@@ -50,6 +50,11 @@ anything else, or **Off** to only run that row by hand. New rows default to nigh
 on upgrade, existing rows keep whatever your old global schedule was. Rows that share a cron run
 together. To skip a person entirely, pause them on their detail page.
 
+**A row run is never skipped for starting late.** If Shortlist is busy at the moment a row is due, the run
+starts when it can. The other timers on Jobs are different: one that starts more than 30 seconds late is
+skipped until its next time, and the bell says "A scheduled job didn't run". A run that was due while
+Shortlist was stopped is not replayed when it starts again.
+
 **A scheduled run cut short by a restart is finished once.** If the container restarts part-way
 through a scheduled run (an auto-updater such as Watchtower replacing it, a host reboot), Shortlist
 starts a run as soon as it is back up for the people that run never reached, on the same rows. It

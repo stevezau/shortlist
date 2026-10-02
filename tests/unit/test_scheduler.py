@@ -62,11 +62,11 @@ class TestScheduleGroups:
 
 class TestSchedulerLateness:
     @pytest.mark.parametrize("rebuild", [False, True], ids=["initial", "rebuilt"])
-    @pytest.mark.parametrize("late_seconds", [1.116242, 29, 30, 31])
+    @pytest.mark.parametrize("late_seconds", [1.116242, 29, 30])
     def test_row_runs_when_no_more_than_thirty_seconds_late(
         self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, rebuild: bool, late_seconds: float
     ) -> None:
-        from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_MISSED
+        from apscheduler.events import EVENT_JOB_EXECUTED
         from apscheduler.executors import base
 
         from shortlist.server.scheduler import build_scheduler, rebuild_schedule
@@ -95,20 +95,329 @@ class TestSchedulerLateness:
                     job, "default", [now - timedelta(seconds=late_seconds)], "test.scheduler"
                 )
 
-                expected_code = EVENT_JOB_EXECUTED if late_seconds <= 30 else EVENT_JOB_MISSED
-                assert [(event.job_id, event.code) for event in events] == [(job.id, expected_code)]
-                if late_seconds <= 30:
-                    start_run.assert_awaited_once_with(
-                        trigger="schedule", dry_run=False, collection_ids=schedule_groups(app)[cron]
-                    )
-                else:
-                    start_run.assert_not_awaited()
-                assert all(job.misfire_grace_time == 30 for job in scheduler.get_jobs())
+                assert [(event.job_id, event.code) for event in events] == [(job.id, EVENT_JOB_EXECUTED)]
+                start_run.assert_awaited_once_with(
+                    trigger="schedule", dry_run=False, collection_ids=schedule_groups(app)[cron]
+                )
+                # Row runs have no grace at all (owner decision 2026-10-02); every timer keeps 30 seconds.
+                for scheduled in scheduler.get_jobs():
+                    expected = None if scheduled.id.startswith("row-schedule::") else 30
+                    assert scheduled.misfire_grace_time == expected, scheduled.id
             finally:
                 scheduler.shutdown(wait=False)
                 await asyncio.sleep(0)
 
         asyncio.run(execute())
+
+    @staticmethod
+    def _missed_events(app: SimpleNamespace) -> list[Event]:
+        with app.state.sessions() as session:
+            return session.query(Event).filter(Event.scope == "schedule.missed").all()
+
+    @staticmethod
+    async def _submit(scheduler, job, run_times: list[datetime]) -> None:
+        """The executor's own submit path, so APScheduler applies its lateness check and dispatches the event."""
+        executor = scheduler._lookup_executor("default")
+        executor.submit_job(job, run_times)
+        for _ in range(100):
+            if not executor._pending_futures:
+                break
+            await asyncio.sleep(0)
+        assert not executor._pending_futures
+
+    def test_a_row_run_still_starts_when_it_is_minutes_late(
+        self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Owner decision 2026-10-02: a row run is never skipped for being late."""
+        from apscheduler.executors import base
+
+        from shortlist.server.scheduler import build_scheduler
+        from tests.conftest import freeze_clock
+
+        cron = "0 2 * * *"
+        _add(app.state.sessions, "a", cron)
+        start_run = AsyncMock()
+        app.state.run_service = SimpleNamespace(start_run=start_run)
+        due = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
+        freeze_clock(monkeypatch, base, due + timedelta(minutes=10))
+
+        async def execute() -> None:
+            scheduler = build_scheduler(app)
+            scheduler.start(paused=True)
+            try:
+                await self._submit(scheduler, scheduler.get_job(f"row-schedule::{cron}"), [due])
+            finally:
+                scheduler.shutdown(wait=False)
+                await asyncio.sleep(0)
+
+        asyncio.run(execute())
+
+        start_run.assert_awaited_once_with(trigger="schedule", dry_run=False, collection_ids=schedule_groups(app)[cron])
+        assert self._missed_events(app) == []
+
+    def test_a_non_row_job_later_than_the_grace_is_still_skipped_and_recorded(
+        self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from apscheduler.executors import base
+
+        from shortlist.server import scheduler as scheduler_module
+        from tests.conftest import freeze_clock
+
+        queue = AsyncMock()
+        monkeypatch.setattr(scheduler_module, "_queue_and_drain", queue)
+        due = datetime(2026, 1, 1, 4, 17, tzinfo=UTC)
+        now = due + timedelta(seconds=31)
+        freeze_clock(monkeypatch, base, now)
+        freeze_clock(monkeypatch, scheduler_module, now)
+
+        async def execute() -> None:
+            scheduler = scheduler_module.build_scheduler(app)
+            scheduler.start(paused=True)
+            try:
+                job = scheduler.get_job(scheduler_module.WATCH_SYNC_JOB_ID)
+                assert job.misfire_grace_time == 30
+                await self._submit(scheduler, job, [due])
+            finally:
+                scheduler.shutdown(wait=False)
+                await asyncio.sleep(0)
+
+        asyncio.run(execute())
+
+        queue.assert_not_awaited()
+        assert [(e.level, e.message) for e in self._missed_events(app)] == [
+            (
+                "warning",
+                {
+                    "job": "watch-sync",
+                    "name": "Sync watch history",
+                    "scheduled_for": "2026-01-01T04:17:00+00:00",
+                    "late_by_s": 31,
+                },
+            )
+        ]
+
+    def test_the_missed_job_audit_is_written_off_the_event_loop(
+        self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A miss happens when the loop is already congested; a blocking SQLite commit there would stall it further."""
+        from apscheduler.executors import base
+
+        from shortlist.server import scheduler as scheduler_module
+        from shortlist.server.services import audit
+        from tests.conftest import freeze_clock
+
+        monkeypatch.setattr(scheduler_module, "_queue_and_drain", AsyncMock())
+        due = datetime(2026, 1, 1, 4, 17, tzinfo=UTC)
+        now = due + timedelta(seconds=31)
+        freeze_clock(monkeypatch, base, now)
+        freeze_clock(monkeypatch, scheduler_module, now)
+        real_write_audit = audit.write_audit
+        written_on_loop: list[bool] = []
+
+        def spy(*args, **kwargs) -> None:
+            try:
+                asyncio.get_running_loop()
+                written_on_loop.append(True)
+            except RuntimeError:
+                written_on_loop.append(False)
+            real_write_audit(*args, **kwargs)
+
+        monkeypatch.setattr(audit, "write_audit", spy)
+
+        async def execute() -> None:
+            scheduler = scheduler_module.build_scheduler(app)
+            scheduler.start(paused=True)
+            try:
+                await self._submit(scheduler, scheduler.get_job(scheduler_module.WATCH_SYNC_JOB_ID), [due])
+                deadline = asyncio.get_running_loop().time() + 5
+                while not self._missed_events(app) and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(0.01)
+            finally:
+                scheduler.shutdown(wait=False)
+                await asyncio.sleep(0)
+
+        asyncio.run(execute())
+
+        assert written_on_loop == [False]
+        assert [(e.level, e.message) for e in self._missed_events(app)] == [
+            (
+                "warning",
+                {
+                    "job": "watch-sync",
+                    "name": "Sync watch history",
+                    "scheduled_for": "2026-01-01T04:17:00+00:00",
+                    "late_by_s": 31,
+                },
+            )
+        ]
+
+    def test_several_missed_row_fire_times_start_one_run(
+        self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An event loop blocked across several fire times catches up with ONE run, for the newest of them."""
+        from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_MISSED, JobExecutionEvent
+        from apscheduler.executors import base as executor_base
+        from apscheduler.schedulers import base as scheduler_base
+
+        from shortlist.server.scheduler import build_scheduler
+        from tests.conftest import freeze_clock
+
+        cron = "0 2 * * *"
+        _add(app.state.sessions, "a", cron)
+        start_run = AsyncMock()
+        app.state.run_service = SimpleNamespace(start_run=start_run)
+        outcomes: list[tuple[int, datetime]] = []
+
+        def record(event: JobExecutionEvent) -> None:
+            outcomes.append((event.code, event.scheduled_run_time))
+
+        async def execute() -> datetime:
+            scheduler = build_scheduler(app)
+            scheduler.add_listener(record, EVENT_JOB_EXECUTED | EVENT_JOB_MISSED)
+            scheduler.start(paused=True)
+            try:
+                job = scheduler.get_job(f"row-schedule::{cron}")
+                first = job.trigger.get_next_fire_time(None, datetime(2026, 1, 1, tzinfo=UTC))
+                second = job.trigger.get_next_fire_time(first, first)
+                third = job.trigger.get_next_fire_time(second, second)
+                job.modify(next_run_time=first)
+                now = third + timedelta(minutes=10)
+                freeze_clock(monkeypatch, scheduler_base, now)
+                freeze_clock(monkeypatch, executor_base, now)
+                # The real wakeup path: `_process_jobs` finds all three fire times due at once.
+                scheduler.resume()
+                executor = scheduler._lookup_executor("default")
+                for _ in range(100):
+                    await asyncio.sleep(0)
+                    if outcomes and not executor._pending_futures:
+                        break
+                return third
+            finally:
+                scheduler.shutdown(wait=False)
+                await asyncio.sleep(0)
+
+        newest = asyncio.run(execute())
+
+        assert outcomes == [(EVENT_JOB_EXECUTED, newest)]
+        start_run.assert_awaited_once_with(trigger="schedule", dry_run=False, collection_ids=schedule_groups(app)[cron])
+
+    def test_row_jobs_keep_the_never_skip_rule_after_a_schedule_rebuild(
+        self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from apscheduler.executors import base
+
+        from shortlist.server.scheduler import build_scheduler, rebuild_schedule
+        from tests.conftest import freeze_clock
+
+        cron = "0 2 * * *"
+        _add(app.state.sessions, "a", cron)
+        start_run = AsyncMock()
+        app.state.run_service = SimpleNamespace(start_run=start_run)
+        due = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
+        freeze_clock(monkeypatch, base, due + timedelta(minutes=10))
+
+        async def execute() -> None:
+            scheduler = build_scheduler(app)
+            app.state.scheduler = scheduler
+            scheduler.start(paused=True)
+            try:
+                # One cron re-registered with a new member, and one registered for the first time.
+                _add(app.state.sessions, "b", cron)
+                _add(app.state.sessions, "c", "30 5 * * 1")
+                rebuild_schedule(app)
+                grace = {job.id: job.misfire_grace_time for job in scheduler.get_jobs()}
+                rows = {job_id: g for job_id, g in grace.items() if job_id.startswith("row-schedule::")}
+                assert rows == {f"row-schedule::{cron}": None, "row-schedule::30 5 * * 1": None}
+                assert {g for job_id, g in grace.items() if job_id not in rows} == {30}
+                await self._submit(scheduler, scheduler.get_job(f"row-schedule::{cron}"), [due])
+            finally:
+                scheduler.shutdown(wait=False)
+                await asyncio.sleep(0)
+
+        asyncio.run(execute())
+
+        start_run.assert_awaited_once_with(trigger="schedule", dry_run=False, collection_ids=schedule_groups(app)[cron])
+        assert len(schedule_groups(app)[cron]) == 2
+        assert self._missed_events(app) == []
+
+    def test_a_missed_timer_job_is_named_from_the_jobs_catalogue(self, app: SimpleNamespace) -> None:
+        from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
+
+        from shortlist.server.scheduler import build_scheduler
+
+        scheduler = build_scheduler(app)
+        due = datetime(2026, 1, 1, 4, 17, tzinfo=UTC)
+
+        scheduler._dispatch_event(JobExecutionEvent(EVENT_JOB_MISSED, "watch-sync", "default", due))
+
+        [event] = self._missed_events(app)
+        assert event.message["job"] == "watch-sync"
+        assert event.message["name"] == "Sync watch history"
+        assert event.message["scheduled_for"] == "2026-01-01T04:17:00+00:00"
+
+    @pytest.mark.parametrize("job_id", ["jobs.drain", "jobs.sweep"])
+    def test_a_drain_tick_missed_or_skipped_writes_nothing(self, app: SimpleNamespace, job_id: str) -> None:
+        """The worker ticks every minute; `jobs.drain` hit max_instances 27 times in 8 days on a live server."""
+        from apscheduler.events import (
+            EVENT_JOB_MAX_INSTANCES,
+            EVENT_JOB_MISSED,
+            JobExecutionEvent,
+            JobSubmissionEvent,
+        )
+
+        from shortlist.server.scheduler import build_scheduler
+
+        _add(app.state.sessions, "a", "0 2 * * *")
+        scheduler = build_scheduler(app)
+        due = datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
+
+        scheduler._dispatch_event(JobExecutionEvent(EVENT_JOB_MISSED, job_id, "default", due))
+        # A row run that could not start because the last one is still going is not a missed schedule.
+        for skipped in (job_id, "row-schedule::0 2 * * *"):
+            scheduler._dispatch_event(JobSubmissionEvent(EVENT_JOB_MAX_INSTANCES, skipped, "default", [due]))
+
+        assert self._missed_events(app) == []
+
+    def test_the_listener_is_registered_once_after_a_schedule_rebuild(self, app: SimpleNamespace) -> None:
+        from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
+
+        from shortlist.server.scheduler import build_scheduler, rebuild_schedule
+
+        cron = "0 2 * * *"
+        _add(app.state.sessions, "a", cron)
+        app.state.scheduler = build_scheduler(app)
+        rebuild_schedule(app)
+        rebuild_schedule(app)
+
+        app.state.scheduler._dispatch_event(
+            JobExecutionEvent(EVENT_JOB_MISSED, f"row-schedule::{cron}", "default", datetime(2026, 1, 1, 2, tzinfo=UTC))
+        )
+
+        assert len(self._missed_events(app)) == 1
+
+    def test_a_failed_audit_write_does_not_raise_out_of_the_listener(self, app: SimpleNamespace) -> None:
+        """APScheduler swallows listener errors itself, so the listener is called directly to prove its own guard."""
+        from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
+        from loguru import logger
+
+        from shortlist.server.scheduler import build_scheduler
+
+        scheduler = build_scheduler(app)
+        [(listener, mask)] = scheduler._listeners
+        assert mask == EVENT_JOB_MISSED
+
+        def locked():
+            raise RuntimeError("database is locked")
+
+        app.state.sessions = locked
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="WARNING", format="{message}")
+        try:
+            listener(JobExecutionEvent(EVENT_JOB_MISSED, "db-backup", "default", datetime(2026, 1, 1, 3, tzinfo=UTC)))
+        finally:
+            logger.remove(sink)
+
+        assert any("db-backup" in line for line in lines), lines
 
 
 class TestBuildScope:

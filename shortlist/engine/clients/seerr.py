@@ -21,6 +21,7 @@ import httpx
 from loguru import logger
 
 from shortlist.engine.clients import http_retry
+from shortlist.engine.clients.arr import json_shape
 from shortlist.engine.models import MediaType, SeerrTarget
 
 #: ``MediaInfo.status``, mapped to the vocabulary the request inbox already speaks (the same four
@@ -416,12 +417,14 @@ class SeerrClient:
 
         A short walk is WARNED about and returned by default — the lenient readers only ever hold a
         request back or leave a date blank. ``strict=True`` raises :class:`PartialRead` instead, for
-        the readers whose answer can remove a row.
+        the readers whose answer can remove a row, and refuses a page of the wrong shape (`_require_page`).
         """
         out: list[object] = []
         expected: int | None = None
         for _page in range(self._MAX_PAGES):
             payload = self._get(path, permission=permission, take=self._PAGE_SIZE, skip=len(out), **params)
+            if strict:
+                self._require_page(path, payload)
             results = payload.get("results") if isinstance(payload, dict) else None
             batch = results if isinstance(results, list) else []
             info = payload.get("pageInfo") if isinstance(payload, dict) else None
@@ -449,6 +452,21 @@ class SeerrClient:
                 raise PartialRead(f"{self.app_name}: {short}")
             logger.warning("{}: {} — the rest are invisible to this run", self.app_name, short)
         return out
+
+    def _require_page(self, path: str, payload: object) -> None:
+        """Refuse a 200 that is not a ``{results: [objects]}`` page, for the reads that can remove a row.
+
+        Read as an empty batch, ``{}``, ``null`` or a proxy's bare string says "nobody asked for
+        anything" (or "nobody is linked") on a COMPLETE ledger, and that removes requests rows.
+
+        Raises:
+            SeerrError: The page has the wrong shape; names the endpoint and the JSON type only.
+        """
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if isinstance(results, list) and all(isinstance(r, dict) for r in results):
+            return
+        got = f"an object whose results are {json_shape(results)}" if isinstance(payload, dict) else json_shape(payload)
+        raise SeerrError(f"{self.app_name} GET {path} answered with {got} where a page of results was expected")
 
     def blocklisted(self) -> set[tuple[str, int]]:
         """Titles the owner has told this instance never to fetch, as ``{(media_type, tmdb_id)}``.

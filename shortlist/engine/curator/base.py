@@ -224,16 +224,29 @@ def parse_web_titles(text: str, limit: int) -> list[dict]:
     prose, so we fall back to the outermost ``[...]`` slice. Every item is normalised; anything
     unparseable yields an empty list (the source then simply contributes nothing).
     """
+    return try_parse_web_titles(text, limit) or []
+
+
+def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
+    """`parse_web_titles`, but ``None`` means the reply was unparseable (and was logged), so a caller can
+    tell that from a reply that legitimately held an empty list."""
     raw = (text or "").strip()
     data: object = None
+    # The LAST decode attempt is the one worth reporting: the slice when there is one, else the reply.
+    decode_error: json.JSONDecodeError | None = None
+    decoded = raw
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        decode_error = exc
         start, end = raw.find("["), raw.rfind("]")
         if 0 <= start < end:
+            decoded = raw[start : end + 1]
             try:
-                data = json.loads(raw[start : end + 1])
-            except json.JSONDecodeError:
+                data = json.loads(decoded)
+                decode_error = None
+            except json.JSONDecodeError as slice_exc:
+                decode_error = slice_exc
                 data = None
     # A provider answering under a JSON schema returns the array wrapped in an object, because a
     # bare top-level array is not expressible in OpenAI's strict Structured Outputs (the root must
@@ -249,14 +262,26 @@ def parse_web_titles(text: str, limit: int) -> list[dict]:
         # response which is empty or pure whitespace is visibly so rather than looking like a
         # missing log line.
         preview = raw if isinstance(raw, str) else str(raw)
+        # The first 400 characters are rarely where a ~2,000-character reply went wrong (4 of 1,038
+        # production replies failed with the cause past the preview), so also say where the decoder
+        # gave up and what the reply ends with. `pos` is relative to the text last decoded.
+        if decode_error is not None:
+            around = decoded[max(0, decode_error.pos - 60) : decode_error.pos + 60]
+            diagnosis = (
+                f"; decode error: {decode_error.msg} at char {decode_error.pos} of {len(decoded)}"
+                f" (context {around!r}); last 200 chars {preview[-200:]!r}"
+            )
+        else:
+            diagnosis = f"; no decode error; last 200 chars {preview[-200:]!r}"
         logger.warning(
-            "llm_web: could not parse a title list from the model reply ({} chars, parsed as {}): {!r}{}",
+            "llm_web: could not parse a title list from the model reply ({} chars, parsed as {}): {!r}{}{}",
             len(preview),
             type(data).__name__,
             preview[:400],
             "…" if len(preview) > 400 else "",
+            diagnosis,
         )
-        return []
+        return None
     out: list[dict] = []
     for item in data:
         if not isinstance(item, dict):

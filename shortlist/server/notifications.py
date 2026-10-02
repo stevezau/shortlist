@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.placeholders import names_a_seed
 from shortlist.server.db.models import Event, Run
+from shortlist.server.scheduler import SCHEDULE_MISSED_SCOPE
 from shortlist.server.services.audit import RESTRICTION_RESTORED_SCOPE
 from shortlist.server.services.watch_stream import STREAM_DOWN_ALERT_MINUTES, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
@@ -1051,6 +1052,58 @@ def _restrictions_restored(session: Session) -> dict | None:
     }
 
 
+def _missed_job_in_words(message: dict) -> str:
+    """'"Back up the database" due at 03:00 on 29 September' — the owner's clock, never a raw job id."""
+    name = message.get("name")
+    what = f'"{name}"' if name else "a scheduled job"
+    try:
+        local = datetime.fromisoformat(str(message.get("scheduled_for"))).astimezone()
+    except ValueError:
+        return what
+    return f"{what} due at {local:%H:%M} on {local.day} {local:%B}"
+
+
+def _scheduled_jobs_missed(session: Session) -> dict | None:
+    """A scheduled job APScheduler skipped because it started more than its grace late.
+
+    The scheduler drops such a job and moves on to its next time, so until this the only trace was a log
+    line — the whole 2026-09-29 nightly row run went that way unnoticed. Row runs no longer have a grace
+    (`scheduler._register`), so only the fixed timers land here. One item for every miss in the last day,
+    keyed to the newest so a later miss re-surfaces after a dismissal.
+    """
+    since = datetime.now(UTC) - timedelta(days=1)
+    events = (
+        session.query(Event)
+        .filter(Event.scope == SCHEDULE_MISSED_SCOPE, Event.ts >= since)
+        .order_by(Event.id.desc())
+        .limit(200)
+        .all()
+    )
+    if not events:
+        return None
+    messages = [e.message or {} for e in events]
+    missed = [_missed_job_in_words(m) for m in messages]
+    shown = missed[:3] if len(missed) <= 3 else [*missed[:2], f"{len(missed) - 2} more"]
+    listed = shown[0] if len(shown) == 1 else f"{', '.join(shown[:-1])} and {shown[-1]}"
+    if len(events) == 1:
+        title = "A scheduled job didn't run"
+        body = f"{listed[0].upper()}{listed[1:]} was skipped because Shortlist was busy at that moment. "
+        body += "It will run again at its next scheduled time."
+    else:
+        title = f"{len(events)} scheduled jobs didn't run"
+        body = f"Shortlist was busy when these were due, so they were skipped: {listed}. "
+        body += "Each will run again at its next scheduled time."
+    return {
+        "id": f"schedule-missed-{events[0].id}",
+        "severity": "warning",
+        "title": title,
+        "body": body,
+        "action_url": "/jobs",
+        "action_label": "Open Jobs",
+        "dismissable": True,
+    }
+
+
 def build_notifications(session: Session, store: SettingsStore, current_version: str) -> list[dict]:
     """Every currently-firing notification the owner hasn't dismissed, most severe first. Dismissal is
     by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
@@ -1061,6 +1114,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _secrets_we_cannot_read(store),
         _last_run_problem(session),
         _failed_jobs(session),
+        _scheduled_jobs_missed(session),
         _mdblist_quota(session),
         _requests_found_nothing(session),
         _recent_service_errors(session),

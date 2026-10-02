@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import ClassVar
 
 import pytest
 from sqlalchemy import create_engine
@@ -130,6 +131,206 @@ class TestTheShelfEventsANightlyRunEmits:
         )
 
         assert [(a[0], a[1]) for a in seen] == [("run.hub_unplaced", "info"), ("run.hub_order", "info")]
+
+
+class TestARunAuditsEveryShareFilterWrite:
+    """`run.privacy_sync` from the RUN path — the record the runless jobs now share (`test_jobs.py`
+    `TestRunlessPrivacyPassesAuditFilterWrites`). Pinned so sharing the emitter cannot change what a run
+    has always written: rows already in the table and in support bundles read this exact shape."""
+
+    def test_a_persisted_run_records_each_accounts_before_and_after(self, sessions):
+        from shortlist.engine.models import RunReport
+        from shortlist.server.db.models import Event, Run
+        from shortlist.server.services.run_persistence import persist_report
+
+        with sessions() as session:
+            run = Run(trigger="manual", status="running", dry_run=False, stats={})
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        report = RunReport(started_at=datetime.now(UTC), dry_run=False)
+        report.filter_writes = {
+            300: {"username": "dave", "fields": {"filterMovies": ("", "label!=shortlist_sarah")}, "at": 12.5}
+        }
+
+        persist_report(sessions, run_id, report)
+
+        with sessions() as session:
+            events = session.query(Event).filter_by(scope="run.privacy_sync").all()
+        assert [(e.level, e.message) for e in events] == [
+            (
+                "info",
+                {
+                    "run_id": run_id,
+                    "dry_run": False,
+                    "plex_account_id": 300,
+                    "username": "dave",
+                    "fields": {"filterMovies": {"before": "", "after": "label!=shortlist_sarah"}},
+                },
+            )
+        ]
+        assert list(events[0].message) == ["run_id", "dry_run", "plex_account_id", "username", "fields"]
+
+
+SWEEP_REASON = (
+    "row was broken beyond repair-in-place — no share filter could hide it (wrong type for its library, or no "
+    "shortlist label at all — an orphan from an interrupted run), or it shared a collection tag with other users' "
+    "rows and held their picks. Keys starting 'freed-name helper:' are not rows: a helper a stopped run left "
+    "behind while freeing a row's name"
+)
+
+
+class TestARunAuditsItsSweep:
+    """`run.sweep` from the RUN path — the record the runless jobs now share (`test_jobs.py`
+    `TestRunlessPrivacyPassesAuditTheirSweep`). Pinned so sharing the emitter cannot change what a run has
+    always written: rows already in the table and in support bundles read this exact shape."""
+
+    SWEPT: ClassVar[dict[str, list[str]]] = {
+        "sarah": ["Picked for Sarah"],
+        "freed-name helper:mike": ["Picked for Mike ~freeing"],
+    }
+
+    def _persist(self, sessions, *, dry_run: bool, swept_rows: dict) -> tuple[int, list]:
+        from shortlist.engine.models import RunReport
+        from shortlist.server.db.models import Event, Run
+        from shortlist.server.services.run_persistence import persist_report
+
+        with sessions() as session:
+            run = Run(trigger="manual", status="running", dry_run=dry_run, stats={})
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        report = RunReport(started_at=datetime.now(UTC), dry_run=dry_run)
+        report.swept_rows = swept_rows
+
+        persist_report(sessions, run_id, report)
+
+        with sessions() as session:
+            return run_id, session.query(Event).filter_by(scope="run.sweep").all()
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_a_persisted_run_records_every_row_and_helper_it_deleted(self, sessions, dry_run):
+        run_id, events = self._persist(sessions, dry_run=dry_run, swept_rows=dict(self.SWEPT))
+
+        assert [(e.level, e.message) for e in events] == [
+            (
+                "warning",
+                {"run_id": run_id, "dry_run": dry_run, "reason": SWEEP_REASON, "deleted": self.SWEPT},
+            )
+        ]
+        assert list(events[0].message) == ["run_id", "dry_run", "reason", "deleted"]
+
+    def test_a_run_that_swept_nothing_adds_no_event(self, sessions):
+        _, events = self._persist(sessions, dry_run=False, swept_rows={})
+
+        assert events == []
+
+
+def _persist_converge(sessions, *, dry_run: bool, scope: str, **lists) -> tuple[int, list]:
+    """Persist a run whose converge phase recorded `lists`, and read back every event of `scope`."""
+    from shortlist.engine.models import RunReport
+    from shortlist.server.db.models import Event, Run
+    from shortlist.server.services.run_persistence import persist_report
+
+    with sessions() as session:
+        run = Run(trigger="manual", status="running", dry_run=dry_run, stats={})
+        session.add(run)
+        session.commit()
+        run_id = run.id
+    report = RunReport(started_at=datetime.now(UTC), dry_run=dry_run, **lists)
+
+    persist_report(sessions, run_id, report)
+
+    with sessions() as session:
+        return run_id, session.query(Event).filter_by(scope=scope).all()
+
+
+class TestARunAuditsItsConvergeDemotions:
+    """`run.demote` — converge takes rows off Home (a paused person, a shared row switched off, an unknown owner
+    it may not delete, a row on the owner's Home that should not be). It wrote only a sorted list of labels to
+    the run log, so nothing said which collection, in which library, or why (plex-safety rule 10)."""
+
+    DEMOTED: ClassVar[list[dict]] = [
+        {
+            "label": "Shortlist_sarah",
+            "title": "Picked for Sarah",
+            "rating_key": 4101,
+            "library_key": "1",
+            "library": "Movies",
+            "reason": "paused",
+        },
+        {
+            "label": "Shortlist_mike",
+            "title": "Picked for Mike",
+            "rating_key": 4102,
+            "library_key": "2",
+            "library": "TV Shows",
+            "reason": "on_owner_home",
+        },
+    ]
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_a_persisted_run_records_every_row_it_took_off_home(self, sessions, dry_run):
+        """Info, not warning: each is the intended effect of a setting (a pause, a switched-off row) or a
+        correction that only ever hides more — nothing the owner has to act on."""
+        demoted = [dict(entry) for entry in self.DEMOTED]
+        run_id, events = _persist_converge(sessions, dry_run=dry_run, scope="run.demote", converge_demotions=demoted)
+
+        assert [(e.level, e.message) for e in events] == [
+            ("info", {"run_id": run_id, "dry_run": dry_run, "demoted": self.DEMOTED})
+        ]
+        assert list(events[0].message) == ["run_id", "dry_run", "demoted"]
+
+    def test_a_run_that_demoted_nothing_adds_no_event(self, sessions):
+        _, events = _persist_converge(sessions, dry_run=False, scope="run.demote", converge_demotions=[])
+
+        assert events == []
+
+
+ORPHAN_REASON = (
+    "its label names no one Shortlist knows — the person was removed from the server or from Shortlist — and the "
+    "roster read was complete, so the collection was deleted rather than hidden"
+)
+
+
+class TestARunAuditsItsOrphanDeletes:
+    """`run.orphan_delete` — converge DELETES a collection whose label names nobody on the roster, the one
+    irreversible thing it does. It recorded only `orphans_removed`, a list of labels no event carried
+    (plex-safety rule 10)."""
+
+    DELETED: ClassVar[list[dict]] = [
+        {
+            "label": "Shortlist_ghost",
+            "title": "Picked for Ghost",
+            "rating_key": 4103,
+            "library_key": "1",
+            "library": "Movies",
+        }
+    ]
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_a_persisted_run_records_every_collection_it_deleted(self, sessions, dry_run):
+        deleted = [dict(entry) for entry in self.DELETED]
+        run_id, events = _persist_converge(
+            sessions, dry_run=dry_run, scope="run.orphan_delete", orphan_deletions=deleted
+        )
+
+        assert [(e.level, e.message) for e in events] == [
+            ("warning", {"run_id": run_id, "dry_run": dry_run, "reason": ORPHAN_REASON, "deleted": self.DELETED})
+        ]
+        assert list(events[0].message) == ["run_id", "dry_run", "reason", "deleted"]
+
+    def test_a_run_that_deleted_nothing_adds_no_event(self, sessions):
+        _, events = _persist_converge(sessions, dry_run=False, scope="run.orphan_delete", orphan_deletions=[])
+
+        assert events == []
+
+    def test_a_demotion_is_never_filed_as_a_delete_or_the_reverse(self, sessions):
+        """Two scopes so "what was destroyed at 03:31" is answerable on its own, as `orphans_removed` promised."""
+        demoted = [dict(entry) for entry in TestARunAuditsItsConvergeDemotions.DEMOTED]
+        _, deletes = _persist_converge(sessions, dry_run=False, scope="run.orphan_delete", converge_demotions=demoted)
+
+        assert deletes == []
 
 
 class TestTheZeroRequestedEventSaysWhetherItWasReachable:

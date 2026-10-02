@@ -264,6 +264,19 @@ GET  /api/notifications/whats-new -> {version, releases[{version, url, published
      Worth alerting at all because the failure is SILENT: the nightly play-log sweep still credits finished watches, so every
      number keeps looking plausible. What stops is the partial-watch signal, which only the live socket can see — and
      "nobody abandoned anything this week" looks exactly like a healthy week.
+     Another is "A scheduled job didn't run" (several at once read "N scheduled jobs didn't run"), raised when a
+     scheduled job was skipped for starting too late, typically because Shortlist was busy at that moment. It is
+     dismissable, covers the last day, and a later miss shows it again. The job runs again at its next scheduled
+     time; row runs are never skipped for starting late, so this only ever names the other timers.
+     The audit feed (`/api/events/log?scope=`) records each such skip as `schedule.missed` (warning) with `job`
+     (the job id), `name` (its label on the Jobs page, when it has one), `scheduled_for` (when it was due, UTC)
+     and `late_by_s`. The scopes below describe what a pass did to Plex. Each of these can come from a run
+     (carrying its `run_id`) or from a background job, which carries `job` (`privacy.sync`, `user.restore`,
+     `rows.visibility` or `sync.check`) and a null `run_id`: `run.privacy_sync` (info, one per share filter
+     written, with the account and each field's before and after), `run.sweep` (warning, rows deleted because
+     no share filter could hide them), `run.demote` (info, rows taken off Home, each with the reason it was
+     taken off) and `run.orphan_delete` (warning, orphaned rows deleted because their label names no one
+     Shortlist knows).
 ```
 
 ## Outgoing notifications

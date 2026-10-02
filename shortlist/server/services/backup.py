@@ -12,7 +12,9 @@ import os
 import re
 import shutil
 import sqlite3
+import threading
 from datetime import UTC, datetime, timedelta
+from fnmatch import fnmatch
 from pathlib import Path
 
 from loguru import logger
@@ -21,6 +23,13 @@ from shortlist.server.net_guard import safe_backup_name
 
 DEFAULT_MAX_BACKUPS = 10
 BACKUP_SUBDIR = "backups"
+#: A backup is written under its final name plus this, and renamed only once complete. The listing and
+#: rotation match `shortlist_*.db`, which never matches it, so an unfinished copy is never a restore point.
+PARTIAL_SUFFIX = ".partial"
+#: A partial and the SQLite journal beside it.
+_PARTIAL_GLOB = f"shortlist_*.db{PARTIAL_SUFFIX}*"
+#: One backup at a time per process, so the sweep of stale partials can never take one still being written.
+_backup_lock = threading.Lock()
 
 
 def _backup_dir(config_dir: Path) -> Path:
@@ -32,7 +41,15 @@ def _backup_dir(config_dir: Path) -> Path:
 def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = DEFAULT_MAX_BACKUPS) -> Path | None:
     """Take a crash-safe backup of shortlist.db using SQLite's online backup API.
 
-    Returns the path to the new backup, or None if the DB doesn't exist.
+    Returns:
+        The new backup's path on success. ``None`` in two cases this function does not tell apart:
+        there is no ``shortlist.db`` to back up, or the copy failed (logged here). A caller that must
+        know checks the database itself first. ``run_migrations`` calls this only once ``shortlist.db``
+        exists with a non-zero size and a migration is pending, so ``None`` there can only mean a
+        failed copy, and it refuses to migrate. Never read ``None`` as "nothing to back up" alone.
+
+    Raises:
+        OSError: The ``backups/`` folder could not be created; that happens outside the copy's handler.
     """
     db_path = config_dir / "shortlist.db"
     if not db_path.exists():
@@ -48,25 +65,34 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
     # included, outside /config. The restore path has always validated its filename; this one didn't.
     safe_label = re.sub(r"[^a-z0-9_-]", "-", (label or "backup").strip().lower())[:32] or "backup"
     backup_path = backup_dir / f"shortlist_{ts}_{safe_label}.db"
+    # Copied under another name and renamed once complete. A process stopped mid-copy (a container
+    # stop during "Back up now" or the pre-migration backup) used to leave a half-written file under
+    # the real name: listed, kept by rotation, and restorable with no integrity check.
+    partial = backup_path.with_name(backup_path.name + PARTIAL_SUFFIX)
 
-    src = dst = None
-    try:
-        src = sqlite3.connect(str(db_path))
-        dst = sqlite3.connect(str(backup_path))
-        src.backup(dst)
-        logger.info("backup created: {} ({:.1f} KB)", backup_path.name, backup_path.stat().st_size / 1024)
-    except Exception as e:
-        logger.error("backup failed: {}", e)
-        if backup_path.exists():
-            backup_path.unlink()
-        return None
-    finally:
-        # Both handles, always. They used to be closed only on the success path, so a failure
-        # mid-`backup()` leaked two SQLite connections and then unlinked a file `dst` still held —
-        # and this runs on every boot.
-        for conn in (dst, src):
-            if conn is not None:
-                conn.close()
+    with _backup_lock:
+        _sweep_partials(backup_dir)
+        try:
+            src = dst = None
+            try:
+                src = sqlite3.connect(str(db_path))
+                dst = sqlite3.connect(str(partial))
+                src.backup(dst)
+            finally:
+                # Both handles, always, and before the rename or the unlink below. They used to be
+                # closed only on the success path, so a failure mid-`backup()` leaked two SQLite
+                # connections and then unlinked a file `dst` still held — and this runs on every boot.
+                for conn in (dst, src):
+                    if conn is not None:
+                        conn.close()
+            size = partial.stat().st_size
+            os.replace(partial, backup_path)
+        except Exception as e:
+            logger.error("backup failed: {}", e)
+            return None
+        finally:
+            partial.unlink(missing_ok=True)  # nothing left to remove once the rename has happened
+    logger.info("backup created: {} ({:.1f} KB)", backup_path.name, size / 1024)
 
     # Housekeeping must never invalidate the backup it is tidying up around. This runs on every boot,
     # so an exception escaping here failed the boot AFTER a good backup had already been written —
@@ -77,6 +103,21 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
     except OSError as e:
         logger.warning("could not rotate old backups ({}); keeping them, the new backup is fine", e)
     return backup_path
+
+
+def _sweep_partials(backup_dir: Path) -> None:
+    """Remove unfinished copies a stopped process left behind. Housekeeping: a failure only logs."""
+    for stale in backup_dir.glob(_PARTIAL_GLOB):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("could not remove an unfinished backup {} ({})", stale.name, type(e).__name__)
+            continue
+        logger.info("removed an unfinished backup left by an earlier stop: {}", stale.name)
+
+
+def _is_partial(name: str) -> bool:
+    return fnmatch(name, _PARTIAL_GLOB)
 
 
 def _rotate(backup_dir: Path, max_keep: int) -> None:
@@ -147,7 +188,7 @@ def restore_backup(config_dir: Path, backup_name: str, *, max_keep: int = DEFAUL
     backup_path = config_dir / BACKUP_SUBDIR / backup_name
     db_path = config_dir / "shortlist.db"
     staged = config_dir / RESTORE_STAGING
-    if not backup_path.exists():
+    if _is_partial(backup_name) or not backup_path.exists():
         logger.error("backup not found: {}", backup_name)
         return False
 
@@ -208,7 +249,8 @@ def request_restore(config_dir: Path, backup_name: str, *, max_keep: int = DEFAU
     except ValueError:
         logger.error("refusing a backup name that is not a plain filename: {!r}", backup_name)
         return False
-    if not (config_dir / BACKUP_SUBDIR / backup_name).exists():
+    # An unfinished copy is not a backup, whatever the folder holds under that name.
+    if _is_partial(backup_name) or not (config_dir / BACKUP_SUBDIR / backup_name).exists():
         logger.error("backup not found: {}", backup_name)
         return False
     queued = {"backup": backup_name, "requested_at": datetime.now(UTC).isoformat(), "max_keep": max_keep}

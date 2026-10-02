@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+import respx
 
+import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.clients.arr import ArrError
 from shortlist.engine.clients.seerr import PartialRead, SeerrError
+from shortlist.engine.context import EngineContext
+from shortlist.engine.delivery import row_marker
 from shortlist.engine.models import (
     ArrTarget,
+    EngineConfig,
     MediaType,
     RequestSources,
     RowSpec,
@@ -27,6 +34,7 @@ from shortlist.engine.requests_row import (
     parse_requester_tag,
     pattern_matches,
 )
+from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 FIX = Path(__file__).resolve().parents[1] / "fixtures"
 REQS = json.loads((FIX / "overseerr_requests_page.json").read_text())
@@ -629,3 +637,257 @@ class TestBuildRequestsPicks:
         assert [p.tmdb_id for p in picks["1"]] == [2] and picks["1"][0].rank == 1
         results = {r["tmdb_id"]: r["result"] for r in policy.report.trace["selection"][0]["requests"]}
         assert results == {1: "not_on_plex", 2: "in_row"}
+
+
+BOB_TAG = [{"id": 1, "label": "req-bob"}]
+BOB_ITEM = {
+    "tmdbId": 42,
+    "tags": [1],
+    "hasFile": True,
+    "movieFile": {"dateAdded": "2026-09-27T00:00:00Z"},
+    "title": "A",
+}
+BY_USERNAME, BY_NAME = "req-{username}", "req-{name}"
+
+
+def _rows_holding(ledger: RequestLedger, people: list[UserProfile], patterns: frozenset[str]) -> dict:
+    """``{(plex account id, row pattern): picked tmdb ids}`` — whose requests row would show what."""
+    out = {}
+    for person in people:
+        for pattern in sorted(patterns):
+            policy = _policy({"1": {BOB_ITEM["tmdbId"]: 4242}})
+            policy.user = person
+            spec = RowSpec(slug="asked", name_template="n", size=20, requests_row=True, requests_tag_pattern=pattern)
+            picks = build_requests_picks(policy, spec, [_section()], 20, ledger, now=NOW)
+            out[(person.plex_account_id, pattern)] = [p.tmdb_id for p in picks["1"]]
+    return out
+
+
+def _collect_bob_tag(people: list[UserProfile], patterns: frozenset[str]) -> RequestLedger:
+    radarr = _radarr(items=[BOB_ITEM], tags=BOB_TAG)
+    return collect_requests(RequestSources(radarr=ARR), people, radarr=radarr, patterns=patterns)
+
+
+class TestOneTagAcrossSeveralPatterns:
+    """A tag resolves against EVERY pattern the run's requests rows use, not the first that fits.
+
+    Two rows using `req-{username}` and `req-{name}` render `req-bob` for whoever is called bob either way;
+    stopping at the first pattern credited one of two people with the other's request and called it
+    unambiguous. `_add_tagged` never reads `user_type` (a pattern renders username and nickname for every
+    type), so the matrix below must give the same answer for owner, shared and managed alike.
+    """
+
+    @pytest.mark.parametrize("user_type", list(UserType))
+    def test_a_tag_two_patterns_render_for_two_people_goes_to_nobody_and_is_reported(self, user_type):
+        alice = UserProfile(username="alice", nickname="bob", plex_account_id=1, user_type=user_type, slug="alice")
+        bob = UserProfile(username="bob", nickname="Robert", plex_account_id=2, user_type=user_type, slug="bob")
+        both = frozenset({BY_USERNAME, BY_NAME})
+
+        ledger = _collect_bob_tag([alice, bob], both)
+
+        assert _rows_holding(ledger, [alice, bob], both) == {
+            (1, BY_NAME): [],
+            (1, BY_USERNAME): [],
+            (2, BY_NAME): [],
+            (2, BY_USERNAME): [],
+        }
+        assert ledger.titles == []
+        assert ledger.tag_matches == [
+            TagMatch(label="req-bob", source="pattern", plex_account_id=None, titles=1, ambiguous=True)
+        ]
+
+    @pytest.mark.parametrize("user_type", list(UserType))
+    def test_one_person_two_patterns_render_it_for_gets_the_title_in_each_of_those_rows(self, user_type):
+        bob = UserProfile(username="bob", nickname="bob", plex_account_id=2, user_type=user_type, slug="bob")
+        patterns = frozenset({BY_USERNAME, BY_NAME, "other-{username}"})
+
+        ledger = _collect_bob_tag([bob], patterns)
+
+        assert _rows_holding(ledger, [bob], patterns) == {
+            (2, "other-{username}"): [],
+            (2, BY_NAME): [42],
+            (2, BY_USERNAME): [42],
+        }
+        assert ledger.tag_matches == [
+            TagMatch(label="req-bob", source="pattern", plex_account_id=2, titles=1, ambiguous=False)
+        ]
+
+    @pytest.mark.parametrize(
+        "alice_nickname,patterns",
+        [
+            # The audit's baseline: Alice is nicknamed bob, but no row in the run renders a nickname.
+            pytest.param("bob", frozenset({BY_USERNAME}), id="the-colliding-pattern-is-not-in-play"),
+            pytest.param("Alice", frozenset({BY_USERNAME, BY_NAME}), id="a-second-pattern-that-names-nobody"),
+        ],
+    )
+    def test_a_tag_only_one_person_renders_is_theirs_in_the_matching_row_only(self, alice_nickname, patterns):
+        alice = UserProfile(
+            username="alice", nickname=alice_nickname, plex_account_id=1, user_type=UserType.SHARED, slug="alice"
+        )
+        bob = UserProfile(username="bob", nickname="Robert", plex_account_id=2, user_type=UserType.SHARED, slug="bob")
+
+        ledger = _collect_bob_tag([alice, bob], patterns)
+
+        holding = _rows_holding(ledger, [alice, bob], patterns)
+        assert {row: ids for row, ids in holding.items() if ids} == {(2, BY_USERNAME): [42]}
+        assert ledger.tag_matches == [
+            TagMatch(label="req-bob", source="pattern", plex_account_id=2, titles=1, ambiguous=False)
+        ]
+
+
+RADARR_AT = ArrTarget(url="http://radarr.test", api_key="RADARR-KEY-CANARY", quality_profile_id=0, root_folder="")
+SONARR_AT = ArrTarget(url="http://sonarr.test", api_key="SONARR-KEY-CANARY", quality_profile_id=0, root_folder="")
+#: 200 answers that are not the list of records Radarr/Sonarr serve. CANARY must never reach a message.
+MALFORMED_ARR = [
+    pytest.param(b'{"message": "CANARY"}', id="object"),
+    pytest.param(b"null", id="null"),
+    pytest.param(b'"CANARY"', id="string"),
+    pytest.param(b'[{"id": 1, "label": "req-sarah", "tmdbId": 10, "tags": [1]}, "CANARY"]', id="list-holding-a-string"),
+]
+ARR_READS = [
+    pytest.param(RADARR_AT, "/api/v3/tag", "Radarr", id="radarr-tags"),
+    pytest.param(RADARR_AT, "/api/v3/movie", "Radarr", id="radarr-movies"),
+    pytest.param(SONARR_AT, "/api/v3/tag", "Sonarr", id="sonarr-tags"),
+    pytest.param(SONARR_AT, "/api/v3/series", "Sonarr", id="sonarr-series"),
+]
+EXISTING_ROW = fake_media_item(4242, "Movies you asked for" + row_marker(100))
+SIBLING_ROW = fake_media_item(4343, "✨ Movies Picked for You" + row_marker(100))
+
+
+@pytest.fixture
+def requests_ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> EngineContext:
+    """Sarah's requests row already on Plex beside a sibling row under her label, both Arrs as sources.
+
+    The real pipeline, ledger read and `remove_row`; only Plex, plex.tv and the Arrs' HTTP are fakes.
+    """
+    plex = MagicMock()
+    movies = MagicMock()
+    movies.type, movies.title, movies.key = "movie", "Movies", "1"
+    movies.collections.return_value = []
+    plex.sections.return_value = [movies]
+    plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+    plex.build_library_index.return_value = {900: 999}
+    plex.owned_collections.return_value = {}
+    plex.find_owned_collections.return_value = [EXISTING_ROW, SIBLING_ROW]
+    plex.stored_label.side_effect = lambda collection, label, *, extra=None: label.replace("shortlist", "Shortlist", 1)
+    plex.fetch_items.side_effect = lambda keys: ([fake_media_item(k, f"item{k}") for k in keys], [])
+    history = MagicMock()
+    history.fetch.return_value = [make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)]
+    mock_plextv.users = [plextv_user(100, "sarah")]
+    config = replace(
+        engine_config,
+        rows=[RowSpec(slug="asked", name_template="{library_name} you asked for", size=5, requests_row=True)],
+        rows_defined=True,
+        request_sources=RequestSources(radarr=RADARR_AT, sonarr=SONARR_AT),
+    )
+    return EngineContext(
+        config=config,
+        plex=plex,
+        plextv=mock_plextv,
+        tmdb=mock_tmdb,
+        history_source=history,
+        curator=mock_curator,
+        snapshots=MemorySnapshotStore(),
+    )
+
+
+def _run_with_arrs(ctx: EngineContext, answers: dict[str, httpx.Response]):
+    """Sarah through the real pipeline, every Arr read answering an empty list unless ``answers`` overrides it."""
+    with respx.mock(assert_all_called=False) as arrs:
+        for target, path in (
+            (RADARR_AT, "/api/v3/tag"),
+            (RADARR_AT, "/api/v3/movie"),
+            (SONARR_AT, "/api/v3/tag"),
+            (SONARR_AT, "/api/v3/series"),
+        ):
+            url = f"{target.url}{path}"
+            arrs.get(url).mock(return_value=answers.get(url, httpx.Response(200, json=[])))
+        return pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
+
+
+class TestAMalformedArrAnswerNeverRemovesARow:
+    """A 200 whose body is not a list of records is a FAILED read, not an empty one.
+
+    Coerced to an empty list it made the ledger complete and empty, and the pipeline deleted the
+    person's requests row and forgot its delivery on the strength of a read that did not happen.
+    """
+
+    @pytest.mark.parametrize("body", MALFORMED_ARR)
+    @pytest.mark.parametrize("target,path,app", ARR_READS)
+    def test_the_existing_row_survives_and_the_ledger_is_incomplete(
+        self, requests_ctx: EngineContext, target, path, app, body
+    ):
+        report = _run_with_arrs(requests_ctx, {f"{target.url}{path}": httpx.Response(200, content=body)})
+
+        requests_ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.removed_deliveries == []
+        assert not (report.diff and report.diff.deleted)
+        ledger = requests_ctx.request_ledger
+        assert ledger is not None and ledger.complete is False
+        assert ledger.unreadable == {app}
+        assert any(path in p for p in ledger.problems)
+        assert not any("CANARY" in p for p in ledger.problems)
+
+    def test_an_empty_list_is_a_complete_read_and_the_empty_row_is_still_removed(self, requests_ctx: EngineContext):
+        report = _run_with_arrs(requests_ctx, {})
+
+        assert requests_ctx.request_ledger is not None and requests_ctx.request_ledger.complete is True
+        requests_ctx.plex.delete_owned_collection.assert_called_once()
+        assert requests_ctx.plex.delete_owned_collection.call_args.args[0] is EXISTING_ROW
+        assert report.removed_deliveries == [{"row_slug": "asked", "library_key": "1"}]
+        assert report.diff.deleted == ["Movies you asked for"]
+
+
+SEERR_AT = SeerrTarget(url="http://overseerr.test", api_key="SEERR-KEY-CANARY")
+SEERR_BASE = f"{SEERR_AT.url}/api/v1"
+
+
+def _users_page() -> dict:
+    """The Overseerr accounts behind the recorded request page, as a `/user` page."""
+    users = list({r["requestedBy"]["id"]: r["requestedBy"] for r in REQS["results"]}.values())
+    return {"pageInfo": {"pages": 1, "results": len(users)}, "results": users}
+
+
+def _collect_from_seerr(answers: dict[str, httpx.Response]) -> RequestLedger:
+    plex_ids = {r["requestedBy"]["plexId"] for r in REQS["results"]}
+    people = [UserProfile(username=f"p{i}", plex_account_id=i, user_type=UserType.SHARED) for i in sorted(plex_ids)]
+    with respx.mock(assert_all_called=False) as seerr:
+        seerr.get(f"{SEERR_BASE}/request").mock(return_value=answers.get("/request", httpx.Response(200, json=REQS)))
+        seerr.get(f"{SEERR_BASE}/user").mock(return_value=answers.get("/user", httpx.Response(200, json=_users_page())))
+        seerr.get(url__startswith=f"{SEERR_BASE}/settings/").mock(return_value=httpx.Response(200, json=[]))
+        return collect_requests(RequestSources(overseerr=SEERR_AT), people)
+
+
+class TestAMalformedOverseerrPageFailsTheRead:
+    """`/request` and `/user` are the Overseerr reads that can take a row down; a 200 that is not a
+    `{results: [objects]}` page is a failed read of either, never "nobody asked for anything"."""
+
+    @pytest.mark.parametrize("path", ["/request", "/user"])
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param(b'{"message": "CANARY"}', id="object-without-results"),
+            pytest.param(b"null", id="null"),
+            pytest.param(b'"CANARY"', id="string"),
+            pytest.param(b"[]", id="bare-list"),
+            pytest.param(b'{"pageInfo": {"results": 1}, "results": ["CANARY"]}', id="results-holding-a-string"),
+        ],
+    )
+    def test_the_ledger_is_incomplete(self, path, body):
+        ledger = _collect_from_seerr({path: httpx.Response(200, content=body)})
+
+        assert ledger.complete is False
+        assert ledger.unreadable == {"Overseerr"}
+        assert any(path in p for p in ledger.problems)
+        assert not any("CANARY" in p for p in ledger.problems)
+
+    def test_a_genuinely_empty_request_page_is_a_complete_read(self):
+        empty = {"pageInfo": {"pages": 0, "results": 0}, "results": []}
+        ledger = _collect_from_seerr({"/request": httpx.Response(200, json=empty)})
+
+        assert ledger.complete is True and ledger.titles == []
+
+    def test_the_recorded_pages_still_read_in_full(self):
+        ledger = _collect_from_seerr({})
+
+        assert ledger.complete is True and len(ledger.titles) == 7

@@ -132,15 +132,29 @@ def fake_report(dry_run: bool = False) -> RunReport:
 
 
 async def _wait_for_run(sessions, run_id: int, timeout_s: float = 3.0) -> Run:
+    """The run once it has ENDED: its status settled, and its task finished.
+
+    The status alone is not the end. Crediting, the alert, `notify.after_run` and the queue drain all
+    come after it, and returning while they are in flight makes `asyncio.run` cancel the run task on
+    its way out — so a test would observe a shutdown instead of the run it started.
+    """
     deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
+    while True:
         with sessions() as session:
             run = session.get(Run, run_id)
             if run and run.status in ("ok", "error"):
-                session.expunge(run)
-                return run
+                break
+        if time.monotonic() >= deadline:
+            raise AssertionError("run did not finish in time")
         await asyncio.sleep(0.02)
-    raise AssertionError("run did not finish in time")
+    rest = asyncio.all_tasks() - {asyncio.current_task()}
+    if rest:
+        _, pending = await asyncio.wait(rest, timeout=timeout_s)
+        assert not pending, "the run's task did not finish in time"
+    with sessions() as session:
+        run = session.get(Run, run_id)
+        session.expunge(run)
+        return run
 
 
 class TestRunExecution:
@@ -1064,6 +1078,102 @@ class TestAFinishedRunStartsTheWorkItWasBlocking:
 
         assert run.status == "error"  # fake_report has one errored user; the DRAIN did not cause it
         assert run.stats["users_ok"] == 1, "the run's own results survived the queue blowing up"
+
+    def test_a_run_stopped_with_cancel_run_still_drains(self, sessions, tmp_path, monkeypatch):
+        """`cancel_run` is not task cancellation. It sets the engine's flag, the engine stops between
+        users and RETURNS, and the run ends normally with its thread finished — so it owes the queue its
+        drain exactly like a finished run. The shutdown guard must not swallow this one."""
+        service, drained = self._service_with_a_drain_spy(sessions, tmp_path, monkeypatch)
+        engine_started = threading.Event()
+
+        def engine_that_stops_when_asked(ctx, profiles):
+            engine_started.set()
+            deadline = time.monotonic() + 5
+            while not ctx.cancelled() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            return fake_report()
+
+        monkeypatch.setattr(run_service_mod, "engine_run", engine_that_stops_when_asked)
+
+        async def scenario() -> int:
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            (task,) = service._tasks
+            await asyncio.get_running_loop().run_in_executor(None, engine_started.wait, 5)
+            assert service.cancel_run(run_id) is True
+            await asyncio.wait({task}, timeout=5)
+            assert task.done() and not task.cancelled()
+            return run_id
+
+        run_id = asyncio.run(scenario())
+
+        with sessions() as session:
+            assert session.get(Run, run_id).status == "aborted"
+        assert drained == [False], "a run stopped by the owner still owes the queue its turn"
+
+
+class TestShutdownNeverStartsAWriterBesideALiveEngine:
+    """A teardown path cancels the run TASK, and task cancellation cannot stop the engine's executor thread.
+
+    In the shipped image the process simply dies at shutdown and no task is cancelled; Ctrl-C, uvicorn as
+    PID 1 without an init, or an in-process server are the paths that cancel it.
+
+    The task's `finally` blocks still run on the way out: they release the writer lock and drop the
+    cancel Event, so `is_running()` reads False — and the drain after them used to start a queued
+    `privacy.sync` while the engine thread was still merging share filters. Two overlapping
+    read-modify-write merges drop the first one's `label!=` excludes (plex-safety rule 3).
+    """
+
+    def test_a_cancelled_run_task_starts_no_writer_while_its_engine_thread_runs(self, sessions, tmp_path, monkeypatch):
+        from shortlist.server.services import jobs
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        service.state = SimpleNamespace(run_service=service, sessions=sessions)
+        engine_started, release_engine, engine_done = threading.Event(), threading.Event(), threading.Event()
+
+        def engine_still_mid_run(ctx, profiles):
+            engine_started.set()
+            release_engine.wait(timeout=10)
+            engine_done.set()
+            return fake_report()
+
+        writer_ran_beside_engine: list[bool] = []
+
+        def privacy_sync(state, payload):
+            writer_ran_beside_engine.append(not engine_done.is_set())
+            return {}
+
+        monkeypatch.setattr(run_service_mod, "engine_run", engine_still_mid_run)
+        monkeypatch.setitem(jobs._HANDLERS, "privacy.sync", privacy_sync)
+
+        async def scenario() -> tuple[list[bool], str, bool]:
+            loop = asyncio.get_running_loop()
+            try:
+                await service.start_run(trigger="schedule", dry_run=False)
+                (task,) = service._tasks
+                await loop.run_in_executor(None, engine_started.wait, 5)
+                job_id = jobs.enqueue(sessions, "privacy.sync", {"scheduled": True})
+
+                task.cancel()  # what asyncio.run's teardown does to every task left after uvicorn stops
+                await asyncio.wait({task}, timeout=5)
+                assert task.done(), "the cancelled run task never finished its `finally` blocks"
+                during_shutdown = list(writer_ran_beside_engine)
+                with sessions() as session:
+                    left_queued = session.get(Job, job_id).status
+                engine_was_alive = not engine_done.is_set()
+            finally:
+                release_engine.set()
+            await loop.run_in_executor(None, engine_done.wait, 5)
+            # The next drain (the next boot's, in production) still finds the job and runs it.
+            await jobs.drain_now(service.state, "next boot")
+            return during_shutdown, left_queued, engine_was_alive
+
+        during_shutdown, left_queued, engine_was_alive = asyncio.run(scenario())
+
+        assert engine_was_alive, "the scenario needs the engine thread still running when the task ends"
+        assert during_shutdown == [], "a writer job started while the cancelled run's engine thread was running"
+        assert left_queued == "queued", "a skipped job must stay queued for the next drain"
+        assert writer_ran_beside_engine == [False], "the next drain must run it, after the engine finished"
 
 
 class TestRunLogBuffer:

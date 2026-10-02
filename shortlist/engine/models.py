@@ -1493,6 +1493,15 @@ class RunReport:
     # Separate from `converged` because this is the one irreversible action converge takes, and
     # "what was destroyed at 03:31" must be answerable on its own (plex-safety rule 10).
     orphans_removed: list[str] = field(default_factory=list)
+    # The same two outcomes as entries an audit event can be built from — the two lists above are bare
+    # labels, which name neither the collection nor its library nor why (plex-safety rule 10). In walk
+    # order, filled (and in a dry run, filled with what WOULD happen) exactly where those two are:
+    #   converge_demotions: {"label", "title", "rating_key", "library_key", "library", "reason"}, where
+    #     `reason` is "paused" | "shared_row_switched_off" | "unknown_owner" (off every surface) or
+    #     "on_owner_home" (off the owner's Home only);
+    #   orphan_deletions: {"label", "title", "rating_key", "library_key", "library"}.
+    converge_demotions: list[dict] = field(default_factory=list)
+    orphan_deletions: list[dict] = field(default_factory=list)
     # Share filters we changed, keyed by plex account id. Editing someone's Plex share permissions
     # is the most sensitive write Shortlist makes, and most of the accounts we write to are not in
     # any run's user list — so without this, "what changed on whose share at 03:31" would have no

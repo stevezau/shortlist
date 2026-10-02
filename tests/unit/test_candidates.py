@@ -1734,3 +1734,105 @@ class TestAnUnparseableReplyIsDiagnosable:
         text = self._warnings(lambda: parse_web_titles("z" * 5000, 10))
         assert "\u2026" in text
         assert len(text) < 2000
+
+    @staticmethod
+    def _fenced_array_then_bracketed_prose() -> str:
+        items = ",\n".join(f'  {{"title": "Synthetic Title {n}", "year": 2020, "media": "movie"}}' for n in range(40))
+        return f"```json\n[\n{items}\n]\n```\nNote: Example Title (2020) [movie] was left out."
+
+    @staticmethod
+    def _unescaped_quote() -> str:
+        items = ",\n".join(f'  {{"title": "Synthetic Title {n}", "year": 2020, "media": "movie"}}' for n in range(40))
+        return f'[\n{items},\n  {{"title": "The "Quoted" One", "year": 2020, "media": "movie"}}\n]'
+
+    def test_the_bracket_prose_input_is_recorded_as_failing_or_parsing_today(self):
+        """The production-defect hypothesis. The slice runs from the first `[` to the LAST `]`, which
+        is the one in `[movie]`, so the prose is inside the slice."""
+        out = parse_web_titles(self._fenced_array_then_bracketed_prose(), 100)
+        assert out == [], "this input fails to parse today (hypothesis confirmed)"
+
+    def test_the_log_shows_the_tail_and_the_decode_error_position_when_parsing_fails(self):
+        import json
+
+        reply = self._unescaped_quote()
+        with pytest.raises(json.JSONDecodeError) as expected:
+            json.loads(reply)
+        text = self._warnings(lambda: parse_web_titles(reply, 100))
+
+        assert "could not parse" in text and repr(reply[:50])[1:-1] in text, "the existing preview stays"
+        assert f"{len(reply)} chars" in text
+        assert f"char {expected.value.pos}" in text
+        assert expected.value.msg in text
+        assert reply[-200:] in text or repr(reply[-200:])[1:-1] in text, "the tail is where the defect hides"
+        assert "Quoted" in text, "the context around the error position is shown"
+
+    def test_the_bracket_prose_failure_reports_the_error_of_the_slice_not_the_whole_reply(self):
+        import json
+
+        reply = self._fenced_array_then_bracketed_prose()
+        sliced = reply[reply.find("[") : reply.rfind("]") + 1]
+        with pytest.raises(json.JSONDecodeError) as expected:
+            json.loads(sliced)
+        text = self._warnings(lambda: parse_web_titles(reply, 100))
+
+        assert f"char {expected.value.pos}" in text
+        assert "was left out." in text
+
+    def test_the_unparsed_reply_is_kept_in_the_trace_when_parsing_fails(self):
+        reply = self._unescaped_quote()
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor", "Shogun"))
+        stats = GatherStats()
+
+        out = web_recommendations(
+            _NonNativeCurator(reply), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert stats.trace["web"]["unparsed_reply"] == reply
+        assert stats.trace["web"]["unpicked"] == "the model returned no usable titles"
+        assert out == [
+            {"title": "Andor", "year": 2020, "media": "movie"},
+            {"title": "Shogun", "year": 2020, "media": "movie"},
+        ]
+
+    def test_a_huge_unparsed_reply_is_kept_capped_with_its_original_length(self):
+        reply = "z" * 50_000
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            _NonNativeCurator(reply), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        kept = stats.trace["web"]["unparsed_reply"]
+        assert kept.startswith("z" * 20_000)
+        assert kept[20_000:] == "\n… [truncated; reply was 50000 characters]"
+
+    def test_a_parsed_reply_leaves_no_unparsed_reply_in_the_trace(self):
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            _NonNativeCurator('[{"title": "Shogun", "year": 2024, "media": "show"}]'),
+            search,
+            "exa",
+            web_profile(),
+            [seed(1, "Dune")],
+            5,
+            stats,
+            cache=_DictCache(),
+        )
+
+        assert "unparsed_reply" not in stats.trace["web"]
+
+    def test_a_legitimately_empty_list_is_not_recorded_as_unparsed(self):
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            _NonNativeCurator("[]"), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert "unparsed_reply" not in stats.trace["web"]
+
+    def _titles(self, *names):
+        return [TitleCandidate(title=n, year=2020, media="movie") for n in names]

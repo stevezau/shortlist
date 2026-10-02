@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import ClassVar
 from unittest.mock import MagicMock
+from unittest.mock import call as plex_call
 
 import pytest
 from hypothesis import given
@@ -38,6 +39,7 @@ from shortlist.engine.models import (
     RowOverride,
     RowSpec,
     SeerrTarget,
+    UserProfile,
     UserRunReport,
     UserType,
 )
@@ -5198,6 +5200,165 @@ class TestOrphanDeletion:
         assert report.orphans_removed == ["Shortlist_ghost"]
 
 
+ALL_SURFACES_OFF = plex_call(recommended=False, home=False, shared=False)
+
+
+class TestConvergeRecordsEachRowItTouched:
+    """`report.converged` and `report.orphans_removed` hold bare labels — no collection, no library, no reason —
+    so no exact audit event could be built from them, and a converge demotion or orphan delete reached Plex with
+    no event at all (plex-safety rule 10). Each branch now records an entry beside them.
+
+    Every cell also pins the exact Plex calls its branch makes: recording what happened must not change what
+    happens. The four demotion branches are four cells because each decides on a different reason and three of
+    them make a different write.
+    """
+
+    _collection = TestConverge._collection
+
+    # reason -> (the row's label, how the pass is set up, the Plex calls a live pass makes, the hub write)
+    DEMOTIONS: ClassVar[dict[str, tuple]] = {
+        "paused": (
+            "Shortlist_sarah",
+            {"paused": {"sarah"}},
+            lambda c: [plex_call.claims_any_surface(c), plex_call.demote_all(c, reason="paused")],
+            ALL_SURFACES_OFF,
+        ),
+        "shared_row_switched_off": (
+            "Shortlist__shared_retired",
+            {},
+            lambda c: [plex_call.claims_any_surface(c), plex_call.demote_all(c, reason="row switched off")],
+            ALL_SURFACES_OFF,
+        ),
+        "unknown_owner": (
+            "Shortlist_ghost",
+            {"known": {100: "steve"}},
+            lambda c: [plex_call.claims_any_surface(c), plex_call.demote_all(c, reason="unknown owner")],
+            ALL_SURFACES_OFF,
+        ),
+        "on_owner_home": (
+            "Shortlist_mike",
+            {},
+            lambda c: [plex_call.reads_as_on_owner_home(c), plex_call.demote_own_home(c)],
+            plex_call(recommended=True, home=False, shared=True),
+        ),
+    }
+
+    def _run(self, ctx, collection, *, paused=frozenset(), known=None, may_delete=False, dry_run=False):
+        from shortlist.engine.models import RunReport
+        from shortlist.engine.pipeline import _converge_phase
+
+        section = ctx.plex.sections.return_value[0]
+        section.key = 1
+        section.collections.return_value = [collection]
+        ctx.owner_slug = "steve"
+        ctx.paused_slugs = set(paused)
+        ctx.known_slugs = known or {}
+        ctx.may_delete_orphans = may_delete
+        ctx.config.dry_run = dry_run
+        ctx.config.rows = []
+        # The REAL reads and demotes, so a cell covers the read-then-write contract, not a stub's answer.
+        ctx.plex.claims_any_surface.side_effect = lambda c: PlexClient.claims_any_surface(ctx.plex, c)
+        ctx.plex.demote_all.side_effect = lambda c, **kw: PlexClient.demote_all(ctx.plex, c, **kw)
+        ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
+        ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
+        report = RunReport(started_at=datetime.now(UTC))
+        _converge_phase(ctx, set(), report)
+        return report
+
+    @staticmethod
+    def _entry(label: str, **extra) -> dict:
+        return {"label": label, "title": "row-1", "rating_key": 1, "library_key": "1", "library": "Movies", **extra}
+
+    @pytest.mark.parametrize("reason", list(DEMOTIONS))
+    def test_a_demotion_is_recorded_with_its_collection_library_and_reason(self, ctx: EngineContext, reason):
+        label, setup, _, _ = self.DEMOTIONS[reason]
+
+        report = self._run(ctx, self._collection(1, label), **setup)
+
+        assert report.converge_demotions == [self._entry(label, reason=reason)]
+        assert report.orphan_deletions == []
+
+    @pytest.mark.parametrize("reason", list(DEMOTIONS))
+    def test_a_dry_run_records_the_demotion_it_would_make(self, ctx: EngineContext, reason):
+        """The same rows `converged` lists in a preview — which is the actual list, not every candidate."""
+        label, setup, _, _ = self.DEMOTIONS[reason]
+
+        report = self._run(ctx, self._collection(1, label), dry_run=True, **setup)
+
+        assert report.converge_demotions == [self._entry(label, reason=reason)]
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["live", "dry_run"])
+    @pytest.mark.parametrize("reason", list(DEMOTIONS))
+    def test_each_demotion_branch_makes_the_same_plex_calls(self, ctx: EngineContext, reason, dry_run):
+        """Regression pin: the reads, the write and its kwargs, in order — and in a dry run the reads alone."""
+        label, setup, plex_calls, hub_write = self.DEMOTIONS[reason]
+        row = self._collection(1, label)
+
+        report = self._run(ctx, row, dry_run=dry_run, **setup)
+
+        expected = plex_calls(row)[:1] if dry_run else plex_calls(row)
+        assert ctx.plex.method_calls == [plex_call.sections(), *expected]
+        assert row.visibility.return_value.updateVisibility.call_args_list == ([] if dry_run else [hub_write])
+        assert report.converged == [label]
+        assert report.orphans_removed == []
+
+    def test_a_demote_plex_did_not_make_is_not_recorded(self, ctx: EngineContext):
+        """`demote_all` reads the hub again and writes nothing when it no longer claims a surface — a row that
+        came down between the check and the write. An entry says Plex changed, so it follows `converged`."""
+        row = self._collection(1, "Shortlist_sarah")
+        settled = MagicMock(promotedToRecommended=False, promotedToOwnHome=False, promotedToSharedHome=False)
+        row.visibility.side_effect = [row.visibility.return_value, settled]
+
+        report = self._run(ctx, row, paused={"sarah"})
+
+        settled.updateVisibility.assert_not_called()
+        assert report.converged == []
+        assert report.converge_demotions == []
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_an_orphan_deletion_is_recorded_with_its_collection_and_library(self, ctx: EngineContext, dry_run):
+        row = self._collection(1, "Shortlist_ghost")
+
+        report = self._run(ctx, row, known={100: "steve"}, may_delete=True, dry_run=dry_run)
+
+        assert report.orphan_deletions == [self._entry("Shortlist_ghost")]
+        assert report.converge_demotions == []
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["live", "dry_run"])
+    def test_an_orphan_deletion_makes_the_same_plex_calls(self, ctx: EngineContext, dry_run):
+        """Regression pin: one delete, with Shortlist's label prefix as the ownership proof, and nothing else."""
+        row = self._collection(1, "Shortlist_ghost")
+
+        report = self._run(ctx, row, known={100: "steve"}, may_delete=True, dry_run=dry_run)
+
+        deletes = [] if dry_run else [plex_call.delete_owned_collection(row, "shortlist")]
+        assert ctx.plex.method_calls == [plex_call.sections(), *deletes]
+        row.visibility.assert_not_called()
+        assert report.orphans_removed == ["Shortlist_ghost"]
+        assert report.converged == []
+
+    def test_a_pass_with_no_users_records_no_deletion_however_complete_the_roster(self, ctx: EngineContext):
+        """Why the three run-less jobs audit demotions and not deletions: `engine_run(ctx, [])` hands converge no
+        delete authority, so an orphan is DEMOTED (and recorded as one) even when the roster is complete and the
+        context would allow it. Through the real `run`, not `_converge_phase`, so the authority it passes is
+        what is pinned."""
+        orphan = self._collection(1, "Shortlist_ghost")
+        section = ctx.plex.sections.return_value[0]
+        section.key = 1
+        section.collections.return_value = [orphan]
+        ctx.owner_slug = "steve"
+        ctx.known_slugs = {100: "steve", 200: "sarah"}
+        ctx.may_delete_orphans = True
+        ctx.plex.claims_any_surface.return_value = True
+        ctx.plex.demote_all.return_value = True
+
+        report = pipeline_mod.run(ctx, [])
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphan_deletions == []
+        assert report.converge_demotions == [self._entry("Shortlist_ghost", reason="unknown_owner")]
+
+
 class TestRatingSource:
     """Ordering by "Highest rated" when the owner picked a non-TMDB service (IMDb, Trakt, …).
 
@@ -7598,6 +7759,49 @@ class TestRequestsRow:
         assert report.diff.deleted == ["Movies you asked for"]
         assert report.removed_deliveries == []
 
+    @staticmethod
+    def _no_picks_lines(run) -> list[str]:
+        from loguru import logger as loguru_logger
+
+        lines: list[str] = []
+        sink = loguru_logger.add(lambda message: lines.append(str(message)), level="WARNING")
+        try:
+            run()
+        finally:
+            loguru_logger.remove(sink)
+        return [line for line in lines if "no picks produced" in line]
+
+    def test_the_no_picks_line_says_what_was_removed_when_the_run_removed_a_row(self, ctx: EngineContext, mock_plextv):
+        """ "Left as they are" was false for a person whose row this very run had just deleted."""
+        self._seed_server(ctx)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        found = self._no_picks_lines(lambda: _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100)))
+
+        assert len(found) == 1
+        assert "removed 1 row(s) this run; any other rows are left as they are" in found[0]
+        assert "existing rows are left as they are" not in found[0]
+
+    def test_the_no_picks_line_says_would_remove_on_a_dry_run(self, ctx: EngineContext, mock_plextv):
+        self._seed_server(ctx)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True, dry_run=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        found = self._no_picks_lines(lambda: _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100)))
+
+        assert len(found) == 1
+        assert "would remove 1 row(s) this run; any other rows are left as they are" in found[0]
+
+    def test_the_no_picks_line_keeps_its_wording_when_nothing_was_removed(self, ctx: EngineContext, mock_plextv):
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        found = self._no_picks_lines(lambda: _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100)))
+
+        assert len(found) == 1
+        assert "no picks produced — existing rows are left as they are (history=" in found[0]
+
     def test_an_empty_requests_row_is_left_alone_when_the_read_was_incomplete(self, ctx: EngineContext, mock_plextv):
         self._seed_server(ctx)
         ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
@@ -7788,3 +7992,177 @@ class TestRequestsRow:
         pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
 
         assert seen == [["sarah"]]
+
+
+def _by_username_row() -> RowSpec:
+    return RowSpec(
+        slug="asked-u",
+        name_template="{library_name} you asked for",
+        size=5,
+        requests_row=True,
+        requests_tag_pattern="req-{username}",
+    )
+
+
+def _by_name_row() -> RowSpec:
+    return RowSpec(
+        slug="asked-n",
+        name_template="{library_name} requested by name",
+        size=5,
+        requests_row=True,
+        requests_tag_pattern="req-{name}",
+    )
+
+
+class TestTagAmbiguityAcrossEveryEnabledRequestsRow:
+    """A requester tag is judged against the pattern of every ENABLED requests row, due tonight or not.
+
+    Judged against the due rows alone, a night when one of two overlapping rows ran by itself handed
+    `req-bob` to whoever that row's pattern names — the wrong-person outcome the cross-pattern check
+    exists to stop. Which rows RECEIVE titles is unchanged: only the rows being built.
+    """
+
+    @staticmethod
+    def _alice_nicknamed_bob_and_bob() -> list[UserProfile]:
+        return [
+            make_profile("alice", account_id=101, nickname="bob"),
+            make_profile("bob", account_id=102, nickname="Robert"),
+        ]
+
+    @staticmethod
+    def _run(
+        ctx: EngineContext,
+        mock_plextv: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        roster: list[UserProfile],
+        users: list[UserProfile],
+        rows: list[RowSpec],
+        build_only: frozenset[str] | None = None,
+    ) -> dict[tuple[str, str], list[int]]:
+        """One night with `req-bob` on movie 10 in Radarr; ``{(username, row slug): picked tmdb ids}``."""
+        real_collect = pipeline_mod.collect_requests
+        radarr = MagicMock()
+        radarr.app_name = "Radarr"
+        radarr.tags.return_value = {7: "req-bob"}
+        radarr.movies.return_value = [{"tmdbId": 10, "tags": [7], "hasFile": True, "movieFile": {}, "title": "A"}]
+        monkeypatch.setattr(
+            pipeline_mod,
+            "collect_requests",
+            lambda sources, people, **kw: real_collect(sources, people, radarr=radarr, **kw),
+        )
+        ctx.roster = roster
+        ctx.config = replace(
+            ctx.config,
+            rows=rows,
+            rows_defined=True,
+            build_only=build_only,
+            request_sources=RequestSources(
+                radarr=ArrTarget(url="http://r", api_key="k", quality_profile_id=0, root_folder="", tag="shortlist")
+            ),
+        )
+        mock_plextv.users = [plextv_user(p.plex_account_id, p.username) for p in roster]
+
+        report = pipeline_mod.run(ctx, users)
+
+        return {
+            (u.username, spec.slug): [p.tmdb_id for p in u.picks if p.collection_slug == spec.slug]
+            for u in report.users
+            for spec in rows
+        }
+
+    def test_a_tag_two_enabled_rows_render_for_two_people_goes_to_nobody_when_only_one_row_is_due(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        people = self._alice_nicknamed_bob_and_bob()
+
+        picked = self._run(
+            ctx,
+            mock_plextv,
+            monkeypatch,
+            roster=people,
+            users=people,
+            rows=[_by_username_row(), _by_name_row()],
+            build_only=frozenset({"asked-u"}),
+        )
+
+        assert picked == {
+            ("alice", "asked-u"): [],
+            ("alice", "asked-n"): [],
+            ("bob", "asked-u"): [],
+            ("bob", "asked-n"): [],
+        }
+        assert ctx.request_ledger is not None and ctx.request_ledger.titles == []
+        assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
+            ("req-bob", None, True)
+        ]
+
+    def test_with_the_overlapping_row_disabled_the_tag_goes_to_its_single_owner(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """A disabled row never reaches the engine's row list, so its pattern names nobody."""
+        people = self._alice_nicknamed_bob_and_bob()
+
+        picked = self._run(ctx, mock_plextv, monkeypatch, roster=people, users=people, rows=[_by_username_row()])
+
+        assert picked == {("alice", "asked-u"): [], ("bob", "asked-u"): [10]}
+        assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
+            ("req-bob", 102, False)
+        ]
+
+    @pytest.mark.parametrize(
+        "build_only,scoped_to_bob",
+        [
+            pytest.param(None, False, id="full-run"),
+            pytest.param(None, True, id="one-person"),
+            pytest.param(frozenset({"asked-u"}), False, id="one-row"),
+            pytest.param(frozenset({"asked-u"}), True, id="one-row-one-person"),
+            pytest.param(frozenset({"asked-n"}), False, id="the-other-row"),
+        ],
+    )
+    def test_a_scoped_run_judges_the_tag_exactly_as_a_full_run_does(
+        self, ctx: EngineContext, mock_plextv, monkeypatch, build_only, scoped_to_bob
+    ):
+        people = self._alice_nicknamed_bob_and_bob()
+
+        picked = self._run(
+            ctx,
+            mock_plextv,
+            monkeypatch,
+            roster=people,
+            users=people[1:] if scoped_to_bob else people,
+            rows=[_by_username_row(), _by_name_row()],
+            build_only=build_only,
+        )
+
+        assert all(ids == [] for ids in picked.values())
+        assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
+            ("req-bob", None, True)
+        ]
+
+    def test_one_person_both_enabled_patterns_render_it_for_is_not_ambiguous(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        bob = make_profile("bob", account_id=102, nickname="bob")
+        alice = make_profile("alice", account_id=101, nickname="Alice")
+
+        picked = self._run(
+            ctx,
+            mock_plextv,
+            monkeypatch,
+            roster=[alice, bob],
+            users=[alice, bob],
+            rows=[_by_username_row(), _by_name_row()],
+            build_only=frozenset({"asked-u"}),
+        )
+
+        # Only the due row is built: the not-due `asked-n` receives nothing tonight, as before.
+        assert picked == {
+            ("alice", "asked-u"): [],
+            ("alice", "asked-n"): [],
+            ("bob", "asked-u"): [10],
+            ("bob", "asked-n"): [],
+        }
+        assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
+            ("req-bob", 102, False)
+        ]

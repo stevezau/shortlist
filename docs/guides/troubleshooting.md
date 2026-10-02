@@ -164,6 +164,10 @@ restart it keeps running on the database it has, and Jobs → Backups says a res
 button to cancel it. A restore still waiting a day later is dropped rather than applied by whatever
 restarts the container next.
 
+If the backup taken before an upgrade cannot be written, Shortlist does not start the upgrade and the
+container log says why. The database is left unchanged. Free some disk space or fix the permissions on
+the config folder, then restart.
+
 Because a backup holds your rows' **audiences**, restoring one also restores who could see which
 rows at that moment. If you have narrowed a shared row's audience since the backup was taken,
 restoring widens it again and those people will see the row after the next run. Shortlist says so

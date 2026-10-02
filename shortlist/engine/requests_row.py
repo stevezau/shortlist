@@ -1,6 +1,6 @@
 """Who asked for what: the read behind a "Your requests" row (issue #127).
 
-Two sources, merged so a title counts once per person. Overseerr's request list covers requests that
+Two sources, merged so a title counts once per person and row. Overseerr's request list covers requests that
 are still there; Radarr/Sonarr requester tags (``<seerrUserId>-<username>``, written by Seerr's
 "Tag Requests" and never removed when the request is deleted — fixture ``radarr_request_tags.json``)
 cover the ones an owner tidied away. A person is only ever identified by Plex account ID: an
@@ -50,7 +50,8 @@ class RequestedTitle:
     seasons_landed: bool
     found_in: tuple[str, ...]
     title: str = ""
-    #: The own-pattern that matched its tag; empty for Overseerr and override matches.
+    #: The own-pattern that matched its tag; empty for Overseerr and override matches. A tag that
+    #: several patterns render for this one person gives one copy per pattern, one for each such row.
     pattern: str = ""
 
 
@@ -161,29 +162,20 @@ def collect_requests(
     by_plex = {p.plex_account_id: p for p in people}
     seerr_plex: dict[int, int | None] = {}
     seerr_client = seerr or (SeerrClient(sources.overseerr) if sources.overseerr else None)
-    merged: dict[tuple[MediaType, int, int], RequestedTitle] = {}
+    # (media, tmdb id, person) -> pattern -> title. Pattern "" holds in every requests row the person
+    # has; any other only in the rows using that pattern.
+    merged: dict[tuple[MediaType, int, int], dict[str, RequestedTitle]] = {}
 
     def add(t: RequestedTitle) -> None:
-        # The Overseerr request carries the dates the person saw; a tag only proves they asked. The
-        # request side wins its ``pattern`` too (empty): Overseerr proof holds in every row for the
-        # person, whatever tag pattern that row uses. Between two tags, the override's empty pattern
-        # wins for the same reason.
-        key = (t.media_type, t.tmdb_id, t.plex_account_id)
-        prev = merged.get(key)
-        if prev is None:
-            merged[key] = t
-        elif "overseerr" in prev.found_in or ("overseerr" not in t.found_in and not prev.pattern):
-            merged[key] = replace(
-                prev,
-                found_in=tuple(dict.fromkeys(prev.found_in + t.found_in)),
-                title=prev.title or t.title,
-            )
+        by_pattern = merged.setdefault((t.media_type, t.tmdb_id, t.plex_account_id), {})
+        if "" in by_pattern or not t.pattern:
+            # Proof for every row absorbs the copies scoped to one pattern.
+            for prev in [by_pattern.pop(p) for p in list(by_pattern)]:
+                t = _merge_titles(prev, t)
+            by_pattern[""] = t
         else:
-            merged[key] = replace(
-                t,
-                found_in=tuple(dict.fromkeys(t.found_in + prev.found_in)),
-                title=t.title or prev.title,
-            )
+            prev = by_pattern.get(t.pattern)
+            by_pattern[t.pattern] = t if prev is None else _merge_titles(prev, t)
 
     if seerr_client is not None:
         try:
@@ -242,7 +234,12 @@ def collect_requests(
     # got it (and, for a show, when the latest season did), which is the arrival the person saw;
     # the Arr's own date is the fallback, and for Sonarr that is the day the series was ADDED, not
     # when anything landed. The table is one paged walk, so it is read only when a title needs it.
-    tag_only = [k for k, t in merged.items() if "overseerr" not in t.found_in]
+    tag_only = [
+        (by_pattern, pattern)
+        for by_pattern in merged.values()
+        for pattern, t in by_pattern.items()
+        if "overseerr" not in t.found_in
+    ]
     if tag_only and seerr_client is not None:
         media_dates: dict[tuple[str, int], dict] = {}
         try:
@@ -250,19 +247,35 @@ def collect_requests(
         except Exception as e:
             ledger.problems.append(f"Overseerr media dates could not be read: {e}")
             logger.warning("requests row: Overseerr media dates failed ({})", e)
-        for key in tag_only:
-            t = merged[key]
+        for by_pattern, pattern in tag_only:
+            t = by_pattern[pattern]
             rec = media_dates.get((_SEERR_MEDIA_KIND[t.media_type], t.tmdb_id))
             if not rec:
                 continue
             landed = _iso(rec.get("lastSeasonChange")) if t.media_type is MediaType.SHOW else None
             landed = landed or _iso(rec.get("mediaAddedAt"))
             if landed:
-                merged[key] = replace(t, landed_at=landed)
+                by_pattern[pattern] = replace(t, landed_at=landed)
 
-    ledger.titles = sorted(merged.values(), key=lambda t: t.landed_at or datetime(1, 1, 1, tzinfo=UTC), reverse=True)
+    ledger.titles = sorted(
+        (t for by_pattern in merged.values() for t in by_pattern.values()),
+        key=lambda t: t.landed_at or datetime(1, 1, 1, tzinfo=UTC),
+        reverse=True,
+    )
     ledger.tag_matches = _merge_tag_matches(ledger.tag_matches)
     return ledger
+
+
+def _merge_titles(prev: RequestedTitle, t: RequestedTitle) -> RequestedTitle:
+    """One title one person asked for, found twice: keep the better-proven copy, union where it was found.
+
+    The Overseerr request carries the dates the person saw; a tag only proves they asked. The request
+    side wins its ``pattern`` too (empty): Overseerr proof holds in every row for the person, whatever
+    tag pattern that row uses. Between two tags, the override's empty pattern wins for the same reason.
+    """
+    if "overseerr" in prev.found_in or ("overseerr" not in t.found_in and not prev.pattern):
+        return replace(prev, found_in=tuple(dict.fromkeys(prev.found_in + t.found_in)), title=prev.title or t.title)
+    return replace(t, found_in=tuple(dict.fromkeys(t.found_in + prev.found_in)), title=t.title or prev.title)
 
 
 def _merge_tag_matches(matches: list[TagMatch]) -> list[TagMatch]:
@@ -345,9 +358,8 @@ def _add_tagged(
         if p.requested_by_tag:
             override.setdefault(_norm(p.requested_by_tag), []).append(p)
     counts: dict[tuple[str, str], int] = {}
-    owner_of: dict[
-        int, tuple[UserProfile | None, str, str, bool]
-    ] = {}  # tag id -> (person, source, pattern, ambiguous)
+    # tag id -> (person, source, the row patterns it holds for — "" is every row, ambiguous)
+    owner_of: dict[int, tuple[UserProfile | None, str, tuple[str, ...], bool]] = {}
     warned_seerr = False
     for tag_id, label in tags.items():
         if _norm(label) in override:
@@ -355,7 +367,7 @@ def _add_tagged(
             # person, whether or not Overseerr is connected to say who user 12 is.
             # Two people who typed the same tag: nobody's, the same as an ambiguous pattern match.
             claimants = override[_norm(label)]
-            owner_of[tag_id] = (claimants[0] if len(claimants) == 1 else None, "override", "", len(claimants) > 1)
+            owner_of[tag_id] = (claimants[0] if len(claimants) == 1 else None, "override", ("",), len(claimants) > 1)
             continue
         uid = parse_requester_tag(label)
         if uid is not None:
@@ -372,16 +384,23 @@ def _add_tagged(
             if sources.exclude_seerr_user_id and uid == sources.exclude_seerr_user_id:
                 # The account Shortlist files its own requests as: its tag rides on every title we
                 # added, and its requests are already left out of the Overseerr read for the same reason.
-                owner_of[tag_id] = (None, "overseerr", "", False)
+                owner_of[tag_id] = (None, "overseerr", ("",), False)
                 continue
             plex_id = seerr_plex.get(uid)
-            owner_of[tag_id] = (by_plex.get(plex_id), "overseerr", "", False)
+            owner_of[tag_id] = (by_plex.get(plex_id), "overseerr", ("",), False)
             continue
+        # Every pattern, not the first that fits: `req-{username}` and `req-{name}` can render one tag
+        # for two different people, and whichever sorted first would take the other's request.
+        claimants: dict[int, UserProfile] = {}
+        matched: list[str] = []
         for pattern in sorted(patterns):
             hits = pattern_matches(label, pattern, people)
             if hits:
-                owner_of[tag_id] = (hits[0] if len(hits) == 1 else None, "pattern", pattern, len(hits) > 1)
-                break
+                matched.append(pattern)
+                claimants.update((p.plex_account_id, p) for p in hits)
+        if matched:
+            only = next(iter(claimants.values())) if len(claimants) == 1 else None
+            owner_of[tag_id] = (only, "pattern", tuple(matched), len(claimants) > 1)
     for item in items:
         tmdb_id = item.get("tmdbId")
         if not isinstance(tmdb_id, int):
@@ -396,7 +415,7 @@ def _add_tagged(
         # Overseerr tag proves the person asked, an own-pattern match on such an item is the owner's.
         ours = bool(shortlist_tag_ids & set(item.get("tags", [])))
         for tag_id in item_tags:
-            person, source, pattern, _ambiguous = owner_of[tag_id]
+            person, source, row_patterns, _ambiguous = owner_of[tag_id]
             counts[(tags[tag_id], source)] = counts.get((tags[tag_id], source), 0) + 1
             if person is None or (ours and source != "overseerr"):
                 continue
@@ -406,21 +425,22 @@ def _add_tagged(
             else:
                 on_disk = int((item.get("statistics") or {}).get("episodeFileCount") or 0) > 0
                 landed = _iso(item.get("added"))
-            add(
-                RequestedTitle(
-                    tmdb_id=tmdb_id,
-                    media_type=kind,
-                    plex_account_id=person.plex_account_id,
-                    requested_at=_iso(item.get("added")),
-                    landed_at=landed if on_disk else None,
-                    on_disk=on_disk,
-                    seasons_landed=True,
-                    found_in=("tag",),
-                    title=str(item.get("title") or ""),
-                    pattern=pattern,
+            for pattern in row_patterns:
+                add(
+                    RequestedTitle(
+                        tmdb_id=tmdb_id,
+                        media_type=kind,
+                        plex_account_id=person.plex_account_id,
+                        requested_at=_iso(item.get("added")),
+                        landed_at=landed if on_disk else None,
+                        on_disk=on_disk,
+                        seasons_landed=True,
+                        found_in=("tag",),
+                        title=str(item.get("title") or ""),
+                        pattern=pattern,
+                    )
                 )
-            )
-    for tag_id, (person, source, _pattern, ambiguous) in owner_of.items():
+    for tag_id, (person, source, _patterns, ambiguous) in owner_of.items():
         ledger.tag_matches.append(
             TagMatch(
                 label=tags[tag_id],
@@ -458,8 +478,8 @@ def build_requests_picks(
     for section in targets:
         kind = section_kind(section)
         sec_idx = ctx.section_index.get(section.key, {})
-        # One trace row per title, keyed by tmdb_id: a person's ledger holds a title once, and a
-        # section holds one media type, so the key is unique within a section.
+        # One trace row per title, keyed by tmdb_id: `mine` holds a title once (a second copy carries
+        # another row's pattern), and a section holds one media type, so the key is unique within a section.
         rows: dict[int, dict] = {}
         keep: list[tuple[RequestedTitle, int]] = []
         for t in (x for x in mine if x.media_type is kind):

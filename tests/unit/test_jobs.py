@@ -148,6 +148,41 @@ class TestRetry:
         assert gave_up.message["error"] == "RuntimeError: plex.tv said 429"
         assert gave_up.message["attempts"] == 2
 
+    def test_a_job_that_succeeds_on_a_retry_drops_its_earlier_error(self, state, sessions, monkeypatch):
+        """Every consumer reads a non-null `error` as a failure; the first attempt's text survives in
+        its `job.attempt_failed` event, so the column carries nothing a done job should show."""
+        monkeypatch.setattr(jobs, "_BACKOFF_S", (0,))
+        outcomes = iter([RuntimeError("Plex is down"), None])
+
+        def flaky_then_fine(st, payload):
+            outcome = next(outcomes)
+            if outcome:
+                raise outcome
+            return {}
+
+        jobs.handler("t.flaky")(flaky_then_fine)
+        job_id = jobs.enqueue(sessions, "t.flaky", max_attempts=2)
+
+        drain(state)
+        drain(state)
+
+        job = _job(sessions, job_id)
+        assert job.status == "done"
+        assert job.error is None
+        with sessions() as session:
+            retried = session.query(Event).filter_by(scope="job.attempt_failed").one()
+        assert retried.message["error"] == "RuntimeError: Plex is down"
+
+    def test_a_job_that_fails_its_final_attempt_keeps_its_error(self, state, sessions):
+        jobs.handler("t.doomed")(lambda st, payload: (_ for _ in ()).throw(RuntimeError("nope")))
+        job_id = jobs.enqueue(sessions, "t.doomed", max_attempts=1)
+
+        drain(state)
+
+        job = _job(sessions, job_id)
+        assert job.status == "failed"
+        assert job.error == "RuntimeError: nope"
+
     def test_a_retried_attempts_error_is_stored_redacted(self, state, sessions):
         """The same redacted text `jobs.error` gets — a Plex error can carry a tokened URL (rule 9)."""
         jobs.handler("t.flaky")(
@@ -629,6 +664,9 @@ class TestRestoreAfterUnpause:
                 converged=0,
                 filters_not_enforced={},
                 unhideable_rows={},
+                filter_writes={},
+                converge_demotions=[],
+                orphan_deletions=[],
             )
 
         import shortlist.engine.pipeline as pipeline_mod
@@ -712,6 +750,9 @@ class TestRestoreAfterUnpause:
             converged=0,
             filters_not_enforced={},
             unhideable_rows={},
+            filter_writes={},
+            converge_demotions=[],
+            orphan_deletions=[],
         )
 
         with pytest.raises(RuntimeError, match="dave"):
@@ -744,6 +785,9 @@ class TestRestoreAfterUnpause:
                 unhideable_rows={},
                 hub_orderings=[],
                 left_alone_failures=[],
+                filter_writes={},
+                converge_demotions=[],
+                orphan_deletions=[],
             )
 
         pipeline_mod.run = fake_run
@@ -769,6 +813,9 @@ class TestRestoreAfterUnpause:
             left_alone_failures=[],
             restrictions_restored={201: "sarah"},
             unreadable_filters={"mike": "their Plex restriction uses the label 'Kids & Family'"},
+            filter_writes={},
+            converge_demotions=[],
+            orphan_deletions=[],
         )
 
         result = jobs._HANDLERS["privacy.sync"](state, {"reason": "someone left a shared row"})
@@ -808,6 +855,9 @@ class TestRestoreAfterUnpause:
                 unhideable_rows={},
                 hub_orderings=[],
                 left_alone_failures=[],
+                filter_writes={},
+                converge_demotions=[],
+                orphan_deletions=[],
             )
 
         pipeline_mod.run = fake_run
@@ -831,6 +881,9 @@ class TestRestoreAfterUnpause:
             converged=0,
             filters_not_enforced={},
             unhideable_rows={},
+            filter_writes={},
+            converge_demotions=[],
+            orphan_deletions=[],
         )
 
         with pytest.raises(RuntimeError) as raised:
@@ -855,6 +908,9 @@ class TestRestoreAfterUnpause:
             converged=0,
             filters_not_enforced={},
             unhideable_rows={},
+            filter_writes={},
+            converge_demotions=[],
+            orphan_deletions=[],
         )
 
         with pytest.raises(RuntimeError, match=re.escape("plex.tv 503")):
@@ -1147,6 +1203,9 @@ class TestSafeMode:
                 converged=0,
                 filters_not_enforced={},
                 unhideable_rows={},
+                filter_writes={},
+                converge_demotions=[],
+                orphan_deletions=[],
             ),
         )
 
@@ -1916,6 +1975,9 @@ class TestScheduledRowVisibility:
                 converged=0,
                 filters_not_enforced={},
                 unhideable_rows={},
+                filter_writes={},
+                converge_demotions=[],
+                orphan_deletions=[],
             )
 
         import shortlist.engine.pipeline as pipeline_mod
@@ -2605,3 +2667,401 @@ class TestAPrivacySyncSaysWhenItWasQuiet:
         again = self._run(monkeypatch, sessions, self.SCHEDULED, unhideable_rows={"kid": [5001]})
 
         assert again["quiet"] is True
+
+
+class TestRunlessPrivacyPassesAuditFilterWrites:
+    """Three jobs run `engine_run(ctx, [])` and persist no run, so the run persister's `run.privacy_sync`
+    events never fired for the share filters they wrote. On 2026-09-27 a `privacy.sync` took a deleted
+    shared row's exclude off ~46 accounts and the events table recorded none of it (plex-safety rule 10)."""
+
+    KINDS: ClassVar[dict[str, dict]] = {
+        "privacy.sync": {"reason": "a shared row was deleted"},
+        "user.restore": {"slug": "sarah"},
+        "rows.visibility": {"row": "picked"},
+    }
+    WRITTEN: ClassVar[dict] = {
+        "filterMovies": ("label!=shortlist__shared_gone", ""),
+        "filterTelevision": ("label!=shortlist__shared_gone&label!=shortlist_mike", "label!=shortlist_mike"),
+    }
+
+    def _state(self, sessions, monkeypatch, *, filter_writes: dict, blocked: bool = False, swept_rows=None):
+        """The real handler over a stub `engine_run` that returns a REAL `RunReport`, stamped with the
+        context's dry-run flag the way `pipeline.run` stamps it."""
+        import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine.models import RunReport
+        from shortlist.server.db.models import Collection, User
+
+        def fake_engine_run(ctx, users):
+            report = RunReport(started_at=datetime.now(UTC), dry_run=ctx.config.dry_run)
+            report.filter_writes = filter_writes
+            report.swept_rows = swept_rows or {}
+            if blocked:
+                report.promotion_blockers = ["kid (plex account 500): plex.tv 503"]
+            return report
+
+        monkeypatch.setattr(pipeline_mod, "run", fake_engine_run)
+        with sessions() as session:
+            # `user.restore` needs an un-paused person and `rows.visibility` an enabled row, or each
+            # returns before its privacy pass.
+            session.query(Collection).delete()
+            session.add(User(plex_account_id=555000100, username="sarah", slug="sarah", enabled=True, prefs={}))
+            session.add(Collection(slug="picked", name="picked", build="per_person", enabled=True))
+            session.commit()
+        plex = SimpleNamespace(
+            sections=lambda: [SimpleNamespace(title="Movies", key=1, type="movie")],
+            find_owned_collections=lambda section, label: [],
+        )
+        run_service = SimpleNamespace(
+            build_context=lambda dry_run, plex_only=False: SimpleNamespace(
+                plex=plex, config=EngineConfig(dry_run=dry_run), write_lock=None
+            ),
+            enabled_profiles=lambda session, user_ids=None: [],
+        )
+        return SimpleNamespace(sessions=sessions, run_service=run_service, secrets=None)
+
+    def _audited(self, sessions) -> list[tuple[str, dict]]:
+        with sessions() as session:
+            return [(e.level, e.message) for e in session.query(Event).filter_by(scope="run.privacy_sync")]
+
+    def _expected(self, kind: str, *, dry_run: bool) -> dict:
+        return {
+            "run_id": None,
+            "dry_run": dry_run,
+            "plex_account_id": 300,
+            "username": "dave",
+            "fields": {
+                "filterMovies": {"before": "label!=shortlist__shared_gone", "after": ""},
+                "filterTelevision": {
+                    "before": "label!=shortlist__shared_gone&label!=shortlist_mike",
+                    "after": "label!=shortlist_mike",
+                },
+            },
+            "job": kind,
+        }
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_each_filter_write_is_audited_with_its_diff(self, sessions, monkeypatch, kind):
+        writes = {300: {"username": "dave", "fields": dict(self.WRITTEN), "at": 12.5}}
+        state = self._state(sessions, monkeypatch, filter_writes=writes)
+
+        jobs._HANDLERS[kind](state, self.KINDS[kind])
+
+        assert self._audited(sessions) == [("info", self._expected(kind, dry_run=False))]
+
+    @pytest.mark.parametrize("kind", ["privacy.sync", "user.restore"])
+    def test_a_dry_run_pass_audits_the_write_it_would_have_made(self, sessions, monkeypatch, kind):
+        """`rows.visibility` has no cell: a dry run of it returns before the privacy pass runs at all."""
+        writes = {300: {"username": "dave", "fields": dict(self.WRITTEN), "at": 12.5}}
+        state = self._state(sessions, monkeypatch, filter_writes=writes)
+
+        jobs._HANDLERS[kind](state, {**self.KINDS[kind], "dry_run": True})
+
+        assert self._audited(sessions) == [("info", self._expected(kind, dry_run=True))]
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_a_filter_write_is_audited_when_another_account_blocked_the_pass(self, sessions, monkeypatch, kind):
+        """The handler raises on the blocker, but dave's write already landed on plex.tv and the retry will find
+        nothing left to write for him — so a record written only on success would be lost for good. Driven
+        through the queue and read back from a fresh session, so the failed job's close-out is in the path."""
+        writes = {300: {"username": "dave", "fields": dict(self.WRITTEN), "at": 12.5}}
+        state = self._state(sessions, monkeypatch, filter_writes=writes, blocked=True)
+        job_id = jobs.enqueue(sessions, kind, self.KINDS[kind], max_attempts=1)
+
+        drain(state)
+
+        assert _job(sessions, job_id).status == "failed"
+        assert self._audited(sessions) == [("info", self._expected(kind, dry_run=False))]
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_a_pass_that_wrote_no_filter_adds_no_event(self, sessions, monkeypatch, kind):
+        """Nearly every scheduled `privacy.sync` writes nothing; at every 30 minutes the table must not fill
+        with empty records."""
+        state = self._state(sessions, monkeypatch, filter_writes={})
+
+        jobs._HANDLERS[kind](state, self.KINDS[kind])
+
+        assert self._audited(sessions) == []
+
+
+class TestRunlessPrivacyPassesAuditTheirSweep:
+    """The same three jobs also run the sweep, which DELETES rows Plex cannot hide and the helpers a stopped
+    run left behind. The run persister's `run.sweep` never fired for them either: `privacy.sync` put a count
+    in its detail line and the other two recorded nothing — a collection deleted from someone's server with
+    no event (plex-safety rule 10). Same harness as the filter-write class above."""
+
+    KINDS = TestRunlessPrivacyPassesAuditFilterWrites.KINDS
+    _state = TestRunlessPrivacyPassesAuditFilterWrites._state
+    SWEPT: ClassVar[dict[str, list[str]]] = {
+        "sarah": ["Picked for Sarah"],
+        "freed-name helper:mike": ["Picked for Mike ~freeing"],
+    }
+    REASON = (
+        "row was broken beyond repair-in-place — no share filter could hide it (wrong type for its library, or no "
+        "shortlist label at all — an orphan from an interrupted run), or it shared a collection tag with other "
+        "users' rows and held their picks. Keys starting 'freed-name helper:' are not rows: a helper a stopped run "
+        "left behind while freeing a row's name"
+    )
+
+    def _audited(self, sessions) -> list[tuple[str, dict]]:
+        with sessions() as session:
+            return [(e.level, e.message) for e in session.query(Event).filter_by(scope="run.sweep")]
+
+    def _expected(self, kind: str, *, dry_run: bool) -> dict:
+        return {"run_id": None, "dry_run": dry_run, "reason": self.REASON, "deleted": self.SWEPT, "job": kind}
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_each_sweep_is_audited_with_what_it_deleted(self, sessions, monkeypatch, kind):
+        state = self._state(sessions, monkeypatch, filter_writes={}, swept_rows=dict(self.SWEPT))
+
+        jobs._HANDLERS[kind](state, self.KINDS[kind])
+
+        assert self._audited(sessions) == [("warning", self._expected(kind, dry_run=False))]
+
+    @pytest.mark.parametrize("kind", ["privacy.sync", "user.restore"])
+    def test_a_dry_run_sweep_is_audited_as_a_preview(self, sessions, monkeypatch, kind):
+        """`rows.visibility` has no cell: a dry run of it returns before the privacy pass runs at all."""
+        state = self._state(sessions, monkeypatch, filter_writes={}, swept_rows=dict(self.SWEPT))
+
+        jobs._HANDLERS[kind](state, {**self.KINDS[kind], "dry_run": True})
+
+        assert self._audited(sessions) == [("warning", self._expected(kind, dry_run=True))]
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_a_sweep_is_audited_when_another_account_blocked_the_pass(self, sessions, monkeypatch, kind):
+        """The rows are already gone from Plex when the blocker raises, and the retry's sweep finds nothing left
+        to delete — so a record written only on success would be lost for good. Driven through the queue and
+        read back from a fresh session."""
+        state = self._state(sessions, monkeypatch, filter_writes={}, swept_rows=dict(self.SWEPT), blocked=True)
+        job_id = jobs.enqueue(sessions, kind, self.KINDS[kind], max_attempts=1)
+
+        drain(state)
+
+        assert _job(sessions, job_id).status == "failed"
+        assert self._audited(sessions) == [("warning", self._expected(kind, dry_run=False))]
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_a_pass_that_swept_nothing_adds_no_event(self, sessions, monkeypatch, kind):
+        state = self._state(sessions, monkeypatch, filter_writes={}, swept_rows={})
+
+        jobs._HANDLERS[kind](state, self.KINDS[kind])
+
+        assert self._audited(sessions) == []
+
+
+class TestRunlessPrivacyPassesAuditTheirDemotions:
+    """The same three jobs run converge, which takes rows off Home — a paused person's, a switched-off shared
+    row's, one whose owner is unknown. `privacy.sync` put a count in its detail line and the other two recorded
+    nothing (plex-safety rule 10). They never DELETE an orphan — `engine_run(ctx, [])` gives converge no delete
+    authority (`test_pipeline.py` `TestConvergeRecordsEachRowItTouched`) — so there is no `run.orphan_delete`
+    for them to write. Same harness as the filter-write class above."""
+
+    KINDS = TestRunlessPrivacyPassesAuditFilterWrites.KINDS
+    DEMOTED: ClassVar[list[dict]] = [
+        {
+            "label": "Shortlist_ghost",
+            "title": "Picked for Ghost",
+            "rating_key": 4103,
+            "library_key": "1",
+            "library": "Movies",
+            "reason": "unknown_owner",
+        }
+    ]
+
+    def _state(self, sessions, monkeypatch, *, demoted: list[dict], blocked: bool = False):
+        """The filter-write harness, with the stub's report also carrying what converge demoted."""
+        import shortlist.engine.pipeline as pipeline_mod
+
+        state = TestRunlessPrivacyPassesAuditFilterWrites._state(
+            self, sessions, monkeypatch, filter_writes={}, blocked=blocked
+        )
+        stub = pipeline_mod.run
+
+        def engine_run_that_demoted(ctx, users):
+            report = stub(ctx, users)
+            report.converge_demotions = [dict(entry) for entry in demoted]
+            report.converged = sorted(entry["label"] for entry in demoted)
+            return report
+
+        monkeypatch.setattr(pipeline_mod, "run", engine_run_that_demoted)
+        return state
+
+    def _audited(self, sessions) -> list[tuple[str, dict]]:
+        with sessions() as session:
+            return [(e.level, e.message) for e in session.query(Event).filter_by(scope="run.demote")]
+
+    def _expected(self, kind: str, *, dry_run: bool) -> dict:
+        return {"run_id": None, "dry_run": dry_run, "demoted": self.DEMOTED, "job": kind}
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_each_demotion_is_audited_with_its_collection_and_reason(self, sessions, monkeypatch, kind):
+        state = self._state(sessions, monkeypatch, demoted=self.DEMOTED)
+
+        jobs._HANDLERS[kind](state, self.KINDS[kind])
+
+        assert self._audited(sessions) == [("info", self._expected(kind, dry_run=False))]
+
+    @pytest.mark.parametrize("kind", ["privacy.sync", "user.restore"])
+    def test_a_dry_run_demotion_is_audited_as_a_preview(self, sessions, monkeypatch, kind):
+        """`rows.visibility` has no cell: a dry run of it returns before the privacy pass runs at all."""
+        state = self._state(sessions, monkeypatch, demoted=self.DEMOTED)
+
+        jobs._HANDLERS[kind](state, {**self.KINDS[kind], "dry_run": True})
+
+        assert self._audited(sessions) == [("info", self._expected(kind, dry_run=True))]
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_a_demotion_is_audited_when_another_account_blocked_the_pass(self, sessions, monkeypatch, kind):
+        """The row is already off Home when the blocker raises, and the retry's converge finds nothing left to
+        demote — so a record written only on success would be lost for good. Driven through the queue and read
+        back from a fresh session."""
+        state = self._state(sessions, monkeypatch, demoted=self.DEMOTED, blocked=True)
+        job_id = jobs.enqueue(sessions, kind, self.KINDS[kind], max_attempts=1)
+
+        drain(state)
+
+        assert _job(sessions, job_id).status == "failed"
+        assert self._audited(sessions) == [("info", self._expected(kind, dry_run=False))]
+
+    @pytest.mark.parametrize("kind", list(KINDS))
+    def test_a_pass_that_demoted_nothing_adds_no_event(self, sessions, monkeypatch, kind):
+        """`privacy.sync` can fire every 30 minutes; a pass that moved nothing must not add a record."""
+        state = self._state(sessions, monkeypatch, demoted=[])
+
+        jobs._HANDLERS[kind](state, self.KINDS[kind])
+
+        assert self._audited(sessions) == []
+
+
+class TestSyncCheckAuditsWhatItConverged:
+    """`sync.check` runs converge on its own — no sweep, no share filters — and persists no run, so neither the
+    rows it took off Home nor the orphans it DELETED once the owner pressed Fix became events; the deletes were
+    named only in the job's result (plex-safety rule 10).
+
+    A pass without `confirmed` is not a preview: the nightly one still demotes for real, orphans included. Only
+    a dry run is marked as one, the way `run.sweep` and `run.privacy_sync` mark theirs. Same harness as the
+    preview class above, over a real database, with converge recording exactly what the engine records."""
+
+    _base_state = TestSyncCheckPreviewsWhatItWouldDelete._state
+    ORPHAN: ClassVar[dict] = {
+        "label": "Shortlist_ghost",
+        "title": "Picked for Ghost",
+        "rating_key": 4103,
+        "library_key": "1",
+        "library": "Movies",
+    }
+    PAUSED: ClassVar[dict] = {
+        "label": "Shortlist_sarah",
+        "title": "Picked for Sarah",
+        "rating_key": 4101,
+        "library_key": "1",
+        "library": "Movies",
+        "reason": "paused",
+    }
+    REASON = (
+        "its label names no one Shortlist knows — the person was removed from the server or from Shortlist — and "
+        "the roster read was complete, so the collection was deleted rather than hidden"
+    )
+
+    def _state(self, sessions, monkeypatch, *, orphan: bool, paused: bool, forced_dry_run: bool = False):
+        from shortlist.engine import pipeline
+
+        def fake_converge(ctx, promoted, report, *, may_delete=None):
+            # The real converge's recording, branch for branch: an orphan is deleted only with authority (in a
+            # dry run, recorded as the delete it would be) and demoted without it.
+            if paused:
+                report.converge_demotions.append(dict(self.PAUSED))
+            if orphan and may_delete:
+                report.orphan_deletions.append(dict(self.ORPHAN))
+            elif orphan:
+                report.converge_demotions.append({**self.ORPHAN, "reason": "unknown_owner"})
+            report.converged = sorted(entry["label"] for entry in report.converge_demotions)
+            report.orphans_removed = [entry["label"] for entry in report.orphan_deletions]
+
+        monkeypatch.setattr(pipeline, "_converge_phase", fake_converge)
+        state = self._base_state(
+            forced_dry_run=forced_dry_run, sections=[MagicMock(type="movie", key="1", title="Movies")]
+        )
+        state.sessions = sessions
+        return state
+
+    def _audited(self, sessions) -> list[tuple[str, str, dict]]:
+        with sessions() as session:
+            events = session.query(Event).filter(Event.scope.in_(("run.demote", "run.orphan_delete")))
+            return [(e.scope, e.level, e.message) for e in events.order_by(Event.id)]
+
+    def _deleted(self, *, dry_run: bool) -> tuple[str, str, dict]:
+        fields = {"run_id": None, "dry_run": dry_run, "reason": self.REASON, "deleted": [self.ORPHAN]}
+        return ("run.orphan_delete", "warning", {**fields, "job": "sync.check"})
+
+    @staticmethod
+    def _demoted(entries: list[dict], *, dry_run: bool) -> tuple[str, str, dict]:
+        return ("run.demote", "info", {"run_id": None, "dry_run": dry_run, "demoted": entries, "job": "sync.check"})
+
+    def test_pressing_fix_audits_the_orphan_it_deleted(self, sessions, monkeypatch):
+        state = self._state(sessions, monkeypatch, orphan=True, paused=False)
+
+        jobs._HANDLERS["sync.check"](state, {"confirmed": True})
+
+        assert self._audited(sessions) == [self._deleted(dry_run=False)]
+
+    def test_pressing_fix_audits_the_row_it_took_off_home(self, sessions, monkeypatch):
+        state = self._state(sessions, monkeypatch, orphan=False, paused=True)
+
+        jobs._HANDLERS["sync.check"](state, {"confirmed": True})
+
+        assert self._audited(sessions) == [self._demoted([self.PAUSED], dry_run=False)]
+
+    def test_the_nightly_pass_audits_its_demotions_as_real_writes(self, sessions, monkeypatch):
+        """No `confirmed` withholds the DELETE, not the write: the orphan is still taken off every surface, so
+        it is audited as a demotion that happened — and there is no delete to record."""
+        state = self._state(sessions, monkeypatch, orphan=True, paused=True)
+
+        jobs._HANDLERS["sync.check"](state, {})
+
+        demoted = [self.PAUSED, {**self.ORPHAN, "reason": "unknown_owner"}]
+        assert self._audited(sessions) == [self._demoted(demoted, dry_run=False)]
+
+    @pytest.mark.parametrize(
+        ("payload", "forced"),
+        [({"dry_run": True}, False), ({"confirmed": True}, True)],
+        ids=["preview", "fix-under-safe-mode"],
+    )
+    def test_a_dry_run_audits_what_it_would_do_as_a_preview(self, sessions, monkeypatch, payload, forced):
+        """Safe mode turns a pressed Fix into a preview, so the marking follows the flag that governed the
+        writes, not the one the caller sent."""
+        state = self._state(sessions, monkeypatch, orphan=True, paused=True, forced_dry_run=forced)
+
+        jobs._HANDLERS["sync.check"](state, payload)
+
+        assert self._audited(sessions) == [
+            self._demoted([self.PAUSED], dry_run=True),
+            self._deleted(dry_run=True),
+        ]
+
+    def test_a_delete_is_audited_when_the_shelf_pass_after_it_fails(self, sessions, monkeypatch):
+        """The collection is gone from Plex before the shelf pass reads the libraries, and the retry's converge
+        finds nothing left to delete — so a record written only on success would be lost for good. Driven
+        through the queue and read back from a fresh session."""
+        from shortlist.engine import pipeline
+
+        state = self._state(sessions, monkeypatch, orphan=True, paused=False)
+
+        def unreachable(*args, **kwargs):
+            raise RuntimeError("PMS went away")
+
+        monkeypatch.setattr(pipeline, "_build_indexes", unreachable)
+        job_id = jobs.enqueue(sessions, "sync.check", {"confirmed": True}, max_attempts=1)
+
+        drain(state)
+
+        assert _job(sessions, job_id).status == "failed"
+        assert self._audited(sessions) == [self._deleted(dry_run=False)]
+
+    @pytest.mark.parametrize("payload", [{}, {"confirmed": True}, {"dry_run": True}], ids=["nightly", "fix", "preview"])
+    def test_a_check_with_nothing_to_fix_adds_no_event(self, sessions, monkeypatch, payload):
+        """The nightly pass usually finds nothing; it must not add an empty record every night."""
+        state = self._state(sessions, monkeypatch, orphan=False, paused=False)
+
+        jobs._HANDLERS["sync.check"](state, payload)
+
+        assert self._audited(sessions) == []

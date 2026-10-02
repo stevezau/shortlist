@@ -899,3 +899,55 @@ class TestPartialReads:
                 ]
             )
             assert list(_client().media_dates()) == [("movie", 1)]
+
+
+class TestMalformedPages:
+    """The two reads that can take a row DOWN refuse a 200 that is not a ``{results: [objects]}`` page.
+
+    Coerced to an empty batch, ``{}``, ``null`` or a proxy's string read as "nobody asked for anything"
+    (or "nobody is linked"), which a complete ledger turns into row removals. The message names the
+    endpoint and the JSON type, never the body or the key.
+    """
+
+    READS = (
+        pytest.param("/request", "requests", id="requests"),
+        pytest.param("/user", "user_plex_ids", id="user_plex_ids"),
+    )
+
+    @pytest.mark.parametrize("path,method", READS)
+    @pytest.mark.parametrize(
+        "body,shape",
+        [
+            pytest.param(b'{"message": "CANARY"}', "an object whose results are null", id="object-without-results"),
+            pytest.param(b"null", "null", id="null"),
+            pytest.param(b'"CANARY"', "a string", id="string"),
+            pytest.param(b"[]", "a list", id="bare-list"),
+            pytest.param(
+                b'{"pageInfo": {"results": 1}, "results": ["CANARY"]}',
+                "an object whose results are a list holding a string",
+                id="results-holding-a-string",
+            ),
+        ],
+    )
+    def test_a_malformed_200_is_a_seerr_error_naming_the_endpoint_and_shape(self, path, method, body, shape):
+        target = SeerrTarget(url="http://overseerr.test", api_key="SEERR-KEY-CANARY")
+        with respx.mock:
+            respx.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, content=body))
+            with pytest.raises(SeerrError) as raised:
+                getattr(SeerrClient(target), method)()
+        message = str(raised.value)
+        assert f"Overseerr GET {path} answered with {shape}" in message
+        assert "CANARY" not in message and "overseerr.test" not in message
+
+    @pytest.mark.parametrize("path,method", READS)
+    def test_a_genuinely_empty_page_is_a_complete_empty_read(self, path, method):
+        empty = {"pageInfo": {"pages": 0, "results": 0}, "results": []}
+        with respx.mock:
+            respx.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, json=empty))
+            assert getattr(_client(), method)() in ([], {})
+
+    def test_the_lenient_reads_still_tolerate_a_malformed_page(self):
+        """`media_dates` only ever leaves a date blank, so it keeps failing open."""
+        with respx.mock:
+            respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json={"message": "x"}))
+            assert _client().media_dates() == {}

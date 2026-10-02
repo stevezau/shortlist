@@ -704,3 +704,46 @@ class TestTagReads:
             got = SonarrClient(SONARR).series()
         assert [s["tvdbId"] for s in got] == [s["tvdbId"] for s in fx["tagged_items"]]
         assert "statistics" in got[0]
+
+
+REQUEST_READERS = [
+    pytest.param(RadarrClient, "/api/v3/tag", "tags", id="radarr-tags"),
+    pytest.param(RadarrClient, "/api/v3/movie", "movies", id="radarr-movies"),
+    pytest.param(SonarrClient, "/api/v3/tag", "tags", id="sonarr-tags"),
+    pytest.param(SonarrClient, "/api/v3/series", "series", id="sonarr-series"),
+]
+CANARY_TARGET = ArrTarget(url="http://arr.test", api_key="ARR-KEY-CANARY", quality_profile_id=1, root_folder="/m")
+
+
+class TestRequestReadsRefuseAMalformedAnswer:
+    """The reads a requests row is built from fail on a 200 that is not a list of records.
+
+    Coerced to an empty list, such an answer read as "nothing requested" and let the row be removed.
+    The message names the endpoint and the JSON type, never the body or the key.
+    """
+
+    @pytest.mark.parametrize("reader,path,method", REQUEST_READERS)
+    @pytest.mark.parametrize(
+        "body,shape",
+        [
+            pytest.param(b'{"message": "CANARY"}', "an object", id="object"),
+            pytest.param(b"null", "null", id="null"),
+            pytest.param(b'"CANARY"', "a string", id="string"),
+            pytest.param(b'[{"id": 1, "label": "a", "tmdbId": 5}, "CANARY"]', "a list holding a string", id="list"),
+        ],
+    )
+    def test_a_malformed_200_is_an_arr_error_naming_the_endpoint_and_shape(self, reader, path, method, body, shape):
+        with respx.mock:
+            respx.get(f"{CANARY_TARGET.url}{path}").mock(return_value=httpx.Response(200, content=body))
+            with pytest.raises(ArrError) as raised:
+                getattr(reader(CANARY_TARGET), method)()
+        message = str(raised.value)
+        assert f"{reader.app_name} GET {path} answered with {shape}" in message
+        assert "CANARY" not in message and "arr.test" not in message
+
+    @pytest.mark.parametrize("reader,path,method", REQUEST_READERS)
+    def test_an_empty_list_is_a_complete_empty_read(self, reader, path, method):
+        with respx.mock:
+            respx.get(f"{CANARY_TARGET.url}{path}").mock(return_value=httpx.Response(200, json=[]))
+            got = getattr(reader(CANARY_TARGET), method)()
+        assert got == ({} if method == "tags" else [])

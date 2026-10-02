@@ -28,7 +28,7 @@ charset-normalizer==3.4.9
     # via requests
 click==8.4.2
     # via uvicorn
-cryptography==49.0.0
+cryptography==50.0.2
     # via
     #   shortlist (pyproject.toml)
     #   google-auth
@@ -138,9 +138,11 @@ typing-inspection==0.4.2
     #   pydantic
 tzlocal==5.4.4
     # via apscheduler
-urllib3==2.7.0
+urllib3==2.8.0
     # via requests
 uvicorn==0.51.0
     # via shortlist (pyproject.toml)
 websockets==16.1.1
-    # via google-genai
+    # via
+    #   shortlist (pyproject.toml)
+    #   google-genai

@@ -6,6 +6,43 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Failed web searches say how long they took, and an unreadable AI reply is kept.** The log now names
+  the attempt that failed and how long it ran before failing. When the AI's reply to a web search could
+  not be read as a list of titles, the whole reply is saved in that person's run details so it can be
+  diagnosed.
+
+### Fixed
+
+- **A row run that starts late still runs.** It used to be skipped if it started more than 30 seconds
+  late. Any other scheduled job that is skipped for starting late now shows a bell alert, "A scheduled
+  job didn't run", and is recorded in the change log.
+- **Stopping or updating the container while Shortlist is open in a browser now shuts down cleanly.**
+  It used to hang until Docker force-killed it, which also left in-progress plays marked as timed out.
+- **Everything a background job changes on Plex is now recorded.** Share-filter changes, rows removed
+  and rows taken off Home by the privacy sync, restore, row-visibility and sync check jobs used to
+  leave no event, and so did the orphaned rows the sync check deletes. Runs now also record the rows
+  they take off Home and the orphans they delete.
+- **"Your requests": a tag that could belong to two different people now goes to nobody.** It used to go
+  to whichever person matched first. A person matched by the tags of two rows now gets the title in
+  both.
+- **"Your requests": an unreadable reply from Radarr, Sonarr or Overseerr no longer removes someone's
+  row.** It is treated as a failed read, so the row is kept.
+- **An upgrade no longer goes ahead when its safety backup could not be written.** Shortlist stops with
+  a message saying why, and the database is left unchanged. Free some disk space or fix the config
+  folder's permissions, then restart.
+- **A half-written backup is never offered as a restore point.** A backup stopped part-way through, for
+  example by a container stop, is now discarded instead of listed.
+- **A job that succeeded on a retry no longer shows its earlier error.**
+- **The run log no longer says "existing rows are left as they are" for a person whose rows that run
+  removed.** It says how many rows were removed.
+
+### Security
+
+- **Updated cryptography to 50.0.2 and urllib3 to 2.8.0.** The build-tool dependency brace-expansion is
+  also updated.
+
 ## [1.9.3] - 2026-09-27
 
 ### Changed

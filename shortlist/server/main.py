@@ -47,7 +47,7 @@ from shortlist.server.scheduler import build_scheduler
 from shortlist.server.services import backup as backups
 from shortlist.server.services.run_service import RunService, missed_by_restart
 from shortlist.server.services.secrets import SecretBox
-from shortlist.server.services.sse import EventBus
+from shortlist.server.services.sse import EventBus, close_on_stop_signals
 from shortlist.server.services.watch_stream import WatchStream
 from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
 
@@ -358,10 +358,13 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             logger.warning(
                 "SHORTLIST_DRY_RUN={!r} is not a recognized value (use 1/true/yes/on) — safe mode is OFF", bad
             )
+        # A stop signal ends the open event streams, which uvicorn otherwise waits on before shutting down.
+        close_on_stop_signals(bus, asyncio.get_running_loop())
         logger.info("shortlist server up (config: {})", config_dir)
         try:
             yield
         finally:
+            bus.close()
             scheduler.shutdown(wait=False)
             watch_stream.stop()
             # Awaited, not just cancelled: `run()` closes every in-flight session on its way out, and
@@ -373,6 +376,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 stream_task.cancel()
             # Close the pool, so the WAL is checkpointed now rather than whenever the interpreter gets to it.
             engine.dispose()
+            logger.info("shutdown complete: scheduler and playback listener stopped, database closed")
 
     # The interactive API docs + schema disclose the whole API surface unauthenticated. They're off
     # by default (nothing sensitive, but no reason to advertise); set SHORTLIST_ENABLE_DOCS=1 to

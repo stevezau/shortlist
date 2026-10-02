@@ -3504,10 +3504,18 @@ def _run_user(
         # candidates from the sources, or nothing of the candidates actually in their libraries.
         # Without the counts this line said only that it happened, sending the operator to the trace.
         counts = user_report.counts
+        # The removal paths above record into `diff.deleted` (a dry run too, where it is a preview),
+        # so "left as they are" is only true when this run removed nothing for the person.
+        removed = len(user_report.diff.deleted) if user_report.diff else 0
+        if removed:
+            verb = "would remove" if cfg.dry_run else "removed"
+            outcome = f"{verb} {removed} row(s) this run; any other rows are left as they are"
+        else:
+            outcome = "existing rows are left as they are"
         logger.warning(
-            "{}: no picks produced — existing rows are left as they are "
-            "(history={} seeds={} candidates={} in_library={}){}",
+            "{}: no picks produced — {} (history={} seeds={} candidates={} in_library={}){}",
             user.username,
+            outcome,
             counts.history,
             counts.seeds,
             counts.candidates,

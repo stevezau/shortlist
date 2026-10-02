@@ -446,10 +446,13 @@ def _load_request_ledger(ctx: EngineContext, users: list[UserProfile]) -> None:
 
     Resolved against the whole roster (``ctx.roster``), not the scoped ``users``: a tag two people
     render to is ambiguous whoever is in tonight's run, and a subset would credit the one in scope.
+    Likewise against every ENABLED requests row's pattern, not only the due rows': one row due alone
+    would otherwise hand a tag two rows' patterns name two people for to the one its own names.
+    ``config.rows`` is every enabled row on a scoped run too; only the due rows are built from it.
     """
-    request_rows = [spec for spec in ctx.config.rows if spec.requests_row and ctx.config.should_build(spec)]
+    request_rows = [spec for spec in ctx.config.rows if spec.requests_row]
     sources = ctx.config.request_sources
-    if not users or not request_rows or sources is None or not sources.any():
+    if not users or not any(map(ctx.config.should_build, request_rows)) or sources is None or not sources.any():
         return
     patterns = frozenset(spec.requests_tag_pattern for spec in request_rows if spec.requests_tag_pattern)
     ctx.request_ledger = collect_requests(sources, ctx.roster or users, patterns=patterns)
@@ -1595,6 +1598,24 @@ def promote_user_rows(
     return promoted
 
 
+def _converged_row(section, collection, label: str, reason: str | None = None) -> dict:
+    """One `RunReport.converge_demotions` / `orphan_deletions` entry: what converge acted on, and where.
+
+    Read from objects the walk already holds, so recording costs no PMS request. A deletion has no
+    `reason` — every orphan is deleted for the same one.
+    """
+    entry = {
+        "label": label,
+        "title": collection.title,
+        "rating_key": int(collection.ratingKey),
+        "library_key": str(section.key),
+        "library": section.title,
+    }
+    if reason is not None:
+        entry["reason"] = reason
+    return entry
+
+
 def _converge_phase(
     ctx: EngineContext, promoted: set[int], report: RunReport, *, may_delete: bool | None = None
 ) -> None:
@@ -1663,6 +1684,7 @@ def _converge_phase(
                 # everyone else's exclude still matches and unpausing is a re-promote, not a rebuild.
                 if label.lower() in paused_labels or retired_shared:
                     reason = "row switched off" if retired_shared else "paused"
+                    why = "shared_row_switched_off" if retired_shared else "paused"
                     # Read first, exactly as the own-home branch does: a preview must list what would
                     # actually change, not every candidate considered.
                     if not ctx.plex.claims_any_surface(collection):
@@ -1670,10 +1692,12 @@ def _converge_phase(
                     if ctx.config.dry_run:
                         logger.info("[dry-run] {}: would take off every surface", collection.title)
                         demoted.append(label)
+                        report.converge_demotions.append(_converged_row(section, collection, label, reason=why))
                         continue
                     with ctx.write_lock:
                         if ctx.plex.demote_all(collection, reason=reason):
                             demoted.append(label)
+                            report.converge_demotions.append(_converged_row(section, collection, label, reason=why))
                     continue
 
                 # ORPHAN: a per-person label whose user Shortlist no longer knows. Deleting is what
@@ -1704,15 +1728,22 @@ def _converge_phase(
                         wrote = ctx.config.dry_run or ctx.plex.demote_all(collection, reason="unknown owner")
                         if wrote:
                             demoted.append(label)
+                            report.converge_demotions.append(
+                                _converged_row(section, collection, label, reason="unknown_owner")
+                            )
                     continue
 
                 if is_orphan:
+                    # Read before deleting, as the sweep does: afterwards the object refers to nothing on
+                    # the server.
+                    deletion = _converged_row(section, collection, label)
                     if ctx.config.dry_run:
                         logger.info("[dry-run] {}: would DELETE (no such user)", collection.title)
                     else:
                         with ctx.write_lock:
                             ctx.plex.delete_owned_collection(collection, LABEL_PREFIX)
                     deleted.append(label)
+                    report.orphan_deletions.append(deletion)
                     continue
 
                 if label.lower() in allowed:
@@ -1724,10 +1755,14 @@ def _converge_phase(
                 if ctx.config.dry_run:
                     logger.info("[dry-run] {}: would demote off the owner's Home (converge)", collection.title)
                     demoted.append(label)
+                    report.converge_demotions.append(_converged_row(section, collection, label, reason="on_owner_home"))
                     continue
                 with ctx.write_lock:
                     if ctx.plex.demote_own_home(collection):
                         demoted.append(label)
+                        report.converge_demotions.append(
+                            _converged_row(section, collection, label, reason="on_owner_home")
+                        )
     except Exception:
         # Best-effort: the run's real work is already done and this only ever removes visibility, so a
         # PMS wobble here must not fail the run. Next run converges again.

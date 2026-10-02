@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.delivery import FREED_NAME_HELPER_KEY
-from shortlist.engine.models import SHARED_SLUG_PREFIX
+from shortlist.engine.models import SHARED_SLUG_PREFIX, RunReport
 from shortlist.engine.requests import QUEUE_REASON_PREFIXES
 from shortlist.server.db.models import (
     Collection,
@@ -1026,8 +1026,10 @@ def persist_report(
             # the finalize stats. This backstops users the live path missed (e.g. it errored).
             if session.query(RunUser).filter_by(run_id=run_id, user_id=user.id).first() is None:
                 _persist_user_report(session, run_id, user, user_report, report.dry_run)
-        _emit_sweep_event(session, run_id, report)
-        _emit_privacy_sync_events(session, run_id, report)
+        audit_sweep(session, report, dry_run=report.dry_run, run_id=run_id)
+        audit_filter_writes(session, report, dry_run=report.dry_run, run_id=run_id)
+        audit_demotions(session, report, dry_run=report.dry_run, run_id=run_id)
+        audit_orphan_deletes(session, report, dry_run=report.dry_run, run_id=run_id)
         _emit_hub_ordering_events(session, run_id, report)
         _emit_request_events(session, run_id, report)
         persist_request_queue(session, run_id, report)
@@ -1164,7 +1166,7 @@ def prune_events(session: Session, retention_months: int) -> int:
     return session.query(Event).filter(Event.ts < cutoff).delete(synchronize_session=False)
 
 
-def _add_event(session: Session, scope: str, level: str, run_id: int, *, dry_run: bool | None = None, **fields):
+def _add_event(session: Session, scope: str, level: str, run_id: int | None, *, dry_run: bool | None = None, **fields):
     """Append one audit Event, injecting the run_id (and dry_run, where relevant) that every
     emitter shares (plex-safety rule 10). Callers pass only their distinctive message fields."""
     extra = {"dry_run": dry_run} if dry_run is not None else {}
@@ -1425,44 +1427,125 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
     )
 
 
-def _emit_sweep_event(session: Session, run_id: int, report) -> None:
-    # Rows deleted because Plex could not hide them. This is a SERVER-wide sweep, so it
-    # can touch users who were not in this run at all (paused, disabled) — those have no
-    # RunUser row to carry the audit, and deleting someone's row is the most destructive
-    # thing a run does. It gets its own event (plex-safety rule 10).
+def audit_sweep(
+    session: Session, report: RunReport, *, dry_run: bool, run_id: int | None = None, job: str | None = None
+) -> None:
+    """Add one `run.sweep` event for the rows and helpers a sweep deleted (plex-safety rule 10).
+
+    The sweep is SERVER-wide, so it can touch users who were not in the run at all (paused, disabled) —
+    those have no RunUser row to carry the audit, and deleting someone's row is the most destructive thing
+    a pass does. Jobs that run the pass persist no run, so they call this too.
+
+    Args:
+        session: An open session; the caller owns the commit.
+        report: The pass's report; nothing is added when `swept_rows` is empty.
+        dry_run: Whether the pass only previewed its deletes.
+        run_id: The persisted run, or None when a job ran the pass.
+        job: The job kind that ran the pass. Omitted from a run's event, which predates the field.
+    """
     if not report.swept_rows:
         return
+    origin = {"job": job} if job is not None else {}
     _add_event(
         session,
         "run.sweep",
         "warning",
         run_id,
-        dry_run=report.dry_run,
+        dry_run=dry_run,
         reason="row was broken beyond repair-in-place — no share filter could hide it (wrong "
         "type for its library, or no shortlist label at all — an orphan from an interrupted "
         "run), or it shared a collection tag with other users' rows and held their picks. Keys "
         "starting 'freed-name helper:' are not rows: a helper a stopped run left behind while "
         "freeing a row's name",
         deleted=report.swept_rows,
+        **origin,
     )
 
 
-def _emit_privacy_sync_events(session: Session, run_id: int, report) -> None:
-    # Share-filter writes. Most of these accounts are NOT in this run's user list — they
-    # are simply people the server is shared with — so they have no RunUser row to carry
-    # the audit. Changing someone's Plex share permissions is the most sensitive thing
-    # Shortlist does; "what changed on whose share at 03:31" has to be answerable for every
-    # one of them (plex-safety rule 10).
+def audit_demotions(
+    session: Session, report: RunReport, *, dry_run: bool, run_id: int | None = None, job: str | None = None
+) -> None:
+    """Add one `run.demote` event for the rows converge took off Home (plex-safety rule 10).
+
+    Converge reaches exactly the rows no run promoted — a paused person's, a switched-off shared row's, one whose
+    owner is unknown — so most belong to nobody in the run's user list, and `report.converged` names only labels.
+    Info, not warning: each demotion is the intended effect of a setting or a correction that only hides more.
+
+    Args:
+        session: An open session; the caller owns the commit.
+        report: The pass's report; nothing is added when `converge_demotions` is empty.
+        dry_run: Whether the pass only previewed its demotions.
+        run_id: The persisted run, or None when a job ran the pass.
+        job: The job kind that ran the pass. Omitted from a run's event, as on `run.sweep`.
+    """
+    if not report.converge_demotions:
+        return
+    origin = {"job": job} if job is not None else {}
+    _add_event(session, "run.demote", "info", run_id, dry_run=dry_run, demoted=report.converge_demotions, **origin)
+
+
+def audit_orphan_deletes(
+    session: Session, report: RunReport, *, dry_run: bool, run_id: int | None = None, job: str | None = None
+) -> None:
+    """Add one `run.orphan_delete` event for the collections converge deleted (plex-safety rule 10).
+
+    The one irreversible thing converge does, so it has its own scope: "what was destroyed at 03:31" must be
+    answerable without reading through demotions. Off the run path only `sync.check` ever has one to record —
+    when the owner pressed Fix, or as a preview; the run-less privacy passes are handed no authority to delete
+    (`pipeline.run` passes `may_delete=bool(users)`).
+
+    Args:
+        session: An open session; the caller owns the commit.
+        report: The pass's report; nothing is added when `orphan_deletions` is empty.
+        dry_run: Whether the pass only previewed its deletes.
+        run_id: The persisted run, or None when a job ran the pass.
+        job: The job kind that ran the pass. Omitted from a run's event, as on `run.sweep`.
+    """
+    if not report.orphan_deletions:
+        return
+    origin = {"job": job} if job is not None else {}
+    _add_event(
+        session,
+        "run.orphan_delete",
+        "warning",
+        run_id,
+        dry_run=dry_run,
+        reason="its label names no one Shortlist knows — the person was removed from the server or from Shortlist "
+        "— and the roster read was complete, so the collection was deleted rather than hidden",
+        deleted=report.orphan_deletions,
+        **origin,
+    )
+
+
+def audit_filter_writes(
+    session: Session, report: RunReport, *, dry_run: bool, run_id: int | None = None, job: str | None = None
+) -> None:
+    """Add one `run.privacy_sync` event per share filter a privacy pass wrote (plex-safety rule 10).
+
+    Most of these accounts are NOT in the run's user list — they are simply people the server is shared
+    with — so they have no RunUser row to carry the audit. Changing someone's Plex share permissions is the
+    most sensitive thing Shortlist does; "what changed on whose share at 03:31" has to be answerable for
+    every one of them, including when a job ran the pass and persisted no run.
+
+    Args:
+        session: An open session; the caller owns the commit.
+        report: The pass's report; one event per `filter_writes` entry.
+        dry_run: Whether the pass only previewed its writes.
+        run_id: The persisted run, or None when a job ran the pass.
+        job: The job kind that ran the pass. Omitted from a run's event, which predates the field.
+    """
+    origin = {"job": job} if job is not None else {}
     for account_id, write in report.filter_writes.items():
         _add_event(
             session,
             "run.privacy_sync",
             "info",
             run_id,
-            dry_run=report.dry_run,
+            dry_run=dry_run,
             plex_account_id=account_id,
             username=write["username"],
             fields={field: {"before": before, "after": after} for field, (before, after) in write["fields"].items()},
+            **origin,
         )
 
 

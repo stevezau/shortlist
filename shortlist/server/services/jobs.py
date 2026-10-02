@@ -645,6 +645,7 @@ def _finish(sessions, job_id: int, *, result: dict | None = None, error: str | N
         job.finished_at = datetime.now(UTC)
         if error is None:
             job.status = "done"
+            job.error = None  # an earlier attempt's text is kept in its job.attempt_failed event
             job.result = result or {}
             job.detail = str((result or {}).get("detail", ""))[:512]
         elif job.attempts < job.max_attempts:
@@ -989,6 +990,9 @@ def _sync_check(state, payload: dict) -> dict:
     # anything: `dry_run` is True only when `ctx.config.dry_run` is (it is one of the two terms it is
     # OR'd from), and converge checks that flag before every delete, logging the would-be removal.
     _converge_phase(ctx, set(), report, may_delete=confirmed or dry_run)
+    # Before the shelf pass, whose library read can raise: an orphan deleted here is gone from Plex, and the
+    # retry's converge finds nothing left to record.
+    _audit_runless_pass(state, report, dry_run, "sync.check")
     # A row stranded at the bottom of the Recommended shelf IS a row "in the wrong place", which is
     # what this button says it fixes — so put the shelf right here too, not only on a full run. It is
     # cosmetic and privacy-neutral (positions only, on hubs already promoted and browse-hidden), so it
@@ -1082,6 +1086,34 @@ def _audit_hub_orderings(state, report, dry_run: bool) -> None:
         )
 
 
+def _audit_runless_pass(state, report, dry_run: bool, kind: str) -> None:
+    """Audit what a pass that persists no run did to Plex — the rows its sweep deleted, every share filter it
+    wrote, every row its converge took off Home and every orphan converge deleted (plex-safety rule 10).
+
+    The run persister is the only other place `report.swept_rows`, `report.filter_writes`,
+    `report.converge_demotions` and `report.orphan_deletions` become events: on 2026-09-27 a `privacy.sync`
+    took a deleted shared row's exclude off ~46 accounts with no event, and a swept row was deleted from Plex
+    with none either. Each emitter adds nothing for an empty list, so one call covers every job: the privacy
+    passes never delete an orphan (`engine_run(ctx, [])` hands converge no delete authority) and `sync.check`
+    neither sweeps nor writes a filter. Committed in its own session, as `write_audit` is, so the record
+    survives a raise later in the job — the deletes and writes that landed are on Plex, and the retry finds
+    nothing left to do.
+    """
+    from shortlist.server.services.run_persistence import (
+        audit_demotions,
+        audit_filter_writes,
+        audit_orphan_deletes,
+        audit_sweep,
+    )
+
+    with state.sessions() as session:
+        audit_sweep(session, report, dry_run=dry_run, job=kind)
+        audit_filter_writes(session, report, dry_run=dry_run, job=kind)
+        audit_demotions(session, report, dry_run=dry_run, job=kind)
+        audit_orphan_deletes(session, report, dry_run=dry_run, job=kind)
+        session.commit()
+
+
 @handler("privacy.sync")
 def _privacy_sync(state, payload: dict) -> dict:
     """Merge every account's share filter without building anything.
@@ -1126,6 +1158,7 @@ def _privacy_sync(state, payload: dict) -> dict:
     # Before the check that may raise: an account repaired in a pass that another account blocked is
     # still repaired, and the retry will find nothing left to report.
     audit_restored_restrictions(state, report)
+    _audit_runless_pass(state, report, dry_run, "privacy.sync")
     _require_filters_merged(report, "reporting the filters as merged")
     _audit_hub_orderings(state, report, dry_run)
     swept = sum(len(titles) for key, titles in report.swept_rows.items() if not key.startswith(FREED_NAME_HELPER_KEY))
@@ -1141,8 +1174,8 @@ def _privacy_sync(state, payload: dict) -> dict:
         detail += f" after {reason}"
     if swept:
         detail += f"; swept {swept} unhidable row(s)"
-    # Not rows: collections a run that was stopped left behind while freeing a row's name. This job writes no
-    # run, so this line is the only record of deleting them (rule 10).
+    # Not rows: collections a run that was stopped left behind while freeing a row's name. The `run.sweep` event
+    # is the audit (rule 10); this line is the Jobs page's answer to what the pass did.
     if helpers_removed:
         detail += f"; removed {helpers_removed} leftover name-freeing helper collection(s)"
     # `privacy.sync` persists no run, so `report.left_alone_failures` has nowhere else to surface —
@@ -1526,6 +1559,7 @@ def _user_restore(state, payload: dict) -> dict:
     # Before the check that may raise: an account repaired in a pass that another account blocked is
     # still repaired, and the retry will find nothing left to report.
     audit_restored_restrictions(state, report)
+    _audit_runless_pass(state, report, dry_run, "user.restore")
     _require_filters_merged(report, f"promoting {slug}'s rows")
     # Left alone, not shown, when a row is hidden today: un-pausing on a row's day off must not put an
     # unidentifiable `{top_seed}` collection back on Home, exactly as `_promote_phase` decides it. The
@@ -1883,6 +1917,7 @@ def _rows_visibility(state, payload: dict) -> dict:
     # Before the check that may raise: an account repaired in a pass that another account blocked is
     # still repaired, and the retry will find nothing left to report.
     audit_restored_restrictions(state, report)
+    _audit_runless_pass(state, report, dry_run, "rows.visibility")
     _require_filters_merged(report, "applying today's row schedule")
 
     touched: set[int] = set()

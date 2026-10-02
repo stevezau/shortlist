@@ -290,7 +290,18 @@ class RunService:
             #
             # After `_run_locked` returns, so the lock is released and `_cancels` is empty: draining
             # while `is_running()` is still true would re-park every writer and achieve nothing.
-            await self._drain_jobs_after_run(run_id)
+            #
+            # NOT when this task is being cancelled. In the shipped image (tini as PID 1) the process
+            # dies at shutdown with no task cancelled; a teardown path cancels it — Ctrl-C, uvicorn as
+            # PID 1 without an init, an in-process server. The process lives on there for a moment,
+            # and cancellation cannot stop the engine's executor thread, yet the `finally` blocks above
+            # have already released the writer lock and dropped the Event — so a drain here would start
+            # a share-filter writer beside an engine still merging its own (rule 3). The jobs stay
+            # queued for the next drain.
+            # `cancel_run` is not this: it lets the engine return, and that run still drains.
+            task = asyncio.current_task()
+            if task is None or not task.cancelling():
+                await self._drain_jobs_after_run(run_id)
 
     async def _run_locked(
         self,
@@ -406,6 +417,11 @@ class RunService:
                 async with jobs.plex_writer_lock():
                     report = await loop.run_in_executor(None, _engine_run_logged, run_id, log_sink, ctx, profiles)
                 aborted = cancel is not None and cancel.is_set()
+                # On the event loop on purpose, as are the crediting and the alert below. In a thread,
+                # `cancel_run` can interleave with the save (lost update on `Run.stats`), and a loop-side
+                # writer waiting on reconcile's SQLite lock fails after busy_timeout instead of waiting.
+                # Revisit only together with a settling guard in `cancel_run` and per-person commits in
+                # reconcile.
                 self._persist_report(run_id, report, status="aborted" if aborted else None)
                 # The engine filled each profile's history in place, so this is the one moment we hold
                 # both "what we recommended" and "what they have since watched". A dry run is a

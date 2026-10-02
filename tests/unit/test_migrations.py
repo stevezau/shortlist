@@ -9,7 +9,10 @@ a NULL production accepted was unreachable in a test.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,9 +22,16 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config as AlembicConfig
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 
 from shortlist.server.db.models import Base
-from shortlist.server.db.session import ALEMBIC_DIR, db_url, make_engine, run_migrations
+from shortlist.server.db.session import (
+    ALEMBIC_DIR,
+    MigrationBackupError,
+    db_url,
+    make_engine,
+    run_migrations,
+)
 
 
 def _alembic(config_dir: Path) -> AlembicConfig:
@@ -508,6 +518,103 @@ class TestThePreMigrationBackup:
 
         assert len(self._backups(tmp_path)) == 1
         assert self._backups(tmp_path)[0].endswith("_pre-migration.db")
+
+
+@contextmanager
+def _unwritable_backups(config_dir: Path) -> Iterator[None]:
+    """`/config/backups` exists but cannot be written — the way a backup really fails on a box whose
+    volume has the wrong owner. `take_backup` answers None to it rather than raising."""
+    backups = config_dir / "backups"
+    backups.mkdir(exist_ok=True)
+    backups.chmod(0o500)
+    try:
+        yield
+    finally:
+        backups.chmod(0o700)
+
+
+def _stamp(config_dir: Path) -> str:
+    with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+        return con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+
+
+def _head(config_dir: Path) -> str:
+    return ScriptDirectory.from_config(_alembic(config_dir)).get_current_head()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through directory permissions")
+class TestAnUpgradeNeedsItsBackup:
+    """The pre-migration backup is the way back from a migration that goes wrong, and `take_backup`
+    mostly answers None instead of raising when it cannot write one. An upgrade that ran on past that
+    answer changed the schema with no copy of the old one anywhere. Built at 0093 so 0094's new column
+    (`collections.requests_row`) shows whether the upgrade ran."""
+
+    @staticmethod
+    def _backups(config_dir: Path) -> list[str]:
+        return sorted(p.name for p in (config_dir / "backups").glob("*.db"))
+
+    @staticmethod
+    def _has_requests_row(config_dir: Path) -> bool:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            return any(row[1] == "requests_row" for row in con.execute("PRAGMA table_info(collections)"))
+
+    def test_a_pending_migration_is_refused_when_its_backup_cannot_be_written(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0093")
+
+        with _unwritable_backups(tmp_path), pytest.raises(MigrationBackupError) as refused:
+            run_migrations(tmp_path)
+
+        assert _stamp(tmp_path) == "0093"
+        assert not self._has_requests_row(tmp_path), "the migration ran with no backup to go back to"
+        assert self._backups(tmp_path) == []
+        assert str(tmp_path / "backups") in str(refused.value)
+
+    def test_a_pending_migration_is_refused_when_the_backups_folder_cannot_be_created(self, tmp_path: Path):
+        """A first upgrade with no `backups/` yet and a config folder that cannot be written: creating
+        the folder RAISES inside `take_backup`, rather than answering None. Same refusal either way."""
+        command.upgrade(_alembic(tmp_path), "0093")
+        files_before = sorted(os.listdir(tmp_path))
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            schema_before = sorted(con.execute("SELECT type, name, sql FROM sqlite_master").fetchall())
+
+        tmp_path.chmod(0o500)
+        try:
+            with pytest.raises(MigrationBackupError) as refused:
+                run_migrations(tmp_path)
+        finally:
+            tmp_path.chmod(0o700)
+
+        assert isinstance(refused.value.__cause__, OSError), "the real cause must stay in the traceback"
+        assert _stamp(tmp_path) == "0093"
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            assert sorted(con.execute("SELECT type, name, sql FROM sqlite_master").fetchall()) == schema_before
+        assert sorted(os.listdir(tmp_path)) == files_before
+        assert str(tmp_path / "backups") in str(refused.value)
+
+    def test_a_pending_migration_runs_when_its_backup_is_written(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0093")
+
+        run_migrations(tmp_path)
+
+        assert _stamp(tmp_path) == _head(tmp_path)
+        assert self._has_requests_row(tmp_path)
+        assert [name.endswith("_pre-migration.db") for name in self._backups(tmp_path)] == [True]
+
+    def test_a_fresh_install_boots_without_a_backup(self, tmp_path: Path):
+        """Nothing to back up yet, so a backup that cannot be written must not stop the first boot."""
+        with _unwritable_backups(tmp_path):
+            run_migrations(tmp_path)
+
+        assert _stamp(tmp_path) == _head(tmp_path)
+
+    def test_a_restart_with_nothing_pending_boots_without_a_backup(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        with _unwritable_backups(tmp_path):
+            run_migrations(tmp_path)
+
+        assert _stamp(tmp_path) == _head(tmp_path)
+        assert self._backups(tmp_path) == []
 
 
 class TestUpgradingAnOldInstall:

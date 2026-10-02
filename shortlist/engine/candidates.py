@@ -29,7 +29,7 @@ from shortlist.engine.curator.base import (
     build_web_pick_prompt,
     build_web_query_for_title,
     build_web_rag_prompt,
-    parse_web_titles,
+    try_parse_web_titles,
 )
 from shortlist.engine.models import MAX_ROW_SIZE, Attribution, Candidate, MediaType, Seed
 
@@ -54,6 +54,8 @@ _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the web-search LLM
 # point of the structured path: the curator picks from everything the searches found instead of from
 # a rationed slice of it.
 _WEB_PICK_CAP = 300
+# A normal reply is ~2,500 characters, so real failures are kept whole; a runaway one must not bloat the run trace.
+_UNPARSED_REPLY_CAP = 20_000
 # A search that came back nearly empty is cached BRIEFLY rather than for the usual fortnight. Exa's
 # `deep-lite` is measurably variable — three identical calls returned 36, 45 and 38 usable titles,
 # sharing only 45% — so a thin draw should not be served to every user for a whole week. But refusing to
@@ -245,6 +247,13 @@ def _rec_label(rec: dict) -> str:
     return f"{rec.get('title', '?')}{f' ({year})' if year else ''} [{media}]"
 
 
+def _capped_reply(reply: str) -> str:
+    """An unparseable model reply as kept in the run trace: whole up to the cap, else its head plus its length."""
+    if len(reply) <= _UNPARSED_REPLY_CAP:
+        return reply
+    return f"{reply[:_UNPARSED_REPLY_CAP]}\n… [truncated; reply was {len(reply)} characters]"
+
+
 def _web_via_search(
     curator,
     search,
@@ -368,7 +377,12 @@ def _web_via_search(
     if not getattr(curator, "can_complete", True):
         return _titles_as_proposals(candidates, web_trace, reason="no AI provider configured")
     _clear_last_tokens(curator)
-    titles = parse_web_titles(curator.complete(system, user), k)
+    reply = curator.complete(system, user)
+    parsed = try_parse_web_titles(reply, k)
+    titles = parsed or []
+    if parsed is None and web_trace is not None:
+        # The parse warning logs only a preview; the full reply is what shows where it went wrong.
+        web_trace["unparsed_reply"] = _capped_reply(reply)
     stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0), getattr(curator, "last_output_tokens", 0))
     # Same fallback for a model that answered with nothing usable — rate-limited, timed out, or
     # replying in prose. Degrading to Exa's own extraction beats losing the searches we just paid for.

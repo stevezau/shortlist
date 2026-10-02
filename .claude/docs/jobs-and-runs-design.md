@@ -682,6 +682,20 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
   row off the server in one night. §14's rule — a removal needs evidence, not the absence of an
   exception — applied to a third source of "nothing here".
 
+- **Runless jobs audit what they did to Plex (2026-10-02).** The register above treated the run
+  persister as the only place a pass's deletes and filter writes become events, so a job that persists
+  no run changed Plex with no record: on 2026-09-27 a `privacy.sync` took a deleted shared row's exclude
+  off ~46 accounts, and a swept row was deleted, each with no event (rule 10). Filter writes
+  (`run.privacy_sync`), sweep deletes (`run.sweep`), converge demotions (`run.demote`, new) and orphan
+  deletions (`run.orphan_delete`, new) are now emitted by shared functions in `run_persistence.py` —
+  `audit_filter_writes`, `audit_sweep`, `audit_demotions`, `audit_orphan_deletes` — which the run path
+  and `jobs._audit_runless_pass` both call. The latter covers `privacy.sync`, `user.restore`,
+  `rows.visibility` and `sync.check`, stamps each event with `job` and a null `run_id`, and commits in
+  its own session, before any check that can raise, so a retry that finds nothing left to do does not
+  lose the record. Each emitter writes nothing for an empty list, so one call serves every job: only
+  `sync.check` can ever record an orphan delete, because the privacy passes (`engine_run(ctx, [])`) are
+  handed no authority to delete.
+
 ### Corrections to this document
 
 - §11.A said `notifications.py` doesn't read failed jobs — it does (`_failed_jobs`).

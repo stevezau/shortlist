@@ -180,16 +180,37 @@ def _send(
         try:
             response = httpx.request(method, url, **kwargs)
         except retry_exc as exc:
+            elapsed = time.monotonic() - started
             if attempt >= attempts:  # the expensive budget
+                # The last failure used to propagate unlogged, so a request abandoned at its timeout
+                # looked the same as one that failed fast.
+                logger.warning(
+                    "{} {} failed ({}); attempt {}/{} took {:.1f}s, giving up",
+                    method,
+                    host,
+                    type(exc).__name__,
+                    attempt,
+                    attempts,
+                    elapsed,
+                )
                 raise
-            _wait(_backoff(attempt, base_backoff, max_backoff), method, host, type(exc).__name__, attempt, attempts)
+            _wait(
+                _backoff(attempt, base_backoff, max_backoff),
+                method,
+                host,
+                type(exc).__name__,
+                attempt,
+                attempts,
+                elapsed,
+            )
             continue
         # Host + status + latency only (never the URL — its query can carry an api_key, rule 9). This
         # is the per-call trail that answers "which service was slow tonight" at DEBUG.
-        logger.debug("{} {} → {} in {:.2f}s", method, host, response.status_code, time.monotonic() - started)
+        elapsed = time.monotonic() - started
+        logger.debug("{} {} → {} in {:.2f}s", method, host, response.status_code, elapsed)
         if response.status_code in retry_status and attempt < status_budget:  # the cheap budget
             delay = _retry_after(response) or _backoff(attempt, base_backoff, max_backoff)
-            _wait(delay, method, host, f"HTTP {response.status_code}", attempt, attempts)
+            _wait(delay, method, host, f"HTTP {response.status_code}", attempt, attempts, elapsed)
             continue
         return response
     raise AssertionError("unreachable: the loop always returns or raises")  # pragma: no cover
@@ -238,8 +259,19 @@ def throttle(last_write: float, min_interval: float, on_wait: Callable[[float], 
     return time.monotonic()
 
 
-def _wait(delay: float, method: str, host: str, reason: str, attempt: int, attempts: int) -> None:
-    logger.warning("{} {} failed ({}); retry {}/{} in {:.1f}s", method, host, reason, attempt, attempts, delay)
+def _wait(delay: float, method: str, host: str, reason: str, attempt: int, attempts: int, elapsed: float) -> None:
+    logger.warning(
+        "{} {} failed ({}); retry {}/{} in {:.1f}s; attempt {}/{} took {:.1f}s",
+        method,
+        host,
+        reason,
+        attempt,
+        attempts,
+        delay,
+        attempt,
+        attempts,
+        elapsed,
+    )
     time.sleep(delay)
 
 

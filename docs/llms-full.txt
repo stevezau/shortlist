@@ -1674,6 +1674,11 @@ anything else, or **Off** to only run that row by hand. New rows default to nigh
 on upgrade, existing rows keep whatever your old global schedule was. Rows that share a cron run
 together. To skip a person entirely, pause them on their detail page.
 
+**A row run is never skipped for starting late.** If Shortlist is busy at the moment a row is due, the run
+starts when it can. The other timers on Jobs are different: one that starts more than 30 seconds late is
+skipped until its next time, and the bell says "A scheduled job didn't run". A run that was due while
+Shortlist was stopped is not replayed when it starts again.
+
 **A scheduled run cut short by a restart is finished once.** If the container restarts part-way
 through a scheduled run (an auto-updater such as Watchtower replacing it, a host reboot), Shortlist
 starts a run as soon as it is back up for the people that run never reached, on the same rows. It
@@ -2380,6 +2385,10 @@ database and swaps the backup in as it starts, before anything else opens the da
 restart it keeps running on the database it has, and Jobs → Backups says a restore is waiting, with a
 button to cancel it. A restore still waiting a day later is dropped rather than applied by whatever
 restarts the container next.
+
+If the backup taken before an upgrade cannot be written, Shortlist does not start the upgrade and the
+container log says why. The database is left unchanged. Free some disk space or fix the permissions on
+the config folder, then restart.
 
 Because a backup holds your rows' **audiences**, restoring one also restores who could see which
 rows at that moment. If you have narrowed a shared row's audience since the backup was taken,
@@ -3280,6 +3289,19 @@ GET  /api/notifications/whats-new -> {version, releases[{version, url, published
      Worth alerting at all because the failure is SILENT: the nightly play-log sweep still credits finished watches, so every
      number keeps looking plausible. What stops is the partial-watch signal, which only the live socket can see — and
      "nobody abandoned anything this week" looks exactly like a healthy week.
+     Another is "A scheduled job didn't run" (several at once read "N scheduled jobs didn't run"), raised when a
+     scheduled job was skipped for starting too late, typically because Shortlist was busy at that moment. It is
+     dismissable, covers the last day, and a later miss shows it again. The job runs again at its next scheduled
+     time; row runs are never skipped for starting late, so this only ever names the other timers.
+     The audit feed (`/api/events/log?scope=`) records each such skip as `schedule.missed` (warning) with `job`
+     (the job id), `name` (its label on the Jobs page, when it has one), `scheduled_for` (when it was due, UTC)
+     and `late_by_s`. The scopes below describe what a pass did to Plex. Each of these can come from a run
+     (carrying its `run_id`) or from a background job, which carries `job` (`privacy.sync`, `user.restore`,
+     `rows.visibility` or `sync.check`) and a null `run_id`: `run.privacy_sync` (info, one per share filter
+     written, with the account and each field's before and after), `run.sweep` (warning, rows deleted because
+     no share filter could hide them), `run.demote` (info, rows taken off Home, each with the reason it was
+     taken off) and `run.orphan_delete` (warning, orphaned rows deleted because their label names no one
+     Shortlist knows).
 ```
 
 ## Outgoing notifications

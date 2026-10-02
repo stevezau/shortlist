@@ -57,6 +57,25 @@ class ArrError(RuntimeError):
     """
 
 
+_JSON_TYPES = {dict: "an object", list: "a list", str: "a string", int: "a number", float: "a number"}
+
+
+def json_shape(value: object) -> str:
+    """What a decoded JSON body is, by type alone: ``an object``, ``null``, ``a list holding a string``.
+
+    Never its contents: the result lands in an error message shown in the UI and written to events,
+    and a proxy's error page can echo the request back.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, list):
+        stray = [v for v in value if not isinstance(v, dict)]
+        return f"a list holding {json_shape(stray[0])}" if stray else "a list"
+    return _JSON_TYPES.get(type(value), "an unknown type")
+
+
 class _ArrClient:
     """Shared HTTP plumbing for the two apps; subclasses add the movie/series specifics."""
 
@@ -247,13 +266,29 @@ class _ArrClient:
             logger.debug("{}: created tag {!r} (id {})", self.app_name, label, tag_id)
         return tag_id
 
+    def _records(self, path: str) -> list[dict]:
+        """A list endpoint a requests row is built from. A 200 that is not a list of objects raises.
+
+        Coerced to an empty list, a ``{}``, ``null`` or a proxy's bare string read as "nobody asked
+        for anything" on a COMPLETE ledger, and that removes the person's requests row. A real ``[]``
+        is a complete read and passes.
+
+        Raises:
+            ArrError: The body is not a list of objects; names the endpoint and the JSON type only.
+        """
+        payload = self._get(path)
+        if isinstance(payload, list) and all(isinstance(r, dict) for r in payload):
+            return payload
+        raise ArrError(
+            f"{self.app_name} GET {path} answered with {json_shape(payload)} where a list of records was expected"
+        )
+
     def tags(self) -> dict[int, str]:
         """Every tag the app has, id -> label. A READ: `_resolve_tag` is the one that may create."""
-        payload = self._get("/api/v3/tag")
         return {
             int(t["id"]): str(t["label"])
-            for t in (payload if isinstance(payload, list) else [])
-            if isinstance(t, dict) and t.get("id") is not None and t.get("label")
+            for t in self._records("/api/v3/tag")
+            if t.get("id") is not None and t.get("label")
         }
 
 
@@ -262,8 +297,7 @@ class RadarrClient(_ArrClient):
 
     def movies(self) -> list[dict]:
         """Every movie Radarr tracks, raw — `tags`, `hasFile`, `movieFile.dateAdded` are what a requests row reads."""
-        payload = self._get("/api/v3/movie")
-        return [m for m in payload if isinstance(m, dict)] if isinstance(payload, list) else []
+        return self._records("/api/v3/movie")
 
     def library_tmdb_ids(self) -> set[int]:
         """Every tmdbId Radarr already tracks — so a title it has (or is still downloading) isn't
@@ -335,8 +369,7 @@ class SonarrClient(_ArrClient):
 
         `tags`, `tmdbId`, `added`, `statistics.episodeFileCount` are what a requests row reads.
         """
-        payload = self._get("/api/v3/series")
-        return [s for s in payload if isinstance(s, dict)] if isinstance(payload, list) else []
+        return self._records("/api/v3/series")
 
     def library_ids(self) -> tuple[set[int], set[int]]:
         """(tvdbIds, tmdbIds) Sonarr already tracks, from ONE /series fetch.
