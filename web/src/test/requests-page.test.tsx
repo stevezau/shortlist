@@ -87,7 +87,8 @@ function person(username: string, displayName: string): User {
     prefs: {},
     history_depth: 0,
     last_run_at: null,
-    hit_rate: null,
+    picks_watched_30d: null,
+    last_pick_watched_at: null,
     preview_titles: [],
   };
 }

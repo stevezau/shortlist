@@ -2345,10 +2345,10 @@ export interface paths {
         };
         /**
          * List Users
-         * @description Every user with their badges, watch depth, lifetime hit rate and a pick preview.
+         * @description Every user with their badges, watch depth, picks watched in 30 days and a pick preview.
          *
-         *     Deliberately a plain `def`, not `async def`: it issues four synchronous queries PER USER,
-         *     which on a 40-account server is ~160 round-trips. On the event loop that stalls SSE,
+         *     Deliberately a plain `def`, not `async def`: it issues two synchronous queries PER USER,
+         *     which on a 40-account server is ~80 round-trips. On the event loop that stalls SSE,
          *     `/api/system/health` and every other request for the duration; as a sync handler Starlette
          *     runs it in a worker thread instead.
          */
@@ -5884,16 +5884,18 @@ export interface components {
             friendly_name: string;
             /** History Depth */
             history_depth: number;
-            /** Hit Rate */
-            hit_rate: number | null;
             /** Id */
             id: number;
+            /** Last Pick Watched At */
+            last_pick_watched_at: string | null;
             /** Last Run At */
             last_run_at: string | null;
             /** Manage Sharing */
             manage_sharing: boolean;
             /** Nickname */
             nickname: string;
+            /** Picks Watched 30D */
+            picks_watched_30d: number | null;
             /** Plex Account Id */
             plex_account_id: number;
             /** Prefs */

@@ -7311,20 +7311,20 @@
             "title": "History Depth",
             "type": "integer"
           },
-          "hit_rate": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_pick_watched_at": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Hit Rate"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
+            "title": "Last Pick Watched At"
           },
           "last_run_at": {
             "anyOf": [
@@ -7344,6 +7344,17 @@
           "nickname": {
             "title": "Nickname",
             "type": "string"
+          },
+          "picks_watched_30d": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Picks Watched 30D"
           },
           "plex_account_id": {
             "title": "Plex Account Id",
@@ -7413,7 +7424,8 @@
           "prefs",
           "history_depth",
           "last_run_at",
-          "hit_rate",
+          "picks_watched_30d",
+          "last_pick_watched_at",
           "preview_titles",
           "unhidden_rows",
           "departed"
@@ -12430,7 +12442,7 @@
     },
     "/api/users": {
       "get": {
-        "description": "Every user with their badges, watch depth, lifetime hit rate and a pick preview.\n\nDeliberately a plain `def`, not `async def`: it issues four synchronous queries PER USER,\nwhich on a 40-account server is ~160 round-trips. On the event loop that stalls SSE,\n`/api/system/health` and every other request for the duration; as a sync handler Starlette\nruns it in a worker thread instead.",
+        "description": "Every user with their badges, watch depth, picks watched in 30 days and a pick preview.\n\nDeliberately a plain `def`, not `async def`: it issues two synchronous queries PER USER,\nwhich on a 40-account server is ~80 round-trips. On the event loop that stalls SSE,\n`/api/system/health` and every other request for the duration; as a sync handler Starlette\nruns it in a worker thread instead.",
         "operationId": "list_users_api_users_get",
         "responses": {
           "200": {

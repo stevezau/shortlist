@@ -46,7 +46,8 @@ USER_KEYS = {
     "prefs",
     "history_depth",
     "last_run_at",
-    "hit_rate",
+    "picks_watched_30d",
+    "last_pick_watched_at",
     "preview_titles",
     "unhidden_rows",
     "departed",
@@ -117,6 +118,80 @@ class TestUsersApi:
         """Absent evidence renders as zero, never as null: the SPA branches on the number, and a null
         would make an unmeasured account look the same as an exposed one."""
         assert all(u["unhidden_rows"] == 0 for u in client.get("/api/users").json())
+
+    def test_the_list_counts_distinct_picks_watched_in_30_days_and_the_last_watch_ever(self, client: TestClient):
+        from shortlist.server.db.models import PickRow, Run
+
+        now = datetime.now(UTC)
+        five_days_ago = now - timedelta(days=5)
+        forty_days_ago = now - timedelta(days=40)
+        with client.app.state.sessions() as session:
+            sarah = session.query(User).filter_by(slug="sarah").one()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            # (tmdb_id, watched_at): 1 is picked twice (two runs' rows), 2 is old, 3 is unwatched.
+            for tmdb_id, watched_at in (
+                (1, five_days_ago),
+                (1, five_days_ago),
+                (2, forty_days_ago),
+                (3, None),
+                (4, now - timedelta(days=1)),
+            ):
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=sarah.id,
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        rating_key=tmdb_id,
+                        rank=tmdb_id,
+                        collection_slug="picked",
+                        section_key="1",
+                        library="Movies",
+                        title=f"Title {tmdb_id}",
+                        watched_at=watched_at,
+                    )
+                )
+            session.commit()
+
+        users = {u["username"]: u for u in client.get("/api/users").json()}
+
+        assert users["sarah"]["picks_watched_30d"] == 2, "titles 1 (once) and 4; 2 is too old, 3 unwatched"
+        assert users["sarah"]["last_pick_watched_at"] == (now - timedelta(days=1)).isoformat()
+        assert users["mike"]["picks_watched_30d"] is None
+        assert users["mike"]["last_pick_watched_at"] is None
+
+    def test_an_old_watch_sets_the_last_watched_date_but_adds_nothing_to_the_count(self, client: TestClient):
+        from shortlist.server.db.models import PickRow, Run
+
+        forty_days_ago = datetime.now(UTC) - timedelta(days=40)
+        with client.app.state.sessions() as session:
+            sarah = session.query(User).filter_by(slug="sarah").one()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=sarah.id,
+                    tmdb_id=2,
+                    media_type="movie",
+                    rating_key=2,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Old",
+                    watched_at=forty_days_ago,
+                )
+            )
+            session.commit()
+
+        sarah_out = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+
+        assert sarah_out["picks_watched_30d"] == 0
+        assert sarah_out["last_pick_watched_at"] == forty_days_ago.isoformat()
 
     def test_prefs_pass_through_whatever_an_install_has_accrued(self, client: TestClient):
         """`prefs` is free-form JSON: which keys exist varies by DATA, not by branch (`history_depth`

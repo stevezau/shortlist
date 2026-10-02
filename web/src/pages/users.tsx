@@ -46,10 +46,9 @@ import {
 import { api } from "@/lib/api";
 import { profileName } from "@/lib/user-profile";
 import type { RowSources, User } from "@/lib/types";
-import { formatHitRate, timeAgo } from "@/lib/format";
+import { timeAgo } from "@/lib/format";
 import {
   queryKeys,
-  useHitRatesMatured,
   useRemoveUser,
   useRequestRowSources,
   useSetAllUsersEnabled,
@@ -195,7 +194,6 @@ export function UsersPage() {
     if (failed.size) setBatchError(`${failed.size} ${failed.size === 1 ? "person couldn’t" : "people couldn’t"} be updated. They stay selected; try again. Other changes were saved.`);
     else toast.success(paused ? "Rebuilding paused. Existing rows stay on Plex." : "Rebuilding resumed for enabled people.");
   };
-  const ratesMatured = useHitRatesMatured();
   // ONCE for the page, never per row — see RequestsCell.
   const requestSources = useRequestRowSources("", true);
 
@@ -515,7 +513,7 @@ export function UsersPage() {
             <div className="overflow-hidden rounded-xl border bg-card">
               <Table>
                 <TableHeader className="hidden lg:table-header-group bg-muted/20">
-                  <TableRow className="hover:bg-transparent"><TableHead className="w-10 pl-4"><span className="sr-only">Selection</span></TableHead><TableHead>Person</TableHead><TableHead>Rebuilding</TableHead><TableHead>Watch history</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right">Enabled</TableHead></TableRow>
+                  <TableRow className="hover:bg-transparent"><TableHead className="w-10 pl-4"><span className="sr-only">Selection</span></TableHead><TableHead>Person</TableHead><TableHead>Status</TableHead><TableHead>Watch history</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right">Enabled</TableHead></TableRow>
                 </TableHeader>
                 <TableBody className="grid lg:table-row-group">
                   {visibleUsers.map((user) => <TableRow key={user.id} className={`group flex flex-wrap gap-x-3 gap-y-2 px-4 py-3 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selected.has(user.id) ? "bg-primary/5" : ""}`}>
@@ -532,7 +530,7 @@ export function UsersPage() {
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                             {user.display_name && user.display_name !== user.username && <span className="break-all" title="Plex username">{user.username}</span>}
                             <RequestsCell user={user} sources={requestSources} />
-                            <span title="Share of Shortlist’s picks this person has watched, over all time">Picks watched {!ratesMatured && (user.hit_rate ?? 0) <= 0 && "(too early)"}: <span className="tabular-nums">{formatHitRate(user.hit_rate, ratesMatured)}</span></span>
+                            <span title={user.last_pick_watched_at ? `Last watched a pick ${timeAgo(user.last_pick_watched_at)}` : "Hasn’t watched a pick yet"}>Picks watched: <span className="tabular-nums">{user.picks_watched_30d === null ? "—" : `${user.picks_watched_30d} in 30 days`}</span></span>
                           </div>
                         </div>
                       </div>
