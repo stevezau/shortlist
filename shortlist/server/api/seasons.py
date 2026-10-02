@@ -163,10 +163,15 @@ class PresetOut(SeasonIn):
 
 
 class SeasonPreviewIn(SeasonSourcesIO):
-    """A draft season to count. Undeclared fields are let through, not refused: the editor posts its whole
-    draft, and a preview stores nothing that a misspelt field could silently fail to set."""
+    """A draft season to count, for the row the editor was opened from. Undeclared fields are let through, not
+    refused: the editor posts its whole draft, and a preview stores nothing that a misspelt field could
+    silently fail to set."""
 
     rule: DateRuleIO
+    #: The row's ``media``: only titles of its type count, because a films row never draws a show.
+    media: Literal["movie", "show", "both"] = "both"
+    #: The row's ``library_keys``: only titles in those libraries count. Empty is every library of its type.
+    library_keys: list[str] = Field(default_factory=list)
 
 
 class CollectionCountOut(PassthroughModel):
@@ -211,6 +216,8 @@ class PlexCollectionOut(PassthroughModel):
     title: str
     count: int
     smart: bool
+    #: Its library's type, so the editor counts a TV collection in shows.
+    media_type: Literal["movie", "show"]
 
 
 class LibraryTitleOut(PassthroughModel):
@@ -333,7 +340,7 @@ async def preview_season(body: SeasonPreviewIn, request: Request) -> dict:
 
     def count() -> seasons_mod.SeasonPreview:
         plex = _plex(state)
-        index = library_index(plex, state.sessions)
+        index = library_index(plex, state.sessions, media=body.media, library_keys=body.library_keys)
         return seasons_mod.preview(tmdb, plex, draft, index, today=today, workers=_PREVIEW_PAGE_WORKERS)
 
     result = await _off_loop(count, "season preview")
@@ -375,6 +382,7 @@ async def plex_collections(request: Request, q: str = "") -> list[dict]:
             "title": c.title,
             "count": c.count,
             "smart": c.smart,
+            "media_type": c.media_type.value,
         }
         for c in matches
     ]

@@ -2,6 +2,7 @@ import { useId } from "react";
 
 import { badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { SeasonRow } from "@/lib/season-verdict";
 import { longDate, seasonTiming, seasonWindowLabel, timingLabel } from "@/lib/seasons";
 import type { Season } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -11,8 +12,8 @@ import { SeasonFilmCount } from "./season-film-count";
 /**
  * One season in the row editor's list (#137): tick it to show it in this row.
  *
- * A season of the owner's ("Yours") shows its film count against this row and an Edit button; a
- * built-in shows neither — its films are known to be plenty, and it can't be edited.
+ * A season of the owner's ("Yours") shows its count of this row's kind of title, against this row, and an
+ * Edit button; a built-in shows neither — its films are known to be plenty, and it can't be edited.
  */
 export function SeasonListItem({
   season,
@@ -20,8 +21,7 @@ export function SeasonListItem({
   onToggle,
   rowLeadDays,
   rowAfterDays,
-  rowSize,
-  perPerson,
+  row,
   onEdit,
 }: {
   season: Season;
@@ -30,8 +30,7 @@ export function SeasonListItem({
   /** The row's timing, which a built-in follows. */
   rowLeadDays: number;
   rowAfterDays: number;
-  rowSize: number;
-  perPerson: boolean;
+  row: SeasonRow;
   onEdit: () => void;
 }) {
   const detailsId = useId();
@@ -91,7 +90,7 @@ export function SeasonListItem({
       </div>
       {!season.builtin && (
         <div className="mt-1 pl-7">
-          <SeasonFilmCount source={season} rowSize={rowSize} perPerson={perPerson} />
+          <SeasonFilmCount source={season} row={row} />
         </div>
       )}
     </li>

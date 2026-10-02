@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SeasonEditorDialog, type SeasonEditorTarget } from "@/components/rows/seasons/season-editor-dialog";
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
+import type { SeasonRow } from "@/lib/season-verdict";
 import type { SeasonInput, SeasonPreviewInput } from "@/lib/types";
 
 import { BUILTINS, THANKSGIVING, THANKSGIVING_US, preview } from "./season-fixtures";
@@ -36,8 +37,7 @@ const MISSING_COLLECTION =
 function renderEditor(
   target: SeasonEditorTarget,
   {
-    rowSize = 15,
-    perPerson = true,
+    row = { size: 15, perPerson: true, media: "movie", libraryKeys: [] } as SeasonRow,
     tickedHere = ["halloween"] as string[],
     savedRow = null as { id: number; seasons: string[] } | null,
   } = {},
@@ -51,8 +51,7 @@ function renderEditor(
       <QueryClientProvider client={client}>
         <SeasonEditorDialog
           target={target}
-          rowSize={rowSize}
-          perPerson={perPerson}
+          row={row}
           savedRow={savedRow}
           tickedHere={tickedHere}
           onClose={onClose}
@@ -85,7 +84,14 @@ describe("SeasonEditorDialog", () => {
 
   it("warns that a collection missing from the library tonight adds nothing until it's back", async () => {
     mocks.getPlexCollections.mockResolvedValue([
-      { section_key: "1", section_title: "Movies", title: "Thanksgiving Movies", count: 18, smart: false },
+      {
+        section_key: "1",
+        section_title: "Movies",
+        title: "Thanksgiving Movies",
+        count: 18,
+        smart: false,
+        media_type: "movie",
+      },
     ]);
     mocks.previewSeason.mockImplementation((body: SeasonPreviewInput) =>
       Promise.resolve(
@@ -137,7 +143,7 @@ describe("SeasonEditorDialog", () => {
 
   it("says a per-person row will look alike when the season has fewer than 100 films", async () => {
     mocks.previewSeason.mockResolvedValue(preview({ total: 26, from_tags: 26, per_tag: { "4543": 26 } }));
-    renderEditor({ kind: "preset", preset: THANKSGIVING_US }, { rowSize: 15, perPerson: true });
+    renderEditor({ kind: "preset", preset: THANKSGIVING_US });
     expect(
       await screen.findByText("People's rows will be much alike — works best in a shared row"),
     ).toBeInTheDocument();
@@ -225,7 +231,30 @@ describe("SeasonEditorDialog", () => {
 
     mocks.previewSeason.mockResolvedValue(preview({ total: 150, from_tags: 150 }));
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByText("Enough for this row")).toBeInTheDocument();
+    expect(await screen.findByText("Enough films for this row")).toBeInTheDocument();
+  });
+
+  it("counts for the row it was opened from: its media and libraries, in that row's word", async () => {
+    mocks.previewSeason.mockResolvedValue(preview({ total: 72, from_tags: 72, per_tag: { "4543": 72 } }));
+    renderEditor(
+      { kind: "preset", preset: THANKSGIVING_US },
+      { row: { size: 15, perPerson: false, media: "both", libraryKeys: ["1", "2"] } },
+    );
+
+    expect(await screen.findByText("titles in your libraries")).toBeInTheDocument();
+    expect(screen.getByText("Enough titles for this row")).toBeInTheDocument();
+    const body = mocks.previewSeason.mock.calls[0]?.[0] as SeasonPreviewInput;
+    expect([body.media, body.library_keys]).toEqual(["both", ["1", "2"]]);
+  });
+
+  it("says a TV collection holds shows", async () => {
+    mocks.getPlexCollections.mockResolvedValue([
+      { section_key: "2", section_title: "TV", title: "Thanksgiving TV", count: 4, smart: false, media_type: "show" },
+    ]);
+    renderEditor({ kind: "create" });
+    await userEvent.type(screen.getByLabelText("Search your Plex collections"), "thanks");
+
+    expect(await screen.findByText("TV · 4 shows")).toBeInTheDocument();
   });
 
   it("sends the owner to Settings, not Retry, when there is no TMDB key", async () => {

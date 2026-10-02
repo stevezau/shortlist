@@ -465,6 +465,69 @@ class TestPreview:
         assert date.fromisoformat(result["next_date"]).month == 11 and result["rule_error"] is None
         assert tmdb.workers and set(tmdb.workers) == {6}, "the editor reads a list's pages six at a time"
 
+    class _Libraries(_Plex):
+        """Movies (1) and 4K (5), both films, and TV (2). Each holds its own titles; one TV collection."""
+
+        SECTIONS: ClassVar[list] = [
+            SimpleNamespace(key="1", type="movie", title="Movies"),
+            SimpleNamespace(key="5", type="movie", title="4K"),
+            SimpleNamespace(key="2", type="show", title="TV"),
+        ]
+        HELD: ClassVar[dict] = {"1": {1: 101}, "5": {2: 502}, "2": {10: 210, 11: 211}}
+
+        def sections(self) -> list:
+            return list(self.SECTIONS)
+
+        def build_library_index(self, section) -> dict[int, int]:
+            self.scans += 1
+            return dict(self.HELD[section.key])
+
+        def collection_members(self, section_key: str, title: str) -> list[LibraryTitle] | None:
+            return [LibraryTitle(11, MediaType.SHOW, "A Thanksgiving Special", 2001)] if section_key == "2" else None
+
+    #: Films 1 and 2 and shows 10 and 11 carry the tag; the TV library's collection holds show 11.
+    BOTH_KINDS: ClassVar[dict] = {
+        (MediaType.MOVIE, "4543"): [
+            {"id": 1, "title": "Planes, Trains and Automobiles", "vote_count": 1500},
+            {"id": 2, "title": "Pieces of April", "vote_count": 90},
+        ],
+        (MediaType.SHOW, "4543"): [
+            {"id": 10, "name": "Thanksgiving Reunion", "vote_count": 40},
+            {"id": 11, "name": "A Thanksgiving Special", "vote_count": 30},
+        ],
+    }
+    TV_COLLECTION: ClassVar[dict] = {"section_key": "2", "section_title": "TV", "title": "Thanksgiving TV"}
+
+    @pytest.mark.parametrize(
+        ("media", "library_keys", "total", "collection"),
+        [
+            ("movie", [], 2, 0),
+            ("show", [], 2, 1),
+            ("both", [], 4, 1),
+            ("movie", ["1"], 1, 0),
+            ("both", ["5", "2"], 3, 1),
+        ],
+        ids=["films_row", "shows_row", "both_row", "films_row_in_one_library", "both_row_in_two_libraries"],
+    )
+    def test_it_counts_only_what_the_row_it_was_opened_from_can_draw(
+        self, client: TestClient, monkeypatch, media, library_keys, total, collection
+    ):
+        """#137 I-1: St Patrick's read "72 films" on a real server that held 56 of them — the other 16 were
+        shows, which a films row never draws, and a library the row does not build in counted too."""
+        _connect(monkeypatch, client, _Tmdb(self.BOTH_KINDS), self._Libraries())
+
+        result = self._preview(
+            client, tags=[self.TAG], collections=[self.TV_COLLECTION], media=media, library_keys=library_keys
+        )
+
+        assert result["total"] == total
+        assert result["per_tag"] == {"4543": total}
+        assert result["per_collection"][0]["in_library"] == collection
+
+    def test_without_a_row_it_counts_every_library_of_both_kinds(self, client: TestClient, monkeypatch):
+        _connect(monkeypatch, client, _Tmdb(self.BOTH_KINDS), self._Libraries())
+        assert self._preview(client, tags=[self.TAG])["total"] == 4
+
     def test_an_invalid_rule_still_counts(self, client: TestClient, monkeypatch):
         _connect(monkeypatch, client, _Tmdb(self.LISTS), _Plex(held={1: 101}))
         result = self._preview(client, rule={"kind": "nth", "month": 11, "nth": 9, "weekday": 3}, tags=[self.TAG])
@@ -534,6 +597,7 @@ class TestSearches:
                 "title": "A THANKSGIVING Feast",
                 "count": 3,
                 "smart": False,
+                "media_type": "movie",
             },
             {
                 "section_key": "1",
@@ -541,8 +605,15 @@ class TestSearches:
                 "title": "Thanksgiving Movies",
                 "count": 12,
                 "smart": False,
+                "media_type": "movie",
             },
         ]
+
+    def test_a_tv_collection_says_it_holds_shows(self, client: TestClient, monkeypatch):
+        tv = LibraryCollection("2", "TV", "Thanksgiving Episodes", 4, False, MediaType.SHOW)
+        _connect(monkeypatch, client, None, _Plex(collections=[tv]))
+
+        assert client.get("/api/seasons/plex-collections?q=thanks").json()[0]["media_type"] == "show"
 
     def test_library_search_asks_plex_for_ten(self, client: TestClient, monkeypatch):
         plex = _Plex(titles=[LibraryTitle(2, MediaType.MOVIE, "Pieces of April", 2003)])

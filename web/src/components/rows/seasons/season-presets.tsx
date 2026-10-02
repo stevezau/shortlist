@@ -5,28 +5,27 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSeasonPresets } from "@/lib/queries";
 import { ruleLabel, timingLabel } from "@/lib/seasons";
+import type { SeasonRow } from "@/lib/season-verdict";
 import type { SeasonPreset } from "@/lib/types";
 
 import { SeasonFilmCount } from "./season-film-count";
 
 /**
  * "Add more seasons" (#137 D9): the ready-made seasons not added yet, each with its date and how many
- * films it finds here, and Create your own. Add never saves anything: it opens the editor filled in,
- * so the owner sees the films before saving.
+ * titles it finds for this row, and Create your own. Add never saves anything: it opens the editor
+ * filled in, so the owner sees the titles before saving.
  *
  * Folded away unless `defaultOpen`; nothing is asked of the server until it is opened, since every
- * card counts its films.
+ * card counts its titles.
  */
 export function SeasonPresets({
   defaultOpen,
-  rowSize,
-  perPerson,
+  row,
   onAdd,
   onCreate,
 }: {
   defaultOpen: boolean;
-  rowSize: number;
-  perPerson: boolean;
+  row: SeasonRow;
   onAdd: (preset: SeasonPreset) => void;
   onCreate: () => void;
 }) {
@@ -51,7 +50,7 @@ export function SeasonPresets({
         <div className="space-y-3 border-t p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground">
-              Add opens the season filled in, so you can check its films before saving it.
+              Add opens the season filled in, so you can check what it finds before saving it.
             </p>
             <Button type="button" size="sm" onClick={onCreate}>
               <Plus aria-hidden="true" />
@@ -79,13 +78,7 @@ export function SeasonPresets({
             // ~370px wide on a 1024px screen, beside the summary.
             <ul aria-label="Ready-made seasons" className="grid grid-cols-[repeat(auto-fill,minmax(min(14rem,100%),1fr))] gap-2">
               {presets.data.map((preset) => (
-                <PresetCard
-                  key={preset.key}
-                  preset={preset}
-                  rowSize={rowSize}
-                  perPerson={perPerson}
-                  onAdd={() => onAdd(preset)}
-                />
+                <PresetCard key={preset.key} preset={preset} row={row} onAdd={() => onAdd(preset)} />
               ))}
             </ul>
           )}
@@ -99,17 +92,7 @@ export function SeasonPresets({
   );
 }
 
-function PresetCard({
-  preset,
-  rowSize,
-  perPerson,
-  onAdd,
-}: {
-  preset: SeasonPreset;
-  rowSize: number;
-  perPerson: boolean;
-  onAdd: () => void;
-}) {
+function PresetCard({ preset, row, onAdd }: { preset: SeasonPreset; row: SeasonRow; onAdd: () => void }) {
   return (
     <li className="flex flex-col gap-2 rounded-md border bg-card p-3">
       <div className="flex items-start gap-2">
@@ -126,13 +109,7 @@ function PresetCard({
           Add
         </Button>
       </div>
-      <SeasonFilmCount
-        source={preset}
-        rowSize={rowSize}
-        perPerson={perPerson}
-        noun="films in your libraries"
-        chipWhenOk
-      />
+      <SeasonFilmCount source={preset} row={row} inLibraries chipWhenOk />
       {preset.note && <p className="text-xs text-muted-foreground">{preset.note}</p>}
     </li>
   );

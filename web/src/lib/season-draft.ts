@@ -1,4 +1,5 @@
 import { ApiError } from "@/lib/api";
+import type { SeasonRow } from "@/lib/season-verdict";
 import { MONTH_NAMES } from "@/lib/seasons";
 import type {
   DateRule,
@@ -128,9 +129,10 @@ function pickPick(pick: SeasonPick): SeasonPick {
   return { tmdb_id: pick.tmdb_id, media_type: pick.media_type, title: pick.title, year: pick.year ?? null };
 }
 
-/** What a count needs, and only that, in one shape: a saved season's list entry and the editor opened
- *  on it ask the same question, so they share one answer. */
-export function previewInput(source: Sources): SeasonPreviewInput {
+/** A season's date and sources, and nothing else: what a save sends and a count is made of. */
+function sourcesInput(
+  source: Sources,
+): Pick<SeasonPreviewInput, "rule" | "tags" | "genre" | "excluded_genres" | "collections" | "picks"> {
   return {
     rule: pickRule(source.rule),
     tags: (source.tags ?? []).map(pickTag),
@@ -141,12 +143,18 @@ export function previewInput(source: Sources): SeasonPreviewInput {
   };
 }
 
+/** What a count needs, and only that, in one shape: a saved season's list entry and the editor opened
+ *  on it ask the same question for the same row, so they share one answer. */
+export function previewInput(source: Sources, row: Pick<SeasonRow, "media" | "libraryKeys">): SeasonPreviewInput {
+  return { ...sourcesInput(source), media: row.media, library_keys: [...row.libraryKeys] };
+}
+
 /** The body to save. `preset` names the ready-made season this came from, on create only. */
 export function seasonBody(draft: SeasonDraft, preset: string | null): SeasonInput {
   return {
     name: draft.name.trim(),
     emoji: draft.emoji.trim(),
-    ...previewInput(draft),
+    ...sourcesInput(draft),
     lead_days: draft.lead_days,
     after_days: draft.after_days,
     ...(preset ? { preset } : {}),

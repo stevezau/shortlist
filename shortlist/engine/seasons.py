@@ -636,7 +636,8 @@ def preview(
         tmdb: Reads TMDB lists and single titles.
         plex: Reads the season's Plex collections.
         season: The draft. Its slug, name and timing are not read.
-        library_index: ``tmdb_id -> ratingKey`` per media type, for every library.
+        library_index: ``tmdb_id -> ratingKey`` per media type, over the libraries the row it is counted for
+            builds in: every count is of what that row can draw (#137 I-1).
         today: The day the next date is counted from.
         workers: Pages of one TMDB list read at once.
 

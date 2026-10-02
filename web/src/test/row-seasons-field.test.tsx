@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RowSeasonsField } from "@/components/rows/row-seasons-field";
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
+import type { SeasonRow } from "@/lib/season-verdict";
 import { seasonDate } from "@/lib/seasons";
 
 import {
@@ -41,7 +42,12 @@ type Value = { seasons: string[]; season_lead_days: number; season_after_days: n
 
 function renderField(
   value: Value,
-  { schedule = "30 3 * * *", name = "{season_emoji} {season} picks", status = null as never } = {},
+  {
+    schedule = "30 3 * * *",
+    name = "{season_emoji} {season} picks",
+    status = null as never,
+    row = { size: 15, perPerson: true, media: "movie", libraryKeys: [] } as SeasonRow,
+  } = {},
 ) {
   const onChange = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -54,8 +60,7 @@ function renderField(
           schedule={schedule}
           name={name}
           status={status}
-          rowSize={15}
-          perPerson
+          row={row}
           savedRow={null}
         />
       </QueryClientProvider>
@@ -118,6 +123,15 @@ describe("RowSeasonsField", () => {
     expect(within(item).getByRole("button", { name: "Edit Thanksgiving" })).toBeInTheDocument();
   });
 
+  it("counts a season for this row's media and libraries, and says shows for a shows row", async () => {
+    renderField(ON, { row: { size: 15, perPerson: true, media: "show", libraryKeys: ["2"] } });
+    const box = await screen.findByRole("checkbox", { name: /Thanksgiving/ });
+    const item = box.closest("[data-season]") as HTMLElement;
+
+    expect(await within(item).findByText("26 shows")).toBeInTheDocument();
+    expect(mocks.previewSeason).toHaveBeenCalledWith(expect.objectContaining({ media: "show", library_keys: ["2"] }));
+  });
+
   it("opens the editor on a season of the owner's from Edit", async () => {
     renderField(ON);
     await userEvent.click(await screen.findByRole("button", { name: "Edit Thanksgiving" }));
@@ -171,6 +185,7 @@ describe("RowSeasonsField", () => {
     const card = (await within(presets).findByText("Thanksgiving (US)")).closest("li") as HTMLElement;
     expect(within(card).getByText(/4th Thursday of November/)).toBeInTheDocument();
     expect(await within(card).findByText("26 films in your libraries")).toBeInTheDocument();
+    expect(mocks.previewSeason).toHaveBeenCalledWith(expect.objectContaining({ media: "movie", library_keys: [] }));
     expect(within(presets).getByText("TMDB has no Father's Day tag — add a collection or your own picks.")).toBeInTheDocument();
 
     await userEvent.click(within(card).getByRole("button", { name: "Add Thanksgiving (US)" }));

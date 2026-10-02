@@ -15,12 +15,14 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
-from shortlist.engine.models import MediaType
+from shortlist.engine.delivery import section_kind, target_sections
+from shortlist.engine.models import MediaType, RowSpec
 from shortlist.server.db.adapters import DbCache
 
 if TYPE_CHECKING:
@@ -43,21 +45,33 @@ class _LibraryReader(Protocol):
     def build_library_index(self, section: LibrarySection) -> dict[int, int]: ...
 
 
-def library_index(plex: _LibraryReader, sessions: sessionmaker[Session]) -> dict[MediaType, dict[int, int]]:
-    """``tmdb_id -> ratingKey`` per media type, across every movie and TV library.
+def library_index(
+    plex: _LibraryReader,
+    sessions: sessionmaker[Session],
+    *,
+    media: str = "both",
+    library_keys: Collection[str] = (),
+) -> dict[MediaType, dict[int, int]]:
+    """``tmdb_id -> ratingKey`` per media type, across the libraries one row builds in.
+
+    A row draws only from its own libraries of its own media type, so a count over every library would
+    overstate what it can use (#137 I-1). Which libraries those are is `delivery.target_sections`'s answer,
+    the very rule a run delivers by.
 
     Args:
         plex: The owner's server.
         sessions: For the run's cached index.
+        media: The row's ``media``: "movie", "show" or "both".
+        library_keys: The row's ``library_keys``; empty is every library of its media type.
 
     Returns:
         The index, in the shape `seasons.load_titles` and `seasons.preview` take.
     """
     cache = DbCache(sessions, kind="library_index")
+    row = RowSpec(slug="", name_template="", size=0, media=media, library_keys=[str(key) for key in library_keys])
     index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
-    for section in plex.sections():
-        kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-        index[kind].update(_section_index(plex, cache, section))
+    for section in target_sections(plex.sections(), row):
+        index[section_kind(section)].update(_section_index(plex, cache, section))
     return index
 
 

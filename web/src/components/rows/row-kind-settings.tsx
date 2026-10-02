@@ -527,8 +527,12 @@ export function RowKindSettings({
             schedule={input.schedule}
             name={input.name_template || input.name}
             status={seasonStatus}
-            rowSize={input.size}
-            perPerson={input.build !== "shared"}
+            row={{
+              size: input.size,
+              perPerson: input.build !== "shared",
+              media: input.media,
+              libraryKeys: input.library_keys,
+            }}
             savedRow={savedRow}
           />
         </div>

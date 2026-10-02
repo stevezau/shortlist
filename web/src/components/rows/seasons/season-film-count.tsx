@@ -1,6 +1,6 @@
 import { Skeleton } from "@/components/ui/skeleton";
 import { previewInput } from "@/lib/season-draft";
-import { seasonVerdict } from "@/lib/season-verdict";
+import { seasonVerdict, titleNoun, type SeasonRow } from "@/lib/season-verdict";
 import { useSeasonPreview } from "@/lib/queries";
 import type { Season, SeasonPreset } from "@/lib/types";
 
@@ -8,30 +8,29 @@ import { SeasonPreviewError } from "./season-preview-error";
 import { SeasonVerdictChip } from "./season-verdict-chip";
 
 /**
- * How many films a season finds in the libraries, and what that means for this row — counted by the
- * server (`POST /api/seasons/preview`) when this mounts, so a list only asks for what is on screen.
+ * How many of the row's kind of title a season finds in the row's libraries, and what that means for the
+ * row — counted by the server (`POST /api/seasons/preview`) when this mounts, so a list only asks for what
+ * is on screen.
  */
 export function SeasonFilmCount({
   source,
-  rowSize,
-  perPerson,
-  noun = "films",
+  row,
+  inLibraries = false,
   chipWhenOk = false,
 }: {
   source: Season | SeasonPreset;
-  rowSize: number;
-  perPerson: boolean;
-  /** "films", or "films in your libraries" where nothing else says where they are counted. */
-  noun?: "films" | "films in your libraries";
-  /** Show "Enough for this row" too, not only a warning. */
+  row: SeasonRow;
+  /** Say "in your libraries" too, where nothing else says where they are counted. */
+  inLibraries?: boolean;
+  /** Show "Enough … for this row" too, not only a warning. */
   chipWhenOk?: boolean;
 }) {
-  const preview = useSeasonPreview(previewInput(source));
+  const preview = useSeasonPreview(previewInput(source, row));
 
   if (preview.isPending) {
     return (
       <span className="inline-flex items-center">
-        <span className="sr-only">Counting films…</span>
+        <span className="sr-only">{`Counting ${titleNoun(row.media, 2)}…`}</span>
         <Skeleton aria-hidden="true" className="h-5 w-24" />
       </span>
     );
@@ -41,11 +40,10 @@ export function SeasonFilmCount({
   }
 
   const { total } = preview.data;
-  const verdict = seasonVerdict(total, rowSize, perPerson);
-  const words = noun.replace(/^films/, total === 1 ? "film" : "films");
+  const verdict = seasonVerdict(total, row);
   return (
     <span className="flex flex-wrap items-center gap-2">
-      <span className="text-sm">{`${total} ${words}`}</span>
+      <span className="text-sm">{`${total} ${titleNoun(row.media, total)}${inLibraries ? " in your libraries" : ""}`}</span>
       {(chipWhenOk || verdict.level !== "ok") && <SeasonVerdictChip verdict={verdict} />}
     </span>
   );

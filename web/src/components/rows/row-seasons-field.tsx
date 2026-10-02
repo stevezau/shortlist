@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { queryKeys, useSeasons } from "@/lib/queries";
 import { usesSeason } from "@/lib/placeholders";
 import { MAX_AFTER_DAYS, MAX_LEAD_DAYS, clampDays } from "@/lib/season-draft";
+import { titleNoun, type SeasonRow } from "@/lib/season-verdict";
 import { isNightly, seasonStatusLine } from "@/lib/seasons";
 import type { Season, SeasonStatus } from "@/lib/types";
 
@@ -42,8 +43,7 @@ export function RowSeasonsField({
   schedule,
   name,
   status,
-  rowSize,
-  perPerson,
+  row,
   savedRow,
 }: {
   value: SeasonsValue;
@@ -54,9 +54,8 @@ export function RowSeasonsField({
   name: string;
   /** Where the SAVED row is in its calendar; null for a new row or one not yet seasonal. */
   status: SeasonStatus | null;
-  /** The row's size and whether each person gets their own: what a season's film count is judged by. */
-  rowSize: number;
-  perPerson: boolean;
+  /** The row's size, mode, media and libraries: what a season's count is made for and judged by. */
+  row: SeasonRow;
   /** The row as saved: its id, so the editor names only OTHER rows that use a season, and its seasons,
    *  so a delete the server would refuse for this row is explained first. Null for a new row. */
   savedRow: { id: number; seasons: readonly string[] } | null;
@@ -163,7 +162,7 @@ export function RowSeasonsField({
           Seasons
         </h3>
         <p className="text-sm text-muted-foreground">
-          Ticked seasons show in this row on their dates. Only films in your libraries are used.
+          Ticked seasons show in this row on their dates. Only {titleNoun(row.media, 2)} in your libraries are used.
         </p>
       </div>
 
@@ -192,8 +191,7 @@ export function RowSeasonsField({
                 onToggle={() => toggleSeason(season.slug)}
                 rowLeadDays={value.season_lead_days}
                 rowAfterDays={value.season_after_days}
-                rowSize={rowSize}
-                perPerson={perPerson}
+                row={row}
                 onEdit={() => openEditor({ kind: "edit", season })}
               />
             ))}
@@ -219,8 +217,7 @@ export function RowSeasonsField({
       {catalogue.isSuccess && (
         <SeasonPresets
           defaultOpen={ticked.every((season) => season.builtin)}
-          rowSize={rowSize}
-          perPerson={perPerson}
+          row={row}
           onAdd={(preset) => openEditor({ kind: "preset", preset })}
           onCreate={() => openEditor({ kind: "create" })}
         />
@@ -280,8 +277,7 @@ export function RowSeasonsField({
       {editor && (
         <SeasonEditorDialog
           target={editor}
-          rowSize={rowSize}
-          perPerson={perPerson}
+          row={row}
           savedRow={savedRow}
           tickedHere={value.seasons}
           onClose={() => setEditor(null)}

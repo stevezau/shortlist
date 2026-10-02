@@ -3939,6 +3939,14 @@
             "title": "Count",
             "type": "integer"
           },
+          "media_type": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media Type",
+            "type": "string"
+          },
           "section_key": {
             "title": "Section Key",
             "type": "string"
@@ -3961,7 +3969,8 @@
           "section_title",
           "title",
           "count",
-          "smart"
+          "smart",
+          "media_type"
         ],
         "title": "PlexCollectionOut",
         "type": "object"
@@ -6627,7 +6636,7 @@
       },
       "SeasonPreviewIn": {
         "additionalProperties": true,
-        "description": "A draft season to count. Undeclared fields are let through, not refused: the editor posts its whole\ndraft, and a preview stores nothing that a misspelt field could silently fail to set.",
+        "description": "A draft season to count, for the row the editor was opened from. Undeclared fields are let through, not\nrefused: the editor posts its whole draft, and a preview stores nothing that a misspelt field could\nsilently fail to set.",
         "properties": {
           "collections": {
             "items": {
@@ -6655,6 +6664,23 @@
               }
             ],
             "title": "Genre"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array"
+          },
+          "media": {
+            "default": "both",
+            "enum": [
+              "movie",
+              "show",
+              "both"
+            ],
+            "title": "Media",
+            "type": "string"
           },
           "picks": {
             "items": {
@@ -11327,7 +11353,7 @@
     },
     "/api/seasons/preview": {
       "post": {
-        "description": "Count a draft season's films in the libraries, as a run would, without saving anything.\n\nAn invalid date rule still counts: the editor shows what is wrong with the date beside the films.",
+        "description": "Count a draft season's titles in one row's libraries, as a run would, without saving anything.\n\nOnly the row's own media type and libraries count: that is all the row draws from (#137 I-1). An invalid\ndate rule still counts: the editor shows what is wrong with the date beside the count.",
         "operationId": "preview_season_api_seasons_preview_post",
         "requestBody": {
           "content": {

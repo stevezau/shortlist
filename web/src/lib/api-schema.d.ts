@@ -1108,9 +1108,10 @@ export interface paths {
         put?: never;
         /**
          * Preview Season
-         * @description Count a draft season's films in the libraries, as a run would, without saving anything.
+         * @description Count a draft season's titles in one row's libraries, as a run would, without saving anything.
          *
-         *     An invalid date rule still counts: the editor shows what is wrong with the date beside the films.
+         *     Only the row's own media type and libraries count: that is all the row draws from (#137 I-1). An invalid
+         *     date rule still counts: the editor shows what is wrong with the date beside the count.
          */
         post: operations["preview_season_api_seasons_preview_post"];
         delete?: never;
@@ -4569,6 +4570,11 @@ export interface components {
         PlexCollectionOut: {
             /** Count */
             count: number;
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "movie" | "show";
             /** Section Key */
             section_key: string;
             /** Section Title */
@@ -5685,8 +5691,9 @@ export interface components {
         };
         /**
          * SeasonPreviewIn
-         * @description A draft season to count. Undeclared fields are let through, not refused: the editor posts its whole
-         *     draft, and a preview stores nothing that a misspelt field could silently fail to set.
+         * @description A draft season to count, for the row the editor was opened from. Undeclared fields are let through, not
+         *     refused: the editor posts its whole draft, and a preview stores nothing that a misspelt field could
+         *     silently fail to set.
          */
         SeasonPreviewIn: {
             /** Collections */
@@ -5695,6 +5702,14 @@ export interface components {
             excluded_genres?: number[];
             /** Genre */
             genre?: number | null;
+            /** Library Keys */
+            library_keys?: string[];
+            /**
+             * Media
+             * @default both
+             * @enum {string}
+             */
+            media: "movie" | "show" | "both";
             /** Picks */
             picks?: components["schemas"]["PickIO"][];
             rule: components["schemas"]["DateRuleIO"];

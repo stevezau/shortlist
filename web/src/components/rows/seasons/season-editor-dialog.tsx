@@ -24,6 +24,7 @@ import {
   seasonBody,
   type SeasonDraft,
 } from "@/lib/season-draft";
+import { titleNoun, type SeasonRow } from "@/lib/season-verdict";
 import { addDays, longDate, weekdayDate } from "@/lib/seasons";
 import type { Season, SeasonPreset, SeasonPreviewInput } from "@/lib/types";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
@@ -60,8 +61,7 @@ const NAME_CLASH = /already a season called/;
  */
 export function SeasonEditorDialog({
   target,
-  rowSize,
-  perPerson,
+  row,
   savedRow,
   tickedHere,
   onClose,
@@ -70,9 +70,8 @@ export function SeasonEditorDialog({
   onDeleted,
 }: {
   target: SeasonEditorTarget;
-  /** The row the editor was opened from: its size and mode decide the verdict. */
-  rowSize: number;
-  perPerson: boolean;
+  /** The row the editor was opened from: what the count is made for, and its verdict judged by. */
+  row: SeasonRow;
   /** That row as saved: left out of "Also used by", and what the server judges a delete by. Null for a
    *  row not saved yet. */
   savedRow: { id: number; seasons: readonly string[] } | null;
@@ -100,14 +99,14 @@ export function SeasonEditorDialog({
 
   // Counted 400ms after the last change. Debounced as JSON: a fresh object every render would restart
   // the wait forever.
-  const draftKey = JSON.stringify(previewInput(draft));
+  const draftKey = JSON.stringify(previewInput(draft, row));
   const countedKey = useDebouncedValue(draftKey, 400);
   const counted = useMemo(() => JSON.parse(countedKey) as SeasonPreviewInput, [countedKey]);
   const preview = useSeasonPreview(counted, { keepPrevious: true });
   const counting = preview.isFetching || draftKey !== countedKey;
   // What the count says about the date, only while it is about the date on screen.
   const countedRule =
-    preview.data && JSON.stringify(preview.data.draft.rule) === JSON.stringify(previewInput(draft).rule)
+    preview.data && JSON.stringify(preview.data.draft.rule) === JSON.stringify(previewInput(draft, row).rule)
       ? preview.data
       : null;
   const ruleError = (countedRule?.rule_error ?? null) || ruleProblem(draft.rule);
@@ -264,8 +263,7 @@ export function SeasonEditorDialog({
                   Films
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                  A film belongs to this season if any source below finds it. Only films in your libraries are
-                  used. Mix sources freely.
+                  {`A ${titleNoun(row.media, 1)} belongs to this season if any source below finds it. Only ${titleNoun(row.media, 2)} in your libraries are used. Mix sources freely.`}
                 </p>
                 {target.kind === "preset" && target.preset.note && (
                   <p className="mt-2 rounded-md bg-muted/60 p-3 text-sm">{target.preset.note}</p>
@@ -282,6 +280,7 @@ export function SeasonEditorDialog({
                 onChange={(collections) => update({ collections })}
                 perCollection={preview.data?.per_collection}
                 counting={counting}
+                media={row.media}
               />
               <SeasonPicksPicker picks={draft.picks} onChange={(picks) => update({ picks })} />
               <SeasonGenreFields
@@ -293,7 +292,7 @@ export function SeasonEditorDialog({
             </section>
           </div>
 
-          <SeasonSummary preview={preview} rowSize={rowSize} perPerson={perPerson} alsoUsedBy={alsoUsedBy} />
+          <SeasonSummary preview={preview} row={row} alsoUsedBy={alsoUsedBy} />
         </div>
 
         <DialogFooter className="sticky bottom-0 -mx-4 flex-col gap-3 border-t bg-background px-4 py-3 sm:-mx-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:space-x-0 sm:px-6">

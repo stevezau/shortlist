@@ -4,6 +4,7 @@ import { badgeVariants } from "@/components/ui/badge";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { usePlexCollections } from "@/lib/queries";
 import { MAX_COLLECTIONS } from "@/lib/season-draft";
+import { titleNoun, type RowMedia } from "@/lib/season-verdict";
 import type { SeasonCollection, SeasonPreview } from "@/lib/types";
 
 import { ChosenItem, SearchResultRow, SeasonSearch } from "./season-search";
@@ -25,12 +26,15 @@ export function SeasonCollectionPicker({
   onChange,
   perCollection,
   counting,
+  media,
 }: {
   collections: SeasonCollection[];
   onChange: (collections: SeasonCollection[]) => void;
   /** Each chosen collection's films the season uses, from the latest count. */
   perCollection: SeasonPreview["per_collection"] | undefined;
   counting: boolean;
+  /** The row's media: a chosen collection's count is of what this row would use from it. */
+  media: RowMedia;
 }) {
   const headingId = useId();
   const [query, setQuery] = useState("");
@@ -79,7 +83,7 @@ export function SeasonCollectionPicker({
             <span className="font-medium">{found.title}</span>{" "}
             {found.smart && <span className={badgeVariants({ variant: "secondary" })}>Smart</span>}{" "}
             <span className="block text-muted-foreground sm:inline">
-              {found.section_title} · {found.count} {found.count === 1 ? "film" : "films"}
+              {found.section_title} · {found.count} {titleNoun(found.media_type, found.count)}
             </span>
           </SearchResultRow>
         )}
@@ -105,7 +109,7 @@ export function SeasonCollectionPicker({
                 <span className="font-medium">{collection.title}</span>{" "}
                 <span className="text-muted-foreground">
                   {collection.section_title}
-                  {counted?.found && ` · ${counted.in_library} ${counted.in_library === 1 ? "film" : "films"} used`}
+                  {counted?.found && ` · ${counted.in_library} ${titleNoun(media, counted.in_library)} used`}
                   {!counted && counting && " · counting…"}
                 </span>
                 {counted && !counted.found && <span className="mt-1 block text-warning">{MISSING_COLLECTION}</span>}

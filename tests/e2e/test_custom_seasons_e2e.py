@@ -33,7 +33,10 @@ def test_a_ready_made_season_with_a_film_picked_by_hand_is_saved_and_ticked_in_a
     page: Page, app: ShortlistApp, reset_fake_plex: FakePlexState
 ):
     thanksgiving = FAKE_TMDB_TAGS[THANKSGIVING_TAG]
-    tagged_here = len(thanksgiving.movies_in_library) + len(thanksgiving.shows_in_library)
+    # The Seasonal template builds films only, so the tag's show in the TV library is not counted: a films row
+    # never draws it (#137 I-1). Counting it is how a real server's St Patrick's read "72 films" for 56.
+    tagged_here = len(thanksgiving.movies_in_library)
+    assert thanksgiving.shows_in_library, "the tag must reach a show, or counting films only proves nothing"
     # Searched by the middle of its title, and listed past the first ten: a search that matched only from
     # the start, or a library that ignored `title=` and served its first page, would not find it.
     pick = next(movie for movie in reset_fake_plex.movies.values() if movie.title == "Nightcrawler")
@@ -71,7 +74,7 @@ def test_a_ready_made_season_with_a_film_picked_by_hand_is_saved_and_ticked_in_a
     expect(dialog.get_by_label("Season name", exact=True)).to_have_value("Thanksgiving")
     expect(dialog.get_by_label("Emoji", exact=True)).to_have_value("🦃")
 
-    # 3. The server's count: every tagged film and show the libraries hold, and none of the ones they don't.
+    # 3. The server's count: every tagged film the libraries hold, and none of the ones they don't.
     summary = dialog.get_by_role("complementary", name="This season draws from")
     expect(summary).to_contain_text(_films_counted(tagged_here), timeout=COUNT)
     expect(dialog.get_by_role("list", name="Chosen tags")).to_contain_text(
