@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Literal
 from shortlist.engine.models import RowSeason
 
 if TYPE_CHECKING:
-    from shortlist.engine.seasons import Catalogue
+    from shortlist.engine.seasons import Catalogue, Season
 
 USER = "{user}"
 LIBRARY_NAME = "{library_name}"
@@ -55,9 +55,14 @@ def fill_season(text: str, season: RowSeason | None) -> str:
     return text.replace(SEASON_EMOJI, season.emoji).replace(SEASON, season.name)
 
 
+def naming_season(season: Season) -> RowSeason:
+    """A season as a name-filling season (the anchor's year is irrelevant to a name)."""
+    return RowSeason(slug=season.slug, name=season.name, emoji=season.emoji, anchor=season.rule.anchor(2000))
+
+
 def catalogue_seasons(catalogue: Catalogue) -> list[RowSeason]:
-    """Every season a row can follow, as a name-filling season (the anchor's year is irrelevant to a name)."""
-    return [RowSeason(slug=s.slug, name=s.name, emoji=s.emoji, anchor=s.rule.anchor(2000)) for s in catalogue.values()]
+    """Every season a row can follow, as a name-filling season."""
+    return [naming_season(season) for season in catalogue.values()]
 
 
 def season_renderings(template: str, catalogue: Catalogue) -> list[str]:

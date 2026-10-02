@@ -26,7 +26,7 @@ from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.delivery import section_kind
 from shortlist.engine.models import MediaType, RowSeason
-from shortlist.engine.placeholders import uses_season
+from shortlist.engine.placeholders import fill_season, naming_season, uses_season
 from shortlist.engine.rows import row_shown_today
 from shortlist.engine.seasons import (
     BUILTIN_SEASONS,
@@ -178,6 +178,13 @@ class SeasonPreviewIn(SeasonSourcesIO):
     library_keys: list[str] = Field(default_factory=list)
 
 
+class SeasonDateOut(PassthroughModel):
+    """When a date rule next falls (ISO), or, with ``next_date`` None, why the rule can't be used."""
+
+    next_date: str | None
+    rule_error: str | None
+
+
 class CollectionCountOut(PassthroughModel):
     title: str
     section_key: str
@@ -242,7 +249,7 @@ async def list_seasons(request: Request) -> list[dict]:
     with request.app.state.sessions() as session:
         catalogue = load_catalogue(session)
         stored = {row.slug: row for row in session.scalars(select(SeasonDef))}
-        used_by = _used_by(session)
+        used_by = _used_by(session, catalogue)
         return [
             _season_view(catalogue[slug], None if catalogue[slug].builtin else stored[slug], used_by, today)
             for slug in seasons_mod.normalise_slugs(list(catalogue), catalogue=catalogue)
@@ -302,8 +309,8 @@ async def update_season(slug: str, body: SeasonIn, request: Request) -> dict:
             session.flush()
             _reject_row_title_clashes(session, state, season_from_row(row))
         session.commit()
-        used_by = _used_by(session)
         catalogue_after = {**catalogue_before, slug: season_from_row(row)}
+        used_by = _used_by(session, catalogue_after)
         following = _enabled_followers(session, slug) if moved else []
         changed = [
             c.slug
@@ -334,14 +341,15 @@ async def delete_season(slug: str, request: Request) -> Response:
             for c in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id))
             if slug in (c.seasons or [])
         ]
-        alone = [row_display_name(session, c) for c in following if set(c.seasons) == {slug}]
+        alone = [_row_name_in(session, c, catalogue_before[slug]) for c in following if set(c.seasons) == {slug}]
         if alone:
+            what_to_do = (
+                "Give that row another season, or delete it, first."
+                if len(alone) == 1
+                else "Give those rows another season, or delete them, first."
+            )
             raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"“{row.name}” is the only season in {_and_list(alone)}. "
-                    "Give those rows another season, or delete them, first."
-                ),
+                status_code=409, detail=f"“{row.name}” is the only season in {_and_list(alone)}. {what_to_do}"
             )
         changed = [
             c.slug
@@ -390,6 +398,25 @@ async def preview_season(body: SeasonPreviewIn, request: Request) -> dict:
         "per_collection": [dataclasses.asdict(c) for c in result.per_collection],
         "sample": list(result.sample),
     }
+
+
+@router.post("/next-date", response_model=SeasonDateOut)
+async def next_date(body: DateRuleIO) -> dict:
+    """When a draft date rule next falls, or why it can't be used — from the rule alone.
+
+    The editor's "Next: …" line asks this rather than the count, so a count that fails (no TMDB key, Plex
+    down) never takes the date with it. Reads no clock but the server's, and nothing else.
+    """
+    rule = DateRule(
+        kind=body.kind, month=body.month, day=body.day, nth=body.nth, weekday=body.weekday, offset=body.offset
+    )
+    try:
+        rule.validate()
+    except ValueError as e:
+        return {"next_date": None, "rule_error": str(e)}
+    today = context_builder.local_now().date()
+    season = Season(slug="draft", name="Draft", emoji="", rule=rule, description="")
+    return {"next_date": seasons_mod.next_anchors(season, today, 1)[0].isoformat(), "rule_error": None}
 
 
 @router.get("/tmdb-tags", response_model=list[TagOut])
@@ -547,12 +574,24 @@ def _stored(session: Session, slug: str) -> SeasonDef:
     return row
 
 
-def _used_by(session: Session) -> dict[str, list[dict]]:
-    """Slug -> the rows that follow it, as ``{id, name}``, in the Rows page's order."""
+def _row_name_in(session: Session, row: Collection, season: Season | None) -> str:
+    """What the Rows page calls a row, with ``season`` filled into it.
+
+    Anything said about one season names its rows as they read in that season: the Seasonal template's own
+    name, ``{season_emoji} {season} picks``, reads "🦃 Thanksgiving picks" beside Thanksgiving, not as its
+    placeholders.
+    """
+    name = row_display_name(session, row)
+    return name if season is None else fill_season(name, naming_season(season))
+
+
+def _used_by(session: Session, catalogue: seasons_mod.Catalogue) -> dict[str, list[dict]]:
+    """Slug -> the rows that follow it, as ``{id, name}`` with that season filled into each name, in the Rows
+    page's order."""
     used: dict[str, list[dict]] = {}
     for row in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id)):
         for slug in dict.fromkeys(row.seasons or []):
-            used.setdefault(slug, []).append({"id": row.id, "name": row_display_name(session, row)})
+            used.setdefault(slug, []).append({"id": row.id, "name": _row_name_in(session, row, catalogue.get(slug))})
     return used
 
 

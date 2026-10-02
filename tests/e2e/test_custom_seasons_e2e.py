@@ -114,11 +114,13 @@ def test_a_ready_made_season_with_a_film_picked_by_hand_is_saved_and_ticked_in_a
     page.get_by_role("button", name="Add row").click()
     expect(page).to_have_url(re.compile(r"/rows$"), timeout=LOAD)
 
-    # 5. The row follows it, and the season names the row as one that uses it.
+    # 5. The row follows it, and the season names the row as one that uses it — as the row reads in this
+    #    season, not as the template's placeholders.
     row = next(c for c in app.api("GET", "/api/collections").json() if "thanksgiving" in c["seasons"])
     assert set(row["seasons"]) == {*BUILT_INS, "thanksgiving"}
     season = next(s for s in app.api("GET", "/api/seasons").json() if s["slug"] == "thanksgiving")
-    assert season["used_by"] == [{"id": row["id"], "name": row["name"]}]
+    assert row["name"] == "{season_emoji} {season} picks"
+    assert season["used_by"] == [{"id": row["id"], "name": "🦃 Thanksgiving picks"}]
     assert (season["name"], season["emoji"], season["builtin"], season["preset"]) == (
         "Thanksgiving",
         "🦃",

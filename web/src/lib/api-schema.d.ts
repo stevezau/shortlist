@@ -1057,6 +1057,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/seasons/next-date": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Next Date
+         * @description When a draft date rule next falls, or why it can't be used — from the rule alone.
+         *
+         *     The editor's "Next: …" line asks this rather than the count, so a count that fails (no TMDB key, Plex
+         *     down) never takes the date with it. Reads no clock but the server's, and nothing else.
+         */
+        post: operations["next_date_api_seasons_next_date_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/seasons/plex-collections": {
         parameters: {
             query?: never;
@@ -5616,6 +5639,18 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * SeasonDateOut
+         * @description When a date rule next falls (ISO), or, with ``next_date`` None, why the rule can't be used.
+         */
+        SeasonDateOut: {
+            /** Next Date */
+            next_date: string | null;
+            /** Rule Error */
+            rule_error: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * SeasonIn
          * @description A custom season, to create or replace.
          */
@@ -8189,6 +8224,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryTitleOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    next_date_api_seasons_next_date_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DateRuleIO"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonDateOut"];
                 };
             };
             /** @description Validation Error */

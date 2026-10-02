@@ -198,6 +198,15 @@ class TestList:
         halloween = next(s for s in client.get("/api/seasons").json() if s["slug"] == "halloween")
         assert halloween["used_by"] == [{"id": row["id"], "name": "Spooky"}]
 
+    def test_used_by_names_each_row_as_it_reads_in_that_season(self, client: TestClient):
+        """The Seasonal template's own name is `{season_emoji} {season} picks`: shown as its placeholders it
+        tells the owner nothing about which row it is."""
+        _create(client)
+        row = _row(client, "{season_emoji} {season} picks", ["halloween", "thanksgiving"])
+        listed = {s["slug"]: s["used_by"] for s in client.get("/api/seasons").json()}
+        assert listed["thanksgiving"] == [{"id": row["id"], "name": "🦃 Thanksgiving picks"}]
+        assert listed["halloween"] == [{"id": row["id"], "name": "🎃 Halloween picks"}]
+
     def test_the_old_seasons_endpoint_is_gone(self, client: TestClient):
         assert client.get("/api/collections/seasons").status_code in (404, 405)
 
@@ -435,7 +444,7 @@ class TestDelete:
 
         assert r.status_code == 409
         assert r.json()["detail"] == (
-            "“Thanksgiving” is the only season in “Row B”. Give those rows another season, or delete them, first."
+            "“Thanksgiving” is the only season in “Row B”. Give that row another season, or delete it, first."
         )
         assert _rows(client) == before
         assert "thanksgiving" in [s["slug"] for s in client.get("/api/seasons").json()]
@@ -493,7 +502,16 @@ class TestDelete:
         _row(client, "Row B", ["thanksgiving"])
         _row(client, "Row C", ["thanksgiving"])
         detail = client.delete("/api/seasons/thanksgiving").json()["detail"]
-        assert detail.startswith("“Thanksgiving” is the only season in “Row B” and “Row C”.")
+        assert detail == (
+            "“Thanksgiving” is the only season in “Row B” and “Row C”. "
+            "Give those rows another season, or delete them, first."
+        )
+
+    def test_a_refusal_names_a_row_as_it_reads_in_this_season(self, client: TestClient):
+        _create(client)
+        _row(client, "{season_emoji} {season} picks", ["thanksgiving"])
+        detail = client.delete("/api/seasons/thanksgiving").json()["detail"]
+        assert detail.startswith("“Thanksgiving” is the only season in “🦃 Thanksgiving picks”.")
 
 
 class TestASeasonCannotGiveTwoRowsOneTitle:
@@ -803,6 +821,29 @@ class TestPreview:
         monkeypatch.setattr(client.app.state.run_service, "build_plex_reader", unreachable)
         r = client.post("/api/seasons/preview", json={"rule": {"kind": "easter"}, "tags": [self.TAG]})
         assert r.status_code == 502 and "PLEXSECRET" not in r.text
+
+
+class TestNextDate:
+    """The editor's "Next: …" line, from the rule alone: no TMDB key or Plex needed, so a failed count never
+    takes the date with it."""
+
+    def test_a_rule_says_when_it_next_falls_without_tmdb_or_plex(self, client: TestClient, monkeypatch):
+        _connect(monkeypatch, client, None, None)
+        _on(monkeypatch, datetime(2026, 10, 3, 12, 0))
+        r = client.post("/api/seasons/next-date", json={"kind": "nth", "month": 11, "nth": 4, "weekday": 3})
+        assert (r.status_code, r.json()) == (200, {"next_date": "2026-11-26", "rule_error": None})
+
+    def test_a_day_already_past_this_year_falls_next_year(self, client: TestClient, monkeypatch):
+        _on(monkeypatch, datetime(2026, 10, 3, 12, 0))
+        r = client.post("/api/seasons/next-date", json={"kind": "fixed", "month": 3, "day": 17})
+        assert r.json() == {"next_date": "2027-03-17", "rule_error": None}
+
+    def test_a_rule_that_cant_be_used_says_why(self, client: TestClient):
+        r = client.post("/api/seasons/next-date", json={"kind": "fixed", "month": 2, "day": 29})
+        assert r.json() == {
+            "next_date": None,
+            "rule_error": "29 February isn't every year — pick 28 February or 1 March.",
+        }
 
 
 class TestSearches:

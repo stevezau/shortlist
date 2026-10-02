@@ -6399,6 +6399,40 @@
         "title": "ScheduleRowsOut",
         "type": "object"
       },
+      "SeasonDateOut": {
+        "additionalProperties": true,
+        "description": "When a date rule next falls (ISO), or, with ``next_date`` None, why the rule can't be used.",
+        "properties": {
+          "next_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Date"
+          },
+          "rule_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Error"
+          }
+        },
+        "required": [
+          "next_date",
+          "rule_error"
+        ],
+        "title": "SeasonDateOut",
+        "type": "object"
+      },
       "SeasonIn": {
         "additionalProperties": false,
         "description": "A custom season, to create or replace.",
@@ -11296,6 +11330,48 @@
           }
         },
         "summary": "Library Search",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/next-date": {
+      "post": {
+        "description": "When a draft date rule next falls, or why it can't be used \u2014 from the rule alone.\n\nThe editor's \"Next: \u2026\" line asks this rather than the count, so a count that fails (no TMDB key, Plex\ndown) never takes the date with it. Reads no clock but the server's, and nothing else.",
+        "operationId": "next_date_api_seasons_next_date_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DateRuleIO"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonDateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Next Date",
         "tags": [
           "seasons"
         ]
