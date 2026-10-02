@@ -647,3 +647,204 @@ class TestCatalogueArgument:
         assert seasons.row_season_on(["pat"], 30, 0, date(2027, 3, 1), catalogue=catalogue).content_hash == "abc"
         christmas = seasons.row_season_on(["christmas"], 30, 0, date(2026, 12, 1), catalogue=catalogue)
         assert christmas.content_hash == ""
+
+
+class TestPresets:
+    """The ready-made seasons the editor offers (#137 D9), exactly as the spec's table measured them."""
+
+    #: The spec's table (`.claude/docs/issue-137-custom-seasons.md`, "Presets"), tag ids verified on TMDB.
+    SPEC_TAGS: ClassVar[dict[str, tuple[int, ...]]] = {
+        "new_years_eve": (613, 252123),
+        "fourth_of_july": (235503, 159743, 282190, 190024, 2407),
+        "thanksgiving_us": (4543,),
+        "thanksgiving_ca": (4543,),
+        "st_patricks_day": (209352, 10310, 14985, 299594, 4729),
+        "easter": (9921, 9923),
+        "mothers_day": (173983,),
+        "mothering_sunday": (173983,),
+        "fathers_day": (),
+        "fathers_day_au_nz": (),
+    }
+    #: Each preset's day in 2026 — Easter fell on 5 April — and its (lead, after) timing.
+    SPEC_DAYS: ClassVar[dict[str, tuple[date, int, int]]] = {
+        "new_years_eve": (date(2026, 12, 31), 7, 1),
+        "fourth_of_july": (date(2026, 7, 4), 7, 0),
+        "thanksgiving_us": (date(2026, 11, 26), 14, 0),
+        "thanksgiving_ca": (date(2026, 10, 12), 7, 0),
+        "st_patricks_day": (date(2026, 3, 17), 7, 0),
+        "easter": (date(2026, 4, 5), 14, 0),
+        "mothers_day": (date(2026, 5, 10), 7, 0),
+        "mothering_sunday": (date(2026, 3, 15), 7, 0),
+        "fathers_day": (date(2026, 6, 21), 7, 0),
+        "fathers_day_au_nz": (date(2026, 9, 6), 7, 0),
+    }
+
+    def test_tag_ids_are_the_spec_tables(self) -> None:
+        assert {preset.key: preset.season.keywords for preset in seasons.PRESETS} == self.SPEC_TAGS
+
+    def test_each_falls_on_its_day_with_its_own_timing(self) -> None:
+        assert {
+            p.key: (p.season.rule.anchor(2026), p.season.lead_days, p.season.after_days) for p in seasons.PRESETS
+        } == self.SPEC_DAYS
+
+    def test_every_preset_validates_and_fits_what_the_editor_accepts(self) -> None:
+        builtin_names = {season.name.casefold() for season in seasons.BUILTIN_SEASONS.values()}
+        for preset in seasons.PRESETS:
+            preset.season.rule.validate()
+            assert 1 <= len(preset.season.name) <= 40 and 1 <= len(preset.season.emoji) <= 8, preset.key
+            assert 0 <= preset.season.lead_days <= seasons.MAX_LEAD_DAYS, preset.key
+            assert 0 <= preset.season.after_days <= seasons.MAX_AFTER_DAYS, preset.key
+            assert len(preset.key) <= 32, "seasons.preset is String(32)"
+            assert preset.season.name.casefold() not in builtin_names, "names are unique, built-ins included"
+        assert len({p.key for p in seasons.PRESETS}) == len(seasons.PRESETS)
+        assert len({p.season.name.casefold() for p in seasons.PRESETS}) == len(seasons.PRESETS)
+
+    def test_every_preset_tag_has_its_tmdb_name(self) -> None:
+        """The editor shows a tag by name, and a preset is saved without a TMDB lookup."""
+        for preset in seasons.PRESETS:
+            for tag in preset.season.keywords:
+                assert seasons.PRESET_TAG_NAMES[tag], (preset.key, tag)
+
+    def test_fathers_day_has_no_tag_and_says_what_to_add_instead(self) -> None:
+        """TMDB has no Father's Day tag: the editor opens it empty and asks for a collection or picks."""
+        for key in ("fathers_day", "fathers_day_au_nz"):
+            preset = next(p for p in seasons.PRESETS if p.key == key)
+            assert preset.season.keywords == ()
+            assert "collection" in preset.note and "picks" in preset.note
+
+    def test_st_patricks_day_leaves_out_horror(self) -> None:
+        """The leprechaun tag otherwise brings in the *Leprechaun* slashers."""
+        preset = next(p for p in seasons.PRESETS if p.key == "st_patricks_day")
+        assert preset.season.keyword_excluded_genres == (27,)
+        assert preset.note
+
+
+def _voted(tmdb_id: int, votes: int, title: str | None = None) -> dict:
+    return {"id": tmdb_id, "title": title or f"t{tmdb_id}", "genre_ids": [], "vote_count": votes}
+
+
+class _PagedTmdb(_Tmdb):
+    """`_Tmdb` that also records how many page workers each list read was given."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.workers: list[int] = []
+
+    def discover_all(self, media_type: MediaType, params: dict, *, workers: int = 1) -> list[dict]:
+        self.workers.append(workers)
+        return super().discover_all(media_type, params)
+
+
+class TestPreview:
+    """What the season editor shows while the owner builds a season (#137 D10): the count, where it comes
+    from, and a sample."""
+
+    LIB: ClassVar[dict[MediaType, dict[int, int]]] = {
+        MediaType.MOVIE: {1: 11, 2: 12, 3: 13, 4: 14, 5: 15},
+        MediaType.SHOW: {1: 21},
+    }
+    TODAY = date(2026, 10, 2)
+
+    def _sources(self) -> tuple[_PagedTmdb, _Plex, seasons.Season]:
+        """Every source overlaps the one before it, so each marginal count differs from its raw one."""
+        show_one = {"id": 1, "name": "Show One", "genre_ids": [], "vote_count": 10}
+        tmdb = _PagedTmdb(
+            {
+                (MediaType.MOVIE, "1|2"): [_voted(1, 50), _voted(2, 900), _voted(9, 5000)],  # 9: not in a library
+                (MediaType.SHOW, "1|2"): [show_one],
+                (MediaType.MOVIE, "1"): [_voted(1, 50), _voted(2, 900)],
+                (MediaType.SHOW, "1"): [show_one],
+                (MediaType.MOVIE, "2"): [_voted(2, 900), _voted(9, 5000)],
+                (MediaType.MOVIE, "27"): [_voted(2, 900), _voted(3, 300)],
+            },
+            {4: _voted(4, 70), 5: _voted(5, 2000, "Picked")},
+        )
+        plex = _Plex(
+            {
+                ("1", "Kometa"): [
+                    LibraryTitle(3, MediaType.MOVIE, "t3", 2000),
+                    LibraryTitle(4, MediaType.MOVIE, "t4", 2000),
+                ]
+            }
+        )
+        season = _custom_season(
+            keywords=(1, 2),
+            movie_genres=(27,),
+            collections=(seasons.CollectionRef("1", "Kometa"), seasons.CollectionRef("1", "Gone")),
+            picks=((4, MediaType.MOVIE), (5, MediaType.MOVIE)),
+        )
+        return tmdb, plex, season
+
+    def test_marginal_counts_add_up_to_the_total_load_titles_gives(self) -> None:
+        tmdb, plex, season = self._sources()
+        result = seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY)
+        loaded = seasons.load_titles(tmdb, plex, season, self.LIB)
+
+        assert result.total == sum(len(items) for items in loaded.in_library.values()) == 6
+        # Tags: films 1, 2 and show 1. The genre adds 3; the collection adds 4 (3 is the genre's); picks add 5.
+        assert (result.from_tags, result.from_genre, result.from_collections, result.from_picks) == (3, 1, 1, 1)
+        assert result.from_tags + result.from_genre + result.from_collections + result.from_picks == result.total
+
+    def test_each_tag_is_counted_on_its_own_and_only_in_the_libraries(self) -> None:
+        tmdb, plex, season = self._sources()
+        result = seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY)
+        assert result.per_tag == {1: 3, 2: 1}
+        assert (MediaType.MOVIE, {"with_keywords": "2"}) in tmdb.queries
+
+    def test_each_collection_says_whether_it_was_found_and_what_it_gives(self) -> None:
+        tmdb, plex, season = self._sources()
+        result = seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY)
+        assert result.per_collection == (
+            seasons.CollectionCount(title="Kometa", section_key="1", found=True, in_library=2),
+            seasons.CollectionCount(title="Gone", section_key="1", found=False, in_library=0),
+        )
+
+    def test_a_left_out_genre_is_left_out_of_the_tag_and_collection_counts_too(self) -> None:
+        """Counts must agree with the total, which never holds a film the season leaves out."""
+        tmdb = _Tmdb({(MediaType.MOVIE, "1"): [_item(1, (27,)), _item(2)]}, {3: _item(3, (27,))})
+        plex = _Plex({("1", "C"): [LibraryTitle(3, MediaType.MOVIE, "t3", 2000)]})
+        season = _custom_season(keywords=(1,), excluded=(27,), collections=(seasons.CollectionRef("1", "C"),))
+        result = seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY)
+        assert (result.total, result.per_tag, result.per_collection[0].in_library) == (1, {1: 1}, 0)
+
+    def test_the_sample_is_the_most_voted_titles_in_the_libraries_picks_and_collections_included(self) -> None:
+        tmdb, plex, season = self._sources()
+        result = seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY)
+        assert result.sample == ("Picked", "t2", "t3", "t4", "t1", "Show One")
+
+    def test_the_sample_stops_at_ten(self) -> None:
+        tmdb = _Tmdb({(MediaType.MOVIE, "1"): [_voted(i, i) for i in range(1, 16)]})
+        library = {MediaType.MOVIE: {i: i for i in range(1, 16)}, MediaType.SHOW: {}}
+        result = seasons.preview(tmdb, NO_PLEX, _custom_season(keywords=(1,)), library, today=self.TODAY)
+        assert result.sample == tuple(f"t{i}" for i in range(15, 5, -1))
+
+    def test_the_next_date_is_on_or_after_today(self) -> None:
+        tmdb, plex, season = self._sources()  # 17 March
+        result = seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY)
+        assert (result.next_date, result.rule_error) == (date(2027, 3, 17), None)
+
+    @pytest.mark.parametrize(
+        ("rule", "message"),
+        [
+            (seasons.DateRule("fixed", month=2, day=29), "29 February"),
+            (seasons.DateRule("nth", month=11, nth=7, weekday=3), "1st to 4th"),
+        ],
+    )
+    def test_an_invalid_rule_still_counts_the_films(self, rule: seasons.DateRule, message: str) -> None:
+        """The owner may be mid-way through choosing a date; the films panel must not go blank meanwhile."""
+        tmdb, plex, season = self._sources()
+        result = seasons.preview(tmdb, plex, dataclasses.replace(season, rule=rule), self.LIB, today=self.TODAY)
+        assert result.next_date is None and message in result.rule_error
+        assert result.total == 6
+
+    def test_list_reads_get_the_workers_they_are_given(self) -> None:
+        """Only the editor reads pages concurrently; a run's reads keep the client's default."""
+        tmdb, plex, season = self._sources()
+        seasons.preview(tmdb, plex, season, self.LIB, today=self.TODAY, workers=6)
+        assert tmdb.workers and set(tmdb.workers) == {6}
+
+    def test_a_season_with_no_sources_reads_nothing(self) -> None:
+        tmdb = _PagedTmdb({})
+        result = seasons.preview(tmdb, NO_PLEX, _custom_season(), self.LIB, today=self.TODAY)
+        assert tmdb.queries == [] and tmdb.looked_up == []
+        assert (result.total, result.per_tag, result.per_collection, result.sample) == (0, {}, (), ())

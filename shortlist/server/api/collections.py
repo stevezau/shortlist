@@ -305,7 +305,7 @@ class CollectionIn(StrictRequestModel):
     # and it shows from `season_lead_days` before each season's day to `season_after_days` after it.
     seasons: list[str] = Field(
         default_factory=list,
-        description="Seasons this row follows (see GET /api/collections/seasons). Empty means it is not seasonal.",
+        description="Seasons this row follows (see GET /api/seasons). Empty means it is not seasonal.",
     )
     season_lead_days: int = Field(
         default=30,
@@ -382,18 +382,6 @@ class SeasonStatusOut(PassthroughModel):
     showing: SeasonWindowOut | None
     #: The next season to start after today, or null when it follows none.
     next: SeasonWindowOut | None
-
-
-class SeasonOut(PassthroughModel):
-    """A season a row can follow."""
-
-    slug: str
-    name: str
-    emoji: str
-    month: int
-    day: int
-    #: What the row holds in this season, in plain English.
-    description: str
 
 
 class CollectionOut(PassthroughModel):
@@ -1125,29 +1113,6 @@ async def list_collections(request: Request) -> list[dict]:
         now = context_builder.local_now()
         catalogue = load_catalogue(session)
         return [_serialize(session, c, now, catalogue=catalogue) for c in collections]
-
-
-@router.get("/seasons", response_model=list[SeasonOut])
-async def list_seasons(request: Request) -> list[dict]:
-    """Every season a row can follow, in calendar order (discussion #124)."""
-    with request.app.state.sessions() as session:
-        catalogue = load_catalogue(session)
-    year = context_builder.local_now().year  # a season on a moving date reports this year's day
-    listed = []
-    for slug in seasons_mod.normalise_slugs(list(catalogue), catalogue=catalogue):
-        season = catalogue[slug]
-        day = season.rule.anchor(year)
-        listed.append(
-            {
-                "slug": season.slug,
-                "name": season.name,
-                "emoji": season.emoji,
-                "month": day.month,
-                "day": day.day,
-                "description": season.description,
-            }
-        )
-    return listed
 
 
 def _known_seasons(slugs: list[str], *, catalogue: seasons_mod.Catalogue) -> list[str]:

@@ -300,7 +300,13 @@ class TmdbClient:
 
         Returns:
             The matching titles, de-duplicated by id, each reduced to ``_LIST_FIELDS``.
+
+        Raises:
+            ValueError: ``params`` holds no ``with_*`` filter with a value. TMDB reads no filter as "every
+                title", which is 500 pages read and then cached for a week.
         """
+        if not any(key.startswith("with_") and str(value).strip(" |,") for key, value in params.items()):
+            raise ValueError(f"discover_all needs a with_* filter with a value, got {sorted(params)}")
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         path = f"/discover/{kind}"
         query = {

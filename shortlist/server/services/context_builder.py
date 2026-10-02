@@ -77,6 +77,11 @@ from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
 
+#: The season editor's PMS reads (#137). A page waits on them, so a stalled server fails in seconds rather
+#: than holding the tab for a run's `plex.timeout_s` — `api/system._INTERACTIVE_TIMEOUT_S`'s reasoning.
+#: A library scan pages through the PMS, so no single read in it is long.
+EDITOR_PLEX_TIMEOUT_S = 8
+
 
 def curator_kwargs(get: Callable[[str], object]) -> dict:
     """Assemble ``make_curator`` kwargs from settings. A local/OpenAI-compatible server takes a
@@ -605,6 +610,25 @@ class ContextBuilder:
             store = SettingsStore(session, self._secrets)
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             return self._build_requests(store), tmdb
+
+    def build_tmdb_only(self) -> TmdbClient | None:
+        """A TMDB client on the shared cache, or None when no API key is set. Touches no network."""
+        with self._sessions() as session:
+            api_key = SettingsStore(session, self._secrets).get("tmdb.apikey")
+        return TmdbClient(api_key, cache=DbCache(self._sessions)) if api_key else None
+
+    def build_plex_reader(self) -> PlexClient | None:
+        """The owner's PMS for the season editor's reads, or None before setup has connected one.
+
+        Connects to the server, so call it off the event loop. Read-only by use, not by type: nothing that
+        holds this client writes (plex-safety rule 4 — a collection a season reads is never touched).
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            url, token = store.get("plex.url"), store.get("plex.token")
+        if not url or not token:
+            return None
+        return PlexClient(url, token, timeout=EDITOR_PLEX_TIMEOUT_S)
 
     def build_request_sources_only(self) -> tuple[RequestSources | None, list[UserProfile], dict[int, int]]:
         """What the requests-row setup check reads: the sources, the roster, and each person's DB id.

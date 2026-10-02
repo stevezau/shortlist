@@ -157,6 +157,14 @@ class RunService:
         """Requests config + TMDB client for the approval inbox's manual send — no Plex/LLM I/O."""
         return self._ctx.build_requests_only()
 
+    def build_tmdb_only(self):
+        """A TMDB client, or None without an API key — for the season editor (issue #137)."""
+        return self._ctx.build_tmdb_only()
+
+    def build_plex_reader(self):
+        """The owner's PMS, or None before setup — for the season editor's reads (issue #137). Connects."""
+        return self._ctx.build_plex_reader()
+
     def build_request_sources_only(self):
         """Request sources + enabled roster + plex id -> DB id for the requests-row setup check."""
         return self._ctx.build_request_sources_only()

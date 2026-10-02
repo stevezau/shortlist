@@ -567,6 +567,60 @@
         "title": "ClearedOut",
         "type": "object"
       },
+      "CollectionCountOut": {
+        "additionalProperties": true,
+        "properties": {
+          "found": {
+            "title": "Found",
+            "type": "boolean"
+          },
+          "in_library": {
+            "title": "In Library",
+            "type": "integer"
+          },
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "section_key",
+          "found",
+          "in_library"
+        ],
+        "title": "CollectionCountOut",
+        "type": "object"
+      },
+      "CollectionIO": {
+        "additionalProperties": true,
+        "description": "A Plex collection, by library and title \u2014 never ratingKey: Kometa recreates its seasonal ones each year.",
+        "properties": {
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "section_title": {
+            "title": "Section Title",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_key",
+          "section_title",
+          "title"
+        ],
+        "title": "CollectionIO",
+        "type": "object"
+      },
       "CollectionIn": {
         "additionalProperties": false,
         "properties": {
@@ -1098,7 +1152,7 @@
             "type": "integer"
           },
           "seasons": {
-            "description": "Seasons this row follows (see GET /api/collections/seasons). Empty means it is not seasonal.",
+            "description": "Seasons this row follows (see GET /api/seasons). Empty means it is not seasonal.",
             "items": {
               "type": "string"
             },
@@ -1943,6 +1997,51 @@
           }
         },
         "title": "CuratorModelsRequest",
+        "type": "object"
+      },
+      "DateRuleIO": {
+        "additionalProperties": true,
+        "description": "When a season falls: see `seasons.DateRule`. ``weekday`` is Monday=0; ``nth`` is 1-4, or -1 for the last.",
+        "properties": {
+          "day": {
+            "default": 1,
+            "title": "Day",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "fixed",
+              "nth",
+              "easter"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "month": {
+            "default": 1,
+            "title": "Month",
+            "type": "integer"
+          },
+          "nth": {
+            "default": 1,
+            "title": "Nth",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "weekday": {
+            "default": 0,
+            "title": "Weekday",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "DateRuleIO",
         "type": "object"
       },
       "DeletedOut": {
@@ -2956,6 +3055,46 @@
         "title": "LibrarySectionOut",
         "type": "object"
       },
+      "LibraryTitleOut": {
+        "additionalProperties": true,
+        "properties": {
+          "media_type": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media_type",
+          "title",
+          "year"
+        ],
+        "title": "LibraryTitleOut",
+        "type": "object"
+      },
       "LinkRequest": {
         "properties": {
           "machine_id": {
@@ -3555,6 +3694,46 @@
         "title": "PersonReadyOut",
         "type": "object"
       },
+      "PickIO": {
+        "additionalProperties": true,
+        "description": "A title the owner picked by hand.",
+        "properties": {
+          "media_type": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media_type",
+          "title"
+        ],
+        "title": "PickIO",
+        "type": "object"
+      },
       "PickOut": {
         "additionalProperties": true,
         "description": "One delivered recommendation, as the run detail lists it.",
@@ -3753,6 +3932,40 @@
         "title": "PlanEntryOut",
         "type": "object"
       },
+      "PlexCollectionOut": {
+        "additionalProperties": true,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "section_title": {
+            "title": "Section Title",
+            "type": "string"
+          },
+          "smart": {
+            "title": "Smart",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_key",
+          "section_title",
+          "title",
+          "count",
+          "smart"
+        ],
+        "title": "PlexCollectionOut",
+        "type": "object"
+      },
       "PlexServerOut": {
         "additionalProperties": true,
         "description": "A server plex.tv says this account can reach, with every advertised address already tried.",
@@ -3896,6 +4109,112 @@
           "mode"
         ],
         "title": "PosterUploadOut",
+        "type": "object"
+      },
+      "PresetOut": {
+        "additionalProperties": true,
+        "description": "A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``.",
+        "properties": {
+          "after_days": {
+            "default": 0,
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "After Days",
+            "type": "integer"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
+          },
+          "emoji": {
+            "maxLength": 8,
+            "minLength": 1,
+            "title": "Emoji",
+            "type": "string"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "lead_days": {
+            "default": 7,
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "title": "Lead Days",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DateRuleIO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "emoji",
+          "rule",
+          "key",
+          "note"
+        ],
+        "title": "PresetOut",
         "type": "object"
       },
       "PrivacyStatusOut": {
@@ -6066,13 +6385,128 @@
         "title": "ScheduleRowsOut",
         "type": "object"
       },
+      "SeasonIn": {
+        "additionalProperties": false,
+        "description": "A custom season, to create or replace.",
+        "properties": {
+          "after_days": {
+            "default": 0,
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "After Days",
+            "type": "integer"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
+          },
+          "emoji": {
+            "maxLength": 8,
+            "minLength": 1,
+            "title": "Emoji",
+            "type": "string"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "lead_days": {
+            "default": 7,
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "title": "Lead Days",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DateRuleIO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "emoji",
+          "rule"
+        ],
+        "title": "SeasonIn",
+        "type": "object"
+      },
       "SeasonOut": {
         "additionalProperties": true,
-        "description": "A season a row can follow.",
+        "description": "A season a row can follow. A built-in's sources live in code and are not listed.",
         "properties": {
-          "day": {
-            "title": "Day",
-            "type": "integer"
+          "after_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Days"
+          },
+          "builtin": {
+            "title": "Builtin",
+            "type": "boolean"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
           },
           "description": {
             "title": "Description",
@@ -6082,28 +6516,248 @@
             "title": "Emoji",
             "type": "string"
           },
-          "month": {
-            "title": "Month",
-            "type": "integer"
+          "excluded_genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "lead_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Days"
           },
           "name": {
             "title": "Name",
             "type": "string"
           },
+          "next_dates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Next Dates",
+            "type": "array"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DateRuleIO"
+          },
+          "rule_label": {
+            "title": "Rule Label",
+            "type": "string"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          },
+          "used_by": {
+            "items": {
+              "$ref": "#/components/schemas/UsedByOut"
+            },
+            "title": "Used By",
+            "type": "array"
           }
         },
         "required": [
           "slug",
           "name",
           "emoji",
-          "month",
-          "day",
-          "description"
+          "description",
+          "builtin",
+          "rule",
+          "rule_label",
+          "next_dates",
+          "lead_days",
+          "after_days",
+          "preset",
+          "used_by"
         ],
         "title": "SeasonOut",
+        "type": "object"
+      },
+      "SeasonPreviewIn": {
+        "additionalProperties": true,
+        "description": "A draft season to count. Undeclared fields are let through, not refused: the editor posts its whole\ndraft, and a preview stores nothing that a misspelt field could silently fail to set.",
+        "properties": {
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DateRuleIO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rule"
+        ],
+        "title": "SeasonPreviewIn",
+        "type": "object"
+      },
+      "SeasonPreviewOut": {
+        "additionalProperties": true,
+        "description": "What the editor's summary shows. Every count is of titles in the libraries.",
+        "properties": {
+          "from_collections": {
+            "title": "From Collections",
+            "type": "integer"
+          },
+          "from_genre": {
+            "title": "From Genre",
+            "type": "integer"
+          },
+          "from_picks": {
+            "title": "From Picks",
+            "type": "integer"
+          },
+          "from_tags": {
+            "title": "From Tags",
+            "type": "integer"
+          },
+          "next_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Date"
+          },
+          "per_collection": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionCountOut"
+            },
+            "title": "Per Collection",
+            "type": "array"
+          },
+          "per_tag": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Per Tag",
+            "type": "object"
+          },
+          "rule_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Error"
+          },
+          "sample": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "next_date",
+          "rule_error",
+          "total",
+          "from_tags",
+          "from_genre",
+          "from_collections",
+          "from_picks",
+          "per_tag",
+          "per_collection",
+          "sample"
+        ],
+        "title": "SeasonPreviewOut",
         "type": "object"
       },
       "SeasonStatusOut": {
@@ -6711,6 +7365,26 @@
         "title": "SyncsOut",
         "type": "object"
       },
+      "TagIO": {
+        "additionalProperties": true,
+        "description": "A TMDB tag (keyword), with its name so the editor can show it without asking TMDB.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "TagIO",
+        "type": "object"
+      },
       "TagMatchOut": {
         "additionalProperties": true,
         "description": "How one requester tag on Radarr/Sonarr resolved \u2014 the preview under \"Use my own tags\".",
@@ -6761,6 +7435,30 @@
           "ambiguous"
         ],
         "title": "TagMatchOut",
+        "type": "object"
+      },
+      "TagOut": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "movies": {
+            "title": "Movies",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "movies"
+        ],
+        "title": "TagOut",
         "type": "object"
       },
       "TitleMatchOut": {
@@ -7277,6 +7975,26 @@
           "reason"
         ],
         "title": "UninstallUnreachableOut",
+        "type": "object"
+      },
+      "UsedByOut": {
+        "additionalProperties": true,
+        "description": "A row that follows the season.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "UsedByOut",
         "type": "object"
       },
       "UserOut": {
@@ -8687,32 +9405,6 @@
           }
         },
         "summary": "Create Collection",
-        "tags": [
-          "collections"
-        ]
-      }
-    },
-    "/api/collections/seasons": {
-      "get": {
-        "description": "Every season a row can follow, in calendar order (discussion #124).",
-        "operationId": "list_seasons_api_collections_seasons_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/SeasonOut"
-                  },
-                  "title": "Response List Seasons Api Collections Seasons Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Seasons",
         "tags": [
           "collections"
         ]
@@ -10437,6 +11129,371 @@
         "summary": "Schedule",
         "tags": [
           "schedule"
+        ]
+      }
+    },
+    "/api/seasons": {
+      "get": {
+        "description": "Every season a row can follow, in calendar order: the built-ins and the owner's own.",
+        "operationId": "list_seasons_api_seasons_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SeasonOut"
+                  },
+                  "title": "Response List Seasons Api Seasons Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Seasons",
+        "tags": [
+          "seasons"
+        ]
+      },
+      "post": {
+        "description": "Save a new season. Its slug is made from its name now and never changes (D14).",
+        "operationId": "create_season_api_seasons_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Season",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/library-search": {
+      "get": {
+        "description": "Films and shows in the libraries whose title contains ``q``, for picking by hand.",
+        "operationId": "library_search_api_seasons_library_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryTitleOut"
+                  },
+                  "title": "Response Library Search Api Seasons Library Search Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Library Search",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/plex-collections": {
+      "get": {
+        "description": "The libraries' collections whose title contains ``q``, in any case, by title. Never one of Shortlist's.",
+        "operationId": "plex_collections_api_seasons_plex_collections_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlexCollectionOut"
+                  },
+                  "title": "Response Plex Collections Api Seasons Plex Collections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plex Collections",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/presets": {
+      "get": {
+        "description": "The ready-made seasons not added yet (#137 D9).",
+        "operationId": "list_presets_api_seasons_presets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PresetOut"
+                  },
+                  "title": "Response List Presets Api Seasons Presets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Presets",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/preview": {
+      "post": {
+        "description": "Count a draft season's films in the libraries, as a run would, without saving anything.\n\nAn invalid date rule still counts: the editor shows what is wrong with the date beside the films.",
+        "operationId": "preview_season_api_seasons_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeasonPreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonPreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Season",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/tmdb-tags": {
+      "get": {
+        "description": "TMDB tags whose name matches ``q``, each with how many films TMDB tags with it.",
+        "operationId": "tmdb_tags_api_seasons_tmdb_tags_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagOut"
+                  },
+                  "title": "Response Tmdb Tags Api Seasons Tmdb Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tmdb Tags",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/{slug}": {
+      "delete": {
+        "description": "Delete a custom season and untick it in every row, in one transaction (D12).\n\nRefused, naming the rows, while it is any row's only season: that row would be left following nothing.",
+        "operationId": "delete_season_api_seasons__slug__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Season",
+        "tags": [
+          "seasons"
+        ]
+      },
+      "put": {
+        "description": "Replace a custom season, keeping its slug.\n\nA change of date or timing changes which days its rows are shown on, so it is applied to Plex now, as a\nchange to a row's own seasons is. A source change rebuilds its rows on their next build (D11).",
+        "operationId": "update_season_api_seasons__slug__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Season",
+        "tags": [
+          "seasons"
         ]
       }
     },

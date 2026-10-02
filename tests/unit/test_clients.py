@@ -640,6 +640,20 @@ class TestTmdbClient:
         assert cache.store == {}
 
     @respx.mock
+    @pytest.mark.parametrize(
+        "params",
+        [{}, {"with_keywords": ""}, {"with_genres": " "}, {"with_keywords": "|"}, {"vote_count.gte": 200}],
+    )
+    def test_discover_all_refuses_a_query_with_no_filter(self, params):
+        """With no filter TMDB answers with every title it holds: 500 pages read, and cached for a week."""
+        route = respx.get("https://api.themoviedb.org/3/discover/movie").mock(
+            return_value=httpx.Response(200, json={"page": 1, "total_pages": 1, "results": []})
+        )
+        with pytest.raises(ValueError, match="filter"):
+            TmdbClient("k").discover_all(MediaType.MOVIE, params)
+        assert not route.called
+
+    @respx.mock
     def test_discover_with_no_genres_makes_no_call(self):
         # No genres -> no query at all (respx would raise on any unmocked request).
         assert TmdbClient("k").discover(MediaType.MOVIE, []) == []
@@ -1634,6 +1648,28 @@ class TestPlexClient:
         assert mock_plex.collection_members("2", "Christmas Specials") == [
             LibraryTitle(57243, MediaType.SHOW, "Doctor Who", 2005)
         ]
+
+    def test_a_collection_says_how_many_of_its_items_it_could_not_use(self, mock_plex: PlexClient):
+        """The season editor counts what a collection gives the season, so a member skipped for having no TMDB
+        id, or for being an episode, must not vanish without a word."""
+        from loguru import logger
+
+        show = SimpleNamespace(type="show", title="Doctor Who", year=2005, guids=[SimpleNamespace(id="tmdb://57243")])
+        episode = SimpleNamespace(type="episode", title="Ep", year=2005, guids=[SimpleNamespace(id="tmdb://1")])
+        unmatched = SimpleNamespace(type="show", title="Local Show", year=2001, guids=[])
+        collection = SimpleNamespace(title="Christmas Specials", items=lambda: [show, episode, unmatched])
+        mock_plex._sections_cache = [
+            SimpleNamespace(key="2", type="show", title="TV Shows", collections=lambda: [collection])
+        ]
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{message}")
+        try:
+            members = mock_plex.collection_members("2", "Christmas Specials")
+        finally:
+            logger.remove(sink)
+
+        assert [m.tmdb_id for m in members] == [57243]
+        assert any("Christmas Specials" in line and "2 of its 3" in line for line in lines), lines
 
 
 class TestUserHubs:

@@ -19,11 +19,12 @@ custom season.
 from __future__ import annotations
 
 import contextvars
+import functools
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -451,6 +452,76 @@ def _read_items(tmdb: _ListReader, titles: list[tuple[int, MediaType]]) -> list[
         return list(pool.map(lambda context, title: context.run(tmdb.list_item, *title), contexts, titles))
 
 
+@dataclass(frozen=True)
+class _SourceReads:
+    """What each of a season's sources gave, before any library is consulted. Read once, so `load_titles` and
+    `preview` count from the very same reads."""
+
+    #: Tag films and shows, with the season's left-out genres already dropped.
+    tagged: dict[tuple[int, MediaType], dict]
+    genre: dict[tuple[int, MediaType], dict]
+    #: Each collection the season names, with its members, or None when it is not in its library tonight.
+    collections: tuple[tuple[CollectionRef, list[LibraryTitle] | None], ...]
+    #: Picks and collection members that no list above gave, read one by one; left-out genres dropped, except
+    #: from a hand pick.
+    by_id: dict[tuple[int, MediaType], dict]
+
+    def all_titles(self) -> dict[tuple[int, MediaType], dict]:
+        """Every title in the season, as the first source to give it has it."""
+        merged: dict[tuple[int, MediaType], dict] = {}
+        for source in (self.tagged, self.genre, self.by_id):
+            for title, item in source.items():
+                merged.setdefault(title, item)
+        return merged
+
+
+def _read_sources(
+    tmdb: _ListReader,
+    plex: _CollectionReader,
+    season: Season,
+    discover: Callable[[MediaType, dict], list[dict]],
+) -> _SourceReads:
+    """Read every source of ``season`` (see `load_titles`). ``discover`` reads one TMDB list."""
+    tagged: dict[tuple[int, MediaType], dict] = {}
+    genre: dict[tuple[int, MediaType], dict] = {}
+    for media_type, params in _queries(season):
+        is_tag = "with_keywords" in params
+        for item in discover(media_type, params):
+            if is_tag and _left_out(season, media_type, item):
+                continue
+            (tagged if is_tag else genre).setdefault((int(item["id"]), media_type), item)
+
+    collections: list[tuple[CollectionRef, list[LibraryTitle] | None]] = []
+    for ref in season.collections:
+        titles = plex.collection_members(ref.section_key, ref.title)
+        if titles is None:
+            logger.warning(
+                "{}: collection “{}” isn't in your library tonight — using the season's other sources",
+                season.name,
+                ref.title,
+            )
+        collections.append((ref, titles))
+    members = [(title.tmdb_id, title.media_type) for _ref, titles in collections for title in titles or ()]
+
+    picks = set(season.picks)
+    listed = tagged.keys() | genre.keys()
+    wanted = [title for title in dict.fromkeys([*season.picks, *members]) if title not in listed]
+    if len(wanted) > MAX_PLEX_SOURCED:
+        logger.warning(
+            "{}: {} titles from its collections and picks; only the first {} are used",
+            season.name,
+            len(wanted),
+            MAX_PLEX_SOURCED,
+        )
+        wanted = wanted[:MAX_PLEX_SOURCED]
+    by_id: dict[tuple[int, MediaType], dict] = {}
+    for title, item in zip(wanted, _read_items(tmdb, wanted), strict=True):
+        if item is None or (title not in picks and _left_out(season, title[1], item)):
+            continue
+        by_id[title] = item
+    return _SourceReads(tagged=tagged, genre=genre, collections=tuple(collections), by_id=by_id)
+
+
 def load_titles(
     tmdb: _ListReader,
     plex: _CollectionReader,
@@ -473,41 +544,10 @@ def load_titles(
     hand pick. Raises when TMDB or Plex fails, so the rows that need this season keep what they have tonight
     rather than rebuild from half a list.
     """
+    reads = _read_sources(tmdb, plex, season, tmdb.discover_all)
     found: dict[MediaType, dict[int, dict]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
-    for media_type, params in _queries(season):
-        for item in tmdb.discover_all(media_type, params):
-            if "with_keywords" in params and _left_out(season, media_type, item):
-                continue
-            found[media_type].setdefault(int(item["id"]), item)
-
-    missing: list[str] = []
-    members: list[tuple[int, MediaType]] = []
-    for ref in season.collections:
-        titles = plex.collection_members(ref.section_key, ref.title)
-        if titles is None:
-            missing.append(ref.title)
-            logger.warning(
-                "{}: collection “{}” isn't in your library tonight — using the season's other sources",
-                season.name,
-                ref.title,
-            )
-            continue
-        members += [(title.tmdb_id, title.media_type) for title in titles]
-
-    picks = set(season.picks)
-    by_id = [title for title in dict.fromkeys([*season.picks, *members]) if title[0] not in found[title[1]]]
-    if len(by_id) > MAX_PLEX_SOURCED:
-        logger.warning(
-            "{}: {} titles from its collections and picks; only the first {} are used",
-            season.name,
-            len(by_id),
-            MAX_PLEX_SOURCED,
-        )
-        by_id = by_id[:MAX_PLEX_SOURCED]
-    for (tmdb_id, media_type), item in zip(by_id, _read_items(tmdb, by_id), strict=True):
-        if item is None or ((tmdb_id, media_type) not in picks and _left_out(season, media_type, item)):
-            continue
-        found[media_type].setdefault(tmdb_id, item)
+    for (tmdb_id, media_type), item in reads.all_titles().items():
+        found[media_type][tmdb_id] = item
 
     return SeasonTitles(
         ids={media_type: frozenset(items) for media_type, items in found.items()},
@@ -515,5 +555,271 @@ def load_titles(
             media_type: [item for tmdb_id, item in items.items() if tmdb_id in library_index.get(media_type, {})]
             for media_type, items in found.items()
         },
-        missing_collections=tuple(missing),
+        missing_collections=tuple(ref.title for ref, titles in reads.collections if titles is None),
     )
+
+
+class _PagedListReader(_ListReader, Protocol):
+    def discover_all(self, media_type: MediaType, params: dict, *, workers: int = ...) -> list[dict]: ...
+
+
+#: Titles the editor's sample shows.
+PREVIEW_SAMPLE = 10
+
+
+@dataclass(frozen=True)
+class CollectionCount:
+    """What one Plex collection gives a season, for the editor."""
+
+    title: str
+    section_key: str
+    #: False when the library has no collection of that title right now.
+    found: bool
+    #: Its titles the season would use: in a library, with a TMDB entry, and not of a left-out genre.
+    in_library: int
+
+
+@dataclass(frozen=True)
+class SeasonPreview:
+    """What the season editor shows while the owner builds a season (#137 D10). Every count is of titles in
+    the libraries, which is all a season ever adds to a row."""
+
+    #: The season's next day on or after today; None while its date rule is invalid.
+    next_date: date | None
+    #: Why the date rule is invalid, worded for the owner; None when it is fine.
+    rule_error: str | None
+    #: What `load_titles` puts in the season's ``in_library``.
+    total: int
+    #: The total split by the first source, in this order, that gives each title: they add up to ``total``.
+    from_tags: int
+    from_genre: int
+    from_collections: int
+    from_picks: int
+    #: Tag id -> what that tag alone gives.
+    per_tag: dict[int, int]
+    per_collection: tuple[CollectionCount, ...]
+    #: Up to ``PREVIEW_SAMPLE`` titles, the most voted on TMDB first.
+    sample: tuple[str, ...]
+
+
+def preview(
+    tmdb: _PagedListReader,
+    plex: _CollectionReader,
+    season: Season,
+    library_index: dict[MediaType, dict[int, int]],
+    *,
+    today: date,
+    workers: int = 1,
+) -> SeasonPreview:
+    """Count a draft season's titles the way a run would, and say where they come from.
+
+    The engine reads no clock, so ``today`` is the caller's. An invalid date rule still counts the films — the
+    owner may be half-way through choosing a date — and says what is wrong with it instead of a next date.
+
+    Args:
+        tmdb: Reads TMDB lists and single titles.
+        plex: Reads the season's Plex collections.
+        season: The draft. Its slug, name and timing are not read.
+        library_index: ``tmdb_id -> ratingKey`` per media type, for every library.
+        today: The day the next date is counted from.
+        workers: Pages of one TMDB list read at once.
+
+    Returns:
+        The counts, the next date and a sample.
+
+    Raises:
+        Exception: Whatever TMDB or Plex raised. A preview from part of the sources would understate them.
+    """
+    try:
+        season.rule.validate()
+    except ValueError as e:
+        next_date, rule_error = None, str(e)
+    else:
+        next_date, rule_error = next_anchors(season, today, 1)[0], None
+
+    def held(title: tuple[int, MediaType]) -> bool:
+        return title[0] in library_index.get(title[1], {})
+
+    discover = functools.partial(tmdb.discover_all, workers=workers)
+    reads = _read_sources(tmdb, plex, season, discover)
+    in_library = {title: item for title, item in reads.all_titles().items() if held(title)}
+
+    from_tags = reads.tagged.keys() & in_library.keys()
+    from_genre = (reads.genre.keys() & in_library.keys()) - from_tags
+    per_collection = []
+    members: set[tuple[int, MediaType]] = set()
+    for ref, titles in reads.collections:
+        gives = {(title.tmdb_id, title.media_type) for title in titles or ()} & in_library.keys()
+        members |= gives
+        per_collection.append(
+            CollectionCount(
+                title=ref.title, section_key=ref.section_key, found=titles is not None, in_library=len(gives)
+            )
+        )
+    from_collections = members - from_tags - from_genre
+    from_picks = (set(season.picks) & in_library.keys()) - from_tags - from_genre - from_collections
+
+    def per_tag(tag: int) -> int:
+        alone = replace(season, keywords=(tag,), movie_genres=())
+        found = {
+            (int(item["id"]), media_type)
+            for media_type, params in _queries(alone)
+            for item in discover(media_type, params)
+            if not _left_out(season, media_type, item)
+        }
+        return sum(1 for title in found if held(title))
+
+    def name(item: dict) -> str:
+        return str(item.get("title") or item.get("name") or "")
+
+    most_voted = sorted(in_library.values(), key=lambda item: (-(item.get("vote_count") or 0), name(item)))
+    return SeasonPreview(
+        next_date=next_date,
+        rule_error=rule_error,
+        total=len(in_library),
+        from_tags=len(from_tags),
+        from_genre=len(from_genre),
+        from_collections=len(from_collections),
+        from_picks=len(from_picks),
+        per_tag={tag: per_tag(tag) for tag in dict.fromkeys(season.keywords)},
+        per_collection=tuple(per_collection),
+        sample=tuple(name(item) for item in most_voted[:PREVIEW_SAMPLE]),
+    )
+
+
+@dataclass(frozen=True)
+class Preset:
+    """A ready-made season the editor offers (#137 D9). Adding one opens the editor filled in from it; nothing
+    is saved until the owner saves. ``season.slug`` is the preset's key: a saved season gets its own slug."""
+
+    key: str
+    season: Season
+    #: What the editor says beside it — what to add when TMDB's tags fall short. Empty when they don't.
+    note: str
+
+
+#: The TMDB name of every tag a preset uses, as `/search/keyword` gave it on 2 Oct 2026. The editor shows a
+#: tag by its name, and a preset opens without a TMDB read.
+PRESET_TAG_NAMES: dict[int, str] = {
+    613: "new year's eve",
+    252123: "new year",
+    235503: "independence day",
+    159743: "fourth of july",
+    282190: "4th of july",
+    190024: "american revolution",
+    2407: "fireworks",
+    4543: "thanksgiving",
+    209352: "st. patrick's day",
+    10310: "leprechaun",
+    14985: "ireland",
+    299594: "irish",
+    4729: "dublin, ireland",
+    9921: "easter",
+    9923: "easter bunny",
+    173983: "mother's day",
+}
+
+_FEW_TAGGED = "TMDB tags only a handful of films for this day — add a collection or your own picks."
+_NO_TAG = "TMDB has no Father's Day tag — add a collection or your own picks."
+
+
+def _preset(
+    key: str, name: str, emoji: str, rule: DateRule, *, lead: int, after: int = 0, note: str = "", **sources
+) -> Preset:
+    season = Season(
+        slug=key, name=name, emoji=emoji, rule=rule, description="", lead_days=lead, after_days=after, **sources
+    )
+    return Preset(key=key, season=season, note=note)
+
+
+# The spec's table (`.claude/docs/issue-137-custom-seasons.md`, "Presets"): tag ids verified against TMDB on
+# 2 Oct 2026, and measured against a 10,030-film library. A wrong id is silent: it matches real, unrelated films.
+PRESETS: tuple[Preset, ...] = (
+    _preset(
+        "new_years_eve",
+        "New Year's Eve",
+        "🎆",
+        DateRule("fixed", month=12, day=31),
+        lead=7,
+        after=1,
+        keywords=(613, 252123),  # new year's eve, new year
+    ),
+    _preset(
+        "fourth_of_july",
+        "4th of July",
+        "🎇",
+        DateRule("fixed", month=7, day=4),
+        lead=7,
+        # independence day, fourth of july, 4th of july, american revolution, fireworks
+        keywords=(235503, 159743, 282190, 190024, 2407),
+    ),
+    _preset(
+        "thanksgiving_us",
+        "Thanksgiving (US)",
+        "🦃",
+        DateRule("nth", month=11, nth=4, weekday=3),
+        lead=14,
+        keywords=(4543,),  # thanksgiving
+    ),
+    _preset(
+        "thanksgiving_ca",
+        "Thanksgiving (Canada)",
+        "🍁",
+        DateRule("nth", month=10, nth=2, weekday=0),
+        lead=7,
+        keywords=(4543,),  # thanksgiving
+    ),
+    _preset(
+        "st_patricks_day",
+        "St Patrick's Day",
+        "☘️",
+        DateRule("fixed", month=3, day=17),
+        lead=7,
+        # st. patrick's day, leprechaun, ireland, irish, dublin, ireland
+        keywords=(209352, 10310, 14985, 299594, 4729),
+        keyword_excluded_genres=(27,),  # Horror
+        note="Leaves out Horror, which would otherwise bring in the Leprechaun slashers.",
+    ),
+    _preset(
+        "easter",
+        "Easter",
+        "🐣",
+        DateRule("easter"),
+        lead=14,
+        keywords=(9921, 9923),  # easter, easter bunny
+    ),
+    _preset(
+        "mothers_day",
+        "Mother's Day (US, CA, AU, NZ)",
+        "💐",
+        DateRule("nth", month=5, nth=2, weekday=6),
+        lead=7,
+        keywords=(173983,),  # mother's day
+        note=_FEW_TAGGED,
+    ),
+    _preset(
+        "mothering_sunday",
+        "Mothering Sunday (UK, IE)",
+        "💐",
+        DateRule("easter", offset=-21),
+        lead=7,
+        keywords=(173983,),  # mother's day
+        note=_FEW_TAGGED,
+    ),
+    _preset(
+        "fathers_day",
+        "Father's Day (US, UK, CA, IE)",
+        "👔",
+        DateRule("nth", month=6, nth=3, weekday=6),
+        lead=7,
+        note=_NO_TAG,
+    ),
+    _preset(
+        "fathers_day_au_nz",
+        "Father's Day (AU, NZ)",
+        "👔",
+        DateRule("nth", month=9, nth=1, weekday=6),
+        lead=7,
+        note=_NO_TAG,
+    ),
+)

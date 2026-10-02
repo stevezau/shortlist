@@ -207,3 +207,24 @@ def test_make_slug(name, taken, slug) -> None:
 )
 def test_make_slug_edge_cases(name, taken, slug) -> None:
     assert make_slug(name, taken) == slug
+
+
+def test_make_slug_never_takes_a_built_in_slug_whatever_it_is_told() -> None:
+    """Rows store slugs: a custom "Hallowe'en" under `halloween` would be read as the built-in by every row."""
+    assert make_slug("Hallowe'en", set()) == "halloween-2"
+    assert make_slug("Christmas", {"christmas-2"}) == "christmas-3"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "x" * 100,
+        "a" * 55 + " bcdefgh",  # the cut lands just after a dash
+        "\N{TELEPHONE SIGN}" * 40,  # 40 characters, the most a name may have, and 120 letters decomposed
+    ],
+)
+def test_make_slug_fits_the_column_even_with_a_suffix(name: str) -> None:
+    base = make_slug(name, set())
+    suffixed = make_slug(name, {base, *(f"{base}-{n}" for n in range(2, 12))})
+    assert len(base) <= 56 and not base.endswith("-")
+    assert suffixed == f"{base}-12" and len(suffixed) <= 64

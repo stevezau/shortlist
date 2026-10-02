@@ -14,6 +14,9 @@ from shortlist.engine.models import MediaType
 from shortlist.engine.seasons import BUILTIN_SEASONS, CollectionRef, DateRule, Season, season_content_hash
 from shortlist.server.db.models import SeasonDef
 
+#: `seasons.slug` is String(64); this leaves room for a "-N" suffix of up to seven digits.
+_MAX_SLUG_BASE = 56
+
 
 def load_catalogue(session: Session) -> dict[str, Season]:
     """Every season a row may follow. Built once per request, job or run and passed down explicitly.
@@ -83,15 +86,18 @@ def make_slug(name: str, taken: set[str]) -> str:
 
     Args:
         name: The season's name as the owner typed it.
-        taken: Slugs already in the catalogue, built-ins included.
+        taken: Every slug already stored. The built-ins' are reserved here whatever the caller passes: a
+            custom "Hallowe'en" stored as `halloween` would be read as the built-in by every row.
 
     Returns:
         The slug, with "-2", "-3"... appended while it is taken; "season" when the name has no letters
-        or digits at all (an emoji alone).
+        or digits at all (an emoji alone). At most 64 characters, the column's width: one character can
+        decompose into several letters ("℡" is "tel"), so a 40-character name can make a longer slug.
     """
+    taken = taken | BUILTIN_SEASONS.keys()
     text = name.replace("'", "").replace("\N{RIGHT SINGLE QUOTATION MARK}", "")
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
-    base = re.sub(r"[^a-z0-9]+", "-", text).strip("-") or "season"
+    base = re.sub(r"[^a-z0-9]+", "-", text).strip("-")[:_MAX_SLUG_BASE].rstrip("-") or "season"
     slug, n = base, 2
     while slug in taken:
         slug = f"{base}-{n}"

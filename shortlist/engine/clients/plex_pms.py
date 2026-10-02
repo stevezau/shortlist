@@ -826,7 +826,18 @@ class PlexClient:
         )
         if collection is None:
             return None
-        return _library_titles(collection.items(), section)
+        items = collection.items()
+        titles = _library_titles(items, section)
+        if dropped := len(items) - len(titles):
+            logger.info(
+                "collection “{}” in {}: {} of its {} items are skipped — no TMDB id, or not a {}",
+                collection.title,
+                section.title,
+                dropped,
+                len(items),
+                section.type,
+            )
+        return titles
 
     def search_titles(self, query: str, limit: int = 10) -> list[LibraryTitle]:
         """Titles in the movie and TV libraries whose name contains ``query`` — the season editor's film search.

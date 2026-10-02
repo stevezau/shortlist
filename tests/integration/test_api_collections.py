@@ -3622,17 +3622,6 @@ class TestSeasonalRowsApi:
         assert body["season_status"]["showing"] is None
         assert body["season_status"]["next"]["starts"] == "2026-11-25"
 
-    def test_the_catalogue_lists_every_season_with_its_day(self, client: TestClient):
-        r = client.get("/api/collections/seasons")
-
-        assert r.status_code == 200
-        assert [(s["slug"], s["month"], s["day"]) for s in r.json()] == [
-            ("valentines", 2, 14),
-            ("halloween", 10, 31),
-            ("christmas", 12, 25),
-        ]
-        assert r.json()[1]["description"] == "Halloween films and horror"
-
     def test_changing_the_seasons_is_applied_now(self, client: TestClient, monkeypatch):
         """Make a row seasonal in September and it has to come off people's Home now, not at midnight."""
         queued: list[str] = []
