@@ -428,6 +428,37 @@ class TestBuildContext:
 
         assert ctx.delivered_details == {("sarah", "gems", "2"): WrittenDetails(summary="Hi", title_sort=None)}
 
+    def test_the_season_a_collection_was_built_for_reaches_the_engine_under_the_same_key(
+        self, service, sessions, configured
+    ):
+        """#137 C-1's DB→engine wiring. "" (built while not seasonal) is a record; NULL (delivered before
+        seasons were recorded) is absent, so promotion falls back to the picks' recipe."""
+        from shortlist.server.db.models import Delivery
+
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="sarah", slug="sarah", enabled=True))
+            session.add(
+                Delivery(
+                    collection_slug="seasonal",
+                    user_slug="sarah",
+                    library_key="1",
+                    rating_key=9001,
+                    season="christmas@2026-12-25",
+                )
+            )
+            session.add(
+                Delivery(collection_slug="plain", user_slug="sarah", library_key="1", rating_key=9002, season="")
+            )
+            session.add(Delivery(collection_slug="old", user_slug="sarah", library_key="1", rating_key=9003))
+            session.commit()
+
+        ctx = service.build_context(dry_run=True)
+
+        assert ctx.delivered_seasons == {
+            ("sarah", "seasonal", "1"): "christmas@2026-12-25",
+            ("sarah", "plain", "1"): "",
+        }
+
     def test_a_ratingkey_two_rows_claim_is_dropped_rather_than_arbitrated(self, service, sessions, configured):
         """The safety valve that makes a bad ledger self-heal. Two rows naming one collection is
         reachable if a run died between the delete and the persist of a repair that recreates a row — and

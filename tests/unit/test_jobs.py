@@ -649,7 +649,7 @@ class TestRestoreAfterUnpause:
             find_owned_collections=lambda section, label: [collection] if label == "shortlist_sarah" else [],
             promote=lambda c, **kw: promoted.append((c.title, kw)),
         )
-        ctx = SimpleNamespace(plex=plex, config=config, write_lock=None)
+        ctx = SimpleNamespace(plex=plex, config=config, write_lock=None, delivered_seasons={}, previous_recipes={})
 
         def fake_engine_run(_ctx, users):
             merged.append(users)
@@ -1164,7 +1164,9 @@ class TestSafeMode:
             demote_all=lambda c, **kw: wrote.append(("demote", kw)) or True,
             claims_any_surface=lambda c: True,
         )
-        return SimpleNamespace(plex=plex, config=EngineConfig(dry_run=True), write_lock=None)
+        return SimpleNamespace(
+            plex=plex, config=EngineConfig(dry_run=True), write_lock=None, delivered_seasons={}, previous_recipes={}
+        )
 
     def _state(self, sessions, ctx):
         return SimpleNamespace(
@@ -1255,7 +1257,13 @@ class TestCleanupForgetsTheLedger:
             # would make this test pass for a handler that had stopped honouring it.
             from shortlist.server.safe_mode import force_dry_run
 
-            return SimpleNamespace(plex=plex, config=EngineConfig(dry_run=force_dry_run() or dry_run), write_lock=None)
+            return SimpleNamespace(
+                plex=plex,
+                config=EngineConfig(dry_run=force_dry_run() or dry_run),
+                write_lock=None,
+                delivered_seasons={},
+                previous_recipes={},
+            )
 
         return SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=build_context))
 
@@ -1943,6 +1951,7 @@ class TestScheduledRowVisibility:
         collections=None,
         paused_all=False,
         dry_run=False,
+        delivered_seasons=None,
     ):
         """A fake Plex plus a stub `engine_run`, both recording into ONE ordered list.
 
@@ -1963,7 +1972,9 @@ class TestScheduledRowVisibility:
             promote=lambda c, **kw: calls.append(("promote", c.title, kw)),
             demote_all=lambda c, **kw: calls.append(("demote", c.title, kw)) or True,
         )
-        ctx = SimpleNamespace(plex=plex, config=config, write_lock=None)
+        ctx = SimpleNamespace(
+            plex=plex, config=config, write_lock=None, delivered_seasons=delivered_seasons or {}, previous_recipes={}
+        )
 
         def fake_engine_run(_ctx, users):
             calls.append(("merge", users))
@@ -2115,6 +2126,56 @@ class TestScheduledRowVisibility:
                 "promote",
                 "🎃 Halloween picks" + row_marker(self.ACCOUNT),
                 {"shared": False, "home": False, "recommended": False},
+            )
+        ]
+
+    @pytest.mark.parametrize(
+        ("built_for", "shown"),
+        [("halloween@2026-10-31", False), ("christmas@2026-12-25", True)],
+        ids=["last_seasons_collection", "built_for_tonight"],
+    )
+    def test_the_night_a_season_opens_only_a_collection_built_for_it_is_shown(
+        self, sessions, monkeypatch, built_for, shown
+    ):
+        """#137 C-1. Christmas opens on 25 Nov. If the row found no Christmas films in this library, the library
+        still holds the Halloween collection, and showing it would put "🎃 Halloween picks" on Home until
+        Christmas. The ledger says what each collection was built for; specs come from the real ContextBuilder."""
+        from shortlist.server.db.models import Collection, Delivery
+
+        calls: list = []
+        self._seed_seasonal(sessions, monkeypatch, today=datetime(2026, 11, 25, 0, 0))
+        with sessions() as session:
+            row = session.query(Collection).filter_by(slug="seasonal").one()
+            row.seasons = ["halloween", "christmas"]
+            row.name_template, row.placement, row.placement_friends = "{season_emoji} {season} picks", "both", "both"
+            session.add(
+                Delivery(collection_slug="seasonal", user_slug="sarah", library_key="1", rating_key=4242, title="x")
+            )
+            session.commit()
+        title = "🎃 Halloween picks" if not shown else "🎄 Christmas picks"
+        state = self._state(
+            sessions,
+            calls=calls,
+            rows=[],
+            collections=[(title + row_marker(self.ACCOUNT), 4242, "shortlist_sarah")],
+            delivered_seasons={("sarah", "seasonal", "1"): built_for},
+        )
+        with sessions() as session:
+            specs = state.run_service.builder._build_rows(
+                session, SettingsStore(session, state.secrets), catalogue=load_catalogue(session)
+            )
+        state.run_service.build_context(False).config.rows[:] = specs
+
+        assert jobs._HANDLERS["rows.visibility"](state, {})["changed"] == ["seasonal"]
+
+        assert calls[0] == ("merge", calls[0][1])
+        assert self._promotes(calls) == [
+            (
+                "promote",
+                title + row_marker(self.ACCOUNT),
+                {"shared": True, "home": False, "recommended": True}
+                if shown
+                else {"shared": False, "home": False, "recommended": False},
             )
         ]
 
@@ -2716,7 +2777,11 @@ class TestRunlessPrivacyPassesAuditFilterWrites:
         )
         run_service = SimpleNamespace(
             build_context=lambda dry_run, plex_only=False: SimpleNamespace(
-                plex=plex, config=EngineConfig(dry_run=dry_run), write_lock=None
+                plex=plex,
+                config=EngineConfig(dry_run=dry_run),
+                write_lock=None,
+                delivered_seasons={},
+                previous_recipes={},
             ),
             enabled_profiles=lambda session, user_ids=None: [],
         )

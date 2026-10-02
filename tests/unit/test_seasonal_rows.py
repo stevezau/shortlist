@@ -7,7 +7,7 @@ never reads a clock.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -852,6 +852,188 @@ class TestASharedSeasonalRow:
         assert not any(u.slug == "shared_season-shared" and u.picks for u in report.users)
         assert ctx.tmdb.discover_all.called is False
         ctx.plex.promote.assert_any_call(collection, shared=False, home=False, recommended=False)
+
+
+PAT = RowSeason(slug="pat", name="St Patrick's Day", emoji="☘️", anchor=date(2027, 3, 17), content_hash="abc")
+
+
+class TestLastSeasonsCollection:
+    """A seasonal row with nothing for its new season in a library keeps last season's collection there, under
+    last season's title and with last season's films. Promoting it would put "🎄 Christmas picks" on people's
+    Home in March, so it is kept hidden like a dormant row until a run builds the new season into it (#137 C-1).
+    Hiding is the only write: delivery leaves an empty library alone, and nothing here deletes."""
+
+    @staticmethod
+    def _christmas_copy(account: int = 100) -> SimpleNamespace:
+        return SimpleNamespace(title="🎄 Christmas picks" + row_marker(account), ratingKey=4242, labels=[])
+
+    def _in_march(self, ctx, collection) -> None:
+        """Sarah's row follows St Patrick's Day (with no titles in the library) and Christmas; tonight is St
+        Patrick's, and her library still holds the Christmas collection the row last built."""
+        from shortlist.engine.seasons import DateRule, Season
+
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: (
+            [collection] if label.lower() == "shortlist_sarah" else []
+        )
+        ctx.delivered_keys = {("sarah", "seasonal", "1"): 4242}
+        pat = Season(
+            slug="pat",
+            name=PAT.name,
+            emoji=PAT.emoji,
+            rule=DateRule("fixed", month=3, day=17),
+            description="",
+            keywords=(209352,),
+            lead_days=7,
+            after_days=0,
+            content_hash="abc",
+        )
+        ctx.config.seasons = {**BUILTIN_SEASONS, "pat": pat}
+        ctx.config.rows = [seasonal_spec(seasons=["pat", "christmas"], season=PAT)]
+
+    @staticmethod
+    def _midnight(ctx) -> None:
+        """What `rows.visibility` does on the season's first day: promote one row by its ledger key."""
+        pipeline_mod.promote_user_rows(
+            ctx,
+            _people()[0],
+            {},
+            placement_keys={4242: "seasonal"},
+            skip_unmatched=True,
+            only_row="seasonal",
+            built_for=pipeline_mod.built_seasons(ctx),
+        )
+
+    def test_the_midnight_pass_keeps_it_hidden(self, ctx):
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "christmas@2026-12-25"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_last_years_collection_of_the_same_season_is_kept_hidden_too(self, ctx):
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "pat@2026-03-17"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_one_built_for_tonights_season_is_promoted(self, ctx):
+        fresh = SimpleNamespace(title="☘️ St Patrick's Day picks" + row_marker(100), ratingKey=4242, labels=[])
+        self._in_march(ctx, fresh)
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "pat@2027-03-17"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(fresh, shared=True, home=False, recommended=True)
+
+    def test_with_no_ledger_record_its_picks_recipe_decides(self, ctx):
+        """Every collection delivered before the ledger recorded seasons has no record there. The picks it was
+        built from still name their season, so last season's collection is not shown on the deploy night."""
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+        ctx.previous_recipes = {
+            ("sarah", "seasonal", "1"): "movie|||||False|False|5|1|similar|season=christmas@2026-12-25"
+        }
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_a_recipe_for_tonights_custom_season_ignores_its_source_hash(self, ctx):
+        fresh = SimpleNamespace(title="☘️ St Patrick's Day picks" + row_marker(100), ratingKey=4242, labels=[])
+        self._in_march(ctx, fresh)
+        ctx.previous_recipes = {
+            ("sarah", "seasonal", "1"): "movie|||||False|False|5|1|similar|season=pat@2027-03-17#old"
+        }
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(fresh, shared=True, home=False, recommended=True)
+
+    def test_a_collection_built_before_the_row_followed_seasons_is_kept_hidden(self, ctx):
+        """Its recipe has no season at all, so its films were not chosen for this one."""
+        stale = SimpleNamespace(title="Plain picks" + row_marker(100), ratingKey=4242, labels=[])
+        self._in_march(ctx, stale)
+        ctx.previous_recipes = {("sarah", "seasonal", "1"): "movie|||||False|False|5|1|similar"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_with_no_record_at_all_it_is_promoted_as_before(self, ctx):
+        """Nothing says what it holds, so nothing proves it stale: a row must not lose its place on the night
+        this ships just because the ledger never recorded a season."""
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=True, home=False, recommended=True)
+
+    def test_a_run_that_finds_nothing_for_the_new_season_hides_it(self, ctx):
+        """Someone whose only row found nothing tonight delivers nothing, and a person who delivers nothing was
+        never promoted: last season's collection kept whatever flags it had (a Halloween row handing over to
+        Christmas stayed on Home all through Christmas)."""
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "christmas@2026-12-25"}
+
+        report = pipeline_mod.run(ctx, _people())
+
+        assert _picks(report, "sarah", "seasonal") == []
+        ctx.plex.promote.assert_any_call(stale, shared=False, home=False, recommended=False)
+        assert not [c for c in ctx.plex.promote.call_args_list if c.args[0] is stale and any(c.kwargs.values())]
+
+    def test_a_run_that_builds_the_new_season_shows_what_it_built(self, ctx):
+        """The ledger the run starts from still names last season; what the run delivers tonight is what counts."""
+        built = MagicMock(ratingKey=5555, labels=[])
+        built.title = "🎄 Christmas picks" + row_marker(100)
+        ctx.plex.create_collection.return_value = built
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: (
+            [built] if label.lower() == "shortlist_sarah" and ctx.plex.create_collection.called else []
+        )
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "halloween@2026-10-31"}
+        ctx.config.rows = [seasonal_spec()]
+
+        report = pipeline_mod.run(ctx, _people()[:1])
+
+        assert _picks(report, "sarah", "seasonal") != []
+        ctx.plex.promote.assert_any_call(built, shared=True, home=False, recommended=True)
+
+    def test_a_shared_rows_last_season_is_kept_hidden(self, ctx):
+        stale = SimpleNamespace(title="🎄 Christmas picks" + row_marker(0), ratingKey=5151, labels=[])
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: (
+            [stale] if label == "shortlist__shared_season-shared" else []
+        )
+        ctx.delivered_seasons = {("shared_season-shared", "season-shared", "1"): "christmas@2026-12-25"}
+        spec = seasonal_spec(slug="season-shared", shared=True, seasons=["pat", "christmas"], season=PAT)
+
+        pipeline_mod.promote_shared_row(ctx, spec, into=set(), built_for=pipeline_mod.built_seasons(ctx))
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_what_a_run_delivers_or_removes_replaces_the_ledgers_record(self, ctx):
+        from shortlist.engine.models import RunReport, UserRunReport
+
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "halloween@2026-10-31", ("sarah", "gone", "1"): "x@1"}
+        ctx.previous_recipes = {("mike", "seasonal", "1"): "movie|season=halloween@2026-10-31#h"}
+        sarah = UserRunReport(username="sarah", slug="sarah")
+        sarah.breakdown = [
+            {"row_slug": "seasonal", "library_key": "1", "rating_key": 1, "season": "christmas@2026-12-25"},
+            {"row_slug": "plain", "library_key": "1", "rating_key": 2, "season": ""},
+        ]
+        sarah.removed_deliveries = [{"row_slug": "gone", "library_key": "1"}]
+        report = RunReport(started_at=datetime(2026, 12, 1, tzinfo=UTC), users=[sarah])
+
+        assert pipeline_mod.built_seasons(ctx, report) == {
+            ("sarah", "seasonal", "1"): "christmas@2026-12-25",
+            ("sarah", "plain", "1"): "",
+            ("mike", "seasonal", "1"): "halloween@2026-10-31",
+        }
 
 
 class TestSeasonInTheDescriptionAndPoster:

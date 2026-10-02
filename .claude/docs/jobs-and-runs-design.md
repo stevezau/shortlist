@@ -696,6 +696,18 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
   `sync.check` can ever record an orphan delete, because the privacy passes (`engine_run(ctx, [])`) are
   handed no authority to delete.
 
+- **Last season's collection is never shown for the next one (2026-10-02, issue #137 C-1).** A seasonal row
+  that builds nothing in a library for tonight's season leaves that library's collection as it was (rule 1's
+  "a library with no picks is left alone"), still titled and filled for the previous season. Every door that
+  promotes — the run's `_promote_phase`, `rows.visibility` (which a season PUT or DELETE also queues), and
+  `user.restore` — now passes `pipeline.built_seasons`, and `promote_user_rows`/`promote_shared_row` treat a
+  collection whose record is not tonight's `slug@anchor` as dormant: hidden, never deleted. The record is
+  `deliveries.season` (0096), written on the persist path from each breakdown entry, with the stored picks'
+  recipe as the fallback for older deliveries; a run lays its own deliveries over both, as
+  `live_delivered_keys` does. A person whose in-season seasonal row built nothing is a promotion candidate,
+  as one with a dormant row is, so the hiding happens on the run too. Season PUT/DELETE queue a pass only
+  for rows whose shown-today or tonight's season actually changes.
+
 ### Corrections to this document
 
 - §11.A said `notifications.py` doesn't read failed jobs — it does (`_failed_jobs`).

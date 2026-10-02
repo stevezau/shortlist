@@ -1716,6 +1716,47 @@ class TestCustomSeasons0095:
         assert self._columns(tmp_path) == {}
 
 
+class TestDeliverySeason0096:
+    """0096 adds `deliveries.season`, the season a collection was last built for (#137 C-1). Every existing
+    ledger row comes out NULL — "not recorded" — so promotion behaves as before until the next delivery."""
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, tuple[bool, str | None]]:
+        """column -> (NOT NULL, default)."""
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            return {r[1]: (bool(r[3]), r[4]) for r in con.execute("PRAGMA table_info(deliveries)")}
+
+    def test_it_adds_a_nullable_season_with_no_default(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        assert self._columns(tmp_path)["season"] == (False, None)
+
+    def test_an_existing_delivery_comes_out_unrecorded(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0095")
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            con.execute(
+                "INSERT INTO deliveries (collection_slug, user_slug, library_key, rating_key, title, updated_at) "
+                "VALUES ('seasonal', 'sarah', '1', 42, 'x', '2026-10-02')"
+            )
+            con.commit()
+
+        run_migrations(tmp_path)
+
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            assert con.execute("SELECT season FROM deliveries").fetchall() == [(None,)]
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0095")
+        run_migrations(tmp_path)
+        assert "season" in self._columns(tmp_path)
+
+    def test_the_downgrade_drops_the_column(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0095")
+        assert "season" not in self._columns(tmp_path)
+
+
 class TestRowShowDaysDowngrade0088:
     """0089's downgrade re-creates `shown_state` for any install that had it, and 0088's downgrade has to
     take it out again, or a database downgraded past 0088 keeps a column no revision below it defines."""

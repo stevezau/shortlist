@@ -109,6 +109,9 @@ def _record_deliveries(session: Session, user_slug: str, breakdown: list[dict]) 
             row.summary_written = entry["summary_written"]
         if "title_sort_written" in entry:
             row.title_sort_written = entry["title_sort_written"]
+        # Absent only on a breakdown written before seasons were recorded: leave the record as it was.
+        if "season" in entry:
+            row.season = entry["season"]
         row.updated_at = datetime.now(UTC)
 
 

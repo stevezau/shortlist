@@ -12,7 +12,7 @@ import contextvars
 import json
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -674,6 +674,10 @@ def _deliver_phase(
         )
         if agg is not None:
             shared_to_promote.append((spec, agg))
+        elif spec.season is not None:
+            # Nothing built for this season anywhere, so each library may still hold LAST season's collection,
+            # promoted. Promotion is where that is hidden (`promote_shared_row`), as for a dormant row.
+            shared_to_promote.append((spec, None))
     return to_promote, shared_to_promote
 
 
@@ -1299,6 +1303,66 @@ def live_delivered_keys(ctx: EngineContext, report: RunReport) -> dict[tuple[str
     return keys
 
 
+def built_seasons(ctx: EngineContext, report: RunReport | None = None) -> dict[tuple[str, str, str], str]:
+    """``(user_slug, row_slug, library_key) -> the season that collection was last built for``.
+
+    A seasonal row that finds nothing for its new season in a library delivers nothing there, so that library
+    keeps last season's collection — its title and its films (#137 C-1). Promotion hides a collection whose
+    answer here is not tonight's season (`_built_for_another_season`).
+
+    Three sources, later ones winning: the season part of the stored picks' recipe (`rows.recipe_season`),
+    the delivery ledger's record, and — given ``report`` — what THIS run delivered or removed, laid over the
+    ledger in the order `live_delivered_keys` replays it. The recipe covers collections delivered before the
+    ledger recorded seasons; the ledger outlives pruned picks; the run's own deliveries are newer than both.
+
+    A key absent from all three is a collection nothing describes. It is promoted exactly as before, so no
+    row loses its place on the night the record starts being kept.
+
+    Args:
+        ctx: The engine context: ``previous_recipes`` and ``delivered_seasons``.
+        report: The run in progress, or None outside a run (`rows.visibility`, `user.restore`).
+
+    Returns:
+        ``slug@anchor`` per collection, or "" for one built while its row followed no season.
+    """
+    built = {key: rows.recipe_season(recipe) for key, recipe in ctx.previous_recipes.items()}
+    built.update(ctx.delivered_seasons)
+    for user in report.users if report is not None else []:
+        for entry in user.removed_deliveries or []:
+            built.pop((user.slug, entry.get("row_slug") or "", str(entry.get("library_key") or "")), None)
+    for user in report.users if report is not None else []:
+        for entry in user.breakdown or []:
+            row_slug, library_key = entry.get("row_slug") or "", str(entry.get("library_key") or "")
+            if int(entry.get("rating_key") or 0) and row_slug and library_key and "season" in entry:
+                built[(user.slug, row_slug, library_key)] = entry["season"]
+    return built
+
+
+def _unless_built_for_another_season(spec: RowSpec | None, built: str | None, collection) -> RowSpec | None:
+    """``spec``, or the same row out of season when this collection was built for another season or year.
+
+    Out of season is DORMANT, which `_promote_one` hides whatever the placement says: last season's
+    collection is treated exactly like a row between seasons until a run builds tonight's season into it.
+    Hiding is the only write this leads to.
+
+    Args:
+        spec: The row the collection was matched to, or None.
+        built: Its `built_seasons` record. None — nothing records what it holds — is never a mismatch, so
+            such a collection is promoted as it always was.
+        collection: For the log line.
+    """
+    if spec is None or spec.season is None or built is None or built == spec.season.built_for:
+        return spec
+    logger.info(
+        "{}: built for {}, not tonight's {} — kept hidden until a run builds {} into it",
+        log_title(collection.title),
+        built or "no season",
+        spec.season.built_for,
+        spec.season.name,
+    )
+    return replace(spec, season=None)
+
+
 def identity_map(keys: dict[tuple[str, str, str], int]) -> dict[str, dict[int, str]]:
     """Ledger tuples -> ``{user_slug: {ratingKey: row_slug}}``, dropping anything ambiguous.
 
@@ -1345,6 +1409,9 @@ def _promote_phase(
     A collection skipped by an exception mid-loop is correctly absent, so converge picks it up."""
     promoted: set[int] = set()
     ledger = identity_map(live_delivered_keys(ctx, report))
+    # With this run's deliveries over the ledger: a row the run just built for a new season is promoted,
+    # while the ledger it started from still names the last one.
+    built_for = built_seasons(ctx, report)
     # When SOME row is hidden today, an unidentifiable collection might BE that row — and promotion's
     # no-spec fallback shows what it cannot identify, which would undo the midnight schedule for the
     # rest of the day. So the run stops guessing exactly when guessing could over-show, and keeps the
@@ -1382,6 +1449,7 @@ def _promote_phase(
                 placement_keys=ledger.get(user.slug, {}),
                 into=promoted,
                 skip_unmatched=hidden_today,
+                built_for=built_for,
             )
         except Exception as e:
             if user_report is not None:
@@ -1393,7 +1461,7 @@ def _promote_phase(
     for spec, _agg in shared_to_promote if not ctx.config.dry_run and filters_ok else []:
         shared_report = next((r for r in report.users if r.slug == f"{SHARED_SLUG_PREFIX}_{spec.slug}"), None)
         try:
-            promote_shared_row(ctx, spec, into=promoted)
+            promote_shared_row(ctx, spec, into=promoted, built_for=built_for)
         except Exception as e:
             if shared_report is not None:
                 shared_report.status = "error"
@@ -1403,8 +1471,12 @@ def _promote_phase(
     return promoted
 
 
-def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int]) -> None:
+def promote_shared_row(
+    ctx: EngineContext, spec: RowSpec, *, into: set[int], built_for: Mapping[tuple[str, str, str], str]
+) -> None:
     """Put a SHARED row's one public collection on the surfaces its placement asks for.
+
+    ``built_for`` is `built_seasons`: a seasonal row's collection built for another season is kept hidden.
 
     Every library, not just the first: a shared row whose ``library_keys`` narrowed leaves its
     collection in the library it walked away from, which promotion would otherwise never revisit.
@@ -1427,7 +1499,8 @@ def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int]) -> 
                 # second caller of `promote_user_rows`. This function is written to be reused.
                 logger.info("[dry-run] {}: would promote shared row '{}'", collection.title, spec.slug)
                 continue
-            _promote_one(ctx, collection, spec)
+            built = built_for.get((f"{SHARED_SLUG_PREFIX}_{spec.slug}", spec.slug, str(section.key)))
+            _promote_one(ctx, collection, _unless_built_for_another_season(spec, built, collection))
             into.add(int(collection.ratingKey))
 
 
@@ -1458,6 +1531,7 @@ def promote_user_rows(
     into: set[int] | None = None,
     skip_unmatched: bool = False,
     only_row: str | None = None,
+    built_for: Mapping[tuple[str, str, str], str],
 ) -> set[int]:
     """Put every collection under one user's label onto the surfaces its row asks for.
 
@@ -1483,6 +1557,10 @@ def promote_user_rows(
 
     ``only_row`` narrows the pass to one row's collections: every other one, unidentified ones included,
     is left exactly as it is. ``rows.visibility`` sets it when the row editor queued it for one row.
+
+    ``built_for`` is `built_seasons`, with the run's own deliveries laid over it when a run calls this. A
+    seasonal row's collection built for another season is hidden rather than promoted (#137 C-1). Required,
+    with no default: a run that forgot its overlay would hide every row it had just rebuilt for a new season.
 
     Returns the ratingKeys touched, and writes them into ``into`` as it goes when given one — so a
     caller that catches a mid-loop PMS failure still knows which collections were already set. Raises
@@ -1602,6 +1680,9 @@ def promote_user_rows(
                     log_title(collection.title),
                 )
                 continue
+            if spec is not None:
+                built = built_for.get((user.slug, spec.slug, str(section.key)))
+                spec = _unless_built_for_another_season(spec, built, collection)
             _promote_one(ctx, collection, spec, user.user_type)
             promoted.add(int(collection.ratingKey))
     return promoted

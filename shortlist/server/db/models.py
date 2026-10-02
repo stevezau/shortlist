@@ -713,6 +713,10 @@ class Delivery(Base):
     # person or another tool put there since is never wiped.
     summary_written: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     title_sort_written: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # The season this collection's films were last chosen for, ``slug@anchor`` (`RowSeason.built_for`); "" for
+    # a row that was not seasonal. NULL = delivered before this was recorded (#137 C-1). A seasonal row's
+    # collection built for another season is kept hidden rather than promoted.
+    season: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

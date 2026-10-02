@@ -436,6 +436,7 @@ class ContextBuilder:
             previous_recipes = self._previous_recipes(previous)
             delivered_keys = self._delivered_keys(session)
             delivered_details = self._delivered_details(session)
+            delivered_seasons = self._delivered_seasons(session)
             # Opted-out accounts: with hide_shared_from_disabled, even public shared rows are hidden
             # from them, so disabling a user removes them from Shortlist entirely.
             disabled_account_ids = {u.plex_account_id for u in session.query(User).filter_by(enabled=False).all()}
@@ -508,6 +509,7 @@ class ContextBuilder:
                 previous_recipes=previous_recipes,
                 delivered_keys=delivered_keys,
                 delivered_details=delivered_details,
+                delivered_seasons=delivered_seasons,
                 pms_for_user=_pms_for_user,
                 # Same token `_pms_for_user` builds its client from — including the canary fallback
                 # for a Home profile that was never separately shared.
@@ -868,6 +870,12 @@ class ContextBuilder:
             )
             for row in rows
         }
+
+    def _delivered_seasons(self, session: Session) -> dict[tuple[str, str, str], str]:
+        """The season each collection was last built for, keyed like `_delivered_keys`. Only collections
+        carrying a record: one delivered before seasons were recorded is judged by its picks' recipe."""
+        rows = session.query(Delivery).filter(Delivery.season.isnot(None))
+        return {(row.user_slug, row.collection_slug, row.library_key): row.season for row in rows}
 
     def _previous_picks(self, session: Session) -> dict[tuple[str, str, str], list[Pick]]:
         """Each row+library's picks from the run that last built it, keyed (user_slug, row_slug, section_key).

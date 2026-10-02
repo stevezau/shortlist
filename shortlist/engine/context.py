@@ -70,6 +70,10 @@ class EngineContext:
     # Same key -> what Shortlist last wrote to that collection's summary and sort title. Empty (direct
     # engine runs, rows delivered before issue #120) only means clearing a field reverts nothing.
     delivered_details: dict[tuple[str, str, str], WrittenDetails] = field(default_factory=dict)
+    # Same key -> the season that collection was last BUILT for, as `RowSeason.built_for` renders it; "" for
+    # a row that was not seasonal then. Absent for collections delivered before the ledger recorded it. A
+    # seasonal row's collection built for another season is kept hidden (`pipeline.built_seasons`).
+    delivered_seasons: dict[tuple[str, str, str], str] = field(default_factory=dict)
     # Build a PMS client that sees the server AS one user, or None when no token can be had. Used to
     # CHECK what an account Plex refuses a hide-list for can actually see, rather than assume. None on
     # direct engine runs, where the check is simply skipped.

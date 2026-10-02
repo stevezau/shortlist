@@ -950,6 +950,10 @@ def _shuffle_key(row_slug: str, user_slug: str, run_day: int, tmdb_id: int) -> i
     return int.from_bytes(digest, "big")
 
 
+#: How `row_recipe` starts its season part.
+_RECIPE_SEASON = "season="
+
+
 def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
     """A fingerprint of the settings that decide a row's CONTENTS, for change detection.
 
@@ -1012,7 +1016,7 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
             # hash (#137), so editing them rebuilds its rows; a built-in has none, so its part is unchanged.
             *(
                 (
-                    f"season={spec.season.slug}@{spec.season.anchor.isoformat()}"
+                    f"{_RECIPE_SEASON}{spec.season.built_for}"
                     + (f"#{spec.season.content_hash}" if spec.season.content_hash else ""),
                 )
                 if spec.season
@@ -1020,6 +1024,22 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
             ),
         )
     )
+
+
+def recipe_season(recipe: str) -> str:
+    """The season a stored recipe's picks were built for, as `RowSeason.built_for` renders it.
+
+    Args:
+        recipe: A `row_recipe` fingerprint as stored with the picks.
+
+    Returns:
+        ``slug@anchor`` without the custom season's source hash, or "" when the recipe names no season (the
+        row was not seasonal when it was built).
+    """
+    for part in recipe.split("|"):
+        if part.startswith(_RECIPE_SEASON):
+            return part.removeprefix(_RECIPE_SEASON).split("#", 1)[0]
+    return ""
 
 
 def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
@@ -3181,7 +3201,7 @@ def _run_user(
     """Deliver every per-person row this user is in the audience of. Candidates are computed once
     and reused across rows; each row curates and delivers with its own size/media/recipe. Returns
     True when this person is a candidate for promotion: at least one row was delivered, or a row this
-    run covers is out of season and its collection needs hiding.
+    run covers is out of season, or seasonal and in season, and its collection may need hiding.
 
     When ``demand`` is provided (requests are on), the candidates this user wanted but no delivery
     library holds are folded into it, so the run-wide request pass can ask Sonarr/Radarr for them.
@@ -3222,6 +3242,10 @@ def _run_user(
     # scoped to another row must not make this person a candidate and re-place every row they have.
     # The midnight `rows.visibility` pass hides it on the day it turns over whatever runs that night.
     dormant = [s for s in owned if not _is_muted(user, s) and s.dormant and cfg.should_build(s)]
+    # A seasonal row building tonight is owed the same pass: in a library where it finds nothing for this
+    # season it delivers nothing, so that library keeps LAST season's collection, possibly promoted. Promotion
+    # hides it (`pipeline.built_seasons`), but only for a person it reaches (#137 C-1).
+    owes_hiding = bool(dormant) or any(s.season is not None for s in specs)
     # The same three conditions, recorded per row rather than collapsed into one sentence. `reason`
     # explains the person; this attributes the decision to the ROW, which is what a rows-first run
     # view needs to place someone under the rows they were skipped for. Written on every path — a
@@ -3246,7 +3270,7 @@ def _run_user(
         # mid-run forever.
         user_report.status = "skipped"
         user_report.reason = _why_no_rows(user, cfg)
-        return bool(dormant)
+        return owes_hiding
     _emit(ctx, user.slug, "history", {})
     # Reuse a history the CALLER already filled, exactly as the shared-row path does. The server
     # pre-fills it from its watched-title cache, which turns the run's second complete per-user read
@@ -3272,7 +3296,7 @@ def _run_user(
             user_report.status = "cold_start"
             deleted_now = len(user_report.diff.deleted) if user_report.diff else 0
             user_report.reason = _why_cold_skipped(user, cfg, due, deleted_now - deleted_before)
-            return bool(dormant)  # nothing built, but an out-of-season row of theirs still needs hiding
+            return owes_hiding  # nothing built, but an out-of-season row of theirs still needs hiding
 
     policy = RowPolicy(
         ctx=ctx,
@@ -3302,7 +3326,7 @@ def _run_user(
         user_report.status = "error"
         user_report.error = f"RuntimeError: {e}"
         logger.error("{}: pipeline failed ({})", user.username, e)
-        return bool(dormant)
+        return owes_hiding
 
     # Everything above is shared by every row this person has — the history read and the candidate
     # gather, which is where all AI spend happens. Closed here, before the first row is touched.
@@ -3535,7 +3559,7 @@ def _run_user(
             counts.in_library,
             f" — {user_report.reason}" if user_report.reason else "",
         )
-    return delivered_any or bool(dormant)  # nothing delivered and nothing to hide -> nothing to promote
+    return delivered_any or owes_hiding  # nothing delivered and nothing to hide -> nothing to promote
 
 
 def _claimed_this_run(user_report) -> set[tuple[str, int]]:

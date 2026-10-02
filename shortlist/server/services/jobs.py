@@ -1484,7 +1484,7 @@ def _user_restore(state, payload: dict) -> dict:
     report and raises. The whole job is then retried, and nothing is promoted meanwhile.
     """
     from shortlist.engine.models import UserProfile, UserType
-    from shortlist.engine.pipeline import any_row_hidden_today, identity_map, promote_user_rows
+    from shortlist.engine.pipeline import any_row_hidden_today, built_seasons, identity_map, promote_user_rows
     from shortlist.engine.pipeline import run as engine_run
     from shortlist.server.db.models import Delivery, Run, RunUser, User
 
@@ -1566,7 +1566,12 @@ def _user_restore(state, payload: dict) -> dict:
     # trade is the nightly run's too: after a pause "left alone" means still hidden, until that row's
     # next delivery writes the ledger key that identifies it. Over-showing is the one this cannot risk.
     restored = promote_user_rows(
-        ctx, profile, placements, placement_keys=keys, skip_unmatched=any_row_hidden_today(ctx.config)
+        ctx,
+        profile,
+        placements,
+        placement_keys=keys,
+        skip_unmatched=any_row_hidden_today(ctx.config),
+        built_for=built_seasons(ctx),
     )
     # `dry_run` recorded, not assumed False: `promote_user_rows` carries its own safe-mode guard, so
     # under SHORTLIST_DRY_RUN it returns the keys it WOULD have promoted and nothing on Plex moved.
@@ -1818,7 +1823,7 @@ def _rows_visibility(state, payload: dict) -> dict:
     individually paused person. This is the first scheduled task that writes to people's shelves, so a
     kill switch it did not honour would be a kill switch in name only.
     """
-    from shortlist.engine.pipeline import identity_map, promote_shared_row, promote_user_rows
+    from shortlist.engine.pipeline import built_seasons, identity_map, promote_shared_row, promote_user_rows
     from shortlist.engine.pipeline import run as engine_run
     from shortlist.engine.rows import row_shown_today
     from shortlist.server.db.models import Collection, Delivery
@@ -1936,6 +1941,9 @@ def _rows_visibility(state, payload: dict) -> dict:
             {(d.user_slug, d.collection_slug, d.library_key): d.rating_key for d in session.query(Delivery)}
         )
 
+    # A seasonal row whose new season found nothing in a library still has LAST season's collection there:
+    # it stays hidden on the day the season opens rather than being shown under last season's title (#137).
+    built_for = built_seasons(ctx)
     for profile in profiles:
         # All-or-nothing on purpose: raising leaves the whole pass owed, and the durable queue retries
         # it with backoff. Carrying on would report a converge that only partly happened.
@@ -1950,11 +1958,12 @@ def _rows_visibility(state, payload: dict) -> dict:
             # key would be promoted onto Home on a day its schedule says to hide it.
             skip_unmatched=True,
             only_row=row,
+            built_for=built_for,
         )
 
     for spec in ctx.config.shared_rows():
         if row is None or spec.slug == row:
-            promote_shared_row(ctx, spec, into=touched)
+            promote_shared_row(ctx, spec, into=touched, built_for=built_for)
 
     # `scheduled`, not "changed": this pass applies today's answer to every scheduled row (or to the one row it
     # was queued for) rather than tracking which ones moved, so calling it "changed" would overstate what the

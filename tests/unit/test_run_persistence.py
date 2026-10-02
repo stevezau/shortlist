@@ -553,3 +553,32 @@ class TestTheLedgerRecordsWhatWasWrittenToASummaryAndSortTitle:
             _record_deliveries(session, "sarah", [self._entry(summary_written="Hi", title_sort_written=None)])
             _record_deliveries(session, "sarah", [self._entry()])
             assert session.get(Delivery, ("gems", "sarah", "1")).summary_written == "Hi"
+
+
+class TestTheLedgerRecordsTheSeasonACollectionWasBuiltFor:
+    """#137 C-1: promotion keeps a seasonal collection built for another season hidden, and reads which season
+    from here. "" (not seasonal) is a record too; a breakdown without the key says nothing."""
+
+    def _entry(self, **season) -> dict:
+        return {"row_slug": "seasonal", "library_key": "1", "rating_key": 42, "row_title": "Picks", **season}
+
+    def test_each_delivery_records_its_season_and_a_plain_build_records_none(self, sessions):
+        from shortlist.server.db.models import Delivery
+        from shortlist.server.services.run_persistence import _record_deliveries
+
+        with sessions() as session:
+            _record_deliveries(session, "sarah", [self._entry(season="christmas@2026-12-25")])
+            row = session.get(Delivery, ("seasonal", "sarah", "1"))
+            assert row.season == "christmas@2026-12-25"
+
+            _record_deliveries(session, "sarah", [self._entry(season="")])
+            assert row.season == ""
+
+    def test_an_entry_without_the_key_keeps_the_record(self, sessions):
+        from shortlist.server.db.models import Delivery
+        from shortlist.server.services.run_persistence import _record_deliveries
+
+        with sessions() as session:
+            _record_deliveries(session, "sarah", [self._entry(season="pat@2027-03-17")])
+            _record_deliveries(session, "sarah", [self._entry()])
+            assert session.get(Delivery, ("seasonal", "sarah", "1")).season == "pat@2027-03-17"

@@ -398,6 +398,14 @@ class RowSeason:
     #: for a built-in, which keeps its recipe byte-identical to before custom seasons existed.
     content_hash: str = ""
 
+    @property
+    def built_for(self) -> str:
+        """``slug@anchor``: which season, and which year of it, a collection built tonight holds.
+
+        The recipe's season part and the delivery ledger's record both use it, so the two can be compared.
+        """
+        return f"{self.slug}@{self.anchor.isoformat()}"
+
 
 @dataclass
 class RowSpec:

@@ -936,6 +936,9 @@ def deliver_rows(
                 # what CHANGED; this says WHICH Plex object it changed, which is the one thing a
                 # later reconcile cannot recompute — a `{top_seed}` title is different every run.
                 "rating_key": one.rating_key,
+                # What these picks were chosen for, so promotion can tell this library's collection from
+                # one a later season left untouched ("" for a row that is not seasonal).
+                "season": spec.season.built_for if spec.season else "",
                 "library_key": str(section.key),
                 "library_title": getattr(section, "title", str(section.key)),
                 "added": list(one.added),
