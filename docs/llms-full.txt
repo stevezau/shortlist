@@ -3286,6 +3286,10 @@ POST /api/seasons/preview (a draft season body, plus the row's `media` — `movi
      source, plus up to 10 titles. `movies`/`shows` split `total` by type, and are null for a type the row
      builds in no library of. An invalid rule returns 200 with `rule_error` set. 503 without a TMDB
      key or before Plex is connected; 502 when either fails.
+POST /api/seasons/next-date (a date rule: `kind` `fixed`|`nth`|`easter`, `month`, `day`, `nth` — 1–4, or -1 for the last, `weekday` — Monday=0, `offset`) -> {next_date, rule_error}
+     When the rule next falls, as an ISO date on the server's clock. Worked out from the rule alone — no
+     Plex or TMDB call — so it still answers when a preview can't. An invalid rule returns 200 with
+     `next_date` null and `rule_error` set. Owner only.
 GET  /api/seasons/tmdb-tags?q= · GET /api/seasons/plex-collections?q= · GET /api/seasons/library-search?q=
      Search TMDB keywords, the PMS's collections (read only; each with its library's `media_type`), and the
      libraries' titles. A `q` under 2 characters returns `[]` without asking anyone.
