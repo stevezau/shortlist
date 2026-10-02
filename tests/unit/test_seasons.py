@@ -685,8 +685,8 @@ class TestPresets:
         "easter": (9921, 9923),
         "mothers_day": (173983,),
         "mothering_sunday": (173983,),
-        "fathers_day": (),
-        "fathers_day_au_nz": (),
+        "fathers_day": (195439,),
+        "fathers_day_au_nz": (195439,),
     }
     #: Each preset's day in 2026 — Easter fell on 5 April — and its (lead, after) timing.
     SPEC_DAYS: ClassVar[dict[str, tuple[date, int, int]]] = {
@@ -748,12 +748,14 @@ class TestPresets:
             for tag in preset.season.keywords:
                 assert seasons.PRESET_TAG_NAMES[tag], (preset.key, tag)
 
-    def test_fathers_day_has_no_tag_and_says_what_to_add_instead(self) -> None:
-        """TMDB has no Father's Day tag: the editor opens it empty and asks for a collection or picks."""
+    def test_fathers_day_has_its_few_tagged_films_and_says_what_to_add(self) -> None:
+        """TMDB's Father's Day tag holds 3 films, none of them in the library measured: the preset uses it and
+        asks for a collection or picks, rather than claiming there is no tag."""
         for key in ("fathers_day", "fathers_day_au_nz"):
             preset = next(p for p in seasons.PRESETS if p.key == key)
-            assert preset.season.keywords == ()
-            assert "collection" in preset.note and "picks" in preset.note
+            assert preset.season.keywords == (195439,)
+            assert seasons.PRESET_TAG_NAMES[195439] == "father's day"
+            assert preset.note == "TMDB tags very few films as Father's Day — add a collection or your own picks."
 
     def test_st_patricks_day_leaves_out_horror(self) -> None:
         """The leprechaun tag otherwise brings in the *Leprechaun* slashers."""

@@ -739,10 +739,12 @@ PRESET_TAG_NAMES: dict[int, str] = {
     9921: "easter",
     9923: "easter bunny",
     173983: "mother's day",
+    195439: "father's day",
 }
 
 _FEW_TAGGED = "TMDB tags only a handful of films for this day — add a collection or your own picks."
-_NO_TAG = "TMDB has no Father's Day tag — add a collection or your own picks."
+#: TMDB's Father's Day tag holds 3 films (2 Oct 2026), none of them in the 10,030-film library measured.
+_FEW_FATHERS_DAY = "TMDB tags very few films as Father's Day — add a collection or your own picks."
 
 
 def _preset(
@@ -861,7 +863,8 @@ PRESETS: tuple[Preset, ...] = (
         "👔",
         DateRule("nth", month=6, nth=3, weekday=6),
         lead=7,
-        note=_NO_TAG,
+        keywords=(195439,),  # father's day
+        note=_FEW_FATHERS_DAY,
     ),
     _preset(
         "fathers_day_au_nz",
@@ -870,6 +873,7 @@ PRESETS: tuple[Preset, ...] = (
         "👔",
         DateRule("nth", month=9, nth=1, weekday=6),
         lead=7,
-        note=_NO_TAG,
+        keywords=(195439,),  # father's day
+        note=_FEW_FATHERS_DAY,
     ),
 )

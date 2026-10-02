@@ -186,7 +186,7 @@ describe("RowSeasonsField", () => {
     expect(within(card).getByText(/4th Thursday of November/)).toBeInTheDocument();
     expect(await within(card).findByText("26 films in your libraries")).toBeInTheDocument();
     expect(mocks.previewSeason).toHaveBeenCalledWith(expect.objectContaining({ media: "movie", library_keys: [] }));
-    expect(within(presets).getByText("TMDB has no Father's Day tag — add a collection or your own picks.")).toBeInTheDocument();
+    expect(within(presets).getByText("TMDB tags very few films as Father's Day — add a collection or your own picks.")).toBeInTheDocument();
 
     await userEvent.click(within(card).getByRole("button", { name: "Add Thanksgiving (US)" }));
     const dialog = await screen.findByRole("dialog", { name: "Add Thanksgiving (US)" });

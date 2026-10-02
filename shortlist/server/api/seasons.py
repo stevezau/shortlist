@@ -161,7 +161,7 @@ class PresetOut(SeasonIn):
     #: What the editor calls the preset, region included: "Mother's Day (US, CA, AU, NZ)". ``name`` has none,
     #: because a row's title renders it.
     label: str
-    #: What to add when TMDB's tags fall short, e.g. "TMDB has no Father's Day tag — add a collection or…".
+    #: What to add when TMDB's tags fall short, e.g. "TMDB tags very few films as Father's Day — add a…".
     note: str
 
 
