@@ -71,11 +71,13 @@ a feature request. Nothing is broken.
     with that season's title and films. Promotion never shows a seasonal row's collection unless it was last
     BUILT for tonight's showing of the season (`slug@anchor` recorded per library in `deliveries.season`,
     migration 0096, else read from a per-person row's stored picks' recipe). It counts as tonight's only when
-    the slug matches AND the recorded day falls inside tonight's window, from the day before it opens to the
-    day it closes (`RowSeason.holds`): a date moved within the window hides nothing, while an earlier day of
-    the same year (Diwali moved from March to November), another year's showing, or a season deleted and made
-    again under its slug for another day does. A slug-and-year comparison was tried and let that earlier day
-    through (review round 3). A mismatch is treated as dormant: hidden, placement off.
+    the slug matches AND the recorded day is no further from tonight's day, either side, than tonight's window
+    is wide (lead + after; `RowSeason.holds`): a date moved by no more than that hides nothing, while a day of
+    the same year further off (Diwali moved from March to November), another year's showing, or a season
+    deleted and made again under its slug for a day further off does. A slug-and-year comparison let that
+    earlier day through (review round 3); a one-sided window check then hid a row moved one day earlier (round
+    4). Any season edit that moves the day or window of a shown season queues a visibility pass, which judges
+    the ledger's own record. A mismatch is treated as dormant: hidden, placement off.
     Nothing is deleted. A collection with neither record is promoted as before, so no row loses its place
     on the night this ships.
 16. **The editor counts for its row** (final review I-1). `POST /preview` takes the row's `media` and

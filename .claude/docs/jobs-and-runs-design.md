@@ -702,18 +702,23 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
   promotes — the run's `_promote_phase`, `rows.visibility` (which a season PUT or DELETE also queues), and
   `user.restore` — now passes `pipeline.built_seasons`, and `promote_user_rows`/`promote_shared_row` treat a
   collection whose record is not tonight's season as dormant: hidden, never deleted. Tonight's means the same
-  slug with a recorded day inside tonight's window, from the day before it opens to the day it closes
-  (`RowSeason.holds`, with the window `row_season_on` sets). A season whose date the owner moves within that
-  window keeps its correctly built rows shown, and the recipe's full day still rebuilds them at the next run;
-  an earlier day of the same year does not pass, which a slug-and-YEAR comparison let through (Diwali moved
-  from March to November showed March's collection).
+  slug with a recorded day no further from tonight's day, either side, than the window is wide (lead + after;
+  `RowSeason.holds`, with the window `row_season_on` sets): the showing it was built for overlaps this one. A
+  season whose date the owner moves by no more than that keeps its correctly built rows shown, and the recipe's
+  full day still rebuilds them at the next run. An earlier day of the same year further off does not pass,
+  which a slug-and-YEAR comparison let through (Diwali moved from March to November showed March's
+  collection); another year's showing is 365 days off against a window of at most 120. A one-sided "day
+  before it opens to the day it closes" check came between them and hid a row moved one day EARLIER with no
+  days after, the default (review round 4).
   The record is `deliveries.season` (0096), written on the persist path from each breakdown entry, with the
   stored picks' recipe as the fallback for older PER-PERSON deliveries — a shared row stores no picks recipe,
   so its deliveries from before 0096 have no record and are promoted as before. A run lays its own deliveries
   over both, as `live_delivered_keys` does. A person whose in-season seasonal row built nothing is a promotion candidate,
-  as one with a dormant row is, so the hiding happens on the run too. Season PUT/DELETE queue a pass only
-  when it would change something (`api/seasons._pass_owed`): the row's shown-today answer moves, or it is
-  shown and the collection built for the season's old day no longer `holds` the season it shows now.
+  as one with a dormant row is, so the hiding happens on the run too. Season PUT/DELETE queue a pass
+  (`api/seasons._pass_owed`) for every enabled following row shown before or after the edit whose shown-today
+  answer, or the day or window of the season it shows, changed. The pass, not the gate, judges the ledger's own
+  record: a gate that guessed from the season's pre-edit day skipped the pass on a second edit before the next
+  run. A rename or an edit to a field the rule's kind ignores queues nothing.
 
 ### Corrections to this document
 
