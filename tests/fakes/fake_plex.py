@@ -1116,6 +1116,11 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
                 _movie_xml(root, state, item, watched_by=account_id)
             return _xml(root)
         listing = _sorted_items(list(items.values()), query.get("sort"))
+        # The season editor's film search (#137). A real PMS reads `title=` as a case-insensitive
+        # SUBSTRING match and counts every match in totalSize before the container headers cut the page
+        # (tests/fixtures/pms_section_title_search.xml.txt: "free" -> totalSize 21, size 5).
+        if (title := query.get("title")) is not None:
+            listing = [item for item in listing if title.casefold() in item.title.casefold()]
         if query.get("limit") is not None:
             listing = listing[: int(query["limit"])]
         start, size = _page(request, len(listing))
@@ -1251,10 +1256,15 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         # the account could not see on this path (`pms_share_filter_allow_lists.json`).
         collection = _collection(rating_key)
         members = state.members(collection)  # shared with any same-titled collection in this library
-        root = _container(size=len(members), totalSize=len(members))
+        # Shaped as recorded (tests/fixtures/pms_collection_children.xml.txt): the container carries ONLY
+        # `size`, and each member names its own library and carries its `tmdb://` guid inline.
+        root = _container(size=len(members))
         for key in members:
             if (item := state.item(key)) is not None:
-                _movie_xml(root, state, item)
+                element = _movie_xml(root, state, item)
+                if (section := state.section_of(item.rating_key)) is not None:
+                    element.set("librarySectionKey", f"/library/sections/{section.key}")
+                    element.set("librarySectionTitle", section.title)
         return _xml(root)
 
     @app.get("/library/metadata/{rating_key}/children")

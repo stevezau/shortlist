@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 import pytest
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 
 pytest.importorskip("playwright.sync_api", reason="playwright is not installed")
 
@@ -204,6 +204,41 @@ def fake_plex() -> Iterator[tuple[str, str, FakePlexState]]:
     plextv.stop()
 
 
+@dataclass(frozen=True)
+class FakeTmdbTag:
+    """A TMDB tag (keyword) the fake knows: its name, and the titles a discover by it lists.
+
+    `*_in_library` are TMDB ids the fake PMS holds; `*_elsewhere` counts titles TMDB tags that no library
+    here has, as most of a real tag's list is. They are what a season's count has to leave out.
+    """
+
+    name: str
+    movies_in_library: tuple[int, ...] = ()
+    shows_in_library: tuple[int, ...] = ()
+    movies_elsewhere: int = 0
+    shows_elsewhere: int = 0
+
+
+#: Thanksgiving is the one tag of both Thanksgiving presets (#137). Its 31 films are two discover pages, and
+#: the six the library holds (1994 on) sort after the 25 it doesn't (1951-1975) in the release order a season
+#: reads, so they are all on page 2: a count that stopped at page 1 would find none of them.
+THANKSGIVING_TAG = 4543
+#: Made up: a second tag for the tag search to find beside it.
+THANKSGIVING_DINNER_TAG = 990001
+FAKE_TMDB_TAGS: dict[int, FakeTmdbTag] = {
+    THANKSGIVING_TAG: FakeTmdbTag(
+        "thanksgiving",
+        movies_in_library=(9011, 9012, 9013, 9014, 9015, 9016),
+        shows_in_library=(7003,),
+        movies_elsewhere=25,
+        shows_elsewhere=2,
+    ),
+    THANKSGIVING_DINNER_TAG: FakeTmdbTag("thanksgiving dinner", movies_elsewhere=3),
+}
+#: TMDB pages a list 20 at a time (tmdb_discover_paged.json: 676 results over 34 pages).
+TMDB_PAGE_SIZE = 20
+
+
 def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
     """Suggestions = the next 10 catalog titles after the seed — deterministic, always in-library.
 
@@ -214,6 +249,40 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
     app = FastAPI()
     movies = sorted(state.movies.values(), key=lambda m: m.tmdb_id)
     shows = sorted(state.shows.values(), key=lambda m: m.tmdb_id)
+    by_id = {"movie": {m.tmdb_id: m for m in movies}, "tv": {s.tmdb_id: s for s in shows}}
+
+    def _listed(kind: str, tmdb_id: int, title: str, year: int) -> dict:
+        """One title as a TMDB list serves it (tmdb_discover_paged.json), less fields nothing reads."""
+        named = (
+            ("title", "original_title", "release_date")
+            if kind == "movie"
+            else ("name", "original_name", "first_air_date")
+        )
+        return {
+            "adult": False,
+            "id": tmdb_id,
+            named[0]: title,
+            named[1]: title,
+            named[2]: f"{year}-11-01",
+            "genre_ids": [1],
+            "original_language": "en",
+            "poster_path": f"/poster-{tmdb_id}.jpg",
+            "vote_average": 6.5,
+            "vote_count": 100 + tmdb_id % 900,
+        }
+
+    def _tagged(kind: str, tag_id: int) -> list[dict]:
+        tag = FAKE_TMDB_TAGS.get(tag_id)
+        if tag is None:
+            return []
+        held = tag.movies_in_library if kind == "movie" else tag.shows_in_library
+        elsewhere = tag.movies_elsewhere if kind == "movie" else tag.shows_elsewhere
+        titles = [_listed(kind, tmdb_id, by_id[kind][tmdb_id].title, by_id[kind][tmdb_id].year) for tmdb_id in held]
+        titles += [
+            _listed(kind, tag_id * 1000 + n, f"{tag.name.title()} {kind} {n}", 1950 + n)
+            for n in range(1, elsewhere + 1)
+        ]
+        return titles
 
     def _suggest(catalog: list, tmdb_id: int, key: str) -> dict:
         index = {item.tmdb_id: i for i, item in enumerate(catalog)}
@@ -244,6 +313,43 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
     def genres() -> dict:
         return {"genres": [{"id": 1, "name": "Drama"}]}
 
+    @app.get("/search/keyword")
+    def search_keyword(query: str = "") -> dict:
+        found = [
+            {"id": tag_id, "name": tag.name}
+            for tag_id, tag in FAKE_TMDB_TAGS.items()
+            if query.strip().casefold() in tag.name.casefold()
+        ]
+        return {"page": 1, "results": found, "total_pages": 1, "total_results": len(found)}
+
+    @app.get("/discover/movie")
+    @app.get("/discover/tv")
+    def discover(request: Request) -> dict:
+        """A tag list, paged as TMDB pages one and in the release order a season asks for.
+
+        `|` between tag ids is OR (tmdb_discover_paged.json). Only tags are listed: a genre query is
+        answered empty, which keeps every other e2e's taste-discover source as it was.
+        """
+        kind = request.url.path.rsplit("/", 1)[-1]
+        params = request.query_params
+        page = int(params.get("page") or 1)
+        if page > 500:
+            raise HTTPException(status_code=400, detail="page must be less than or equal to 500")
+        titles: dict[int, dict] = {}
+        for raw in (params.get("with_keywords") or "").split("|"):
+            if raw.strip().isdigit():
+                for title in _tagged(kind, int(raw)):
+                    titles.setdefault(title["id"], title)
+        dated = "release_date" if kind == "movie" else "first_air_date"
+        listing = sorted(titles.values(), key=lambda title: (title[dated], title["id"]))
+        start = (page - 1) * TMDB_PAGE_SIZE
+        return {
+            "page": page,
+            "results": listing[start : start + TMDB_PAGE_SIZE],
+            "total_pages": max(1, -(-len(listing) // TMDB_PAGE_SIZE)),
+            "total_results": len(listing),
+        }
+
     @app.get("/movie/{tmdb_id}/{endpoint}")
     def movie_suggestions(tmdb_id: int, endpoint: str) -> dict:
         return _suggest(movies, tmdb_id, "title")
@@ -255,10 +361,19 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
     # The title detail endpoints — how a poster is recovered for a title a NON-TMDB source surfaced
     # (Trakt, the web search), which never carries one. Declared after the two-segment routes above so
     # those keep matching `/movie/123/similar`.
+    #
+    # A title the fake library holds also carries its name, date and votes, as a real detail payload does:
+    # a season's hand pick is read from here (`TmdbClient.list_item`) and shows by that name in its sample.
+    # No `genres`, so the genre-led sources of every other e2e stay as they were.
     @app.get("/movie/{tmdb_id}")
     @app.get("/tv/{tmdb_id}")
-    def title_detail(tmdb_id: int) -> dict:
-        return {"id": tmdb_id, "poster_path": f"/poster-{tmdb_id}.jpg"}
+    def title_detail(tmdb_id: int, request: Request) -> dict:
+        kind = request.url.path.split("/")[1]
+        detail = {"id": tmdb_id, "poster_path": f"/poster-{tmdb_id}.jpg"}
+        if (item := by_id[kind].get(tmdb_id)) is not None:
+            detail = {**_listed(kind, tmdb_id, item.title, item.year), **detail}
+            del detail["genre_ids"]  # a detail payload carries `genres`, never `genre_ids`
+        return detail
 
     return app
 
