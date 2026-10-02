@@ -411,8 +411,11 @@ def _load_season_titles(
         for spec in ctx.config.rows
         if spec.season is not None and ctx.config.should_build(spec)
     }
+    if not wanted:
+        return
+    catalogue = ctx.config.season_catalogue()
     for slug, season in wanted.items():
-        catalogued = ctx.config.seasons.get(slug)
+        catalogued = catalogue.get(slug)
         if catalogued is None:
             ctx.season_failures[slug] = "it is not a season this version knows"
             continue

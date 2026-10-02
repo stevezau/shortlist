@@ -105,6 +105,26 @@ class TestOtherRowsClaimEverySeasonsTitle:
             ("1", "💘 Valentine's Day picks"),
         }
 
+    def test_a_config_without_a_catalogue_refuses_rather_than_claiming_nothing(self):
+        """An empty default once made this claim silently empty, so a plain row's removal could take a seasonal
+        row's collection (#137). A config nobody gave a catalogue says so instead."""
+        from shortlist.engine.delivery import titles_other_rows_build
+
+        section = SimpleNamespace(title="Movies", key="1", type="movie")
+        with pytest.raises(RuntimeError, match=r"EngineConfig\.seasons was not set"):
+            titles_other_rows_build(
+                [section], make_profile("sarah"), EngineConfig(), [seasonal_spec(season=None)], slug="plain"
+            )
+
+    def test_a_config_without_a_catalogue_still_claims_plain_titles(self):
+        """Only a name that uses the season needs the catalogue; every other caller keeps working without one."""
+        from shortlist.engine.delivery import titles_other_rows_build
+
+        section = SimpleNamespace(title="Movies", key="1", type="movie")
+        plain = RowSpec(slug="friday", name_template="Friday", size=5, media="movie")
+        claimed = titles_other_rows_build([section], make_profile("sarah"), EngineConfig(), [plain], slug="plain")
+        assert claimed == {("1", "Friday")}
+
 
 class TestRemovingASeasonalRow:
     """A seasonal row's collection wears whichever season it was last built for — possibly not tonight's —
@@ -552,6 +572,20 @@ class TestADormantRow:
         ctx.config.rows = [seasonal_spec()]
         pipeline_mod.run(ctx, [])
         assert ctx.tmdb.discover_all.called is False
+
+    def test_a_run_given_no_catalogue_refuses_to_build_a_seasonal_row(self, ctx):
+        """With an empty default every season read as unknown and every seasonal row quietly kept last night's
+        picks (#137). A caller that forgot the catalogue is a bug, so it fails loudly."""
+        ctx.config.seasons = None
+        ctx.config.rows = [seasonal_spec()]
+        with pytest.raises(RuntimeError, match=r"EngineConfig\.seasons was not set"):
+            pipeline_mod._load_season_titles(ctx, _people(), {})
+
+    def test_a_run_given_no_catalogue_reads_nothing_when_no_row_is_in_season(self, ctx):
+        ctx.config.seasons = None
+        ctx.config.rows = [seasonal_spec(season=None)]
+        pipeline_mod._load_season_titles(ctx, _people(), {})
+        assert ctx.season_titles == {} and ctx.season_failures == {}
 
 
 class TestWhatDecidesARebuild:

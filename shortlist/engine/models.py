@@ -1307,8 +1307,21 @@ class EngineConfig:
     # `requests` — the row and the request feature are independent.
     request_sources: RequestSources | None = None
     # Every season a row may follow, built-ins and the owner's own (issue #137), by slug — what this run
-    # reads a seasonal row's titles from. Empty -> no seasonal row can build; the server always fills it.
-    seasons: Mapping[str, Any] = field(default_factory=dict)  # seasons.Catalogue; Any avoids an import cycle
+    # reads a seasonal row's titles from, and what a seasonal row's every possible title is rendered from.
+    # None, NOT an empty default: an empty catalogue read as "no such season" everywhere, which silently
+    # emptied the #121 title claim. Read it through `season_catalogue`, which refuses a missing one.
+    seasons: Mapping[str, Any] | None = None  # seasons.Catalogue; Any avoids an import cycle
+
+    def season_catalogue(self) -> Mapping[str, Any]:
+        """The season catalogue, for a reader that needs one: a row in season, or a name using the season.
+
+        Raises:
+            RuntimeError: when the caller never passed one. That is a bug in the caller, and failing loudly
+                beats every season reading as unknown.
+        """
+        if self.seasons is None:
+            raise RuntimeError("EngineConfig.seasons was not set — the server must pass the season catalogue")
+        return self.seasons
 
     def should_build(self, spec: RowSpec) -> bool:
         """Whether this run rebuilds ``spec`` (scoped run) or every row (full run)."""

@@ -1508,6 +1508,49 @@ class TestRunRowRenameFromPlexAudit:
         assert "SEKRETVALUE" not in str(event.message)
 
 
+class TestASeasonalSiblingClaimsEverySeasonsTitle:
+    """A seasonal row wears whichever season it was last built for, so it claims the title of EVERY catalogue
+    season (#124) — and the reconciles have to hand the claim the catalogue that says what those are (#137).
+    Without it the claim is empty, and removing or renaming a plain row can take the seasonal row's collection."""
+
+    MARK = row_marker(100)
+
+    def _rows(self, sessions):
+        _add_user(sessions, slug="sarah", account_id=100)
+        with sessions() as session:
+            session.add(Collection(slug="plain", name="Halloween picks", media="movie"))
+            # Follows Christmas alone now, but its collection may still wear the Halloween it was built for.
+            session.add(Collection(slug="seasonal", name="{season} picks", media="movie", seasons=["christmas"]))
+            session.commit()
+
+    def _plex(self, worn: MagicMock) -> MagicMock:
+        movies = _section("Movies", key="1")
+        movies.type = "movie"
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda sec, label: [worn] if label == "shortlist_sarah" else []
+        return plex
+
+    def test_the_claim_covers_every_catalogue_season(self, sessions):
+        self._rows(sessions)
+        with sessions() as session:
+            other_rows = rec._other_rows(session, None, "plain")
+            sarah = next(u for u in rec._users_data(session) if u["slug"] == "sarah")
+        ctx = SimpleNamespace(plex=self._plex(_collection("anything")))
+
+        claimed = rec._claimed_titles(ctx, sarah, other_rows)
+
+        assert {("1", "Valentine's Day picks"), ("1", "Halloween picks"), ("1", "Christmas picks")} <= claimed
+
+    def test_removing_a_plain_row_leaves_the_seasonal_rows_collection_alone(self, sessions):
+        self._rows(sessions)
+        plex = self._plex(_collection("Halloween picks" + self.MARK))
+
+        rec._reconcile_row_removal(_state(sessions, plex), slug="plain", build="per_person", dry_run=False, removed=[])
+
+        plex.delete_owned_collection.assert_not_called()
+
+
 class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
     """Issue #121: a Movies-only row and a TV-only row of one person may share a title. Every
     on-demand reconcile below used to match that title in EVERY library, so deleting, switching off,

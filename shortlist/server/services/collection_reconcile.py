@@ -111,6 +111,8 @@ class _OtherRows:
     global_template: str
     #: {(user slug, row slug) -> {(library key, title)}} as the delivery ledger last recorded them.
     delivered: dict[tuple[str, str], set[tuple[str, str]]]
+    #: Every season, so a seasonal row claims the title of each one it may be wearing (#124, #137).
+    catalogue: Catalogue
 
 
 def _other_rows(session, secrets, slug: str) -> _OtherRows:
@@ -143,7 +145,9 @@ def _other_rows(session, secrets, slug: str) -> _OtherRows:
     for row in session.query(Delivery).filter(Delivery.title != ""):
         if row.collection_slug in slugs:
             delivered.setdefault((row.user_slug, row.collection_slug), set()).add((row.library_key, row.title))
-    return _OtherRows(specs, SettingsStore(session, secrets).get("row.name_template") or "", delivered)
+    return _OtherRows(
+        specs, SettingsStore(session, secrets).get("row.name_template") or "", delivered, load_catalogue(session)
+    )
 
 
 def _claimed_titles(ctx, udata: dict, other_rows: _OtherRows) -> set[tuple[str, str]]:
@@ -154,7 +158,7 @@ def _claimed_titles(ctx, udata: dict, other_rows: _OtherRows) -> set[tuple[str, 
     renamed or reset the other row's collection.
     """
     profile = replace(_profile_of(udata), row_name_template=udata["prefs"].get("row_name_tpl"))
-    config = EngineConfig(row_name_template=other_rows.global_template)
+    config = EngineConfig(row_name_template=other_rows.global_template, seasons=other_rows.catalogue)
     claimed = titles_other_rows_build(ctx.plex.sections(), profile, config, other_rows.specs, slug="")
     # A `{top_seed}` title cannot be rendered without picks, so rendering never claims one — yet two such
     # rows seeded by one watch wear the same title in different libraries. The ledger records what each
@@ -836,7 +840,6 @@ def reconcile_row_rename_iter(
         )
         ledger_titles = _ledger_titles(session, slug) if seeded_old else {}
         ledger_keys = _ledger_keys(session, slug) if seeded_old else {}
-        catalogue = load_catalogue(session)
     ctx = state.run_service.build_context(dry_run=dry_run, plex_only=True)
     dry_run = ctx.config.dry_run or dry_run  # the chokepoint may force a preview ON, never off
     total = 0
@@ -859,7 +862,7 @@ def reconcile_row_rename_iter(
                     _shared_profile(),
                     _shared_profile(),
                     lib_name,
-                    catalogue=catalogue,
+                    catalogue=other_rows.catalogue,
                 )
                 if seasonal
                 else None
@@ -966,7 +969,7 @@ def reconcile_row_rename_iter(
                 old_profile,
                 profile,
                 lib_name,
-                catalogue=catalogue,
+                catalogue=other_rows.catalogue,
                 recorded=ledger_titles.get((udata["slug"], str(section.key))),
             )
             if not renamed:  # unnameable — see render_row_name and `_renamed_titles`
