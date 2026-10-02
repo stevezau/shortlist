@@ -555,15 +555,16 @@ def _enabled_followers(session: Session, slug: str) -> list[Collection]:
 
 
 def _today(row: Collection, seasons: list[str], now: datetime, catalogue: seasons_mod.Catalogue) -> tuple:
-    """What a `rows.visibility` pass applies to a row today: whether it is shown, and which season it is built
-    for (a collection built for another is kept hidden). A season edit that changes neither needs no pass."""
+    """What a `rows.visibility` pass applies to a row today: whether it is shown, and which season and year it is
+    built for (a collection built for another is kept hidden). Compared as promotion compares it, on
+    `season_year`: a date moved within the year changes neither, so it needs no pass."""
     shown = row_shown_today(
         row.show_days, seasons, row.season_lead_days, row.season_after_days, now, catalogue=catalogue
     )
     season = seasons_mod.row_season_on(
         list(seasons), row.season_lead_days, row.season_after_days, now.date(), catalogue=catalogue
     )
-    return shown, season.built_for if season else None
+    return shown, season.year_key if season else None
 
 
 def _reject_row_title_clashes(session: Session, state: State, season: Season) -> None:

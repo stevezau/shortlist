@@ -937,6 +937,22 @@ class TestLastSeasonsCollection:
 
         ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
 
+    @pytest.mark.parametrize("record", ["ledger", "recipe"])
+    def test_a_date_moved_within_the_year_is_still_shown(self, ctx, record):
+        """The owner moved St Patrick's from the 14th to the 17th while it was showing. The films were chosen for
+        this year's St Patrick's, so the collection is the right one; hiding it until its next build would take
+        a correct row off Home. The recipe keeps the full date, so the next run still rebuilds it."""
+        fresh = SimpleNamespace(title="☘️ St Patrick's Day picks" + row_marker(100), ratingKey=4242, labels=[])
+        self._in_march(ctx, fresh)
+        if record == "ledger":
+            ctx.delivered_seasons = {("sarah", "seasonal", "1"): "pat@2027-03-14"}
+        else:
+            ctx.previous_recipes = {("sarah", "seasonal", "1"): "movie|season=pat@2027-03-14#abc"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(fresh, shared=True, home=False, recommended=True)
+
     def test_one_built_for_tonights_season_is_promoted(self, ctx):
         fresh = SimpleNamespace(title="☘️ St Patrick's Day picks" + row_marker(100), ratingKey=4242, labels=[])
         self._in_march(ctx, fresh)
@@ -1031,6 +1047,17 @@ class TestLastSeasonsCollection:
         pipeline_mod.promote_shared_row(ctx, spec, into=set(), built_for=pipeline_mod.built_seasons(ctx))
 
         ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    @pytest.mark.parametrize(
+        ("recorded", "key"),
+        [("christmas@2026-12-25", "christmas@2026"), ("pat@2027-03-14", "pat@2027"), ("", "")],
+    )
+    def test_a_recorded_season_is_compared_on_its_slug_and_year(self, recorded, key):
+        """The ledger and the recipe keep the full day; promotion compares only the season and its year."""
+        from shortlist.engine.models import season_year
+
+        assert season_year(recorded) == key
+        assert PAT.year_key == "pat@2027" and PAT.built_for == "pat@2027-03-17"
 
     def test_what_a_run_delivers_or_removes_replaces_the_ledgers_record(self, ctx):
         from shortlist.engine.models import RunReport, UserRunReport

@@ -400,11 +400,35 @@ class RowSeason:
 
     @property
     def built_for(self) -> str:
-        """``slug@anchor``: which season, and which year of it, a collection built tonight holds.
+        """``slug@anchor``: the season, and the exact day of it, a collection built tonight was built for.
 
-        The recipe's season part and the delivery ledger's record both use it, so the two can be compared.
+        The recipe's season part and the delivery ledger's record both use it. The recipe needs the full day, so
+        moving a season's date rebuilds its rows; what a collection is SHOWN for is compared on `season_year`.
         """
         return f"{self.slug}@{self.anchor.isoformat()}"
+
+    @property
+    def year_key(self) -> str:
+        """`season_year` of tonight's season: ``slug@year``."""
+        return f"{self.slug}@{self.anchor.year}"
+
+
+def season_year(built: str) -> str:
+    """``slug@year`` of a recorded `RowSeason.built_for`: which season, and which year of it, a collection holds.
+
+    What promotion compares (#137): another season, or the same season in another year, is a collection built
+    for something else. A date moved within the year is not — the films were chosen for this year's season,
+    and the recipe's full day rebuilds the row at its next run anyway. The year is the rule year `_windows`
+    anchors each window in, since every rule's anchor falls inside its own year.
+
+    Args:
+        built: ``slug@YYYY-MM-DD`` as the ledger and the recipe record it, or "" for no season.
+
+    Returns:
+        ``slug@YYYY``, or ``built`` unchanged when it names no season.
+    """
+    slug, at, anchor = built.rpartition("@")
+    return f"{slug}@{anchor[:4]}" if at else built
 
 
 @dataclass

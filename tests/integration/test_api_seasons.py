@@ -304,6 +304,19 @@ class TestUpdate:
 
         assert (queued, drains) == ([], [])
 
+    def test_a_date_moved_within_a_window_it_stays_shown_in_queues_no_pass(self, client: TestClient, monkeypatch):
+        """On 20 Nov Thanksgiving (US) shows on the 26th or a day later: same season, same year, same films, so
+        nothing on Plex changes and the row's collection must not be hidden by a pass (#137 round 2)."""
+        _on(monkeypatch, datetime(2026, 11, 20, 12, 0))
+        _create(client)
+        _row(client, "Turkey", ["thanksgiving"])
+        queued, drains = _jobs(monkeypatch)
+
+        r = client.put("/api/seasons/thanksgiving", json=_body(rule={"kind": "fixed", "month": 11, "day": 27}))
+
+        assert r.status_code == 200, r.text
+        assert (queued, drains) == ([], [])
+
     def test_a_move_that_hands_the_row_to_another_season_queues_a_pass(self, client: TestClient, monkeypatch):
         """Shown before and after, but for another season: the collection built for the first is hidden now
         (#137 C-1), so the pass is owed even though the row is on Home either way."""
