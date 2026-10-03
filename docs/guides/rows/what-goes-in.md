@@ -2,7 +2,7 @@
 title: How a row is filled
 description: How Because you watched and Watch it again rows choose their titles, what people with too little watch history get, and the orders a row's titles can appear in.
 heading: How a row is filled
-updated: 2026-10-03
+updated: 2026-10-04
 ---
 
 Every pick in a row carries the watch that earned it. Because you watched rows follow one recent
@@ -162,6 +162,28 @@ people's copies of one row shuffle differently.
 arrived, so there is nothing to put in front. How often that happens is **How often rows rebuild**,
 not this setting. If the front of a row feels stuck, the rebuild cadence is usually the dial you
 want, and **Taking turns** is the one that moves the front every night regardless.
+
+## Length, year and rating limits
+
+Picked for You, Because you watched and Watch it again rows can set three optional limits under
+**What goes in**. Each one is off while its box is blank, so a row with none set behaves exactly as it
+always has. "Your requests" and the popular shared row don't offer them.
+
+- **Longest it can run (minutes)** (1 to 600) leaves out films longer than this. For a show it is the
+  length of an episode, not of the whole series.
+- **Released between** takes a first year and a last year (1870 to 2100). Fill in one end or both. The
+  first year can't be later than the last.
+- **Lowest rating (out of 10)** (0 to 10, decimals allowed) leaves out titles rated below this, using
+  the TMDB rating.
+
+What to expect:
+
+- **Unknown is kept.** A title whose release year, rating or length TMDB doesn't know is left in. A
+  limit never empties a row because TMDB had a gap or a hiccup.
+- **Titles nobody has rated are dropped** once a lowest rating is set, because TMDB shows them as 0.
+- **Changing a limit rebuilds the row** on its next run, like any other content setting.
+- **A tight limit can leave a row short.** The row only holds titles that pass, so it may have fewer
+  than its usual number.
 
 ## AI instructions
 
