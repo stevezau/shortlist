@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -135,6 +136,9 @@ class TestEveryTemplateSaves:
         assert created.status_code == 201, f"{template_id}: {created.text}"
 
         body = created.json()
+        assert body["build"] == ("shared" if template_id in {"seasonal", "popular-here"} else "per_person")
+        assert body["audience"] == "everyone"
+        assert body["audience_user_ids"] == []
         for field, expected in values.items():
             assert body[field] == expected, f"{template_id}: {field} came back as {body[field]!r}, sent {expected!r}"
 
@@ -146,6 +150,8 @@ class TestEveryTemplateSaves:
         cid = client.post("/api/collections", json=values).json()["id"]
 
         reloaded = next(c for c in client.get("/api/collections").json() if c["id"] == cid)
+        assert reloaded["audience"] == "everyone"
+        assert reloaded["audience_user_ids"] == []
         for field, expected in values.items():
             assert reloaded[field] == expected, f"{template_id}: {field} did not persist"
 
@@ -377,15 +383,18 @@ class TestEveryTemplateDelivers:
     def test_fresh_finds_delivers_nothing_already_watched_and_rebuilds_nightly(self, engine_ctx, mock_plextv):
         """Claims: "Rebuilds nightly" and "Nothing already watched"."""
         import shortlist.engine.pipeline as pipeline_mod
-        from shortlist.engine.rows import _is_refresh_night
+        from shortlist.engine.rows import _is_refresh_night, effective_idle_hold_days
 
         engine_ctx.config.max_seeds = 1
+        engine_ctx.config.watched_pct = 1.0
+        engine_ctx.config.idle_hold_days = 90
         engine_ctx.history_source.fetch.return_value = [
             *[make_watched("Seed", days_ago=i, rating_key=999) for i in range(1, 5)],
             make_watched(movie_title(20), days_ago=8, tmdb_id=20),  # finished
         ]
         engine_ctx.tmdb.suggestions.return_value = _movies(10, 20)
         spec = _spec("fresh-finds")
+        assert effective_idle_hold_days(spec, engine_ctx.config) == 0
         engine_ctx.config.rows = [spec]
         mock_plextv.users = [plextv_user(100, "sarah")]
 
@@ -403,6 +412,24 @@ class TestEveryTemplateDelivers:
         spec = _spec("from-the-vault")
         assert spec.refresh_days == 0
         assert not any(_is_refresh_night(spec.slug, "sarah", day, spec.refresh_days) for day in range(1, 400))
+
+    def test_from_the_vault_excludes_watched_even_when_the_global_default_allows_it(self, engine_ctx, mock_plextv):
+        import shortlist.engine.pipeline as pipeline_mod
+
+        engine_ctx.config.watched_pct = 1.0
+        engine_ctx.config.rows = [_spec("from-the-vault")]
+        engine_ctx.history_source.fetch.return_value = [
+            *_mixed_history(),
+            make_watched(movie_title(20), days_ago=8, tmdb_id=20),
+        ]
+        engine_ctx.tmdb.suggestions.side_effect = _both_types
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(engine_ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in _picks_by_row(report)["from_the_vault"]]
+        assert delivered, "the fake pool must have an unseen title to deliver"
+        assert 20 not in delivered, "the vault promises unseen picks regardless of the global watched cap"
 
     def test_popular_on_this_server_is_shared_and_needs_several_watchers(self, engine_ctx, mock_plextv):
         """Claims: "Shared with everyone" and "Needs 3 watchers" — a title one person watched must not
@@ -443,8 +470,11 @@ class TestEveryTemplateDelivers:
     def test_movie_night_is_movies_only_ten_picks_and_weekly(self, engine_ctx, mock_plextv):
         """Claims: "Movies only", "10 picks", "Weekly"."""
         import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine.rows import effective_idle_hold_days
 
         spec = _spec("movie-night")
+        engine_ctx.config.idle_hold_days = 90
+        assert effective_idle_hold_days(spec, engine_ctx.config) == 0
         assert spec.media == "movie"
         assert spec.size == 10
         assert spec.refresh_days == 7, "the tile says weekly, so the cadence must BE weekly"
@@ -483,7 +513,11 @@ class TestEveryTemplateDelivers:
             seasons.shown_on(values["seasons"], lead, after, date(2026, 10, 1), catalogue=catalogue).season.slug
             == "halloween"
         )
-        spec = _spec("seasonal", season=RowSeason("halloween", "Halloween", "🎃", date(2026, 10, 31)))
+        # Choosing Per person is still supported; template defaults must never rewrite that choice.
+        spec = replace(
+            _spec("seasonal", season=RowSeason("halloween", "Halloween", "🎃", date(2026, 10, 31))),
+            shared=False,
+        )
         assert all(_is_refresh_night(spec.slug, "sarah", day, spec.refresh_days) for day in range(1, 30))
 
         engine_ctx.history_source.fetch.return_value = _mixed_history()
@@ -505,6 +539,40 @@ class TestEveryTemplateDelivers:
         assert [p.tmdb_id for p in picks] == [20], "a film outside the season reached a seasonal row"
         rendered = render_row_name(resolve_row_template(spec, profile, engine_ctx.config), profile, picks, "Movies")
         assert rendered == "🎃 Halloween picks"
+
+    def test_seasonal_defaults_to_one_shared_row_with_two_watchers_and_seasonal_titles(self, engine_ctx, mock_plextv):
+        from datetime import date
+
+        import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine import seasons
+        from shortlist.engine.models import RowSeason
+
+        spec = _spec("seasonal", season=RowSeason("halloween", "Halloween", "🎃", date(2026, 10, 31)))
+        assert spec.shared
+        assert spec.min_watchers == 2
+        engine_ctx.config.rows = [spec]
+        engine_ctx.config.seasons = dict(seasons.BUILTIN_SEASONS)
+        # Both people watched Halloween 20 and non-seasonal 10. Only Sarah watched Halloween 30.
+        common = [make_watched(movie_title(i), days_ago=1, tmdb_id=i) for i in (10, 20)]
+        engine_ctx.history_source.fetch.side_effect = lambda user, **kw: (
+            [*common, make_watched(movie_title(30), days_ago=2, tmdb_id=30)]
+            if user.username == "sarah"
+            else list(common)
+        )
+        engine_ctx.tmdb.discover_all.side_effect = lambda media, params: (
+            [{"id": i, "title": movie_title(i), "genre_ids": [27]} for i in (20, 30)]
+            if media is MediaType.MOVIE and "with_keywords" in params
+            else []
+        )
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+
+        report = pipeline_mod.run(
+            engine_ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)]
+        )
+
+        shared_reports = [user for user in report.users if user.slug.startswith("shared")]
+        assert len(shared_reports) == 1
+        assert [p.tmdb_id for p in shared_reports[0].picks] == [20]
 
     def test_more_tv_to_watch_excludes_a_series_already_started(self, engine_ctx, mock_plextv):
         """Claims: "TV only" and "Never started" — the second is stricter than the normal filter, which

@@ -35,6 +35,22 @@ build also adds _Your requests_, for titles someone requested that are now ready
 In the editor, **Per person / Shared** stays visible above **Row type**, whichever template you
 start from. The template selects a starting choice; you can change it before saving.
 
+Every template starts with **Everyone** as its audience: everyone with Shortlist enabled. The
+preview shows **Row** (Shared or Per person) separately from **Audience**, because sharing the
+same picks and choosing who receives them are different choices.
+
+- **Shared:** Seasonal and Popular on this server. Seasonal starts with 15 films watched by at
+  least two people; Popular starts with 20 titles watched by at least three.
+- **Per person:** Picked for You, Because you watched, Watch it again, Your requests, Fresh finds,
+  From the vault, Movie night and More TV to watch. Their picks depend on each person's viewing
+  or requests. Movie night is a personal shortlist of ten films for an evening.
+
+Fresh finds and Movie night do not wait for a new watch before their nightly and weekly refresh
+cadence can apply. From the vault excludes watched titles even if the global setting allows some.
+Because you watched uses one recent watch for recommendations and web-search seeds. Source selection
+and request limits follow your configured server settings. These starting defaults apply to new
+template rows; saved rows keep their settings.
+
 </div>
 </details>
 

@@ -95,7 +95,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       // 1 seed is the whole point: at the default 30 the row names one watch and fills itself from
       // the other 29, so the title claims something the contents don't honour.
       max_seeds: 1,
-      recent_count: 3,
+      recent_count: 1,
       media: "movie",
       size: 20,
       // Nightly, not the global default. This row is ABOUT recency: at the default cadence (~8 days)
@@ -174,6 +174,8 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       name: "🌱 New {library_name} to try",
       build: "per_person",
       refresh_days: 1,
+      // This template promises new picks nightly even when their watch history has not changed.
+      idle_hold_days: 0,
       watched_pct: 0,
       size: 15,
     },
@@ -187,28 +189,26 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     // Films only: TMDB tags a few dozen seasonal SHOWS against thousands of films (13 Christmas shows
     // on a 5,000-show library, measured for discussion #124), so a TV half would sit nearly empty.
     blurb:
-      "Follows the calendar: Halloween, Christmas and Valentine's, plus any season you add. Hidden between seasons.",
+      "One shared row of the most-watched seasonal films. Follows the holidays you choose and stays hidden between seasons.",
     highlights: [
+      "Shared with everyone",
+      "Needs 2 watchers",
       "Halloween, Christmas & Valentine's, or your own",
       "Shows a month before",
-      "Changes nightly",
+      "Rebuilt nightly",
     ],
     values: {
       name: "{season_emoji} {season} picks",
-      build: "per_person",
+      build: "shared",
+      min_watchers: 2,
       media: "movie",
       size: 15,
       seasons: ["valentines", "halloween", "christmas"],
       season_lead_days: 30,
       season_after_days: 0,
-      // Nightly, because "changes every day" is the refresh cadence: each night keeps the best
-      // two-thirds and swaps the rest from the season's titles.
+      // Shared popularity is recounted every run. Keep a nightly cadence if they choose Per person.
       refresh_days: 1,
-      // Release date ignored. Seasonal favourites are old: on a real server the Christmas films people
-      // watched had a median release year of 2008, and at a server's usual lean towards new releases a
-      // Christmas row filled with obscure 2025 TV movies instead of Home Alone and Klaus. Measured side
-      // by side, both seasons read better at 0 — and new releases still arrive through their similar
-      // titles.
+      // Personal seasonal picks should keep older favourites competitive too. Shared ignores age.
       recency: 0,
     },
   },
@@ -218,11 +218,8 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     emoji: "🕰️",
     title: "From the vault",
     summary: "A shelf that takes its time",
-    // "Never re-picks on a schedule" is the honest form of what `refresh_days: 0` buys. The row is
-    // frozen against the CADENCE, not against everything: it inherits the global `watched_pct`, which
-    // defaults to 0, and a 0% row drops any pick the person has since watched (`_reusable_prior`) —
-    // the carry-forward branch then pads the gap from that night's pool. So the shelf does move, for
-    // exactly the people watching from it, and the old "set it once, it stays" promised otherwise.
+    // A frozen row still replaces watched picks. Pin the cap so an owner's more permissive global
+    // default cannot silently turn off the replacement this template promises.
     blurb:
       "Built once and never re-picked on a schedule. A shelf that stays put apart from titles they've watched, which are replaced.",
     highlights: ["Never refreshes on its own", "Only moves as they watch it"],
@@ -230,6 +227,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       name: "🕰️ {library_name} from the vault",
       build: "per_person",
       refresh_days: 0,
+      watched_pct: 0,
       size: 20,
     },
   },
@@ -256,7 +254,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     title: "Movie night",
     summary: "Ten films. One good evening.",
     blurb:
-      "Films only, a short shelf, refreshed weekly. Something to pick from on a Friday.",
+      "Ten films picked for each person, refreshed weekly. A short list for their next movie night.",
     highlights: ["Movies only", "10 picks", "Weekly"],
     values: {
       name: "🍿 Tonight's {library_name}",
@@ -266,6 +264,8 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       // The blurb says "refreshed weekly", so the cadence is 7. This needed a comment when it was a
       // fraction: 0.5 resolved to 8 days, a day out, so the value had to be nudged to 0.53.
       refresh_days: 7,
+      // A weekly shelf keeps its cadence even if the global idle hold is longer than a week.
+      idle_hold_days: 0,
     },
   },
   {

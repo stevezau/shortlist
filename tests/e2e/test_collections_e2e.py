@@ -108,17 +108,19 @@ def test_a_seasonal_template_keeps_its_seasons_when_choosing_shared_or_per_perso
     page.get_by_role("group", name="Templates", exact=True).get_by_role("button", name=re.compile(r"^Seasonal")).click()
     page.get_by_role("button", name="Use template").click()
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible(timeout=LOAD)
-    expect(page.get_by_role("radio", name="Per person", exact=True)).to_be_checked()
-    page.get_by_role("radiogroup", name="How it's filled").get_by_role(
-        "radio", name="Watch it again", exact=True
-    ).click()
-    page.locator('li[data-season="valentines"]').get_by_role("checkbox").uncheck()
+    expect(page.get_by_role("radio", name="Shared", exact=True)).to_be_checked()
+    expect(page.get_by_role("button", name="Everyone", exact=True)).to_have_attribute("aria-pressed", "true")
     name = f"Seasonal {build} regression"
     page.get_by_label("Name", exact=True).fill(name)
 
-    page.get_by_role("radio", name="Shared", exact=True).click()
-    expect(page.get_by_role("dialog")).to_have_count(0)
     if build == "per_person":
+        page.get_by_role("radio", name="Per person", exact=True).click()
+        page.get_by_role("radiogroup", name="How it's filled").get_by_role(
+            "radio", name="Watch it again", exact=True
+        ).click()
+        page.locator('li[data-season="valentines"]').get_by_role("checkbox").uncheck()
+        page.get_by_role("radio", name="Shared", exact=True).click()
+        expect(page.get_by_role("dialog")).to_have_count(0)
         page.get_by_role("radio", name="Per person", exact=True).click()
         expect(
             page.get_by_role("radiogroup", name="How it's filled").get_by_role(
@@ -133,7 +135,12 @@ def test_a_seasonal_template_keeps_its_seasons_when_choosing_shared_or_per_perso
 
     created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == name)
     assert created["build"] == build
-    assert set(created["seasons"]) == {"halloween", "christmas"}
+    assert created["audience"] == "everyone"
+    assert created["audience_user_ids"] == []
+    assert created["min_watchers"] == 2
+    assert set(created["seasons"]) == (
+        {"valentines", "halloween", "christmas"} if build == "shared" else {"halloween", "christmas"}
+    )
     assert created["rewatch"] is (build == "per_person")
     _edit_row(page, name)
     expect(page.get_by_role("radio", name="Shared" if build == "shared" else "Per person", exact=True)).to_be_checked()

@@ -54,6 +54,13 @@ season coming up next wins. Weekdays under **Where and when people see it** narr
 
 On the `:dev` image, not stable {{ site.stable_version }}. Everything outside this box applies to both.
 
+**Template defaults.** Seasonal starts as **Shared** for **Everyone**, with 15 films watched by at
+least two people. It follows the three built-in seasons and rebuilds nightly. Titles are ordered by
+how many people have watched them, so rebuilding does not guarantee a different set of films each
+night. With too little overlapping viewing, the row can be short or empty. Choose **Per person**
+for individual recommendations instead. This default applies when starting from the template;
+making an existing row seasonal keeps its current sharing choice.
+
 **Per person or Shared.** Choose this above **Row type** in the row editor. **Per person** offers
 Picked for You, Because you watched and Watch it again under **How it's filled**. **Shared** uses
 the season's most-watched titles for everyone in the selected audience. Switching between them
@@ -142,13 +149,13 @@ no season can't use either placeholder, and Shortlist refuses the save. The othe
 
 ## What goes in it
 
-The season's films that are on your server, ranked for each person. Films close to what they watch
+For a per-person row, the season's films on your server are ranked for each person. Films close to what they watch
 lead the row; the rest are weighed by how well their genres fit that person's viewing. Someone who
 watches thrillers gets Violent Night and Die Hard before a Christmas romance, and a family that
 watches animation gets Casper and Hocus Pocus rather than slasher films.
 
-The row changes every night it rebuilds (the template sets nightly), keeping the strongest
-two-thirds. The template also ignores release dates, because seasonal favourites are mostly old: on a
+With nightly refresh, a per-person row keeps the strongest two-thirds and replaces its weakest
+picks. The template ignores release dates, because seasonal favourites are mostly old: on a
 real server, the Christmas films people actually watched had a median release year of 2008.
 
 ### Per person or shared

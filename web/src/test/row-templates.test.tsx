@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
@@ -8,7 +8,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RowTemplateGallery } from "@/components/rows/row-template-gallery";
 import { RowEditor } from "@/components/rows/row-editor";
 import type * as ApiModule from "@/lib/api";
+import { api } from "@/lib/api";
 import { blankInput } from "@/lib/collections";
+import type { CollectionInput } from "@/lib/types";
 import {
   ROW_TEMPLATE_GROUPS,
   ROW_TEMPLATES,
@@ -55,6 +57,7 @@ const { rowSources } = vi.hoisted(() => ({
 
 beforeEach(() => {
   rowSources.current = { ...rowSources.current, overseerr: "connected" };
+  vi.mocked(api.createCollection).mockClear();
 });
 
 function galleryWrapper() {
@@ -83,7 +86,8 @@ describe("the Seasonal template", () => {
     expect(seasonal).toBeDefined();
     expect(seasonal!.values).toMatchObject({
       name: "{season_emoji} {season} picks",
-      build: "per_person",
+      build: "shared",
+      min_watchers: 2,
       media: "movie",
       seasons: ["valentines", "halloween", "christmas"],
       season_lead_days: 30,
@@ -221,8 +225,18 @@ describe("ROW_TEMPLATES", () => {
     const template = findRowTemplate("because-you-watched");
     expect(template?.values.name).toContain("{top_seed}");
     expect(template?.values.max_seeds).toBe(1);
+    expect(template?.values.recent_count).toBe(1);
     // A single watch is a movie OR a show, so a "both" row at 1 seed leaves half of it empty.
     expect(template?.values.media).not.toBe("both");
+  });
+
+  it("never advertises more AI web-search watches than a template's entire seed budget", () => {
+    for (const template of ROW_TEMPLATES) {
+      const { max_seeds, recent_count } = template.values;
+      if (max_seeds != null && recent_count != null) {
+        expect(recent_count, template.id).toBeLessThanOrEqual(max_seeds);
+      }
+    }
   });
 });
 
@@ -358,6 +372,27 @@ describe("RowTemplateGallery", () => {
     expect(screen.getByText("Every run")).toBeInTheDocument();
   });
 
+  it.each([
+    ["Seasonal", "Shared"],
+    ["Movie night", "Per person"],
+  ])("distinguishes %s contents from who receives the row", async (title, build) => {
+    renderGallery();
+    await userEvent.click(templateButton(title));
+    const details = within(screen.getByRole("complementary", { name: "Selected template details" }));
+    expect(details.getByText("Row", { exact: true }).parentElement).toHaveTextContent(build);
+    expect(details.getByText("Audience", { exact: true }).parentElement).toHaveTextContent("Everyone");
+  });
+
+  it("describes Seasonal as shared popularity without promising new titles every night", async () => {
+    renderGallery();
+    await userEvent.click(templateButton("Seasonal"));
+    const details = within(screen.getByRole("complementary", { name: "Selected template details" }));
+    expect(details.getByText(/most-watched seasonal films/i)).toBeInTheDocument();
+    expect(details.getByText("Needs 2 watchers")).toBeInTheDocument();
+    expect(details.getByText("Rebuilt nightly")).toBeInTheDocument();
+    expect(details.queryByText("Changes nightly")).not.toBeInTheDocument();
+  });
+
   it("starts from scratch immediately", async () => {
     const onPick = renderGallery();
     await userEvent.click(screen.getByRole("button", { name: /Start from scratch/i }));
@@ -385,7 +420,7 @@ describe("RowTemplateGallery", () => {
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  it.each(["MOVIE NIGHT", "Ten films", "Friday"])(
+  it.each(["MOVIE NIGHT", "One good evening", "picked for each person"])(
     "searches template titles, summaries, and blurbs for %s",
     async (query) => {
       renderGallery();
@@ -491,6 +526,21 @@ describe("RowTemplateGallery", () => {
 });
 
 describe("RowEditor seeded from a template", () => {
+  // These are each template's product promises, independently of its source preset. Checking the
+  // submitted input also catches the editor overriding a correct gallery default before creation.
+  const intendedDefaults: { id: string; values: Partial<CollectionInput> }[] = [
+    { id: "picked-for-you", values: { build: "per_person", media: "both", size: 15, refresh_days: null, watched_pct: null } },
+    { id: "because-you-watched", values: { build: "per_person", media: "movie", size: 20, max_seeds: 1, recent_count: 1, seed_window: 1, refresh_days: 1 } },
+    { id: "seen-it-already", values: { build: "per_person", media: "both", size: 15, rewatch: true, watched_pct: 1, refresh_days: 11, rewatch_cooldown_days: 30 } },
+    { id: "your-requests", values: { build: "per_person", media: "both", size: 20, requests_row: true, requests_window_days: 90 } },
+    { id: "fresh-finds", values: { build: "per_person", media: "both", size: 15, watched_pct: 0, refresh_days: 1, idle_hold_days: 0 } },
+    { id: "seasonal", values: { build: "shared", media: "movie", size: 15, min_watchers: 2, seasons: ["valentines", "halloween", "christmas"], season_lead_days: 30, season_after_days: 0, recency: 0 } },
+    { id: "from-the-vault", values: { build: "per_person", media: "both", size: 20, refresh_days: 0, watched_pct: 0 } },
+    { id: "popular-here", values: { build: "shared", media: "both", size: 20, min_watchers: 3 } },
+    { id: "movie-night", values: { build: "per_person", media: "movie", size: 10, refresh_days: 7, idle_hold_days: 0 } },
+    { id: "more-tv", values: { build: "per_person", media: "show", size: 10, unstarted_only: true, watched_pct: 0 } },
+  ];
+
   function renderEditor(templateId: string) {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -508,6 +558,24 @@ describe("RowEditor seeded from a template", () => {
       </MemoryRouter>,
     );
   }
+
+  it.each(intendedDefaults)("creates $id with its intended defaults for everyone", async ({ id, values }) => {
+    renderEditor(id);
+    expect(screen.getByRole("radio", { name: values.build === "shared" ? "Shared" : "Per person" })).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Add row" }));
+    await waitFor(() => expect(api.createCollection).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.createCollection).mock.calls[0]?.[0]).toMatchObject({
+      ...values,
+      audience: "everyone",
+      audience_user_ids: [],
+      // Templates apply to the server's configured libraries and sources, without assuming that
+      // an optional integration is connected or inventing a subset of people.
+      library_keys: [],
+      candidate_sources: [],
+      schedule: "30 3 * * *",
+      show_days: [],
+    });
+  });
 
   it("prefills the fields the template sets", () => {
     renderEditor("seen-it-already");

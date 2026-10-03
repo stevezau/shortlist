@@ -127,7 +127,8 @@ function TemplateDetails({ template, needsRequestSource }: {
 }) {
   const Icon = TEMPLATE_ICONS[template.id] ?? Sparkles;
   const settings = [
-    { label: "Audience", value: template.values.build === "shared" ? "One shared row" : "One row per person", icon: Users },
+    { label: "Row", value: template.values.build === "shared" ? "Shared" : "Per person", icon: Layers },
+    { label: "Audience", value: template.values.audience === "subset" ? "Chosen people" : "Everyone", icon: Users },
     { label: "Row size", value: `${template.values.size} titles`, icon: Layers },
     { label: "Refresh", value: refreshLabel(template), icon: Clock },
   ];
