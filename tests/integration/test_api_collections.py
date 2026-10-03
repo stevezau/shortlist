@@ -22,6 +22,7 @@ pytestmark = pytest.mark.integration
 
 #: Every key `collections._serialize` renders — `GET`, `POST` and `PATCH /api/collections` alike.
 COLLECTION_KEYS = {
+    "ai_instructions",
     "id",
     "slug",
     "name",
@@ -4439,3 +4440,99 @@ class TestPreviewTitles:
 
         assert patched.status_code == 200, patched.text
         assert patched.json()["preview_titles"] == [{"rating_key": 61, "title": "Solo"}]
+
+
+class TestAiInstructions:
+    """A row's instructions for AI web search (#138), kept in the formerly dead `Collection.prompt` column."""
+
+    @staticmethod
+    def _spec(client: TestClient, slug: str):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            specs = builder._build_rows(session, store, catalogue=load_catalogue(session))
+            config = builder._engine_config(session, store)
+        return next(s for s in specs if s.slug == slug), config
+
+    def test_ai_instructions_round_trip_and_reach_the_spec(self, client: TestClient):
+        from shortlist.engine.web_guidance import AiInstructions
+
+        body = {"name": "Guided Row", "ai_instructions": {"mode": "add", "text": " No kids films. "}}
+        created = client.post("/api/collections", json=body)
+        assert created.status_code == 201
+        assert created.json()["ai_instructions"] == {"mode": "add", "text": "No kids films."}
+        rid = created.json()["id"]
+        patched = client.patch(
+            f"/api/collections/{rid}",
+            json={"name": "Guided Row", "ai_instructions": {"mode": "own", "text": "Any decade."}},
+        )
+        assert patched.json()["ai_instructions"] == {"mode": "own", "text": "Any decade."}
+        spec, _ = self._spec(client, "guided_row")
+        assert spec.ai_instructions == AiInstructions("own", "Any decade.")
+
+    def test_the_server_text_reaches_the_engine_config(self, client: TestClient):
+        client.post("/api/collections", json={"name": "Plain Row"})
+        assert (
+            client.put("/api/settings", json={"values": {"llm_web.instructions": "Favour classics."}}).status_code
+            == 200
+        )
+        spec, config = self._spec(client, "plain_row")
+        assert config.web_instructions == "Favour classics."
+        assert spec.ai_instructions is None
+
+    def test_ai_instructions_need_words_unless_they_use_the_default(self, client: TestClient):
+        def post(instructions: dict):
+            return client.post("/api/collections", json={"name": "X", "ai_instructions": instructions})
+
+        assert post({"mode": "own", "text": "   "}).status_code == 422
+        assert post({"mode": "add", "text": ""}).status_code == 422
+        assert post({"mode": "nope", "text": "x"}).status_code == 422
+        assert post({"mode": "add", "text": "x" * 2001}).status_code == 422
+
+    def test_a_row_saved_with_the_default_stores_nothing_new(self, client: TestClient):
+        from shortlist.server.db.models import Collection
+
+        rid = client.post("/api/collections", json={"name": "Quiet Row"}).json()["id"]
+        with client.app.state.sessions() as session:
+            assert session.get(Collection, rid).prompt == {}
+        rows = client.get("/api/collections").json()
+        assert next(r for r in rows if r["id"] == rid)["ai_instructions"] == {"mode": "default", "text": ""}
+
+    def test_a_legacy_prompt_value_reads_as_the_default(self, client: TestClient):
+        from shortlist.server.db.models import Collection
+
+        rid = client.post("/api/collections", json={"name": "Old Row"}).json()["id"]
+        with client.app.state.sessions() as session:
+            session.get(Collection, rid).prompt = {"tone": "warm", "guidance": "old curate setting"}
+            session.commit()
+        row = next(r for r in client.get("/api/collections").json() if r["id"] == rid)
+        assert row["ai_instructions"] == {"mode": "default", "text": ""}
+
+    def test_a_patch_that_omits_ai_instructions_leaves_them_alone(self, client: TestClient):
+        from shortlist.server.db.models import Event
+
+        body = {"name": "Kept Row", "ai_instructions": {"mode": "add", "text": "No kids films."}}
+        rid = client.post("/api/collections", json=body).json()["id"]
+        patched = client.patch(f"/api/collections/{rid}", json={"name": "Kept Row Renamed"})
+        assert patched.status_code == 200
+        assert patched.json()["ai_instructions"] == {"mode": "add", "text": "No kids films."}
+        with client.app.state.sessions() as session:
+            assert session.query(Event).filter_by(scope="collection.ai_instructions").count() == 0
+
+    def test_the_response_schema_declares_ai_instructions(self, client: TestClient):
+        schema = client.app.openapi()["components"]["schemas"]["CollectionOut"]
+        assert "ai_instructions" in schema["properties"]
+        assert "ai_instructions" in schema["required"]
+
+    def test_changing_ai_instructions_is_audited(self, client: TestClient):
+        from shortlist.server.db.models import Event
+
+        rid = client.post("/api/collections", json={"name": "Audited Row"}).json()["id"]
+        patch = {"name": "Audited Row", "ai_instructions": {"mode": "add", "text": "No kids films."}}
+        assert client.patch(f"/api/collections/{rid}", json=patch).status_code == 200
+        with client.app.state.sessions() as session:
+            event = session.query(Event).filter_by(scope="collection.ai_instructions").one()
+            assert event.message["mode"] == "add" and event.message["chars"] == len("No kids films.")

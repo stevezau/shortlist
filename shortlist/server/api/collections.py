@@ -38,6 +38,7 @@ from shortlist.engine.models import (
 )
 from shortlist.engine.placeholders import refusal, uses_season
 from shortlist.engine.rows import row_shown_today
+from shortlist.engine.web_guidance import INSTRUCTION_MODES, MAX_INSTRUCTIONS_CHARS, AiInstructions
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
     PRIVACY_SYNC,
@@ -146,6 +147,14 @@ class PosterIn(BaseModel):
     title: str = Field(default="", max_length=120)
     subtitle: str = Field(default="", max_length=120)
     style: str = Field(default="", max_length=400)
+
+
+class AiInstructionsIn(StrictRequestModel):
+    """What AI web search should look for on this row (#138). ``default`` uses the built-in wording
+    plus the server-wide instructions; ``add`` appends ``text`` to them; ``own`` replaces them."""
+
+    mode: str = _closed_set(set(INSTRUCTION_MODES), "default", "AI instructions must be default, add or own")
+    text: str = Field(default="", max_length=MAX_INSTRUCTIONS_CHARS)
 
 
 class CollectionIn(StrictRequestModel):
@@ -273,6 +282,7 @@ class CollectionIn(StrictRequestModel):
     # the default, which is the top of the shelf.
     hub_anchor: dict[str, HubAnchorIn] = Field(default_factory=dict)
     poster: PosterIn = Field(default_factory=PosterIn)
+    ai_instructions: AiInstructionsIn = Field(default_factory=AiInstructionsIn)
     # The collection's Plex summary and sort title (issue #120). "" leaves that field on Plex alone.
     description: str = Field(
         default="",
@@ -393,6 +403,13 @@ class PreviewTitleOut(PassthroughModel):
     title: str
 
 
+class AiInstructionsOut(PassthroughModel):
+    """A row's AI web search instructions as the editor reads them."""
+
+    mode: str = _closed_set_out(set(INSTRUCTION_MODES), "default, add or own")
+    text: str
+
+
 class CollectionOut(PassthroughModel):
     """A curated-row definition — the response shape of :func:`_serialize`."""
 
@@ -507,6 +524,7 @@ class CollectionOut(PassthroughModel):
     hub_anchor: dict[str, HubAnchorOut]  # keyed by Plex section key, so the KEYS vary by library
     library_keys: list[str]
     poster: PosterOut
+    ai_instructions: AiInstructionsOut
     # The three keys below exist ONLY on a dry-run PATCH, where the row comes back unchanged and the
     # preview rides alongside it. Optional-with-None is a deliberate exception to `_closed_set_out`'s
     # "declare responses required so a dropped field fails loudly": these are genuinely absent on a
@@ -574,7 +592,23 @@ def _normalise_show_days(days: list[int]) -> list[int]:
     return [] if len(chosen) == 7 else chosen
 
 
+def _stored_instructions(body: AiInstructionsIn) -> dict[str, str]:
+    """What `Collection.prompt` holds: {} for the default, so an untouched row stores exactly what it did."""
+    if body.mode == "default":
+        return {}
+    return {"mode": body.mode, "text": body.text.strip()}
+
+
+def _ai_instructions_view(stored: object) -> dict[str, str]:
+    parsed = AiInstructions.from_stored(stored)
+    return {"mode": parsed.mode, "text": parsed.text} if parsed else {"mode": "default", "text": ""}
+
+
 def _validate(body: CollectionIn) -> None:
+    if body.ai_instructions.mode not in INSTRUCTION_MODES:
+        raise HTTPException(status_code=422, detail="AI instructions must be default, add or own")
+    if body.ai_instructions.mode != "default" and not body.ai_instructions.text.strip():
+        raise HTTPException(status_code=422, detail="Write the AI instructions, or choose Use the default.")
     if body.build not in BUILDS:
         raise HTTPException(status_code=422, detail=f"build must be one of {sorted(BUILDS)}")
     if body.audience not in AUDIENCES:
@@ -1055,6 +1089,7 @@ def _serialize(
         "hub_anchor": collection.hub_anchor or {},
         "library_keys": [str(k) for k in (collection.library_keys or [])],
         "poster": _poster_view(session, collection),
+        "ai_instructions": _ai_instructions_view(collection.prompt),
     }
 
 
@@ -1319,6 +1354,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             hub_anchor={k: v.model_dump() for k, v in body.hub_anchor.items()},
             library_keys=body.library_keys,
             poster=body.poster.model_dump(),
+            prompt=_stored_instructions(body.ai_instructions),
             description=body.description,
             sort_title_prefix=body.sort_title_prefix,
             **{column: getattr(body, column) for column in _REQUEST_COLUMNS},
@@ -1531,6 +1567,20 @@ def _apply_patch(
                 message={
                     "slug": collection.slug,
                     "mode": body.poster.mode or "default",
+                    "at": datetime.now(UTC).isoformat(),
+                },
+            )
+        )
+    if "ai_instructions" in sent:
+        collection.prompt = _stored_instructions(body.ai_instructions)
+        session.add(
+            Event(
+                scope="collection.ai_instructions",
+                level="info",
+                message={
+                    "slug": collection.slug,
+                    "mode": body.ai_instructions.mode,
+                    "chars": len(body.ai_instructions.text.strip()),
                     "at": datetime.now(UTC).isoformat(),
                 },
             )

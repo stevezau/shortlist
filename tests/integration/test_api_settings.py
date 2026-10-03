@@ -1098,3 +1098,9 @@ class TestRepointingPlexAtAnotherServer:
 
         assert client.put("/api/settings", json={"values": {"row.size": 25}}).status_code == 200
         assert probed == []
+
+
+def test_ai_instructions_setting_accepts_text_up_to_2000_characters(client: TestClient):
+    assert client.put("/api/settings", json={"values": {"llm_web.instructions": "Favour classics."}}).status_code == 200
+    assert client.put("/api/settings", json={"values": {"llm_web.instructions": "x" * 2001}}).status_code == 422
+    assert client.put("/api/settings", json={"values": {"llm_web.instructions": 7}}).status_code == 422

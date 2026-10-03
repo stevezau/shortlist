@@ -95,6 +95,57 @@
         "title": "AccountPrivacyOut",
         "type": "object"
       },
+      "AiInstructionsIn": {
+        "additionalProperties": false,
+        "description": "What AI web search should look for on this row (#138). ``default`` uses the built-in wording\nplus the server-wide instructions; ``add`` appends ``text`` to them; ``own`` replaces them.",
+        "properties": {
+          "mode": {
+            "default": "default",
+            "description": "AI instructions must be default, add or own",
+            "enum": [
+              "add",
+              "default",
+              "own"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "title": "AiInstructionsIn",
+        "type": "object"
+      },
+      "AiInstructionsOut": {
+        "additionalProperties": true,
+        "description": "A row's AI web search instructions as the editor reads them.",
+        "properties": {
+          "mode": {
+            "description": "default, add or own",
+            "enum": [
+              "add",
+              "default",
+              "own"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "text"
+        ],
+        "title": "AiInstructionsOut",
+        "type": "object"
+      },
       "ApiTokenCreatedOut": {
         "additionalProperties": true,
         "properties": {
@@ -624,6 +675,9 @@
       "CollectionIn": {
         "additionalProperties": false,
         "properties": {
+          "ai_instructions": {
+            "$ref": "#/components/schemas/AiInstructionsIn"
+          },
           "audience": {
             "default": "everyone",
             "description": "Everyone, or the subset named by audience_user_ids.",
@@ -1222,6 +1276,9 @@
         "additionalProperties": true,
         "description": "A curated-row definition \u2014 the response shape of :func:`_serialize`.",
         "properties": {
+          "ai_instructions": {
+            "$ref": "#/components/schemas/AiInstructionsOut"
+          },
           "audience": {
             "description": "Everyone, or the subset named by audience_user_ids.",
             "enum": [
@@ -1864,7 +1921,8 @@
           "pin_top",
           "hub_anchor",
           "library_keys",
-          "poster"
+          "poster",
+          "ai_instructions"
         ],
         "title": "CollectionOut",
         "type": "object"
@@ -9380,6 +9438,71 @@
         "title": "WatcherOut",
         "type": "object"
       },
+      "WebPromptPreviewIn": {
+        "additionalProperties": false,
+        "description": "What to preview: a row's instructions and/or unsaved server-wide text; either may be omitted.",
+        "properties": {
+          "ai_instructions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AiInstructionsIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_text": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Text"
+          }
+        },
+        "title": "WebPromptPreviewIn",
+        "type": "object"
+      },
+      "WebPromptPreviewOut": {
+        "additionalProperties": true,
+        "description": "The prompt AI web search would send, the built-in wording, and whether instructions do anything.",
+        "properties": {
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "builtin_guidance": {
+            "title": "Builtin Guidance",
+            "type": "string"
+          },
+          "builtin_template": {
+            "title": "Builtin Template",
+            "type": "string"
+          },
+          "inert": {
+            "title": "Inert",
+            "type": "boolean"
+          },
+          "system": {
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend",
+          "system",
+          "builtin_guidance",
+          "builtin_template",
+          "inert"
+        ],
+        "title": "WebPromptPreviewOut",
+        "type": "object"
+      },
       "WhatsNewOut": {
         "additionalProperties": true,
         "properties": {
@@ -9480,6 +9603,48 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/ai/web-prompt-preview": {
+      "post": {
+        "description": "The system prompt AI web search sends with these instructions. Reads settings; writes nothing.",
+        "operationId": "web_prompt_preview_api_ai_web_prompt_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPromptPreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebPromptPreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Web Prompt Preview",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/auth/logout": {
       "post": {
         "operationId": "logout_api_auth_logout_post",

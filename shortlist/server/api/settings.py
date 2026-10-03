@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Annotated
 
@@ -23,6 +24,7 @@ from shortlist.engine.models import (
     SONARR_MONITOR_MODES,
 )
 from shortlist.engine.placeholders import refusal
+from shortlist.engine.web_guidance import MAX_INSTRUCTIONS_CHARS
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, Server
@@ -191,6 +193,19 @@ def _one_of(*allowed: str):
     return check
 
 
+def _text_at_most(limit: int) -> Callable[[object], str | None]:
+    """Free text up to ``limit`` characters (no other free-text setting caps its length yet)."""
+
+    def check(value: object) -> str | None:
+        if not isinstance(value, str):
+            return "must be text"
+        if len(value) > limit:
+            return f"must be at most {limit} characters"
+        return None
+
+    return check
+
+
 def _is_bool(value: object) -> str | None:
     # A non-empty STRING is truthy in Python, so "false" would have switched paused_all ON while the
     # UI read it as off. Only real booleans are accepted.
@@ -314,6 +329,7 @@ VALIDATORS = {
     "requests.auto_send": _is_bool,
     "candidates.sources": _known_sources,
     "llm_web.search_provider": _one_of("native", "exa", "searxng"),
+    "llm_web.instructions": _text_at_most(MAX_INSTRUCTIONS_CHARS),
     # Validated here as well as clamped in the client: a typo saved through the API would otherwise
     # be a 400 from Exa on every seed of every run, and the owner would see an empty row, not a bad
     # setting. The client's fallback is the second line of defence, for a value written before this.

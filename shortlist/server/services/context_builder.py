@@ -54,6 +54,7 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
 )
 from shortlist.engine.rows import row_shown_today
+from shortlist.engine.web_guidance import AiInstructions
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -1114,6 +1115,7 @@ class ContextBuilder:
                 tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
             },
             web_search_provider=store.get("llm_web.search_provider") or "native",
+            web_instructions=str(store.get("llm_web.instructions") or ""),
             manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
             # The `or` fallbacks below are safe only because the validators exclude the falsy
             # value: `min_history` is bounded 1-100, `recent_count` 1-25, `max_seeds` 5-100
@@ -1251,6 +1253,7 @@ class ContextBuilder:
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],
                     poster=self._build_poster(session, collection),
+                    ai_instructions=AiInstructions.from_stored(collection.prompt),
                     request_overrides=row_request_overrides(collection),
                     description=collection.description or "",
                     sort_title_prefix=collection.sort_title_prefix or "",

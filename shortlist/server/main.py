@@ -23,6 +23,7 @@ import shortlist
 from shortlist.logging_config import configure_logging, normalize_level
 from shortlist.server import auth, whats_new
 from shortlist.server.api import (
+    ai,
     collections,
     events,
     notifications,
@@ -405,6 +406,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
     app.include_router(auth.router, prefix="/api")
     for module in (
         setup,
+        ai,
         users,
         user_rows,
         picks,
