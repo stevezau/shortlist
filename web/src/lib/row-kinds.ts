@@ -605,6 +605,20 @@ export function visibleSettings(
 }
 
 /**
+ * The row as it should be saved: blank AI instructions on a row that hides that field become the default,
+ * since the server refuses a mode with no words and the owner has no field to write them in. Text the owner
+ * did write is kept, so choosing web search again finds it.
+ */
+export function withoutHiddenInstructions(
+  input: CollectionInput,
+  ctx: Pick<RowKindContext, "isDefault" | "globalMaxSeeds" | "defaultRowName" | "globalSources">,
+): CollectionInput {
+  const { mode, text } = input.ai_instructions;
+  if (mode === "default" || text.trim() !== "" || visibleSettings(input, ctx).has("ai_instructions")) return input;
+  return { ...input, ai_instructions: { mode: "default", text: "" } };
+}
+
+/**
  * Settings the editor can't use as things stand but the engine still applies, holding a value other
  * than their default — shown with a Reset until they are back at it (design §4). Reads, never writes.
  *

@@ -75,6 +75,7 @@ import {
   rowKindOf,
   SEED_NAME_IN_SETTINGS,
   visibleSettings,
+  withoutHiddenInstructions,
   type RowKind,
   type RowKindChoice,
   type RowKindContext,
@@ -495,7 +496,7 @@ export function RowEditor({
       {
         id: collection?.id ?? null,
         body: {
-          ...input,
+          ...withoutHiddenInstructions(input, kindCtx),
           hub_anchor,
           ...(renameTo
             ? {

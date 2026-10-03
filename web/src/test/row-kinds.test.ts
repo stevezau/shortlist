@@ -27,6 +27,7 @@ import {
   rowKindOf,
   takeTurnsEnabled,
   visibleSettings,
+  withoutHiddenInstructions,
   type RowFill,
   type RowKindChoice,
   type RowKindContext,
@@ -1519,5 +1520,33 @@ describe("Watch it again's new picks can take turns", () => {
     expect(visible(turns)).toEqual(
       [...expected("again", "both").filter((key) => key !== "refresh_days" && key !== "idle_hold_days"), "seed_window"].sort(),
     );
+  });
+});
+
+describe("withoutHiddenInstructions", () => {
+  const blankAdd = { mode: "add", text: "  " } as const;
+  const web = ["tmdb_similar", "llm_web"];
+
+  it.each([
+    ["inherited global sources without web search", row({ ai_instructions: blankAdd }), CTX],
+    ["a seasonal row", row({ ai_instructions: blankAdd, seasons: ["halloween"] }), { ...CTX, globalSources: web }],
+    [
+      "explicit sources without web search",
+      row({ ai_instructions: blankAdd, candidate_sources: ["tmdb_similar"] }),
+      { ...CTX, globalSources: web },
+    ],
+  ])("sends the default for blank text when the field is hidden: %s", (_name, input, ctx) => {
+    expect(visibleSettings(input, ctx).has("ai_instructions")).toBe(false);
+    expect(withoutHiddenInstructions(input, ctx).ai_instructions).toEqual({ mode: "default", text: "" });
+  });
+
+  it("leaves blank text alone while the field is shown, so its own error still works", () => {
+    const input = row({ ai_instructions: blankAdd, candidate_sources: web });
+    expect(withoutHiddenInstructions(input, CTX).ai_instructions).toEqual(blankAdd);
+  });
+
+  it("keeps real text on a hidden field", () => {
+    const input = row({ ai_instructions: { mode: "own", text: "Any decade." } });
+    expect(withoutHiddenInstructions(input, CTX)).toBe(input);
   });
 });
