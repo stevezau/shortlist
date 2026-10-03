@@ -1,6 +1,6 @@
 # Discussion #138 — Rows described in your own words
 
-Status: **phase 1 (AI instructions) built 2026-10-03, uncommitted pending the owner's OK; phases 2-4 not started.** Plan: `.claude/docs/plans/2026-10-03-ai-instructions-phase1.md`. As built, owner text may use `{count}`, `{year}` and `{last_year}`; with no AI provider (or a provider that can't search the web itself on the native backend) the instructions are shown as having no effect. Mockups and the decisions board: the "AI Rows Proposal"
+Status: **phase 1 (AI instructions) built 2026-10-03, shipped to dev at `43d9d26b` and proven live 2026-10-04; phase 2 (limits) in progress; phases 3-4 not started.** Plans: `.claude/docs/plans/2026-10-03-ai-instructions-phase1.md`, `.claude/docs/plans/2026-10-04-ai-custom-rows-phase2-limits.md`. As built, owner text may use `{count}`, `{year}` and `{last_year}`; with no AI provider (or a provider that can't search the web itself on the native backend) the instructions are shown as having no effect. Mockups and the decisions board: the "AI Rows Proposal"
 canvas, https://claude.ai/artifact/Y8CMBv8UQYbVTgFmE8cnwC. The owner's direction (2026-10-03): rows should be
 able to override the AI prompts, AND there should be a fully customisable AI row. So the proposal has two parts:
 **A** (AI instructions on any row) and **B** (the AI row, the design below). Every number
