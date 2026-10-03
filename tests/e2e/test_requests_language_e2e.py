@@ -64,7 +64,10 @@ def test_the_second_bar_follows_the_owners_own_floor_and_saves_as_null(page: Pag
     expect(bar).to_have_value("8.5", timeout=LOAD)  # 7.0 + 1.5, shown without anyone typing it
     expect(page.get_by_text(re.compile("Following your minimum rating", re.I))).to_be_visible()
 
-    expect(page.locator("#requests").get_by_text(re.compile(r"^Saved|^Saving", re.I)).first).to_be_visible(timeout=LOAD)
+    # The Defaults tab reports every section's autosave in one save bar at its foot, not per card.
+    expect(page.locator("[aria-live=polite]").get_by_text(re.compile(r"^Saved|^Saving", re.I)).first).to_be_visible(
+        timeout=LOAD
+    )
     page.wait_for_timeout(2000)
 
     saved = app.api("GET", "/api/settings").json()

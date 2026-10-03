@@ -1235,6 +1235,55 @@ class TestUserRowsApi:
         assert rows[0]["muted"] is False
         assert rows[0]["picks"] == []
 
+    def test_rows_keep_the_last_built_picks_when_a_later_run_built_nothing(self, client: TestClient):
+        """A dry run, or a run cancelled before this person's turn, writes a `run_users` row but no
+        picks. Plex still holds the last real run's titles, so that is what the page shows — not
+        "No picks in this row yet" for every person after one cancelled dry run."""
+        from shortlist.server.db.models import PickRow, Run, RunUser
+
+        uid = self._sarah_id(client)
+
+        def pick(run_id: int, title: str) -> PickRow:
+            return PickRow(
+                run_id=run_id,
+                user_id=uid,
+                tmdb_id=329865,
+                media_type="movie",
+                rating_key=42,
+                rank=1,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                title=title,
+            )
+
+        with client.app.state.sessions() as session:
+            built = Run(trigger="schedule", status="ok")
+            session.add(built)
+            session.flush()
+            session.add(RunUser(run_id=built.id, user_id=uid, status="ok"))
+            session.add(pick(built.id, "Arrival"))
+            cancelled_dry = Run(trigger="manual", status="aborted", dry_run=True)
+            session.add(cancelled_dry)
+            session.flush()
+            session.add(RunUser(run_id=cancelled_dry.id, user_id=uid, status="skipped"))
+            session.commit()
+
+        row = client.get(f"/api/users/{uid}/rows").json()[0]
+        assert [p["title"] for p in row["picks"]] == ["Arrival"]
+        assert (row["library"], row["section_key"]) == ("Movies", "1")
+
+        with client.app.state.sessions() as session:
+            rebuilt = Run(trigger="schedule", status="ok")
+            session.add(rebuilt)
+            session.flush()
+            session.add(RunUser(run_id=rebuilt.id, user_id=uid, status="ok"))
+            session.add(pick(rebuilt.id, "Contact"))
+            session.commit()
+
+        row = client.get(f"/api/users/{uid}/rows").json()[0]
+        assert [p["title"] for p in row["picks"]] == ["Contact"], "a newer build replaces the older one"
+
     def test_override_mute_and_resize_round_trip(self, client: TestClient):
         uid = self._sarah_id(client)
         cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]

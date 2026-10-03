@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 
 from shortlist.engine.models import MAX_ROW_SIZE, MIN_ROW_SIZE
 from shortlist.server.api.schemas import PassthroughModel
@@ -19,7 +20,6 @@ from shortlist.server.db.models import (
     CollectionAudience,
     CollectionUserOverride,
     PickRow,
-    RunUser,
     User,
 )
 from shortlist.server.settings_store import SettingsStore
@@ -86,13 +86,15 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
 
-        # Latest run's picks for this user, grouped by (row, library). A row spanning multiple
-        # libraries is one Plex collection per library — show them as separate cards.
-        latest = session.query(RunUser.run_id).filter_by(user_id=user.id).order_by(RunUser.run_id.desc()).first()
+        # The picks of the newest run that built anything for this user, grouped by (row, library). A
+        # dry run, or a run cancelled before their turn, still writes a `run_users` row but no picks,
+        # and Plex keeps the earlier titles — so the newest `run_users` row is the wrong anchor. A row
+        # spanning multiple libraries is one Plex collection per library — show them as separate cards.
+        latest_built = session.query(func.max(PickRow.run_id)).filter(PickRow.user_id == user.id).scalar()
         picks_by_row_lib: dict[tuple[str, str], list[dict]] = {}
-        if latest is not None:
+        if latest_built is not None:
             for pick in (
-                session.query(PickRow).filter_by(user_id=user.id, run_id=latest.run_id).order_by(PickRow.rank).all()
+                session.query(PickRow).filter_by(user_id=user.id, run_id=latest_built).order_by(PickRow.rank).all()
             ):
                 key = (pick.collection_slug or DEFAULT_SLUG, pick.section_key or "")
                 picks_by_row_lib.setdefault(key, []).append(pick_dict(pick))

@@ -973,7 +973,7 @@ function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
             <div className="min-w-0 flex-1 py-1">
               <span
                 className={cn(
-                  "flex items-center gap-1.5 text-sm transition-colors",
+                  "flex flex-wrap items-baseline gap-x-1.5 text-sm transition-colors",
                   on
                     ? "font-medium text-foreground"
                     : "text-muted-foreground group-hover:text-foreground",
@@ -981,7 +981,7 @@ function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
               >
                 <span data-rail-label>{step.rail}</span>
                 {step.count !== undefined && step.count > 0 && (
-                  <span data-rail-count className="text-xs text-muted-foreground">
+                  <span data-rail-count className="whitespace-nowrap text-xs text-muted-foreground">
                     {countLabel(step)}
                   </span>
                 )}
@@ -1003,14 +1003,14 @@ function FlowStep({ step }: { step: FlowStepDef }) {
       className="scroll-mt-6 rounded-xl border bg-card p-5 shadow-sm motion-safe:transition-shadow target:ring-2 target:ring-primary/40 data-[navigation-highlight=true]:ring-2 data-[navigation-highlight=true]:ring-primary/50 hover:shadow-md"
     >
       <div className="mb-4 flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-inset ring-primary/20">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-elevated text-muted-foreground ring-1 ring-inset ring-border-strong">
           <Icon className="h-4 w-4" aria-hidden={true} />
         </span>
         <div className="min-w-0 flex-1 space-y-1">
           <h2 tabIndex={-1} className="flex items-center gap-2 rounded-sm text-base font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {step.title}
             {step.count !== undefined && step.count > 0 && (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+              <span className="whitespace-nowrap rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
                 {countLabel(step)}
               </span>
             )}
@@ -1757,20 +1757,22 @@ function WebSourceCard({
             <ul className="space-y-1.5">
               {searches.map((s, i) => (
                 <li key={i} className="text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-start gap-2">
                     <Search
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                      className="mt-[3px] h-3.5 w-3.5 shrink-0 text-muted-foreground"
                       aria-hidden="true"
                     />
-                    <span className="italic">“{s.query}”</span>
-                    {s.cached && (
-                      <Badge
-                        variant="secondary"
-                        className="shrink-0 text-[10px]"
-                      >
-                        reused an earlier search
-                      </Badge>
-                    )}
+                    <span className="min-w-0">
+                      <span className="italic">“{s.query}”</span>
+                      {s.cached && (
+                        <Badge
+                          variant="secondary"
+                          className="ml-2 whitespace-nowrap align-middle text-[10px]"
+                        >
+                          reused an earlier search
+                        </Badge>
+                      )}
+                    </span>
                   </div>
                   {s.returned.length > 0 && (
                     <span className="mt-0.5 block pl-5 text-xs text-muted-foreground">
@@ -2036,7 +2038,7 @@ function DeliveredPick({ pick }: { pick: Pick }) {
   const prov = provenanceLabel(pick);
   return (
     <li className="flex items-start gap-3 p-3 text-sm">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-elevated text-xs font-semibold tabular-nums text-muted-foreground ring-1 ring-inset ring-border-strong">
         {pick.rank}
       </span>
       <div className="min-w-0 flex-1 space-y-0.5">

@@ -415,6 +415,34 @@ describe("RunRowsTab — a run that is still going", () => {
   });
 });
 
+describe("RunRowsTab — a run cancelled before anyone's turn", () => {
+  it("says it was cancelled, not that it is too old to show rows", () => {
+    // Live run 77: a dry run cancelled before its first person. It has no error and no rows, so it
+    // fell through to the copy meant for runs that predate this view, on the day it was made.
+    renderTab(
+      run({
+        status: "aborted",
+        dry_run: true,
+        shared_rows: [],
+        users: [
+          user({
+            status: "skipped",
+            reason: "The run was cancelled before this person's turn.",
+            rows_considered: {},
+          }),
+        ],
+      } as unknown as Partial<RunDetail>),
+    );
+
+    expect(
+      screen.getByText("This run was cancelled before it built any rows"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/before this view existed/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("RunRowsTab — per-row cost", () => {
   const rowBreakdown = () => [
     {

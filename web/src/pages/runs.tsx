@@ -182,7 +182,10 @@ function RunRow({ run }: { run: Run }) {
         </div>
       </TableCell>
       <TableCell className="text-muted-foreground">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        {/* Each figure after the first carries its own "·"; the -ml + overflow-hidden pair clips the
+            one that lands at the start of a wrapped line, so no line ever opens on a separator. */}
+        <div className="overflow-hidden">
+        <div className="-ml-4 flex flex-wrap items-center gap-y-0.5 [&>*]:before:inline-block [&>*]:before:w-4 [&>*]:before:text-center [&>*]:before:content-['·']">
           <span>
             {run.stats.users_ok} ok
             {/* A skipped person built nothing but nothing went wrong — counting them as "ok" made a
@@ -205,23 +208,24 @@ function RunRow({ run }: { run: Run }) {
               detail described one fact in two vocabularies. */}
           {(run.stats.titles_added ?? 0) > 0 && (
             <span>
-              · <span className="text-success">+{run.stats.titles_added}</span>{" "}
+              <span className="text-success">+{run.stats.titles_added}</span>{" "}
               added
             </span>
           )}
           {(run.stats.titles_removed ?? 0) > 0 && (
-            <span>· −{run.stats.titles_removed} rotated out</span>
+            <span>−{run.stats.titles_removed} rotated out</span>
           )}
           {(run.stats.titles_requested ?? 0) > 0 && (
             <span title="Titles requested from Sonarr/Radarr">
-              · {run.stats.titles_requested} requested
+              {run.stats.titles_requested} requested
             </span>
           )}
           {(run.stats.llm_tokens ?? 0) > 0 && (
             <span title="AI input + output tokens this run, as the provider reported them">
-              · {run.stats.llm_tokens!.toLocaleString()} tokens
+              {run.stats.llm_tokens!.toLocaleString()} tokens
             </span>
           )}
+        </div>
         </div>
       </TableCell>
     </TableRow>

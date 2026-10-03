@@ -164,7 +164,8 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
           value={elapsed != null ? formatDuration(elapsed) : "—"}
           sub={elapsed != null && run.began_at && run.finished_at ? (
             <>
-              {clockTime(run.began_at)} → {clockTime(run.finished_at)}
+              <span className="whitespace-nowrap">{clockTime(run.began_at)} →</span>{" "}
+              <span className="whitespace-nowrap">{clockTime(run.finished_at)}</span>
             </>
           ) : (
             "start → finish"
@@ -209,15 +210,28 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
           icon={Layers}
           label="Rows built"
           value={rowsBuilt}
-          // A failed run that built nothing did not find "nothing due" — it never got that far.
-          hint={rowsHint || (run.status === "error" ? "none were built" : "nothing was due")}
+          // A failed or cancelled run that built nothing did not find "nothing due" — it never got that far.
+          hint={
+            rowsHint ||
+            (run.status === "error"
+              ? "none were built"
+              : run.status === "aborted"
+                ? "cancelled before any were built"
+                : "nothing was due")
+          }
         />
         <MetaFact
           icon={Download}
           warn={Boolean(s.requests_warnings?.length)}
           label="Requested"
           value={requested}
-          hint={s.requests_warnings?.length ? s.requests_warnings.join("; ") : requestHint(s)}
+          hint={
+            s.requests_warnings?.length
+              ? s.requests_warnings.join("; ")
+              : requested === 0 && run.status === "aborted"
+                ? "the run was cancelled"
+                : requestHint(s)
+          }
         />
         {showTokens && (
           <MetaFact

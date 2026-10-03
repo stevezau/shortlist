@@ -60,7 +60,10 @@ def test_the_global_amount_of_a_show_saves_and_survives_a_reload(page: Page, app
     expect(page.get_by_text(re.compile("Season 1 only"))).to_be_visible()
 
     # Autosave has no button; wait for the value to reach the API rather than a fixed sleep.
-    expect(page.locator("#requests").get_by_text(re.compile(r"^Saved|^Saving", re.I)).first).to_be_visible(timeout=LOAD)
+    # The Defaults tab reports every section's autosave in one save bar at its foot, not per card.
+    expect(page.locator("[aria-live=polite]").get_by_text(re.compile(r"^Saved|^Saving", re.I)).first).to_be_visible(
+        timeout=LOAD
+    )
     page.wait_for_timeout(2000)
 
     saved = app.api("GET", "/api/settings").json()

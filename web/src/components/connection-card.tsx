@@ -501,7 +501,9 @@ export function ConnectionCard({
             </div>
           </div>
         ) : test.isSuccess ? (
-          <TestResult result={test.data} />
+          // A passing background check is already shown, small, under the summary above; only the
+          // footnote opened this section, so don't say it twice.
+          test.data.ok && !testRequested ? null : <TestResult result={test.data} />
         ) : test.isError ? (
           <TestResult error={test.error} />
         ) : null}

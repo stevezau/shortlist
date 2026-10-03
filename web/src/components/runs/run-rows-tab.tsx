@@ -393,20 +393,24 @@ export function RunRowsTab({
           {/* A RUNNING run has nothing persisted yet, so it lands here — and blaming a legacy run for
               a run that started seconds ago is a confidently wrong explanation, the exact failure
               this view exists to end. So does a run that FAILED before it knew its rows (Plex
-              unreachable, issue #139). Four cases, not one. */}
+              unreachable, issue #139), and so does one CANCELLED before anyone's turn, with no error at all. */}
           <p className="font-medium">
             {!run.finished_at
               ? "Getting ready…"
               : run.error
                 ? "This run stopped before it built any rows"
-                : "This run built no rows"}
+                : run.status === "aborted"
+                  ? "This run was cancelled before it built any rows"
+                  : "This run built no rows"}
           </p>
           <p className="text-muted-foreground">
             {!run.finished_at
               ? "This run hasn’t picked up its rows yet. They appear here the moment it does — the Log tab has the live detail."
               : run.error
                 ? "The error above says why. The Log tab has anything the run recorded before it stopped."
-                : notInRun.length > 0
+                : run.status === "aborted"
+                  ? "It was stopped before anyone’s turn. The Log tab has anything it recorded first."
+                  : notInRun.length > 0
                   ? `Nothing was due to run. ${notInRun.length} row${notInRun.length === 1 ? " was" : "s were"} considered and skipped.`
                   : "Runs from before this view existed recorded their results per person rather than per row — the Log tab still has everything that happened."}
           </p>

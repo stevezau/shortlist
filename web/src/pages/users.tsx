@@ -765,7 +765,7 @@ export function UsersPage() {
               <div className="overflow-hidden rounded-xl border bg-card">
                 <Table>
                   <TableHeader className="hidden lg:table-header-group">
-                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead>Picks watched (30 days)</TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
+                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead className="pr-8 text-right">Picks watched (30 days)</TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
                   </TableHeader>
                   <TableBody className="grid lg:table-row-group">
                     {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
@@ -790,7 +790,7 @@ export function UsersPage() {
                       </TableCell>
                       <TableCell className="justify-self-end lg:justify-self-auto"><StatePill user={user} /></TableCell>
                       <TableCell className="text-sm lg:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
-                      <TableCell className="text-sm"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
+                      <TableCell className="text-sm lg:pr-8 lg:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
                       <TableCell className="text-sm"><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
                       <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? new Date(user.last_run_at).toLocaleString() : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
                       <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap lg:table-cell lg:pr-4 lg:text-right">
