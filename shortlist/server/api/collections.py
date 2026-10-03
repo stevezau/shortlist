@@ -616,7 +616,9 @@ def _ai_instructions_view(stored: object) -> dict[str, str]:
 def _validate(body: CollectionIn) -> None:
     if body.ai_instructions.mode not in INSTRUCTION_MODES:
         raise HTTPException(status_code=422, detail="AI instructions must be default, add or own")
-    if body.ai_instructions.mode != "default" and not body.ai_instructions.text.strip():
+    # A row that names its sources without AI web search has no instructions field on screen to fill in.
+    web_search_off = bool(body.candidate_sources) and "llm_web" not in body.candidate_sources
+    if body.ai_instructions.mode != "default" and not body.ai_instructions.text.strip() and not web_search_off:
         raise HTTPException(status_code=422, detail="Write the AI instructions, or choose Use the default.")
     if body.build not in BUILDS:
         raise HTTPException(status_code=422, detail=f"build must be one of {sorted(BUILDS)}")

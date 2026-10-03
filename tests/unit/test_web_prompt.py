@@ -135,6 +135,16 @@ class TestBuiltinPromptsAreByteIdentical:
         assert build_web_prompt(profile, [], 40, year=2026)[0] == EXPECTED_NATIVE_2026_K40
         assert build_web_prompt(profile, [], 40, year=2026, guidance=BUILTIN)[0] == EXPECTED_NATIVE_2026_K40
 
+    def test_native_user_message(self, profile):
+        seeds = [Seed(tmdb_id=1, title="Severance", media_type=MediaType.SHOW, weight=1.0)]
+        expected = (
+            "They recently enjoyed:\n- Severance\n\n"
+            "Search the web for what to watch next, then recommend up to 40 titles."
+            " Favour things released in 2025 or 2026."
+        )
+        assert build_web_prompt(profile, seeds, 40, year=2026)[1] == expected
+        assert build_web_prompt(profile, seeds, 40, year=2026, guidance=BUILTIN)[1] == expected
+
     def test_rag_and_pick(self, profile):
         assert build_web_rag_prompt(profile, [], 40)[0] == EXPECTED_RAG_K40
         assert build_web_pick_prompt(profile, [], 40)[0] == EXPECTED_PICK_K40

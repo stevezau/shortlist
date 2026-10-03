@@ -4559,6 +4559,14 @@ class TestAiInstructions:
         assert post({"mode": "nope", "text": "x"}).status_code == 422
         assert post({"mode": "add", "text": "x" * 2001}).status_code == 422
 
+    def test_blank_instructions_are_not_required_when_the_row_has_web_search_off(self, client: TestClient):
+        def post(sources: list[str]):
+            body = {"name": "Quiet", "candidate_sources": sources, "ai_instructions": {"mode": "add", "text": ""}}
+            return client.post("/api/collections", json=body)
+
+        assert post(["tmdb_similar"]).status_code == 201
+        assert post(["tmdb_similar", "llm_web"]).status_code == 422
+
     def test_a_row_saved_with_the_default_stores_nothing_new(self, client: TestClient):
         from shortlist.server.db.models import Collection
 

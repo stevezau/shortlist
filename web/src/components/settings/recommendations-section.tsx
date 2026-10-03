@@ -175,7 +175,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   // Shortlist's built-in guidance: shown until the owner writes their own, and the template (placeholders
   // unfilled) that "Write your own" starts from and that saving compares against.
   const builtin = useQuery({
-    queryKey: ["web-prompt-preview", "builtin"],
+    queryKey: ["web-prompt-preview", "builtin", String(settings["llm_web.search_provider"] || "native")],
     queryFn: () => api.previewWebPrompt({}),
     enabled: webSearchOn,
   });

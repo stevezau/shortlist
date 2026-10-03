@@ -33,6 +33,9 @@ const PREVIEW_FOOTNOTES: Record<string, string> = {
   searxng: "Then the person's 20 most recent watches and excerpts from the articles found are added.",
 };
 
+/** Native search also ends its user message by asking for recent releases, unless guidance replaces the default. */
+const RECENCY_LINE = " It ends by asking for titles released in the last two years.";
+
 const MODES: { value: Mode; label: string }[] = [
   { value: "default", label: "Use the default" },
   { value: "add", label: "Add to the default" },
@@ -112,7 +115,7 @@ export function RowAiInstructionsField({
         onChange={(mode) => onChange({ mode, text: value.text })}
       />
 
-      {value.mode === "default" && <DefaultInstructions />}
+      {value.mode === "default" && <DefaultInstructions backend={backend} />}
 
       {value.mode === "add" && (
         <div className="space-y-2">
@@ -186,7 +189,7 @@ export function RowAiInstructionsField({
         </summary>
         {previewOpen && (
           <div className="mt-3">
-            <PromptPreview value={value} />
+            <PromptPreview value={value} backend={backend} />
           </div>
         )}
       </details>
@@ -195,13 +198,13 @@ export function RowAiInstructionsField({
 }
 
 /** The instructions a row on the default gets: the owner's server-wide text, else the built-in wording. */
-function DefaultInstructions() {
+function DefaultInstructions({ backend }: { backend: string }) {
   const settings = useSettings();
   const serverText = settings.data ? settingString(settings.data, "llm_web.instructions").trim() : "";
   // The server reads blank server-wide text as "use the built-in wording" (`resolve_guidance`).
   const needsBuiltin = settings.isSuccess && serverText === "";
   const builtin = useQuery({
-    queryKey: ["web-prompt-preview", "builtin"],
+    queryKey: ["web-prompt-preview", "builtin", backend],
     queryFn: () => api.previewWebPrompt({}),
     enabled: needsBuiltin,
   });
@@ -235,10 +238,11 @@ function DefaultInstructions() {
 }
 
 /** The system prompt this row's AI web search would send, as the server builds it. */
-function PromptPreview({ value }: { value: AiInstructions }) {
+function PromptPreview({ value, backend }: { value: AiInstructions; backend: string }) {
+  const settings = useSettings();
   const text = useDebouncedValue(value.text, PREVIEW_DEBOUNCE_MS);
   const preview = useQuery({
-    queryKey: ["web-prompt-preview", value.mode, text],
+    queryKey: ["web-prompt-preview", backend, value.mode, text],
     queryFn: () => api.previewWebPrompt({ ai_instructions: { mode: value.mode, text } }),
     // Keeps the last prompt on screen while the next one loads, rather than a skeleton per pause in typing.
     placeholderData: keepPreviousData,
@@ -248,11 +252,16 @@ function PromptPreview({ value }: { value: AiInstructions }) {
     return <LoadError message="Couldn't load the preview." onRetry={() => void preview.refetch()} />;
   }
   if (preview.isPending) return <Skeleton className="h-4 w-full" />;
+  // The server drops that line when guidance replaces the default: a row's own text, or the server-wide text.
+  const serverText = settings.data ? settingString(settings.data, "llm_web.instructions").trim() : "";
+  const sendsRecency =
+    preview.data.backend === "native" && settings.isSuccess && value.mode !== "own" && serverText === "";
   return (
     <div className="space-y-2">
       <pre className={PROMPT_CLASS}>{preview.data.system}</pre>
       <p className="text-sm text-muted-foreground">
         {PREVIEW_FOOTNOTES[preview.data.backend] ?? PREVIEW_FOOTNOTES.native}
+        {sendsRecency && <span>{RECENCY_LINE}</span>}
       </p>
     </div>
   );

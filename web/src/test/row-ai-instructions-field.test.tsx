@@ -209,6 +209,28 @@ describe("RowAiInstructionsField", () => {
   });
 
   it.each([
+    ["default", { mode: "default", text: "" }, true],
+    ["add", { mode: "add", text: "x" }, true],
+    ["own", { mode: "own", text: "x" }, false],
+  ] as const)("native footnote mentions the recent-releases line only when it is sent (%s)", async (_name, value, sent) => {
+    previewWebPrompt.mockResolvedValue({ backend: "native", system: "SYSTEM TEXT", builtin_guidance: "", inert: false });
+    renderField({ value: { ...value } });
+    await userEvent.click(screen.getByText("Exactly what's sent"));
+    await screen.findByText(/SYSTEM TEXT/);
+    const line = screen.queryByText(/asking for titles released in the last two years/);
+    expect(line !== null).toBe(sent);
+  });
+
+  it("leaves the recent-releases line out when the server-wide text replaces the default", async () => {
+    getSettings.mockResolvedValue({ "llm_web.instructions": "Favour classics." } as Settings);
+    previewWebPrompt.mockResolvedValue({ backend: "native", system: "SYSTEM TEXT", builtin_guidance: "", inert: false });
+    renderField({ value: { mode: "add", text: "x" } });
+    await userEvent.click(screen.getByText("Exactly what's sent"));
+    await screen.findByText(/SYSTEM TEXT/);
+    expect(screen.queryByText(/asking for titles released/)).toBeNull();
+  });
+
+  it.each([
     ["exa", "Then the person's 20 most recent watches and the titles Exa found are added."],
     ["searxng", "Then the person's 20 most recent watches and excerpts from the articles found are added."],
   ])("says what else is sent on %s", async (backend, footnote) => {

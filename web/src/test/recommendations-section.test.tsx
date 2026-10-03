@@ -340,6 +340,23 @@ describe("RecommendationsSection", () => {
     expect(screen.getByText("You can use {count}, {year} and {last_year}.")).toBeInTheDocument();
   });
 
+  it("asks for the built-in instructions again when the search backend changes", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = (backend: string) => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <RecommendationsSection
+            settings={{ "llm_web.instructions": "", "candidates.sources": ["llm_web"], "llm_web.search_provider": backend }}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui("native"));
+    await waitFor(() => expect(previewWebPrompt).toHaveBeenCalledTimes(1));
+    rerender(ui("exa"));
+    await waitFor(() => expect(previewWebPrompt).toHaveBeenCalledTimes(2));
+  });
+
   it("stores the built-in template, untouched, as empty so no row rebuilds", async () => {
     previewWebPrompt.mockResolvedValue({
       backend: "native",
