@@ -340,6 +340,7 @@ export const ROW_SETTING_KEYS = [
   "rewatch_cooldown_days",
   "candidate_sources",
   "recent_count",
+  "ai_instructions",
   "watched_pct",
   "unstarted_only",
   "recency",
@@ -380,6 +381,7 @@ export const SETTING_LABELS: Readonly<Record<RowSettingKey, string>> = {
   rewatch_cooldown_days: "Skip titles finished recently",
   candidate_sources: "Sources",
   recent_count: "Recent watches for AI web search",
+  ai_instructions: "AI instructions",
   watched_pct: "Already-watched titles",
   unstarted_only: "Only series they haven't started",
   recency: "Recent releases",
@@ -438,6 +440,7 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   idle_hold_days: "idle_hold_days",
   recency: "recency",
   recent_count: "recent_count",
+  ai_instructions: "ai_instructions",
   max_seeds: "max_seeds",
   cold_start: "cold_start",
   seed_window: "seed_window",
@@ -508,6 +511,7 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "cold_start",
     "candidate_sources",
     "recent_count",
+    "ai_instructions",
     "watched_pct",
     "unstarted_only",
     "recency",
@@ -522,6 +526,7 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "fallback_name",
     "candidate_sources",
     "recent_count",
+    "ai_instructions",
     "watched_pct",
     "unstarted_only",
     "recency",
@@ -537,6 +542,7 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "max_seeds",
     "candidate_sources",
     "recent_count",
+    "ai_instructions",
     "recency",
     "refresh_days",
     "idle_hold_days",
@@ -579,6 +585,7 @@ export function visibleSettings(
   // The engine renders the fallback whenever a {top_seed} name has no watch to fill it, whatever the kind.
   if (namesASeed(input, ctx)) shown.add("fallback_name");
   if (!rowSources(input, ctx).includes("llm_web")) shown.delete("recent_count");
+  if (!rowSources(input, ctx).includes("llm_web")) shown.delete("ai_instructions");
   // The API refuses it on a movies-only row.
   if (input.media === "movie") shown.delete("unstarted_only");
   // `effective_refresh_days` forces nightly and `effective_idle_hold_days` forces no hold here.

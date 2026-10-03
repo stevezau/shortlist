@@ -1,3 +1,4 @@
+import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -19,7 +20,10 @@ import {
   SettingsPanel,
   SettingsSection,
 } from "@/components/settings/section-layout";
+import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import type { ColdStart } from "@/lib/cold-start";
 import {
@@ -34,6 +38,7 @@ import {
   RATING_LABELS,
   RATING_SOURCES,
 } from "@/lib/rating-sources";
+import { api } from "@/lib/api";
 import { useAutosavedSettings } from "@/lib/autosave";
 import {
   IDLE_HOLD_DAYS_DEFAULT,
@@ -42,7 +47,7 @@ import {
   WATCHED_PCT_DEFAULT,
 } from "@/lib/constants";
 import { hasTrakt, SOURCES } from "@/lib/sources";
-import type { Settings } from "@/lib/types";
+import type { Settings, WebPromptPreview } from "@/lib/types";
 
 // Every source except AI web search — that one gets its own card (its toggle plus what it costs;
 // the backend it searches with lives on the Connections card).
@@ -74,6 +79,15 @@ function readWholeNumber(
 ): number {
   const value = Number(settings[key]);
   return Number.isFinite(value) ? Math.round(value) : fallback;
+}
+
+/**
+ * The `llm_web.instructions` to store. Blank, or Shortlist's own template untouched, is "" — it IS the
+ * default — so typing nothing or clicking Write your own and walking away changes no row's recipe.
+ */
+function storedInstructions(text: string, builtinTemplate: string): string {
+  const trimmed = text.trim();
+  return trimmed === "" || trimmed === builtinTemplate.trim() ? "" : text;
 }
 
 /** When an enabled source is missing its dependency, show how to satisfy it RIGHT HERE. */
@@ -148,10 +162,23 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     return Number.isFinite(value) ? Math.min(6, Math.max(0, value)) : 2;
   });
 
+  const [aiInstructions, setAiInstructions] = useState<string>(() =>
+    String(settings["llm_web.instructions"] ?? ""),
+  );
+
   const toggle = (id: string) =>
     setEnabled((current) =>
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
     );
+
+  const webSearchOn = enabled.includes("llm_web");
+  // Shortlist's built-in guidance: shown until the owner writes their own, and the template (placeholders
+  // unfilled) that "Write your own" starts from and that saving compares against.
+  const builtin = useQuery({
+    queryKey: ["web-prompt-preview", "builtin"],
+    queryFn: () => api.previewWebPrompt({}),
+    enabled: webSearchOn,
+  });
 
   // Persist the owner's INTENT (the enabled set as chosen). A source whose dependency isn't met yet
   // no-ops safely in the engine and shows an inline "here's what's needed" prompt — never a silent lie.
@@ -169,6 +196,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       coldStart,
       usePlexRatings,
       dislikeThreshold,
+      aiInstructions,
     },
     () => ({
       "candidates.sources": enabled,
@@ -183,11 +211,11 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       "recommendations.recent_count": recentCount,
       "recommendations.max_seeds": maxSeeds,
       "recommendations.rating_source": ratingSource,
+      "llm_web.instructions": storedInstructions(aiInstructions, builtin.data?.builtin_template ?? ""),
     }),
   );
 
   const inSaveBar = useSaveBarReport("recommendations", save);
-  const webSearchOn = enabled.includes("llm_web");
 
   return (
     <>
@@ -212,6 +240,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
           <SettingDisclosure title="Web search" value={webSearchOn ? "On" : "Off"} description="Discovery beyond the usual sources, through AI & web search." defaultOpen={webSearchOn}>
             <p className="text-xs leading-relaxed text-muted-foreground">The TMDB sources find titles without AI. Set the provider to <strong>None</strong> in <Link to="/settings/connections#connection-llm" className="font-medium text-primary hover:underline">Connections</Link> and you still get full rows, ranked by score with plain reasons.</p>
             <AiWebSearchCard settings={settings} enabled={webSearchOn} onToggle={() => toggle("llm_web")} />
+            <AiInstructionsDefault value={aiInstructions} onChange={setAiInstructions} webSearchOn={webSearchOn} builtin={builtin} />
           </SettingDisclosure>
         </SettingsPanel>
       </SettingsSection>
@@ -428,5 +457,96 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
         </SettingsPanel>
       </SettingsSection>
     </>
+  );
+}
+
+const AI_INSTRUCTIONS_MAX = 2000;
+
+/** The server-wide AI web search instructions (#138): Shortlist's built-in wording until the owner writes their own. */
+function AiInstructionsDefault({
+  value,
+  onChange,
+  webSearchOn,
+  builtin,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  webSearchOn: boolean;
+  /** The built-in prompt preview, which only loads while web search is on. */
+  builtin: UseQueryResult<WebPromptPreview>;
+}) {
+  // Editing starts with "Write your own" (or a saved text) and ends only with Reset, so clearing the
+  // box mid-edit keeps the textarea, and its focus, rather than swapping it for the built-in block.
+  const [editing, setEditing] = useState(() => value.trim() !== "");
+  // The server reads blank text as "use the built-in wording", so that is what an empty box shows.
+  const builtinText = builtin.data?.builtin_guidance ?? "";
+  const builtinTemplate = builtin.data?.builtin_template ?? "";
+
+  return (
+    <div className="space-y-2 border-t pt-4">
+      {editing ? (
+        <Label htmlFor="ai-instructions">AI instructions</Label>
+      ) : (
+        <p id="ai-instructions-label" className="text-sm font-medium leading-none">AI instructions</p>
+      )}
+      <p className="text-sm text-muted-foreground">
+        What the AI looks for, on every row that doesn&rsquo;t have its own. A row can add to these or replace them in its editor, under What goes in.
+      </p>
+      {editing ? (
+        <>
+          <Textarea
+            id="ai-instructions"
+            rows={6}
+            value={value}
+            maxLength={AI_INSTRUCTIONS_MAX}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          <p className="text-sm text-muted-foreground">You can use {"{count}"}, {"{year}"} and {"{last_year}"}.</p>
+          <Button type="button" variant="ghost" size="sm" onClick={() => {
+            setEditing(false);
+            onChange("");
+          }}>
+            Reset to Shortlist&apos;s default
+          </Button>
+          <div className="space-y-1 rounded-md border border-dashed p-3">
+            <p className="text-sm font-medium">Shortlist always adds these</p>
+            <p className="text-sm text-muted-foreground">
+              Today&apos;s year, and that the AI must search rather than answer from memory. The exact
+              title and release year for every pick, so it can be found in your library. Only titles
+              already out. The reply format.
+            </p>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            A change here rebuilds every row that uses AI web search, on that row&rsquo;s next run.
+          </p>
+        </>
+      ) : !webSearchOn ? (
+        // The built-in wording comes from the server, which is only asked while web search is on.
+        <p className="text-sm text-muted-foreground">Turn on web search to set these.</p>
+      ) : (
+        <>
+          {builtin.isError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-destructive-text">Couldn&apos;t load Shortlist&apos;s default instructions.</p>
+              <Button type="button" variant="outline" size="sm" onClick={() => void builtin.refetch()}>
+                Retry
+              </Button>
+            </div>
+          ) : builtin.isPending ? (
+            <Skeleton className="h-16 w-full" />
+          ) : (
+            <pre aria-labelledby="ai-instructions-label" className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs">
+              {builtinText}
+            </pre>
+          )}
+          <Button type="button" variant="outline" size="sm" disabled={!builtinTemplate} onClick={() => {
+              setEditing(true);
+              onChange(builtinTemplate);
+            }}>
+            Write your own
+          </Button>
+        </>
+      )}
+    </div>
   );
 }

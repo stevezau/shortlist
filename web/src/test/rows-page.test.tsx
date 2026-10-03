@@ -92,6 +92,7 @@ const SUBSET_ROW: Collection = {
   pin_top: false,
   hub_anchor: {},
   poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
+  ai_instructions: { mode: "default", text: "" },
 };
 
 function renderPage() {

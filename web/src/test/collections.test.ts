@@ -91,8 +91,43 @@ describe("hasUnsavedChanges", () => {
     ).toBe(true);
   });
 
+  it("compares AI instructions as the server stores them: no text on the default, trimmed otherwise", () => {
+    const onDefault = collection({ ai_instructions: { mode: "default", text: "" } });
+    // Text typed under Add and kept in the draft after switching back is never saved.
+    expect(
+      hasUnsavedChanges({ ...toInput(onDefault), ai_instructions: { mode: "default", text: "x" } }, onDefault),
+    ).toBe(false);
+    expect(
+      hasUnsavedChanges({ ...toInput(onDefault), ai_instructions: { mode: "add", text: "x" } }, onDefault),
+    ).toBe(true);
+
+    const adding = collection({ ai_instructions: { mode: "add", text: "x" } });
+    expect(
+      hasUnsavedChanges({ ...toInput(adding), ai_instructions: { mode: "add", text: "y" } }, adding),
+    ).toBe(true);
+    expect(
+      hasUnsavedChanges({ ...toInput(adding), ai_instructions: { mode: "own", text: "x" } }, adding),
+    ).toBe(true);
+    expect(
+      hasUnsavedChanges({ ...toInput(adding), ai_instructions: { mode: "add", text: " x " } }, adding),
+    ).toBe(false);
+  });
+
   it("treats a row being created as having nothing to differ from", () => {
     expect(hasUnsavedChanges(toInput(collection()), null)).toBe(false);
+  });
+});
+
+describe("toInput", () => {
+  it("carries a row's AI instructions as just the mode and text the API accepts", () => {
+    const saved = collection({
+      ai_instructions: { mode: "own", text: "Any decade.", extra: 1 },
+    });
+    expect(toInput(saved).ai_instructions).toEqual({ mode: "own", text: "Any decade." });
+  });
+
+  it("reads a row saved without AI instructions as using the default", () => {
+    expect(toInput(collection()).ai_instructions).toEqual({ mode: "default", text: "" });
   });
 });
 
@@ -118,6 +153,21 @@ describe("rowOverrides", () => {
     );
     expect(parts).toContain("Sources: Trakt"); // only the runnable one is advertised as active
     expect(parts).toContain("Needs setup: AI web search"); // the dead one is flagged, never claimed
+  });
+
+  it("badges a row's own AI instructions, but not one on the default", () => {
+    expect(
+      rowOverrides(collection({ ai_instructions: { mode: "add", text: "x" } }), LIBRARIES),
+    ).toContain("AI instructions: adds to the default");
+    expect(
+      rowOverrides(collection({ ai_instructions: { mode: "own", text: "x" } }), LIBRARIES),
+    ).toContain("AI instructions: own");
+    const onDefault = rowOverrides(
+      collection({ ai_instructions: { mode: "default", text: "" } }),
+      LIBRARIES,
+    );
+    expect(onDefault).not.toContain("AI instructions: adds to the default");
+    expect(onDefault).not.toContain("AI instructions: own");
   });
 
   it("names the libraries a row is pinned to", () => {

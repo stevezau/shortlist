@@ -413,6 +413,23 @@ describe("visibleSettings", () => {
     expect(visibleSettings(seasonal(row({ candidate_sources: web })), CTX).has("recent_count")).toBe(false);
   });
 
+  it("shows AI instructions only when AI web search is on, from the row or the global", () => {
+    const web = ["tmdb_similar", "llm_web"];
+    expect(visibleSettings(row({ candidate_sources: web }), CTX).has("ai_instructions")).toBe(true);
+    expect(visibleSettings(row(), { ...CTX, globalSources: web }).has("ai_instructions")).toBe(true);
+    expect(visibleSettings(row(), CTX).has("ai_instructions")).toBe(false);
+    // A row's own list replaces the global, so the global's web search doesn't reach it.
+    expect(
+      visibleSettings(row({ candidate_sources: ["tmdb_similar"] }), { ...CTX, globalSources: web }).has(
+        "ai_instructions",
+      ),
+    ).toBe(false);
+    expect(visibleSettings(FIXTURES.again, { ...CTX, globalSources: web }).has("ai_instructions")).toBe(true);
+    expect(visibleSettings(FIXTURES.bywNamed, { ...CTX, globalSources: web }).has("ai_instructions")).toBe(true);
+    expect(visibleSettings(FIXTURES.popular, { ...CTX, globalSources: web }).has("ai_instructions")).toBe(false);
+    expect(visibleSettings(seasonal(row({ candidate_sources: web })), CTX).has("ai_instructions")).toBe(false);
+  });
+
   it("hides the hold on a Because you watched row that takes turns", () => {
     const turns = row({ max_seeds: 2, seed_window: 3 });
     const shown = visibleSettings(turns, CTX);

@@ -229,7 +229,7 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
             // tokens as the provider reported them: Anthropic's `input_tokens` excludes cache reads and
             // writes (and Shortlist sets no cache_control, so both are 0); OpenAI's `total_tokens` and
             // Gemini's `total_token_count` count cached input inside the prompt figure.
-            title="Input and output tokens the AI provider reported for each call this run, added up — what it bills on, shown as input and output because output costs several times more. With Claude nothing is cached, so this is every token sent and received. OpenAI and Gemini count input they served from their own prompt cache in here too, and bill that part at a discount. The 7-day web-search cache saves web searches, not tokens. Turn AI sources off in Settings → Finding titles to lower it."
+            title="Input and output tokens the AI provider reported for each call this run, added up — what it bills on, shown as input and output because output costs several times more. With Claude nothing is cached, so this is every token sent and received. OpenAI and Gemini count input they served from their own prompt cache in here too, and bill that part at a discount. The 7-day web-search cache saves web searches, not tokens. Turn AI sources off in Settings → Defaults → Title sources to lower it."
           />
         )}
         {showExa && (

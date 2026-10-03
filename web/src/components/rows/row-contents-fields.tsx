@@ -7,8 +7,12 @@ import {
   RecentCountField,
 } from "@/components/recent-count-field";
 import { InheritableField } from "@/components/rows/inheritable-field";
+import { RowAiInstructionsField } from "@/components/rows/row-ai-instructions-field";
 import { RowMaxSeedsSetting } from "@/components/rows/row-max-seeds-setting";
-import { RowSourcesField } from "@/components/rows/row-sources-field";
+import {
+  effectiveSources,
+  RowSourcesField,
+} from "@/components/rows/row-sources-field";
 import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Label } from "@/components/ui/label";
@@ -22,6 +26,11 @@ import {
   watchedPctSeed,
 } from "@/lib/row-globals";
 import type { RowFill, RowSettingKey } from "@/lib/row-kinds";
+import {
+  aiInstructionsInert,
+  sourceShortLabel,
+  webSearchProvider,
+} from "@/lib/sources";
 import type { CollectionInput, Settings } from "@/lib/types";
 
 /**
@@ -87,6 +96,22 @@ export function RowContentsFields({
         onChange={(next) => set({ recent_count: next })}
       />
     </InheritableField>
+  );
+
+  // Same test as the server's preview (`api/ai.py`). While settings load neither is known, so nothing
+  // is claimed.
+  const aiInstructions = shown.has("ai_instructions") && (
+    <div data-setting="ai_instructions">
+      <RowAiInstructionsField
+        value={input.ai_instructions}
+        onChange={(ai_instructions) => set({ ai_instructions })}
+        otherSources={effectiveSources(input.candidate_sources, settings)
+          .filter((source) => source !== "llm_web")
+          .map(sourceShortLabel)}
+        backend={settings ? webSearchProvider(settings) : "native"}
+        inert={settings === undefined ? null : aiInstructionsInert(settings)}
+      />
+    </div>
   );
 
   // Anything that can hold shows, which is what the API accepts — it refuses this only on a
@@ -188,6 +213,7 @@ export function RowContentsFields({
         {takeTurns}
         {sources}
         {recentCount}
+        {aiInstructions}
         {recency}
       </section>
     );
@@ -197,6 +223,7 @@ export function RowContentsFields({
     <>
       {sources}
       {recentCount}
+      {aiInstructions}
       {watched}
       {/* Defensive: every kind that shows this also shows the cap it sits under. */}
       {!shown.has("watched_pct") && unstarted}

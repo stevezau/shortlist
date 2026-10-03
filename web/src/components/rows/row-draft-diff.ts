@@ -37,6 +37,13 @@ const LABELS: Partial<Record<Key, string>> = {
   season_lead_days: "Seasons",
   season_after_days: "Seasons",
   fallback_name: "Name for someone who's new",
+  ai_instructions: "AI instructions",
+};
+
+const AI_INSTRUCTIONS_MODE: Record<CollectionInput["ai_instructions"]["mode"], string> = {
+  default: "Use the default",
+  add: "Add to the default",
+  own: "Write your own",
 };
 
 const PICK_ORDER: Record<CollectionInput["pick_order"], string> = {
@@ -88,6 +95,8 @@ function describe(key: Key, input: CollectionInput): string | null {
       return input.sort_title_prefix.trim() ? quoted(input.sort_title_prefix) : "none";
     case "show_days":
       return showDaysSummary(input.show_days);
+    case "ai_instructions":
+      return AI_INSTRUCTIONS_MODE[input.ai_instructions.mode];
     default:
       return null;
   }

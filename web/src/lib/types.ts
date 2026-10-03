@@ -130,6 +130,12 @@ export type CollectionBody = Partial<CollectionInput> & {
  *  `hub_anchor` needs no override: its dynamic keys are Plex section keys, which the schema already
  *  expresses as an index signature, and its VALUES are modelled (`HubAnchorOut`). */
 export type Collection = Schemas["CollectionOut"];
+/** What AI web search should look for on a row (#138): the default, added to, or replaced. */
+export type AiInstructions = Collection["ai_instructions"];
+/** POST /api/ai/web-prompt-preview: a row's instructions and/or unsaved server-wide text to preview. */
+export type WebPromptPreviewInput = Schemas["WebPromptPreviewIn"];
+/** The system prompt AI web search would send, the built-in wording, and whether instructions apply. */
+export type WebPromptPreview = Schemas["WebPromptPreviewOut"];
 /** A season a row can follow (GET /api/seasons): a built-in, or one of the owner's own (#137). */
 export type Season = Schemas["SeasonOut"];
 /** Where a seasonal row is today. */

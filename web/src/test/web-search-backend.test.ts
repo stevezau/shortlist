@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   SOURCES,
+  aiInstructionsInert,
   hasSearxng,
   hasWebSearch,
   sourceBlockedReason,
@@ -136,5 +137,25 @@ describe("sourceBlockedReason names the fix for the chosen backend", () => {
         settings({ ...OLLAMA, ...SEARX, "llm_web.search_provider": "searxng" }),
       ),
     ).toBeNull();
+  });
+});
+
+describe("aiInstructionsInert: whether anything reads a row's AI instructions", () => {
+  // Mirrors `inert` in the server's prompt preview (`api/ai.py`); test_api_ai.py holds the same matrix.
+  it.each([
+    ["no provider", {}, "no_provider"],
+    ["provider none", { "curator.provider": "none" }, "no_provider"],
+    ["Exa, no provider", { "curator.provider": "none", "llm_web.search_provider": "exa" }, "no_provider"],
+    ["SearXNG, no provider", { "curator.provider": "none", "llm_web.search_provider": "searxng" }, "no_provider"],
+    ["native, Claude", CLAUDE, null],
+    ["native, GPT", { "curator.provider": "openai" }, null],
+    ["native, Gemini", { "curator.provider": "google" }, null],
+    ["native, Ollama", OLLAMA, "no_native_search"],
+    ["native, OpenAI-compatible", { "curator.provider": "openai_compatible" }, "no_native_search"],
+    ["a stored 'auto' (native), Ollama", { ...OLLAMA, "llm_web.search_provider": "auto" }, "no_native_search"],
+    ["Exa, Ollama", { ...OLLAMA, "llm_web.search_provider": "exa" }, null],
+    ["SearXNG, Ollama", { ...OLLAMA, "llm_web.search_provider": "searxng" }, null],
+  ] as const)("%s → %s", (_label, values, expected) => {
+    expect(aiInstructionsInert(settings(values as Record<string, string>))).toBe(expected);
   });
 });

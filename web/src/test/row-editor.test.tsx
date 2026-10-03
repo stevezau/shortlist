@@ -121,6 +121,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
+    ai_instructions: { mode: "default", text: "" },
     ...patch,
   };
 }
@@ -267,6 +268,47 @@ describe("RowEditor — Live on Plex and the save bar", () => {
     await userEvent.click(within(bar).getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
     expect(updateCollection).toHaveBeenCalledWith(1, { ...toInput(row()), pick_order: "shuffle" });
+  });
+
+  it("names an AI instructions change in the save bar and sends it on Save", async () => {
+    renderEditor(row({ candidate_sources: ["llm_web"] }));
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Add to the default" }));
+    expect(bar).toHaveTextContent("AI instructions: Use the default → Add to the default");
+    await userEvent.type(screen.getByRole("textbox", { name: "Also tell the AI" }), "No sequels.");
+
+    await userEvent.click(within(bar).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
+    expect(updateCollection).toHaveBeenCalledWith(1, {
+      ...toInput(row({ candidate_sources: ["llm_web"] })),
+      ai_instructions: { mode: "add", text: "No sequels." },
+    });
+  });
+
+  it("counts no change after adding instructions and switching back to the default, and keeps the text", async () => {
+    renderEditor(row({ candidate_sources: ["llm_web"] }));
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Add to the default" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Also tell the AI" }), "x");
+    expect(within(bar).getByText("1 unsaved change")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Use the default" }));
+    expect(within(bar).queryByText(/unsaved change/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Add to the default" }));
+    expect(screen.getByRole("textbox", { name: "Also tell the AI" })).toHaveValue("x");
+  });
+
+  it("counts no change after switching a row's instructions to Write your own and back", async () => {
+    renderEditor(row({ candidate_sources: ["llm_web"], ai_instructions: { mode: "add", text: "No sequels." } }));
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Write your own" }));
+    expect(within(bar).getByText("1 unsaved change")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add to the default" }));
+    expect(within(bar).queryByText(/unsaved change/)).toBeNull();
   });
 
   it("throws the draft away on Discard without saving anything", async () => {

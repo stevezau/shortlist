@@ -84,6 +84,7 @@ export function blankInput(): CollectionInput {
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "" },
+    ai_instructions: { mode: "default", text: "" },
   };
 }
 
@@ -161,6 +162,11 @@ export function toInput(collection: Collection): CollectionInput {
       subtitle: collection.poster?.subtitle ?? "",
       style: collection.poster?.style ?? "",
     },
+    // Only the two fields: the response model is open, and the request model refuses any other key.
+    ai_instructions: {
+      mode: collection.ai_instructions?.mode ?? "default",
+      text: collection.ai_instructions?.text ?? "",
+    },
   };
 }
 
@@ -203,7 +209,20 @@ export function hasUnsavedChanges(
   collection: Collection | null,
 ): boolean {
   if (!collection) return false; // an unsaved new row has nothing to differ from
-  return !sameValue(input, toInput(collection));
+  return !sameValue(asStored(input), asStored(toInput(collection)));
+}
+
+/**
+ * The form as the server would store it, for comparison only. The draft keeps text typed under Add
+ * after a switch back to the default, so choosing Add again restores it; but the server stores no
+ * text for the default and trims the rest (`_stored_instructions`), so neither is a change.
+ */
+function asStored(input: CollectionInput): CollectionInput {
+  const { mode, text } = input.ai_instructions;
+  return {
+    ...input,
+    ai_instructions: { mode, text: mode === "default" ? "" : text.trim() },
+  };
 }
 
 /** One-line "who sees this row" summary for a row card. */
@@ -321,6 +340,9 @@ export function rowOverrides(
       `AI web search: ${collection.recent_count} ${collection.recent_count === 1 ? "watch" : "watches"}`,
     );
   }
+
+  if (collection.ai_instructions?.mode === "add") parts.push("AI instructions: adds to the default");
+  if (collection.ai_instructions?.mode === "own") parts.push("AI instructions: own");
 
   // null inherits the global cold-start behaviour, so only badge a row that overrides it — and only
   // "skip" is worth a badge: it is the one that makes a row silently absent for someone.

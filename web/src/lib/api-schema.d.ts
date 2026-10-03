@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/ai/web-prompt-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Web Prompt Preview
+         * @description The system prompt AI web search sends with these instructions. Reads settings; writes nothing.
+         */
+        post: operations["web_prompt_preview_api_ai_web_prompt_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/logout": {
         parameters: {
             query?: never;
@@ -2974,6 +2994,41 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * AiInstructionsIn
+         * @description What AI web search should look for on this row (#138). ``default`` uses the built-in wording
+         *     plus the server-wide instructions; ``add`` appends ``text`` to them; ``own`` replaces them.
+         */
+        AiInstructionsIn: {
+            /**
+             * Mode
+             * @description AI instructions must be default, add or own
+             * @default default
+             * @enum {string}
+             */
+            mode: "add" | "default" | "own";
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
+        /**
+         * AiInstructionsOut
+         * @description A row's AI web search instructions as the editor reads them.
+         */
+        AiInstructionsOut: {
+            /**
+             * Mode
+             * @description default, add or own
+             * @enum {string}
+             */
+            mode: "add" | "default" | "own";
+            /** Text */
+            text: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** ApiTokenCreatedOut */
         ApiTokenCreatedOut: {
             /** Created At */
@@ -3232,6 +3287,7 @@ export interface components {
         };
         /** CollectionIn */
         CollectionIn: {
+            ai_instructions?: components["schemas"]["AiInstructionsIn"];
             /**
              * Audience
              * @description Everyone, or the subset named by audience_user_ids.
@@ -3477,6 +3533,7 @@ export interface components {
          * @description A curated-row definition — the response shape of :func:`_serialize`.
          */
         CollectionOut: {
+            ai_instructions: components["schemas"]["AiInstructionsOut"];
             /**
              * Audience
              * @description Everyone, or the subset named by audience_user_ids.
@@ -6812,6 +6869,33 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * WebPromptPreviewIn
+         * @description What to preview: a row's instructions and/or unsaved server-wide text; either may be omitted.
+         */
+        WebPromptPreviewIn: {
+            ai_instructions?: components["schemas"]["AiInstructionsIn"] | null;
+            /** Server Text */
+            server_text?: string | null;
+        };
+        /**
+         * WebPromptPreviewOut
+         * @description The prompt AI web search would send, the built-in wording, and whether instructions do anything.
+         */
+        WebPromptPreviewOut: {
+            /** Backend */
+            backend: string;
+            /** Builtin Guidance */
+            builtin_guidance: string;
+            /** Builtin Template */
+            builtin_template: string;
+            /** Inert */
+            inert: boolean;
+            /** System */
+            system: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** WhatsNewOut */
         WhatsNewOut: {
             /** Releases */
@@ -6876,6 +6960,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    web_prompt_preview_api_ai_web_prompt_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebPromptPreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebPromptPreviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     logout_api_auth_logout_post: {
         parameters: {
             query?: never;

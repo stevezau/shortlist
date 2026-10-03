@@ -28,6 +28,8 @@ import type {
   SeasonDate,
   SeasonInput,
   SeasonPreset,
+  WebPromptPreview,
+  WebPromptPreviewInput,
   SeasonPreview,
   SeasonPreviewInput,
   TmdbTag,
@@ -568,6 +570,11 @@ export const api = {
    *  take several seconds while the server reads the libraries. */
   previewSeason: (body: SeasonPreviewInput): Promise<SeasonPreview> =>
     request("/api/seasons/preview", { method: "POST", body: JSON.stringify(body) }),
+
+  /** The system prompt AI web search would send with these instructions (#138). Reads settings and
+   *  writes nothing; an omitted field falls back to what is saved. */
+  previewWebPrompt: (body: WebPromptPreviewInput): Promise<WebPromptPreview> =>
+    request("/api/ai/web-prompt-preview", { method: "POST", body: JSON.stringify(body) }),
 
   /** When a date rule next falls, from the rule alone: no TMDB key or Plex needed. */
   getSeasonNextDate: (rule: DateRule): Promise<SeasonDate> =>
