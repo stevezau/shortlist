@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, Request
 
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import Run, Server, User, iso_utc
+from shortlist.server.db.models import RestrictionSnapshotRow, Run, Server, User, iso_utc
 from shortlist.server.services import privacy_status
 from shortlist.server.settings_store import SettingsStore
 
@@ -115,6 +115,9 @@ class PrivacyStatusOut(PassthroughModel):
     rows_error: str | None
     error: str | None
     enforcement: EnforcementOut
+    #: How many pre-Shortlist share-filter records uninstall can restore from (plex-safety rule 2).
+    #: Read from our own database, so it is reported even when plex.tv cannot be read.
+    snapshots_kept: int
 
 
 @router.get("/status", response_model=PrivacyStatusOut)
@@ -152,6 +155,7 @@ def privacy_status_endpoint(request: Request) -> dict:
         if owner is not None:
             accounts.insert(0, _owner_out(owner, status.rows_on_plex))
         enforcement = _enforcement(session)
+        snapshots_kept = session.query(RestrictionSnapshotRow).count()
 
     return {
         "read_at": status.read_at,
@@ -161,6 +165,7 @@ def privacy_status_endpoint(request: Request) -> dict:
         "rows_error": status.rows_error,
         "error": status.error,
         "enforcement": enforcement,
+        "snapshots_kept": snapshots_kept,
     }
 
 

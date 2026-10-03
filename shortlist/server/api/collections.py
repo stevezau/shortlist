@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from fastapi.concurrency import run_in_threadpool
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse, StreamingResponse
 
@@ -59,6 +59,7 @@ from shortlist.server.db.models import (
     Job,
     PickRow,
     RequestCandidate,
+    Run,
     RunSharedRow,
     SharedRowWatch,
     User,
@@ -384,6 +385,14 @@ class SeasonStatusOut(PassthroughModel):
     next: SeasonWindowOut | None
 
 
+class PreviewTitleOut(PassthroughModel):
+    """One title from a row's latest delivery, for the Rows list's poster collage."""
+
+    #: The Plex ratingKey, which `/api/picks/{rating_key}/poster` serves the artwork for.
+    rating_key: int
+    title: str
+
+
 class CollectionOut(PassthroughModel):
     """A curated-row definition — the response shape of :func:`_serialize`."""
 
@@ -392,6 +401,8 @@ class CollectionOut(PassthroughModel):
     # The DEFAULT row's title is the global template, not its own stale `name` column — see `_serialize`.
     name: str
     last_run_id: int | None  # None until the row has ever built
+    #: Up to four titles from the row's most recent delivery, best ranked first. Empty until it has built.
+    preview_titles: list[PreviewTitleOut]
     build: str = _closed_set_out(BUILDS, "Who the row is built for: one per person, or one shared row.")
     audience: str = _closed_set_out(AUDIENCES, "Everyone, or the subset named by audience_user_ids.")
     audience_user_ids: list[int]
@@ -840,12 +851,116 @@ def row_display_name(session: Session, collection: Collection) -> str:
     return collection.name
 
 
+#: How many titles the Rows list's collage shows for a row.
+PREVIEW_TITLE_COUNT = 4
+
+
+def _preview_titles(session: Session, slugs: list[str]) -> dict[str, list[dict]]:
+    """Up to four titles from each row's most recent delivery, keyed by slug, for the Rows list.
+
+    Built for every row at once — the list renders them all, so this is two queries, not two per row.
+    A per-person row's picks are `picks` rows, written only by real runs; its newest run holds every
+    person's picks, so the same title arrives once per person and is kept once, at its best rank. A
+    shared row's picks live only in `run_shared_rows`, which dry runs write too, so that read skips dry
+    runs, and skips a run that delivered it nothing (Plex still holds the earlier titles then). A pick
+    never matched to a library item (`rating_key` 0) has no artwork to show and is left out.
+
+    Args:
+        session: An open database session.
+        slugs: The rows to read.
+
+    Returns:
+        slug -> `{"rating_key", "title"}` dicts, best ranked first. A row that never built is absent.
+    """
+    latest_per_person = (
+        session.query(PickRow.collection_slug, func.max(PickRow.run_id).label("run_id"))
+        .filter(PickRow.collection_slug.in_(slugs))
+        .group_by(PickRow.collection_slug)
+        .subquery()
+    )
+    best_rank = func.min(PickRow.rank)
+    per_person = (
+        session.query(PickRow.collection_slug, PickRow.rating_key, func.min(PickRow.title), best_rank)
+        .join(
+            latest_per_person,
+            and_(
+                PickRow.collection_slug == latest_per_person.c.collection_slug,
+                PickRow.run_id == latest_per_person.c.run_id,
+            ),
+        )
+        .filter(PickRow.rating_key > 0)
+        .group_by(PickRow.collection_slug, PickRow.rating_key)
+        .order_by(PickRow.collection_slug, best_rank, PickRow.rating_key)
+        .all()
+    )
+    previews: dict[str, list[dict]] = {}
+    for slug, rating_key, title, _rank in per_person:
+        titles = previews.setdefault(slug, [])
+        if len(titles) < PREVIEW_TITLE_COUNT:
+            titles.append({"rating_key": rating_key, "title": title})
+
+    latest_shared = (
+        session.query(RunSharedRow.collection_slug, func.max(RunSharedRow.run_id).label("run_id"))
+        .join(Run, Run.id == RunSharedRow.run_id)
+        .filter(
+            RunSharedRow.collection_slug.in_(slugs),
+            Run.dry_run.is_(False),
+            func.json_array_length(RunSharedRow.picks) > 0,
+        )
+        .group_by(RunSharedRow.collection_slug)
+        .subquery()
+    )
+    shared = (
+        session.query(RunSharedRow.collection_slug, RunSharedRow.picks)
+        .join(
+            latest_shared,
+            and_(
+                RunSharedRow.collection_slug == latest_shared.c.collection_slug,
+                RunSharedRow.run_id == latest_shared.c.run_id,
+            ),
+        )
+        .all()
+    )
+    for slug, picks in shared:
+        titles, seen = [], set()
+        for pick in sorted(picks, key=lambda p: p.get("rank") or 0):
+            rating_key = pick.get("rating_key") or 0
+            if rating_key <= 0 or rating_key in seen:
+                continue
+            seen.add(rating_key)
+            titles.append({"rating_key": rating_key, "title": pick.get("title") or ""})
+            if len(titles) == PREVIEW_TITLE_COUNT:
+                break
+        previews[slug] = titles
+    return previews
+
+
 def _serialize(
-    session, collection: Collection, now: datetime | None = None, *, catalogue: seasons_mod.Catalogue
+    session,
+    collection: Collection,
+    now: datetime | None = None,
+    *,
+    catalogue: seasons_mod.Catalogue,
+    previews: dict[str, list[dict]] | None = None,
 ) -> dict:
+    """One row as the API renders it.
+
+    Args:
+        session: An open database session.
+        collection: The row.
+        now: The one clock read for the whole response; read here when omitted.
+        catalogue: The season catalogue, for the season status.
+        previews: `_preview_titles` for a whole list, read once by the caller; read here for this one
+            row when omitted.
+
+    Returns:
+        The `CollectionOut` payload.
+    """
     # One clock read for everything this row reports about today: the badge and the season status must
     # describe the same day, even for a response built across midnight.
     now = now or context_builder.local_now()
+    if previews is None:
+        previews = _preview_titles(session, [collection.slug])
     audience_ids = [
         row.user_id for row in session.query(CollectionAudience).filter_by(collection_id=collection.id).all()
     ]
@@ -858,6 +973,7 @@ def _serialize(
         "slug": collection.slug,
         "name": name,
         "last_run_id": last_run_id,
+        "preview_titles": previews.get(collection.slug, []),
         "build": collection.build,
         "audience": collection.audience,
         "audience_user_ids": audience_ids,
@@ -1119,7 +1235,8 @@ async def list_collections(request: Request) -> list[dict]:
         # days.
         now = context_builder.local_now()
         catalogue = load_catalogue(session)
-        return [_serialize(session, c, now, catalogue=catalogue) for c in collections]
+        previews = _preview_titles(session, [c.slug for c in collections])
+        return [_serialize(session, c, now, catalogue=catalogue, previews=previews) for c in collections]
 
 
 def _known_seasons(slugs: list[str], *, catalogue: seasons_mod.Catalogue) -> list[str]:

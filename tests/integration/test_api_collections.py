@@ -28,6 +28,7 @@ COLLECTION_KEYS = {
     "description",
     "sort_title_prefix",
     "last_run_id",
+    "preview_titles",
     "build",
     "audience",
     "audience_user_ids",
@@ -4297,3 +4298,144 @@ class TestRequestsRowFields:
         assert created.status_code == 201, created.text
         r = client.patch(f"/api/collections/{created.json()['id']}", json={"name": "n", **patch})
         assert r.status_code == 422 and msg in r.text, r.text
+
+
+class TestPreviewTitles:
+    """`preview_titles`: the Rows list's 4-poster collage, from each row's most recent delivery."""
+
+    @staticmethod
+    def _people(client: TestClient, *slugs: str) -> list[int]:
+        """The ids of these people, adding any the fixture's roster does not already have."""
+        with client.app.state.sessions() as session:
+            for i, slug in enumerate(slugs):
+                if session.query(User).filter_by(slug=slug).one_or_none() is None:
+                    session.add(User(username=slug, slug=slug, plex_account_id=5000 + i, enabled=True))
+            session.commit()
+            return [session.query(User).filter_by(slug=slug).one().id for slug in slugs]
+
+    @staticmethod
+    def _run(client: TestClient, picks: list[tuple[int, str, int, str, int]], *, dry_run: bool = False) -> int:
+        """One run delivering `(user_id, slug, rating_key, title, rank)` picks."""
+        from shortlist.server.db.models import PickRow, Run
+
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok", dry_run=dry_run)
+            session.add(run)
+            session.flush()
+            for user_id, slug, rating_key, title, rank in picks:
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=user_id,
+                        tmdb_id=rating_key,
+                        media_type="movie",
+                        rating_key=rating_key,
+                        rank=rank,
+                        collection_slug=slug,
+                        title=title,
+                    )
+                )
+            session.commit()
+            return run.id
+
+    @staticmethod
+    def _row(client: TestClient, slug: str) -> dict:
+        return next(c for c in client.get("/api/collections").json() if c["slug"] == slug)
+
+    def test_a_row_never_built_has_none(self, client: TestClient):
+        assert self._row(client, "picked")["preview_titles"] == []
+
+    def test_four_distinct_titles_from_the_latest_run_best_ranked_first(self, client: TestClient):
+        sarah, mike = self._people(client, "sarah", "mike")
+        # An older run's titles are not what the row holds now.
+        self._run(client, [(sarah, "picked", 900, "Old", 1)])
+        # Both people got Heat at the top: one poster, not two.
+        self._run(
+            client,
+            [
+                (sarah, "picked", 11, "Heat", 1),
+                (sarah, "picked", 12, "Ronin", 2),
+                (sarah, "picked", 13, "Collateral", 3),
+                (sarah, "picked", 14, "Thief", 4),
+                (sarah, "picked", 15, "Manhunter", 5),
+                (mike, "picked", 11, "Heat", 1),
+                (mike, "picked", 16, "Drive", 2),
+            ],
+        )
+
+        titles = self._row(client, "picked")["preview_titles"]
+
+        assert titles == [
+            {"rating_key": 11, "title": "Heat"},
+            {"rating_key": 12, "title": "Ronin"},
+            {"rating_key": 16, "title": "Drive"},
+            {"rating_key": 13, "title": "Collateral"},
+        ]
+
+    def test_fewer_than_four_are_returned_as_they_are(self, client: TestClient):
+        (sarah,) = self._people(client, "sarah")
+        self._run(client, [(sarah, "picked", 21, "Alien", 1), (sarah, "picked", 22, "Aliens", 2)])
+
+        assert self._row(client, "picked")["preview_titles"] == [
+            {"rating_key": 21, "title": "Alien"},
+            {"rating_key": 22, "title": "Aliens"},
+        ]
+
+    def test_a_pick_never_matched_to_a_library_item_has_no_artwork_to_show(self, client: TestClient):
+        (sarah,) = self._people(client, "sarah")
+        self._run(client, [(sarah, "picked", 0, "Unmatched", 1), (sarah, "picked", 31, "Matched", 2)])
+
+        assert self._row(client, "picked")["preview_titles"] == [{"rating_key": 31, "title": "Matched"}]
+
+    def test_each_row_gets_its_own_titles_from_one_list_call(self, client: TestClient):
+        (sarah,) = self._people(client, "sarah")
+        other = client.post("/api/collections", json={"name": "Another"}).json()["slug"]
+        self._run(client, [(sarah, "picked", 41, "Mine", 1), (sarah, other, 42, "Theirs", 1)])
+
+        assert self._row(client, "picked")["preview_titles"] == [{"rating_key": 41, "title": "Mine"}]
+        assert self._row(client, other)["preview_titles"] == [{"rating_key": 42, "title": "Theirs"}]
+
+    def test_a_shared_row_reads_its_latest_real_delivery(self, client: TestClient):
+        """A shared row's picks live only in `run_shared_rows` — and that table is written by dry runs
+        too, so a preview must not show a row as holding titles a dry run only imagined."""
+        from shortlist.server.db.models import RunSharedRow
+
+        slug = client.post("/api/collections", json={"name": "Popular", "build": "shared"}).json()["slug"]
+        real = self._run(client, [])
+        dry = self._run(client, [], dry_run=True)
+        skipped = self._run(client, [])
+        with client.app.state.sessions() as session:
+            session.add(
+                RunSharedRow(
+                    run_id=real,
+                    collection_slug=slug,
+                    status="ok",
+                    picks=[
+                        {"rating_key": 51, "title": "Up", "rank": 1},
+                        {"rating_key": 52, "title": "Coco", "rank": 2},
+                    ],
+                )
+            )
+            session.add(
+                RunSharedRow(
+                    run_id=dry, collection_slug=slug, status="ok", picks=[{"rating_key": 99, "title": "Dry", "rank": 1}]
+                )
+            )
+            # A later run that delivered nothing for it leaves Plex holding the earlier titles.
+            session.add(RunSharedRow(run_id=skipped, collection_slug=slug, status="skipped", picks=[]))
+            session.commit()
+
+        assert self._row(client, slug)["preview_titles"] == [
+            {"rating_key": 51, "title": "Up"},
+            {"rating_key": 52, "title": "Coco"},
+        ]
+
+    def test_a_single_row_response_carries_them_too(self, client: TestClient):
+        (sarah,) = self._people(client, "sarah")
+        created = client.post("/api/collections", json={"name": "Another"}).json()
+        self._run(client, [(sarah, created["slug"], 61, "Solo", 1)])
+
+        patched = client.patch(f"/api/collections/{created['id']}", json={"name": "Another"})
+
+        assert patched.status_code == 200, patched.text
+        assert patched.json()["preview_titles"] == [{"rating_key": 61, "title": "Solo"}]

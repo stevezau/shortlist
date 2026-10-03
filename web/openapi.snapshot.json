@@ -1434,6 +1434,13 @@
             ],
             "title": "Preview Incomplete"
           },
+          "preview_titles": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewTitleOut"
+            },
+            "title": "Preview Titles",
+            "type": "array"
+          },
           "recency": {
             "anyOf": [
               {
@@ -1798,6 +1805,7 @@
           "slug",
           "name",
           "last_run_id",
+          "preview_titles",
           "build",
           "audience",
           "audience_user_ids",
@@ -2494,6 +2502,42 @@
           "observed_at"
         ],
         "title": "EngagementPickOut",
+        "type": "object"
+      },
+      "EventOut": {
+        "additionalProperties": true,
+        "description": "One audit row. `message` is the writer's structured diff, and its keys depend on `scope`.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "additionalProperties": true,
+            "title": "Message",
+            "type": "object"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "level",
+          "scope",
+          "message"
+        ],
+        "title": "EventOut",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -4231,6 +4275,26 @@
         "title": "PresetOut",
         "type": "object"
       },
+      "PreviewTitleOut": {
+        "additionalProperties": true,
+        "description": "One title from a row's latest delivery, for the Rows list's poster collage.",
+        "properties": {
+          "rating_key": {
+            "title": "Rating Key",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rating_key",
+          "title"
+        ],
+        "title": "PreviewTitleOut",
+        "type": "object"
+      },
       "PrivacyStatusOut": {
         "additionalProperties": true,
         "description": "One live reading of the whole server's sharing state.",
@@ -4278,6 +4342,10 @@
             "title": "Rows On Plex",
             "type": "array"
           },
+          "snapshots_kept": {
+            "title": "Snapshots Kept",
+            "type": "integer"
+          },
           "summary": {
             "title": "Summary",
             "type": "string"
@@ -4290,7 +4358,8 @@
           "rows_on_plex",
           "rows_error",
           "error",
-          "enforcement"
+          "enforcement",
+          "snapshots_kept"
         ],
         "title": "PrivacyStatusOut",
         "type": "object"
@@ -5520,6 +5589,16 @@
             "title": "Id",
             "type": "integer"
           },
+          "privacy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunPrivacyOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "promotion_blockers": {
             "items": {
               "type": "string"
@@ -5576,6 +5655,7 @@
           "stats",
           "error",
           "promotion_blockers",
+          "privacy",
           "users",
           "shared_rows"
         ],
@@ -5714,6 +5794,54 @@
           "seq"
         ],
         "title": "RunLogLineOut",
+        "type": "object"
+      },
+      "RunPrivacyOut": {
+        "additionalProperties": true,
+        "description": "What this run measured about who can see whose rows. Reporting only.",
+        "properties": {
+          "can_see_others": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Can See Others",
+            "type": "array"
+          },
+          "filters_not_enforced": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters Not Enforced"
+          },
+          "unreadable_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unreadable Filters"
+          }
+        },
+        "required": [
+          "can_see_others",
+          "unreadable_filters",
+          "filters_not_enforced"
+        ],
+        "title": "RunPrivacyOut",
         "type": "object"
       },
       "RunProgressEvent": {
@@ -5924,6 +6052,16 @@
             "title": "Id",
             "type": "integer"
           },
+          "privacy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunPrivacyOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "promotion_blockers": {
             "items": {
               "type": "string"
@@ -5965,7 +6103,8 @@
           "dry_run",
           "stats",
           "error",
-          "promotion_blockers"
+          "promotion_blockers",
+          "privacy"
         ],
         "title": "RunSummaryOut",
         "type": "object"
@@ -9988,7 +10127,7 @@
     },
     "/api/events/log": {
       "get": {
-        "description": "The audit trail, newest first. `before_id` pages backwards \u2014 pass the id of the oldest entry\nyou already have. A cursor, not an offset: events are appended while you read.",
+        "description": "The audit trail, newest first. `before_id` pages backwards \u2014 pass the id of the oldest entry\nyou already have. A cursor, not an offset: events are appended while you read. Every filter given\napplies.",
         "operationId": "audit_log_api_events_log_get",
         "parameters": [
           {
@@ -10005,6 +10144,36 @@
                 }
               ],
               "title": "Scope"
+            }
+          },
+          {
+            "description": "Only scopes starting with this, e.g. `run.`. Case-insensitive on SQLite (it is a LIKE).",
+            "in": "query",
+            "name": "scope_prefix",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only scopes starting with this, e.g. `run.`. Case-insensitive on SQLite (it is a LIKE).",
+              "title": "Scope Prefix"
+            }
+          },
+          {
+            "description": "Only the scopes that record a write to Plex or plex.tv. Includes dry-run audit rows (`message.dry_run` true), which changed nothing on Plex; the UI labels them as dry runs.",
+            "in": "query",
+            "name": "plex_writes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Only the scopes that record a write to Plex or plex.tv. Includes dry-run audit rows (`message.dry_run` true), which changed nothing on Plex; the UI labels them as dry runs.",
+              "title": "Plex Writes",
+              "type": "boolean"
             }
           },
           {
@@ -10042,8 +10211,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/EventOut"
                   },
                   "title": "Response Audit Log Api Events Log Get",
                   "type": "array"

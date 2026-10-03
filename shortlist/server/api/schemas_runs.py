@@ -105,6 +105,21 @@ class RunSharedRowOut(PassthroughModel):
     has_trace: bool
 
 
+class RunPrivacyOut(PassthroughModel):
+    """What this run measured about who can see whose rows. Reporting only."""
+
+    #: Accounts Plex refuses hide rules for that can nonetheless see other people's rows
+    #: (`stats.unhideable_rows` keys with a non-empty list).
+    can_see_others: list[str]
+    #: Accounts whose share filter Plex itself cannot read (`stats.unreadable_filters` keys). None =
+    #: not measured (a run recorded before that key existed); [] = measured, none found.
+    unreadable_filters: list[str] | None
+    #: Accounts whose filter Shortlist wrote and Plex is not applying (`stats.filters_not_enforced`
+    #: keys). None = that check did not measure — it has its own flag (`filters_enforcement_measured`),
+    #: so a run can measure the rest and not this; [] = measured, none found.
+    filters_not_enforced: list[str] | None
+
+
 class RunSummaryOut(PassthroughModel):
     """One run, as the Runs list shows it."""
 
@@ -128,6 +143,11 @@ class RunSummaryOut(PassthroughModel):
     stats: dict[str, Any]
     error: str | None  # why the run failed, when the failure belongs to no single person
     promotion_blockers: list[str]  # accounts whose share filter Plex refused
+    #: None = this run did not measure privacy: no `stats.unhideable_rows` (an older run, or one that
+    #: died before the privacy phase), or a dry run (it records the key but built no rows). The UI must
+    #: read that as "not measured", never as "everyone is private". A finding never changes `status` —
+    #: every reader that filters on ok/error would drop a run with a new one.
+    privacy: RunPrivacyOut | None
 
 
 class RunDetailOut(RunSummaryOut):
