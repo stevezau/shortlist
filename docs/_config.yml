@@ -38,7 +38,7 @@ stable_released: 2026-09-27
 # GoatCounter site code (the part before .goatcounter.com). Empty means no analytics tag at all:
 # head.html emits the script only when this is set. The install include's Copy button also counts
 # an "install-copy" event when the script is present.
-goatcounter: ""
+goatcounter: "shortlist"
 
 # The host shown in the landing page's fake address bars. A `.local` name says
 # "this runs on your own network" without a sentence about it, and 5959 is the
