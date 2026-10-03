@@ -8166,3 +8166,83 @@ class TestTagAmbiguityAcrossEveryEnabledRequestsRow:
         assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
             ("req-bob", 102, False)
         ]
+
+
+class TestRowLimitsRecipe:
+    """#138 phase 2: limits join the recipe only when set, so no existing row rebuilds on upgrade."""
+
+    @staticmethod
+    def _recipe(**spec_kw) -> str:
+        from shortlist.engine.models import EngineConfig
+        from shortlist.engine.rows import RowPolicy, _rating_key_resolver, row_recipe
+
+        cfg = EngineConfig()
+        spec = RowSpec(slug="picked", name_template="", size=4, media="movie", **spec_kw)
+        ctx = MagicMock()
+        ctx.config = cfg
+        policy = RowPolicy(
+            ctx=ctx,
+            user=make_profile("sarah", account_id=100),
+            cfg=cfg,
+            specs=[spec],
+            library_index={},
+            report=MagicMock(),
+            resolve=_rating_key_resolver({}),
+        )
+        return row_recipe(policy, spec)
+
+    def test_recipe_is_byte_identical_when_no_limit_is_set(self):
+        # Captured from the parent commit, before row_recipe was touched.
+        assert self._recipe() == "movie||tmdb_similar|0.0|0.0|False|False|30|1|popular"
+
+    def test_a_limit_changes_the_recipe_and_names_it(self):
+        recipe = self._recipe(max_runtime=120)
+        assert recipe == "movie||tmdb_similar|0.0|0.0|False|False|30|1|popular|limits=rt<=120"
+
+    def test_clearing_the_limits_restores_the_original_recipe(self):
+        assert self._recipe(min_year=None, max_runtime=None) == self._recipe()
+
+
+class TestRowLimitsInThePipeline:
+    """A row's limits narrow the pool before ranking, so the picks are drawn only from titles inside them."""
+
+    def _setup(self, ctx: EngineContext, mock_plextv, **spec_kw):
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": 8.0,
+                "release_date": f"{1970 + (i - 10) * 6}-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.tmdb.details.side_effect = lambda tid, mt: {"runtime": 90 if tid <= 12 else 150}
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=4, media="movie", **spec_kw)]
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        return sorted(p["tmdb_id"] for p in picks)
+
+    def test_max_year_keeps_only_titles_released_by_then(self, ctx, mock_plextv):
+        ids = self._setup(ctx, mock_plextv, max_year=2000)
+        assert ids == [10, 11, 12, 13]
+        ctx.tmdb.details.assert_not_called()
+
+    def test_max_runtime_asks_details_only_for_titles_that_passed_the_year_limit(self, ctx, mock_plextv):
+        ids = self._setup(ctx, mock_plextv, max_year=2000, max_runtime=100)
+        assert ids == [10, 11, 12]
+        asked = {c.args[0] for c in ctx.tmdb.details.call_args_list if c.args[0] >= 10}
+        assert asked == {10, 11, 12, 13, 14, 15}
+
+    def test_no_limits_still_fills_the_row_from_the_whole_pool(self, ctx, mock_plextv):
+        ids = self._setup(ctx, mock_plextv)
+        assert len(ids) == 4

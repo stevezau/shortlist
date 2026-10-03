@@ -19,6 +19,7 @@ from functools import cached_property
 from loguru import logger
 
 from shortlist.engine import candidates as candidates_mod
+from shortlist.engine import limits as limits_mod
 from shortlist.engine import picker, placeholders, ranking
 from shortlist.engine import requests as requests_mod
 from shortlist.engine import seasons as seasons_mod
@@ -46,6 +47,7 @@ from shortlist.engine.models import (
     MediaType,
     Pick,
     RequestWhy,
+    RowLimits,
     RowSpec,
     Seed,
     UserProfile,
@@ -1030,6 +1032,8 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
                 if not policy.effective_guidance(spec).is_builtin
                 else ()
             ),
+            # Rows with a length, year or rating limit only, so no other row's recipe changes (#138).
+            *((f"limits={spec.limits().fingerprint()}",) if spec.limits().active else ()),
         )
     )
 
@@ -1286,6 +1290,7 @@ def _candidate_pool(
     visible: Callable[[list[int]], set[int] | None] | None = None,
     season: seasons_mod.SeasonTitles | None = None,
     guidance: Guidance | None = None,
+    limits: RowLimits | None = None,
 ) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
     """Gather TMDB candidates for ``seeds`` and intersect them with the library.
 
@@ -1358,6 +1363,11 @@ def _candidate_pool(
     if visible is not None and in_library:
         in_library, hidden = _visible_candidates(ctx, in_library, visible)
         dropped.extend((c, "hidden_by_their_restrictions") for c in hidden)
+    if limits is not None and limits.active:
+        limited = limits_mod.apply_limits(in_library, limits, ctx.tmdb)
+        logger.info("limits: kept={} dropped={} unknown={}", len(limited.kept), limited.dropped, limited.unknown)
+        dropped.extend((c, "outside_row_limits") for c in limited.dropped_candidates)
+        in_library = limited.kept
     # Measure genre avoidance BEFORE the cut, so the dial can rescue or demote a title across the
     # truncation boundary rather than only reordering whatever already survived — the same reason
     # `recency` participates in the cut. A no-op unless the owner turned the dial up, and the
@@ -2388,6 +2398,8 @@ class RowPolicy:
             # Rows with different AI instructions must not share an AI web search (#138); "" otherwise,
             # which every row without instructions shares, so no pool splits on the night this ships.
             self.effective_guidance(spec).fingerprint(),
+            # Limits shape the pool itself, so rows with different limits cannot share one (#138).
+            spec.limits().fingerprint(),
         )
 
     def pools_for(self, spec: RowSpec) -> Pool | None:
@@ -2430,6 +2442,7 @@ class RowPolicy:
                     visible=self.visible,
                     season=season,
                     guidance=guidance,
+                    limits=spec.limits(),
                 )
             except Exception as e:
                 self.pool_failures[key] = f"{type(e).__name__}: {e}"

@@ -443,6 +443,30 @@ class RowSeason:
         return abs((recorded - self.anchor).days) <= width
 
 
+@dataclass(frozen=True)
+class RowLimits:
+    """What a row may hold. ``None`` on every field means no limit, which is today's behaviour."""
+
+    max_runtime: int | None = None  # minutes
+    min_year: int | None = None
+    max_year: int | None = None
+    min_rating: float | None = None  # TMDB vote_average, 0..10
+
+    @property
+    def active(self) -> bool:
+        return any(v is not None for v in (self.max_runtime, self.min_year, self.max_year, self.min_rating))
+
+    def fingerprint(self) -> str:
+        """The set limits in a fixed order, e.g. ``rt<=120;y>=1990;y<=2010;r>=7.0``."""
+        parts = [
+            f"rt<={self.max_runtime}" if self.max_runtime is not None else "",
+            f"y>={self.min_year}" if self.min_year is not None else "",
+            f"y<={self.max_year}" if self.max_year is not None else "",
+            f"r>={self.min_rating}" if self.min_rating is not None else "",
+        ]
+        return ";".join(p for p in parts if p)
+
+
 @dataclass
 class RowSpec:
     """One curated-row definition the engine delivers, built by the adapter from a Collection row.
@@ -524,6 +548,11 @@ class RowSpec:
     # actually watched, which is what a `{top_seed}` ("Because you watched X") title claims; the default
     # blends the whole recent history. None -> inherit EngineConfig.max_seeds.
     max_seeds: int | None = None
+    # Optional limits on what the row may hold (#138). None = no limit.
+    max_runtime: int | None = None  # minutes; a show's is its typical episode
+    min_year: int | None = None
+    max_year: int | None = None
+    min_rating: float | None = None  # TMDB vote_average, 0..10
     # What this row does for someone with too little history to recommend from ("popular" = the
     # cold-start fallback of top-rated titles, "skip" = don't build it for them at all).
     # None -> inherit EngineConfig.cold_start.
@@ -624,6 +653,9 @@ class RowSpec:
     requests_tag_pattern: str = ""
     # Owner-written instructions for AI web search on this row (#138); None = use the server's.
     ai_instructions: AiInstructions | None = None
+
+    def limits(self) -> RowLimits:
+        return RowLimits(self.max_runtime, self.min_year, self.max_year, self.min_rating)
 
     @property
     def dormant(self) -> bool:
