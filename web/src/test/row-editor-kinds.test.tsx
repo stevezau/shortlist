@@ -153,7 +153,7 @@ describe("explicit Per person / Shared choice", () => {
   it("a new seasonal row switches to shared without losing its season or other choices", async () => {
     const template = findRowTemplate("seasonal")!;
     renderEditor(null, { ...template, values: {
-      ...template.values, seasons: ["halloween"], season_lead_days: 17,
+      ...template.values, build: "per_person", seasons: ["halloween"], season_lead_days: 17,
       season_after_days: 4, library_keys: ["1"], audience: "subset", audience_user_ids: [7],
     } });
     await userEvent.click(buildRadio("Shared"));
