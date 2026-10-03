@@ -18,6 +18,7 @@ from shortlist.engine.clients.search import SearchResult, TitleCandidate
 from shortlist.engine.curator import NullCurator
 from shortlist.engine.curator.base import parse_web_titles
 from shortlist.engine.models import MediaType, Pick, Seed
+from shortlist.engine.web_guidance import Guidance
 from tests.conftest import make_candidate
 
 
@@ -142,7 +143,7 @@ class TestGatherCandidates:
         class _WebCurator:
             supports_native_web_search = True
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 return [{"title": "Both", "year": 2020, "media": "movie"}]
 
         pool = gather_candidates(
@@ -243,7 +244,7 @@ class TestGatherCandidates:
         class _WebCurator:
             supports_native_web_search = True
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 return [
                     {"title": "Real Film", "year": 2022, "media": "movie"},
                     {"title": "Real Show", "year": 2019, "media": "show"},
@@ -276,7 +277,7 @@ class TestGatherCandidates:
         class _Boom:
             supports_native_web_search = True
 
-            def recommend_web(self, *a):
+            def recommend_web(self, *a, **kw):
                 raise RuntimeError("web search down")
 
         pool = gather_candidates(
@@ -330,9 +331,11 @@ class _NonNativeCurator:
         self._reply = reply
         self.complete_calls = 0
         self.last_user = ""  # the RAG prompt, so a test can assert what the curator was actually shown
+        self.last_system = ""
 
     def complete(self, system, user):
         self.complete_calls += 1
+        self.last_system = system
         self.last_user = user
         return self._reply
 
@@ -345,9 +348,11 @@ class _NativeCurator:
     def __init__(self):
         self.recommend_calls = 0
         self.complete_calls = 0
+        self.last_guidance = None
 
-    def recommend_web(self, profile, seeds, k):
+    def recommend_web(self, profile, seeds, k, *, guidance=None):
         self.recommend_calls += 1
+        self.last_guidance = guidance
         return [{"title": "Native Pick", "year": 2020, "media": "movie"}]
 
     def complete(self, system, user):
@@ -445,6 +450,58 @@ class TestLlmWebBackends:
         )
         assert {c.tmdb_id for c in pool} == {88}
         assert curator.recommend_calls == 0 and curator.complete_calls == 1  # forced onto the external path
+
+    def test_a_rows_guidance_reaches_the_exa_pick_prompt(self, mock_tmdb):
+        self._tmdb(mock_tmdb, {"Dune": {"id": 55, "title": "Dune", "genre_ids": [], "vote_average": 8.0}})
+        curator = _NonNativeCurator(reply='[{"title": "Dune", "year": 2021, "media": "movie"}]')
+        gather_candidates(
+            mock_tmdb,
+            [seed(1, "Arrival")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=_FakeExtractingSearch(
+                [make_result("a", "b")], [TitleCandidate(title="Dune", year=2021, media="movie")]
+            ),
+            web_search_mode="exa",
+            web_search_cache=_DictCache(),
+            web_guidance=Guidance(extra="Nothing aimed at kids."),
+        )
+        assert "The server owner adds, for this row: Nothing aimed at kids." in curator.last_system
+
+    def test_a_rows_guidance_reaches_the_searxng_prompt(self, mock_tmdb):
+        """SearXNG extracts nothing, so the model reads snippets through the RAG prompt — the third shape."""
+        self._tmdb(mock_tmdb, {"Dune": {"id": 55, "title": "Dune", "genre_ids": [], "vote_average": 8.0}})
+        curator = _NonNativeCurator(reply='[{"title": "Dune", "year": 2021, "media": "movie"}]')
+        gather_candidates(
+            mock_tmdb,
+            [seed(1, "Arrival")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=_FakeSearch([make_result("Best of 2021", "Dune is great")], name="searxng"),
+            web_search_mode="searxng",
+            web_search_cache=_DictCache(),
+            web_guidance=Guidance(extra="Nothing aimed at kids."),
+        )
+        assert "excerpts from recent web articles" in curator.last_system  # the RAG prompt, not the pick one
+        assert "The server owner adds, for this row: Nothing aimed at kids." in curator.last_system
+
+    def test_native_search_is_handed_the_rows_guidance(self, mock_tmdb):
+        self._tmdb(mock_tmdb, {"Native Pick": {"id": 77, "title": "Native Pick", "genre_ids": [], "vote_average": 8.0}})
+        curator = _NativeCurator()
+        g = Guidance(replace="Any decade.")
+        gather_candidates(
+            mock_tmdb,
+            [seed(1)],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=None,
+            web_search_mode="native",
+            web_guidance=g,
+        )
+        assert curator.last_guidance == g
 
     def test_native_mode_without_a_native_provider_is_a_noop_not_a_failure(self, mock_tmdb):
         """web_search_mode=native + Ollama: the source can't run, so it's skipped — the OTHER source
@@ -620,6 +677,34 @@ class TestWebSearchWithoutAnLlm:
         )
 
         assert calls == []
+
+    def test_a_rows_guidance_does_not_wake_a_missing_model(self, mock_tmdb):
+        """Instructions are words for a model. With none configured, Exa's own titles still fill the row and
+        nothing is asked — the guidance has nobody to reach."""
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
+        mock_tmdb.genre_names.return_value = {}
+        mock_tmdb.search.side_effect = lambda title, mt, year=None: (
+            {"id": 9001, "name": "Andor", "first_air_date": "2022-09-21", "genre_ids": []} if title == "Andor" else None
+        )
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        curator = NullCurator()
+        calls = []
+        curator.complete = lambda system, user: calls.append(1) or ""
+
+        pool = gather_candidates(
+            mock_tmdb,
+            [seed(1, "Dune")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_mode="exa",
+            web_search_cache=_DictCache(),
+            web_guidance=Guidance(extra="Nothing aimed at kids."),
+        )
+
+        assert [c.title for c in pool] == ["Andor"]
+        assert len(calls) == 0
 
     def test_the_fallback_respects_k(self):
         search = _FakeExtractingSearch([make_result("a", "b")], self._titles("A", "B", "C", "D", "E"))
@@ -1049,7 +1134,7 @@ class TestGatherStats:
             supports_native_web_search = True
             last_tokens = 0
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 self.last_tokens = 321
                 self.last_output_tokens = 21
                 return [{"title": "Native Pick", "year": 2020, "media": "movie"}]
@@ -1107,7 +1192,7 @@ class TestGatherStats:
             last_tokens = 7800
             last_output_tokens = 600
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 return []  # the provider's own degrade-on-error shape
 
         stats = GatherStats()
@@ -1400,7 +1485,7 @@ class TestTheWebSourceCanFillTheLargestRow:
             supports_native_web_search = True
             last_tokens = 0
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 seen["k"] = k
                 return []
 
@@ -1678,7 +1763,7 @@ class TestStructuredExtractionPath:
             supports_native_web_search = True
             last_tokens = 0
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 return [
                     {"title": "Dune", "year": 2021, "media": "movie"},
                     {"title": "Mr. Robot", "year": 2015, "media": "show"},

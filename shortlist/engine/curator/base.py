@@ -11,12 +11,13 @@ from __future__ import annotations
 import json
 import threading
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from loguru import logger
 
 from shortlist.engine.history import distinct_recent
 from shortlist.engine.models import UserProfile
+from shortlist.engine.web_guidance import BUILTIN, Guidance, render_owner_text
 
 
 class ThreadLocalTokens:
@@ -75,6 +76,19 @@ def taste_summary(profile: UserProfile, max_titles: int = 20) -> str:
     return "Recently watched (most recent first):\n" + "\n".join(lines)
 
 
+class _WebPrompt(NamedTuple):
+    """A web system prompt as mechanics around one guidance passage (#138).
+
+    ``head + guide + tail`` is the built-in prompt, byte for byte. ``count`` restates how many titles to
+    give when an owner's text replaces ``guide``, which is where the built-in states it.
+    """
+
+    head: str
+    guide: str
+    tail: str
+    count: str
+
+
 # Note what this prompt does NOT ask for: tmdb_id or imdb_id. Measured 2026-09-02 against the live
 # curator, only 4 of 10 proposed tmdb_ids and 6 of 10 imdb_ids were correct — and a wrong id resolves
 # to a REAL but unrelated title ("Black Mirror" → "Wild China"), which reaches someone's row. A wrong
@@ -96,25 +110,79 @@ def taste_summary(profile: UserProfile, max_titles: int = 20) -> str:
 #
 # Gemini is the exception and no prompt fixes it: it declines to search for this task under every
 # phrasing tried, including `tool_config mode="ANY"`. See GoogleCurator.recommend_web.
-_WEB_SYSTEM = (
-    "You are a film and TV recommender with live web search. Today is in {year}, which is LATER than "
-    "your training cutoff — so your own knowledge of what is new is out of date. Search the web "
-    "before answering rather than recommending from memory. Search for what 'what to watch next' "
-    "articles, critics' best-of lists and review sites are recommending in {year} and {last_year}. "
-    "Based on what this person recently watched, give {k} titles they'd most likely want to watch "
-    "next. Strongly prefer titles released in {last_year} or {year}; include something older only "
-    "when it is an unusually good match for their taste. Rules: (1) never recommend a title they "
-    "already watched, or another season or sequel of one; (2) ALWAYS give the exact release year — "
-    "it is used to look the title up, and a missing year means the recommendation is discarded; "
-    "(3) use the exact title as released, not a description of it; (4) only titles ALREADY RELEASED "
-    "and watchable now — never announced, upcoming or unaired ones; (5) name a series by its series "
-    "title alone, never 'Season 2' or 'Part 3'. Prefer real, findable titles over "
-    'obscure guesses. Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, '
-    '"year": int, "media": "movie" or "show"}}. No prose.'
+_WEB = _WebPrompt(
+    head=(
+        "You are a film and TV recommender with live web search. Today is in {year}, which is LATER than "
+        "your training cutoff — so your own knowledge of what is new is out of date. Search the web "
+        "before answering rather than recommending from memory. Search for what 'what to watch next' "
+        "articles, critics' best-of lists and review sites are recommending in {year} and {last_year}. "
+    ),
+    guide=(
+        "Based on what this person recently watched, give {k} titles they'd most likely want to watch "
+        "next. Strongly prefer titles released in {last_year} or {year}; include something older only "
+        "when it is an unusually good match for their taste. "
+    ),
+    tail=(
+        "Rules: (1) never recommend a title they "
+        "already watched, or another season or sequel of one; (2) ALWAYS give the exact release year — "
+        "it is used to look the title up, and a missing year means the recommendation is discarded; "
+        "(3) use the exact title as released, not a description of it; (4) only titles ALREADY RELEASED "
+        "and watchable now — never announced, upcoming or unaired ones; (5) name a series by its series "
+        "title alone, never 'Season 2' or 'Part 3'. Prefer real, findable titles over "
+        'obscure guesses. Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, '
+        '"year": int, "media": "movie" or "show"}}. No prose.'
+    ),
+    count="Give up to {k} titles. ",
 )
+_WEB_SYSTEM = _WEB.head + _WEB.guide + _WEB.tail
 
 
-def build_web_prompt(profile: UserProfile, seeds: list, k: int, *, year: int | None = None) -> tuple[str, str]:
+_OWNER_ADDS = "The server owner adds, for this row: "
+
+
+def _web_system(prompt: _WebPrompt, *, k: int, year: int, guidance: Guidance | None) -> str:
+    """One web system prompt. Built-in guidance gives exactly the text this source has always sent.
+
+    Owner text is spliced in AFTER ``str.format`` runs on Shortlist's own parts, so its braces are inert.
+    """
+    g = guidance or BUILTIN
+    fmt = {"k": k, "year": year, "last_year": year - 1}
+    if g.replace:
+        middle = render_owner_text(g.replace, k=k, year=year) + " " + prompt.count.format(**fmt)
+    else:
+        middle = prompt.guide.format(**fmt)
+    if g.extra:
+        middle += _OWNER_ADDS + render_owner_text(g.extra, k=k, year=year) + " "
+    return prompt.head.format(**fmt) + middle + prompt.tail.format(**fmt)
+
+
+def web_system_prompt(backend: str, *, k: int, year: int, guidance: Guidance | None) -> str:
+    """The system prompt AI web search sends for ``backend`` ("native", "exa", "searxng").
+
+    Exa is shown with its pick prompt, the one used whenever Exa extracts titles. An unknown backend is
+    treated as native, as ``web_recommendations`` does.
+    """
+    return _web_system(_PROMPT_FOR_BACKEND.get(backend, _WEB), k=k, year=year, guidance=guidance)
+
+
+def builtin_guidance(backend: str, *, k: int, year: int) -> str:
+    """The built-in guidance passage an owner's text would replace, for showing in Settings."""
+    return _PROMPT_FOR_BACKEND.get(backend, _WEB).guide.format(k=k, year=year, last_year=year - 1).strip()
+
+
+def builtin_template(backend: str) -> str:
+    """The built-in guidance as owner text, for Settings' "Write your own" to start from.
+
+    The placeholders stay unfilled (``{k}`` written as ``{count}``), so an owner who edits a word of it keeps
+    a prompt whose years still move with the calendar, and ``render_owner_text`` of it is ``builtin_guidance``.
+    """
+    guide = _PROMPT_FOR_BACKEND.get(backend, _WEB).guide
+    return guide.format(k="{count}", year="{year}", last_year="{last_year}").strip()
+
+
+def build_web_prompt(
+    profile: UserProfile, seeds: list, k: int, *, year: int | None = None, guidance: Guidance | None = None
+) -> tuple[str, str]:
     """(system, user) prompts for a web-search recommendation call (the ``llm_web`` source).
 
     Asks the model to propose NEW titles via web search; the caller resolves each to a real TMDB id
@@ -127,6 +195,7 @@ def build_web_prompt(profile: UserProfile, seeds: list, k: int, *, year: int | N
         k: How many titles to ask for.
         year: The current year, injected into the prompt because a model cannot be trusted to know
             it. Defaults to today's. Tests pin it so the prompt is deterministic.
+        guidance: The owner's guidance (#138). None or ``BUILTIN`` sends the built-in prompt.
 
     Returns:
         ``(system, user)`` — the system prompt carrying the rules, and the user prompt carrying the
@@ -137,31 +206,46 @@ def build_web_prompt(profile: UserProfile, seeds: list, k: int, *, year: int | N
         liked = [w.title for w in sorted(profile.history, key=lambda w: w.watched_at, reverse=True)[:20]]
     body = "\n".join(f"- {t}" for t in liked) or "- (no history yet — recommend broadly popular titles)"
     now = year if year is not None else datetime.now(UTC).year
-    system = _WEB_SYSTEM.format(k=k, year=now, last_year=now - 1)
-    user = (
-        f"They recently enjoyed:\n{body}\n\nSearch the web for what to watch next, then recommend "
-        f"up to {k} titles. Favour things released in {now - 1} or {now}."
-    )
+    system = _web_system(_WEB, k=k, year=now, guidance=guidance)
+    user = f"They recently enjoyed:\n{body}\n\nSearch the web for what to watch next, then recommend up to {k} titles."
+    # The release window repeats the built-in guidance, so it goes when an owner's text replaces that guidance.
+    if not (guidance and guidance.replace):
+        user += f" Favour things released in {now - 1} or {now}."
     return system, user
 
 
-_WEB_RAG_SYSTEM = (
-    "You are a film and TV recommender. Below are excerpts from recent web articles about what to "
-    "watch. Based on what this person recently enjoyed, pick the {k} titles mentioned in these "
-    "articles they'd most likely want to watch next. Prefer real, well-reviewed, findable titles. "
-    "Give the exact release year wherever the article states it — it is used to look the title up. "
-    'Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, "year": int or null, '
-    '"media": "movie" or "show"}}. No prose.'
+_WEB_RAG = _WebPrompt(
+    head="You are a film and TV recommender. Below are excerpts from recent web articles about what to watch. ",
+    guide=(
+        "Based on what this person recently enjoyed, pick the {k} titles mentioned in these "
+        "articles they'd most likely want to watch next. Prefer real, well-reviewed, findable titles. "
+    ),
+    tail=(
+        "Give the exact release year wherever the article states it — it is used to look the title up. "
+        'Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, "year": int or null, '
+        '"media": "movie" or "show"}}. No prose.'
+    ),
+    count="Pick up to {k} of the titles mentioned in these articles. ",
 )
+_WEB_RAG_SYSTEM = _WEB_RAG.head + _WEB_RAG.guide + _WEB_RAG.tail
 
-_WEB_PICK_SYSTEM = (
-    "You are a film and TV recommender. Below is a list of titles that recent web articles "
-    "recommend as things to watch next. Based on what this person recently enjoyed, "
-    "pick the {k} they'd most likely want to watch next. Choose only from the list — do not add "
-    "titles of your own. Keep each title and year exactly as written; they are used to look the "
-    'title up. Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, "year": '
-    'int or null, "media": "movie" or "show"}}. No prose.'
+_WEB_PICK = _WebPrompt(
+    head=(
+        "You are a film and TV recommender. Below is a list of titles that recent web articles "
+        "recommend as things to watch next. "
+    ),
+    guide="Based on what this person recently enjoyed, pick the {k} they'd most likely want to watch next. ",
+    tail=(
+        "Choose only from the list — do not add "
+        "titles of your own. Keep each title and year exactly as written; they are used to look the "
+        'title up. Respond with ONLY a JSON array of up to {k} objects, each {{"title": str, "year": '
+        'int or null, "media": "movie" or "show"}}. No prose.'
+    ),
+    count="Pick up to {k} of them. ",
 )
+_WEB_PICK_SYSTEM = _WEB_PICK.head + _WEB_PICK.guide + _WEB_PICK.tail
+
+_PROMPT_FOR_BACKEND = {"native": _WEB, "exa": _WEB_PICK, "searxng": _WEB_RAG}
 
 
 def build_web_query_for_title(title: str) -> str:
@@ -178,21 +262,26 @@ def build_web_query_for_title(title: str) -> str:
     return f"what to watch next if you liked {clean} — similar recent, well-reviewed movies and TV shows"
 
 
-def build_web_rag_prompt(profile: UserProfile, results: list, k: int) -> tuple[str, str]:
+def build_web_rag_prompt(
+    profile: UserProfile, results: list, k: int, *, year: int | None = None, guidance: Guidance | None = None
+) -> tuple[str, str]:
     """(system, user) prompts for recommending titles from web-search RESULTS the app already fetched.
 
     Unlike ``build_web_prompt`` (which asks a native-search model to search for itself), this embeds
     the article snippets we retrieved so an offline/local model can recommend from them. The caller
     resolves each returned title to TMDB and library-verifies it, so a bad title reaches no row.
     """
-    system = _WEB_RAG_SYSTEM.format(k=k)
+    now = year if year is not None else datetime.now(UTC).year
+    system = _web_system(_WEB_RAG, k=k, year=now, guidance=guidance)
     blocks = [f"## {getattr(r, 'title', '')}\n{(getattr(r, 'text', '') or '')[:800]}" for r in results]
     context = "\n\n".join(blocks) or "(no web results found)"
     user = f"{taste_summary(profile)}\n\nWeb articles:\n{context}\n\nRecommend up to {k} titles to watch next."
     return system, user
 
 
-def build_web_pick_prompt(profile: UserProfile, candidates: list, k: int) -> tuple[str, str]:
+def build_web_pick_prompt(
+    profile: UserProfile, candidates: list, k: int, *, year: int | None = None, guidance: Guidance | None = None
+) -> tuple[str, str]:
     """(system, user) prompts for picking from titles the SEARCH PROVIDER already extracted.
 
     The third and cheapest shape of the ``llm_web`` prompt. ``build_web_prompt`` asks a model to go
@@ -205,7 +294,8 @@ def build_web_pick_prompt(profile: UserProfile, candidates: list, k: int) -> tup
     The caller resolves each returned title to TMDB and library-verifies it, so a title the model
     invents rather than picks from the list reaches no row.
     """
-    system = _WEB_PICK_SYSTEM.format(k=k)
+    now = year if year is not None else datetime.now(UTC).year
+    system = _web_system(_WEB_PICK, k=k, year=now, guidance=guidance)
     lines = []
     for c in candidates:
         year = getattr(c, "year", None)

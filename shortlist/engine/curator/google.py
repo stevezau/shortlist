@@ -10,6 +10,7 @@ from shortlist.engine.curator.base import (
     parse_web_titles,
 )
 from shortlist.engine.models import UserProfile
+from shortlist.engine.web_guidance import Guidance
 
 # An ALIAS, not a pinned model, and that is the whole point. This was `gemini-2.5-flash` until it
 # started answering `404 NOT_FOUND: This model is no longer available to new users` — so every new
@@ -101,7 +102,9 @@ class GoogleCurator:
                 out.append(name)
         return sorted(out)
 
-    def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
+    def recommend_web(
+        self, profile: UserProfile, seeds: list, k: int, *, guidance: Guidance | None = None
+    ) -> list[dict]:
         """Propose up to k titles via Gemini's Google Search grounding tool (the ``llm_web`` source).
 
         **Gemini does not actually search for this task — but its answers are still good.**
@@ -120,8 +123,10 @@ class GoogleCurator:
         enough. So this logs at INFO, not WARNING: the one real cost is that it cannot refresh
         itself as its cutoff recedes, where Claude and GPT can. Degrades to an empty list on any
         provider error.
+
+        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt.
         """
-        system, user = build_web_prompt(profile, seeds, k)
+        system, user = build_web_prompt(profile, seeds, k, guidance=guidance)
         try:
             r = self._grounded_call(system, user, with_schema=self._schema_supported)
         except Exception as e:  # google-genai raises provider-specific exceptions

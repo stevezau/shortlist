@@ -37,6 +37,7 @@ from shortlist.engine.curator.openai import DEFAULT_MODEL as OPENAI_DEFAULT_MODE
 from shortlist.engine.curator.openai import OpenAICurator
 from shortlist.engine.curator.openai_compatible import OpenAICompatibleCurator, normalize_base_url
 from shortlist.engine.models import MediaType, Seed
+from shortlist.engine.web_guidance import Guidance
 from tests.conftest import make_profile
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -119,6 +120,18 @@ class TestAnthropicCurator:
         assert curator.last_tokens == 612 + 143
         assert curator.last_output_tokens == 143
 
+    def test_recommend_web_sends_the_rows_guidance_in_its_system_prompt(self):
+        curator = make_curator("anthropic", api_key="sk-ant-test")
+        curator._client = MagicMock()
+        curator._client.messages.create.return_value = anthropic.types.Message.model_validate(
+            _load("curator_anthropic_recommend_web.json")
+        )
+
+        curator.recommend_web(make_profile(), [], k=5, guidance=Guidance(extra="Nothing aimed at kids."))
+
+        system = curator._client.messages.create.call_args.kwargs["system"]
+        assert "The server owner adds, for this row: Nothing aimed at kids." in system
+
     def test_recommend_web_degrades_to_empty_list_on_api_error(self):
         curator = make_curator("anthropic", api_key="sk-ant-test")
         curator._client = MagicMock()
@@ -186,6 +199,18 @@ class TestOpenAICurator:
         ]
         assert curator.last_tokens == 636
         assert curator.last_output_tokens == 96
+
+    def test_recommend_web_sends_the_rows_guidance_in_its_system_prompt(self):
+        curator = make_curator("openai", api_key="sk-test")
+        curator._client = MagicMock()
+        curator._client.responses.create.return_value = OpenAIResponse.model_validate(
+            _load("curator_openai_responses_web_search.json")
+        )
+
+        curator.recommend_web(make_profile(), [], k=5, guidance=Guidance(extra="Nothing aimed at kids."))
+
+        system = curator._client.responses.create.call_args.kwargs["instructions"]
+        assert "The server owner adds, for this row: Nothing aimed at kids." in system
 
     def test_recommend_web_degrades_to_empty_list_on_api_error(self):
         curator = make_curator("openai", api_key="sk-test")
@@ -314,6 +339,18 @@ class TestGoogleCurator:
         ]
         assert curator.last_tokens == 380
         assert curator.last_output_tokens == 80
+
+    def test_recommend_web_sends_the_rows_guidance_in_its_system_prompt(self):
+        curator = make_curator("google", api_key="AIzaTest")
+        curator._client = MagicMock()
+        curator._client.models.generate_content.return_value = gtypes.GenerateContentResponse.model_validate(
+            _load("curator_google_generate_content_web.json")
+        )
+
+        curator.recommend_web(make_profile(), [], k=5, guidance=Guidance(extra="Nothing aimed at kids."))
+
+        system = curator._client.models.generate_content.call_args.kwargs["config"].system_instruction
+        assert "The server owner adds, for this row: Nothing aimed at kids." in system
 
     def test_recommend_web_logs_only_the_exception_type_never_the_message(self):
         """google.py's comment: the google-genai error text can carry the API key (`?key=AIza...`),

@@ -32,6 +32,7 @@ from shortlist.engine.curator.base import (
     try_parse_web_titles,
 )
 from shortlist.engine.models import MAX_ROW_SIZE, Attribution, Candidate, MediaType, Seed
+from shortlist.engine.web_guidance import Guidance
 
 # One cached web search PER recent title (Exa bills per search): cache the RESULTS by (media, tmdb_id)
 # so a title many users watched is searched once server-wide.
@@ -86,6 +87,7 @@ _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
 # web searches are driven by `recent_count` instead — so this costs output tokens for the extra
 # titles, not extra requests.
 _LLM_WEB_K = MAX_ROW_SIZE
+LLM_WEB_K = _LLM_WEB_K  # public, for the server's prompt preview
 _TRACE_SEEDS_SAMPLE = 12  # per source, how many seeds' queries to record in the trace (display only)
 _TRACE_RETURNS_SAMPLE = 25  # per seed, how many returned titles to record in the trace (display only —
 # the UI shows the first few and lets you expand the rest, so this is the ceiling on what "expand" reveals)
@@ -168,6 +170,7 @@ def web_recommendations(
     *,
     cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
+    guidance: Guidance | None = None,
 ) -> list[dict]:
     """Titles to watch next from a web search, as ``[{title, year, media}]`` for TMDB resolution.
 
@@ -186,6 +189,7 @@ def web_recommendations(
     ``recent_count`` caps how many recent titles the external path searches (one cached search each).
     ``stats`` accumulates this source's token spend (and searches) for per-run AI accounting —
     read ``last_tokens`` right after each LLM call, before the next one overwrites it.
+    ``guidance`` is this row's AI instructions (#138), handed to whichever prompt the backend sends.
     """
     web_trace: dict = {"mode": mode}
     stats.trace["web"] = web_trace
@@ -193,13 +197,22 @@ def web_recommendations(
         if search is None:
             return []
         recs = _web_via_search(
-            curator, search, profile, seeds, k, stats, web_trace, cache=cache, recent_count=recent_count
+            curator,
+            search,
+            profile,
+            seeds,
+            k,
+            stats,
+            web_trace,
+            cache=cache,
+            recent_count=recent_count,
+            guidance=guidance,
         )
     elif not getattr(curator, "supports_native_web_search", False):
         return []
     else:
         _clear_last_tokens(curator)
-        recs = curator.recommend_web(profile, seeds, k)
+        recs = curator.recommend_web(profile, seeds, k, guidance=guidance)
         stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0), getattr(curator, "last_output_tokens", 0))
     recs = _drop_watched_proposals(recs, seeds, profile, web_trace)
     # Cap here, not before the filter: the keyless path hands back every extracted title so that
@@ -265,6 +278,7 @@ def _web_via_search(
     *,
     cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
+    guidance: Guidance | None = None,
 ) -> list[dict]:
     """External-search path: one CACHED web search per recent title, then the curator picks from the
     union. Caching by (media, tmdb_id) means a title many users watched is searched once server-wide —
@@ -362,9 +376,9 @@ def _web_via_search(
     # empty — a mode that declined to synthesise, a shape change — still has the snippets, so this
     # degrades to exactly the path that shipped before rather than to nothing.
     if candidates:
-        system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k)
+        system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k, guidance=guidance)
     elif results:
-        system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k)
+        system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k, guidance=guidance)
     else:
         return []
     # No model to ask: Exa's `outputSchema` already returned clean titles, so hand those straight to
@@ -822,6 +836,7 @@ def gather_candidates(
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
     stats: GatherStats | None = None,
     season_items: dict[MediaType, list[dict]] | None = None,
+    web_guidance: Guidance | None = None,
 ) -> list[Candidate]:
     """Pool candidates from every enabled source, deduped by (tmdb_id, media_type).
 
@@ -832,6 +847,7 @@ def gather_candidates(
     ``curator``/``profile`` are only needed by the ``llm_web`` source and ``trakt`` by the Trakt
     source; the TMDB sources ignore them. ``search``/``web_search_mode`` drive the ``llm_web``
     source's external-search backend (Exa) — ``search`` is None when no key is configured.
+    ``web_guidance`` is the row's AI instructions for that source's prompt (#138); None = built-in.
 
     Pass a ``stats`` (a :class:`GatherStats`) to have the AI token spend of the ``llm_web`` source
     (and Exa searches) accumulated into it, for per-run AI accounting.
@@ -1024,6 +1040,7 @@ def gather_candidates(
                 stats,
                 cache=web_search_cache,
                 recent_count=recent_count,
+                guidance=web_guidance,
             ):
                 media_type = MediaType.SHOW if rec.get("media") == "show" else MediaType.MOVIE
                 found = tmdb.search(rec["title"], media_type, year=rec.get("year"))

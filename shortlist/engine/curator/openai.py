@@ -10,6 +10,7 @@ from shortlist.engine.curator.base import (
     parse_web_titles,
 )
 from shortlist.engine.models import UserProfile
+from shortlist.engine.web_guidance import Guidance
 
 # Must match `defaultModel` for "openai" in web/src/lib/providers.ts, which the wizard writes into
 # `curator.model` — this constant only applies when that setting is blank. The two disagreed
@@ -113,16 +114,20 @@ class OpenAICurator:
         chat = [m for m in ids if m.startswith(("gpt-", "chatgpt", "o1", "o3", "o4"))]
         return chat or ids
 
-    def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
+    def recommend_web(
+        self, profile: UserProfile, seeds: list, k: int, *, guidance: Guidance | None = None
+    ) -> list[dict]:
         """Propose up to k titles to watch next via the Responses API web-search tool (``llm_web``).
 
         Returns ``[{title, year, media}]`` for the caller to resolve against TMDB. Degrades to an
         empty list on a provider error; the source's own try/except in candidates.py is the backstop
         for any other failure, so a run never fails here.
+
+        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt.
         """
         import openai
 
-        system, user = build_web_prompt(profile, seeds, k)
+        system, user = build_web_prompt(profile, seeds, k, guidance=guidance)
         try:
             r = self._web_search_call(system, user, with_schema=self._schema_supported)
         except openai.OpenAIError as e:

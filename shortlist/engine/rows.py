@@ -56,6 +56,7 @@ from shortlist.engine.models import (
 )
 from shortlist.engine.placeholders import names_a_seed
 from shortlist.engine.requests_row import build_requests_picks
+from shortlist.engine.web_guidance import BUILTIN, Guidance, resolve_guidance
 
 
 def effective_row_sources(spec: RowSpec, default_sources: list[str]) -> tuple[str, ...]:
@@ -1022,6 +1023,13 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
                 if spec.season
                 else ()
             ),
+            # AI web search rows with instructions only, so no other row's recipe changes (#138). Editing
+            # the instructions, or the server-wide text a row inherits, rebuilds that row.
+            *(
+                (f"guide={policy.effective_guidance(spec).fingerprint()}",)
+                if not policy.effective_guidance(spec).is_builtin
+                else ()
+            ),
         )
     )
 
@@ -1277,6 +1285,7 @@ def _candidate_pool(
     recency: float = 0.0,
     visible: Callable[[list[int]], set[int] | None] | None = None,
     season: seasons_mod.SeasonTitles | None = None,
+    guidance: Guidance | None = None,
 ) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
     """Gather TMDB candidates for ``seeds`` and intersect them with the library.
 
@@ -1323,6 +1332,7 @@ def _candidate_pool(
             if season is not None
             else None
         ),
+        web_guidance=guidance,
     )
     # `dropped` collects (candidate, reason) as filter_candidates works — observation only, it does
     # not change which candidates are kept.
@@ -2280,6 +2290,12 @@ class RowPolicy:
         # the non-deterministic llm_* sources, possibly diverging despite identical configuration.
         return effective_row_sources(spec, self.cfg.candidate_sources)
 
+    def effective_guidance(self, spec: RowSpec) -> Guidance:
+        """This row's AI web search guidance; built-in when the row does not use AI web search (#138)."""
+        if "llm_web" not in self.effective_sources(spec):
+            return BUILTIN
+        return resolve_guidance(spec.ai_instructions, self.cfg.web_instructions)
+
     def seeds_for(self, spec: RowSpec) -> list:
         """This row's seeds, from the watches its own libraries hold. Memoised per (media,
         libraries, max_seeds) so rows that target the same thing derive them once.
@@ -2369,6 +2385,9 @@ class RowPolicy:
             # A seasonal row's pool is its season's titles and nothing else, so it shares a gather with no
             # other kind of row — nor with a row following a different season.
             spec.season.slug if spec.season is not None else "",
+            # Rows with different AI instructions must not share an AI web search (#138); "" otherwise,
+            # which every row without instructions shares, so no pool splits on the night this ships.
+            self.effective_guidance(spec).fingerprint(),
         )
 
     def pools_for(self, spec: RowSpec) -> Pool | None:
@@ -2383,6 +2402,7 @@ class RowPolicy:
             return None
         if key not in self.pool_cache:
             gather_started = time.monotonic()
+            guidance = self.effective_guidance(spec)
             try:
                 season = None
                 if spec.season is not None:
@@ -2409,6 +2429,7 @@ class RowPolicy:
                     recency=self.cfg.recency,
                     visible=self.visible,
                     season=season,
+                    guidance=guidance,
                 )
             except Exception as e:
                 self.pool_failures[key] = f"{type(e).__name__}: {e}"
@@ -2426,6 +2447,8 @@ class RowPolicy:
             pool_label = f"{spec.media} · {', '.join(key[0])}"
             if any(len(self.seeds_for(other)) != seed_n for other in self.gathered_specs()):
                 pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
+            if not guidance.is_builtin:
+                pool_label += " · own AI instructions"
             _record_gather(
                 self.report,
                 gather_stats,

@@ -10,6 +10,8 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
+from shortlist.engine.web_guidance import AiInstructions
+
 
 class MediaType(StrEnum):
     MOVIE = "movie"
@@ -620,6 +622,8 @@ class RowSpec:
     requests_window_days: int = 90
     # Owner's own tag format for hand-managed Radarr/Sonarr setups, e.g. "req-{username}". "" = off.
     requests_tag_pattern: str = ""
+    # Owner-written instructions for AI web search on this row (#138); None = use the server's.
+    ai_instructions: AiInstructions | None = None
 
     @property
     def dormant(self) -> bool:
@@ -1288,6 +1292,8 @@ class EngineConfig:
     # web-search tool, Claude/GPT/Gemini only), 'exa', or 'searxng'. Either external is the only path
     # for a local Ollama model. ('auto', which unioned native with an external, was removed in 1.3.)
     web_search_provider: str = "native"
+    # Server-wide AI web search instructions (#138); "" = Shortlist's built-in guidance.
+    web_instructions: str = ""
     # Master switch for touching the Recommended-shelf ORDER. False -> Shortlist never reorders the
     # shelf (skips the whole order phase), so a co-managing tool (agregarr/Kometa) owns the order and
     # the two don't fight. True (default) -> apply the configured anchors. Independent of delivery and

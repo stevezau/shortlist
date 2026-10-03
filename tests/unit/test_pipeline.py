@@ -2822,7 +2822,7 @@ class TestPerRowOverrides:
             supports_native_web_search = True
             last_tokens = 0
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 # Set BY the call, as every real provider does. A value left over from before the call
                 # is exactly what a failed call reads back, and it is no longer billed.
                 self.last_tokens = 50
