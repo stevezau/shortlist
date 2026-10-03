@@ -1,11 +1,12 @@
 # Shortlist
 
-**Per-user movie & TV recommendations for Plex.** A private, personalized **"Picked for You"** row on
-every user's Plex home screen — built from their own watch history, visible only to them.
-Self-hosted, one Docker container, no AI key required.
+Shortlist is a free, open-source, self-hosted tool that gives each person on your Plex server their
+own Picked for You row, built from what they watched and hidden from everyone else. One Docker
+container, no AI key required.
 
+[Website](https://shortlistapp.dev/) ·
+[Tools compared](https://shortlistapp.dev/plex-recommendation-tools/) ·
 [Source on GitHub](https://github.com/stevezau/shortlist) ·
-[Documentation](https://shortlistapp.dev/) ·
 [Report a bug](https://github.com/stevezau/shortlist/issues/new/choose)
 
 > The identical image is also published to GHCR as `ghcr.io/stevezau/shortlist` — same build, same

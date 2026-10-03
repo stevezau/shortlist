@@ -2,6 +2,8 @@
 title: Install Shortlist for Plex with Docker
 description: Requirements, Docker install, first login and the setup wizard that connects your Plex server and builds each user's first personalized row.
 heading: Getting started
+updated: 2026-10-03
+dev_preview: true
 ---
 
 ## Requirements
@@ -43,39 +45,38 @@ changing channels; do not downgrade a migrated database in place.
 
 ## Install (Docker)
 
-With Docker Compose:
+{% include install.html %}
 
-```bash
-mkdir shortlist && cd shortlist
-curl -fsSLO https://raw.githubusercontent.com/stevezau/shortlist/master/docker-compose.example.yml
-mv docker-compose.example.yml docker-compose.yml
-docker compose up -d
-```
+Add `SHORTLIST_DRY_RUN=1` under `environment:` to see every change it would make while writing
+nothing to Plex (see [Trying it safely](#trying-it-safely)).
 
-Or with `docker run`:
+## Other ways to install
 
-```bash
-docker run -d --name shortlist \
-  -p 5959:5959 \
-  -e TZ=Etc/UTC -e PUID=1000 -e PGID=1000 \
-  -v /path/to/shortlist/config:/config \
-  --restart unless-stopped \
-  stevezzau/shortlist:latest
-```
+With one `docker run` command instead of a compose file:
 
-The doubled **z** in `stevezzau` is deliberate — that is the project's Docker Hub account, even
-though the source lives at `github.com/stevezau/shortlist` with one. Don't "correct" it or the pull
-fails. The identical image is also on GHCR as `ghcr.io/stevezau/shortlist`, with the same tags; use
-that one if you'd rather not hit Docker Hub's anonymous pull limits.
+{% include install.html variant="run" %}
+
+**From Docker Hub.** The identical image, with the same tags, is on Docker Hub as
+`stevezzau/shortlist`. The doubled **z** is deliberate: that is the project's Docker Hub account,
+even though the source lives at `github.com/stevezau/shortlist` with one. Don't "correct" it or the
+pull fails. GHCR is the default here because it has no anonymous pull limits.
+
+**With the optional seeds.** The repository's
+[`docker-compose.example.yml`](https://github.com/stevezau/shortlist/blob/master/docker-compose.example.yml)
+is a longer version of the same file, with the optional one-time settings (Plex URL and token, Tautulli, TMDB key)
+written in as comments. Every one of them can be entered in the wizard instead.
+
+## The setup wizard
 
 Open `http://your-host:5959`. A fresh install goes straight into the wizard. There is
 nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's
 what claims the instance for you); from then on Shortlist only opens for that account.
 
-<p class="release-note"><strong>Development preview.</strong> This screenshot shows the upcoming wizard layout; the stable steps are described below.</p>
-
-<img src="{{ '/images/wizard.webp' | relative_url }}" width="1440" height="1000"
-     alt="Development preview: the Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
+<figure class="shot">
+  <img src="{{ '/images/wizard.webp' | relative_url }}" width="1440" height="1000"
+       alt="Development preview: the Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
+  <figcaption>The wizard's Welcome step in the development preview. Its layout differs from stable {{ site.stable_version }}; the steps below follow stable.</figcaption>
+</figure>
 
 Every screenshot on this page is of a throwaway test server, so no real account, address or
 library appears in one.
@@ -113,6 +114,16 @@ The wizard has **7 steps**. The list below follows stable {{ site.stable_version
 7. **First run** — watch it build, person by person. Reloading resumes the same run. Results
    distinguish built, skipped and failed users. You can finish setup while the run continues,
    or skip building until later.
+
+<details class="dev-preview" markdown="1">
+<summary><span class="dev-preview__tag">Development preview</span> The Make it yours step</summary>
+<div class="dev-preview__body" markdown="1">
+
+The customization step shows a live title preview and uses **Save & continue** to save the name and
+size before moving on.
+
+</div>
+</details>
 
 ## Trying it safely
 
@@ -160,5 +171,3 @@ Everyone has a row and it will refresh on its own. Worth doing next:
   want but you don't have. See [Requests](guides/requests.md).
 
 If a row doesn't turn up, [Troubleshooting](guides/troubleshooting.md) lists what usually causes it.
-
-**Development preview:** the customization step shows a live title preview and uses **Save & continue** to save the name and size before moving on.

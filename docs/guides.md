@@ -2,21 +2,24 @@
 title: Shortlist guides
 description: How to do the things people actually want to do with Shortlist, from changing how often a row refreshes to sending missing films to Radarr.
 heading: Guides
+updated: 2026-10-03
 ---
 
-Eight short pages instead of one long one. If you know what you want to do, start here.
+Short pages instead of one long one. If you know what you want to do, start here.
 
 ## What do you want to do?
 
 | I want to…                                       | Go to                                                                   |
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
 | Work out what a page in the app is for           | [The web interface](guides/interface.md)                                |
+| Turn someone off, pause them, or leave their sharing alone | [People and sharing](guides/people-and-sharing.md)            |
 | Give someone a different kind of row             | [Rows and templates](guides/rows.md)                                    |
 | Name a row after the film that inspired it       | [Naming a row](guides/rows.md#naming-a-row)                             |
-| Change the order titles appear in                | [The order titles appear in](guides/rows.md#the-order-titles-appear-in) |
-| Move a row to the top of the shelf               | [Row placement](guides/rows.md#row-placement-recommended-shelf)         |
-| Give a row its own artwork                       | [Row posters](guides/rows.md#row-posters)                               |
-| Give a row a description, or sort it in Collections | [Description and sort order](guides/rows.md#description-and-sort-order) |
+| Make a Halloween or Christmas row                | [Seasonal rows](guides/rows/seasonal.md)                                |
+| Change the order titles appear in                | [The order titles appear in](guides/rows/what-goes-in.md#the-order-titles-appear-in) |
+| Move a row to the top of the shelf               | [Row placement](guides/rows/placement.md#row-placement-recommended-shelf)         |
+| Give a row its own artwork                       | [Row posters](guides/rows/placement.md#row-posters)                               |
+| Give a row a description, or sort it in Collections | [Description and sort order](guides/rows/placement.md#description-and-sort-order) |
 | Change where the suggestions come from           | [What goes in a row](guides/picks.md)                                   |
 | Stop one film skewing someone's picks            | [Blocking a seed](guides/picks.md#blocking-a-seed)                      |
 | Change how often a row's picks CHANGE            | [What goes in a row](guides/picks.md)                                   |
@@ -33,7 +36,11 @@ Eight short pages instead of one long one. If you know what you want to do, star
 | Page                                                     | What's in it                                                                |
 | -------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [The web interface](guides/interface.md)                 | What every page does, and what each dashboard figure means                  |
-| [Rows and templates](guides/rows.md)                     | Starting from a template, naming, ordering, where a row shows, posters, descriptions |
+| [People and sharing](guides/people-and-sharing.md)       | The Users page, on/off/paused, per-person settings, accounts Plex restricts |
+| [Rows and templates](guides/rows.md)                     | Starting from a template, row kinds, editing and naming a row               |
+| [How a row is filled](guides/rows/what-goes-in.md)       | Because you watched and Watch it again rows, cold start, title order        |
+| [Seasonal rows](guides/rows/seasonal.md)                 | Rows that follow Halloween, Christmas and Valentine's Day                   |
+| [Where a row shows](guides/rows/placement.md)            | Home and Recommended, shelf placement, posters, descriptions                |
 | [What goes in a row](guides/picks.md)                    | Recommendation sources, rebuild cadence, per-row and per-person overrides   |
 | [Schedules and runs](guides/schedules.md)                | Each row's own schedule, custom schedules, the jobs worth knowing about     |
 | [AI and cost](guides/ai.md)                              | What AI does, which search backend to pick, how to keep the bill down       |

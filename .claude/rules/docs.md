@@ -31,6 +31,17 @@ python scripts/build_llms_full.py
 pages. GitHub Pages runs only its allow-listed plugins, so nothing builds it at deploy time — it is
 committed, and `tests/unit/test_llms_full.py` fails if it drifts from `docs/`.
 
+## After a release (any CHANGELOG.md change that adds a dated version heading)
+
+Regenerate the website's release feed and commit it with the release:
+
+```bash
+python scripts/build_feed.py
+```
+
+`docs/feed.xml` is an Atom feed of the newest 20 releases, built from CHANGELOG.md for the same reason
+as llms-full: nothing on GitHub Pages can build it. `tests/unit/test_feed.py` fails if it drifts.
+
 ## Breaking Changes
 
 Document what changed, provide before/after examples, and include migration steps (+ Alembic

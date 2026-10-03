@@ -1,13 +1,31 @@
 ---
-title: Plex recommendations based on watch history
-description: Plex's library rows are identical for everyone and ignore what you've watched. What Plex really does with watch history, why smart collections aren't personal, and how to build rows that are.
-heading: How to get Plex recommendations based on watch history
+title: Plex recommendations based on each user's watch history
+description: Plex's library rows are identical for everyone and ignore what you've watched. What Plex really does with watch history, why smart collections aren't personal, how to build Netflix-style rows that are, and what good looks like.
+heading: How to get Plex recommendations based on each user's watch history
+updated: 2026-10-03
+byline: true
+redirect_from:
+  - /plex-netflix-style-recommendations/
 ---
 
 **Short answer:** Plex records everyone's watch history, but it doesn't use it to build the rows on
 your server. Recommended, Home and every pinned collection are library-wide — identical for every
 account. Getting rows built from a person's own viewing means reading that history yourself and
 creating collections from it.
+
+<figure class="shot shot--pair">
+  <picture>
+    <source media="(max-width: 600px)" srcset="{{ '/images/home-sarah-sm.webp' | relative_url }}" width="600" height="565">
+    <img src="{{ '/images/home-sarah.webp' | relative_url }}" width="1000" height="942"
+         alt="Sarah's Plex Home: Movies Picked for You (Fight Club, Parasite, Whiplash, Forrest Gump, Se7en) and TV Shows Picked for You (Severance, The Bear, Succession, Better Call Saul, True Detective).">
+  </picture>
+  <picture>
+    <source media="(max-width: 600px)" srcset="{{ '/images/home-mike-sm.webp' | relative_url }}" width="600" height="565">
+    <img src="{{ '/images/home-mike.webp' | relative_url }}" width="1000" height="942" loading="lazy"
+         alt="Mike's Plex Home on the same server: TV Shows Picked for You (The Expanse, Peaky Blinders, Ted Lasso, Sherlock, Black Mirror), and none of Sarah's rows.">
+  </picture>
+  <figcaption>Two accounts, one server, one library. Each row is an ordinary Plex collection carrying its owner's label, such as <code>shortlist_sarah</code>; every other account's sharing filter excludes that label, so Mike never sees Sarah's picks and she never sees his.</figcaption>
+</figure>
 
 This page covers what Plex genuinely does, why the advice people are usually given doesn't get them
 there, and what reading the history yourself actually involves.
@@ -73,7 +91,8 @@ that is a separate mechanism, covered in [per-user collections](plex-per-user-co
 
 ## What "good" looks like
 
-If you're evaluating approaches — your own script or someone else's tool — these are the things that
+If you're evaluating approaches — your own script or
+[someone else's tool](plex-recommendation-tools.md) — these are the things that
 actually distinguish a usable result from a demo:
 
 **Picks must exist in your library.** Any approach that asks a language model "what should this
@@ -91,38 +110,49 @@ history should still shuffle its picks, or people stop looking at it after a wee
 **Say why.** "Because you watched _Arrival_" is the difference between a row people trust and a row
 that looks arbitrary. It's also how you debug a bad pick.
 
+<figure class="reasons">
+  <ul>
+    <li><img src="{{ '/images/poster-fight-club.webp' | relative_url }}" width="160" height="240" alt="">
+      <span><strong>Fight Club</strong><span class="why">Because you watched GoodFellas</span><span class="whose">Sarah's movies row</span></span></li>
+    <li><img src="{{ '/images/poster-severance.webp' | relative_url }}" width="160" height="240" alt="">
+      <span><strong>Severance</strong><span class="why">Because you watched The Wire</span><span class="whose">Sarah's TV row</span></span></li>
+    <li><img src="{{ '/images/poster-the-expanse.webp' | relative_url }}" width="160" height="240" alt="">
+      <span><strong>The Expanse</strong><span class="why">Because you watched Breaking Bad</span><span class="whose">Mike's TV row</span></span></li>
+  </ul>
+  <figcaption>What each person's reason looks like: the pick, the watch that earned it, and whose row it is in.</figcaption>
+</figure>
+
 **Handle the person who's watched nothing.** New users have no history. Falling back to
 library-popular or recently-added is fine; producing an empty row is not.
 
-## The automated version
+## If what you want is "like Netflix"
 
-[**Shortlist**](https://github.com/stevezau/shortlist) is a self-hosted container that does this for
-every user on your server, on a schedule. It reads each person's own watch history through their
-own share's access key, finds similar titles verified to exist in your library, and builds them a
-"Picked for You" collection, hidden from other supported accounts using Plex sharing filters.
-The [server owner and some restriction profiles](plex-per-user-collections.md#two-things-to-watch-out-for) are exceptions.
+Ask for Netflix-style rows and you're usually asking for four separate things: different rows for
+different people, a stated reason on each row, rows that change, and rows built from things you can
+actually watch right now. Plex gives you the last one for free, because it's your library. The rest
+is the work above, plus two details worth stealing.
 
-Every pick carries its reason. AI is optional — the built-in picker runs entirely in code with no
-keys and no cloud — and if you do enable a provider (Claude, GPT, Gemini, or a local model via
-Ollama, llama.cpp, LM Studio, vLLM or LocalAI) it only ever ranks and explains candidates drawn from
-your library.
+**Name the row after its reason.** A Plex collection has a title and a summary, both of which show in
+the UI, so a row can be called "Because you watched _Arrival_" with a summary explaining each pick.
+Naming rows after their seed is most of the Netflix feel for almost no effort.
 
-```bash
-docker run -d --name shortlist -p 5959:5959 \
-  -v /path/to/config:/config \
-  stevezzau/shortlist:latest
-```
+**Change the row on purpose.** Rebuilding on a schedule isn't enough on its own: the same watch history
+scored the same way produces the same row every time. You need either fresh input (new watches, new
+library additions) or deliberate variation: rotate which seed drives the row, sample from a larger
+candidate pool than the row can hold, or weight recent watches more heavily.
 
-The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
-typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
+Two limits stay put whatever you build: **the server owner sees every row**, and **films and shows
+need separate rows**.
+[Per-user collections](plex-per-user-collections.md#two-things-to-watch-out-for) explains why.
 
-Set `-e SHORTLIST_DRY_RUN=1` to see every change it would make without writing one.
+{% include seo-closing.html shot="user-detail-crop.webp" shot_w="1453" shot_h="1025"
+   shot_alt="Shortlist's page for one person, sarah: 12 titles watched, and her Picked for You row with each pick's reason, such as Fight Club, because you watched drama like GoodFellas."
+   shot_caption="The same row from the admin's side: Sarah's picks in Shortlist, each with the watch that earned it." %}
 
 ## Related
 
 - [How to improve Plex recommendations](improve-plex-recommendations.md) — the settings to change first
 - [AI recommendations for Plex](plex-ai-recommendations.md) — where a model helps, and where it invents films
 - [Per-user collections](plex-per-user-collections.md) — making a row only one person can see
-- [A different home screen per user](plex-per-user-home-screen.md) — the surfaces rows appear on
 - [Plex recommendation tools compared](plex-recommendation-tools.md) — the other projects in this space
 - [What goes in a row](guides/picks.md) — tuning sources and seeds in Shortlist

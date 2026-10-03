@@ -21,6 +21,53 @@
     });
   }
 
+  /* -------------------------------------------------------- moved anchors */
+
+  /* Sections that moved when long pages were split (October 2026). An old link such as
+     /guides/rows/#seasonal-rows lands on the page that holds the section now. Only when the anchor
+     is not on this page any more, so a heading that stayed put is never redirected away from. */
+  var MOVED = {
+    "/guides/rows/": {
+      "because-you-watched-rows": "/guides/rows/what-goes-in/#because-you-watched-rows",
+      "watch-it-again-rows": "/guides/rows/what-goes-in/#watch-it-again-rows",
+      "when-their-finished-titles-run-out": "/guides/rows/what-goes-in/#when-their-finished-titles-run-out",
+      "people-without-enough-watch-history": "/guides/rows/what-goes-in/#people-without-enough-watch-history",
+      "the-order-titles-appear-in": "/guides/rows/what-goes-in/#the-order-titles-appear-in",
+      "where-a-row-shows": "/guides/rows/placement/#where-a-row-shows",
+      "row-placement-recommended-shelf": "/guides/rows/placement/#row-placement-recommended-shelf",
+      "why-every-move-goes-to-the-bottom": "/guides/rows/placement/#why-every-move-goes-to-the-bottom",
+      "if-you-also-run-agregarr": "/guides/rows/placement/#if-you-also-run-agregarr",
+      "check-which-agregarr-you-are-running": "/guides/rows/placement/#check-which-agregarr-you-are-running",
+      "row-posters": "/guides/rows/placement/#row-posters",
+      "description-and-sort-order": "/guides/rows/placement/#description-and-sort-order",
+      "seasonal-rows": "/guides/rows/seasonal/",
+      "your-requests-rows": "/guides/requests/#your-requests-rows",
+      "requests-on-a-row": "/guides/requests/#requests-on-a-row",
+      "development-preview-editor-navigation": "/guides/rows/#editing-a-row",
+    },
+    "/guides/interface/": {
+      "keeping-the-list-current": "/guides/people-and-sharing/#keeping-the-list-current",
+      "turning-people-on-and-off": "/guides/people-and-sharing/#turning-people-on-and-off",
+      "per-person-settings": "/guides/people-and-sharing/#per-person-settings",
+      "sharing-and-your-watching-account": "/guides/people-and-sharing/#sharing-and-your-watching-account",
+      "leaving-someones-plex-sharing-alone": "/guides/people-and-sharing/#leaving-someones-plex-sharing-alone",
+      "when-someone-leaves-your-server": "/guides/people-and-sharing/#when-someone-leaves-your-server",
+      "accounts-plex-restricts": "/guides/people-and-sharing/#accounts-plex-restricts",
+    },
+    "/reference/settings/": {
+      "environment-variables-container": "/reference/environment/#environment-variables-container",
+      "serving-from-a-subpath": "/reference/environment/#serving-from-a-subpath",
+      "files-under-config": "/reference/environment/#files-under-config",
+    },
+  };
+  var movedHere = MOVED[window.location.pathname.replace(/index\.html$/, "")];
+  if (movedHere && window.location.hash.length > 1) {
+    var oldId = decodeURIComponent(window.location.hash.slice(1));
+    if (movedHere[oldId] && !document.getElementById(oldId)) {
+      window.location.replace(movedHere[oldId]);
+    }
+  }
+
   /* ------------------------------------------------------- mobile sidebar */
 
   var burger = document.getElementById("menu-toggle");
@@ -71,12 +118,29 @@
 
   /* ------------------------------------------------------- copy to clipboard */
 
-  function attachCopy(button, getText) {
+  var COPY_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
+    '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+
+  /* The install include's Copy is the one action worth counting. Only fires when the GoatCounter
+     script is on the page, which head.html adds only when _config.yml names a site. */
+  function countInstallCopy() {
+    try {
+      if (window.goatcounter && window.goatcounter.count) {
+        window.goatcounter.count({ path: "install-copy", title: "Install copied", event: true });
+      }
+    } catch (e) {
+      /* analytics must never break the copy */
+    }
+  }
+
+  function attachCopy(button, getText, onCopied) {
     button.addEventListener("click", function () {
       navigator.clipboard.writeText(getText()).then(function () {
         var label = button.querySelector(".copy__label");
         button.dataset.copied = "true";
         if (label) label.textContent = "Copied";
+        if (onCopied) onCopied();
         setTimeout(function () {
           button.dataset.copied = "false";
           if (label) label.textContent = "Copy";
@@ -85,41 +149,34 @@
     });
   }
 
-  document.querySelectorAll(".codeblock").forEach(function (block) {
-    var button = block.querySelector(".copy");
-    var pre = block.querySelector("pre");
-    if (button && pre)
-      attachCopy(button, function () {
-        return pre.innerText;
-      });
-  });
-
-  /* Prose code blocks come from markdown, so their copy buttons are built here
-     rather than in the template. */
+  /* Prose code blocks come from markdown, so they arrive as a bare <pre>. Each gets one frame: the
+     pre itself, with the copy button inside it (top right, or on its own strip on a phone). No
+     language bar above it — it said "shell" over YAML often enough to be noise. */
   document.querySelectorAll(".prose pre").forEach(function (pre) {
-    var wrapper = document.createElement("div");
-    wrapper.className = "codeblock";
-    var bar = document.createElement("div");
-    bar.className = "codeblock__bar";
-    var lang = (pre.querySelector("code") || {}).className || "";
-    var match = lang.match(/language-([\w-]+)/);
-    bar.innerHTML = "<span>" + (match ? match[1] : "shell") + "</span>";
-
+    if (pre.closest(".cb, .codeblock")) return;
+    var frame = document.createElement("div");
+    frame.className = "cb";
     var button = document.createElement("button");
     button.type = "button";
     button.className = "copy";
-    button.innerHTML =
-      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">' +
-      '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>' +
-      '<span class="copy__label">Copy</span>';
-    bar.appendChild(button);
+    button.setAttribute("aria-label", "Copy this code");
+    button.innerHTML = COPY_ICON + '<span class="copy__label">Copy</span>';
+    pre.parentNode.insertBefore(frame, pre);
+    frame.appendChild(pre);
+    frame.appendChild(button);
+  });
 
-    pre.parentNode.insertBefore(wrapper, pre);
-    wrapper.appendChild(bar);
-    wrapper.appendChild(pre);
-    attachCopy(button, function () {
-      return pre.innerText;
-    });
+  document.querySelectorAll(".cb, .codeblock").forEach(function (block) {
+    var button = block.querySelector(".copy");
+    var pre = block.querySelector("pre");
+    if (!button || !pre) return;
+    attachCopy(
+      button,
+      function () {
+        return pre.innerText;
+      },
+      block.hasAttribute("data-install") ? countInstallCopy : null,
+    );
   });
 
   /* Wide markdown tables need their own scroll container or they force the
@@ -208,117 +265,58 @@
     });
   }
 
-  /* ---------------------------------------------------------------- tour */
+  /* ----------------------------------------------------------- star count */
 
-  /* The landing page's guided tour. CSS already lays the steps and pictures out
-     two readable ways on its own; this block adds the third, where the pictures
-     collapse into one pinned frame that changes as you scroll.
-
-     Same contract as .reveal above: .js-tour-ready is the ONLY thing that lets
-     CSS hide a panel, and it is added after the observer exists and the first
-     panel is already marked active. A thrown error, a blocked script or an old
-     browser therefore leaves every step and every picture on the page rather
-     than stranding six of them at nothing-opacity. */
-  var tour = document.querySelector(".tour");
-  var tourSteps = tour ? tour.querySelectorAll(".tour-step") : [];
-  var tourPanels = tour ? tour.querySelectorAll(".tour-panel") : [];
-
-  if (
-    tourSteps.length &&
-    tourSteps.length === tourPanels.length &&
-    !reduceMotion &&
-    "IntersectionObserver" in window
-  ) {
-    var setActiveStep = function (index) {
-      for (var i = 0; i < tourSteps.length; i++) {
-        tourSteps[i].classList.toggle("is-active", i === index);
-        tourPanels[i].classList.toggle("is-active", i === index);
+  /* The GitHub pill and button show the repo's star count once it is known. One request per tab
+     session (sessionStorage, 6 hours), and a failed request is remembered too, so a blocked or
+     offline API costs one attempt rather than one per page. Without this the pill reads "GitHub". */
+  var starTargets = document.querySelectorAll("[data-stars]");
+  if (starTargets.length && window.fetch) {
+    var STAR_KEY = "shortlist-stars";
+    var STAR_TTL = 6 * 60 * 60 * 1000;
+    var showStars = function (count) {
+      if (typeof count !== "number") return;
+      var text = count >= 1000 ? (count / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(count);
+      starTargets.forEach(function (el) {
+        el.textContent = text;
+        var wrap = el.closest("[data-stars-wrap]") || el;
+        wrap.hidden = false;
+        var pill = el.closest(".nav-pill");
+        if (pill) {
+          pill.classList.add("has-count");
+          pill.setAttribute("aria-label", "Shortlist on GitHub, " + text + " stars");
+        }
+      });
+    };
+    var remember = function (count) {
+      try {
+        sessionStorage.setItem(STAR_KEY, JSON.stringify({ t: Date.now(), n: count }));
+      } catch (e) {
+        /* private browsing: the count still shows for this page view */
       }
     };
-
-    setActiveStep(0);
-
-    /* Collapses the viewport to a band across its middle, so the step that owns
-       the frame is the one the reader is actually looking at. */
-    var tourObserver = new IntersectionObserver(
-      function (entries) {
-        entries.forEach(function (entry) {
-          if (!entry.isIntersecting) return;
-          setActiveStep(Array.prototype.indexOf.call(tourSteps, entry.target));
-        });
-      },
-      { rootMargin: "-45% 0px -45% 0px", threshold: 0 },
-    );
-    tourSteps.forEach(function (step) {
-      tourObserver.observe(step);
-    });
-
-    /* Last, not first: this is the line that lets CSS hide four of the five
-       pictures, so nothing above it may be able to throw after it has run. */
-    root.classList.add("js-tour-ready");
-
-    /* The rail fills to wherever the middle of the viewport has reached in the
-       tour. Read in a rAF rather than in the scroll handler: getBoundingClientRect
-       forces layout, and doing that on every scroll event janks the sticky frame. */
-    var rail = tour.querySelector(".tour__rail-fill");
-    if (rail) {
-      var railQueued = false;
-      var paintRail = function () {
-        railQueued = false;
-        var box = tour.getBoundingClientRect();
-        if (!box.height) return;
-        var progress = (window.innerHeight / 2 - box.top) / box.height;
-        rail.style.height = Math.max(0, Math.min(1, progress)) * 100 + "%";
-      };
-      var queueRail = function () {
-        if (railQueued) return;
-        railQueued = true;
-        window.requestAnimationFrame(paintRail);
-      };
-      window.addEventListener("scroll", queueRail, { passive: true });
-      window.addEventListener("resize", queueRail);
-      queueRail();
+    var cached = null;
+    try {
+      cached = JSON.parse(sessionStorage.getItem(STAR_KEY) || "null");
+    } catch (e) {
+      cached = null;
     }
-  }
-
-  /* ------------------------------------------------------------ count-up */
-
-  /* The real number is the text already in the HTML; this only replays it from
-     zero the first time the strip is scrolled into view, and puts the original
-     string back at the end so nothing depends on the arithmetic coming out
-     right. Nothing is blanked before the first frame runs, either: a tab that is
-     backgrounded mid-animation stops getting frames, and a strip of zeroes is a
-     worse answer than no animation. */
-  var counters = document.querySelectorAll("[data-countup]");
-  if (counters.length && !reduceMotion && "IntersectionObserver" in window) {
-    var countUp = function (el) {
-      var final = el.textContent;
-      var target = parseInt(final, 10);
-      if (!(target > 0)) return; /* nothing to count towards */
-      var started = null;
-      var tick = function (now) {
-        if (started === null) started = now;
-        var t = Math.min(1, (now - started) / 900);
-        var eased = 1 - Math.pow(1 - t, 3);
-        el.textContent = t < 1 ? String(Math.round(target * eased)) : final;
-        if (t < 1) window.requestAnimationFrame(tick);
-      };
-      window.requestAnimationFrame(tick);
-    };
-
-    var countObserver = new IntersectionObserver(
-      function (entries, obs) {
-        entries.forEach(function (entry) {
-          if (!entry.isIntersecting) return;
-          obs.unobserve(entry.target);
-          countUp(entry.target);
+    if (cached && Date.now() - cached.t < STAR_TTL) {
+      showStars(cached.n);
+    } else {
+      fetch("https://api.github.com/repos/stevezau/shortlist", { headers: { Accept: "application/vnd.github+json" } })
+        .then(function (response) {
+          return response.ok ? response.json() : null;
+        })
+        .then(function (repo) {
+          var count = repo && typeof repo.stargazers_count === "number" ? repo.stargazers_count : null;
+          remember(count);
+          showStars(count);
+        })
+        .catch(function () {
+          remember(null);
         });
-      },
-      { threshold: 0.6 },
-    );
-    counters.forEach(function (el) {
-      countObserver.observe(el);
-    });
+    }
   }
 
   /* Anchor links on prose headings, so a section can be linked to directly. */

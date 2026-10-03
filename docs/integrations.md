@@ -2,6 +2,7 @@
 title: What Shortlist works with
 description: Every service Shortlist can talk to — Plex, TMDB, Sonarr, Radarr, Overseerr, Jellyseerr, Trakt, MDBList, Exa, SearXNG, Tautulli and the AI providers — what each one adds, and which are actually required.
 heading: What it works with
+updated: 2026-10-03
 ---
 
 **Two things are required: Plex, and a free TMDB key.** Everything below that is optional, and
@@ -58,7 +59,7 @@ Use one route or the other, not both. [Set it up →](/guides/requests/)
 
 Overseerr is also read the other way round: a **Your requests** row shows each person the titles
 they asked for in Overseerr (or that carry their requester tag in Radarr/Sonarr) once they're on Plex,
-until they've watched them. [How the row works →](/guides/rows/#your-requests-rows)
+until they've watched them. [How the row works →](/guides/requests/#your-requests-rows)
 
 ## Everything else
 

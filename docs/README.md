@@ -48,6 +48,8 @@ python scripts/build_llms_full.py
 
 The browser check uses Playwright Chromium and checks generated links and assets, all pages at
 320, 390 and 1440 pixels, mobile navigation, focus and search. It serves only the local build.
-The default installation follows `stable_version` in `_config.yml`; update that value at release
-and remove the Development preview markers only when the corresponding features reach stable.
+The default installation follows `stable_version` in `_config.yml`; update it and `stable_released`
+at release, run `python scripts/build_feed.py` for the release feed, and remove a page's Development
+preview boxes (`<details class="dev-preview">`, plus `dev_preview: true` in its front matter once the
+last one goes) only when the corresponding features reach stable.
 Recapture sample-account screenshots against the documented build, keeping their channel labels.

@@ -4,6 +4,10 @@
 #
 # Keep them plain and short. No em dashes, no jargon, and no phrasing that sounds
 # like a brochure. Every answer must match /faq, which is the fuller version.
+#
+# `pinned: true` puts a question first on the landing page, open, under its `short` wording with
+# its `short_a` answer: these are the two questions that disqualify a reader, so they are answered
+# before anything else. The structured data on /faq/ keeps `q` and `a`.
 
 - q: Can I give each Plex user recommendations based on what they watched?
   a: >-
@@ -23,6 +27,13 @@
     profiles have exceptions.
 
 - q: Do I need an AI or OpenAI key to use Shortlist?
+  pinned: true
+  short: Does it need an AI key?
+  short_a: >-
+    No. Shortlist picks the titles itself, and the suggestions come from TMDB, which is free. An AI
+    model is optional: Claude, GPT, Gemini, or one you run yourself such as Ollama, llama.cpp, LM
+    Studio, vLLM or LocalAI. If you add one, it writes the short reason next to each pick and can
+    search the web for recent titles TMDB doesn't return. That web search is off until you turn it on.
   a: >-
     No. Shortlist works with no AI and no key. It picks the titles itself, and the suggestions come
     from TMDB, which is free. Adding an AI model is optional. If you do add one (Claude, GPT, Gemini,
@@ -67,6 +78,11 @@
     all optional. Images run on both Intel and ARM machines.
 
 - q: Does Shortlist work with Jellyfin or Emby?
+  pinned: true
+  short: Is it Plex-only?
+  short_a: >-
+    Yes, and it will stay that way. Each row is kept private with a Plex feature for hiding things by
+    label, and Jellyfin and Emby have nothing equivalent to build it on.
   a: >-
     No, it is Plex only. The way each row is kept private relies on a Plex feature for hiding things by
     label, and there is nothing equivalent in Jellyfin or Emby to build it on.

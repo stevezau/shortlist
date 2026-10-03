@@ -1,0 +1,20 @@
+{%- comment -%}
+The close of every Plex how-to article: what Shortlist does about the problem the page described,
+one screenshot chosen for that page, the one install command, and the way to Getting started.
+
+  {% include seo-closing.html shot="user-detail-crop.webp" shot_w="1453" shot_h="1025"
+     shot_alt="…" shot_caption="…" %}
+
+The shot is required: each page shows the part of Shortlist that answers its own question. No blank
+lines in here: it is dropped into Markdown, where a blank line ends a raw HTML block.
+{%- endcomment -%}
+<section class="closer" aria-labelledby="do-it-automatically">
+<h2 id="do-it-automatically">Do it automatically</h2>
+<p><a href="{{ site.repo }}">Shortlist</a> does this for every person on your server, every night: it reads each person's own watch history, picks only titles already in your library, says why, and hides each row from everyone else with Plex sharing filters (the <a href="{{ '/plex-per-user-collections/#two-things-to-watch-out-for' | relative_url }}">server owner and some restriction profiles</a> are the exceptions). It is one self-hosted Docker container, and AI is optional.</p>
+<figure class="shot">
+<img src="{{ include.shot | prepend: '/images/' | relative_url }}" width="{{ include.shot_w }}" height="{{ include.shot_h }}" loading="lazy" alt="{{ include.shot_alt }}">
+<figcaption>{{ include.shot_caption }}</figcaption>
+</figure>
+{% include install.html variant="run" bare=true %}
+<p class="closer__cta"><a class="btn btn--primary" href="{{ '/getting-started/' | relative_url }}">Getting started</a> <a href="{{ '/plex-recommendation-tools/' | relative_url }}">How it compares with other tools</a></p>
+</section>

@@ -21,11 +21,11 @@
   <h1 align="center">Shortlist</h1>
 
   <p align="center">
-    Per-user movie &amp; TV recommendations for <strong>Plex</strong> — a private
-    <strong>&ldquo;Picked for You&rdquo;</strong> row on every user&rsquo;s home screen, built from
-    their own watch history and visible only to them.
+    Shortlist is a free, open-source, self-hosted tool that gives each person on your
+    <strong>Plex</strong> server their own <strong>Picked for You</strong> row, built from what they
+    watched and hidden from everyone else.
     <br />
-    Self-hosted, one Docker container, no AI key required.
+    One Docker container, no AI key required.
     <br />
     <br />
     <a href="https://shortlistapp.dev/"><strong>Explore the docs »</strong></a>
@@ -72,8 +72,8 @@ schedule you set, and each row is visible only to its owner.
      the image. A picture that has to be trusted is worth no more than the sentence above it, and it
      cost the reader a two-column comparison before they had finished learning what a row is.
 
-     It still earns its place in the docs-site tour (docs/_data/tour.yml), where it is one step
-     among several with the mechanism explained around it — which is what a diagram is for.
+     It still earns its place on the website (the landing page hero and the watch-history page),
+     cropped, with the mechanism explained around it — which is what a diagram is for.
 
      What would belong here: two REAL Plex screenshots of the same Home, taken from two accounts on
      the maintainer's own server. That looks like Plex because it is Plex, and it would prove the
@@ -122,7 +122,7 @@ anything.</sub>
 - 🔎 **Web search that works with _any_ model, even offline ones** — Shortlist runs the search
   itself, so your model never needs internet access. Via your provider's own web search, an
   [Exa](https://exa.ai) key, or your own [SearXNG](https://docs.searxng.org).
-  [How it works →](docs/guides/ai.md#the-one-ai-powered-source)
+  [How it works →](https://shortlistapp.dev/guides/ai/#the-one-ai-powered-source)
 - 💬 **Explains itself** — every pick says "Because you watched X".
 - 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, so one series
   can't drown out everything else.
@@ -183,44 +183,37 @@ each person and keep it private, inside Plex. It is designed to sit alongside wh
   there is no Jellyfin or Emby equivalent to port to.
 
 Curious how the per-user privacy actually works?
-See [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md).
+See [How to make a Plex collection visible to only one user](https://shortlistapp.dev/plex-per-user-collections/).
 
 ## Quick start
 
 **You'll need:** somewhere to run a **Docker container** (it does not have to be the same machine as
 Plex, just able to reach it) · Plex Media Server ≥ 1.43.2.10687 · Plex Pass on the admin account · a
 free TMDB key. Optional: Tautulli, an LLM key. Shortlist ships as a container only — there is no
-standalone Windows/macOS/Linux installer. Details in [Getting started](docs/getting-started.md).
+standalone Windows/macOS/Linux installer. Details in [Getting started](https://shortlistapp.dev/getting-started/).
 
-**With Docker Compose:**
+Save this as `docker-compose.yml`:
 
-```bash
-mkdir shortlist && cd shortlist
-curl -fsSLO https://raw.githubusercontent.com/stevezau/shortlist/master/docker-compose.example.yml
-mv docker-compose.example.yml docker-compose.yml
-docker compose up -d
+```yaml
+services:
+  shortlist:
+    image: ghcr.io/stevezau/shortlist:latest
+    ports: ["5959:5959"]
+    volumes: ["./config:/config"]
+    environment:
+      - TZ=Etc/UTC
+      - PUID=1000
+      - PGID=1000
+    restart: unless-stopped
 ```
 
-**Or with `docker run`:**
+Run `docker compose up -d`, then open **http://your-host:5959** and follow the setup wizard — it
+connects your Plex account, picks your server, and walks you to your first rows (about 10 minutes).
+A single `docker run` command and the Docker Hub image are in
+[Other ways to install](https://shortlistapp.dev/getting-started/#other-ways-to-install).
 
-```bash
-docker run -d --name shortlist \
-  -p 5959:5959 \
-  -e TZ=Etc/UTC \
-  -e PUID=1000 -e PGID=1000 \
-  -v /path/to/shortlist/config:/config \
-  --restart unless-stopped \
-  stevezzau/shortlist:latest
-```
-
-Also on GHCR as `ghcr.io/stevezau/shortlist` — the identical image, same tags, no pull limits if
-you'd rather avoid Docker Hub's.
-
-Then open **http://your-host:5959** and follow the setup wizard — it connects your Plex account,
-picks your server, and walks you to your first rows (about 10 minutes).
-
-> 💡 Want to try it without touching your server first? Add `-e SHORTLIST_DRY_RUN=1` — Shortlist
-> will show you exactly what it _would_ do and write nothing to Plex.
+Want to try it without touching your server first? Add `SHORTLIST_DRY_RUN=1` under `environment:` —
+Shortlist will show you exactly what it _would_ do and write nothing to Plex.
 
 ## Documentation
 
@@ -228,10 +221,10 @@ picks your server, and walks you to your first rows (about 10 minutes).
 
 | Page                                       | What's in it                                        |
 | ------------------------------------------ | --------------------------------------------------- |
-| [Getting started](docs/getting-started.md) | Install, wizard, first run                          |
-| [Guides](docs/guides.md)                   | Rows, schedules, requests, AI cost, troubleshooting |
-| [Reference](docs/reference.md)             | Settings, API, env vars                             |
-| [FAQ](docs/faq.md)                         | Privacy model, Kometa, uninstall                    |
+| [Getting started](https://shortlistapp.dev/getting-started/) | Install, wizard, first run                          |
+| [Guides](https://shortlistapp.dev/guides/)                   | Rows, schedules, requests, AI cost, troubleshooting |
+| [Reference](https://shortlistapp.dev/reference/)             | Settings, API, env vars                             |
+| [FAQ](https://shortlistapp.dev/faq/)                         | Privacy model, Kometa, uninstall                    |
 
 ### How Plex itself works
 
@@ -240,13 +233,11 @@ yourself, because most advice on the subject predates Plex's 2026 fixes and quie
 
 | Page                                                                             | What's in it                                                           |
 | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [Per-user collections](docs/plex-per-user-collections.md)                        | The label + share-filter mechanism, and the order that leaks           |
-| [Improving Plex's recommendations](docs/improve-plex-recommendations.md)         | What Manage Recommendations really changes, and where it stops         |
-| [Recommendations from watch history](docs/plex-recommendations-watch-history.md) | What Plex does with history, and why smart collections aren't personal |
-| [A home screen per user](docs/plex-per-user-home-screen.md)                      | Pinned sources, managed users, and what none of them do                |
-| [Netflix-style rows](docs/plex-netflix-style-recommendations.md)                 | The four properties that make rows feel personal                       |
-| [AI recommendations](docs/plex-ai-recommendations.md)                            | Where a model helps, and where it invents films you don't own          |
-| [Tools compared](docs/plex-recommendation-tools.md)                              | Shortlist, Immaculaterr, Curatarr, SeekAndWatch and others             |
+| [Per-user collections](https://shortlistapp.dev/plex-per-user-collections/)                        | The label + share-filter mechanism, and the order that leaks           |
+| [Improving Plex's recommendations](https://shortlistapp.dev/improve-plex-recommendations/)         | What Manage Recommendations really changes, and where it stops         |
+| [Recommendations from watch history](https://shortlistapp.dev/plex-recommendations-watch-history/) | What Plex does with history, and why smart collections aren't personal |
+| [AI recommendations](https://shortlistapp.dev/plex-ai-recommendations/)                            | Where a model helps, and where it invents films you don't own          |
+| [Tools compared](https://shortlistapp.dev/plex-recommendation-tools/)                              | Shortlist, Immaculaterr, Curatarr, Diskovarr, Kometa and others        |
 
 ## Support the project
 

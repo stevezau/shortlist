@@ -3,6 +3,8 @@ title: A tour of the Shortlist web interface
 description: What every page in the Shortlist web interface does, and what each number on the dashboard actually means.
 heading: The web interface
 nav_order: 1
+updated: 2026-10-03
+dev_preview: true
 ---
 
 Eight pages in the sidebar. On a phone, **Open menu** shows the same navigation; Escape closes
@@ -32,131 +34,9 @@ lives. See [Rows and templates](rows.md).
 
 ## Users
 
-Everyone the server is shared with, plus you (badged `owner`, because plex.tv's user list leaves the owner
-out, so Shortlist adds you itself).
-
-**Development preview:** the redesigned roster adds search and filters. Search by name and filter **All**, **Active**, **Paused**, **Off** or **Needs attention**.
-Active means enabled, not paused and not blocked by a Plex restriction profile; a paused person
-can still have their Enabled switch on.
-Account type, request-link status and picks watched stay visible beside each person's identity.
-Picks watched is how many different picks they watched in the last 30 days; hover it for when they
-last watched one. The column that shows Active, Paused, Off or Restricted is headed **Status**.
-**Select visible users** and **Sort** sit above the roster at every screen width. **All users…**
-closes with Escape or an outside click; its Enable/Disable actions still require confirmation.
-
-Open a person for
-**Rows**, **Runs**, **Settings** and **Watched**; these tabs keep their own links, and keyboard
-users can move between them with the arrow, Home and End keys.
-
-### Keeping the list current
-
-**Sync from Plex** pulls the roster again after you invite someone new, or to pick up your own owner
-row on an install that predates it. If it finds somebody who no longer has access to the server,
-Shortlist turns them off and cleans up their rows; their history is kept, so you can switch them
-back on if they return.
-
-### Turning people on and off
-
-Enable or disable each person, or use **Enable all / Disable all** at once.
-Select specific people to **Pause rebuilding** or **Resume rebuilding** without changing their Enabled setting.
-
-- **Off** removes their rows from Plex and rewrites the share filters so they stop seeing the shared
-  rows too. Turning them back **on** undoes the second half straight away, and their own row returns
-  on the next run.
-- **Pause** keeps their row but skips them on runs. It takes their rows off every shelf, and
-  **unpause** puts them straight back. Neither waits for a run.
-
-All of this runs as background jobs, visible on the **Jobs** page.
-
-### Per-person settings
-
-Set a request tag, or add per-person row overrides: mute a row, resize it, or set its watch-history
-depth just for them. Opening a person shows their recent watch history (distinct titles, with season
-and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
-and a **Run now** button to rebuild just that person.
-
-**Development preview:** their Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
-into labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also
-renames existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history
-but stops it shaping recommendations, and you can unblock it from the same section.
-
-### Sharing and your watching account
-
-**Sharing** shows what Shortlist knows about each account’s visibility rules, including the
-read time, exceptions and failures. Stored rules and verified effects are different; an unavailable
-read is reported rather than treated as success.
-
-**Watching account** explains the owner exception and offers a separate-account flow. It retains
-the source and destination preview, explicit copy confirmation, partial-result details and undo
-where available. Reviewing a preview does not itself copy watch history.
-
-### Leaving someone's Plex sharing alone
-
-To keep their own row private, Shortlist adds `label!=` exclusions to every other account's Plex
-restrictions. Occasionally that fights a restriction you set yourself — most often an **allow only**
-label list on a child's account, where the whole point is that the account sees nothing but the
-labels you named.
-
-Open that person, go to **Settings → Plex sharing**, and turn off **Manage their Plex sharing
-settings**. Shortlist takes back out the exclusions it added and never touches that account again.
-Their row in the Users list is badged **Sharing untouched** so you can see it at a glance, and
-Support → Sharing lists them separately instead of reporting them as a fault.
-
-The trade-off, plainly: that account can then see other people's rows, unless — as with an allow-only
-list — its own Plex restrictions already keep it away from them. Everyone else still hides _this_
-person's row as normal, so leaving one account alone never exposes their row to the rest of the
-server.
-
-This is not the same as switching someone **off**. Off means "no row for them" and still rewrites
-their filters so they stop seeing everyone else's rows — unless you have also left their sharing
-alone, which wins, because it means "don't touch this account" full stop. The two are independent:
-someone can have a row _and_ untouched sharing.
-
-One thing is deliberately left in place: if you have a **shared row limited to certain people**, the
-entry hiding it from everyone else stays. That entry is the only thing keeping that row away from
-people you didn't pick, so removing it would undo a choice you made on the row itself. The catch is
-that later changes to who a shared row is for stop reaching a left-alone account — turn management
-back on if you need them to pick those up.
-
-### When someone leaves your server
-
-Removing a person from your Plex share (or deleting a Plex Home user) is picked up by the daily user
-sync. Shortlist switches them off, deletes their rows from the server, and badges them **Left the
-server** in the Users list — distinct from an account _you_ switched off, which is the same
-`disabled` state but means something completely different.
-
-Two safety limits keep that sweep from acting on a bad read of plex.tv, because it deletes
-collections and runs unattended: an **empty** roster is ignored entirely, and if **more than half**
-your enabled accounts appear to vanish at once, nothing happens and an error is recorded instead.
-Both cases are far more likely to be a truncated response than a real mass departure.
-
-A departed row stays in the list so you can see what happened. **Remove** deletes that person's pick history and run history, and their row disappears from the list. It keeps one thing: a copy of their original Plex share settings from before Shortlist touched them, so uninstalling can still put their account back exactly as it was.
-
-You do not have to clean up their share filters. Once their row is gone from the server, the next
-privacy pass drops the leftover `label!=` entry from everyone else's filters on its own — but only
-once two independent checks agree the row is really gone, never on the strength of one read.
-
-### Accounts Plex restricts
-
-Accounts with a Plex **restriction profile** (Younger Kid / Older Kid / Teen) are badged with that
-profile's name. Plex usually hides collections from them, so no row is built. Plex also refuses
-the privacy filters Shortlist writes, so those accounts are left out of them.
-
-Both go away by setting **Restriction Profile → None** in Plex → Settings → Users & Sharing. You can
-still limit them by rating or label there, which Plex only permits once the profile is None. A Plex
-Home account with **no** profile is an ordinary user: it gets a row and privacy filters like anybody
-else.
-
-**"Sees N rows of others'".** "Usually" is doing real work in that first paragraph: a Younger Kid
-account sees no collections at all, but an Older Kid account can see them. Since Plex refuses a
-privacy filter for any profiled account, such an account can end up seeing rows built for other
-people — and nothing Shortlist writes can hide them, because hiding a row _is_ the filter Plex is
-refusing. Every run now checks each profiled account with that account's own token and badges it
-here, on the person's page, and as a dashboard alert if it finds any.
-
-Two fixes, both yours to make. Set that account's **Restriction Profile → None**, which lets the
-normal filter apply and hides everyone else's rows from them; or turn the person **off** in
-Shortlist, which leaves them out of rows entirely so there is nothing of anyone else's to find.
+Everyone the server is shared with, plus you (badged `owner`). Turn people on, off or paused, set
+per-person overrides, and see who Plex restricts. Everything on this page, and what each switch does
+to Plex sharing, is in [People and sharing](people-and-sharing.md).
 
 ## Runs
 
@@ -186,14 +66,21 @@ The AI web-search card shows the exact Exa queries and the prompt the model sear
 each proposed title kept or dropped, or struck through when it resolved to no real match (a
 hallucination). Long lists of returned titles expand in place.
 
-**Development preview:** mobile trace navigation keeps the chosen heading below the sticky
-controls, highlights it and moves keyboard focus to it. Each watch-history seed has a **Don’t seed**
-action, also visible on mobile. A successful change
-shows **Seed blocked**; a failed change shows an error and **Try again** without claiming it saved.
+<details class="dev-preview" markdown="1">
+<summary><span class="dev-preview__tag">Development preview</span> Trace navigation and seed blocking</summary>
+<div class="dev-preview__body" markdown="1">
+
+Mobile trace navigation keeps the chosen heading below the sticky controls, highlights it and moves
+keyboard focus to it. Each watch-history seed has a **Don’t seed** action, also visible on mobile. A
+successful change shows **Seed blocked**; a failed change shows an error and **Try again** without
+claiming it saved.
+
+</div>
+</details>
 
 A **cold-start** user, with too little history to search from, gets the same page, showing the
 highest-rated titles pulled from the server as their fallback — or, when their rows are set to skip
-instead (see [Rows → People without enough watch history](rows.md#people-without-enough-watch-history)),
+instead (see [Rows → People without enough watch history](rows/what-goes-in.md#people-without-enough-watch-history)),
 the reason no row was built and how many titles they have watched so far.
 
 ## Logs
@@ -216,8 +103,8 @@ Every piece of background maintenance Shortlist does, in two areas.
 
 ### The Jobs list
 
-One per line: the name, how the last run went, when the next one fires, and the button.
-The development preview keeps the next-run time, or **Not scheduled**, visible on mobile too.
+One per line: the name, how the last run went, when the next one fires, and the button. (The
+development preview keeps the next-run time, or **Not scheduled**, visible on mobile too.)
 
 **Run now** holds the six you start yourself:
 
@@ -268,9 +155,10 @@ Both are applied by the nightly **Clear out old records** job.
 
 ## Settings
 
-Settings is one continuous page on stable and development. Its section links sit beneath Settings in the main sidebar and
-highlight the section you are reading as you scroll. In the development preview, a sticky mobile section selector jumps to
-the same sections. All forms stay mounted, so jumping between sections preserves unfinished edits.
+Settings is one continuous page on stable and development. Its section links sit beneath Settings
+in the main sidebar and highlight the section you are reading as you scroll. All forms stay mounted,
+so jumping between sections preserves unfinished edits. (The development preview adds a sticky
+section selector on phones that jumps to the same sections.)
 
 - **Connect** — Connections
 - **Rows** — Finding titles, Row defaults, Row placement
@@ -364,13 +252,77 @@ changes.
 
 ## Development preview: the updated interface
 
-These screenshots show the upcoming `:dev` interface using sample accounts and titles.
-Stable {{ site.stable_version }} remains the default installation; see [Release channels](../getting-started.md#release-channels).
+The `:dev` image has a redesigned interface. Stable {{ site.stable_version }} remains the default
+installation; see [Release channels](../getting-started.md#release-channels). The screenshots use
+sample accounts and titles.
+
+**Navigation.** The sidebar reads Dashboard, Rows, Users, Privacy, Runs, Requests, Activity and
+Settings. **Star on GitHub** and **Buy me a coffee** sit in the block at the bottom of the sidebar.
+Sharing is now Privacy, and Logs and Jobs are now Activity. The old `/sharing`, `/logs` and `/jobs`
+addresses still work and redirect.
+
+**Dashboard.** A status strip across the top shows **Last run**, **Next run**, **Privacy** and
+**Plex**. Below it, a privacy callout says whether every row is still hidden from the wrong people,
+then the Impact report. Before the first run the page shows a first-run panel instead, with **Run now**
+and **Dry run first**. A dry run writes nothing to Plex.
 
 <div class="preview-gallery">
-  <figure><a href="{{ '/images/preview-row-editor.webp' | relative_url }}"><img src="{{ '/images/preview-row-editor.webp' | relative_url }}" alt="Development preview: row editor with matching section buttons and headings" loading="lazy"></a><figcaption>Row editor: clear section destinations and visible outcome facts.</figcaption></figure>
-  <figure><a href="{{ '/images/preview-run-live.webp' | relative_url }}"><img src="{{ '/images/preview-run-live.webp' | relative_url }}" alt="Development preview: live run progress with people and status details" loading="lazy"></a><figcaption>Live run: one progress summary and each person's current work.</figcaption></figure>
-  <figure><a href="{{ '/images/preview-users.webp' | relative_url }}"><img src="{{ '/images/preview-users.webp' | relative_url }}" alt="Development preview: Users roster with search, status filters, select and sort controls" loading="lazy"></a><figcaption>Users: compact identities, visible account context and reachable bulk controls.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-dashboard.webp' | relative_url }}"><img src="{{ '/images/preview-dashboard.webp' | relative_url }}" alt="Development preview: the dashboard with the Last run, Next run, Privacy and Plex status strip, a privacy callout and the Impact report" loading="lazy"></a><figcaption>Dashboard: the status strip, the privacy callout and the Impact report.</figcaption></figure>
+</div>
+
+**Run detail.** The summary strip includes **Privacy**: how many accounts hid every row that was not
+theirs. A run that finished fine but left an account able to see other people's rows reads
+**OK with warnings**, and the callout names the accounts. A dry run reads **Not measured**, because it
+writes no hide rules to measure. A failed run still says Failed.
+
+**Rows.** The list shows each row with a collage of its posters. The switch turns a row on or off,
+**Run now** runs it, and the overflow menu holds Edit, Runs, Rename on Plex, and Remove or delete.
+The row editor is one page. A jump list on the side goes to each section: Name and look, Who gets it,
+What goes in, Schedule, Placement, Requests and Danger zone. The **Live on Plex** strip at the top
+holds the changes that apply to Plex immediately: the on/off switch, Rename on Plex and Run now.
+Everything else waits for the sticky save bar at the bottom, which lists what is about to change and
+has **Save changes** and **Discard**. Removing or deleting a row is in the Danger zone, with a
+confirmation.
+
+<div class="preview-gallery">
+  <figure><a href="{{ '/images/preview-rows.webp' | relative_url }}"><img src="{{ '/images/preview-rows.webp' | relative_url }}" alt="Development preview: the Rows list, each row with a poster collage, an on/off switch, Run now and an overflow menu" loading="lazy"></a><figcaption>Rows: a collage per row, the switch, Run now and the overflow menu.</figcaption></figure>
+</div>
+
+**Users.** Each person is **On**, **Paused** or **Off**, and you can filter by those states or by
+Needs attention. A **Restricted** pill shows the name of the Plex parental-control profile on the
+account; Shortlist never changes that profile. A Privacy column says whether the account is hiding
+every row, is missing hide rules, is left alone by your choice, or is the server owner.
+
+**Privacy.** A status strip, then a ledger with one line per Plex account that says what plex.tv just
+reported for it. **Read again** and **Verify now** re-check on demand. The **Policy** panel holds
+**Disabled users see nothing**, which moved here from Settings, Advanced. It saves as you flip it and
+applies on the next run. The page reports only what it read; it does not claim anything about the
+Collections tab or Related shelves.
+
+<div class="preview-gallery">
+  <figure><a href="{{ '/images/preview-privacy.webp' | relative_url }}"><img src="{{ '/images/preview-privacy.webp' | relative_url }}" alt="Development preview: the Privacy page with its status strip, one ledger line per Plex account and the Policy panel" loading="lazy"></a><figcaption>Privacy: what plex.tv reported for each account, read live.</figcaption></figure>
+</div>
+
+**Activity.** One page with four tabs: **Jobs**, **Job history**, **Log** and **Changes on Plex**. The
+last is the audit trail of every write to Plex, with a filter and a Real or Dry run mode on each line.
+`/jobs` and `/logs` open the matching tab.
+
+<div class="preview-gallery">
+  <figure><a href="{{ '/images/preview-activity.webp' | relative_url }}"><img src="{{ '/images/preview-activity.webp' | relative_url }}" alt="Development preview: the Activity page on its Changes on Plex tab, listing each write to Plex with a Real or Dry run mode" loading="lazy"></a><figcaption>Activity: the Changes on Plex tab, the audit trail of every write.</figcaption></figure>
+</div>
+
+**Settings.** Three tabs, each with its own address: **Connections**
+(`/settings/connections`), **Defaults** (`/settings/defaults`) and **System** (`/settings/system`).
+Use the search box to find a setting by name. Connections holds Plex, TMDB, AI and web search,
+Tautulli, Trakt, MDBList, Overseerr or Jellyseerr, Radarr, Sonarr and the webhook with its alert
+events. Defaults holds Title sources, Refresh and variety, Row defaults, Row placement and Requests.
+System holds retention, logging and run limits, the Plex cleanup audit, API access and the Danger
+zone. See [Finding and saving settings](../reference/settings.md#finding-and-saving-settings).
+
+<div class="preview-gallery">
+  <figure><a href="{{ '/images/preview-row-editor.webp' | relative_url }}"><img src="{{ '/images/preview-row-editor.webp' | relative_url }}" alt="Development preview: the row editor with a jump list, the Live on Plex strip and the save bar" loading="lazy"></a><figcaption>Row editor: a jump list, changes that apply at once, and one save bar.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-run-live.webp' | relative_url }}"><img src="{{ '/images/preview-run-live.webp' | relative_url }}" alt="Development preview: a run's summary strip with Privacy and each person's progress" loading="lazy"></a><figcaption>Run detail: the summary strip, including Privacy.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-users.webp' | relative_url }}"><img src="{{ '/images/preview-users.webp' | relative_url }}" alt="Development preview: Users roster with On, Paused and Off states, Restricted pills and a Privacy column" loading="lazy"></a><figcaption>Users: On, Paused or Off, with a Privacy column.</figcaption></figure>
   <figure><a href="{{ '/images/preview-requests.webp' | relative_url }}"><img src="{{ '/images/preview-requests.webp' | relative_url }}" alt="Development preview: Requests with direct Send, Delete and Reject actions" loading="lazy"></a><figcaption>Requests: the available actions stay beside each title.</figcaption></figure>
-  <figure><a href="{{ '/images/preview-settings.webp' | relative_url }}"><img src="{{ '/images/preview-settings.webp' | relative_url }}" alt="Development preview: continuous Settings page with sidebar section navigation" loading="lazy"></a><figcaption>Settings: one scrolling page with section tracking.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-settings.webp' | relative_url }}"><img src="{{ '/images/preview-settings.webp' | relative_url }}" alt="Development preview: Settings with Connections, Defaults and System tabs and a search box" loading="lazy"></a><figcaption>Settings: three tabs and a search box.</figcaption></figure>
 </div>
