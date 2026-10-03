@@ -543,6 +543,7 @@ class TestCollectionsSeed:
         assert {k: patched.json()[k] for k in limits} == cleared
 
     def test_an_int_min_rating_builds_the_same_spec_as_a_float_one(self, client: TestClient):
+        from shortlist.server.db.models import Collection
         from shortlist.server.services.context_builder import ContextBuilder
         from shortlist.server.services.sse import EventBus
 
@@ -550,9 +551,13 @@ class TestCollectionsSeed:
         assert created.status_code == 201
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
+            # Hand the builder a genuine int: SQLite hands back a float, so the cast is only exercised this way.
+            row = session.query(Collection).filter_by(slug="rated_row").one()
+            row.min_rating = 7
             specs = builder._build_rows(
                 session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
             )
+            assert type(row.min_rating) is int
         spec = next(s for s in specs if s.slug == "rated_row")
         assert isinstance(spec.min_rating, float)
         assert spec.limits().fingerprint() == RowLimits(min_rating=7.0).fingerprint()
@@ -581,6 +586,27 @@ class TestCollectionsSeed:
         response = client.post("/api/collections", json={"name": "X", "min_year": 2010, "max_year": 2000})
         assert response.status_code == 422
         assert "min_year" in response.text and "max_year" in response.text
+
+    def test_patch_year_order_is_judged_against_the_stored_row(self, client: TestClient):
+        cid = client.post("/api/collections", json={"name": "Years Row", "min_year": 1990, "max_year": 2000}).json()[
+            "id"
+        ]
+        url = f"/api/collections/{cid}"
+
+        late_min = client.patch(url, json={"name": "Years Row", "min_year": 2010})
+        assert late_min.status_code == 422
+        assert "earliest year" in late_min.text
+        early_max = client.patch(url, json={"name": "Years Row", "max_year": 1980})
+        assert early_max.status_code == 422
+        assert "earliest year" in early_max.text
+
+        both = client.patch(url, json={"name": "Years Row", "min_year": 2010, "max_year": 2020})
+        assert both.status_code == 200
+        assert (both.json()["min_year"], both.json()["max_year"]) == (2010, 2020)
+
+        cleared = client.patch(url, json={"name": "Years Row", "max_year": None})
+        assert cleared.status_code == 200 and cleared.json()["max_year"] is None
+        assert client.patch(url, json={"name": "Years Row", "min_year": 2050}).status_code == 200
 
     def test_per_row_seed_window_round_trips_and_reaches_the_spec(self, client: TestClient):
         """How many recent watches a row cycles between. Unlike max_seeds it is NOT nullable — there

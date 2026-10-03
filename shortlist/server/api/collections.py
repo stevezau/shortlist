@@ -1794,6 +1794,10 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 )
                 default_rename_to = new_template
                 template_before, template_after = previous, new_template
+        merged_min_year = body.min_year if "min_year" in sent else collection.min_year
+        merged_max_year = body.max_year if "max_year" in sent else collection.max_year
+        if merged_min_year is not None and merged_max_year is not None and merged_min_year > merged_max_year:
+            raise HTTPException(status_code=422, detail="The earliest year can't be later than the latest year.")
         # Checked against the MERGED row, never the request body — see `_validate_pairing`.
         _validate_pairing(
             rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
