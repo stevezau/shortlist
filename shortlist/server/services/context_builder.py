@@ -1240,6 +1240,11 @@ class ContextBuilder:
                     recency=collection.recency,  # None -> inherit the global recency
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
+                    max_runtime=collection.max_runtime,  # the four limits: None = no limit
+                    min_year=collection.min_year,
+                    max_year=collection.max_year,
+                    # float(): RowLimits.fingerprint formats it as given, and 7 vs 7.0 must not change the recipe.
+                    min_rating=None if collection.min_rating is None else float(collection.min_rating),
                     cold_start=collection.cold_start,  # None -> inherit the global recommendations.cold_start
                     # "" means this row has no name for someone who cannot be named, and is therefore
                     # not built for them — the engine never invents one (issue #84).

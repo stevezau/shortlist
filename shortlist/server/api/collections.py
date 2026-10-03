@@ -218,6 +218,11 @@ class CollectionIn(StrictRequestModel):
     recency: float | None = Field(default=None, ge=0.0, le=1.0)
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
+    # Per-row limits on what may be picked; None = no limit (#138). Year order is checked in `_validate`.
+    max_runtime: int | None = Field(default=None, ge=1, le=600)  # minutes
+    min_year: int | None = Field(default=None, ge=1870, le=2100)
+    max_year: int | None = Field(default=None, ge=1870, le=2100)
+    min_rating: float | None = Field(default=None, ge=0.0, le=10.0)  # TMDB vote_average
     # "popular" | "skip" | None -> inherit the global recommendations.cold_start. Enforced in
     # `_validate`, like every other closed set here.
     cold_start: str | None = Field(
@@ -447,6 +452,10 @@ class CollectionOut(PassthroughModel):
     recency: float | None
     recent_count: int | None
     max_seeds: int | None
+    max_runtime: int | None
+    min_year: int | None
+    max_year: int | None
+    min_rating: float | None
     cold_start: str | None = Field(
         json_schema_extra={"enum": [*sorted(COLD_STARTS), None]},
         description="What this row does for someone with too little watch history; null inherits the global setting.",
@@ -620,6 +629,8 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(
             status_code=422, detail=f"unknown candidate source(s) {unknown}; valid: {sorted(KNOWN_SOURCES)}"
         )
+    if body.min_year is not None and body.max_year is not None and body.min_year > body.max_year:
+        raise HTTPException(status_code=422, detail="min_year cannot be later than max_year")
     if body.pick_order not in ORDERS:
         raise HTTPException(status_code=422, detail=f"pick_order must be one of {sorted(ORDERS)}")
     if body.cold_start is not None and body.cold_start not in COLD_STARTS:
@@ -1042,6 +1053,10 @@ def _serialize(
         "recency": collection.recency,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
+        "max_runtime": collection.max_runtime,
+        "min_year": collection.min_year,
+        "max_year": collection.max_year,
+        "min_rating": collection.min_rating,
         "cold_start": collection.cold_start,
         "seed_window": int(collection.seed_window or 1),
         "req_min_rating": collection.req_min_rating,
@@ -1341,6 +1356,10 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             recency=body.recency,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
+            max_runtime=body.max_runtime,
+            min_year=body.min_year,
+            max_year=body.max_year,
+            min_rating=body.min_rating,
             cold_start=body.cold_start,
             seed_window=body.seed_window,
             pick_order=body.pick_order,
@@ -1421,6 +1440,10 @@ _PATCHABLE_COLUMNS = (
     "recency",
     "recent_count",
     "max_seeds",
+    "max_runtime",
+    "min_year",
+    "max_year",
+    "min_rating",
     "cold_start",
     "seed_window",
     *_REQUEST_COLUMNS,

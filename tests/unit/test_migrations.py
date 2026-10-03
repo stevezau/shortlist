@@ -1757,6 +1757,39 @@ class TestDeliverySeason0096:
         assert "season" not in self._columns(tmp_path)
 
 
+class TestRowLimits0097:
+    """0097 adds the four per-row limit columns (#138). All NULL = off, so no existing row changes."""
+
+    _LIMITS = frozenset({"max_runtime", "min_year", "max_year", "min_rating"})
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, tuple[bool, str | None]]:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            return {r[1]: (bool(r[3]), r[4]) for r in con.execute("PRAGMA table_info(collections)")}
+
+    def test_it_adds_four_nullable_columns_with_no_default(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path)
+        assert all(columns[name] == (False, None) for name in self._LIMITS)
+
+    def test_an_existing_row_reads_null(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            row = con.execute("SELECT max_runtime, min_year, max_year, min_rating FROM collections").fetchone()
+        assert row == (None, None, None, None)
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0096")
+        run_migrations(tmp_path)
+        assert set(self._columns(tmp_path)) >= self._LIMITS
+
+    def test_the_downgrade_removes_them_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0096")
+        assert not (self._LIMITS & set(self._columns(tmp_path)))
+
+
 class TestRowShowDaysDowngrade0088:
     """0089's downgrade re-creates `shown_state` for any install that had it, and 0088's downgrade has to
     take it out again, or a database downgraded past 0088 keeps a column no revision below it defines."""

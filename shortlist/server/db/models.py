@@ -219,6 +219,11 @@ class Collection(Base):
     # How many watched titles SEED this row — what every source searches from, not just the web one.
     # NULL -> inherit the engine default (30).
     max_seeds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Optional limits on what this row may pick (#138). NULL = no limit; there is no global default.
+    max_runtime: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)  # minutes
+    min_year: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    max_year: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    min_rating: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)  # TMDB 0..10
     # What this row does for someone with too little watch history: "popular" (the server's top-rated
     # titles) or "skip" (don't build it for them; remove any copy they already have).
     # NULL -> inherit the global recommendations.cold_start.

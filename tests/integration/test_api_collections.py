@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from shortlist.engine.models import RowLimits
 from shortlist.engine.rows import ROW_ORDERS
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.db.models import DEFAULT_SLUG, User
@@ -510,6 +511,72 @@ class TestCollectionsSeed:
         assert next(s for s in specs if s.slug == "because_row").max_seeds == 1
         # A row that never set one keeps None, so the engine falls back to its own budget.
         assert next(s for s in specs if s.slug == "picked").max_seeds is None
+
+    def test_per_row_limits_round_trip_clear_and_reach_the_spec(self, client: TestClient):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        limits = {"max_runtime": 120, "min_year": 1990, "max_year": 2020, "min_rating": 7.5}
+        created = client.post("/api/collections", json={"name": "Limit Row", **limits})
+        assert created.status_code == 201
+        assert {k: created.json()[k] for k in limits} == limits
+        cid = created.json()["id"]
+        listed = next(c for c in client.get("/api/collections").json() if c["id"] == cid)
+        assert {k: listed[k] for k in limits} == limits
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
+        spec = next(s for s in specs if s.slug == "limit_row")
+        assert (spec.max_runtime, spec.min_year, spec.max_year, spec.min_rating) == (120, 1990, 2020, 7.5)
+        picked = next(s for s in specs if s.slug == "picked")
+        assert not picked.limits().active
+
+        cleared = {k: None for k in limits}
+        patched = client.patch(f"/api/collections/{cid}", json={"name": "Limit Row", **cleared})
+        assert {k: patched.json()[k] for k in limits} == cleared
+
+    def test_an_int_min_rating_builds_the_same_spec_as_a_float_one(self, client: TestClient):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Rated Row", "min_rating": 7})
+        assert created.status_code == 201
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
+        spec = next(s for s in specs if s.slug == "rated_row")
+        assert isinstance(spec.min_rating, float)
+        assert spec.limits().fingerprint() == RowLimits(min_rating=7.0).fingerprint()
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"max_runtime": 0},
+            {"max_runtime": 601},
+            {"min_year": 1869},
+            {"min_year": 2101},
+            {"max_year": 1869},
+            {"max_year": 2101},
+            {"min_rating": -0.1},
+            {"min_rating": 10.1},
+        ],
+    )
+    def test_a_limit_outside_its_bounds_is_rejected(self, client: TestClient, bad: dict):
+        assert client.post("/api/collections", json={"name": "X", **bad}).status_code == 422
+
+    def test_a_limit_at_its_bounds_is_accepted(self, client: TestClient):
+        ok = {"max_runtime": 1, "min_year": 1870, "max_year": 2100, "min_rating": 0}
+        assert client.post("/api/collections", json={"name": "Edge Row", **ok}).status_code == 201
+
+    def test_min_year_after_max_year_is_rejected_naming_both_fields(self, client: TestClient):
+        response = client.post("/api/collections", json={"name": "X", "min_year": 2010, "max_year": 2000})
+        assert response.status_code == 422
+        assert "min_year" in response.text and "max_year" in response.text
 
     def test_per_row_seed_window_round_trips_and_reaches_the_spec(self, client: TestClient):
         """How many recent watches a row cycles between. Unlike max_seeds it is NOT nullable — there

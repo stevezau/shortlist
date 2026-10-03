@@ -784,6 +784,19 @@
             "title": "Library Keys",
             "type": "array"
           },
+          "max_runtime": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runtime"
+          },
           "max_seeds": {
             "anyOf": [
               {
@@ -797,6 +810,19 @@
             ],
             "title": "Max Seeds"
           },
+          "max_year": {
+            "anyOf": [
+              {
+                "maximum": 2100.0,
+                "minimum": 1870.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Year"
+          },
           "media": {
             "default": "both",
             "description": "Which library types this row builds in.",
@@ -808,11 +834,37 @@
             "title": "Media",
             "type": "string"
           },
+          "min_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Rating"
+          },
           "min_watchers": {
             "default": 2,
             "minimum": 2.0,
             "title": "Min Watchers",
             "type": "integer"
+          },
+          "min_year": {
+            "anyOf": [
+              {
+                "maximum": 2100.0,
+                "minimum": 1870.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Year"
           },
           "name": {
             "maxLength": 255,
@@ -1391,6 +1443,17 @@
             "title": "Library Keys",
             "type": "array"
           },
+          "max_runtime": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runtime"
+          },
           "max_seeds": {
             "anyOf": [
               {
@@ -1402,6 +1465,17 @@
             ],
             "title": "Max Seeds"
           },
+          "max_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Year"
+          },
           "media": {
             "description": "Which library types this row builds in.",
             "enum": [
@@ -1412,9 +1486,31 @@
             "title": "Media",
             "type": "string"
           },
+          "min_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Rating"
+          },
           "min_watchers": {
             "title": "Min Watchers",
             "type": "integer"
+          },
+          "min_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Year"
           },
           "name": {
             "title": "Name",
@@ -1890,6 +1986,10 @@
           "recency",
           "recent_count",
           "max_seeds",
+          "max_runtime",
+          "min_year",
+          "max_year",
+          "min_rating",
           "cold_start",
           "seed_window",
           "req_min_rating",
