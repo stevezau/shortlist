@@ -22,7 +22,7 @@ describe("seasonVerdict", () => {
 
   it("says a per-person row will look alike, and where the season works best", () => {
     expect(seasonVerdict({ total: 40 }, films(15, true)).text).toBe(
-      "People's rows will be much alike — works best in a shared row",
+      "People's rows will be much alike. Choose Shared in the row editor to use the season's most-watched titles.",
     );
   });
 

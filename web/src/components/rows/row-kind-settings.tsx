@@ -540,7 +540,7 @@ export function RowKindSettings({
         </div>
       )}
       <div className="border-t pt-4">
-        <RowFillPicker value={choice.fill} onChange={onChooseFill} />
+        <RowFillPicker value={choice.fill} build={input.build} onChange={onChooseFill} />
       </div>
       <FillBlock {...props} fill={choice.fill} />
     </>

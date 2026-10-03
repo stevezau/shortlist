@@ -2,7 +2,7 @@
 title: Seasonal rows
 description: "A seasonal row follows the calendar: Halloween films and horror in October, Christmas films in December, romance before Valentine's Day. Between seasons it is hidden from every Plex screen, and it comes back by itself when its next season opens."
 heading: Seasonal rows
-updated: 2026-10-03
+updated: 2026-10-04
 dev_preview: true
 ---
 
@@ -54,6 +54,11 @@ season coming up next wins. Weekdays under **Where and when people see it** narr
 
 On the `:dev` image, not stable {{ site.stable_version }}. Everything outside this box applies to both.
 
+**Per person or Shared.** Choose this above **Row type** in the row editor. **Per person** offers
+Picked for You, Because you watched and Watch it again under **How it's filled**. **Shared** uses
+the season's most-watched titles for everyone in the selected audience. Switching between them
+keeps the selected seasons and their timing.
+
 **Built-in timing, renamed.** The two window settings read **Built-in seasons show from N days before
 and stay N days after**, with the same ranges and defaults, because your own seasons carry their own
 timing. The year strip under the list draws every ticked season's window and says where two overlap.
@@ -98,8 +103,9 @@ the row's libraries. It sets the count against the row's size. A season shows on
 - **Too few films to fill this row (n of size)**: add a tag, a collection or a few films. A row of
   films and shows fills each library from its own type, so it is short when either half is: **Too few
   shows to fill this row's TV library (0 of 15)**.
-- **People's rows will be much alike — works best in a shared row**: a per-person row has fewer than
-  100 films to draw from, so everyone's row would be nearly the same. This never shows for a shared row.
+- **People's rows will be much alike**: a per-person row has fewer than 100 films to draw from,
+  so everyone's row would be nearly the same. The hint directs you to **Shared** in the row editor,
+  which uses the season's most-watched titles. This never shows for a shared row.
 - **Enough films for this row.**
 
 **When a season finds nothing.** A season can find nothing for a row in one of its libraries: a thin

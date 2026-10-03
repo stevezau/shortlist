@@ -59,7 +59,7 @@ export function seasonVerdict(count: SeasonCount, row: Pick<SeasonRow, "size" | 
   const titles = titleNoun(row.media, 2);
   if (total < size) return { level: "few", text: `Too few ${titles} to fill this row (${total} of ${size})` };
   if (row.perPerson && total < ALIKE_BELOW)
-    return { level: "alike", text: "People's rows will be much alike — works best in a shared row" };
+    return { level: "alike", text: "People's rows will be much alike. Choose Shared in the row editor to use the season's most-watched titles." };
   return { level: "ok", text: `Enough ${titles} for this row` };
 }
 

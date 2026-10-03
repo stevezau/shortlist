@@ -1,6 +1,7 @@
 import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
+import { PeopleBrowser } from "@/components/rows/people-browser";
 import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
 import { Label } from "@/components/ui/label";
@@ -21,15 +22,43 @@ export function AudiencePicker({
   audienceUserIds,
   users,
   onChange,
+  children,
 }: {
   audience: CollectionInput["audience"];
   audienceUserIds: number[];
   users: User[];
   onChange: (patch: AudiencePatch) => void;
+  /** The row editor supplies its table of actual library and privacy information. */
+  children?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
   const chosen = audienceUserIds.length;
   const enabledCount = users.filter((user) => user.enabled).length;
+  const people = children ?? (
+    <PeopleBrowser users={users}>
+      {(visible) => <ul aria-label="People" className="divide-y">
+        {visible.map((user) => (
+          <li key={user.id} className="flex min-w-0 items-center justify-between gap-3 py-2">
+            <span className="flex min-w-0 items-center gap-2 text-sm">
+              <UserAvatar name={user.username} size="sm" />
+              <span className="min-w-0 break-words">
+                {user.display_name || user.username}
+                {!user.enabled && <span className="block text-xs text-muted-foreground">Shortlist disabled</span>}
+              </span>
+            </span>
+            {audience === "subset" && <Switch
+              checked={audienceUserIds.includes(user.id)}
+              onCheckedChange={(checked) => onChange({
+                audience: "subset",
+                audience_user_ids: checked ? [...audienceUserIds, user.id] : audienceUserIds.filter((id) => id !== user.id),
+              })}
+              aria-label={user.username}
+            />}
+          </li>
+        ))}
+      </ul>}
+    </PeopleBrowser>
+  );
 
   return (
     <div className="space-y-2">
@@ -62,13 +91,12 @@ export function AudiencePicker({
             " Enable more on the Users page."}
         </p>
       )}
-      {audience === "subset" && (
-        <div className="mt-2 rounded-lg border bg-elevated">
-          <button
+      <div className="mt-2 border-t">
+          {audience === "subset" && <button
             type="button"
             onClick={() => setExpanded((open) => !open)}
             aria-expanded={expanded}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-accent"
+            className="flex w-full items-center justify-between gap-2 rounded-md py-2 text-left text-sm hover:bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className={cn(chosen === 0 && "text-warning")}>
               {users.length === 0
@@ -84,46 +112,14 @@ export function AudiencePicker({
                 expanded && "rotate-180",
               )}
             />
-          </button>
-          {expanded && (
-            <div className="space-y-1 border-t p-2">
-              {users.length === 0 && (
-                <p className="p-2 text-sm text-muted-foreground">
-                  No users yet &mdash; bring your Plex users in with &ldquo;Sync
-                  users&rdquo; on the Users page first, or this row reaches
-                  nobody.
-                </p>
-              )}
-              {users.map((user) => {
-                const on = audienceUserIds.includes(user.id);
-                return (
-                  <label
-                    key={user.id}
-                    className="flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 hover:bg-accent"
-                  >
-                    <span className="flex items-center gap-2 text-sm">
-                      <UserAvatar name={user.username} size="sm" />
-                      {user.display_name || user.username}
-                    </span>
-                    <Switch
-                      checked={on}
-                      onCheckedChange={(checked) =>
-                        onChange({
-                          audience: "subset",
-                          audience_user_ids: checked
-                            ? [...audienceUserIds, user.id]
-                            : audienceUserIds.filter((id) => id !== user.id),
-                        })
-                      }
-                      aria-label={user.username}
-                    />
-                  </label>
-                );
-              })}
+          </button>}
+          {(audience === "everyone" || expanded) && (
+            <div className="space-y-3 pt-2">
+              {audience === "subset" && <p className="text-xs text-muted-foreground">Choices stay selected when you search or change pages. Disabled or paused people get no copy until they are enabled and unpaused.</p>}
+              {people}
             </div>
           )}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
