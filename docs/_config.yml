@@ -73,7 +73,7 @@ defaults:
 
 # Ownership proof for Google Search Console (where the sitemap is submitted).
 # Public by design — it's served as a meta tag on every page.
-google_site_verification: cqlqedFcoobifs1lLaDIdbBPCPurJ-JlDAIVOTs_02k
+google_site_verification: _1uUI3TfHE0na5iN59RQClU0s5ToExFOT_goS8f0dyk
 
 # The docs sidebar, in reading order. `nav` drives both the sidebar and the
 # prev/next links at the foot of every page, so this list is the single place
