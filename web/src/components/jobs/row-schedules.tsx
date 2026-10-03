@@ -62,10 +62,10 @@ export function RowSchedules() {
 
   return (
     <section className="space-y-2">
-      <div className="flex items-baseline gap-2">
-        <h2 className="text-sm font-medium">Rows</h2>
+      <div className="flex flex-wrap items-baseline gap-x-2 px-1">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Rows</h2>
         <p className="text-xs text-muted-foreground">
-          built on their own schedule
+          · built on their own schedule
         </p>
       </div>
 

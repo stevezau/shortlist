@@ -204,6 +204,9 @@ export function JobRow({
           <Button
             size="sm"
             variant="outline"
+            // One width for "Run" and "Back up now" alike, so the status and next-run columns
+            // line up down the list on a desktop.
+            className="sm:min-w-[6.5rem]"
             loading={action.pending}
             onClick={action.run}
             // The visible label is short because five of these stack up, but "Run" five times over

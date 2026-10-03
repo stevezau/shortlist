@@ -1080,7 +1080,7 @@ function MostWatched({
         className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-2 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-8"
       >
         {titles.map((t, i) => (
-          <li key={`${t.tmdb_id}-${t.media_type}`} className="grid w-[104px] shrink-0 content-start gap-1.5 sm:w-auto">
+          <li key={`${t.tmdb_id}-${t.media_type}`} className="grid w-[128px] shrink-0 content-start gap-1.5 sm:w-auto">
             <div className="relative">
               <TitlePoster
                 ratingKey={t.rating_key}

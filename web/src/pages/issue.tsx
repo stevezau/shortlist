@@ -1474,7 +1474,7 @@ function ReportSection({
       </p>
 
       <div className="flex flex-wrap gap-2">
-        <Button asChild>
+        <Button asChild variant="outline">
           <a href={DISCUSSIONS_URL} target="_blank" rel="noopener noreferrer">
             <MessagesSquare className="mr-2 h-4 w-4" aria-hidden="true" />
             Ask a question

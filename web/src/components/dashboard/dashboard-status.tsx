@@ -80,7 +80,12 @@ function LastRunCell({
             {run.dry_run && " · dry run"}
             {` · ${people} ${people === 1 ? "person" : "people"}`}
             {failed > 0 && ` · ${failed} failed`}
-            {elapsed !== null && ` · ${formatDuration(elapsed)}`}
+            {elapsed !== null && (
+              <>
+                {" · "}
+                <span className="whitespace-nowrap">{formatDuration(elapsed)}</span>
+              </>
+            )}
           </>
         }
       />

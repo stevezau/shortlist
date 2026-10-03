@@ -23,6 +23,7 @@ import {
   otherLanguageBar,
   type LanguageMode,
 } from "@/lib/request-language";
+import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
 import { useArrOptions, useSeerrOptions } from "@/lib/queries";
@@ -645,16 +646,22 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
     return values;
   });
 
+  // In Settings the page's save bar reports this section like every other one, so the card doesn't
+  // open on an empty status line.
+  const inSaveBar = useSaveBarReport("requests", save);
+
   return (
     <Card>
       <CardContent className="space-y-5 pt-6">
-        <div className="sticky top-36 z-10 bg-card/95 py-1 md:top-20"><SaveStatus
-          isPending={save.isPending}
-          isError={save.isError}
-          error={save.error}
-          saved={save.saved}
-          onRetry={save.retry}
-        /></div>
+        {!inSaveBar && (
+          <div className="sticky top-36 z-10 bg-card/95 py-1 md:top-20"><SaveStatus
+            isPending={save.isPending}
+            isError={save.isError}
+            error={save.error}
+            saved={save.saved}
+            onRetry={save.retry}
+          /></div>
+        )}
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <p className="font-medium">Fill in the gaps automatically</p>

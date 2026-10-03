@@ -138,7 +138,7 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
             <PickList picks={row.picks} collapseAfter={5} />
           ) : (
             <p className="text-sm text-muted-foreground">
-              No picks in this row yet — regenerate below or wait for the next
+              No picks in this row yet — use Run now above, or wait for the next
               run.
             </p>
           ))}
@@ -150,6 +150,7 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
             <Button
               variant="ghost"
               size="sm"
+              className="-ml-3"
               onClick={() => setOpen((v) => !v)}
               aria-expanded={open}
             >

@@ -690,7 +690,7 @@ function AccountRow({ account }: { account: AccountPrivacy }) {
       {/* A number, not a tick: "12 of 12" and "0 of 0" must not look alike. With its NOUN — "Hides
           2 of 2" left the reader to guess two of what, on the page where the thing being counted
           is the whole point. */}
-      <p className="shrink-0 whitespace-nowrap text-sm tabular-nums text-muted-foreground sm:pt-1">
+      <p className="shrink-0 whitespace-nowrap pl-12 text-sm tabular-nums text-muted-foreground sm:pl-0 sm:pt-1">
         {account.state === "owner" || account.state === "unknown"
           ? "—"
           : `Hides ${account.hides.length} of ${account.should_hide.length} ${

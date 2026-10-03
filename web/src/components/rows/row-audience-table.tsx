@@ -109,17 +109,18 @@ export function RowAudienceTable({
         </p>
       ) : (
         <div className="min-w-0 overflow-hidden rounded-md border">
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-sm">
             <thead className="border-b bg-elevated text-left text-xs text-muted-foreground">
               <tr>
                 <th scope="col" className="px-3 py-2 font-medium">
                   Person
                 </th>
-                <th scope="col" className="hidden px-3 py-2 font-medium sm:table-cell">
+                <th scope="col" className="hidden px-3 py-2 font-medium sm:table-cell sm:w-[30%]">
                   Gets a copy in
                 </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  Their account hides other rows
+                <th scope="col" className="w-[40%] px-3 py-2 font-medium sm:w-[28%]">
+                  <span className="sm:hidden">Hides other rows</span>
+                  <span className="hidden sm:inline">Their account hides other rows</span>
                 </th>
               </tr>
             </thead>
@@ -128,7 +129,7 @@ export function RowAudienceTable({
                 const name = user.display_name || user.username;
                 return (
                   <tr key={user.id}>
-                    <td className="px-3 py-2.5 align-top">
+                    <td className="px-3 py-2.5 align-middle">
                       <div className="flex min-w-0 items-center gap-2">
                         <UserAvatar name={user.username} size="sm" />
                         <div className="min-w-0">
@@ -139,8 +140,8 @@ export function RowAudienceTable({
                         </div>
                       </div>
                     </td>
-                    <td className="hidden px-3 py-2.5 align-top sm:table-cell">{where}</td>
-                    <td className="px-3 py-2.5 align-top">
+                    <td className="hidden px-3 py-2.5 align-middle sm:table-cell">{where}</td>
+                    <td className="px-3 py-2.5 align-middle">
                       <Hides
                         answer={hidesAnswer(
                           accounts.find((account) => account.user_id === user.id),

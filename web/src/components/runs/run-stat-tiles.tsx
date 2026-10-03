@@ -164,7 +164,8 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
           value={elapsed != null ? formatDuration(elapsed) : "—"}
           sub={elapsed != null && run.began_at && run.finished_at ? (
             <>
-              {clockTime(run.began_at)} → {clockTime(run.finished_at)}
+              <span className="whitespace-nowrap">{clockTime(run.began_at)} →</span>{" "}
+              <span className="whitespace-nowrap">{clockTime(run.finished_at)}</span>
             </>
           ) : (
             "start → finish"
