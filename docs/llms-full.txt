@@ -416,6 +416,8 @@ out, so Shortlist adds you itself).
 Active means enabled, not paused and not blocked by a Plex restriction profile; a paused person
 can still have their Enabled switch on.
 Account type, request-link status and picks watched stay visible beside each person's identity.
+Picks watched is how many different picks they watched in the last 30 days; hover it for when they
+last watched one. The column that shows Active, Paused, Off or Restricted is headed **Status**.
 **Select visible users** and **Sort** sit above the roster at every screen width. **All users…**
 closes with Escape or an outside click; its Enable/Disable actions still require confirmation.
 

@@ -74,7 +74,8 @@ class UserOut(PassthroughModel):
     prefs: dict
     history_depth: int
     last_run_at: str | None
-    hit_rate: float | None
+    picks_watched_30d: int | None
+    last_pick_watched_at: str | None
     preview_titles: list[str]
     unhidden_rows: int
     departed: bool
@@ -117,7 +118,8 @@ def user_dict(
     user: User,
     history_depth: int,
     last_run_at,
-    hit_rate: float | None,
+    picks_watched_30d: int | None,
+    last_pick_watched_at,
     preview_titles: list[str] | None = None,
     unhidden_rows: int = 0,
 ) -> dict:
@@ -127,7 +129,8 @@ def user_dict(
         user: The user row.
         history_depth: How many distinct watched titles we last read for them.
         last_run_at: When the most recent run that included them finished, or None.
-        hit_rate: Watched-over-delivered across their whole history, or None with no picks yet.
+        picks_watched_30d: Distinct picked titles they watched in the last 30 days, or None with no picks yet.
+        last_pick_watched_at: When they last watched any pick, all time, or None.
         preview_titles: A few of their most recent pick titles, for the dashboard card.
         unhidden_rows: How many of OTHER people's rows the last run measured this account as able to
             see. Non-zero only for an account Plex refuses a hide-list for; 0 both when there is
@@ -165,7 +168,8 @@ def user_dict(
         "prefs": user.prefs or {},
         "history_depth": history_depth,
         "last_run_at": iso_utc(last_run_at),
-        "hit_rate": hit_rate,
+        "picks_watched_30d": picks_watched_30d,
+        "last_pick_watched_at": iso_utc(last_pick_watched_at),
         # A few of their most recent pick titles, for a real preview strip on the dashboard card.
         "preview_titles": preview_titles or [],
         "unhidden_rows": unhidden_rows,

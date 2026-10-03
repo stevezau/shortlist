@@ -23,7 +23,6 @@ vi.mock("sonner", () => ({
 
 const {
   getUsers,
-  getReport,
   getRequestRowSources,
   patchUser,
   removeUser,
@@ -31,7 +30,6 @@ const {
   syncUsers,
 } = vi.hoisted(() => ({
   getUsers: vi.fn(),
-  getReport: vi.fn(),
   getRequestRowSources: vi.fn(),
   patchUser: vi.fn(),
   removeUser: vi.fn(),
@@ -42,18 +40,6 @@ const {
     Promise.resolve({ updated: 1, cleaned: 0, enabled: true }),
   ),
 }));
-
-/** The report, reduced to the two fields `useHitRatesMatured` reads. `firstPickDaysAgo` decides
- *  whether any pick on the server has had its 30 days yet. */
-function report(firstPickDaysAgo: number | null) {
-  return {
-    first_pick:
-      firstPickDaysAgo === null
-        ? null
-        : new Date(Date.now() - firstPickDaysAgo * 86_400_000).toISOString(),
-    overall: { landing: { matured_days: 30 } },
-  };
-}
 
 /** GET /api/requests/row-sources, reduced to what the Requests column reads: who is linked to
  *  Overseerr and which sources are connected at all. */
@@ -85,7 +71,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     api: {
       getUsers: () => getUsers(),
-      getReport: (window: string) => getReport(window),
       getRequestRowSources: (pattern: string) => getRequestRowSources(pattern),
       patchUser: (id: number, patch: UserPatch) => patchUser(id, patch),
       removeUser: (id: number) => removeUser(id),
@@ -108,7 +93,8 @@ const SARAH: User = {
   last_run_at: null,
   request_tag: "",
   requested_by_tag: "",
-  hit_rate: null,
+  picks_watched_30d: null,
+  last_pick_watched_at: null,
   nickname: "",
   friendly_name: "",
   display_name: "",
@@ -141,10 +127,8 @@ describe("UsersPage", () => {
     getUsers.mockReset();
     patchUser.mockReset();
     setAllUsersEnabled.mockClear();
-    getReport.mockReset();
     // Most tests here are not about the hit-rate column; a long-running install is the state that
     // leaves every other assertion unchanged.
-    getReport.mockResolvedValue(report(400));
     getRequestRowSources.mockReset();
     getRequestRowSources.mockResolvedValue(sources([]));
   });
@@ -166,12 +150,11 @@ describe("UsersPage", () => {
   });
 
   it("shows request and viewing context directly without repeating the account type", async () => {
-    getUsers.mockResolvedValue([{ ...SARAH, hit_rate: 0.25 }]);
+    getUsers.mockResolvedValue([SARAH]);
     getRequestRowSources.mockResolvedValue(sources([{ user_id: SARAH.id, linked: true, ready: 3 }]));
     renderPage();
     expect(await screen.findByText("Linked")).toBeVisible();
     expect(screen.getByText("3 ready")).toBeVisible();
-    expect(screen.getByText("25%", { exact: true })).toBeVisible();
     expect(screen.getAllByText("Shared", { exact: true })).toHaveLength(1);
     expect(screen.queryByText("Shared account", { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText("Requests & results", { exact: true })).not.toBeInTheDocument();
@@ -234,40 +217,46 @@ describe("UsersPage", () => {
     expect(screen.getByRole("checkbox", { name: "Select sarah" })).not.toBeChecked();
   });
 
-  // `hit_rate` is watched-over-delivered across all time, so on a fresh install it is 0 for
-  // everyone and the column read "0%" down the page — which says "nobody watches any of this" when
-  // the truth is that no pick has had time to be watched. The dashboard already withholds its own
-  // landing rate on exactly this rule.
-  it("shows an em dash rather than 0% until picks have had their 30 days", async () => {
-    getUsers.mockResolvedValue([{ ...SARAH, hit_rate: 0 }]);
-    getReport.mockResolvedValue(report(3));
+  it("shows picks watched in the last 30 days, with the last watch in the tooltip", async () => {
+    const lastWatched = new Date(Date.now() - 5 * 86_400_000).toISOString();
+    getUsers.mockResolvedValue([
+      { ...SARAH, picks_watched_30d: 3, last_pick_watched_at: lastWatched },
+    ]);
+
+    renderPage();
+
+    const count = await screen.findByText("3 in 30 days");
+    expect(count.closest("[title]")).toHaveAttribute("title", "Last watched a pick 5d ago");
+  });
+
+  it("shows 0 in 30 days, not a dash, when picks exist but none were watched lately", async () => {
+    getUsers.mockResolvedValue([
+      { ...SARAH, picks_watched_30d: 0, last_pick_watched_at: null },
+    ]);
+
+    renderPage();
+
+    const count = await screen.findByText("0 in 30 days");
+    expect(count.closest("[title]")).toHaveAttribute("title", "Hasn’t watched a pick yet");
+  });
+
+  it("shows a dash for a person who has never had a pick", async () => {
+    getUsers.mockResolvedValue([SARAH]);
 
     renderPage();
 
     expect(await screen.findByText("sarah")).toBeInTheDocument();
-    await waitFor(() => expect(getReport).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByText("0%")).toBeNull());
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/in 30 days/)).toBeNull();
+    expect(screen.getByText(/Picks watched:/)).toBeVisible();
   });
 
-  it("shows a real 0% once the earliest picks are old enough for it to mean something", async () => {
-    getUsers.mockResolvedValue([{ ...SARAH, hit_rate: 0 }]);
-    getReport.mockResolvedValue(report(45));
+  it("labels the state column Status", async () => {
+    getUsers.mockResolvedValue([SARAH]);
 
     renderPage();
 
-    expect(await screen.findByText("sarah")).toBeInTheDocument();
-    expect(await screen.findByText("0%")).toBeInTheDocument();
-  });
-
-  it("never hides a rate somebody has actually earned, however new the install", async () => {
-    getUsers.mockResolvedValue([{ ...SARAH, hit_rate: 0.5 }]);
-    getReport.mockResolvedValue(report(1));
-
-    renderPage();
-
-    expect(await screen.findByText("50%")).toBeInTheDocument();
-    expect(screen.queryByText(/Picks watched \(too early\)/)).not.toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Rebuilding" })).toBeNull();
   });
 
   it("tells the owner where they DO see everyone's rows — but only once they're in the list", async () => {
@@ -492,8 +481,6 @@ describe("UsersPage — the Requests column", () => {
   beforeEach(() => {
     getUsers.mockReset();
     patchUser.mockReset();
-    getReport.mockReset();
-    getReport.mockResolvedValue(report(400));
     getRequestRowSources.mockReset();
   });
 

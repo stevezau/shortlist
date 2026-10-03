@@ -140,7 +140,8 @@ describe("RowsPage", () => {
         last_run_at: null,
         request_tag: "",
         requested_by_tag: "",
-        hit_rate: null,
+        picks_watched_30d: null,
+        last_pick_watched_at: null,
       },
     ]);
     listCollections.mockResolvedValue([SUBSET_ROW]);

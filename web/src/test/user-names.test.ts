@@ -26,7 +26,8 @@ function user(overrides: Partial<User>): User {
     prefs: {},
     history_depth: 0,
     last_run_at: null,
-    hit_rate: null,
+    picks_watched_30d: null,
+    last_pick_watched_at: null,
     preview_titles: [],
     ...overrides,
   };
