@@ -56,6 +56,10 @@ COLLECTION_KEYS = {
     "recency",
     "recent_count",
     "max_seeds",
+    "max_runtime",
+    "min_year",
+    "max_year",
+    "min_rating",
     "cold_start",
     "seed_window",
     # This row's own request floors and Arr target; null on any of them means inherit the global.
