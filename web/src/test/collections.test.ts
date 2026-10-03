@@ -170,6 +170,46 @@ describe("rowOverrides", () => {
     expect(onDefault).not.toContain("AI instructions: own");
   });
 
+  it("badges length, year and rating limits only when set", () => {
+    expect(
+      rowOverrides(
+        collection({ max_runtime: 120, min_year: 1990, max_year: 2010, min_rating: 7 }),
+        LIBRARIES,
+      ),
+    ).toEqual(["Max length 120 min", "Released 1990–2010", "Rating 7+"]);
+    expect(rowOverrides(collection({ min_year: 1990 }), LIBRARIES)).toEqual(["From 1990"]);
+    expect(rowOverrides(collection({ max_year: 2010 }), LIBRARIES)).toEqual(["Up to 2010"]);
+    expect(
+      rowOverrides(
+        collection({ max_runtime: null, min_year: null, max_year: null, min_rating: null }),
+        LIBRARIES,
+      ),
+    ).toEqual([]);
+  });
+
+  it("badges AI instructions only when the row uses AI web search", () => {
+    const own = { ai_instructions: { mode: "own", text: "x" } } as const;
+    const withSearch = rowOverrides(
+      collection({ ...own, candidate_sources: ["llm_web"] }),
+      LIBRARIES,
+      {},
+    );
+    expect(withSearch).toContain("AI instructions: own");
+    const withoutSearch = rowOverrides(
+      collection({ ...own, candidate_sources: ["trakt"] }),
+      LIBRARIES,
+      {},
+    );
+    expect(withoutSearch).not.toContain("AI instructions: own");
+    // No sources of its own: it follows the global set, which decides.
+    expect(
+      rowOverrides(collection(own), LIBRARIES, { "candidates.sources": ["llm_web"] }),
+    ).toContain("AI instructions: own");
+    expect(
+      rowOverrides(collection(own), LIBRARIES, { "candidates.sources": ["tmdb_similar"] }),
+    ).not.toContain("AI instructions: own");
+  });
+
   it("names the libraries a row is pinned to", () => {
     const parts = rowOverrides(collection({ library_keys: ["2"] }), LIBRARIES);
     expect(parts).toContain("Libraries: 4K Movies");

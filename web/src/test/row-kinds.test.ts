@@ -293,6 +293,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "watched_pct",
     "unstarted_only",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
@@ -307,6 +308,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "watched_pct",
     "unstarted_only",
     "recency",
+    "limits",
     "idle_hold_days",
     "requests",
   ],
@@ -320,6 +322,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "watched_pct",
     "unstarted_only",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
@@ -330,6 +333,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "max_seeds",
     "candidate_sources",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
@@ -1274,7 +1278,7 @@ describe("describeKindChange", () => {
         "Clears the request tag “family”.",
         "A shared row never asks for missing titles.",
         "Adds a setting this kind uses: How many people must have watched a title.",
-        "Hides settings this kind doesn't use: How many recent watches to match, When someone hasn't watched enough, Sources, Already-watched titles, Only series they haven't started, Recent releases, Titles refresh every and Hold when they aren't watching. What they're set to is kept, so switching back restores it.",
+        "Hides settings this kind doesn't use: How many recent watches to match, When someone hasn't watched enough, Sources, Already-watched titles, Only series they haven't started, Recent releases, Length, year and rating limits, Titles refresh every and Hold when they aren't watching. What they're set to is kept, so switching back restores it.",
       ]);
     });
 

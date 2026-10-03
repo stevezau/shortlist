@@ -3346,8 +3346,12 @@ export interface components {
             idle_hold_days?: number | null;
             /** Library Keys */
             library_keys?: string[];
+            /** Max Runtime */
+            max_runtime?: number | null;
             /** Max Seeds */
             max_seeds?: number | null;
+            /** Max Year */
+            max_year?: number | null;
             /**
              * Media
              * @description Which library types this row builds in.
@@ -3355,11 +3359,15 @@ export interface components {
              * @enum {string}
              */
             media: "both" | "movie" | "show";
+            /** Min Rating */
+            min_rating?: number | null;
             /**
              * Min Watchers
              * @default 2
              */
             min_watchers: number;
+            /** Min Year */
+            min_year?: number | null;
             /** Name */
             name: string;
             /**
@@ -3576,16 +3584,24 @@ export interface components {
             last_run_id: number | null;
             /** Library Keys */
             library_keys: string[];
+            /** Max Runtime */
+            max_runtime: number | null;
             /** Max Seeds */
             max_seeds: number | null;
+            /** Max Year */
+            max_year: number | null;
             /**
              * Media
              * @description Which library types this row builds in.
              * @enum {string}
              */
             media: "both" | "movie" | "show";
+            /** Min Rating */
+            min_rating: number | null;
             /** Min Watchers */
             min_watchers: number;
+            /** Min Year */
+            min_year: number | null;
             /** Name */
             name: string;
             /** Name Template */

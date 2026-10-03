@@ -8,6 +8,7 @@ import {
 } from "@/components/recent-count-field";
 import { InheritableField } from "@/components/rows/inheritable-field";
 import { RowAiInstructionsField } from "@/components/rows/row-ai-instructions-field";
+import { RowLimitsFields } from "@/components/rows/row-limits-fields";
 import { RowMaxSeedsSetting } from "@/components/rows/row-max-seeds-setting";
 import {
   effectiveSources,
@@ -215,6 +216,7 @@ export function RowContentsFields({
         {recentCount}
         {aiInstructions}
         {recency}
+        {shown.has("limits") && <RowLimitsFields input={input} set={set} />}
       </section>
     );
   }
@@ -228,6 +230,7 @@ export function RowContentsFields({
       {/* Defensive: every kind that shows this also shows the cap it sits under. */}
       {!shown.has("watched_pct") && unstarted}
       {recency}
+      {shown.has("limits") && <RowLimitsFields input={input} set={set} />}
     </>
   );
 }

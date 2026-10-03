@@ -3,6 +3,7 @@ import {
   recencyBadgeLabel,
   watchedBadgeLabel,
 } from "@/lib/constants";
+import { effectiveSources } from "@/components/rows/row-sources-field";
 import { placementLabel } from "@/lib/placement";
 import { showDaysSummary } from "@/lib/show-days";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
@@ -50,6 +51,10 @@ export function blankInput(): CollectionInput {
     recency: null,
     recent_count: null,
     max_seeds: null,
+    max_runtime: null,
+    min_year: null,
+    max_year: null,
+    min_rating: null,
     cold_start: null,
     // Every request setting starts null: a new row inherits Settings > Requests entirely, and only
     // differs once someone says so. Same contract as watched_pct / recency / cold_start above.
@@ -121,6 +126,10 @@ export function toInput(collection: Collection): CollectionInput {
     recency: collection.recency ?? null,
     recent_count: collection.recent_count ?? null,
     max_seeds: collection.max_seeds ?? null,
+    max_runtime: collection.max_runtime ?? null,
+    min_year: collection.min_year ?? null,
+    max_year: collection.max_year ?? null,
+    min_rating: collection.min_rating ?? null,
     cold_start: collection.cold_start ?? null,
     req_min_rating: collection.req_min_rating ?? null,
     req_min_votes: collection.req_min_votes ?? null,
@@ -341,8 +350,26 @@ export function rowOverrides(
     );
   }
 
-  if (collection.ai_instructions?.mode === "add") parts.push("AI instructions: adds to the default");
-  if (collection.ai_instructions?.mode === "own") parts.push("AI instructions: own");
+  // The instructions only reach AI web search, so a row that doesn't use it has nothing to badge.
+  // Before settings load the global set is unknown, so a row with no sources of its own keeps the badge.
+  const usesAiWebSearch =
+    collection.candidate_sources.length > 0 || settings
+      ? effectiveSources(collection.candidate_sources, settings).includes("llm_web")
+      : true;
+  if (usesAiWebSearch && collection.ai_instructions?.mode === "add") {
+    parts.push("AI instructions: adds to the default");
+  }
+  if (usesAiWebSearch && collection.ai_instructions?.mode === "own") {
+    parts.push("AI instructions: own");
+  }
+
+  // null = no limit, so only a limit that is set gets a badge.
+  if (collection.max_runtime != null) parts.push(`Max length ${collection.max_runtime} min`);
+  const { min_year: fromYear, max_year: toYear } = collection;
+  if (fromYear != null && toYear != null) parts.push(`Released ${fromYear}–${toYear}`);
+  else if (fromYear != null) parts.push(`From ${fromYear}`);
+  else if (toYear != null) parts.push(`Up to ${toYear}`);
+  if (collection.min_rating != null) parts.push(`Rating ${collection.min_rating}+`);
 
   // null inherits the global cold-start behaviour, so only badge a row that overrides it — and only
   // "skip" is worth a badge: it is the one that makes a row silently absent for someone.
