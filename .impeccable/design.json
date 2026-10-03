@@ -1,0 +1,592 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-03T08:48:41+00:00",
+  "title": "Design System: Shortlist",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Run-Now Amber",
+        "canonical": "hsl(43 92% 55%)",
+        "hex": "#f6ba23",
+        "tonalRamp": [
+          "hsl(43 92% 15%)",
+          "hsl(43 92% 26%)",
+          "hsl(43 92% 38%)",
+          "hsl(43 92% 50%)",
+          "hsl(43 92% 62%)",
+          "hsl(43 92% 73%)",
+          "hsl(43 92% 84%)",
+          "hsl(43 92% 95%)"
+        ]
+      },
+      "primary-foreground": {
+        "role": "primary",
+        "displayName": "Amber Ink",
+        "canonical": "hsl(30 90% 8%)",
+        "hex": "#271402",
+        "tonalRamp": [
+          "hsl(30 90% 15%)",
+          "hsl(30 90% 26%)",
+          "hsl(30 90% 38%)",
+          "hsl(30 90% 50%)",
+          "hsl(30 90% 62%)",
+          "hsl(30 90% 73%)",
+          "hsl(30 90% 84%)",
+          "hsl(30 90% 95%)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Amber Wash",
+        "canonical": "hsl(43 55% 15%)",
+        "hex": "#3b2f11",
+        "tonalRamp": [
+          "hsl(43 55% 15%)",
+          "hsl(43 55% 26%)",
+          "hsl(43 55% 38%)",
+          "hsl(43 55% 50%)",
+          "hsl(43 55% 62%)",
+          "hsl(43 55% 73%)",
+          "hsl(43 55% 84%)",
+          "hsl(43 55% 95%)"
+        ]
+      },
+      "accent-foreground": {
+        "role": "primary",
+        "displayName": "Amber Wash Text",
+        "canonical": "hsl(43 92% 72%)",
+        "hex": "#f9d476",
+        "tonalRamp": [
+          "hsl(43 92% 15%)",
+          "hsl(43 92% 26%)",
+          "hsl(43 92% 38%)",
+          "hsl(43 92% 50%)",
+          "hsl(43 92% 62%)",
+          "hsl(43 92% 73%)",
+          "hsl(43 92% 84%)",
+          "hsl(43 92% 95%)"
+        ]
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Canvas",
+        "canonical": "hsl(240 8% 6%)",
+        "hex": "#0e0e11",
+        "tonalRamp": [
+          "hsl(240 8% 15%)",
+          "hsl(240 8% 26%)",
+          "hsl(240 8% 38%)",
+          "hsl(240 8% 50%)",
+          "hsl(240 8% 62%)",
+          "hsl(240 8% 73%)",
+          "hsl(240 8% 84%)",
+          "hsl(240 8% 95%)"
+        ]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Card",
+        "canonical": "hsl(240 6% 9%)",
+        "hex": "#161618",
+        "tonalRamp": [
+          "hsl(240 6% 15%)",
+          "hsl(240 6% 26%)",
+          "hsl(240 6% 38%)",
+          "hsl(240 6% 50%)",
+          "hsl(240 6% 62%)",
+          "hsl(240 6% 73%)",
+          "hsl(240 6% 84%)",
+          "hsl(240 6% 95%)"
+        ]
+      },
+      "elevated": {
+        "role": "neutral",
+        "displayName": "Elevated",
+        "canonical": "hsl(240 6% 12%)",
+        "hex": "#1d1d20",
+        "tonalRamp": [
+          "hsl(240 6% 15%)",
+          "hsl(240 6% 26%)",
+          "hsl(240 6% 38%)",
+          "hsl(240 6% 50%)",
+          "hsl(240 6% 62%)",
+          "hsl(240 6% 73%)",
+          "hsl(240 6% 84%)",
+          "hsl(240 6% 95%)"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised",
+        "canonical": "hsl(240 6% 15%)",
+        "hex": "#242429",
+        "tonalRamp": [
+          "hsl(240 6% 15%)",
+          "hsl(240 6% 26%)",
+          "hsl(240 6% 38%)",
+          "hsl(240 6% 50%)",
+          "hsl(240 6% 62%)",
+          "hsl(240 6% 73%)",
+          "hsl(240 6% 84%)",
+          "hsl(240 6% 95%)"
+        ]
+      },
+      "secondary": {
+        "role": "neutral",
+        "displayName": "Secondary",
+        "canonical": "hsl(240 5% 15%)",
+        "hex": "#242428",
+        "tonalRamp": [
+          "hsl(240 5% 15%)",
+          "hsl(240 5% 26%)",
+          "hsl(240 5% 38%)",
+          "hsl(240 5% 50%)",
+          "hsl(240 5% 62%)",
+          "hsl(240 5% 73%)",
+          "hsl(240 5% 84%)",
+          "hsl(240 5% 95%)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted",
+        "canonical": "hsl(240 5% 13%)",
+        "hex": "#1f1f23",
+        "tonalRamp": [
+          "hsl(240 5% 15%)",
+          "hsl(240 5% 26%)",
+          "hsl(240 5% 38%)",
+          "hsl(240 5% 50%)",
+          "hsl(240 5% 62%)",
+          "hsl(240 5% 73%)",
+          "hsl(240 5% 84%)",
+          "hsl(240 5% 95%)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "hsl(240 5% 17%)",
+        "hex": "#29292e",
+        "tonalRamp": [
+          "hsl(240 5% 15%)",
+          "hsl(240 5% 26%)",
+          "hsl(240 5% 38%)",
+          "hsl(240 5% 50%)",
+          "hsl(240 5% 62%)",
+          "hsl(240 5% 73%)",
+          "hsl(240 5% 84%)",
+          "hsl(240 5% 95%)"
+        ]
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "Control Edge",
+        "canonical": "hsl(240 5% 24%)",
+        "hex": "#3a3a40",
+        "tonalRamp": [
+          "hsl(240 5% 15%)",
+          "hsl(240 5% 26%)",
+          "hsl(240 5% 38%)",
+          "hsl(240 5% 50%)",
+          "hsl(240 5% 62%)",
+          "hsl(240 5% 73%)",
+          "hsl(240 5% 84%)",
+          "hsl(240 5% 95%)"
+        ]
+      },
+      "input": {
+        "role": "neutral",
+        "displayName": "Input Edge",
+        "canonical": "hsl(240 5% 19%)",
+        "hex": "#2e2e33",
+        "tonalRamp": [
+          "hsl(240 5% 15%)",
+          "hsl(240 5% 26%)",
+          "hsl(240 5% 38%)",
+          "hsl(240 5% 50%)",
+          "hsl(240 5% 62%)",
+          "hsl(240 5% 73%)",
+          "hsl(240 5% 84%)",
+          "hsl(240 5% 95%)"
+        ]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Paper Text",
+        "canonical": "hsl(40 12% 94%)",
+        "hex": "#f2f0ee",
+        "tonalRamp": [
+          "hsl(40 12% 15%)",
+          "hsl(40 12% 26%)",
+          "hsl(40 12% 38%)",
+          "hsl(40 12% 50%)",
+          "hsl(40 12% 62%)",
+          "hsl(40 12% 73%)",
+          "hsl(40 12% 84%)",
+          "hsl(40 12% 95%)"
+        ]
+      },
+      "muted-foreground": {
+        "role": "neutral",
+        "displayName": "Quiet Text",
+        "canonical": "hsl(40 5% 64%)",
+        "hex": "#a8a59f",
+        "tonalRamp": [
+          "hsl(40 5% 15%)",
+          "hsl(40 5% 26%)",
+          "hsl(40 5% 38%)",
+          "hsl(40 5% 50%)",
+          "hsl(40 5% 62%)",
+          "hsl(40 5% 73%)",
+          "hsl(40 5% 84%)",
+          "hsl(40 5% 95%)"
+        ]
+      },
+      "faint-foreground": {
+        "role": "neutral",
+        "displayName": "Faint Text",
+        "canonical": "hsl(40 4% 52%)",
+        "hex": "#898680",
+        "tonalRamp": [
+          "hsl(40 4% 15%)",
+          "hsl(40 4% 26%)",
+          "hsl(40 4% 38%)",
+          "hsl(40 4% 50%)",
+          "hsl(40 4% 62%)",
+          "hsl(40 4% 73%)",
+          "hsl(40 4% 84%)",
+          "hsl(40 4% 95%)"
+        ]
+      },
+      "success": {
+        "role": "status",
+        "displayName": "OK Green",
+        "canonical": "hsl(152 55% 45%)",
+        "hex": "#34b277",
+        "tonalRamp": [
+          "hsl(152 55% 15%)",
+          "hsl(152 55% 26%)",
+          "hsl(152 55% 38%)",
+          "hsl(152 55% 50%)",
+          "hsl(152 55% 62%)",
+          "hsl(152 55% 73%)",
+          "hsl(152 55% 84%)",
+          "hsl(152 55% 95%)"
+        ]
+      },
+      "warning": {
+        "role": "status",
+        "displayName": "Warning Amber",
+        "canonical": "hsl(38 92% 52%)",
+        "hex": "#f5a314",
+        "tonalRamp": [
+          "hsl(38 92% 15%)",
+          "hsl(38 92% 26%)",
+          "hsl(38 92% 38%)",
+          "hsl(38 92% 50%)",
+          "hsl(38 92% 62%)",
+          "hsl(38 92% 73%)",
+          "hsl(38 92% 84%)",
+          "hsl(38 92% 95%)"
+        ]
+      },
+      "destructive": {
+        "role": "status",
+        "displayName": "Error Red",
+        "canonical": "hsl(0 72% 51%)",
+        "hex": "#dc2828",
+        "tonalRamp": [
+          "hsl(0 72% 15%)",
+          "hsl(0 72% 26%)",
+          "hsl(0 72% 38%)",
+          "hsl(0 72% 50%)",
+          "hsl(0 72% 62%)",
+          "hsl(0 72% 73%)",
+          "hsl(0 72% 84%)",
+          "hsl(0 72% 95%)"
+        ]
+      },
+      "destructive-text": {
+        "role": "status",
+        "displayName": "Error Red for words",
+        "canonical": "hsl(0 72% 63%)",
+        "hex": "#e55d5d",
+        "tonalRamp": [
+          "hsl(0 72% 15%)",
+          "hsl(0 72% 26%)",
+          "hsl(0 72% 38%)",
+          "hsl(0 72% 50%)",
+          "hsl(0 72% 62%)",
+          "hsl(0 72% 73%)",
+          "hsl(0 72% 84%)",
+          "hsl(0 72% 95%)"
+        ]
+      },
+      "plex": {
+        "role": "status",
+        "displayName": "Plex Gold",
+        "canonical": "hsl(40 96% 47%)",
+        "hex": "#eb9e05",
+        "tonalRamp": [
+          "hsl(40 96% 15%)",
+          "hsl(40 96% 26%)",
+          "hsl(40 96% 38%)",
+          "hsl(40 96% 50%)",
+          "hsl(40 96% 62%)",
+          "hsl(40 96% 73%)",
+          "hsl(40 96% 84%)",
+          "hsl(40 96% 95%)"
+        ]
+      },
+      "support": {
+        "role": "status",
+        "displayName": "Coffee Pink",
+        "canonical": "hsl(330 70% 68%)",
+        "hex": "#e774ad",
+        "tonalRamp": [
+          "hsl(330 70% 15%)",
+          "hsl(330 70% 26%)",
+          "hsl(330 70% 38%)",
+          "hsl(330 70% 50%)",
+          "hsl(330 70% 62%)",
+          "hsl(330 70% 73%)",
+          "hsl(330 70% 84%)",
+          "hsl(330 70% 95%)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page title in the page header, once per screen."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Status-strip values and panel titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Almost all copy, controls and table cells."
+      },
+      "label": {
+        "displayName": "Fact label",
+        "purpose": "Uppercase label naming a value directly beneath it in a status cell or stat tile; not a section heading."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Share-filter strings, cron, log lines, code and keys only; ligatures off."
+      }
+    },
+    "shadows": [
+      {
+        "name": "elevated",
+        "value": "0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 8px 24px -12px hsl(240 40% 2% / 0.7)",
+        "purpose": "Every card and the status strip; the one page-level depth."
+      },
+      {
+        "name": "selected-x",
+        "value": "inset 0 -2px 0 0 hsl(var(--primary))",
+        "purpose": "Selected edge on horizontal controls (segments, chips)."
+      },
+      {
+        "name": "selected-y",
+        "value": "inset 2px 0 0 0 hsl(var(--primary))",
+        "purpose": "Selected edge on vertical lists (nav rail, sub-nav, person list)."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring))",
+        "purpose": "Visible :focus-visible ring on every interactive element."
+      }
+    ],
+    "motion": [
+      {
+        "name": "fade-in",
+        "value": "0.3s ease-out (opacity 0 to 1, translateY 6px to 0)",
+        "purpose": "Page entry."
+      },
+      {
+        "name": "slide-in-left",
+        "value": "0.2s ease-out",
+        "purpose": "Mobile nav drawer."
+      },
+      {
+        "name": "progress-indeterminate",
+        "value": "1.2s ease-in-out infinite",
+        "purpose": "Opaque in-flight call."
+      },
+      {
+        "name": "transition-colors",
+        "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Hover and state changes; colour only."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "all animation and transition durations 0.01ms",
+        "purpose": "prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px",
+        "note": "rail replaces the top bar"
+      },
+      {
+        "name": "lg",
+        "value": "1024px"
+      },
+      {
+        "name": "content-max",
+        "value": "1800px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one filled-amber action on a screen, e.g. Run now.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><polygon points=\"6 3 20 12 6 21 6 3\"/></svg>Run now</button>",
+      "css": ".ds-btn-primary{font-family:\"Source Sans 3 Variable\",\"Segoe UI\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:8px 16px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s;border:none;background:hsl(var(--primary));color:hsl(var(--primary-foreground));}.ds-btn-primary:hover{background:hsl(var(--primary)/.9);}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring));}"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Every action that is not the screen's one primary; hover stays neutral.",
+      "html": "<button class=\"ds-btn-outline\">Dry run</button>",
+      "css": ".ds-btn-outline{font-family:\"Source Sans 3 Variable\",\"Segoe UI\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:8px 16px;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;transition:background-color .15s,color .15s;border:1px solid hsl(var(--border-strong));background:hsl(var(--elevated));color:hsl(var(--foreground));}.ds-btn-outline:hover{background:hsl(var(--raised));}.ds-btn-outline:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring));}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "chip",
+      "refersTo": "option-selected",
+      "description": "Horizontal options; selected is a raised neutral surface with a 2px amber bottom edge.",
+      "html": "<div class=\"ds-seg\"><button class=\"ds-seg-opt\">7 days</button><button class=\"ds-seg-opt\" aria-pressed=\"true\">30 days</button><button class=\"ds-seg-opt\">90 days</button></div>",
+      "css": ".ds-seg{font-family:\"Source Sans 3 Variable\",\"Segoe UI\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:flex;gap:8px;}.ds-seg-opt{font:inherit;font-size:12px;font-weight:500;height:32px;padding:0 12px;border-radius:8px;border:1px solid hsl(var(--border-strong));background:hsl(var(--elevated));color:hsl(var(--muted-foreground));cursor:pointer;transition:background-color .15s,color .15s;}.ds-seg-opt:hover{background:hsl(var(--raised));color:hsl(var(--foreground));}.ds-seg-opt[aria-pressed=true]{border-color:hsl(var(--border));background:hsl(var(--raised));color:hsl(var(--foreground));box-shadow:inset 0 -2px 0 0 hsl(var(--primary));}.ds-seg-opt:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring));}"
+    },
+    {
+      "name": "Nav Rail",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Vertical nav; active item is raised neutral with a 2px amber left edge.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item\" aria-current=\"page\" href=\"#\">Dashboard</a><a class=\"ds-nav-item\" href=\"#\">Rows</a><a class=\"ds-nav-item\" href=\"#\">Privacy<span class=\"ds-nav-dot\"></span></a></nav>",
+      "css": ".ds-nav{font-family:\"Source Sans 3 Variable\",\"Segoe UI\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:flex;flex-direction:column;gap:2px;width:216px;padding:12px;background:hsl(var(--card)/.4);}.ds-nav-item{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;border:1px solid transparent;font-size:14px;font-weight:500;color:hsl(var(--muted-foreground));text-decoration:none;transition:background-color .15s,color .15s;}.ds-nav-item:hover{background:hsl(var(--elevated));color:hsl(var(--foreground));}.ds-nav-item[aria-current=page]{border-color:hsl(var(--border));background:hsl(var(--raised));color:hsl(var(--foreground));box-shadow:inset 2px 0 0 0 hsl(var(--primary));}.ds-nav-item:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--background)),0 0 0 4px hsl(var(--ring));}.ds-nav-dot{margin-left:auto;width:8px;height:8px;border-radius:9999px;background:hsl(var(--warning));}"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "The one surface depth on the canvas; hairlines divide its content.",
+      "html": "<section class=\"ds-card\"><h3 class=\"ds-card-title\">By row</h3><p class=\"ds-card-sub\">Most watched first · the last 30 days</p><div class=\"ds-card-line\"><span>Movies Picked for You</span><span>12 watched · 25 delivered</span></div></section>",
+      "css": ".ds-card{font-family:\"Source Sans 3 Variable\",\"Segoe UI\",system-ui,sans-serif;font-variant-numeric:tabular-nums;border:1px solid hsl(var(--border));border-radius:14px;background:hsl(var(--card));color:hsl(var(--foreground));padding:24px;box-shadow:0 1px 0 0 hsl(0 0% 100%/.04) inset,0 8px 24px -12px hsl(240 40% 2%/.7);}.ds-card-title{margin:0;font-size:16px;font-weight:600;letter-spacing:-.025em;}.ds-card-sub{margin:6px 0 0;font-size:14px;color:hsl(var(--muted-foreground));}.ds-card-line{display:flex;justify-content:space-between;margin-top:16px;padding-top:12px;border-top:1px solid hsl(var(--border));font-size:14px;}"
+    },
+    {
+      "name": "Status Strip",
+      "kind": "custom",
+      "refersTo": "status-cell",
+      "description": "Facts about the last run in one panel, hairlines through a 1px grid gap.",
+      "html": "<section class=\"ds-strip\" aria-label=\"Status\"><div class=\"ds-strip-row\"><div class=\"ds-cell\"><div class=\"ds-cell-label\"><span class=\"ds-dot ds-ok\"></span>Last run</div><div class=\"ds-cell-value\">OK</div><div class=\"ds-cell-sub\">Today 03:31 · 4 people · 2m 8s</div></div><div class=\"ds-cell\"><div class=\"ds-cell-label\">Next run</div><div class=\"ds-cell-value\">Tomorrow 03:30</div><div class=\"ds-cell-sub\">in 8h 25m</div></div><div class=\"ds-cell\"><div class=\"ds-cell-label\"><span class=\"ds-dot ds-warn\"></span>Privacy</div><div class=\"ds-cell-value\">3 of 4 hide every row</div><div class=\"ds-cell-sub\">1 account cannot be hidden</div></div><div class=\"ds-cell\"><div class=\"ds-cell-label\"><span class=\"ds-dot ds-ok\"></span>Plex</div><div class=\"ds-cell-value\">Connected</div><div class=\"ds-cell-sub\">Read just now</div></div></div></section>",
+      "css": ".ds-strip{font-family:\"Source Sans 3 Variable\",\"Segoe UI\",system-ui,sans-serif;font-variant-numeric:tabular-nums;overflow:hidden;border:1px solid hsl(var(--border));border-radius:10px;background:hsl(var(--card));color:hsl(var(--foreground));box-shadow:0 1px 0 0 hsl(0 0% 100%/.04) inset,0 8px 24px -12px hsl(240 40% 2%/.7);}.ds-strip-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:hsl(var(--border));}.ds-cell{background:hsl(var(--card));padding:12px 16px;min-width:0;}.ds-cell-label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:hsl(var(--faint-foreground));}.ds-dot{width:8px;height:8px;border-radius:9999px;}.ds-ok{background:hsl(var(--success));}.ds-warn{background:hsl(var(--warning));}.ds-cell-value{margin-top:4px;font-size:18px;font-weight:600;line-height:1.25;}.ds-cell-sub{margin-top:2px;font-size:13px;color:hsl(var(--muted-foreground));}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "36px field, transparent over the card, amber focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search people\" />",
+      "css": ".ds-input{font-family:\"Source Sans 3 Variable\",\"Segoe UI\",system-ui,sans-serif;font-variant-numeric:tabular-nums;height:36px;width:260px;padding:4px 12px;border-radius:8px;border:1px solid hsl(var(--input));background:transparent;color:hsl(var(--foreground));font-size:14px;transition:box-shadow .15s;}.ds-input::placeholder{color:hsl(var(--muted-foreground));}.ds-input:focus-visible{outline:none;box-shadow:0 0 0 2px hsl(var(--ring));}"
+    },
+    {
+      "name": "Badges",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Neutral by default; status tints only for real state.",
+      "html": "<div class=\"ds-badges\"><span class=\"ds-badge\">Shared</span><span class=\"ds-badge ds-badge-ok\">Hidden</span><span class=\"ds-badge ds-badge-warn\">1 warning</span><span class=\"ds-badge ds-badge-accent\">New</span></div>",
+      "css": ".ds-badges{font-family:\"Source Sans 3 Variable\",\"Segoe UI\",system-ui,sans-serif;font-variant-numeric:tabular-nums;display:flex;gap:8px;}.ds-badge{display:inline-flex;align-items:center;gap:4px;border-radius:9999px;border:1px solid hsl(var(--border-strong));background:hsl(var(--elevated));color:hsl(var(--foreground));padding:2px 10px;font-size:12px;font-weight:600;}.ds-badge-ok{border-color:transparent;background:hsl(var(--success)/.15);color:hsl(var(--success));}.ds-badge-warn{border-color:transparent;background:hsl(var(--warning)/.15);color:hsl(var(--warning));}.ds-badge-accent{border-color:hsl(var(--primary)/.4);background:hsl(var(--primary)/.1);color:hsl(var(--accent-foreground));}"
+    },
+    {
+      "name": "Filter String",
+      "kind": "custom",
+      "refersTo": "mono",
+      "description": "Mono only for copyable strings, ligatures off.",
+      "html": "<code class=\"ds-code\">label!=shortlist_sarah,shortlist_mike</code>",
+      "css": ".ds-code{font-family:\"JetBrains Mono\",ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-variant-ligatures:none;background:hsl(var(--muted));color:hsl(var(--foreground));padding:2px 6px;border-radius:6px;border:1px solid hsl(var(--border));}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Night Shift Logbook",
+    "overview": "Shortlist is an operator's console read a few minutes at a time, usually the morning after a nightly run. The world is a near-black, faintly cool canvas with warm off-white text, and one amber voice. Every screen opens on the run and its privacy state, stated as a strip of plain facts, and everything below it is quieter. Density is moderate: 14px body text, tabular numerals everywhere, hairlines rather than boxes inside a panel.\n\nAmber means \"do this\". It is not decoration, not \"selected\", and not \"the pointer is here\". Choice is shown by lifting a neutral surface one step and drawing a 2px amber edge on it. Depth is a single card layer on the canvas; the content inside a card is divided by 1px hairlines, never by another card. Colour beyond amber is status only: green OK, amber-orange warning, red error, and one pink reserved for the coffee link because it carries no status meaning.\n\nUser-authored emoji in row names (the literal Plex collection titles, such as \"✨ Movies Picked for You\") are data and render as typed. They are never used as chrome.",
+    "keyCharacteristics": [
+      "Dark only; warm text on cool near-black, contrast measured to AA on every surface.",
+      "One filled-amber control per screen.",
+      "Selected = raised neutral surface + 2px amber edge.",
+      "One card depth, hairline dividers inside.",
+      "Source Sans 3 with tabular numerals; mono only for code, cron, logs and filter strings, ligatures off.",
+      "One page header shape on every screen."
+    ],
+    "rules": [
+      {
+        "name": "The One Amber Rule",
+        "body": "Exactly one filled-amber control per screen. A second action on the same screen is an outline button. Hover on neutral controls stays neutral.",
+        "section": "colors"
+      },
+      {
+        "name": "The Status Is Not Decoration Rule",
+        "body": "Green, warning amber and red appear only when they report a real state. Nothing is coloured to look lively.",
+        "section": "colors"
+      },
+      {
+        "name": "The Words Get Their Own Red Rule",
+        "body": "Red text uses `destructive-text`; `destructive` is for fills under white text.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Numerals are tabular everywhere (`font-variant-numeric: tabular-nums` on `body`). Never switch a figure column back to proportional.",
+        "section": "typography"
+      },
+      {
+        "name": "The Literal Mono Rule",
+        "body": "Mono is for text a person might copy into another system. Ligatures are off on every mono element, because JetBrains Mono would draw `!=` as \"≠\" and a filter like `label!=shortlist_sarah` would no longer read as what Plex stores.",
+        "section": "typography"
+      },
+      {
+        "name": "The Run-First Rule",
+        "body": "A top-level screen opens on facts about the last run before anything else: the status strip comes first, any privacy callout second, everything else after.",
+        "section": "layout"
+      },
+      {
+        "name": "The One Card Depth Rule",
+        "body": "A card never sits inside a card. Content inside a panel is divided by 1px hairlines in the border colour; a status strip draws its dividers as the border colour showing through a 1px grid gap, so they follow the cells as the grid wraps.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** give each screen exactly one filled-amber control and make every other action an outline button.",
+      "**Do** mark every selection with the Raised surface and a 2px amber edge: bottom edge for horizontal controls, left edge for vertical lists.",
+      "**Do** open every top-level screen with the page header and then facts about the last run.",
+      "**Do** divide content inside a panel with 1px hairlines in the border colour.",
+      "**Do** keep numerals tabular and set copyable strings (filters, cron, logs, keys) in JetBrains Mono with ligatures off.",
+      "**Do** use `destructive-text` for red words and keep Faint Text on surfaces no lighter than Elevated.",
+      "**Do** give small controls the invisible 44px coarse-pointer hit area."
+    ],
+    "donts": [
+      "**Don't** use amber for selected states, hover, rank numbers or decoration.",
+      "**Don't** put a card inside a card, or give each fact in a strip its own card.",
+      "**Don't** add an icon tile to a page header.",
+      "**Don't** use mono for prose, labels or numbers that are not code.",
+      "**Don't** colour anything green, warning amber or red unless it reports that state.",
+      "**Don't** use emoji as interface chrome; the only emoji on screen are the ones in user-authored row names.",
+      "**Don't** add a light theme without a re-measured palette; every contrast figure here assumes the dark surfaces."
+    ]
+  }
+}
