@@ -25,12 +25,14 @@ account only if it can actually see other people's rows.
 ```python
 class RunPrivacyOut(PassthroughModel):
     """What this run measured about who can see whose rows. Reporting only."""
+
     #: Accounts Plex refuses hide rules for that can nonetheless see other people's rows (stats.unhideable_rows keys with a non-empty list).
     can_see_others: list[str]
     #: Accounts whose share filter Plex itself cannot read (stats.unreadable_filters keys).
     unreadable_filters: list[str]
     #: Accounts whose filter Shortlist wrote and Plex is not applying (stats.filters_not_enforced keys); [] when that check did not run.
     filters_not_enforced: list[str]
+
 
 # RunSummaryOut gains:
 privacy: RunPrivacyOut | None  # None = this run did not measure privacy (absent stats.unhideable_rows)
