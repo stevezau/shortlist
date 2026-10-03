@@ -6,8 +6,23 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **A "Your requests" row.** Choose _Your requests_ as a row's kind and each person gets a private row of
+  the titles they asked for in Overseerr (or Jellyseerr), or that carry their requester tag in Radarr or
+  Sonarr, once the title is on Plex and until they have watched it. Newest arrival first, no AI, no
+  padding; a person with nothing ready has no row. The Users page gains a **Requests** column saying
+  whether each person is linked to an Overseerr account, and the row editor shows where requests are
+  read from and whether Overseerr's Tag Requests is on. (#127)
+
 ### Changed
 
+- **Picking a template is a page of its own.** The template picker shows each row kind with what it
+  holds and who it is for, instead of a drop-down.
+- **The web interface has one consistent layout** across every page, with navigation that works on a
+  phone and a row editor whose sections you can jump to.
+- **The Users page has a Status column** (Active, Paused, Off or Restricted) with search and filters,
+  and shows how many different picks each person watched in the last 30 days.
 - **Failed web searches say how long they took, and an unreadable AI reply is kept.** The log now names
   the attempt that failed and how long it ran before failing. When the AI's reply to a web search could
   not be read as a list of titles, the whole reply is saved in that person's run details so it can be
@@ -35,6 +50,8 @@ All notable changes to this project are documented here. This project follows
 - **A half-written backup is never offered as a restore point.** A backup stopped part-way through, for
   example by a container stop, is now discarded instead of listed.
 - **A job that succeeded on a retry no longer shows its earlier error.**
+- **A Plex server that can't be reached is explained in plain words** instead of showing the Python
+  error. (#139)
 - **The run log no longer says "existing rows are left as they are" for a person whose rows that run
   removed.** It says how many rows were removed.
 

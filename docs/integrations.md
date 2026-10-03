@@ -56,6 +56,10 @@ When a row wants something the server doesn't have, Shortlist can ask for it. Pi
 Overseerr and Jellyseerr are the same integration; Jellyseerr is a fork and speaks the same API.
 Use one route or the other, not both. [Set it up →](/guides/requests/)
 
+Overseerr is also read the other way round: a **Your requests** row shows each person the titles
+they asked for in Overseerr (or that carry their requester tag in Radarr/Sonarr) once they're on Plex,
+until they've watched them. [How the row works →](/guides/rows/#your-requests-rows)
+
 ## Everything else
 
 | Service       | What it does                                                                    |

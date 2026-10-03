@@ -56,7 +56,13 @@ them as restored.
   llama.cpp, LM Studio, vLLM, LocalAI).
 - Every pick is verified to exist in the user's library before delivery — titles are never invented.
 - Every pick carries a reason: "Because you watched X".
-- Optional integrations: Tautulli, Radarr, Sonarr, Trakt, MDBList, Exa.
+- Row kinds: Picked for You, Because you watched, Watch it again, Popular on this server, and Seasonal.
+  A seasonal row follows the calendar (Valentine's Day, Halloween, Christmas), is ranked for each
+  person, and is hidden between seasons.
+- A "Your requests" row (development preview, `:dev` image): the titles a person asked for in
+  Overseerr/Jellyseerr, or that carry their requester tag in Radarr/Sonarr, once they are on Plex and
+  until they have watched them. No AI, no padding; a person with nothing ready has no row.
+- Optional integrations: Tautulli, Radarr, Sonarr, Overseerr/Jellyseerr, Trakt, MDBList, Exa.
 - Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
 - Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
   label-based share filters.
@@ -2562,6 +2568,10 @@ When a row wants something the server doesn't have, Shortlist can ask for it. Pi
 
 Overseerr and Jellyseerr are the same integration; Jellyseerr is a fork and speaks the same API.
 Use one route or the other, not both. [Set it up →](/guides/requests/)
+
+Overseerr is also read the other way round: a **Your requests** row shows each person the titles
+they asked for in Overseerr (or that carry their requester tag in Radarr/Sonarr) once they're on Plex,
+until they've watched them. [How the row works →](/guides/rows/#your-requests-rows)
 
 ## Everything else
 

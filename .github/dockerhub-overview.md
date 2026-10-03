@@ -91,7 +91,13 @@ Multi-arch: `linux/amd64` and `linux/arm64`.
 - **Every pick explains itself** — "Because you watched _Arrival_".
 - **Multiple rows per person, plus shared rows**, each with its own sources, size, libraries,
   refresh cadence and audience.
-- **Radarr/Sonarr requests (optional)** when a strong pick isn't in your library yet.
+- **Seasonal rows** — one row that follows the calendar: Halloween films and horror in October,
+  Christmas films in December, romance for Valentine's, ranked for each person and hidden between
+  seasons.
+- **Radarr/Sonarr or Overseerr requests (optional)** when a strong pick isn't in your library yet.
+- **A "Your requests" row** (`dev` tag) — what each person asked for in Overseerr, or tagged with
+  their name in Radarr/Sonarr, once it's on Plex and until they've watched it. No AI; a person with
+  nothing ready simply has no row.
 - **Kometa-friendly** — never touches a collection it didn't create.
 - **Provable uninstall** — share filters are snapshotted before the first change and restored
   exactly.
