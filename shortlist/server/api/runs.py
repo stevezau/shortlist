@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -31,6 +33,39 @@ class RunRequest(BaseModel):
     dry_run: bool = False
 
 
+def _sorted_names(names: Iterable[str]) -> list[str]:
+    return sorted(names, key=str.casefold)
+
+
+def _measured_names(stats: dict, key: str) -> list[str] | None:
+    """The sorted names under `stats[key]`, or None when the run did not record that key at all."""
+    found = stats.get(key)
+    return None if found is None else _sorted_names(found)
+
+
+def _run_privacy(run: Run) -> dict | None:
+    """The privacy facts a run persisted, or None when it never reached the point of measuring them.
+
+    `run_persistence` writes `unhideable_rows` only when the run actually measured, so its absence
+    means "not measured" — which must never read as an empty, all-clear finding. A dry run reaches
+    the privacy loop and records the key, but it built no rows, so its finding is no all-clear either.
+    """
+    stats = run.stats or {}
+    unhideable = stats.get("unhideable_rows")
+    if unhideable is None or run.dry_run:
+        return None
+    return {
+        # The engine records an account only when it sees somebody else's rows, but an empty list
+        # is not a finding whoever wrote it.
+        "can_see_others": _sorted_names(name for name, keys in unhideable.items() if keys),
+        # Each of these has its own measured flag: an absent key is "not checked", never [] — runs
+        # recorded before `unreadable_filters` existed, and runs whose enforcement check could not
+        # vouch for every account type (`filters_enforcement_measured`).
+        "unreadable_filters": _measured_names(stats, "unreadable_filters"),
+        "filters_not_enforced": _measured_names(stats, "filters_not_enforced"),
+    }
+
+
 def _run_summary(run: Run) -> dict:
     return {
         "id": run.id,
@@ -48,6 +83,7 @@ def _run_summary(run: Run) -> dict:
         # "Failed" and nothing else, and the operator had to read container logs (issue #1).
         "error": (run.stats or {}).get("error"),
         "promotion_blockers": (run.stats or {}).get("promotion_blockers") or [],
+        "privacy": _run_privacy(run),
     }
 
 

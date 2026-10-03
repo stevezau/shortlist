@@ -74,9 +74,34 @@ nothing: no trail beats a trail with a blank name in it.
 </script>
 {%- endif -%}
 
-<div class="docs">
+{%- comment -%}
+Article, only on a page whose front matter carries `updated:`, the same date the "Last updated" line
+under the H1 shows. A page with no date gets no Article: a dateModified that is just the build time
+would claim every page was revised on every deploy.
+{%- endcomment -%}
+{%- if page.updated -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": {{ page.heading | default: page.title | jsonify }},
+  "description": {{ page.description | strip_newlines | jsonify }},
+  "dateModified": {{ page.updated | date_to_xmlschema | jsonify }},
+  "mainEntityOfPage": {{ page.url | absolute_url | jsonify }},
+  "author": { "@type": "Person", "name": "Steven Adams", "url": "https://github.com/stevezau" },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Shortlist",
+    "url": {{ '/' | absolute_url | jsonify }},
+    "logo": { "@type": "ImageObject", "url": {{ '/assets/img/logo.svg' | absolute_url | jsonify }} }
+  }
+}
+</script>
+{%- endif -%}
+
+<div class="docs{% if page.toc == false %} docs--wide{% endif %}">
   <aside class="sidebar" id="sidebar" aria-label="Documentation">
-    <h4>Documentation</h4>
+    <p class="sidebar__title">Documentation</p>
     <ul>
       {%- for item in nav -%}
         {%- assign slashed = item.url | append: '/' -%}
@@ -90,7 +115,7 @@ nothing: no trail beats a trail with a blank name in it.
           {%- if item.children and page.url contains item.url -%}
             <ul class="sidebar__children">
               {%- for child in item.children -%}
-                <li>
+                <li{% if child.group %} class="sidebar__sub"{% endif %}>
                   <a href="{{ child.url | relative_url }}"
                      {% if page.url == child.url %}aria-current="page"{% endif %}>{{ child.title }}</a>
                 </li>
@@ -101,7 +126,7 @@ nothing: no trail beats a trail with a blank name in it.
       {%- endfor -%}
     </ul>
 
-    <h4>Project</h4>
+    <p class="sidebar__title">Project</p>
     <ul>
       <li><a href="{{ site.repo }}">Source on GitHub</a></li>
       <li><a href="{{ site.repo }}/releases">Releases</a></li>
@@ -111,11 +136,46 @@ nothing: no trail beats a trail with a blank name in it.
 
   <main class="prose" id="main">
     <div class="prose__head">
+      {%- if child_idx >= 0 -%}
+        {%- assign crumb_parent = nav[parent_idx] -%}
+        {%- assign crumb_self = crumb_parent.children[child_idx] -%}
+        <nav class="crumbs" aria-label="Breadcrumb">
+          <a href="{{ crumb_parent.url | relative_url }}">{{ crumb_parent.title }}</a>
+          {%- if crumb_self.group -%}
+            {%- for sibling in crumb_parent.children -%}
+              {%- if sibling.url == crumb_self.group -%}
+                <span aria-hidden="true">›</span><a href="{{ sibling.url | relative_url }}">{{ sibling.title }}</a>
+              {%- endif -%}
+            {%- endfor -%}
+          {%- endif -%}
+        </nav>
+      {%- endif %}
       <h1>{{ page.heading | default: page.title }}</h1>
-      {%- if page.description %}<p>{{ page.description }}</p>{% endif -%}
+      {%- comment -%}
+      One dated line instead of the release banner every page used to carry. Product pages say which
+      stable release they describe; the Plex how-to articles (`byline: true`) say who wrote them. The
+      comparison page dates its facts instead (`facts_checked`).
+      {%- endcomment -%}
+      {%- if page.facts_checked %}
+      <p class="checked">Last checked: <time datetime="{{ page.facts_checked | date: '%Y-%m-%d' }}">{{ page.facts_checked | date: "%-d %B %Y" }}</time> against each project&rsquo;s repository. <a href="{{ site.repo }}/issues/new/choose">Corrections welcome.</a></p>
+      {%- elsif page.updated %}
+      <p class="docmeta">
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>{% if page.byline %}Updated{% else %}Last updated{% endif %} <time datetime="{{ page.updated | date: '%Y-%m-%d' }}">{{ page.updated | date: "%-d %b %Y" }}</time></span>
+        <span class="docmeta__dot" aria-hidden="true">·</span>
+        {%- if page.byline %}
+        <span>By <a href="https://github.com/stevezau">Steven Adams</a></span>
+        {%- else %}
+        <span>applies to <a class="docmeta__chip" href="{{ site.repo }}/releases/tag/v{{ site.stable_version }}">v{{ site.stable_version }}</a></span>
+        {%- endif %}
+      </p>
+      {%- endif %}
+      {%- if page.description %}
+      <p>{{ page.description }}</p>
+      {%- endif %}
+      {%- if page.dev_preview %}
+      <p class="devline">Parts of this page describe the development preview (<code>:dev</code>), each in a closed <strong>Development preview</strong> box. Everything outside those boxes applies to stable {{ site.stable_version }}. <a href="{{ '/getting-started/#release-channels' | relative_url }}">Release channels</a>.</p>
+      {%- endif %}
     </div>
-
-    <p class="release-note">Default install: <strong>stable {{ site.stable_version }}</strong>. Upcoming features and interface changes are marked <strong>Development preview</strong>. <a href="{{ "/getting-started/#release-channels" | relative_url }}">Release channels</a>.</p>
 
     {{ content }}
 
@@ -174,8 +234,10 @@ nothing: no trail beats a trail with a blank name in it.
     {%- endif -%}
   </main>
 
+  {%- unless page.toc == false %}
   <aside class="toc" id="toc" aria-label="On this page" hidden>
-    <h4>On this page</h4>
+    <p class="toc__title">On this page</p>
     <ul id="toc-list"></ul>
   </aside>
+  {%- endunless %}
 </div>

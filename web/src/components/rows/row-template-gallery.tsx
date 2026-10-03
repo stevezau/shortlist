@@ -43,6 +43,7 @@ import {
   type RowTemplate,
 } from "@/lib/row-templates";
 import { cn } from "@/lib/utils";
+import { selectedClass, selectedVerticalClass } from "@/lib/selected";
 
 const FILTERS: { label: string; kinds?: RowKind[] }[] = [
   { label: "All templates" },
@@ -221,11 +222,14 @@ function TemplatePicker({ onPick, onClose, noSource }: {
               <Button
                 key={option.label}
                 type="button"
-                variant={filter === option ? "secondary" : "ghost"}
+                variant="ghost"
                 size="sm"
                 aria-pressed={filter === option}
                 onClick={() => setFilter(option)}
-                className="px-2.5 text-xs motion-reduce:transition-none"
+                className={cn(
+                  "border border-transparent px-2.5 text-xs motion-reduce:transition-none",
+                  filter === option && selectedClass,
+                )}
               >
                 {option.label}
               </Button>
@@ -248,13 +252,13 @@ function TemplatePicker({ onPick, onClose, noSource }: {
                   aria-pressed={active}
                   onClick={() => setSelected(template)}
                   className={cn(
-                    "relative flex min-h-[68px] items-center gap-3 rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
-                    active && "border-primary/70 bg-primary/10 hover:bg-primary/10",
+                    "relative flex min-h-[68px] items-center gap-3 rounded-lg border bg-card p-3 text-left transition-colors hover:border-border-strong hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                    active && cn(selectedVerticalClass, "hover:bg-raised"),
                   )}
                 >
                   <span className={cn(
                     "flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground",
-                    active && "bg-primary/10 text-primary",
+                    active && "bg-elevated text-foreground",
                   )}>
                     <Icon className="size-4" aria-hidden />
                   </span>

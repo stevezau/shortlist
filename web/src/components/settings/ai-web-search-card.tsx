@@ -1,5 +1,4 @@
 import { RECENT_COUNT_LABEL } from "@/components/recent-count-field";
-import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import {
   hasCurator,
@@ -66,8 +65,9 @@ export function AiWebSearchCard({
   const problem = missing(backend, settings);
 
   return (
-    <Card>
-      <CardContent className="space-y-4 pt-6">
+    // Plain, not a card: it sits inside the Title sources panel, and a card inside a card is two
+    // depths for one setting.
+    <div className="space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-0.5">
             {/* Not "AI — web search": the AI is optional here now that Exa extracts titles itself,
@@ -161,7 +161,6 @@ export function AiWebSearchCard({
             </div>
           </div>
         )}
-      </CardContent>
-    </Card>
+    </div>
   );
 }

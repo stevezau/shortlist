@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import type { LogLine, LogPage } from "@/lib/types";
-import { LogsPage } from "@/pages/logs";
+import { LogsPanel } from "@/pages/logs";
 
 const { getLogs } = vi.hoisted(() => ({ getLogs: vi.fn() }));
 
@@ -49,7 +49,7 @@ function renderPage() {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <LogsPage />
+        <LogsPanel />
       </MemoryRouter>
     </QueryClientProvider>,
   );

@@ -5,7 +5,8 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
-import { JobsPage } from "@/pages/jobs";
+import { ActivityPage } from "@/pages/activity";
+import { JobsPanel } from "@/pages/jobs";
 
 const {
   syncWatched,
@@ -124,7 +125,22 @@ function renderPage(path = "/jobs") {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
-        <JobsPage />
+        <JobsPanel />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+/** The whole Activity page, for what crosses from the Jobs tab to the Job history tab. The job
+ *  history was a switch inside JobsPanel; it is a tab of the page now. */
+function renderActivity(path = "/activity") {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <ActivityPage />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -877,13 +893,13 @@ describe("JobsPage — sync check", () => {
         finished_at: null,
       },
     ]);
-    renderPage();
+    renderActivity();
 
     // The Jobs area does NOT fetch the cross-job feed.
     await screen.findByTestId("job-sync.users");
     expect(getJobs).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: /^Activity$/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Job history" }));
 
     // The third argument is the status filter, and `undefined` is load-bearing: the unfiltered
     // feed must ask the server for everything, not quietly narrow itself.
@@ -930,17 +946,18 @@ describe("JobsPage — one place for everything on a timer", () => {
     FakeEventSource.latest = null;
   });
 
-  it("offers Jobs and Activity — the schedule is not a third view", async () => {
+  it("offers Jobs and Job history — the schedule is not a third view", async () => {
     // Row schedules were the only thing Timeline showed that this list didn't: every job already
     // carries its own next-run, so a separate tab meant two places each holding half the answer.
-    renderPage();
+    renderActivity();
 
     expect(
-      await screen.findByRole("button", { name: "Jobs" }),
+      await screen.findByRole("tab", { name: "Jobs" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Activity" }),
+      screen.getByRole("tab", { name: "Job history" }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Timeline" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
   });
 
@@ -1284,7 +1301,7 @@ describe("JobsPage — the failure count has to lead somewhere", () => {
     // attempt, which succeeded, so the count was the only evidence they existed.
     getJobCatalog.mockResolvedValue(HEALTHY_LOOKING_BUT_FAILED);
     getJobs.mockResolvedValue([OLD_FAILURE]);
-    renderPage();
+    renderActivity();
 
     const badge = await screen.findByRole("button", { name: /8 failed/i });
     await userEvent.click(badge);
@@ -1310,7 +1327,7 @@ describe("JobsPage — the failure count has to lead somewhere", () => {
       (_kind: string | undefined, _limit: number, status?: string) =>
         Promise.resolve(status === "failed" ? [OLD_FAILURE] : [RECENT_SUCCESS]),
     );
-    renderPage("/jobs?tab=activity&filter=failed");
+    renderActivity("/activity?tab=jobs&view=activity&filter=failed");
 
     expect(await screen.findByText(/No route to host/i)).toBeInTheDocument();
     expect(screen.queryByText(/that's the good outcome/i)).toBeNull();

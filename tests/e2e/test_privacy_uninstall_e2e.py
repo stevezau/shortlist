@@ -169,8 +169,8 @@ class TestUninstall:
         page.get_by_role("link", name="Uninstall Shortlist…").click()
         expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)
 
-        page.get_by_role("button", name="Preview what would change").click()
-        # The preview summary counts the 5 Shortlist rows that would go — and never the Kometa one.
+        # The preview loads on arrival. Its summary counts the 5 Shortlist rows that would go — and
+        # never the Kometa one.
         expect(page.locator("body")).to_contain_text("5 collections", timeout=SLOW)
         expect(page.locator("body")).not_to_contain_text("Kometa")
 

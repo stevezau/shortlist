@@ -1,5 +1,4 @@
 import {
-  ListChecks,
   Play,
   Trash2,
   X,
@@ -288,7 +287,6 @@ export function RunsPage() {
   return (
     <div>
       <PageHeader
-        icon={ListChecks}
         title="Runs"
         subtitle="Every time Shortlist rebuilt rows, and how it went."
         actions={

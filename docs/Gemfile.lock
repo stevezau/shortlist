@@ -40,6 +40,8 @@ GEM
       rouge (>= 1.7, < 4)
       safe_yaml (~> 1.0)
       webrick (>= 1.0)
+    jekyll-redirect-from (0.16.0)
+      jekyll (>= 3.3, < 5.0)
     jekyll-relative-links (0.6.1)
       jekyll (>= 3.3, < 5.0)
     jekyll-sass-converter (1.5.2)
@@ -92,6 +94,7 @@ PLATFORMS
 
 DEPENDENCIES
   jekyll (= 3.10.0)
+  jekyll-redirect-from (= 0.16.0)
   jekyll-relative-links (= 0.6.1)
   jekyll-seo-tag (= 2.8.0)
   jekyll-sitemap (= 1.4.0)

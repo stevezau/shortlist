@@ -13,6 +13,7 @@ import { needsSetup } from "./season-draft";
 import { useSSE } from "./sse";
 import type {
   ArrStatus,
+  AuditEvent,
   CollectionInput,
   DateRule,
   ReportWindow,
@@ -98,6 +99,7 @@ export const queryKeys = {
   jobs: ["jobs"] as const,
   jobsCatalog: ["jobs", "catalog"] as const,
   privacyStatus: ["privacy", "status"] as const,
+  plexChanges: ["events", "plex-writes"] as const,
 };
 
 /**
@@ -184,6 +186,20 @@ export function useRunsSummary() {
   return useQuery({
     queryKey: [...queryKeys.runs, "summary"] as const,
     queryFn: api.getRunsSummary,
+  });
+}
+
+/**
+ * The newest few runs, for a glance at the latest one (the dashboard's Last run).
+ *
+ * A few rather than one: the newest run may still be queued or running, and what the dashboard
+ * reports is the newest FINISHED one. Under `queryKeys.runs`, so starting or finishing a run (which
+ * invalidates that prefix) refreshes it too.
+ */
+export function useRecentRuns(limit = 10) {
+  return useQuery({
+    queryKey: [...queryKeys.runs, "recent", limit] as const,
+    queryFn: () => api.getRuns(undefined, undefined, limit),
   });
 }
 
@@ -1094,6 +1110,32 @@ export function useLogs(
     // buries the real error under a stream of identical ones. The error state offers Retry.
     refetchInterval: (query) => (follow && !query.state.error ? 3000 : false),
     placeholderData: (previous) => previous,
+  });
+}
+
+/** How many audit events one "Load older changes" press fetches (the server's default page). */
+export const PLEX_CHANGES_PAGE = 200;
+
+/**
+ * Every write Shortlist made to Plex or plex.tv, newest first, paged backwards by event id.
+ *
+ * A cursor, not an offset: events are appended while you read. A short page means there is nothing
+ * older — the endpoint returns a plain array, so only the page length can say so.
+ */
+export function usePlexChanges() {
+  return useInfiniteQuery({
+    queryKey: queryKeys.plexChanges,
+    queryFn: ({ pageParam }) =>
+      api.getEventLog({
+        plexWrites: true,
+        beforeId: pageParam as number | undefined,
+        limit: PLEX_CHANGES_PAGE,
+      }),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (lastPage: AuditEvent[]) =>
+      lastPage.length < PLEX_CHANGES_PAGE
+        ? undefined
+        : lastPage[lastPage.length - 1]?.id,
   });
 }
 

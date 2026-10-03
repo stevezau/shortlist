@@ -5,9 +5,11 @@ permalink: /llms.txt
 ---
 # Shortlist
 
-> Self-hosted, per-user movie and TV recommendations for Plex. Shortlist gives every user on a Plex
-> server their own private "Picked for You" row on their Plex home screen, built from that person's
-> own watch history and visible only to them. One Docker container, no AI key required.
+> Shortlist is a free, open-source, self-hosted tool that gives each person on your Plex server their
+> own Picked for You row, built from what they watched and hidden from everyone else.
+
+Per-user movie and TV recommendations for Plex, on each person's own Plex home screen. One Docker
+container, no AI key required. Website: https://shortlistapp.dev/
 
 Shortlist answers the question "can I give each of my Plex users recommendations based on what they
 watched?" — which Plex itself does not do. Plex's built-in recommendation shelves are identical for
@@ -22,7 +24,7 @@ them answers the per-user question, and the distinction matters:
   metadata. It does not read watch history to decide what to suggest, and its collections are
   library-wide — everyone sees the same ones. Shortlist coexists with it and never modifies a
   collection it did not create.
-- **SuggestArr** requests new content through Jellyseerr/Overseerr based on recently watched items.
+- **SuggestArr** requests new content through Seerr based on recently watched items.
   It is about ACQUIRING content, not about presenting a row to a particular person.
 - **Recommendarr** is AI-driven over Radarr/Sonarr library data, and is likewise oriented toward what
   to add rather than per-user rows in Plex.
@@ -72,31 +74,34 @@ them as restored.
 
 Every page below, concatenated into one file, is at [llms-full.txt]({{ '/llms-full.txt' | absolute_url }}) — one fetch instead of twenty-five.
 
-- [Home]({{ '/' | absolute_url }}): what Shortlist is, how it works, screenshots, quick start
+- [Home]({{ '/' | absolute_url }}): what Shortlist is, two people's Homes side by side, the install command, how the privacy works, what it writes and how to undo it
 - [Getting started]({{ '/getting-started' | absolute_url }}): requirements, Docker install, the setup wizard, first run
-- [Guides]({{ '/guides' | absolute_url }}): index of the eight guide pages
-- [A tour of the web interface]({{ '/guides/interface' | absolute_url }}): every page, every dashboard number, the Users roster and its Status and Requests columns
-- [Rows and templates]({{ '/guides/rows' | absolute_url }}): templates, row kinds, naming, ordering, placement, shared rows, the Your requests row, seasonal rows
+- [Guides]({{ '/guides' | absolute_url }}): index of the guide pages
+- [A tour of the web interface]({{ '/guides/interface' | absolute_url }}): every page and every dashboard number
+- [People and sharing]({{ '/guides/people-and-sharing' | absolute_url }}): the Users page, turning people on, off and paused, per-person settings, leaving one account's sharing alone, people who leave, accounts Plex restricts
+- [Rows and templates]({{ '/guides/rows' | absolute_url }}): templates, row kinds, editing a row, naming
+- [How a row is filled]({{ '/guides/rows/what-goes-in' | absolute_url }}): Because you watched and Watch it again rows, people with too little history, the order titles appear in
+- [Seasonal rows]({{ '/guides/rows/seasonal' | absolute_url }}): Halloween, Christmas and Valentine's Day rows, hidden between seasons
+- [Where a row shows]({{ '/guides/rows/placement' | absolute_url }}): Home and the Recommended shelf, placement next to other collections, posters, descriptions and sort titles
 - [Choosing what goes in a row]({{ '/guides/picks' | absolute_url }}): candidate sources, refresh cadence, per-row and per-person overrides
 - [Schedules]({{ '/guides/schedules' | absolute_url }}): per-row schedules, custom cron, the background jobs
-- [Requests: Radarr and Sonarr]({{ '/guides/requests' | absolute_url }}): asking Radarr, Sonarr or Overseerr for titles the library lacks, and the approval inbox
+- [Requests: Radarr and Sonarr]({{ '/guides/requests' | absolute_url }}): asking Radarr, Sonarr or Overseerr for titles the library lacks, and the approval inbox; the Your requests row and per-row request settings
 - [AI and cost]({{ '/guides/ai' | absolute_url }}): what AI adds, which search backend to pick, keeping the bill small
 - [Exposing Shortlist to the internet]({{ '/guides/security' | absolute_url }}): TLS, proxies, the API token
 - [Troubleshooting and backups]({{ '/guides/troubleshooting' | absolute_url }}): common failures, what is backed up
 - [Integrations]({{ '/integrations' | absolute_url }}): Plex, TMDB, the AI providers, Radarr/Sonarr, Overseerr/Jellyseerr, Tautulli, webhooks
-- [Reference]({{ '/reference' | absolute_url }}): index of the three reference pages
-- [Settings reference]({{ '/reference/settings' | absolute_url }}): every configuration key, container environment variable, per-row override and default
+- [Reference]({{ '/reference' | absolute_url }}): index of the reference pages
+- [Settings reference]({{ '/reference/settings' | absolute_url }}): every settings key and its default, grouped by area, and per-row request overrides
+- [Environment and files]({{ '/reference/environment' | absolute_url }}): container environment variables, serving from a subpath, the files under /config
 - [API reference]({{ '/reference/api' | absolute_url }}): every REST endpoint and its request and response shape
 - [How Shortlist decides things]({{ '/reference/concepts' | absolute_url }}): what "already watched" means, watched vs finished, why the owner sees every row, how a pick is chosen, how rows stay private
 - [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling
 - [Plex how-to]({{ '/plex-how-to' | absolute_url }}): what Plex itself can and cannot do about recommendations and per-user rows
-- [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks
+- [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks; what managed users, pinned sources and published collections change; what it costs at your server's size
 - [How to improve Plex recommendations]({{ '/improve-plex-recommendations' | absolute_url }}): what the Manage Recommendations menu really changes, which settings help, and where the built-in tools stop
-- [Plex recommendations based on watch history]({{ '/plex-recommendations-watch-history' | absolute_url }}): what Plex does with watch history, why smart collections are not personal, how to build rows that are
+- [Plex recommendations based on each user's watch history]({{ '/plex-recommendations-watch-history' | absolute_url }}): what Plex does with watch history, why smart collections are not personal, how to build rows that are, and Netflix-style rows
 - [AI recommendations for Plex]({{ '/plex-ai-recommendations' | absolute_url }}): why asking a model for titles hallucinates, the candidates-from-library-then-rank shape that works, local models, cost
-- [A different Plex home screen for each user]({{ '/plex-per-user-home-screen' | absolute_url }}): pinned sources, managed users, published collections, and why none of them give per-user rows
-- [Netflix-style recommendations for your Plex library]({{ '/plex-netflix-style-recommendations' | absolute_url }}): the four properties that make rows feel personal, and which of them Plex can reproduce
-- [Plex recommendation tools compared]({{ '/plex-recommendation-tools' | absolute_url }}): Kometa, SuggestArr, Recommendarr, Curatarr, Immaculaterr, SeekAndWatch and Shortlist — what each actually does, and the personal-vs-private distinction that separates them
+- [Best Plex recommendation tools in 2026, compared]({{ '/plex-recommendation-tools' | absolute_url }}): Shortlist for private per-user rows, each hidden from every other account; Immaculaterr for the richest set of automatic collections when it doesn't matter who sees whose row; Curatarr for per-user collections without Docker; SuggestArr for acquiring new content; Kometa for organising the library you have; Diskovarr for a separate discovery app; Conjurr for Gemini picks per user from Tautulli; Nextt for a ratings-based dashboard
 
 ## Source
 

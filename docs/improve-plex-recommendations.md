@@ -2,6 +2,8 @@
 title: How to improve Plex recommendations
 description: What the Manage Recommendations menu actually changes, which Plex settings are worth touching, how far smart collections get you, and what to do when none of it helps.
 heading: How to improve Plex recommendations
+updated: 2026-10-03
+byline: true
 ---
 
 **Short answer:** most of what people try — reordering rows, toggling Manage Recommendations,
@@ -104,27 +106,8 @@ The mechanics of each part:
 
 - [Recommendations from watch history](plex-recommendations-watch-history.md) — where the titles come from
 - [Per-user collections](plex-per-user-collections.md) — making a row only one person can see
-- [A home screen per user](plex-per-user-home-screen.md) — what the rows land on
 - [Plex recommendation tools compared](plex-recommendation-tools.md) — which project does which part
 
-## The automated version
-
-[**Shortlist**](https://github.com/stevezau/shortlist) is a self-hosted container that does all of
-it on a schedule: reads each person's own watch history, builds them a "Picked for You" row of
-titles verified to exist in your library, explains every pick, and makes each row visible only to
-its owner.
-
-```bash
-docker run -d --name shortlist -p 5959:5959 \
-  -v /path/to/config:/config \
-  stevezzau/shortlist:latest
-```
-
-The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
-typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
-
-Add `-e SHORTLIST_DRY_RUN=1` to see every change it would make without writing one.
-
-Needs Plex Media Server 1.43.2.10687+ and a Plex Pass on the admin account. No AI key required —
-see [AI recommendations for Plex](plex-ai-recommendations.md) for where a model helps and where it
-actively hurts.
+{% include seo-closing.html shot="rows-crop.webp" shot_w="1560" shot_h="800"
+   shot_alt="The Rows page in Shortlist 1.9.3: a Picked for You row, a Because you watched row, a Watch it again row and a shared Popular on this server row."
+   shot_caption="Four kinds of row on one server. Each is built per person except Popular on this server." %}

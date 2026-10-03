@@ -12,6 +12,13 @@ import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { SettingDisclosure } from "@/components/settings/setting-disclosure";
 import { SettingsNumberField } from "@/components/settings/number-field";
+import { useSaveBarReport } from "@/components/settings/save-bar-context";
+import {
+  SettingBlock,
+  SettingRow,
+  SettingsPanel,
+  SettingsSection,
+} from "@/components/settings/section-layout";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { ColdStart } from "@/lib/cold-start";
@@ -179,71 +186,59 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     }),
   );
 
+  const inSaveBar = useSaveBarReport("recommendations", save);
+  const webSearchOn = enabled.includes("llm_web");
+
   return (
-    <section aria-labelledby="recs-heading" className="space-y-6">
-      <header className="space-y-2">
-        <h2 id="recs-heading" className="text-xl font-semibold tracking-tight">Finding titles</h2>
-        <p className="text-sm text-muted-foreground">Choose where recommendations come from and when rows change.</p>
-        <SaveStatus isPending={save.isPending} isError={save.isError} error={save.error} saved={save.saved} onRetry={save.retry} />
-      </header>
-
-      <div className="space-y-2.5">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-medium">Title sources</h3>
-          <span className="text-xs text-muted-foreground">{enabled.filter((id) => id !== "llm_web").length} enabled</span>
-        </div>
-        <div className="divide-y rounded-lg border bg-card">
+    <>
+      <SettingsSection
+        id="sources"
+        title="Title sources"
+        description="Where each person’s candidates come from before they’re ranked. These are defaults; each row can override them in its editor."
+      >
+        {!inSaveBar && <SaveStatus isPending={save.isPending} isError={save.isError} error={save.error} saved={save.saved} onRetry={save.retry} />}
+        <SettingsPanel>
           {SIMPLE_SOURCES.map((source) => (
-            <div key={source.id} className="space-y-2 px-4 py-4 sm:px-5">
-              <div className="flex items-center justify-between gap-5">
-                <div className="space-y-1">
-                  <p className="text-[13px] font-medium">{source.label}</p>
-                  <p className="text-xs leading-relaxed text-muted-foreground">{source.desc}</p>
-                </div>
-                <Switch checked={enabled.includes(source.id)} onCheckedChange={() => toggle(source.id)} aria-label={`Enable ${source.label}`} />
-              </div>
+            <SettingRow
+              key={source.id}
+              title={source.label}
+              description={source.desc}
+              control={<Switch checked={enabled.includes(source.id)} onCheckedChange={() => toggle(source.id)} aria-label={`Enable ${source.label}`} />}
+            >
               {enabled.includes(source.id) && <InlineFix sourceId={source.id} settings={settings} />}
-            </div>
+            </SettingRow>
           ))}
-          {enabled.length === 0 && <p role="status" className="px-4 py-3 text-xs text-warning">Nothing enabled — Shortlist falls back to its defaults (TMDB similar + discover). Turn on at least one source to choose your own.</p>}
-        </div>
-      </div>
+          {enabled.length === 0 && <p role="status" className="px-4 py-3 text-xs text-warning sm:px-5">Nothing enabled — Shortlist falls back to its defaults (TMDB similar + discover). Turn on at least one source to choose your own.</p>}
+          <SettingDisclosure title="Web search" value={webSearchOn ? "On" : "Off"} description="Discovery beyond the usual sources, through AI & web search." defaultOpen={webSearchOn}>
+            <p className="text-xs leading-relaxed text-muted-foreground">The TMDB sources find titles without AI. Set the provider to <strong>None</strong> in <Link to="/settings/connections#connection-llm" className="font-medium text-primary hover:underline">Connections</Link> and you still get full rows, ranked by score with plain reasons.</p>
+            <AiWebSearchCard settings={settings} enabled={webSearchOn} onToggle={() => toggle("llm_web")} />
+          </SettingDisclosure>
+        </SettingsPanel>
+      </SettingsSection>
 
-      <div className="space-y-2.5">
-        <h3 className="text-sm font-medium">Refresh &amp; variety</h3>
-        <div className="divide-y rounded-lg border bg-card">
-          <SettingDisclosure defaultOpen title="How often rows rebuild" value={refreshDays === 0 ? "Never" : refreshDays === 1 ? "Every day" : `Every ${refreshDays} days`} description="Between rebuilds, titles stay in place. Each row keeps its own schedule.">
-            <Label className="sr-only" htmlFor="refresh-days">How often rows rebuild</Label>
-            <p className="text-xs leading-relaxed text-muted-foreground">Longer = stickier and cheaper, shorter = fresher. This decides which titles a row holds; the row’s Order setting decides their order.</p>
+      <SettingsSection id="refresh" title="Refresh & variety" description="When a row changes, and how much of it may be familiar.">
+        <SettingsPanel>
+          <SettingBlock
+            title="Titles refresh every"
+            htmlFor="refresh-days"
+            description="Longer is stickier and cheaper, shorter is fresher. Each row keeps its own schedule; its Order setting decides the order."
+          >
             <RefreshDaysField id="refresh-days" value={refreshDays} onChange={setRefreshDays} />
-          </SettingDisclosure>
-          <SettingDisclosure defaultOpen title="Already-watched titles" value={`Up to ${watchedPct}%`} description="How much of a row may be familiar.">
-            <Label className="sr-only" htmlFor="watched-pct">Already-watched titles</Label>
+          </SettingBlock>
+          <SettingBlock title="Already-watched titles" htmlFor="watched-pct" description="How much of a row may be familiar." value={`Up to ${watchedPct}%`}>
             <WatchedSlider id="watched-pct" value={watchedPct} onChange={setWatchedPct} />
-          </SettingDisclosure>
-          <SettingDisclosure defaultOpen title="Recent releases" value={`${recency}% preference`} description="Give newer titles more weight without filtering older ones out.">
-            <Label className="sr-only" htmlFor="recency">Recent releases</Label>
+          </SettingBlock>
+          <SettingBlock title="Recent releases" htmlFor="recency" description="Give newer titles more weight without filtering older ones out." value={`${recency}% preference`}>
             <RecencySlider id="recency" value={recency} onChange={setRecency} />
-          </SettingDisclosure>
-        </div>
-      </div>
-
-      <div className="rounded-lg border border-dashed">
-        <SettingDisclosure title="Web search" value={enabled.includes("llm_web") ? "On" : "Off"} description="Optional discovery beyond your library’s usual recommendation sources." defaultOpen={enabled.includes("llm_web")}>
-          <p className="text-xs leading-relaxed text-muted-foreground">The TMDB sources find titles without AI. Set the provider to <strong>None</strong> in <Link to="/settings#connections" className="font-medium text-primary hover:underline">Connections</Link> and you still get full rows, ranked by score with plain reasons.</p>
-          <AiWebSearchCard settings={settings} enabled={enabled.includes("llm_web")} onToggle={() => toggle("llm_web")} />
-        </SettingDisclosure>
-      </div>
-
-      <div className="rounded-lg border border-dashed">
-        <SettingDisclosure title="More recommendation controls" value="Edit" description="Watch history, ratings and inactive viewers.">
+          </SettingBlock>
+          <SettingDisclosure title="More recommendation controls" value="Show" description="Watch history, ratings and inactive viewers. Plex ratings are server-wide and do not change shared rows.">
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="idle-hold-days">
                 Hold rows for inactive viewers
               </Label>
               <p className="text-sm text-muted-foreground">
                 Someone who hasn&rsquo;t watched anything since their row was
-                built has nothing new to base a rebuild on, so the row can wait
+                built has nothing new to base fresh picks on, so the row can wait
                 — which also saves a write to Plex for every row held. Off by
                 default.
               </p>
@@ -407,7 +402,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 Which score a row set to <strong>Highest rated</strong> sorts
                 on. Anything but TMDB needs an MDBList key in{" "}
                 <Link
-                  to="/settings#connections"
+                  to="/settings/connections#connection-mdblist"
                   className="font-medium underline"
                 >
                   Connections
@@ -429,9 +424,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 ))}
               </select>
             </div>
-        </SettingDisclosure>
-      </div>
-      <p className="border-l-2 border-primary/30 pl-3 text-xs leading-relaxed text-muted-foreground">These are defaults. Each row can override them in its editor. Plex ratings are server-wide and do not change shared rows.</p>
-    </section>
+          </SettingDisclosure>
+        </SettingsPanel>
+      </SettingsSection>
+    </>
   );
 }

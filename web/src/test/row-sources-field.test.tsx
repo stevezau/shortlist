@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowSourcesField } from "@/components/rows/row-sources-field";
@@ -19,7 +20,9 @@ function renderField(value: string[], onChange: (next: string[]) => void) {
   });
   render(
     <QueryClientProvider client={client}>
-      <RowSourcesField value={value} onChange={onChange} />
+      <MemoryRouter>
+        <RowSourcesField value={value} onChange={onChange} />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -35,7 +38,9 @@ function renderLive(initial: string[]) {
   }
   render(
     <QueryClientProvider client={client}>
-      <Harness />
+      <MemoryRouter>
+        <Harness />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -51,10 +56,15 @@ describe("RowSourcesField", () => {
 
   it("shows the inherit message and no source switches when empty (global default)", () => {
     renderField([], () => {});
-    expect(
-      screen.getByText(/uses the sources you enabled in Settings/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/uses the sources you enabled in/i)).toBeTruthy();
     expect(screen.queryByLabelText(/for this row/i)).toBeNull();
+  });
+
+  it("links the inherit message to where the global sources are set, under their name since the Settings split", () => {
+    renderField([], () => {});
+    expect(
+      screen.getByRole("link", { name: "Settings → Defaults → Title sources" }),
+    ).toHaveAttribute("href", "/settings/defaults#sources");
   });
 
   it("reveals per-source switches when the row overrides sources", () => {
@@ -115,8 +125,11 @@ describe("RowSourcesField", () => {
 
     // It used to snap silently back to the global view, switches and all.
     expect(await screen.findByRole("status")).toHaveTextContent(
-      /falls back to the sources you switched on in Settings/i,
+      /falls back to the sources you switched on in Settings → Defaults → Title sources/i,
     );
+    expect(
+      screen.getByRole("link", { name: "Settings → Defaults → Title sources" }),
+    ).toHaveAttribute("href", "/settings/defaults#sources");
     expect(
       screen.getByLabelText(/Enable TMDB — similar titles for this row/i),
     ).toBeTruthy();

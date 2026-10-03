@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query, Request
 from starlette.responses import StreamingResponse
 
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.schemas_events import (
     RunFinishedEvent,
     RunProgressEvent,
@@ -15,6 +18,7 @@ from shortlist.server.api.schemas_events import (
 from shortlist.server.api.schemas_runs import RunLogLineOut
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Event, iso_utc
+from shortlist.server.services.audit import PLEX_WRITE_SCOPES
 
 router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(require_owner)])
 
@@ -64,19 +68,44 @@ async def stream(request: Request) -> StreamingResponse:
     )
 
 
-@router.get("/log")
+class EventOut(PassthroughModel):
+    """One audit row. `message` is the writer's structured diff, and its keys depend on `scope`."""
+
+    id: int
+    ts: str  # UTC with an explicit offset
+    level: str
+    scope: str
+    message: dict[str, Any]
+
+
+@router.get("/log", response_model=list[EventOut])
 async def audit_log(
     request: Request,
     scope: str | None = None,
+    scope_prefix: str | None = Query(
+        None,
+        description="Only scopes starting with this, e.g. `run.`. Case-insensitive on SQLite (it is a LIKE).",
+    ),
+    plex_writes: bool = Query(
+        False,
+        description="Only the scopes that record a write to Plex or plex.tv. Includes dry-run audit rows "
+        "(`message.dry_run` true), which changed nothing on Plex; the UI labels them as dry runs.",
+    ),
     limit: int = Query(200, ge=1, le=1000),
     before_id: int | None = None,
 ) -> list[dict]:
     """The audit trail, newest first. `before_id` pages backwards — pass the id of the oldest entry
-    you already have. A cursor, not an offset: events are appended while you read."""
+    you already have. A cursor, not an offset: events are appended while you read. Every filter given
+    applies."""
     with request.app.state.sessions() as session:
         query = session.query(Event).order_by(Event.id.desc())
         if scope:
             query = query.filter(Event.scope == scope)
+        if scope_prefix:
+            # Escaped, because LIKE reads `_` as "any one character" and most of our scopes have one.
+            query = query.filter(Event.scope.startswith(scope_prefix, autoescape=True))
+        if plex_writes:
+            query = query.filter(Event.scope.in_(PLEX_WRITE_SCOPES))
         if before_id is not None:
             query = query.filter(Event.id < before_id)
         return [

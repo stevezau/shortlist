@@ -7,14 +7,23 @@ import {
   Sparkles,
   Users,
 } from "lucide-react";
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
+import { Link } from "react-router";
 
-import { StatTile } from "@/components/stat-tile";
-import { formatDuration, runElapsedMs } from "@/lib/format";
+import { StatusCell, StatusRow, StatusStrip } from "@/components/status-strip";
+import { Badge } from "@/components/ui/badge";
+import { formatDuration, runElapsedMs, runStatusLabel } from "@/lib/format";
+import {
+  hasPrivacyWarning,
+  privacyFindings,
+  runPrivacyVerdict,
+  type RunPrivacy,
+} from "@/lib/run-privacy";
 import { tokenSteps } from "@/lib/run-format";
 import type { RunDetail } from "@/lib/types";
 
-/** The finished-run stats as at-a-glance tiles (Dashboard style) rather than one dense text line. */
+/** A finished run's summary: one strip of facts read at a glance, rather than one dense text line. */
 
 /**
  * A hint's parts joined by " · ", wrapping between parts before it wraps inside one: "web search" at
@@ -114,18 +123,17 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
   const tokenHint =
     output != null && output <= tokens ? (
       <>
-        <span className="block">
-          <HintParts
-            parts={[
-              `${(tokens - output).toLocaleString()} in`,
-              `${output.toLocaleString()} out`,
-            ]}
-          />
-        </span>
+        <HintParts
+          parts={[
+            `${(tokens - output).toLocaleString()} in`,
+            `${output.toLocaleString()} out`,
+          ]}
+        />
         {steps.length > 0 && (
-          <span className="block">
+          <>
+            {" · "}
             <HintParts parts={steps} />
-          </span>
+          </>
         )}
       </>
     ) : steps.length > 0 ? (
@@ -133,117 +141,280 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
     ) : (
       "sent + received"
     );
-  // The two AI tiles are conditional, so the track count has to be too. Hard-coding six left a
-  // no-AI run's four tiles filling two-thirds of the row with a third of it blank, which reads as
-  // something that failed to load. Full class strings — Tailwind cannot see an interpolated one.
-  // Six or seven across waits for `xl`: at `lg` the sidebar leaves about 720px, and seven tiles there
-  // broke "6m 47s" and "520,088" over two lines each and stacked the token hint nine lines deep.
   const showTokens = tokens > 0;
   const showExa = exa > 0 || exaCacheHits > 0;
-  const tiles = 5 + (showTokens ? 1 : 0) + (showExa ? 1 : 0);
-  const columns =
-    tiles === 7
-      ? "sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7"
-      : tiles === 6
-        ? "sm:grid-cols-3 xl:grid-cols-6"
-        : "sm:grid-cols-3 lg:grid-cols-5";
+  // Only a warning or a failure earns a dot in place of the icon: these used to colour the icon, and a
+  // green dot on every healthy run is a light nobody reads.
+  const peopleTone =
+    failed > 0
+      ? "error"
+      : (skipped > 0 && sharedBuilt === 0) || run.status === "error"
+        ? "warn"
+        : undefined;
   return (
-    <div className={`grid grid-cols-2 gap-2 [&>div]:px-3 [&>div]:py-2 [&>div>div:nth-child(2)]:text-xl ${columns}`}>
-      <StatTile
-        icon={Clock}
-        label="Duration"
-        value={elapsed != null ? formatDuration(elapsed) : "—"}
-        hint="start → finish"
-      />
-      <StatTile
-        icon={Layers}
-        label="Rows built"
-        value={rowsBuilt}
-        // A failed run that built nothing did not find "nothing due" — it never got that far.
-        hint={
-          rowsHint ||
-          (run.status === "error" ? "none were built" : "nothing was due")
-        }
-        tone={rowsBuilt > 0 ? "success" : undefined}
-      />
-      <StatTile
-        icon={Users}
-        label="People"
-        value={s.users_ok ?? 0}
-        hint={
-          failed > 0
-            ? `${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ""}`
-            : skipped > 0
-              ? // Only a WARNING when the run built nothing at all. A shared-row run skips every
-                // person by design, and flagging that amber said "something went wrong" about the
-                // normal outcome of the thing the operator asked for.
-                sharedBuilt > 0
-                ? `${skipped} skipped — no per-person row was due`
-                : `${skipped} skipped, built nothing`
-              : // Everyone can succeed while the RUN fails (a refused share filter belongs to no
-                // person) — "all succeeded" under a "Failed" badge is how that looked before.
-                run.status === "error"
-                ? (s.users_ok ?? 0) > 0
-                  ? "built, but not promoted"
-                  : "nobody was built"
-                : "all succeeded"
-        }
-        tone={
-          failed > 0
-            ? "destructive"
-            : (skipped > 0 && sharedBuilt === 0) || run.status === "error"
-              ? "warning"
+    <StatusStrip label="Run summary">
+      {/* The answer to "how did it go", in the order it is asked: did it work, how long, for whom,
+          is everything still private, what changed. The privacy column is the widest because its
+          value is a sentence, not a number. */}
+      <StatusRow className="lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,1.65fr)_minmax(0,1fr)] lg:[&>*:last-child:nth-child(odd)]:col-span-1">
+        <ResultCell run={run} />
+        <StatusCell
+          icon={Clock}
+          label="Duration"
+          value={elapsed != null ? formatDuration(elapsed) : "—"}
+          sub={elapsed != null && run.began_at && run.finished_at ? (
+            <>
+              {clockTime(run.began_at)} → {clockTime(run.finished_at)}
+            </>
+          ) : (
+            "start → finish"
+          )}
+        />
+        <StatusCell
+          icon={Users}
+          tone={peopleTone}
+          label="People"
+          value={s.users_ok ?? 0}
+          sub={
+            failed > 0
+              ? `${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ""}`
               : skipped > 0
-                ? undefined
-                : "success"
-        }
-      />
-      <StatTile
-        icon={Shuffle}
-        label="Titles changed"
-        value={`+${s.titles_added ?? 0} / −${s.titles_removed ?? 0}`}
-        hint="added / rotated out"
-      />
-      <StatTile
-        icon={Download}
-        label="Requested"
-        value={requested}
-        hint={
-          s.requests_warnings?.length
-            ? s.requests_warnings.join("; ")
-            : requestHint(s)
-        }
-        tone={s.requests_warnings?.length ? "warning" : undefined}
-      />
-      {showTokens && (
-        <StatTile
-          icon={Sparkles}
-          label="AI tokens"
-          value={tokens.toLocaleString()}
-          hint={tokenHint}
-          // The owner asked whether this includes cached tokens. It is each call's input and output
-          // tokens as the provider reported them: Anthropic's `input_tokens` excludes cache reads and
-          // writes (and Shortlist sets no cache_control, so both are 0); OpenAI's `total_tokens` and
-          // Gemini's `total_token_count` count cached input inside the prompt figure.
-          title="Input and output tokens the AI provider reported for each call this run, added up — what it bills on, shown as input and output because output costs several times more. With Claude nothing is cached, so this is every token sent and received. OpenAI and Gemini count input they served from their own prompt cache in here too, and bill that part at a discount. The 7-day web-search cache saves web searches, not tokens. Turn AI sources off in Settings → Finding titles to lower it."
-        />
-      )}
-      {showExa && (
-        <StatTile
-          icon={Search}
-          label="Web searches"
-          value={exa}
-          // A warm cache means most lookups never hit the backend — showing only the "1" that did
-          // made a fully-cached run look like the source did nothing. The hint names what it served.
-          hint={
-            exaCacheHits > 0
-              ? `searched · ${exaCacheHits.toLocaleString()} from cache`
-              : "web lookups · one per recent watch"
+                ? // Only a WARNING when the run built nothing at all. A shared-row run skips every
+                  // person by design, and flagging that amber said "something went wrong" about the
+                  // normal outcome of the thing the operator asked for.
+                  sharedBuilt > 0
+                  ? `${skipped} skipped — no per-person row was due`
+                  : `${skipped} skipped, built nothing`
+                : // Everyone can succeed while the RUN fails (a refused share filter belongs to no
+                  // person) — "all succeeded" under a "Failed" badge is how that looked before.
+                  run.status === "error"
+                  ? (s.users_ok ?? 0) > 0
+                    ? "built, but not promoted"
+                    : "nobody was built"
+                  : "all succeeded"
           }
-          // Vendor-neutral: the same counter serves Exa and a self-hosted SearXNG.
-          title="External web-search requests this run actually made — a count, not tokens. Exa bills per request and SearXNG rate-limits per request, so it is tracked apart from token spend. Results are cached for 7 days and shared across everyone, so most lookups are served from cache and cost nothing."
         />
-      )}
-    </div>
+        <PrivacyCell run={run} />
+        <StatusCell
+          icon={Shuffle}
+          label="Titles changed"
+          value={`+${s.titles_added ?? 0} / −${s.titles_removed ?? 0}`}
+          sub="added / rotated out"
+        />
+      </StatusRow>
+      {/* What the run made and spent, as ONE quiet line under the strip rather than a second grid:
+          a grid of two to four cells under five left a ragged row of half-empty tiles. */}
+      <div className="flex flex-wrap gap-x-6 gap-y-1.5 border-t px-4 py-3 text-[13px] text-muted-foreground">
+        <MetaFact
+          icon={Layers}
+          label="Rows built"
+          value={rowsBuilt}
+          // A failed run that built nothing did not find "nothing due" — it never got that far.
+          hint={rowsHint || (run.status === "error" ? "none were built" : "nothing was due")}
+        />
+        <MetaFact
+          icon={Download}
+          warn={Boolean(s.requests_warnings?.length)}
+          label="Requested"
+          value={requested}
+          hint={s.requests_warnings?.length ? s.requests_warnings.join("; ") : requestHint(s)}
+        />
+        {showTokens && (
+          <MetaFact
+            icon={Sparkles}
+            label="AI tokens"
+            value={tokens.toLocaleString()}
+            hint={tokenHint}
+            // The owner asked whether this includes cached tokens. It is each call's input and output
+            // tokens as the provider reported them: Anthropic's `input_tokens` excludes cache reads and
+            // writes (and Shortlist sets no cache_control, so both are 0); OpenAI's `total_tokens` and
+            // Gemini's `total_token_count` count cached input inside the prompt figure.
+            title="Input and output tokens the AI provider reported for each call this run, added up — what it bills on, shown as input and output because output costs several times more. With Claude nothing is cached, so this is every token sent and received. OpenAI and Gemini count input they served from their own prompt cache in here too, and bill that part at a discount. The 7-day web-search cache saves web searches, not tokens. Turn AI sources off in Settings → Finding titles to lower it."
+          />
+        )}
+        {showExa && (
+          <MetaFact
+            icon={Search}
+            label="Web searches"
+            value={exa}
+            // A warm cache means most lookups never hit the backend — showing only the "1" that did
+            // made a fully-cached run look like the source did nothing. The hint names what it served.
+            hint={
+              exaCacheHits > 0
+                ? `searched · ${exaCacheHits.toLocaleString()} from cache`
+                : "web lookups · one per recent watch"
+            }
+            // Vendor-neutral: the same counter serves Exa and a self-hosted SearXNG.
+            title="External web-search requests this run actually made — a count, not tokens. Exa bills per request and SearXNG rate-limits per request, so it is tracked apart from token spend. Results are cached for 7 days and shared across everyone, so most lookups are served from cache and cost nothing."
+          />
+        )}
+      </div>
+    </StatusStrip>
   );
+}
+
+/** One figure in the run's quiet second line: icon (or a warning dot), what it is, the number, why. */
+function MetaFact({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  warn = false,
+  title,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: ReactNode;
+  hint: ReactNode;
+  warn?: boolean;
+  title?: string;
+}) {
+  return (
+    <p className="min-w-0 [overflow-wrap:anywhere]" title={title}>
+      {warn ? (
+        <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-warning align-middle" aria-hidden="true" />
+      ) : (
+        <Icon className="mr-1.5 inline h-3.5 w-3.5 align-[-2px]" aria-hidden="true" />
+      )}
+      <span>{label}</span> <span className="font-semibold text-foreground tabular-nums">{value}</span>
+      {" · "}
+      <span>{hint}</span>
+    </p>
+  );
+}
+
+/** "02:30:04" — a run is often seconds long, so the start → finish line carries seconds. */
+function clockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
+/**
+ * Did the run work. "OK with warnings" is not a status of its own — the server has none (five queries
+ * filter on `ok`/`error`) — it is an OK run whose privacy measurement flagged somebody.
+ */
+function ResultCell({ run }: { run: RunDetail }) {
+  const failed = run.stats.users_error ?? 0;
+  if (run.status === "ok") {
+    const warnings = privacyFindings(run.privacy).length;
+    const warned = hasPrivacyWarning(run);
+    return (
+      <StatusCell
+        label="Result"
+        tone={warned ? "warn" : "ok"}
+        value={
+          warned ? (
+            <Badge variant="warning" className="border-warning/40">
+              OK with warnings
+            </Badge>
+          ) : (
+            "OK"
+          )
+        }
+        sub={[
+          failed > 0 ? `${failed} ${failed === 1 ? "person" : "people"} failed` : "No errors",
+          ...(warned ? [`${warnings} ${warnings === 1 ? "warning" : "warnings"}`] : []),
+        ].join(" · ")}
+      />
+    );
+  }
+  if (run.status === "error") {
+    return (
+      <StatusCell
+        label="Result"
+        tone="error"
+        value="Failed"
+        sub={
+          run.promotion_blockers.length > 0
+            ? "Nothing was promoted"
+            : failed > 0
+              ? `${failed} ${failed === 1 ? "person" : "people"} failed`
+              : "Didn’t finish cleanly"
+        }
+      />
+    );
+  }
+  return <StatusCell label="Result" tone="neutral" value={runStatusLabel(run.status)} />;
+}
+
+/** The run's own words for one flagged account, for the link under the privacy count. */
+function findingPhrase(name: string, username: string, privacy: RunPrivacy): string {
+  const key = username.toLowerCase();
+  const listed = (names: string[] | null) => (names ?? []).some((n) => n.toLowerCase() === key);
+  if (listed(privacy.can_see_others)) return `${name} can see others’ rows`;
+  if (listed(privacy.unreadable_filters)) return `Plex can’t read ${name}’s restrictions`;
+  return `Plex isn’t applying ${name}’s hide rules`;
+}
+
+/**
+ * How many accounts hide every row that is not theirs, as far as THIS run can vouch for.
+ *
+ * Says "Not measured" rather than a count whenever the run did not look — an older run, a dry run, a
+ * run that died before the merge — and "Not fully measured" when Plex's filter read did not run. A
+ * count built on a check nobody ran is the all-clear this cell must never print.
+ */
+function PrivacyCell({ run }: { run: RunDetail }) {
+  const verdict = runPrivacyVerdict(
+    run.privacy,
+    run.users.map((user) => user.username),
+  );
+  const displayName = (username: string) =>
+    run.users.find((user) => user.username.toLowerCase() === username.toLowerCase())?.display_name ||
+    username;
+  const flaggedLink = (flagged: string[]) => {
+    const first = flagged[0];
+    if (!first || !run.privacy) return null;
+    return (
+      <Link
+        to="/privacy"
+        className="rounded-sm text-accent-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {findingPhrase(displayName(first), first, run.privacy)} →
+      </Link>
+    );
+  };
+
+  switch (verdict.kind) {
+    case "not_measured":
+      return (
+        <StatusCell
+          label="Privacy"
+          tone="neutral"
+          value="Not measured"
+          sub={
+            run.dry_run
+              ? "A dry run builds no rows, so there was nothing to hide"
+              : "This run didn’t check who can see whose rows"
+          }
+        />
+      );
+    case "partly_measured":
+      return (
+        <StatusCell
+          label="Privacy"
+          tone={verdict.flagged.length > 0 ? "warn" : "neutral"}
+          value="Not fully measured"
+          sub={flaggedLink(verdict.flagged) ?? "Plex’s share filters weren’t read on this run"}
+        />
+      );
+    case "no_accounts":
+      return <StatusCell label="Privacy" tone="neutral" value="Nothing to check" sub="No accounts were in this run" />;
+    case "counted":
+      return (
+        <StatusCell
+          label="Privacy"
+          tone={verdict.hiding === verdict.total ? "ok" : "warn"}
+          value={`${verdict.hiding} of ${verdict.total} accounts hide every row`}
+          sub={
+            flaggedLink(verdict.flagged) ??
+            (verdict.enforcementChecked
+              ? "Measured by this run"
+              : "Hide rules stored; Plex’s enforcement wasn’t spot-checked")
+          }
+        />
+      );
+  }
 }

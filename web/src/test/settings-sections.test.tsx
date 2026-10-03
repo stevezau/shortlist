@@ -1,60 +1,117 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useNavigate } from "react-router";
+import type { ReactNode } from "react";
+import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SettingsSections } from "@/components/settings/section-layout";
-import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { SettingDisclosure } from "@/components/settings/setting-disclosure";
+import { SettingsTabs } from "@/components/settings/section-layout";
 
-function HistoryButtons() { const navigate = useNavigate(); return <><button onClick={() => void navigate(-1)}>Back</button><button onClick={() => void navigate(1)}>Forward</button></>; }
+function HistoryButtons() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button onClick={() => void navigate(-1)}>Back</button>
+      <button onClick={() => void navigate(1)}>Forward</button>
+    </>
+  );
+}
 
-describe("Continuous Settings sections", () => {
-  const scrollIntoView = vi.fn();
+function Where() {
+  const { pathname, search, hash } = useLocation();
+  return <output aria-label="Address">{`${pathname}${search}${hash}`}</output>;
+}
+
+function renderTabs(path: string, content: Parameters<typeof SettingsTabs>[0]["content"], extra?: ReactNode) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      {extra}
+      <Routes>
+        <Route path="/settings/:tab?" element={<SettingsTabs content={content} />} />
+      </Routes>
+      <Where />
+    </MemoryRouter>,
+  );
+}
+
+const scrollIntoView = vi.fn();
+const lastScrolled = () => scrollIntoView.mock.instances.at(-1);
+
+describe("Settings tabs", () => {
   beforeEach(() => {
-    localStorage.clear();
     scrollIntoView.mockClear();
     Element.prototype.scrollIntoView = scrollIntoView;
   });
 
-  it.each(["/settings", "/settings?view=sections#recommendations", "/settings?view=all#danger"])("keeps every form visible despite legacy view preferences at %s", (path) => {
-    localStorage.setItem("shortlist.settings.view", "sections");
-    render(<MemoryRouter initialEntries={[path]}><SettingsSections content={{ connections: <input aria-label="Connection draft" />, recommendations: <p>Recommendation controls</p>, danger: <p>Removal controls</p> }} /></MemoryRouter>);
-    expect(screen.getByLabelText("Connection draft")).toBeVisible();
-    expect(screen.getByText("Recommendation controls")).toBeVisible();
-    expect(screen.getByText("Removal controls")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Sections" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Show all" })).not.toBeInTheDocument();
-  });
-
-  it("repeats a sidebar or mobile jump when its hash is already in the address bar", async () => {
-    render(<MemoryRouter initialEntries={["/settings#defaults"]}><SettingsSubNav /><SettingsSections content={{ defaults: <input aria-label="Naming draft" defaultValue="keep me" /> }} /></MemoryRouter>);
-    scrollIntoView.mockClear();
-    await userEvent.click(screen.getByRole("link", { name: "Row defaults" }));
-    expect(scrollIntoView.mock.instances.at(-1)).toBe(document.getElementById("defaults"));
-    scrollIntoView.mockClear();
-    await userEvent.selectOptions(screen.getByLabelText("Settings section"), "defaults");
-    expect(scrollIntoView.mock.instances.at(-1)).toBe(document.getElementById("defaults"));
-    expect(screen.getByLabelText("Naming draft")).toHaveValue("keep me");
-  });
-
-  it("scrolls between sections and through browser history without hiding or resetting drafts", async () => {
-    render(<MemoryRouter initialEntries={["/settings#connections"]}><HistoryButtons /><SettingsSections content={{ connections: <input aria-label="Draft" defaultValue="" />, recommendations: <p>Recommendations</p> }} /></MemoryRouter>);
+  it("keeps every tab mounted, so a draft survives a trip to another tab and back through history", async () => {
+    renderTabs(
+      "/settings/connections",
+      { connections: <input aria-label="Draft" defaultValue="" />, defaults: <p>Defaults body</p>, system: <p>System body</p> },
+      <HistoryButtons />,
+    );
     await userEvent.type(screen.getByLabelText("Draft"), "keep this");
-    await userEvent.selectOptions(screen.getByLabelText("Settings section"), "recommendations");
-    expect(scrollIntoView.mock.instances.at(-1)).toBe(document.getElementById("recommendations"));
-    expect(screen.getByLabelText("Draft")).toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: "Defaults" }));
+    expect(screen.getByText("Defaults body")).toBeVisible();
+    expect(screen.getByLabelText("Draft")).not.toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(scrollIntoView.mock.instances.at(-1)).toBe(document.getElementById("connections"));
+    await waitFor(() => expect(screen.getByLabelText("Draft")).toBeVisible());
     await userEvent.click(screen.getByRole("button", { name: "Forward" }));
-    expect(scrollIntoView.mock.instances.at(-1)).toBe(document.getElementById("recommendations"));
+    await waitFor(() => expect(screen.getByText("Defaults body")).toBeVisible());
+    await userEvent.click(screen.getByRole("tab", { name: "Connections" }));
     expect(screen.getByLabelText("Draft")).toHaveValue("keep this");
   });
 
-  it("opens secondary controls before scrolling to an existing deep-linked field", () => {
-    render(<MemoryRouter initialEntries={["/settings#min-history"]}><SettingsSections content={{ connections: <p>Connection controls</p>, recommendations: <SettingDisclosure title="More controls" value="Edit"><input id="min-history" aria-label="Deep linked history" /></SettingDisclosure> }} /></MemoryRouter>);
-    expect(screen.getByLabelText("Deep linked history")).toBeVisible();
+  it("repeats a jump when its hash is already in the address", async () => {
+    renderTabs("/settings/defaults#requests", {
+      connections: null,
+      defaults: (
+        <>
+          <Link to="/settings/defaults#requests">Requests</Link>
+          <section id="requests" />
+        </>
+      ),
+      system: null,
+    });
+    await waitFor(() => expect(lastScrolled()).toBe(document.getElementById("requests")));
+    scrollIntoView.mockClear();
+    await userEvent.click(screen.getByRole("link", { name: "Requests" }));
+    await waitFor(() => expect(lastScrolled()).toBe(document.getElementById("requests")));
+  });
+
+  it("switches to the tab an in-page anchor belongs to", async () => {
+    renderTabs("/settings/defaults?view=x", {
+      connections: <section id="connections">Connection controls</section>,
+      defaults: <Link to="/settings/defaults?view=x#connections">change it in Connections</Link>,
+      system: null,
+    });
+    await userEvent.click(screen.getByRole("link", { name: "change it in Connections" }));
+    await waitFor(() => expect(screen.getByLabelText("Address")).toHaveTextContent("/settings/connections?view=x#connections"));
     expect(screen.getByText("Connection controls")).toBeVisible();
-    expect(scrollIntoView.mock.instances.at(-1)).toBe(document.getElementById("min-history"));
+    await waitFor(() => expect(lastScrolled()).toBe(document.getElementById("connections")));
+  });
+
+  it("finds a field it doesn't list by looking in each tab", async () => {
+    renderTabs("/settings/connections#custom-field", {
+      connections: null,
+      defaults: null,
+      system: <input id="custom-field" aria-label="Custom field" />,
+    });
+    await waitFor(() => expect(screen.getByRole("tab", { name: "System", selected: true })).toBeVisible());
+    expect(screen.getByLabelText("Custom field")).toBeVisible();
+  });
+
+  it("opens secondary controls before scrolling to a deep-linked field", async () => {
+    renderTabs("/settings#min-history", {
+      connections: <p>Connection controls</p>,
+      defaults: (
+        <SettingDisclosure title="More controls" value="Edit">
+          <input id="min-history" aria-label="Deep linked history" />
+        </SettingDisclosure>
+      ),
+      system: null,
+    });
+    await waitFor(() => expect(screen.getByLabelText("Address")).toHaveTextContent("/settings/defaults#min-history"));
+    expect(screen.getByLabelText("Deep linked history")).toBeVisible();
+    await waitFor(() => expect(lastScrolled()).toBe(document.getElementById("min-history")));
   });
 });

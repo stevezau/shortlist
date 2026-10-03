@@ -187,7 +187,7 @@ export function UserDetailPage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to="/users" label="All users" />
+      <BackLink to="/users" label="Users" />
       <QueryBoundary
         query={usersQuery}
         skeleton={<Skeleton className="h-64 w-full" />}

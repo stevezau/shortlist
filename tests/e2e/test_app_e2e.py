@@ -6,8 +6,6 @@ mismatched request body passes both unit suites and dies here.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 from playwright.sync_api import Page, expect
 
@@ -19,10 +17,13 @@ pytestmark = pytest.mark.e2e
 class TestAppLoads:
     def test_dashboard_renders_the_report_from_the_api(self, page: Page, app: ShortlistApp):
         # The dashboard IS the tracking report now (the per-user list moved to the Users page).
-        # With nothing delivered yet it says so — which still proves the /api/report round-trip
-        # rendered, because a failed fetch would show the error state instead of this copy.
+        # Before anything has run it shows the first-run panel — which still proves the /api/report
+        # round-trip rendered: the panel is chosen FROM the report (no finished run, no first pick),
+        # and a failed fetch would show the error state instead.
         page.goto("/")
-        expect(page.get_by_text(re.compile("Nothing has reached", re.IGNORECASE))).to_be_visible(timeout=20_000)
+        expect(page.get_by_role("heading", name="Build everyone\u2019s rows for the first time")).to_be_visible(
+            timeout=20_000
+        )
 
     def test_no_console_errors(self, page: Page, app: ShortlistApp):
         errors: list[str] = []

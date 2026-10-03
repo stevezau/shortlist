@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, Eye, Loader2, UserPlus } from "lucide-react";
+import { ArrowRight, Check, Loader2, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
@@ -157,7 +157,6 @@ export function WatchingAccountPage() {
     <div className="space-y-5">
       <BackLink to="/users" label="Users" />
       <PageHeader
-        icon={Eye}
         title="You see everyone's rows"
         subtitle="Why the Recommended shelf in your libraries shows every person's row to you, and the three ways to deal with it."
       />

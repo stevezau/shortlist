@@ -2,6 +2,8 @@
 title: AI recommendations for Plex
 description: Where a language model helps with Plex recommendations, where it invents films you don't own, what it costs nightly, and how to run it locally with no API key.
 heading: AI recommendations for Plex — what works and what doesn't
+updated: 2026-10-03
+byline: true
 ---
 
 **Short answer:** an AI model — an LLM, short for large language model — is good at ranking and
@@ -105,26 +107,13 @@ Questions worth asking, whichever you pick:
 - **Can you see the reason for each pick** — and is that reason traceable to something the person
   actually watched?
 
-## How Shortlist does it
+Shortlist runs the inverted shape: candidates come from TMDB and Trakt, are filtered to titles in
+your library, and only then does an optional model (Claude, GPT, Gemini, or an OpenAI-compatible
+server you run yourself) rank and explain them.
 
-[**Shortlist**](https://github.com/stevezau/shortlist) runs the inverted shape above. Candidates come
-from TMDB and Trakt, are filtered to titles verified present in your library, and only then does an
-optional model rank and explain them.
-
-**AI is off by default and never required** — the built-in picker runs entirely in code, with no keys
-and no cloud. When you do enable a provider, it works with Claude, GPT, Gemini, or any
-OpenAI-compatible local server (Ollama, llama.cpp, LM Studio, vLLM, LocalAI). Every pick carries its
-seed — "Because you watched _Arrival_" — so a bad recommendation is traceable to the watch that
-caused it, and you can block that seed.
-
-```bash
-docker run -d --name shortlist -p 5959:5959 \
-  -v /path/to/config:/config \
-  stevezzau/shortlist:latest
-```
-
-The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
-typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
+{% include seo-closing.html shot="run-detail.webp" shot_w="1440" shot_h="1000"
+   shot_alt="A run in progress in Shortlist 1.9.3: 13 of 46 people processed, each working row labelled with the watch it follows, such as Because you watched For All Mankind."
+   shot_caption="A nightly run: every row says which watch it follows, so a bad pick can be traced back to its seed." %}
 
 ## Related
 

@@ -15,20 +15,28 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGES = ROOT / "docs" / "images"
-#: Two shapes, because the sources write them differently and an expression that only knew the first
-#: had a blind spot big enough to hide a whole file: `images/<name>.<ext>` covers Liquid, Markdown,
-#: HTML and raw GitHub URLs, while `_data/tour.yml` names a bare `image: <name>.<ext>` that the
-#: layout prefixes for it. Missing that form meant a broken tour reference would never have failed.
+#: Two shapes, because the sources write them differently: `images/<name>.<ext>` covers Liquid, Markdown,
+#: HTML and raw GitHub URLs, while a YAML data file can name a bare `image: <name>.<ext>` that a layout
+#: prefixes for it. An expression that only knew the first had a blind spot big enough to hide a file.
 REFERENCE = re.compile(r"(?:images/|image:\s*)([A-Za-z0-9._-]+\.(?:png|jpg|jpeg|webp|svg))")
-SOURCES = (
-    "README.md",
-    "docs/_config.yml",
-    "docs/_data/tour.yml",
-    "docs/getting-started.md",
-    "docs/guides/interface.md",
-    "docs/_layouts/home.html",
-    "unraid-templates/shortlist.xml",
-    "unraid-templates/ca_profile.xml",
+#: Every published page, layout, include and data file, plus the README and the Unraid templates. Globbed
+#: rather than listed: a hand-kept list went stale the first time a guide was split into sub-pages, and a
+#: page missing from it made its own screenshot look like an orphan.
+SOURCES = tuple(
+    sorted(
+        str(p.relative_to(ROOT))
+        for p in [
+            *(ROOT / "docs").rglob("*.md"),
+            *(ROOT / "docs").glob("_layouts/*.html"),
+            *(ROOT / "docs").glob("_includes/*.html"),
+            *(ROOT / "docs").glob("_data/*.yml"),
+            ROOT / "docs" / "_config.yml",
+            ROOT / "README.md",
+            ROOT / "unraid-templates" / "shortlist.xml",
+            ROOT / "unraid-templates" / "ca_profile.xml",
+        ]
+        if "superpowers" not in p.parts
+    )
 )
 
 

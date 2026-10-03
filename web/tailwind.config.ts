@@ -6,8 +6,20 @@ export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        // Self-hosted (@fontsource, imported in main.tsx): Shortlist runs on LANs with no internet,
+        // so a CDN font would silently fall back to the system face on exactly those installs.
+        // Quoted INSIDE the string: Tailwind emits names verbatim, and an unquoted family whose words
+        // include a bare number ("Source Sans 3") is invalid CSS — the browser drops the whole
+        // declaration and falls back to its default serif.
+        sans: ['"Source Sans 3 Variable"', '"Segoe UI"', "system-ui", "sans-serif"],
+        mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+      },
       colors: {
-        border: "hsl(var(--border))",
+        border: {
+          DEFAULT: "hsl(var(--border))",
+          strong: "hsl(var(--border-strong))",
+        },
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
@@ -44,6 +56,10 @@ export default {
           DEFAULT: "hsl(var(--elevated))",
           foreground: "hsl(var(--elevated-foreground))",
         },
+        // The selected-state surface (`lib/selected.ts`): one step above `elevated`, so a chosen
+        // nav item, tab or chip reads as raised rather than filled amber.
+        raised: "hsl(var(--raised))",
+        "faint-foreground": "hsl(var(--faint-foreground))",
         muted: {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
@@ -73,6 +89,10 @@ export default {
         elevated:
           "0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 8px 24px -12px hsl(240 40% 2% / 0.7)",
         glow: "0 0 0 1px hsl(var(--primary) / 0.25), 0 8px 30px -8px hsl(var(--primary) / 0.35)",
+        // The 2px amber edge that marks a selected item: along the bottom for horizontal controls
+        // (segments, chips), along the left for vertical lists (the nav rail, settings sub-nav).
+        "selected-x": "inset 0 -2px 0 0 hsl(var(--primary))",
+        "selected-y": "inset 2px 0 0 0 hsl(var(--primary))",
       },
       keyframes: {
         // Welcome-step mock: the Picked-for-You row appearing on a Plex Home.

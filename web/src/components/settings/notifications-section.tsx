@@ -1,8 +1,7 @@
-import { ArrowRight } from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import { useState } from "react";
 
 import { SaveStatus } from "@/components/save-status";
-import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { settingBool, settingString } from "@/lib/format";
 import { useSaveSettings } from "@/lib/queries";
@@ -56,8 +55,8 @@ function storedEvents(settings: Settings): string[] {
  * Tell the owner what happened while they were asleep, on the channel they already watch.
  *
  * Only the on/off switch and the choice of events live here. Where the messages go — the address and
- * an optional auth header — is the Webhook card in Connections, with every other service Shortlist
- * talks to, where it gets Test and Remove like they do.
+ * an optional auth header — is the Webhook row just above it in Connections, with every other
+ * service Shortlist talks to, where it gets Test and Remove like they do.
  *
  * The owner picks the events. The server's default is a failed run and a privacy exposure — the two
  * nobody can see before their next login — so a section nobody touches stays quiet. No message names a
@@ -97,96 +96,86 @@ export function NotificationsSection({ settings }: { settings: Settings }) {
   };
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold">Notifications</h2>
-        <p className="text-sm text-muted-foreground">
-          Shortlist runs while you’re asleep. This is how it tells you what
-          happened.
-        </p>
+    <div className="space-y-4 px-4 py-4 sm:pl-16 sm:pr-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-0.5">
+          <p className="text-[13px] font-medium">Send alerts to a webhook</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Posts a message for each thing you tick below. No message ever
+            names anybody.
+          </p>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={toggle}
+          aria-label="Send alerts to a webhook"
+        />
       </div>
 
-      <Card>
-        <CardContent className="space-y-6 pt-6">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-0.5">
-              <p className="text-sm font-medium">Send alerts to a webhook</p>
-              <p className="text-sm text-muted-foreground">
-                Posts a message for each thing you tick below. No message ever
-                names anybody.
-              </p>
-            </div>
-            <Switch
-              checked={enabled}
-              onCheckedChange={toggle}
-              aria-label="Send alerts to a webhook"
-            />
-          </div>
+      <p className="text-xs text-muted-foreground">{hasAddress ? `${events.length} events selected · webhook configured` : "Webhook address missing"}</p>
+      <SaveStatus fallback="Couldn’t save that. Try again." isPending={save.isPending} isError={save.isError} error={save.error} saved={save.isSuccess} onRetry={() => {
+        const values = save.variables;
+        if (!values) return;
+        save.mutate(values, { onSuccess: () => {
+          if (typeof values["notify.webhook.enabled"] === "boolean") setEnabled(values["notify.webhook.enabled"]);
+          if (Array.isArray(values["notify.webhook.events"])) setEvents(values["notify.webhook.events"] as string[]);
+        } });
+      }} />
 
-          <p className="text-xs text-muted-foreground">{hasAddress ? `${events.length} events selected · webhook configured` : "Webhook address missing"}</p>
-          <SaveStatus fallback="Couldn’t save that. Try again." isPending={save.isPending} isError={save.isError} error={save.error} saved={save.isSuccess} onRetry={() => {
-            const values = save.variables;
-            if (!values) return;
-            save.mutate(values, { onSuccess: () => {
-              if (typeof values["notify.webhook.enabled"] === "boolean") setEnabled(values["notify.webhook.enabled"]);
-              if (Array.isArray(values["notify.webhook.events"])) setEvents(values["notify.webhook.events"] as string[]);
-            } });
-          }} />
+      {enabled && !hasAddress && (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
+          Nothing is sent until it has somewhere to go.
+          <a
+            href="#connection-notify"
+            className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Set up the webhook above
+            <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+          </a>
+        </p>
+      )}
 
-          {enabled && !hasAddress && (
-            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
-              Nothing is sent until it has somewhere to go.
-              <a
-                href="#connections"
-                className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                Add the webhook in Connections
-                <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-              </a>
-            </p>
-          )}
-
-          {enabled ? (
-            <fieldset className="space-y-3">
-              <legend className="text-sm font-medium">What to send</legend>
-              <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
-                {EVENT_GROUPS.map((group) => (
-                  <div key={group.title} className="space-y-2">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      {group.title}
-                    </p>
-                    <div className="space-y-1">
-                      {group.events.map((event) => (
-                        <label
-                          key={event.id}
-                          className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={events.includes(event.id)}
-                            onChange={() => toggleEvent(event.id)}
-                            className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
-                          />
-                          {event.label}
-                        </label>
-                      ))}
-                    </div>
-                    {/* Under the list, so the three columns' checkboxes start on the same line. */}
-                    {group.hint && (
-                      <p className="px-2 text-xs text-muted-foreground">{group.hint}</p>
-                    )}
-                  </div>
-                ))}
+      {enabled ? (
+        <fieldset className="space-y-3">
+          <legend className="text-sm font-medium">What to send</legend>
+          <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
+            {EVENT_GROUPS.map((group) => (
+              <div key={group.title} className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {group.title}
+                </p>
+                <div className="space-y-1">
+                  {group.events.map((event) => (
+                    <label
+                      key={event.id}
+                      className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted/50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={events.includes(event.id)}
+                        onChange={() => toggleEvent(event.id)}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                      />
+                      {event.label}
+                    </label>
+                  ))}
+                </div>
+                {/* Under the list, so the three columns' checkboxes start on the same line. */}
+                {group.hint && (
+                  <p className="px-2 text-xs text-muted-foreground">{group.hint}</p>
+                )}
               </div>
-            </fieldset>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Until this is on, a failed run shows up in the bell at the top of
-              the page — the next time you look.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+            ))}
+          </div>
+        </fieldset>
+      ) : (
+        // The secondary size of everything around it (the switch's description, the status line):
+        // at text-sm it was the largest text in a block whose title is 13px.
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Until this is on, a failed run shows up in the bell at the top of
+          the page — the next time you look.
+        </p>
+      )}
     </div>
   );
 }

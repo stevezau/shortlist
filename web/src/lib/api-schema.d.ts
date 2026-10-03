@@ -310,7 +310,8 @@ export interface paths {
         /**
          * Audit Log
          * @description The audit trail, newest first. `before_id` pages backwards — pass the id of the oldest entry
-         *     you already have. A cursor, not an offset: events are appended while you read.
+         *     you already have. A cursor, not an offset: events are appended while you read. Every filter given
+         *     applies.
          */
         get: operations["audit_log_api_events_log_get"];
         put?: never;
@@ -3557,6 +3558,8 @@ export interface components {
             poster: components["schemas"]["PosterOut"];
             /** Preview Incomplete */
             preview_incomplete?: string | null;
+            /** Preview Titles */
+            preview_titles: components["schemas"]["PreviewTitleOut"][];
             /** Recency */
             recency: number | null;
             /** Recent Count */
@@ -3928,6 +3931,26 @@ export interface components {
             title: string;
             /** Watched At */
             watched_at: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EventOut
+         * @description One audit row. `message` is the writer's structured diff, and its keys depend on `scope`.
+         */
+        EventOut: {
+            /** Id */
+            id: number;
+            /** Level */
+            level: string;
+            /** Message */
+            message: {
+                [key: string]: unknown;
+            };
+            /** Scope */
+            scope: string;
+            /** Ts */
+            ts: string;
         } & {
             [key: string]: unknown;
         };
@@ -4731,6 +4754,18 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PreviewTitleOut
+         * @description One title from a row's latest delivery, for the Rows list's poster collage.
+         */
+        PreviewTitleOut: {
+            /** Rating Key */
+            rating_key: number;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PrivacyStatusOut
          * @description One live reading of the whole server's sharing state.
          */
@@ -4746,6 +4781,8 @@ export interface components {
             rows_error: string | null;
             /** Rows On Plex */
             rows_on_plex: string[];
+            /** Snapshots Kept */
+            snapshots_kept: number;
             /** Summary */
             summary: string;
         } & {
@@ -5258,6 +5295,7 @@ export interface components {
             finished_at: string | null;
             /** Id */
             id: number;
+            privacy: components["schemas"]["RunPrivacyOut"] | null;
             /** Promotion Blockers */
             promotion_blockers: string[];
             /** Shared Rows */
@@ -5354,6 +5392,20 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * RunPrivacyOut
+         * @description What this run measured about who can see whose rows. Reporting only.
+         */
+        RunPrivacyOut: {
+            /** Can See Others */
+            can_see_others: string[];
+            /** Filters Not Enforced */
+            filters_not_enforced: string[] | null;
+            /** Unreadable Filters */
+            unreadable_filters: string[] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * RunProgressEvent
          * @description Event ``run.progress`` — a run entered a non-terminal state. `cancelling` is published the
          *     moment /cancel is accepted; the run keeps going until the person it is on finishes.
@@ -5440,6 +5492,7 @@ export interface components {
             finished_at: string | null;
             /** Id */
             id: number;
+            privacy: components["schemas"]["RunPrivacyOut"] | null;
             /** Promotion Blockers */
             promotion_blockers: string[];
             /** Started At */
@@ -7297,6 +7350,10 @@ export interface operations {
         parameters: {
             query?: {
                 scope?: string | null;
+                /** @description Only scopes starting with this, e.g. `run.`. Case-insensitive on SQLite (it is a LIKE). */
+                scope_prefix?: string | null;
+                /** @description Only the scopes that record a write to Plex or plex.tv. Includes dry-run audit rows (`message.dry_run` true), which changed nothing on Plex; the UI labels them as dry runs. */
+                plex_writes?: boolean;
                 limit?: number;
                 before_id?: number | null;
             };
@@ -7312,9 +7369,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["EventOut"][];
                 };
             };
             /** @description Validation Error */

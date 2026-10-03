@@ -1,6 +1,11 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
+// Self-hosted faces, bundled with the app: an install on a LAN with no internet still gets them.
+import "@fontsource-variable/source-sans-3";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
+
 import App from "./App";
 import "./index.css";
 

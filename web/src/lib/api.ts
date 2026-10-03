@@ -1,6 +1,7 @@
 import type {
   Job,
   PrivacyStatus,
+  AuditEvent,
   UserPickOutcome,
   RowEffectiveness,
   JobCatalogEntry,
@@ -478,6 +479,19 @@ export const api = {
   /** Where the browser downloads the redacted log zip from (a plain link — the session cookie
    *  authenticates it, so it needs no fetch/blob dance). */
   logsDownloadUrl: (): string => apiUrl("/api/system/logs/download"),
+
+  /** The audit trail, newest first. `plexWrites` keeps only the scopes that record a write to Plex or
+   *  plex.tv; `beforeId` pages backwards — the id of the oldest event you already have. */
+  getEventLog: (
+    params: { plexWrites?: boolean; beforeId?: number; limit?: number } = {},
+  ): Promise<AuditEvent[]> => {
+    const query = new URLSearchParams();
+    if (params.plexWrites) query.set("plex_writes", "true");
+    if (params.beforeId !== undefined) query.set("before_id", String(params.beforeId));
+    if (params.limit !== undefined) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return request(qs ? `/api/events/log?${qs}` : "/api/events/log");
+  },
 
   startRun: (body: RunRequest = {}): Promise<RunCreated> =>
     request("/api/runs", { method: "POST", body: JSON.stringify(body) }),

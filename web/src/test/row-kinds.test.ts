@@ -297,7 +297,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "idle_hold_days",
     "requests",
   ],
-  // Named after a watch, so the engine forces nightly and How often it changes is hidden.
+  // Named after a watch, so the engine forces nightly and Titles refresh every is hidden.
   bywNamed: [
     "based_on",
     "seed_window",
@@ -1143,7 +1143,7 @@ describe("describeKindChange", () => {
         expect(kept).toContain(NIGHTLY_LINE);
         const proposed = describeKindChange(from, choice, CTX).lines;
         expect(proposed).not.toContain(NIGHTLY_LINE);
-        expect(proposed.join(" ")).toContain("How often it changes");
+        expect(proposed.join(" ")).toContain("Titles refresh every");
       });
 
       it("reads a new row's typed name the same way, since the Name box takes the proposal", () => {
@@ -1245,7 +1245,7 @@ describe("describeKindChange", () => {
       const row2 = row({ ...named(BYW_NAME), max_seeds: 3, seed_window: 1, refresh_days: 1 });
       // Its 3 watches are the owner's own and stay; only the settings on screen change.
       expect(describeKindChange(row2, { kind: "picked", fill: "picked" }, CTX).lines).toEqual([
-        "Adds a setting this kind uses: How often it changes.",
+        "Adds a setting this kind uses: Titles refresh every.",
         "Hides settings this kind doesn't use: Take turns between their last watches and Name for someone who's new. What they're set to is kept, so switching back restores it.",
       ]);
     });
@@ -1257,7 +1257,7 @@ describe("describeKindChange", () => {
         "Clears the request tag “family”.",
         "A shared row never asks for missing titles.",
         "Adds a setting this kind uses: How many people must have watched a title.",
-        "Hides settings this kind doesn't use: How many recent watches to match, When someone hasn't watched enough, Sources, Already-watched titles, Only series they haven't started, Recent releases, How often it changes and Hold when they aren't watching. What they're set to is kept, so switching back restores it.",
+        "Hides settings this kind doesn't use: How many recent watches to match, When someone hasn't watched enough, Sources, Already-watched titles, Only series they haven't started, Recent releases, Titles refresh every and Hold when they aren't watching. What they're set to is kept, so switching back restores it.",
       ]);
     });
 
@@ -1291,7 +1291,7 @@ describe("describeKindChange", () => {
         "Leads the row with favourites they've already finished, then fills it with new picks.",
         "Stops taking turns between their last 3 watches.",
         "Turns off Only series they haven't started, which can't be combined with Watch it again.",
-        "Adds settings this kind uses: Skip titles finished recently, How often it changes and Hold when they aren't watching.",
+        "Adds settings this kind uses: Skip titles finished recently, Titles refresh every and Hold when they aren't watching.",
         // Its 0% cap is kept, not raised, so it is hidden like any other setting the kind doesn't use.
         "Hides a setting this kind doesn't use: Already-watched titles. What it's set to is kept, so switching back restores it.",
       ]);

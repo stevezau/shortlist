@@ -29,3 +29,21 @@ def test_relative_fragment_links_resolve_from_pretty_route(tmp_path: Path) -> No
         '<h1 id="intro">Guide</h1><a href="#intro">Intro</a><a href="../#home">Home</a>'
     )
     assert check_links(tmp_path) == []
+
+
+def test_browser_pass_skips_redirect_stubs(tmp_path: Path) -> None:
+    """jekyll-redirect-from writes a stub that sends the browser to the live site's absolute URL.
+
+    Loading one in the browser pass would leave the local build, and every check after it would run
+    against shortlistapp.dev instead of the pages under test.
+    """
+    from scripts.check_docs_site import browser_routes
+
+    (tmp_path / "guide").mkdir()
+    (tmp_path / "old-page").mkdir()
+    (tmp_path / "index.html").write_text("<h1>Home</h1>")
+    (tmp_path / "guide/index.html").write_text("<h1>Guide</h1>")
+    (tmp_path / "old-page/index.html").write_text(
+        '<meta http-equiv="refresh" content="0; url=https://shortlistapp.dev/guide/"><h1>Redirecting</h1>'
+    )
+    assert browser_routes(tmp_path) == ["/", "/guide/"]

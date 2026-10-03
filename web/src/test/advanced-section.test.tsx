@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AdvancedSection } from "@/components/settings/advanced-section";
@@ -20,7 +21,9 @@ function renderSection(settings: Settings) {
   });
   render(
     <QueryClientProvider client={client}>
-      <AdvancedSection settings={settings} />
+      <MemoryRouter>
+        <AdvancedSection settings={settings} />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -133,5 +136,15 @@ describe("AdvancedSection", () => {
     await waitFor(() =>
       expect(putSettings).toHaveBeenCalledWith({ "plex.timeout_s": 150 }),
     );
+  });
+
+  it("points the change log at the screen that shows it", () => {
+    renderSection({});
+    expect(screen.getByRole("link", { name: "Activity → Changes on Plex" })).toHaveAttribute("href", "/activity?tab=changes");
+  });
+
+  it("no longer carries 'Disabled users see nothing' — it moved to Privacy", () => {
+    renderSection({ "privacy.hide_shared_from_disabled": true });
+    expect(screen.queryByRole("switch", { name: /disabled users/i })).toBeNull();
   });
 });

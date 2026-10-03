@@ -20,7 +20,7 @@
   --amber-deep: #b87d05;
 
   --gutter: clamp(1.25rem, 1rem + 2vw, 2.5rem);
-  --measure: 68ch;
+  --measure: 72ch;
   --wide: 1200px;
   --radius: 14px;
   --radius-sm: 9px;
@@ -368,7 +368,6 @@ hr {
   fill: var(--star);
 }
 
-.nav-pill--coffee svg,
 .footer__cup {
   color: var(--cup);
 }
@@ -384,7 +383,7 @@ hr {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.05rem 0.3rem;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--muted);
   background: var(--surface-2);
 }
@@ -412,7 +411,9 @@ hr {
     top: 100%;
     inset-inline: 0;
     padding: 1rem 1.5rem;
-    max-height: calc(100dvh - 4rem);
+    /* Stops short of the bottom of the screen: the strip of page left showing is somewhere to tap to
+       close it, now that a section with many pages makes the menu taller than the screen. */
+    max-height: calc(100dvh - var(--nav-h) - 4rem);
     overflow-y: auto;
     background: var(--bg);
     border-bottom: 1px solid var(--border);
@@ -449,14 +450,11 @@ hr {
   }
 }
 
-/* Measured at 320: the brand, a worded search button and four 34px icons want
-   387px inside a 275px bar, and the row pushed every page 86px sideways. Shed
-   the parts that say something twice, widest first. The word goes before the
-   icon, which keeps its aria-label; the coffee goes before anything
-   structural, and it is still in the footer. */
-/* The Star and Coffee words need ~110px the full nav row does not have below 1180px (measured: 24px
-   over at 1100, 215px at 901). Once the nav links collapse into the burger at 900 there is room for
-   the words again, until the 600px pass sheds every label. */
+/* Measured at 320: the brand, a worded search button and the 34px icons did not fit a 275px bar, and
+   the row pushed every page sideways. Shed the parts that say something twice, widest first: the word
+   goes before the icon, which keeps its aria-label. The pill's "GitHub" word has no room in the full
+   nav row below 1180px; once the links collapse into the burger at 900 there is room again, until the
+   600px pass sheds every label. The star count, when site.js has one, stays at every width. */
 @media (min-width: 901px) and (max-width: 1180px), (max-width: 600px) {
   .nav-pill {
     width: 34px;
@@ -466,6 +464,23 @@ hr {
   .nav-pill__label {
     display: none;
   }
+}
+
+.nav-pill__count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 640;
+  color: var(--text);
+}
+
+.nav-pill--star .nav-pill__label {
+  color: var(--muted);
+}
+
+/* Once the count is in, the pill keeps it at every width, so it is never squeezed to 34px. */
+.nav-pill.has-count {
+  width: auto;
+  padding: 0 0.65rem;
+  gap: 0.4rem;
 }
 
 @media (max-width: 600px) {
@@ -482,9 +497,6 @@ hr {
 @media (max-width: 420px) {
   .nav__inner {
     gap: 0.4rem;
-  }
-  .nav-pill--coffee {
-    display: none;
   }
 }
 
@@ -566,16 +578,6 @@ hr {
   text-align: center;
 }
 
-.eyebrow {
-  display: inline-block;
-  font-size: 0.76rem;
-  font-weight: 680;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--accent-text);
-  margin-bottom: 0.75rem;
-}
-
 .section h2 {
   font-size: clamp(1.6rem, 1.2rem + 1.8vw, 2.35rem);
   margin-bottom: 0.85rem;
@@ -588,156 +590,448 @@ hr {
   text-wrap: pretty;
 }
 
-/* ------------------------------------------------------------------ hero -- */
+/* ------------------------------------------------------------------ home -- */
+/* The landing page. One wider measure than the docs (1360px) so the two Homes are readable side by
+   side, and every section shares the hero's left edge. Plain left-aligned H2s, no kickers. */
 
-.hero {
-  position: relative;
-  overflow: hidden;
-  padding-block: clamp(3rem, 1.5rem + 7vw, 6rem)
-    clamp(2.5rem, 1rem + 5vw, 4.5rem);
-}
-
-/* A single warm bloom behind the headline, so the page has a light source
-   without the gradient-banner look the stock theme had. */
-.hero::before {
-  content: "";
-  position: absolute;
-  inset: -40% 0 auto 50%;
-  translate: -50% 0;
-  width: min(1100px, 130%);
-  aspect-ratio: 1;
-  background: radial-gradient(
-    circle,
-    rgba(229, 160, 13, 0.16),
-    transparent 62%
-  );
-  pointer-events: none;
-  z-index: 0;
-}
-
-[data-theme="light"] .hero::before {
-  background: radial-gradient(circle, rgba(229, 160, 13, 0.2), transparent 65%);
-}
-
-.hero > * {
-  position: relative;
-  z-index: 1;
-}
-
-.hero__inner {
-  max-width: 50rem;
+.home-wide {
+  width: min(100% - var(--gutter) * 2, 1360px);
   margin-inline: auto;
-  text-align: center;
 }
 
-.hero h1 {
-  font-size: clamp(2.15rem, 1.3rem + 4.2vw, 4rem);
-  letter-spacing: -0.035em;
-  font-weight: 700;
-  margin-bottom: 1.15rem;
-}
-
-.hero h1 em {
-  font-style: normal;
-  color: var(--accent-text);
-}
-
-.hero__sub {
-  font-size: clamp(1.05rem, 0.98rem + 0.45vw, 1.28rem);
-  color: var(--text-soft);
-  margin: 0 auto 1.9rem;
-  max-width: 40rem;
-  text-wrap: pretty;
-}
-
-.hero__cta {
+.btn-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
   justify-content: center;
 }
 
-.hero__meta {
-  margin-top: 1.5rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.4rem;
-  justify-content: center;
-  font-size: 0.86rem;
-  color: var(--muted);
-}
-
-.hero__meta span {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.hero__meta svg {
-  width: 14px;
-  height: 14px;
-  color: var(--accent);
-  flex: none;
-}
-
-.hero__shot {
-  margin-top: clamp(2.5rem, 1.5rem + 4vw, 4rem);
-}
-
-/* --------------------------------------------------------- media frames -- */
-
-/* Screenshots need a container or they read as loose rectangles on the page.
-   The Plex row shot gets a plain frame; app shots get a faux title bar. */
-.frame {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-}
-
-.frame img {
-  width: 100%;
-}
-
-.frame--chrome .frame__bar {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.6rem 0.85rem;
-  background: var(--surface-2);
+.home-hero {
+  padding-block: clamp(1.5rem, 1rem + 1.5vw, 2rem) clamp(2.25rem, 1.5rem + 2.5vw, 3.25rem);
   border-bottom: 1px solid var(--border);
 }
 
-.frame__dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--surface-3);
+.home-hero__head {
+  display: grid;
+  gap: 0.9rem 3rem;
+  align-items: end;
+  margin-bottom: clamp(1.25rem, 0.9rem + 1vw, 1.6rem);
+}
+
+@media (min-width: 1000px) {
+  .home-hero__head {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  }
+}
+
+.home-hero h1 {
+  font-size: clamp(2.05rem, 1.15rem + 3vw, 3.5rem);
+  letter-spacing: -0.035em;
+  font-weight: 700;
+  line-height: 1.06;
+}
+
+.home-hero__def {
+  margin: 0;
+  font-size: clamp(1.02rem, 0.96rem + 0.3vw, 1.14rem);
+  color: var(--text-soft);
+  max-width: 34rem;
+  text-wrap: pretty;
+}
+
+/* The stage keeps the site's own dark values in both themes: the Plex captures on it are dark, and
+   a light frame around them reads as a hole in the page. */
+.home-stage {
+  margin: 0;
+  padding: clamp(0.6rem, 0.4rem + 0.6vw, 1rem);
+  background: #0d0d10;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.home-homes {
+  display: grid;
+  gap: clamp(1rem, 0.6rem + 0.8vw, 1.25rem);
+}
+
+@media (min-width: 760px) {
+  .home-homes {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.home-home img {
+  width: 100%;
+  border-radius: 10px;
+  /* The crop stops mid-row, the way a Plex row runs off the screen. */
+  -webkit-mask-image: linear-gradient(90deg, #000 84%, transparent 100%);
+  mask-image: linear-gradient(90deg, #000 84%, transparent 100%);
+}
+
+.home-home__cap {
+  margin: 0.65rem 0.2rem 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.6rem;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: #c9c9d1;
+}
+
+.home-home__cap strong {
+  color: #f4f4f5;
+  font-weight: 650;
+}
+
+.home-home__cap i {
+  font-style: normal;
+  color: #f4f4f5;
+}
+
+.home-stage figcaption {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.95rem 0.2rem 0.1rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  color: #f4f4f5;
+  font-size: 0.95rem;
+  font-weight: 560;
+}
+
+.home-stage figcaption svg {
+  width: 17px;
+  height: 17px;
   flex: none;
+  color: var(--amber);
 }
 
-.frame__title {
-  margin-left: 0.5rem;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.76rem;
+.home-install {
+  display: grid;
+  gap: 1.25rem clamp(2rem, 1rem + 3vw, 3.5rem);
+  margin-top: clamp(1.25rem, 0.9rem + 1.4vw, 2rem);
+  align-items: center;
+}
+
+@media (min-width: 1000px) {
+  .home-install {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+}
+
+.home-install__lead {
+  margin: 0 0 0.7rem;
+  font-size: 1.06rem;
+  color: var(--text-soft);
+  text-wrap: pretty;
+}
+
+.home-install__lead strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.home-install__small {
+  margin: 0 0 1.25rem;
+  font-size: 0.9rem;
   color: var(--muted);
-  font-family: var(--font-mono);
+  text-wrap: pretty;
 }
 
-figure {
+.home-ic {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.08em 0.36em;
+  color: var(--accent-text);
+  font-size: 0.86em;
+  white-space: nowrap;
+}
+
+.home-gh__count:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: 0.2rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--border-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-gh__count svg {
+  width: 15px;
+  height: 15px;
+  color: var(--star);
+  fill: var(--star);
+}
+
+/* The maintenance strip: plain facts, one line on desktop. */
+.home-facts {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0;
+  margin: clamp(1.25rem, 0.9rem + 1.4vw, 1.75rem) 0 0;
+  padding: 0.9rem 0 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.home-facts li {
+  white-space: nowrap;
+}
+
+.home-facts li:not(:last-child)::after {
+  content: "·";
+  margin: 0 0.7rem;
+  color: var(--border-strong);
+}
+
+.home-facts a {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.home-facts .home-live {
+  color: var(--text-soft);
+}
+
+.home-facts .home-live::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 0.45rem;
+  border-radius: 50%;
+  background: var(--good);
+  vertical-align: 0.08em;
+}
+
+.home-split {
+  display: grid;
+  gap: 1.75rem clamp(2rem, 1rem + 4vw, 5rem);
+}
+
+@media (min-width: 1000px) {
+  .home-split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.75fr);
+    align-items: start;
+  }
+}
+
+.home-split .flow {
+  margin: 0.35rem 0 0;
+}
+
+.home-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 1.1rem;
+  font-size: 0.93rem;
+  font-weight: 600;
+}
+
+.home-more svg {
+  width: 15px;
+  height: 15px;
+}
+
+.home-section--tight {
+  padding-block: clamp(2.75rem, 1.75rem + 3vw, 4rem);
+}
+
+.home-ledger {
+  display: grid;
+  gap: 1.75rem clamp(1.5rem, 1rem + 2vw, 3rem);
+  margin-top: clamp(1.5rem, 1rem + 2vw, 2.5rem);
+}
+
+@media (min-width: 860px) {
+  .home-ledger {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.home-ledger__col {
+  border-top: 2px solid var(--border-strong);
+  padding-top: 1.1rem;
+}
+
+.home-ledger__col--undo {
+  border-top-color: var(--accent);
+}
+
+.home-ledger h3 {
+  font-size: 1.08rem;
+  margin-bottom: 0.8rem;
+}
+
+.home-ledger ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.home-ledger li {
+  position: relative;
+  padding-left: 1.05rem;
+  color: var(--muted);
+  font-size: 0.93rem;
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+.home-ledger li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-line);
+}
+
+.home-ledger li strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.home-ledger code,
+.home .faq__body code {
+  font-size: 0.85em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.06em 0.34em;
+  color: var(--accent-text);
+  overflow-wrap: anywhere;
+}
+
+.home-ledger__note {
+  margin: 1.5rem 0 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+  max-width: 60rem;
+}
+
+.home-kinds-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 2rem;
+  margin-bottom: 1.4rem;
+}
+
+.section .home-kinds-head h2 {
   margin: 0;
 }
 
-figcaption {
-  margin-top: 0.85rem;
-  font-size: 0.85rem;
+.home-kinds-head p {
+  margin: 0;
   color: var(--muted);
-  text-align: center;
+  font-size: 0.95rem;
+}
+
+/* One strip, not an icon grid: the 1px gaps over a border-coloured background draw the rules. */
+.home-kinds {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+@media (min-width: 700px) {
+  .home-kinds {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .home-kinds {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+}
+
+.home-kinds li {
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+  padding: 1rem 1.1rem 1.1rem;
+  background: var(--surface);
+}
+
+.home-kinds strong {
+  font-size: 0.97rem;
+  font-weight: 640;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.home-kinds span {
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: var(--muted);
   text-wrap: pretty;
+}
+
+.home-kinds .tag {
+  margin: 0.1rem 0 0;
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.home-kinds-more {
+  margin: 1rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.home-split .faq {
+  max-width: none;
+  margin: 0;
+}
+
+@media (min-width: 1000px) {
+  .home-sticky {
+    position: sticky;
+    top: calc(var(--nav-h) + 2rem);
+  }
+}
+
+.faq details[open].faq--pinned summary::after {
+  display: none;
+}
+
+.home-close .section__lede {
+  margin-bottom: 1.25rem;
+}
+
+@media (max-width: 480px) {
+  /* The stage reaches halfway into the side gutter on a phone, so each Home is at least 340px wide. */
+  .home-stage {
+    margin-inline: calc(var(--gutter) / -2);
+    padding: 0.5rem;
+  }
+  .home .codeblock pre {
+    font-size: 0.75rem;
+    padding: 0.9rem;
+  }
 }
 
 /* ----------------------------------------------------------------- cards -- */
@@ -792,7 +1086,8 @@ figcaption {
   height: 19px;
 }
 
-.card h3 {
+.card h3,
+.section .card h2 {
   font-size: 1.02rem;
   margin-bottom: 0.4rem;
 }
@@ -818,409 +1113,20 @@ figcaption {
   color: var(--accent-text);
 }
 
-/* ------------------------------------------------------ row templates -- */
-
-.templates {
-  display: grid;
-  gap: 0.85rem;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
-  max-width: 68rem;
-  margin-inline: auto;
-}
-
-.template {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.9rem;
-  align-items: start;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1.1rem 1.2rem;
-}
-
-.template__emoji {
-  font-size: 1.35rem;
-  line-height: 1.2;
-}
-
-.template h3 {
-  font-size: 0.98rem;
-  margin-bottom: 0.3rem;
-}
-
-.template p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.88rem;
-  line-height: 1.55;
-}
+/* ------------------------------------------------------------------- tag -- */
 
 .tag {
   display: inline-block;
   vertical-align: middle;
   margin-left: 0.35rem;
-  padding: 0.05rem 0.45rem;
+  padding: 0.05rem 0.5rem;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--muted);
-}
-
-/* --------------------------------------------------------- pipeline -- */
-
-/* Sources in, Shortlist, results out. The page named TMDB in one place, Radarr in
-   another and the AI providers in two more, so nobody could see the shape of it. */
-.pipeline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  justify-content: center;
-  gap: 0.85rem;
-  max-width: 60rem;
-  margin: 0 auto clamp(2rem, 1rem + 3vw, 3rem);
-}
-
-.pipeline__stage {
-  flex: 1 1 14rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem 1.1rem;
-  text-align: center;
-}
-
-.pipeline__stage--core {
-  border-color: var(--accent-line);
-  background: var(--accent-quiet);
-}
-
-.pipeline__stage h3 {
-  font-size: 0.94rem;
-  margin-bottom: 0.3rem;
-}
-
-.pipeline__stage p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-  line-height: 1.5;
-}
-
-.pipeline__arrow {
-  align-self: center;
-  color: var(--accent);
-  font-size: 1.2rem;
-  flex: none;
-}
-
-@media (max-width: 720px) {
-  .pipeline__arrow {
-    rotate: 90deg;
-  }
-}
-
-/* --------------------------------------------------------- works with -- */
-
-/* Capped at three columns so the six groups land as two even rows. The plain
-   .grid--3 stretches to four on a wide screen and leaves two orphans. */
-.grid--trio {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
-  max-width: 68rem;
-  margin-inline: auto;
-}
-
-.supports {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 0.7rem;
-}
-
-.supports li {
-  display: grid;
-  gap: 0.1rem;
-  font-size: 0.9rem;
-}
-
-.supports strong {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.supports span {
-  color: var(--muted);
-  font-size: 0.86rem;
-  line-height: 1.5;
-}
-
-/* ------------------------------------------------------------ stat band -- */
-/* Four numbers under the hero. Column counts are fixed rather than auto-fit
-   because auto-fit put three across and left the fourth alone on a second row
-   through the whole 900-1000px range. */
-
-.stats-band {
-  background: var(--bg-soft);
-  border-block: 1px solid var(--border);
-  padding-block: clamp(1.75rem, 1rem + 2.5vw, 2.75rem);
-}
-
-.stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: clamp(1.5rem, 0.75rem + 2vw, 2.25rem);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.stat__value {
-  margin: 0;
-  font-size: clamp(2.1rem, 1.6rem + 2.2vw, 3rem);
-  line-height: 1;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  color: var(--accent-text);
-  font-variant-numeric: tabular-nums;
-}
-
-.stat__unit {
-  margin-left: 0.22em;
-  font-size: 0.4em;
-  font-weight: 600;
-  letter-spacing: 0;
-  color: var(--muted);
-}
-
-.stat__label {
-  margin: 0.5rem 0 0;
-  font-size: 0.98rem;
-  font-weight: 640;
-}
-
-.stat__note {
-  margin: 0.3rem 0 0;
-  color: var(--muted);
-  font-size: 0.86rem;
-  text-wrap: pretty;
-}
-
-@media (max-width: 479px) {
-  .stats {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (min-width: 1000px) {
-  .stats {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0;
-  }
-  .stat {
-    padding-inline: clamp(1rem, 0.4rem + 1.6vw, 2rem);
-  }
-  .stat + .stat {
-    border-left: 1px solid var(--border);
-  }
-  .stat:first-child {
-    padding-left: 0;
-  }
-  .stat:last-child {
-    padding-right: 0;
-  }
-}
-
-/* ----------------------------------------------------------------- tour -- */
-/* One grid, three layouts, no duplicated content. The steps and the pictures are
-   siblings in reading order, so:
-     narrow            one column, each step followed by its own picture
-     wide, no script   two columns, each step beside its own picture
-     wide, with script every picture moves into one pinned frame that changes
-   Only the third is scoped under .js-tour-ready, and only site.js adds that class
-   (after proving it can drive it — same contract as .reveal at the foot of this
-   file). Nothing here is hidden or dimmed by CSS alone, so a blocked script leaves
-   five readable steps and five visible pictures instead of a page of grey. */
-
-/* `minmax(0, 1fr)`, not the implicit `auto`: an auto column is at least as wide
-   as its widest item's min-content, and at 320 the address bar's monospace path
-   pushed that to 321px inside a 275px page. Measured. */
-.tour {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: clamp(2rem, 1.25rem + 3vw, 3.25rem);
-}
-
-/* Decoration for the pinned layout only. Hidden until site.js turns that on, so
-   nobody else gets an empty groove down the page. */
-.tour__rail {
-  display: none;
-}
-
-.tour-step {
-  display: grid;
-  grid-template-columns: 2.25rem minmax(0, 1fr);
-  column-gap: 1.05rem;
-  row-gap: 0.5rem;
-  align-content: start;
-}
-
-.tour-step__num {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  margin: 0;
-  width: 2.25rem;
-  height: 2.25rem;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface);
-  color: var(--text-soft);
-  font-size: 0.95rem;
-  font-weight: 680;
-  font-variant-numeric: tabular-nums;
-}
-
-.tour-step__title {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-  margin: 0;
-  font-size: clamp(1.2rem, 1.05rem + 0.7vw, 1.5rem);
-  text-wrap: balance;
-}
-
-.tour-step__body {
-  grid-column: 2;
-  grid-row: 2;
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.97rem;
-  text-wrap: pretty;
-}
-
-.tour-panel {
-  margin: 0;
-}
-
-.tour-panel img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-@media (min-width: 901px) {
-  .tour {
-    grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-    column-gap: clamp(2rem, 1rem + 3.5vw, 4rem);
-    align-items: center;
-  }
-
-  .tour-step {
-    grid-column: 1;
-  }
-
-  .tour-panel {
-    grid-column: 2;
-  }
-
-  /* --- pinned layout, script only ------------------------------------- */
-
-  .js-tour-ready .tour {
-    grid-template-rows: repeat(var(--tour-steps), auto);
-    align-items: start;
-  }
-
-  .js-tour-ready .tour__rail {
-    display: block;
-    position: absolute;
-    left: calc(1.125rem - 1px);
-    top: 0.5rem;
-    bottom: 0.5rem;
-    width: 2px;
-    border-radius: 2px;
-    background: var(--border);
-    overflow: hidden;
-  }
-
-  .js-tour-ready .tour__rail-fill {
-    display: block;
-    width: 100%;
-    height: 0;
-    background: var(--accent);
-    transition: height 0.12s linear;
-  }
-
-  .js-tour-ready .tour-step {
-    min-height: 66vh;
-    align-content: center;
-    opacity: 0.42;
-    transition: opacity 0.35s var(--ease);
-  }
-
-  .js-tour-ready .tour-step.is-active {
-    opacity: 1;
-  }
-
-  .js-tour-ready .tour-step.is-active .tour-step__num {
-    background: var(--accent);
-    border-color: transparent;
-    color: #1a1200;
-  }
-
-  /* Every panel occupies the whole second column and sticks inside it. `1 / -1`
-     needs the rows to be explicit, which is what --tour-steps is for. */
-  /* Stacked in one grid area, so each is its own box and none of them affects
-     any other's size. Measured: giving them all ONE fixed shape is the trap. The
-     five pictures run from 1.25:1 to 1.84:1, and a 16:10 frame shrank the
-     tallest until the app's own text was unreadable — `object-fit: contain`
-     stops it being cropped, not being shrunk. Each panel keeps its own shape
-     instead; only the height cap below ever makes one letterbox, and only on a
-     viewport too short to show it whole. */
-  .js-tour-ready .tour-panel {
-    grid-column: 2;
-    grid-row: 1 / -1;
-    align-self: start;
-    position: sticky;
-    top: calc(var(--nav-h) + 7vh);
-    /* One box for all five, with the picture centred in it, so the frame stops
-       jumping up and down the viewport as the pictures swap. */
-    height: calc(100vh - var(--nav-h) - 14vh);
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    opacity: 0;
-    visibility: hidden;
-    transition:
-      opacity 0.35s var(--ease),
-      visibility 0.35s;
-  }
-
-  .js-tour-ready .tour-panel.is-active {
-    opacity: 1;
-    visibility: visible;
-  }
-
-  .js-tour-ready .tour-panel .frame {
-    min-height: 0;
-    max-height: 100%;
-    display: flex;
-    flex-direction: column;
-    background: var(--surface-2);
-  }
-
-  /* Only bites on a viewport too short to show a picture whole: the frame hits
-     the box height, the picture shrinks inside it, and `contain` letterboxes it
-     rather than cropping. */
-  .js-tour-ready .tour-panel img {
-    min-height: 0;
-    object-fit: contain;
-  }
 }
 
 /* ------------------------------------------------- privacy-order flow -- */
@@ -1361,53 +1267,6 @@ figcaption {
   }
 }
 
-/* -------------------------------------------------------- closing call -- */
-
-.cta {
-  position: relative;
-  overflow: hidden;
-  max-width: 46rem;
-  margin-inline: auto;
-  padding: clamp(2rem, 1.25rem + 3vw, 3.25rem)
-    clamp(1.25rem, 0.75rem + 2vw, 2.5rem);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  text-align: center;
-}
-
-/* The same warm bloom as the hero, so the page opens and closes on one light
-   source rather than fading out into a plain box. */
-.cta::before {
-  content: "";
-  position: absolute;
-  inset: -55% 15% auto;
-  height: 18rem;
-  background: radial-gradient(closest-side, var(--accent-quiet), transparent);
-  pointer-events: none;
-}
-
-.cta > * {
-  position: relative;
-}
-
-.cta h2 {
-  font-size: clamp(1.5rem, 1.2rem + 1.4vw, 2.1rem);
-  margin-bottom: 0.75rem;
-}
-
-.cta p {
-  margin: 0 auto;
-  max-width: 34rem;
-  color: var(--muted);
-  text-wrap: pretty;
-}
-
-.cta .hero__cta {
-  margin-top: 1.75rem;
-}
-
 /* --------------------------------------------------------------- table -- */
 
 .table-scroll {
@@ -1531,6 +1390,85 @@ figcaption {
   height: 13px;
 }
 
+/* The install include's Copy: the one amber control on a page that carries it. */
+.copy--primary {
+  background: var(--amber);
+  border-color: transparent;
+  color: #1a1200;
+  font-weight: 650;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.8rem;
+}
+
+.copy--primary:hover {
+  background: var(--amber-bright);
+  border-color: transparent;
+  color: #1a1200;
+}
+
+.codeblock pre code {
+  color: var(--text-soft);
+}
+
+.y-key {
+  color: var(--text);
+}
+
+.y-val {
+  color: var(--accent-text);
+}
+
+/* One frame per code block: the pre IS the frame and the copy button sits inside it, top right. On a
+   phone a long first line would scroll under the button, so the button gets its own strip at the top
+   of the same frame instead. */
+.cb {
+  position: relative;
+  margin: 0 0 1.3rem;
+}
+
+.cb pre {
+  margin: 0;
+  padding: 1rem 5.75rem 1rem 1.1rem;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-size: 0.86rem;
+  line-height: 1.7;
+}
+
+.cb pre code {
+  color: var(--text-soft);
+  white-space: pre;
+}
+
+.cb .copy {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+}
+
+@media (max-width: 600px) {
+  .cb pre {
+    padding: 2.9rem 1.1rem 1rem;
+  }
+}
+
+.install__how {
+  margin: 0.7rem 0 1.3rem;
+  font-size: 0.93rem;
+  color: var(--text-soft);
+}
+
+.codeblock + .install__how,
+.cb + .install__how {
+  margin-top: -0.6rem;
+}
+
+.prose .codeblock {
+  margin: 0 0 1.3rem;
+}
+
 /* ----------------------------------------------------------------- faq -- */
 
 .faq {
@@ -1598,36 +1536,6 @@ figcaption {
   margin-bottom: 0;
 }
 
-/* -------------------------------------------------------------- callout -- */
-
-.callout {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.85rem;
-  padding: 1rem 1.2rem;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  font-size: 0.92rem;
-}
-
-.callout svg {
-  width: 18px;
-  height: 18px;
-  color: var(--accent);
-  margin-top: 0.2rem;
-  flex: none;
-}
-
-.callout > div > :first-child {
-  margin-top: 0;
-}
-
-.callout > div > :last-child {
-  margin-bottom: 0;
-}
-
 /* --------------------------------------------------------------- footer -- */
 
 .footer {
@@ -1644,18 +1552,18 @@ figcaption {
   margin-bottom: 2.25rem;
 }
 
-.footer h4 a {
+.footer__title a {
   /* "Plex how-to" is both a column heading and a real page, so its heading is a link. It must still
      read as a heading rather than as the first item in its own list. */
   color: inherit;
   text-decoration: none;
 }
 
-.footer h4 a:hover {
+.footer__title a:hover {
   color: var(--text);
 }
 
-.footer h4 {
+.footer__title {
   font-size: 0.78rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -1740,9 +1648,9 @@ figcaption {
   scrollbar-width: thin;
 }
 
-.sidebar h4,
-.toc h4 {
-  font-size: 0.74rem;
+.sidebar__title,
+.toc__title {
+  font-size: 0.75rem;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted);
@@ -1965,6 +1873,25 @@ figcaption {
   white-space: pre;
 }
 
+/* A pre inside a frame is not a second frame. */
+.prose .codeblock pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.prose .cb pre {
+  margin: 0;
+  padding: 1rem 5.75rem 1rem 1.1rem;
+}
+
+@media (max-width: 600px) {
+  .prose .cb pre {
+    padding: 2.9rem 1.1rem 1rem;
+  }
+}
+
 /* Long reference tables are the main reason this site needs a wide column. */
 .prose table {
   border-collapse: collapse;
@@ -2081,6 +2008,562 @@ figcaption {
 .edit-link svg {
   width: 14px;
   height: 14px;
+}
+
+/* ------------------------------------------------------- doc template -- */
+
+/* A page with `toc: false` (the comparison) drops the on-this-page column so a wide table can use it. */
+.docs--wide {
+  grid-template-columns: 250px minmax(0, 1fr);
+}
+
+@media (max-width: 1180px) {
+  .docs--wide {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .docs--wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.prose > .full {
+  max-width: none;
+}
+
+/* Rows sub-pages sit one step in from their group page in the sidebar. */
+.sidebar .sidebar__sub a {
+  padding-left: 1.35rem;
+}
+
+/* Breadcrumb: a sub-page can sit two levels deep, and the sidebar is hidden below 900px. */
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin: 0 0 0.9rem;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.crumbs a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.crumbs a:hover {
+  color: var(--text);
+}
+
+.crumbs span[aria-hidden] {
+  opacity: 0.6;
+}
+
+/* The dated line under the H1. It replaced a release banner that sat on every page. */
+.prose__head .docmeta,
+.prose__head .checked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.6rem;
+  margin: 0 0 1.1rem;
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.prose__head .checked {
+  display: block;
+}
+
+.checked time {
+  color: var(--text);
+  font-weight: 620;
+}
+
+.docmeta svg {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-right: 0.3rem;
+  vertical-align: -2px;
+}
+
+.docmeta__dot {
+  opacity: 0.5;
+}
+
+.docmeta a {
+  color: var(--text-soft);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.docmeta a:hover {
+  color: var(--accent-text);
+  border-color: var(--accent-line);
+}
+
+.docmeta .docmeta__chip {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-soft);
+}
+
+.prose__head .devline {
+  margin-top: 0.9rem;
+  font-size: 0.92rem;
+}
+
+.devline code {
+  font-size: 0.85em;
+}
+
+/* Development preview: one closed box per section of dev-only text, never interleaved with stable. */
+.prose .dev-preview {
+  margin: 1.5rem 0 1.75rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.dev-preview > summary {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.7rem;
+  padding: 0.85rem 2.75rem 0.85rem 1.1rem;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.dev-preview > summary::-webkit-details-marker {
+  display: none;
+}
+
+.dev-preview > summary::after {
+  content: "";
+  position: absolute;
+  top: 1.2rem;
+  right: 1.1rem;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform 0.15s var(--ease);
+}
+
+.dev-preview[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.dev-preview__tag {
+  display: inline-block;
+  padding: 0.12rem 0.55rem;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-quiet);
+  color: var(--accent-text);
+  font-size: 0.75rem;
+  font-weight: 640;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dev-preview__body {
+  padding: 1rem 1.1rem 0.4rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.95rem;
+}
+
+.dev-preview__body > :first-child {
+  margin-top: 0;
+}
+
+/* Tables: code tokens never break mid-token; the scroller shows an edge shadow only while there is
+   more table that way (background-attachment: local covers the shadow at the scrolled-to edge). */
+.prose td code,
+.prose th code {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+.prose td.nw {
+  white-space: nowrap;
+}
+
+.prose .table-scroll {
+  background:
+    linear-gradient(to right, var(--surface) 30%, transparent) left / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 30%, transparent) right / 2.5rem 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.35), transparent) left / 0.9rem 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.35), transparent) right / 0.9rem 100% no-repeat scroll,
+    var(--surface);
+}
+
+.prose .table--compact table {
+  min-width: 38rem;
+  font-size: 0.88rem;
+}
+
+/* Figures: real screenshots, allowed out to the full content column like tables. */
+.prose .shot {
+  max-width: none;
+  margin: 1.75rem 0 2rem;
+}
+
+.prose .shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0;
+}
+
+.prose .shot figcaption {
+  max-width: var(--measure);
+  margin-top: 0.7rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.prose .shot--pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.9rem;
+}
+
+.prose .shot--pair figcaption {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+@media (max-width: 600px) {
+  .prose .shot--pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The reasons strip on the watch-history page: three picks, each with the watch that earned it. */
+.prose .reasons {
+  max-width: none;
+  margin: 1.25rem 0 1.6rem;
+}
+
+.reasons ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.prose .reasons li {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: center;
+  margin: 0;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.prose .reasons img {
+  width: 52px;
+  height: 78px;
+  object-fit: cover;
+  margin: 0;
+  border-radius: 6px;
+}
+
+.reasons strong {
+  display: block;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.reasons .why {
+  display: block;
+  color: var(--accent-text);
+  font-size: 0.86rem;
+  line-height: 1.35;
+  margin-top: 0.2rem;
+}
+
+.reasons .whose {
+  display: block;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.3rem;
+}
+
+.reasons figcaption {
+  margin-top: 0.7rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 760px) {
+  .reasons ul {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The closing include on the Plex how-to pages. */
+.prose .closer {
+  max-width: none;
+  margin: 3rem 0 2rem;
+  padding: 1.6rem 1.6rem 0.4rem;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--accent-quiet), transparent 55%), var(--surface);
+}
+
+.prose .closer h2 {
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.closer > p,
+.closer > .cb {
+  max-width: var(--measure);
+}
+
+.prose .closer .shot {
+  max-width: 34rem;
+  margin: 1.25rem 0;
+}
+
+.closer__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.2rem;
+  align-items: center;
+  margin: 0 0 1.2rem;
+}
+
+.closer__cta .btn {
+  text-decoration: none;
+}
+
+@media (max-width: 600px) {
+  .prose .closer {
+    padding: 1.2rem 1rem 0.2rem;
+  }
+}
+
+/* The comparison page: a dated short answer, then one full-width table. */
+.prose .answer {
+  margin: 0 0 2.5rem;
+  padding: 1.2rem 1.4rem 1.1rem;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.answer__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.prose .answer h2 {
+  margin: 0;
+  padding: 0;
+  font-size: 1.2rem;
+}
+
+.answer__date {
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.answer__date time {
+  color: var(--text-soft);
+  font-weight: 600;
+}
+
+.prose .verdicts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.prose .verdicts li {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  gap: 0.15rem 1.25rem;
+  margin: 0;
+  padding: 0.62rem 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+.prose .verdicts li:first-child {
+  border-top: 0;
+}
+
+.verdicts__tool {
+  font-weight: 650;
+}
+
+.verdicts__tool a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.verdicts__ours .verdicts__tool a {
+  color: var(--accent-text);
+}
+
+.verdicts__need {
+  color: var(--text-soft);
+  text-wrap: pretty;
+}
+
+@media (max-width: 600px) {
+  .prose .verdicts li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.prose .answer__disclosure {
+  margin: 0.6rem 0 0;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+.compare table {
+  min-width: 62rem;
+  font-size: 0.87rem;
+}
+
+.prose .compare thead th {
+  white-space: normal;
+  vertical-align: bottom;
+  line-height: 1.35;
+  padding: 0.7rem 0.85rem;
+}
+
+.prose .compare td {
+  padding: 0.75rem 0.85rem;
+  line-height: 1.45;
+}
+
+.prose .compare td:first-child {
+  white-space: normal;
+  min-width: 8.5rem;
+}
+
+.compare td:first-child a {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 650;
+}
+
+.compare tr.compare__ours td {
+  background: var(--accent-quiet);
+}
+
+.compare tr.compare__ours td:first-child a {
+  color: var(--accent-text);
+}
+
+.compare .yes,
+.compare .no,
+.compare .partial,
+.compare .unknown {
+  display: block;
+  font-weight: 700;
+}
+
+.compare .no,
+.compare .unknown {
+  color: var(--muted);
+}
+
+.compare .unknown {
+  font-style: italic;
+  font-weight: 600;
+}
+
+.compare .partial {
+  color: var(--warn);
+}
+
+.compare .q {
+  display: block;
+  margin-top: 0.1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 400;
+  text-wrap: pretty;
+}
+
+.prose .compare td.compare__pick {
+  color: var(--text-soft);
+  min-width: 13rem;
+  text-wrap: pretty;
+}
+
+.prose .compare__key {
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+/* On a phone the table scrolls sideways; keep the tool name in view while it does. */
+@media (max-width: 1180px) {
+  .prose .compare td:first-child,
+  .prose .compare th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--surface);
+    box-shadow: 1px 0 0 var(--border);
+  }
+  .prose .compare thead th:first-child {
+    background: var(--surface-2);
+  }
+  .prose .compare tr.compare__ours td:first-child {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  }
+}
+
+@media (max-width: 600px) {
+  .prose .compare td:first-child {
+    min-width: 6.5rem;
+  }
+}
+
+.prose .pick {
+  padding: 0.15rem 0 0.15rem 0.9rem;
+  border-left: 3px solid var(--accent-line);
+}
+
+.prose .note {
+  font-size: 0.9rem;
+  color: var(--muted);
 }
 
 /* --------------------------------------------------------------- search -- */

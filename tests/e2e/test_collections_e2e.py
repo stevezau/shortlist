@@ -41,23 +41,21 @@ def _saved_row(page: Page, name: str):
     return page.get_by_text(name, exact=False).first
 
 
-def _edit_row(page: Page, name: str) -> None:
-    """Open THIS row's editor. `Edit.last` clicked whichever card rendered last — under load the list
-    from before the save, so the editor opened the default row instead (seen twice at load 27)."""
-    actions = (
-        page.locator("div")
-        .filter(has=page.get_by_role("link", name=f"Remove or delete {name}"))
-        .filter(has=page.get_by_role("button", name="Edit"))
-        .last
-    )
-    actions.get_by_role("button", name="Edit").click()
+def _open_row_menu(page: Page, name: str | None = None) -> None:
+    """Open a row card's "⋯" menu: THIS row's when named, else the first card's.
+
+    Named by its own card's button, not `.last` — under load the list from before the save rendered
+    last, so a positional pick opened the default row instead (seen twice at load 27)."""
+    if name is None:
+        page.get_by_role("button", name=re.compile(r"^More actions for ")).first.click()
+    else:
+        page.get_by_role("button", name=f"More actions for {name}", exact=True).click()
 
 
-def _open_group(page: Page, title: str) -> None:
-    """Reveal a compact editor section through its native disclosure before editing it."""
-    group = page.locator(f'details[data-settings-group="{title}"]')
-    if group.get_attribute("open") is None:
-        group.locator(":scope > summary").click()
+def _edit_row(page: Page, name: str | None = None) -> None:
+    """Open a row's editor through its card's menu (the first card's when no name is given)."""
+    _open_row_menu(page, name)
+    page.get_by_role("menuitem", name="Edit", exact=True).click()
 
 
 def _open_rows(page: Page) -> None:
@@ -91,7 +89,6 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
     page.locator("details[data-setting=kind] > summary").click()
     page.get_by_role("radio", name="Popular on this server", exact=True).click()
     # The aggregate-privacy control appears only for shared rows.
-    _open_group(page, "Row settings")
     expect(page.get_by_text("Only titles watched by at least")).to_be_visible()
     page.get_by_role("button", name="Add row").click()
 
@@ -109,7 +106,9 @@ def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp
 
     # Re-open it and choose a built-in text poster — this needs no AI provider, so it works on any setup.
     _edit_row(page, "Poster Row")
-    expect(page.get_by_label("Name", exact=True)).to_have_value("Poster Row")
+    # A saved row's name is read-only now (it changes only through Rename on Plex), so the page
+    # heading is what says this is the row just added.
+    expect(page.get_by_role("heading", name="Poster Row", level=1)).to_be_visible(timeout=LOAD)
     # The poster sits in the open "Appearance" group, beside the name it belongs to.
     page.get_by_role("button", name="Text", exact=True).click()
     page.get_by_label("Title text").fill("Weekend Picks")
@@ -133,9 +132,10 @@ def test_a_row_can_be_given_a_description_and_sort_title_prefix(page: Page, app:
     expect(_saved_row(page, "Sorted Row")).to_be_visible(timeout=LOAD)
 
     _edit_row(page, "Sorted Row")
-    expect(page.get_by_label("Name", exact=True)).to_have_value("Sorted Row")
+    # A saved row's name is read-only now (it changes only through Rename on Plex), so the page
+    # heading is what says this is the row just added.
+    expect(page.get_by_role("heading", name="Sorted Row", level=1)).to_be_visible(timeout=LOAD)
     page.get_by_label("Description", exact=True).fill("Picked for {user}")
-    _open_group(page, "Plex placement")
     page.get_by_label("Sort title prefix").fill("!010_")
     expect(page.get_by_text("!010_Sorted Row")).to_be_visible()
     page.get_by_role("button", name="Save changes").click()
@@ -147,25 +147,28 @@ def test_a_row_can_be_given_a_description_and_sort_title_prefix(page: Page, app:
 
 def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(page: Page, app: ShortlistApp):
     """The default row's name field used to be disabled (name came only from Settings → Defaults).
-    It's now editable inline, and saving it writes the shared `row.name_template` setting."""
+    It's now editable through Rename on Plex…, and renaming writes the shared `row.name_template`
+    setting."""
     _open_rows(page)
-    # The default row is the only one on a fresh install, so its Edit button is the first.
-    page.get_by_role("button", name="Edit").first.click()
-    expect(page.get_by_role("heading", name="✨ {library_name} Picked for You", exact=True)).to_be_visible()
+    # The default row is the only one on a fresh install, so its card is the first.
+    _edit_row(page)
+    expect(page.get_by_role("heading", name="✨ library name Picked for You", exact=True)).to_be_visible()
 
-    name = page.get_by_label("Name", exact=True)
-    expect(name).to_be_enabled()  # type here, but Save never carries it — only Rename applies it
+    # The editor shows the name read-only; a new one is typed in the Rename on Plex dialog, because
+    # Save never carries a name — only Rename applies it.
+    page.get_by_role("button", name="Rename on Plex…").click()
+    name = page.get_by_role("dialog").get_by_label("New name", exact=True)
+    expect(name).to_be_enabled()
     expect(name).to_have_value("✨ {library_name} Picked for You")  # its value IS the global template
     # Typing must say, on screen, that nothing has happened yet. Without this the box looks like
     # every other field on the page, which would imply Save applies it — Save deliberately does not.
     name.fill("✨ {library_name} Not applied")
     expect(page.get_by_text("Not applied yet")).to_be_visible()
 
-    # Rename is the editor's, beside the name it changes — the Rows card no longer offers one. The
-    # button only enables once the name differs, and that click IS the go-ahead: the rename screen
-    # starts on arrival rather than asking a second time.
+    # The button only enables once the name differs, and that click IS the go-ahead: the rename
+    # screen starts on arrival rather than asking a second time.
     name.fill("✨ {library_name} Handpicked")
-    page.get_by_role("button", name="Rename…").click()
+    page.get_by_role("dialog").get_by_role("button", name="Rename on Plex", exact=True).click()
     expect(page.get_by_role("heading", name=re.compile("^Renaming "))).to_be_visible(timeout=LOAD)
     expect(page.get_by_role("button", name="Rename on Plex")).to_have_count(0)
 
@@ -186,14 +189,23 @@ def test_the_default_row_can_be_deleted_like_any_other(page: Page, app: Shortlis
     # this row, so its rendered title is not stable. "Every row has a way out" is also the actual
     # property — the bug was ONE card missing the control its neighbours had.
     #
-    # A LINK now, not a button. "Remove from Plex" and "Delete" used to sit on the card side by
-    # side with nothing saying which one loses the row's settings; the card carries one honest
-    # "Remove or delete" that opens the editor's danger section, where that difference is already
-    # written out (audit finding, Sep 2026). The 204 and the row actually disappearing are covered
-    # in tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
+    # A LINK, not a button, and in each card's "⋯" menu. "Remove from Plex" and "Delete" used to sit
+    # on the card side by side with nothing saying which one loses the row's settings; the menu
+    # carries one honest "Remove or delete…" that opens the editor's danger section, where that
+    # difference is already written out (audit finding, Sep 2026). The 204 and the row actually
+    # disappearing are covered in
+    # tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
     assert picked, "the seeded default row must exist for this to mean anything"
     rows = app.api("GET", "/api/collections").json()
-    expect(page.get_by_role("link", name=re.compile(r"^Remove or delete "))).to_have_count(len(rows))
+    menus = page.get_by_role("button", name=re.compile(r"^More actions for "))
+    expect(menus).to_have_count(len(rows))
+    for index in range(len(rows)):
+        menus.nth(index).click()
+        way_out = page.get_by_role("menu").get_by_role("menuitem", name="Remove or delete…")
+        expect(way_out).to_have_count(1)
+        expect(way_out).to_have_attribute("href", re.compile(r"/rows/\d+#remove-this-row$"))
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("menu")).to_have_count(0)
 
 
 PLACEMENT_SWITCHES = (
@@ -215,7 +227,6 @@ def test_every_surface_can_be_turned_off_and_reaches_the_api(page: Page, app: Sh
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Quiet Row")
 
-    _open_group(page, "Plex placement")
     for name in PLACEMENT_SWITCHES:
         page.get_by_role("switch", name=name).click()
     for name in PLACEMENT_SWITCHES:
@@ -236,7 +247,6 @@ def test_the_two_placement_columns_are_saved_independently(page: Page, app: Shor
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Split Row")
 
-    _open_group(page, "Plex placement")
     page.get_by_role("switch", name="Friends Library Recommended").click()
     page.get_by_role("button", name="Add row").click()
     expect(_saved_row(page, "Split Row")).to_be_visible(timeout=LOAD)
@@ -254,7 +264,6 @@ def test_the_pick_order_chosen_in_the_editor_reaches_the_api(page: Page, app: Sh
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Shuffled Row")
 
-    _open_group(page, "Titles & filters")
     # Default first, so a control that silently ignored the click couldn't pass this.
     expect(page.get_by_role("button", name="Best match")).to_have_attribute("aria-pressed", "true")
     page.get_by_role("button", name="Shuffled").click()

@@ -26,12 +26,13 @@ OTHER_BAR = re.compile("Minimum .* rating, other languages", re.I)
 
 
 def _open_row_requests(page: Page) -> None:
-    """The default per-person row's editor, with its Requests group expanded (collapsed by default)."""
+    """The default per-person row's editor, at its Requests section (every section is always rendered)."""
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
-    page.get_by_role("button", name="Edit").first.click()
-    expect(page.get_by_role("heading", name="✨ {library_name} Picked for You", exact=True)).to_be_visible(timeout=LOAD)
-    page.locator("details:has(> summary:has-text('Requests')) > summary").click()
+    page.get_by_role("button", name=re.compile(r"^More actions for ")).first.click()
+    page.get_by_role("menuitem", name="Edit", exact=True).click()
+    expect(page.get_by_role("heading", name="✨ library name Picked for You", exact=True)).to_be_visible(timeout=LOAD)
+    expect(page.locator("section#requests")).to_be_visible()
 
 
 def _enable_requests(app: ShortlistApp, **extra) -> None:

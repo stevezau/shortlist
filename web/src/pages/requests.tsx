@@ -874,7 +874,7 @@ function RequestTabs({
               <span
                 className={cn(
                   "rounded-full px-2 text-xs tabular-nums",
-                  selected ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
+                  selected ? "bg-raised text-foreground" : "bg-muted text-muted-foreground",
                 )}
               >
                 {tab.count}
@@ -898,7 +898,7 @@ function FilterChip({
   onRemove: () => void;
 }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 py-0.5 pl-2.5 pr-1 text-xs font-medium text-primary">
+    <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-raised py-0.5 pl-2.5 pr-1 text-xs font-medium text-foreground">
       {label}
       <button
         type="button"
@@ -1462,9 +1462,7 @@ export function RequestsPage() {
   return (
     <div>
       <PageHeader
-        icon={Inbox}
         title="Requests"
-        className="[&>div>span]:hidden"
         actions={settingsQuery.data ? <div className="text-left text-xs sm:text-right"><p className="font-medium text-foreground">Destination · {settingString(settingsQuery.data, "requests.target", "arr") === "overseerr" ? "Overseerr" : "Radarr & Sonarr"}</p><p className="mt-1 text-muted-foreground">{settingBool(settingsQuery.data, "requests.enabled") ? `Global auto-send is ${settingBool(settingsQuery.data, "requests.auto_send") ? "on" : "off"}` : "Requests disabled"} · <Link className="text-primary hover:underline" to={SETTINGS_LINK}>Settings</Link></p></div> : undefined}
         subtitle="Titles your people wanted that aren’t in your library yet. Send the ones you want, reject the rest."
       />
@@ -1664,7 +1662,7 @@ export function RequestsPage() {
                                 <SlidersHorizontal aria-hidden="true" />
                                 Filters <span className="ml-auto font-normal">Rating · votes · language</span>
                                 {menuFiltersSet > 0 && (
-                                  <span className="rounded-full bg-primary px-1.5 text-[11px] font-bold tabular-nums text-primary-foreground">
+                                  <span className="rounded-full bg-raised px-1.5 text-[11px] font-bold tabular-nums text-foreground">
                                     {menuFiltersSet}
                                   </span>
                                 )}
@@ -1769,7 +1767,7 @@ export function RequestsPage() {
                             className={cn(
                               "flex flex-wrap items-center gap-x-3 gap-y-2 px-1 py-2",
                               selectedPending.length > 0
-                                ? "rounded-lg border border-primary/45 bg-primary/10 px-3"
+                                ? "rounded-lg border border-border-strong bg-elevated px-3"
                                 : "",
                             )}
                           >

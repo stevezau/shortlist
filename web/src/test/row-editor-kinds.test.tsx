@@ -507,12 +507,12 @@ describe("requests", () => {
     // not shared. With nothing to configure, an empty section is only a place to be wrong.
     renderEditor(row({ requests_row: true }));
     await screen.findByText("Which requests show up");
-    expect(screen.queryByText("Requests", { selector: "summary span span" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Requests" })).toBeNull();
   });
 
   it("says a Popular row never asks for anything", () => {
     renderEditor(row({ build: "shared" }));
-    const group = screen.getByText("Requests", { selector: "summary span span" }).closest("details")!;
+    const group = screen.getByRole("region", { name: "Requests" });
     expect(within(group).getByText(/A shared row never asks for missing titles/)).toBeInTheDocument();
     expect(group.querySelector('[data-setting="requests"]')).toBeNull();
   });
@@ -533,7 +533,8 @@ describe("switching kind is reversible, and only the last switch counts", () => 
 
     expect(kindRadio("Because you watched")).toBeChecked();
     expect(screen.queryByText(/to match its new kind/i)).toBeNull();
-    expect(screen.getByLabelText("Name")).toHaveValue(BYW_NAME);
+    // The Name box exists only while a switch's rename is pending; back to the saved name, it is gone.
+    expect(screen.queryByLabelText("Name")).toBeNull();
     expect(await savedBody()).toEqual(toInput(collection));
     expect(onRename).not.toHaveBeenCalled();
   });
@@ -863,7 +864,7 @@ describe("saving a kind switch that renames the row", () => {
     await userEvent.type(name, "{{season} forever");
     expect(screen.getByText("A name with {season} only works on a seasonal row.")).toHaveAttribute("role", "alert");
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rename on Plex…" })).toBeDisabled();
   });
 });
 
@@ -1078,7 +1079,8 @@ describe("a pending rename never changes the kind on screen", () => {
     await switchTo("Because you watched");
     expect(kindRadio("Because you watched")).toBeChecked();
     expect(screen.queryByText(/to match its new kind/i)).toBeNull();
-    expect(screen.getByLabelText("Name")).toHaveValue(BYW_NAME);
+    // The Name box exists only while a switch's rename is pending; back to the saved name, it is gone.
+    expect(screen.queryByLabelText("Name")).toBeNull();
     expect(await savedBody()).toEqual(toInput(collection));
     expect(onRename).not.toHaveBeenCalled();
   });
@@ -1206,21 +1208,20 @@ describe("the on/off switch and page Save never overlap", () => {
     return () => release();
   }
 
-  it("holds page Save and Rename… while the switch's change is being saved", async () => {
+  it("holds page Save and Rename on Plex… while the switch's change is being saved", async () => {
     renderEditor(row());
-    await userEvent.type(screen.getByLabelText("Name"), " again");
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Rename on Plex…" })).toBeEnabled();
 
     const release = holdNextSave();
     await userEvent.click(await screen.findByRole("switch", { name: /Enable Hidden Gems/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Turn it off" }));
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rename on Plex…" })).toBeDisabled();
 
     release();
     await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Rename on Plex…" })).toBeEnabled();
     await save();
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(2));
     expect((updateCollection.mock.calls[1]?.[1] as CollectionInput).enabled).toBe(false);

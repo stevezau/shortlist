@@ -218,10 +218,10 @@ export function BackupPanel() {
             then try again. If it keeps failing, restore the file by hand rather
             than retrying: the{" "}
             <Link
-              to="/logs"
+              to="/activity?tab=log"
               className="font-medium underline underline-offset-2"
             >
-              Logs page
+              Activity log
             </Link>{" "}
             has the reason it gave.
           </p>

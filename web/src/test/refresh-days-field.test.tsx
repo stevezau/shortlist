@@ -26,7 +26,7 @@ function Harness({
 }
 
 const box = () =>
-  screen.getByRole("spinbutton", { name: /how often the row rebuilds/i });
+  screen.getByRole("spinbutton", { name: /titles refresh every, in days/i });
 
 describe("RefreshDaysField", () => {
   it("says the cadence in plain days, which is the whole point of the control", () => {
@@ -34,7 +34,7 @@ describe("RefreshDaysField", () => {
 
     expect(box()).toHaveValue(8);
     // The percentage this replaced needed a sentence to translate itself ("55%… about every 7 days").
-    expect(screen.getByText(/Rebuilds every 8 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/Titles refresh every 8 days/i)).toBeInTheDocument();
   });
 
   it("names the two ends rather than reporting a bare number", () => {
@@ -107,6 +107,6 @@ describe("RefreshDaysField", () => {
     rerender(<RefreshDaysField value={30} onChange={vi.fn()} />);
 
     expect(box()).toHaveValue(30);
-    expect(screen.getByText(/Rebuilds every 30 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/Titles refresh every 30 days/i)).toBeInTheDocument();
   });
 });

@@ -150,13 +150,13 @@ describe("rowOverrides", () => {
 
   it("badges a row's own cadence override, but not when it inherits the global one", () => {
     expect(rowOverrides(collection({ refresh_days: 0 }), LIBRARIES)).toContain(
-      "Rebuilds: never",
+      "Titles refresh: never",
     );
     expect(rowOverrides(collection({ refresh_days: 7 }), LIBRARIES)).toContain(
-      "Rebuilds: every 7 days",
+      "Titles refresh: every 7 days",
     );
     expect(rowOverrides(collection({ refresh_days: 1 }), LIBRARIES)).toContain(
-      "Rebuilds: nightly",
+      "Titles refresh: nightly",
     );
     expect(rowOverrides(collection({ refresh_days: null }), LIBRARIES)).toEqual(
       [],
@@ -220,7 +220,7 @@ describe("rowOverrides", () => {
       "Sources: Trakt",
       "Libraries: 4K Movies",
       "Watched: all fresh",
-      "Rebuilds: nightly",
+      "Titles refresh: nightly",
     ]);
   });
 });

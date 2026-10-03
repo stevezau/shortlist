@@ -168,8 +168,8 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     title: "Fresh finds",
     summary: "Something new, every evening",
     blurb:
-      "Rebuilds every night, nothing they've seen. For people who want something new each evening.",
-    highlights: ["Rebuilds nightly", "Nothing already watched"],
+      "Titles refresh every night, nothing they've seen. For people who want something new each evening.",
+    highlights: ["Refreshes nightly", "Nothing already watched"],
     values: {
       name: "🌱 New {library_name} to try",
       build: "per_person",
@@ -225,7 +225,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     // exactly the people watching from it, and the old "set it once, it stays" promised otherwise.
     blurb:
       "Built once and never re-picked on a schedule. A shelf that stays put apart from titles they've watched, which are replaced.",
-    highlights: ["Never rebuilds on its own", "Only moves as they watch it"],
+    highlights: ["Never refreshes on its own", "Only moves as they watch it"],
     values: {
       name: "🕰️ {library_name} from the vault",
       build: "per_person",

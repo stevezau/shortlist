@@ -2,6 +2,7 @@
 title: "Reference: settings, API and env vars"
 description: Every Shortlist configuration key, REST API endpoint, container environment variable and default value, split into settings, the API, and how Shortlist decides things.
 heading: Reference
+updated: 2026-10-03
 ---
 
 The reference is three pages. Pick the one that matches what you are looking up, or find the section
@@ -14,16 +15,17 @@ you want in the lists below.
 
 ## Settings and env vars
 
-Container environment variables, every DB-backed settings key with its default, per-row overrides,
-and what changes on Plex the moment you save one. → **[Settings reference](reference/settings.md)**
+Every DB-backed settings key with its default, grouped by area, per-row overrides, and what changes
+on Plex the moment you save one → **[Settings reference](reference/settings.md)**. Container
+environment variables and the files under `/config` → **[Environment and files](reference/environment.md)**.
 
-- <span id="environment-variables-container"></span>[Environment variables (container)](reference/settings.md#environment-variables-container)
-- <span id="serving-from-a-subpath"></span>[Serving from a subpath](reference/settings.md#serving-from-a-subpath)
+- <span id="environment-variables-container"></span>[Environment variables (container)](reference/environment.md#environment-variables-container)
+- <span id="serving-from-a-subpath"></span>[Serving from a subpath](reference/environment.md#serving-from-a-subpath)
 - <span id="settings-keys-db-backed-settings-ui-or-put-apisettings"></span>[Settings keys, with every default](reference/settings.md#settings-keys-db-backed-settings-ui-or-put-apisettings)
 - <span id="per-row-request-overrides"></span>[Per-row request overrides](reference/settings.md#per-row-request-overrides)
 - <span id="how-settings-take-effect"></span>[How settings take effect](reference/settings.md#how-settings-take-effect)
 - <span id="when-a-row-appears-collectionsshow_days"></span>[When a row appears](reference/settings.md#when-a-row-appears-collectionsshow_days)
-- <span id="files-under-config"></span>[Files under /config](reference/settings.md#files-under-config)
+- <span id="files-under-config"></span>[Files under /config](reference/environment.md#files-under-config)
 
 ## The API
 

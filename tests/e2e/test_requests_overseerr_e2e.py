@@ -31,7 +31,7 @@ def _panel(page: Page):
     connection card as well as the control under test — "Overseerr / Jellyseerr" resolves to two
     buttons, and "Radarr" is present no matter what the target is set to.
     """
-    return page.locator("section[aria-labelledby='requests-heading']")
+    return page.locator("section#requests")
 
 
 def _connect_overseerr(app: ShortlistApp) -> None:

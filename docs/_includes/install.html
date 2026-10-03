@@ -1,0 +1,44 @@
+{%- comment -%}
+The one install command on the site. Every page that tells a reader how to run Shortlist includes
+this file rather than typing a command, so there is one place to change the image, the port or the
+volume, and tests/unit/test_docs_install.py fails if a page spells one out by hand.
+
+  {% include install.html %}                  the compose file, then the one line that says what to do with it
+  {% include install.html variant="run" %}    the same container as one docker run command
+  {% include install.html bare=true %}        the frame alone, for a layout that words the instruction itself
+
+GHCR, not Docker Hub: the Docker Hub namespace doubles the z in the username, and every copy of the
+command used to need a paragraph explaining that. getting-started's "Other ways to install" is the
+one place that still names it. Nothing in here may contain a blank line: this include is dropped into
+Markdown, and kramdown ends a raw HTML block at the first blank line.
+{%- endcomment -%}
+{%- if include.variant == "run" -%}
+<div class="cb install" data-install="run">
+<pre><code>docker run -d --name shortlist -p 5959:5959 \
+  -e TZ=Etc/UTC -e PUID=1000 -e PGID=1000 \
+  -v /path/to/shortlist/config:/config \
+  --restart unless-stopped \
+  {{ site.ghcr }}:latest</code></pre>
+<button class="copy" type="button" aria-label="Copy the docker run command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span class="copy__label">Copy</span></button>
+</div>
+{%- unless include.bare %}
+<p class="install__how">Change <code>/path/to/shortlist/config</code> to a folder on the host, then open <code>http://your-host:5959</code>.</p>
+{%- endunless -%}
+{%- else -%}
+<div class="codeblock install" data-install="compose">
+<div class="codeblock__bar"><span>docker-compose.yml</span><button class="copy copy--primary" type="button" aria-label="Copy the compose file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><span class="copy__label">Copy</span></button></div>
+<pre><code><span class="y-key">services:</span>
+  <span class="y-key">shortlist:</span>
+    <span class="y-key">image:</span> <span class="y-val">{{ site.ghcr }}:latest</span>
+    <span class="y-key">ports:</span> ["5959:5959"]
+    <span class="y-key">volumes:</span> ["./config:/config"]
+    <span class="y-key">environment:</span>
+      - TZ=Etc/UTC
+      - PUID=1000
+      - PGID=1000
+    <span class="y-key">restart:</span> unless-stopped</code></pre>
+</div>
+{%- unless include.bare %}
+<p class="install__how">Save it as <code>docker-compose.yml</code>, run <code>docker compose up -d</code>, then open <code>http://your-host:5959</code>.</p>
+{%- endunless -%}
+{%- endif -%}

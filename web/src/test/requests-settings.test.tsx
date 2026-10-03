@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SettingsSections } from "@/components/settings/section-layout";
+import { SettingsTabs } from "@/components/settings/section-layout";
 import { RequestsSettings } from "@/components/requests-settings";
 import type { Settings } from "@/lib/types";
 
@@ -750,7 +750,7 @@ describe("RequestsSettings", () => {
 
 function CurrentSettingsLocation() {
   const location = useLocation();
-  return <output aria-label="Current settings URL">{location.search}{location.hash}</output>;
+  return <output aria-label="Current settings URL">{location.pathname}{location.search}{location.hash}</output>;
 }
 
 const CONNECTION_SHORTCUTS: { label: string; target: string; button: string; index: number; connectedMdblist?: boolean }[] = [
@@ -763,23 +763,24 @@ const CONNECTION_SHORTCUTS: { label: string; target: string; button: string; ind
   { label: "existing MDBList connection", target: "arr", button: "Connections", index: 0, connectedMdblist: true },
 ];
 
-describe("Requests connection shortcuts in continuous Settings", () => {
+describe("Requests connection shortcuts across the Settings tabs", () => {
   beforeEach(() => { Element.prototype.scrollIntoView = vi.fn(); });
   it.each(CONNECTION_SHORTCUTS)("opens Connections from $label and retains the Requests provider", async ({ target, button, index, connectedMdblist }) => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const settings: Settings = { "requests.enabled": true, "requests.target": target, "requests.rating_source": "imdb",
       ...(connectedMdblist ? { "requests.mdblist.apikey": "•••••" } : {}) };
-    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/settings?view=sections#requests"]}>
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/settings/defaults?view=sections#requests"]}>
       <CurrentSettingsLocation />
-      <SettingsSections content={{ connections: <p>Connection controls</p>, requests: <RequestsSettings settings={settings} /> }} />
+      <Routes>
+        <Route path="/settings/:tab?" element={<SettingsTabs content={{ connections: <p>Connection controls</p>, defaults: <section id="requests"><RequestsSettings settings={settings} /></section>, system: null }} />} />
+      </Routes>
     </MemoryRouter></QueryClientProvider>);
-    expect(screen.getByText("Connection controls")).toBeVisible();
+    const provider = screen.getByRole("button", { name: target === "overseerr" ? "Overseerr / Jellyseerr" : "Radarr & Sonarr" });
     await userEvent.click(screen.getAllByRole("button", { name: button })[index]!);
+    await waitFor(() => expect(screen.getByLabelText("Current settings URL")).toHaveTextContent("/settings/connections?view=sections#connections"));
     expect(screen.getByText("Connection controls")).toBeVisible();
-    expect(screen.getByLabelText("Current settings URL")).toHaveTextContent("?view=sections#connections");
-    const provider = screen.getByRole("button", { name: target === "overseerr" ? "Overseerr / Jellyseerr" : "Radarr & Sonarr", hidden: true });
-    expect(provider).toBeVisible();
-    await userEvent.selectOptions(screen.getByLabelText("Settings section"), "requests");
+    expect(provider).not.toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: "Defaults" }));
     expect(provider).toBeVisible();
     expect(provider).toHaveAttribute("aria-pressed", "true");
   });

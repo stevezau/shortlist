@@ -1,8 +1,9 @@
-import { RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { type ReactNode, useState } from "react";
 import { Link } from "react-router";
 
 import { NeedsALook, WHY_GAVE_UP } from "@/components/dashboard/engagement";
+import { panelRowClass, ReportPanel } from "@/components/dashboard/report-panel";
 import { QueryBoundary } from "@/components/query-boundary";
 import { TitleLinkIcons } from "@/components/title-link-icons";
 import { TitlePoster } from "@/components/title-poster";
@@ -11,7 +12,6 @@ import { Why } from "@/components/why";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate, timeAgo, weekStarting } from "@/lib/format";
 import {
@@ -55,22 +55,21 @@ function WatchSyncButton() {
       ? "Try again"
       : "Sync now";
   return (
-    <span className="flex items-center gap-2">
-      {syncNow.isError && (
-        <span role="alert" className="text-destructive-text">
-          Couldn’t start the sync.
-        </span>
-      )}
+    <>
       <button
         type="button"
         onClick={() => syncNow.mutate()}
         disabled={syncNow.isPending}
-        className="flex items-center gap-1.5 rounded text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+        className="rounded-sm text-accent-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
       >
-        <RefreshCw className="h-3 w-3" aria-hidden="true" />
         {label}
       </button>
-    </span>
+      {syncNow.isError && (
+        <span role="alert" className="block text-[13px] font-normal text-destructive-text">
+          Couldn’t start the sync.
+        </span>
+      )}
+    </>
   );
 }
 
@@ -89,100 +88,58 @@ function sharePercent(
   return `${pct.toFixed(1)}%`;
 }
 
-/** A labelled rate with a bar under it. Two of these carry the whole "is it working" question. */
-function Rate({
+/** One inline figure: what it is, the value, and at most a line or two under it. */
+function Stat({
   label,
-  value,
-  detail,
-  fill,
-  tone = "primary",
   children,
+  sub,
+  size = "lg",
 }: {
   label: string;
-  value: string;
-  detail?: string;
-  /** 0-100. Clamped to a visible sliver so a real-but-tiny rate is not indistinguishable from zero. */
-  fill: number;
-  tone?: "primary" | "success";
-  children?: React.ReactNode;
+  children: ReactNode;
+  sub?: ReactNode;
+  /** `md` for a figure that is a state in words (the watch sync), not a count. */
+  size?: "lg" | "md";
 }) {
   return (
-    <div>
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-xs text-muted-foreground">{label}</span>
-        <span className="text-sm font-medium tabular-nums">{value}</span>
+    <div className="min-w-0">
+      <p className="text-[13px] text-muted-foreground">{label}</p>
+      <div
+        className={cn(
+          "mt-0.5 font-semibold leading-tight tabular-nums",
+          size === "lg" ? "text-[22px]" : "pt-1 text-[15px] font-medium",
+        )}
+      >
+        {children}
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn(
-            "h-full rounded-full",
-            tone === "success" ? "bg-success" : "bg-primary",
-          )}
-          style={{
-            width: `${Math.min(100, Math.max(fill > 0 ? 2 : 0, fill))}%`,
-          }}
-        />
-      </div>
-      {detail && (
-        <p className="mt-1 text-xs tabular-nums text-muted-foreground">
-          {detail}
-        </p>
-      )}
-      {children}
+      {sub && <div className="mt-1 space-y-0.5 text-[13px] leading-snug text-muted-foreground">{sub}</div>}
     </div>
   );
 }
 
-type RunTone = "success" | "warning" | "destructive";
-
-const RUN_DOT: Record<RunTone, string> = {
-  success: "bg-success",
-  warning: "bg-warning",
-  destructive: "bg-destructive",
-};
-
-/**
- * Three tiers, not two — the same three `notifications.py` already draws for this exact fact
- * (`_last_run_problem`: whole-run `error`, per-user `warning`). `last_status` first, always: a run
- * that died usually errored some people on the way down, and reading the count first would repaint
- * a dead run amber.
- */
-function runTone(runs: EffectivenessReport["runs"]): RunTone {
-  if (runs.last_status === "error") return "destructive";
-  return runs.errors_last > 0 ? "warning" : "success";
-}
-
-/** The words beside the dot, so the count is readable and not only colour-coded. */
-function runOutcome(runs: EffectivenessReport["runs"]): string {
-  if (runs.last_status === "error") return ", the run failed";
-  if (runs.errors_last > 0) {
-    return `, ${runs.errors_last} ${runs.errors_last === 1 ? "person" : "people"} failed`;
-  }
-  return ", no errors";
+/** The quieter half of a figure: "· 100 delivered", "of 4". */
+function Small({ children }: { children: ReactNode }) {
+  return <span className="text-[13px] font-normal text-muted-foreground">{children}</span>;
 }
 
 /**
- * Is it working? — the whole question, in one card.
+ * Is it working? — the whole question, as one line of figures under the Impact header.
  *
- * This replaced six stat tiles. Six equal boxes make six equal claims, and they were not equal: two
- * of them were health rather than impact (how long a watch takes, how many runs happened), and the
- * number that actually judges the setup — the share of delivered picks that got watched — was not a
- * tile at all. It sat mid-page under a chart, which is where the answer to "is this thing working"
- * had ended up.
- *
- * So the counts read as a sentence, the two RATES that judge the setup sit beside them, and the
- * health facts drop to a status line where they can be checked without competing.
+ * This replaced six stat tiles, then a hero number with two progress bars and a footer of health
+ * facts. The tiles made six equal claims about unequal things; the hero card answered the question
+ * in three different type sizes. Now each figure is labelled, the same size as its neighbours, and
+ * says in a line under it what it counts. The last run's health is the status strip's job above —
+ * it read the same report field twice on one screen — so only the watch sync, which nothing else
+ * reports, stays here.
  */
 function Verdict({
   overall,
   coverage,
-  runs,
   sync,
   reportWindow,
 }: {
   overall: EffectivenessReport["overall"];
   coverage: EffectivenessReport["coverage"];
-  runs: EffectivenessReport["runs"];
   sync: EffectivenessReport["watch_sync"];
   reportWindow: ReportWindow;
 }) {
@@ -190,140 +147,94 @@ function Verdict({
   const windowSuffix =
     reportWindow === "all" ? "since their rows started" : WINDOW_PHRASE[reportWindow];
   const gaveUp = overall.dropped + overall.bounced;
-  const reach =
-    coverage.users_enabled > 0
-      ? (coverage.users_watched / coverage.users_enabled) * 100
-      : 0;
   return (
-    // Test ids, not class names. The e2e suite used to find these numbers by `div.rounded-lg.border`
-    // — `StatTile`'s classes — so replacing the tiles with this card broke six assertions silently,
-    // and they only surfaced once the SPA was rebuilt. A styling change must not be able to do that.
-    <Card className="min-w-0" data-testid="verdict">
-      <CardContent className="pt-6">
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] lg:items-center">
-          <div>
-            <p className="flex items-baseline gap-2">
-              <span
-                className="text-4xl font-semibold leading-none tabular-nums"
-                data-testid="verdict-watched"
-              >
-                {overall.watched}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                watched · {WINDOW_PHRASE[reportWindow]}
-              </span>
-              <Delta
-                value={overall.watched_delta}
-                reportWindow={reportWindow}
-              />
+    // Test ids, not class names: the e2e suite reads these figures by id, so a styling change can
+    // never silently break what it measures.
+    <div className="grid gap-x-8 gap-y-5 px-4 py-4 sm:grid-cols-2 sm:px-5 lg:grid-cols-3 xl:grid-cols-5">
+      <Stat
+        label="Watched from rows"
+        sub={
+          <>
+            {reportWindow !== "all" && (
+              <p>
+                <Delta value={overall.watched_delta} reportWindow={reportWindow} />
+              </p>
+            )}
+            {overall.avg_days_to_watch !== null && (
+              <p>Typically {overall.avg_days_to_watch} days from recommended to watched</p>
+            )}
+          </>
+        }
+      >
+        <span data-testid="verdict-watched">{overall.watched}</span>{" "}
+        {/* Two labelled counts, NOT "41 of 100". `watched` is windowed on when the watch happened and
+            `delivered` on when the pick was created, so a fraction would claim a subset that isn't
+            one — and reads "4 of 0" whenever delivery paused. The same rule as each row's line. */}
+        <Small>· {overall.delivered.toLocaleString()} delivered</Small>
+      </Stat>
+
+      <Stat
+        label="Finished"
+        sub={
+          // Only when there is one. A dashboard that says "0 gave up" every day teaches you to stop
+          // reading the line that matters on the day it is not zero.
+          gaveUp > 0 ? (
+            <p>
+              <span className="font-medium text-destructive-text tabular-nums">{gaveUp}</span> gave up part-way
+              {/* The SAME control the "Worth a look" card uses: hover-only does not exist on a phone. */}
+              <Why text={WHY_GAVE_UP} />
             </p>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              <span
-                className="font-medium text-primary tabular-nums"
-                data-testid="verdict-finished"
-              >
-                {overall.finished}
-              </span>{" "}
-              finished them
-              {/* Only when there is one. A dashboard that says "0 gave up" every day teaches you to
-                  stop reading the line that matters on the day it is not zero. */}
-              {gaveUp > 0 && (
-                <>
-                  {" · "}
-                  <span className="font-medium text-destructive-text tabular-nums">
-                    {gaveUp}
-                  </span>{" "}
-                  gave up part-way
-                  {/* The SAME control the "Worth a look" card uses, not a `title` tooltip. Two
-                      conventions for one fact shipped together, and the hover-only half does not
-                      exist on the phone this app is read on. One sentence, one component. */}
-                  <Why text={WHY_GAVE_UP} />
-                </>
-              )}
-              {/* NO "N picks delivered" here.
-                  It was a denominator nobody could divide by: `watched` is windowed on when the
-                  watch happened, `delivered` on when the pick was CREATED, so the ratio the sentence
-                  invited ("15,069 delivered, 38 finished") was never a rate of anything. The
-                  rate that can be read sits immediately below as "Watched from Shortlist rows", and
-                  reach is on the same card as "N of M people". A
-                  five-figure count with no action attached to it only crowded both out. */}
+          ) : undefined
+        }
+      >
+        <span data-testid="verdict-finished">{overall.finished}</span>
+      </Stat>
+
+      <Stat
+        label="Share of all viewing"
+        sub={
+          share.watched > 0 ? (
+            <p>{`${share.from_rows.toLocaleString()} of the ${share.watched.toLocaleString()} titles people watched were in their rows · ${windowSuffix}`}</p>
+          ) : (
+            // Says what the share counts, never that nobody watched. It reads the nightly watch sync
+            // while "Watched from rows" reads live credits, so a pick credited today can sit beside an
+            // empty share; on a new install everyone's history predates their rows; and on a server
+            // with only shared rows it stays empty for good, so it must not promise a figure is coming.
+            <p>
+              Nothing to count yet. This counts people with a row of their own, from their first pick,
+              as the nightly watch sync records what they watch.
             </p>
-          </div>
+          )
+        }
+      >
+        {/* From the exact counts, not the rounded `rate`, for the reason `sharePercent` gives. */}
+        {sharePercent(share)}
+      </Stat>
 
-          <div className="grid gap-4">
-            <Rate
-              label="Watched from Shortlist rows"
-              // The dashboard's rate. It replaced "picks watched while their row still showed them",
-              // which divided by every title ever SHOWN — mostly titles nobody will watch — and so sat
-              // under 1% whether Shortlist worked or not (71 of 10,898 on a real server). What a row
-              // competes for is what people actually watch. From the exact counts, not the rounded
-              // `rate`, for the reason `sharePercent` gives.
-              value={sharePercent(share)}
-              fill={share.watched > 0 ? (share.from_rows / share.watched) * 100 : 0}
-              detail={
-                share.watched > 0
-                  ? `${share.from_rows.toLocaleString()} of the ${share.watched.toLocaleString()} titles people watched were in their rows · ${windowSuffix}`
-                  : undefined
-              }
-            >
-              {share.watched === 0 && (
-                // Says what the share counts, never that nobody watched. It reads the nightly watch sync while
-                // the Watched figure above reads live credits, so a pick credited today can sit above an empty
-                // share; on a new install everyone's history predates their rows; and on a server with only
-                // shared rows it stays empty for good, so it must not promise a figure is on its way.
-                <p className="mt-1 text-xs leading-snug text-muted-foreground">
-                  Nothing to count yet. This counts people with a row of their
-                  own, from their first pick, as the nightly watch sync records
-                  what they watch.
-                </p>
-              )}
-            </Rate>
-            <Rate
-              // "a pick", not "something": this counts people who watched a title FROM THEIR ROWS, and
-              // beside a share of titles "watched something" read as the same measure twice. The detail
-              // lines are what tell the pair apart — the first counts titles, this one counts people.
-              label="People who watched a pick"
-              value={`${coverage.users_watched} of ${coverage.users_enabled}`}
-              fill={reach}
-              tone="success"
-              detail={`watched at least one title from their rows · ${windowSuffix}`}
-            />
-          </div>
-        </div>
+      <Stat
+        // "a pick", not "something": this counts people who watched a title FROM THEIR ROWS. The line
+        // under it is what tells it apart from the share beside it — that one counts titles.
+        label="People who watched a pick"
+        sub={<p>{`watched at least one title from their rows · ${windowSuffix}`}</p>}
+      >
+        <span data-testid="verdict-reach">
+          {coverage.users_watched} <Small>of {coverage.users_enabled}</Small>
+        </span>
+      </Stat>
 
-        {/* Health, not impact — and therefore a line rather than two tiles competing with the
-            numbers above.
-
-            It overlaps the health strip above the card on two facts (last run, live tracking) and
-            is deliberately kept: these dots read raw report fields, where the strip reads the
-            notification feed, which a dismissal can silence. When the two disagree, this line is
-            right — so it stays, rather than being folded into the chip that can be switched off. */}
-        <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-1 border-t pt-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span
-              className={cn("h-1.5 w-1.5 rounded-full", RUN_DOT[runTone(runs)])}
-              aria-hidden="true"
-            />
-            {runs.last_finished
-              ? `Last run ${timeAgo(runs.last_finished)}${runOutcome(runs)}`
-              : "No run yet"}
-          </span>
-          <span>
-            Watch status{" "}
-            {sync.last ? `synced ${timeAgo(sync.last)}` : "not synced yet"}
-          </span>
-          {/* The LIVE listener, beside the scheduled sync because they are two different mechanisms
-              that fail independently. This one is the ONLY source of a partial watch — Plex's flag
-              cannot see one — so while it is down the page quietly stops learning how far anyone
-              gets, and every other number here carries on looking healthy. Nothing said whether it
-              was up until an owner asked where that was shown. */}
-          <span className="flex items-center gap-1.5">
+      <Stat
+        label="Watch sync"
+        size="md"
+        sub={
+          // The LIVE listener, beside the scheduled sync because they are two mechanisms that fail
+          // independently. It is the ONLY source of a partial watch — Plex's flag cannot see one —
+          // so while it is down the page quietly stops learning how far anyone gets.
+          <p className="flex items-center gap-1.5">
             <span
               className={cn(
-                "h-1.5 w-1.5 rounded-full",
-                // Three states, not two. "Not started" was painted with the SAME green as "on",
-                // so a listener that had never run once read as healthy — the one reading this
-                // line exists to catch.
+                "h-1.5 w-1.5 shrink-0 rounded-full",
+                // Three states, not two: "not started" painted green read as healthy, the one
+                // reading this line exists to catch.
                 sync.live_down_since
                   ? "bg-destructive"
                   : sync.live_since
@@ -337,19 +248,14 @@ function Verdict({
               : sync.live_since
                 ? "Live tracking on"
                 : "Live tracking not started"}
-          </span>
-          {overall.avg_days_to_watch !== null && (
-            <span className="tabular-nums">
-              Typically {overall.avg_days_to_watch} days from recommended to
-              watched
-            </span>
-          )}
-          <span className="ml-auto">
-            <WatchSyncButton />
-          </span>
-        </div>
-      </CardContent>
-    </Card>
+          </p>
+        }
+      >
+        <span>{sync.last ? `Synced ${timeAgo(sync.last)}` : "Not synced yet"}</span>
+        {" · "}
+        <WatchSyncButton />
+      </Stat>
+    </div>
   );
 }
 
@@ -632,64 +538,48 @@ function CountBar({
   );
 }
 
-function Section({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    // `min-w-0` because this Card is a GRID ITEM, and a grid item's default `min-width: auto`
-    // resolves to its min-content width. Without it the card sized itself to its widest line (508px
-    // on a 358px column), overflowed the page, and — because it then had room to spare — nothing
-    // inside ever truncated. The dashboard scrolled 134px sideways on a phone.
-    <Card className="min-w-0">
-      <CardContent className="space-y-3 pt-6">
-        <div>
-          <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
-          {hint && (
-            <p className="mt-0.5 text-xs text-muted-foreground/80">{hint}</p>
-          )}
-        </div>
-        {children}
-      </CardContent>
-    </Card>
-  );
-}
+/** A summary panel on the dashboard — the shared {@link ReportPanel}, under its old name here. */
+const Section = ReportPanel;
 
 /**
  * A collapsed-by-default section: a one-line toggle, expanding to `children`.
  *
  * `ZeroDisclosure` and `DeletedRows` were the same widget wearing different copy — a button that
- * flips "›"/"▾" and reveals a list underneath. This is that widget; each caller supplies only what
+ * flips a chevron and reveals a list underneath. This is that widget; each caller supplies only what
  * makes it theirs (the label, and — for `DeletedRows` — the delete-history UI alongside its list).
  */
 function Disclosure({
   label,
   openLabel,
+  flush = false,
   children,
 }: {
   /** Button text while collapsed. */
   label: string;
   /** Button text while open, if different (defaults to `label`). */
   openLabel?: string;
+  /** Inside a flush panel's list: the toggle is a full-width line, and what it opens is more lines. */
+  flush?: boolean;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const Chevron = open ? ChevronDown : ChevronRight;
   return (
-    <div className="space-y-1.5 border-t pt-2">
+    <div className={flush ? "border-t" : "space-y-1.5 border-t pt-2"}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={cn(
+          "inline-flex items-center gap-1 rounded-sm text-[13px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          // Inset: the panel clips its corners, and a ring drawn outside a full-width line is cut off.
+          flush && "w-full px-4 py-2.5 focus-visible:ring-inset sm:px-5",
+        )}
       >
-        {open ? "▾" : "›"} {open ? (openLabel ?? label) : label}
+        <Chevron className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        {open ? (openLabel ?? label) : label}
       </button>
-      {open && <div className="space-y-1.5">{children}</div>}
+      {open && <div className={flush ? "divide-y border-t" : "space-y-1.5"}>{children}</div>}
     </div>
   );
 }
@@ -712,6 +602,7 @@ function ZeroDisclosure({
   if (count === 0) return null;
   return (
     <Disclosure
+      flush
       label={`${count} ${count === 1 ? noun : plural} with none in this window`}
     >
       {children}
@@ -737,7 +628,10 @@ function ByPerson({
   const line = (p: EffectivenessReport["per_user"][number]) => (
     <div
       key={p.slug}
-      className="flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3"
+      className={cn(
+        "flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3",
+        panelRowClass,
+      )}
     >
       {/* `min-w-0` is what makes `truncate` actually truncate here. `truncate` sets
           `white-space: nowrap`, so this flex child's min-content width is the WHOLE name — without
@@ -774,16 +668,17 @@ function ByPerson({
       // "Most watched first" is load-bearing here, not decoration: only the top ten are shown
       // outright, so without it the fold looks arbitrary rather than like the bottom of a ranking.
       hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
+      flush
     >
       {active.length === 0 && idle.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
           Nobody was delivered a pick in this window.
         </p>
       ) : (
         <>
-          <div className="space-y-1.5">{shown.map(line)}</div>
+          {shown.length > 0 && <div className="divide-y">{shown.map(line)}</div>}
           {active.length === 0 && (
-            <p className="text-sm text-muted-foreground">
+            <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
               Nobody watched a pick in this window.
             </p>
           )}
@@ -793,6 +688,7 @@ function ByPerson({
               sitting under the first. It is one list, shown ten at a time. */}
           {overflow.length > 0 && (
             <Disclosure
+              flush
               label={`Show ${overflow.length} more ${overflow.length === 1 ? "person" : "people"}`}
               openLabel={`Hide ${overflow.length} more ${overflow.length === 1 ? "person" : "people"}`}
             >
@@ -824,7 +720,10 @@ function ByRow({
   const line = (r: EffectivenessReport["per_row"][number]) => (
     <div
       key={`${r.slug}-${r.section_key}-${r.library}`}
-      className="flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3"
+      className={cn(
+        "flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3",
+        panelRowClass,
+      )}
     >
       <span className="flex min-w-0 items-center gap-1.5 xl:flex-1">
         {/* `min-w-0` for the same reason as ByPerson above: `truncate` alone cannot shrink a flex
@@ -855,14 +754,15 @@ function ByRow({
     <Section
       title="By row"
       hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
+      flush
     >
       {live.length === 0 && gone.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
+        <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
           No row delivered a pick in this window.
         </p>
       ) : (
         <>
-          <div className="space-y-1.5">{live.map(line)}</div>
+          {live.length > 0 && <div className="divide-y">{live.map(line)}</div>}
           {gone.length > 0 && (
             <DeletedRows
               count={gone.length}
@@ -902,18 +802,20 @@ function DeletedRows({
 
   return (
     <Disclosure
+      flush
       label={`Show ${count} deleted ${noun}`}
       openLabel={`Hide ${count} deleted ${noun}`}
     >
-      <p className="text-xs text-muted-foreground/80">
+      <p className={cn("text-[13px] text-muted-foreground", panelRowClass)}>
         These rows were removed from Shortlist. Their history still counts in
         the totals above.
       </p>
       {children}
+      <div className={panelRowClass}>
       {confirming ? (
         <div
           role="alert"
-          className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
+          className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
         >
           <p className="text-foreground">
             Permanently delete the history of{" "}
@@ -969,13 +871,14 @@ function DeletedRows({
         <Button
           variant="ghost"
           size="sm"
-          className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-destructive-text"
+          className="-ml-2 h-7 px-2 text-xs text-muted-foreground hover:text-destructive-text"
           onClick={() => setConfirming(true)}
         >
           <Trash2 className="h-3 w-3" aria-hidden />
           Delete their history
         </Button>
       )}
+      </div>
     </Disclosure>
   );
 }
@@ -991,70 +894,78 @@ function ReportBody({
 }) {
   const { overall, coverage, runs, requests } = report;
 
-  // On a young install every window already covers all the data, so the numbers are identical
-  // whichever button you press — a control that visibly does nothing reads as broken. Say why.
   // `since === null` is the "all time" window, which by definition can't be narrower than the data.
   const coversEverything =
     report.first_pick !== null &&
     report.since !== null &&
     new Date(report.first_pick) >= new Date(report.since);
 
-  const selector = (
-    <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+  // ONE panel: what the report is and which window it covers on the head row, a hairline, then the
+  // figures. The window control sits beside the title because it changes every figure under it.
+  const impact = (body: ReactNode) => (
+    <section
+      aria-labelledby="impact-title"
+      data-testid="verdict"
+      className="min-w-0 overflow-hidden rounded-xl border bg-card text-card-foreground shadow-elevated"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b px-4 py-3.5 sm:px-5">
         {/* h2, not h1 — PageHeader above already owns the page's h1 ("Dashboard"), and two of them
             leaves a screen reader with no page title at all. */}
-        <h2 className="text-sm font-medium text-muted-foreground">Impact</h2>
+        <div className="min-w-0 flex-1 basis-64">
+          <h2 id="impact-title" className="text-base font-semibold tracking-tight">
+            Impact
+          </h2>
+          <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
+            How much of what Shortlist delivered got watched.
+            {/* On a young install every window already covers all the data, so the numbers are
+                identical whichever button you press — a control that visibly does nothing reads as
+                broken. Say why. */}
+            {coversEverything && (
+              <>
+                {" "}
+                Shortlist has only been recording since {formatDate(report.first_pick as string)}, so every
+                window covers all of it for now.
+              </>
+            )}
+          </p>
+        </div>
         <Segmented
+          joined
           value={reportWindow}
           onChange={onWindowChange}
           options={WINDOW_OPTIONS}
           ariaLabel="Report window"
         />
       </div>
-      {coversEverything && (
-        <p className="text-xs text-muted-foreground/80">
-          Shortlist has only been recording since{" "}
-          {formatDate(report.first_pick as string)}, so every window covers all
-          of it — the numbers won&rsquo;t change until there&rsquo;s older
-          history to leave out.
-        </p>
-      )}
-    </div>
+      {body}
+    </section>
   );
 
   if (overall.delivered === 0 && overall.watched === 0) {
-    return (
-      <div className="space-y-4">
-        {selector}
-        <Card>
-          <CardContent className="pt-6 text-sm text-muted-foreground">
-            {runs.total === 0
-              ? "Nothing has reached anyone's rows yet. Build them once from Runs — “Run all rows now” — and this page fills in as people start watching what Shortlist picked."
-              : `Nothing reached a row, and nothing was watched, in ${WINDOW_PHRASE[reportWindow]}. Try a longer window.`}
-            <div className="mt-3"><Button asChild variant="outline" size="sm"><Link to="/runs">Open Runs</Link></Button></div>
-          </CardContent>
-        </Card>
-      </div>
+    return impact(
+      <div className="space-y-3 px-4 py-4 text-sm text-muted-foreground sm:px-5">
+        <p>
+          {runs.total === 0
+            ? "Nothing has reached anyone's rows yet. Build them once from Runs — “Run all rows now” — and this page fills in as people start watching what Shortlist picked."
+            : `Nothing reached a row, and nothing was watched, in ${WINDOW_PHRASE[reportWindow]}. Try a longer window.`}
+        </p>
+        <Button asChild variant="outline" size="sm">
+          <Link to="/runs">Open Runs</Link>
+        </Button>
+      </div>,
     );
   }
 
   return (
     <div className="space-y-6">
-      {selector}
-
-      {/* THE VERDICT, as one card that reads as a sentence.
-          This was six stat tiles. Six equal boxes make six equal claims, and they are not equal: two
-          of them (Time to watch, Runs) are health rather than impact, and the number that actually
-          judges the setup — the share of delivered picks that got watched — was not among them at
-          all. It sat mid-page under a chart. */}
-      <Verdict
-        overall={overall}
-        coverage={coverage}
-        runs={runs}
-        sync={report.watch_sync}
-        reportWindow={reportWindow}
-      />
+      {impact(
+        <Verdict
+          overall={overall}
+          coverage={coverage}
+          sync={report.watch_sync}
+          reportWindow={reportWindow}
+        />,
+      )}
 
       {/* The verdict's rate is the only one on this page — two cards printing the same ratio at two
           different roundings (1% beside 0.5%) is how a dashboard comes to disagree with itself. */}
@@ -1178,7 +1089,7 @@ function MostWatched({
               <span
                 className={cn(
                   "absolute left-1.5 top-1.5 rounded px-1.5 text-[11px] font-bold tabular-nums",
-                  i === 0 ? "bg-primary text-primary-foreground" : "bg-black/65 text-primary",
+                  "bg-black/65 text-foreground",
                 )}
               >
                 {i + 1}

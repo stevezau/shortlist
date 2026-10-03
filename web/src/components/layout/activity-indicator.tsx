@@ -187,7 +187,7 @@ export function ActivityIndicator({
                 // `--primary-foreground` measures 10.06:1 and exists for exactly this pairing.
                 failing
                   ? "bg-destructive text-destructive-foreground"
-                  : "bg-primary text-primary-foreground",
+                  : "bg-foreground text-background",
               )}
             >
               {inFlight.length}
@@ -258,7 +258,7 @@ export function ActivityIndicator({
             </div>
           )}
           <Link
-            to="/jobs"
+            to="/activity?tab=jobs"
             onClick={() => setOpen(false)}
             className="mt-3 block text-xs text-primary underline-offset-4 hover:underline"
           >

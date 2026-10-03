@@ -8,6 +8,14 @@
 <link rel="stylesheet" href="{{ '/assets/css/main.css' | relative_url }}">
 <meta name="theme-color" content="#08080a" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+<link rel="alternate" type="application/atom+xml" title="Shortlist releases" href="{{ '/feed.xml' | absolute_url }}">
+{%- comment -%}
+Analytics only when _config.yml names a GoatCounter site. GoatCounter sets no cookies and collects no
+personal data; an empty `goatcounter:` ships no tag at all.
+{%- endcomment -%}
+{%- if site.goatcounter and site.goatcounter != "" %}
+<script data-goatcounter="https://{{ site.goatcounter }}.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+{%- endif %}
 
 {%- comment -%}
 Set the theme before first paint. A class-swap in the body would flash the wrong

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
-import type { RowSources, User, UserPatch } from "@/lib/types";
+import type { AccountPrivacy, Collection, PrivacyStatus, RowSources, User, UserPatch } from "@/lib/types";
 import { UsersPage } from "@/pages/users";
 
 const { toastSuccess } = vi.hoisted(() => ({ toastSuccess: vi.fn() }));
@@ -24,6 +24,8 @@ vi.mock("sonner", () => ({
 const {
   getUsers,
   getRequestRowSources,
+  getPrivacyStatus,
+  listCollections,
   patchUser,
   removeUser,
   setAllUsersEnabled,
@@ -31,6 +33,8 @@ const {
 } = vi.hoisted(() => ({
   getUsers: vi.fn(),
   getRequestRowSources: vi.fn(),
+  getPrivacyStatus: vi.fn(),
+  listCollections: vi.fn(),
   patchUser: vi.fn(),
   removeUser: vi.fn(),
   syncUsers: vi.fn(() =>
@@ -72,6 +76,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       getUsers: () => getUsers(),
       getRequestRowSources: (pattern: string) => getRequestRowSources(pattern),
+      getPrivacyStatus: () => getPrivacyStatus(),
+      listCollections: () => listCollections(),
       patchUser: (id: number, patch: UserPatch) => patchUser(id, patch),
       removeUser: (id: number) => removeUser(id),
       setAllUsersEnabled: (enabled: boolean) => setAllUsersEnabled(enabled),
@@ -109,6 +115,56 @@ const SARAH: User = {
 
 const MIKE: User = { ...SARAH, id: 5, username: "mike", slug: "mike" };
 
+/** GET /api/privacy/status with one account per entry, matched to a person by `user_id`. */
+function privacy(accounts: { user_id: number; state: string; missing?: string[] }[]): PrivacyStatus {
+  return {
+    accounts: accounts.map(
+      ({ user_id, state, missing = [] }) =>
+        ({
+          account_id: 500 + user_id,
+          display_name: "",
+          hides: [],
+          manage_sharing: true,
+          missing,
+          other_conditions: [],
+          restriction_profile: state === "refused_by_plex" ? "older_kid" : "",
+          should_hide: missing,
+          slug: "",
+          state,
+          user: "",
+          user_id,
+          user_type: "shared",
+        }) satisfies AccountPrivacy,
+    ),
+    enforcement: {} as PrivacyStatus["enforcement"],
+    error: null,
+    read_at: "2026-10-03T02:30:00Z",
+    rows_error: null,
+    rows_on_plex: [],
+    snapshots_kept: 0,
+    summary: "clean",
+  };
+}
+
+function row(id: number, patch: Partial<Collection> = {}): Collection {
+  return {
+    id,
+    slug: `row-${id}`,
+    name: `Row ${id}`,
+    enabled: true,
+    audience: "everyone",
+    audience_user_ids: [],
+    ...patch,
+  } as Collection;
+}
+
+beforeEach(() => {
+  getPrivacyStatus.mockReset();
+  getPrivacyStatus.mockResolvedValue(privacy([]));
+  listCollections.mockReset();
+  listCollections.mockResolvedValue([]);
+});
+
 function renderPage(client?: QueryClient) {
   client ??= new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -144,7 +200,7 @@ describe("UsersPage", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Paused/ }));
     expect(screen.getByRole("link", { name: "Michael" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "sarah" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /^Active/ }));
+    await userEvent.click(screen.getByRole("button", { name: /^On/ }));
     expect(screen.getByRole("link", { name: "sarah" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "Michael" })).not.toBeInTheDocument();
   });
@@ -165,6 +221,7 @@ describe("UsersPage", () => {
     renderPage();
     await screen.findByRole("link", { name: "sarah" });
     const controls = screen.getByRole("group", { name: "User list controls" });
+    await userEvent.click(within(controls).getByRole("button", { name: "Select people" }));
     const select = within(controls).getByRole("checkbox", { name: "Select visible users" });
     expect(within(controls).getByRole("combobox", { name: "Sort users" })).toBeVisible();
     expect(controls.compareDocumentPosition(screen.getByRole("table")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -174,6 +231,28 @@ describe("UsersPage", () => {
     await userEvent.clear(screen.getByRole("searchbox", { name: "Search users" }));
     expect(screen.getByRole("checkbox", { name: "Select mike" })).not.toBeChecked();
     expect(select).toBePartiallyChecked();
+  });
+
+  it("gives every selection checkbox a 44px tap target on a coarse pointer, behind the media query only", async () => {
+    getUsers.mockResolvedValue([SARAH, MIKE]);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Select people" }));
+    const COARSE = "[@media(pointer:coarse)]";
+    for (const name of ["Select visible users", "Select sarah", "Select mike"]) {
+      const box = screen.getByRole("checkbox", { name });
+      // The checkbox's own label takes the taps, so a tap anywhere in the 44px box toggles it.
+      const label = box.closest("label");
+      expect(label, name).not.toBeNull();
+      const classes = label!.className.split(" ");
+      expect(classes).toContain(`${COARSE}:relative`);
+      expect(classes).toContain(`${COARSE}:before:h-11`);
+      expect(classes).toContain(`${COARSE}:before:min-w-11`);
+      // A mouse sees the layout it always saw.
+      expect(classes.filter((c) => c.startsWith("before:"))).toEqual([]);
+    }
+    // Clicking the label (what a tap in the enlarged area lands on) toggles the box.
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select sarah" }).closest("label")!);
+    expect(screen.getByRole("checkbox", { name: "Select sarah" })).toBeChecked();
   });
 
   it("dismisses all-user actions with Escape or an outside click and keeps confirmations separate", async () => {
@@ -199,6 +278,7 @@ describe("UsersPage", () => {
     getUsers.mockResolvedValue([SARAH, MIKE]);
     patchUser.mockResolvedValue(SARAH);
     renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Select people" }));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Select sarah" }));
     await userEvent.click(screen.getByRole("button", { name: "Pause rebuilding" }));
     await waitFor(() => expect(patchUser).toHaveBeenCalledWith(SARAH.id, { prefs: { paused: true } }));
@@ -210,6 +290,7 @@ describe("UsersPage", () => {
     getUsers.mockResolvedValue([SARAH, MIKE]);
     patchUser.mockImplementation((id: number) => id === SARAH.id ? Promise.resolve(SARAH) : Promise.reject(new Error("Unavailable")));
     renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Select people" }));
     await userEvent.click(await screen.findByRole("checkbox", { name: "Select visible users" }));
     await userEvent.click(screen.getByRole("button", { name: "Pause rebuilding" }));
     expect(await screen.findByText(/1 person couldn’t be updated/)).toBeInTheDocument();
@@ -225,8 +306,8 @@ describe("UsersPage", () => {
 
     renderPage();
 
-    const count = await screen.findByText("3 in 30 days");
-    expect(count.closest("[title]")).toHaveAttribute("title", "Last watched a pick 5d ago");
+    const count = await screen.findByTitle("Last watched a pick 5d ago");
+    expect(count).toHaveTextContent(/^3$/);
   });
 
   it("shows 0 in 30 days, not a dash, when picks exist but none were watched lately", async () => {
@@ -236,8 +317,8 @@ describe("UsersPage", () => {
 
     renderPage();
 
-    const count = await screen.findByText("0 in 30 days");
-    expect(count.closest("[title]")).toHaveAttribute("title", "Hasn’t watched a pick yet");
+    const count = await screen.findByTitle("Hasn’t watched a pick yet");
+    expect(count).toHaveTextContent(/^0$/);
   });
 
   it("shows a dash for a person who has never had a pick", async () => {
@@ -246,8 +327,8 @@ describe("UsersPage", () => {
     renderPage();
 
     expect(await screen.findByText("sarah")).toBeInTheDocument();
-    expect(screen.queryByText(/in 30 days/)).toBeNull();
-    expect(screen.getByText(/Picks watched:/)).toBeVisible();
+    expect(await screen.findByTitle("Hasn’t had a pick yet")).toHaveTextContent(/^—$/);
+    expect(screen.queryByTitle(/Hasn’t watched a pick yet/)).toBeNull();
   });
 
   it("labels the state column Status", async () => {
@@ -393,7 +474,7 @@ describe("UsersPage — pulling the roster again", () => {
     expect(screen.queryByText("steve")).toBeNull();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /Sync users/i }),
+      await screen.findByRole("button", { name: /Add people/i }),
     );
 
     await waitFor(() => expect(syncUsers).toHaveBeenCalledTimes(1));
@@ -413,7 +494,7 @@ describe("UsersPage — pulling the roster again", () => {
     });
     renderPage();
 
-    await userEvent.click(await screen.findByRole("button", { name: /Sync/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Add people/ }));
 
     await waitFor(() =>
       expect(toastSuccess).toHaveBeenCalledWith(
@@ -431,7 +512,7 @@ describe("UsersPage — pulling the roster again", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /Sync users/i }),
+      await screen.findByRole("button", { name: /Add people/i }),
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/plex.tv/i);
@@ -614,8 +695,8 @@ describe("UsersPage — the Requests column", () => {
     expect(screen.queryByText("Can’t use Overseerr")).toBeNull();
   });
 
-  it("shows a dash that says so when no request source is connected", async () => {
-    getUsers.mockResolvedValue([SARAH]);
+  it("says no request source is connected once, at the top, rather than once per person", async () => {
+    getUsers.mockResolvedValue([SARAH, MIKE]);
     getRequestRowSources.mockResolvedValue(
       sources([{ user_id: SARAH.id, linked: false, ready: 0 }], {
         overseerr: "off",
@@ -627,8 +708,13 @@ describe("UsersPage — the Requests column", () => {
     renderPage();
 
     expect(
-      await screen.findByTitle("No request source connected"),
-    ).toHaveTextContent("—");
+      await screen.findAllByText(/No request source is connected/),
+    ).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /Set one up in Connections/ })).toHaveAttribute(
+      "href",
+      "/settings/connections",
+    );
+    expect(screen.queryByTitle("No request source connected")).toBeNull();
     expect(screen.queryByText("No account")).toBeNull();
   });
 
@@ -698,7 +784,7 @@ describe("UsersPage — Plex Home accounts", () => {
     getUsers.mockResolvedValue([SARAH, { ...managed("Younger Kid"), enabled: true }]);
     renderPage();
     await screen.findByRole("link", { name: "kid" });
-    await ui.click(screen.getByRole("button", { name: /^Active/ }));
+    await ui.click(screen.getByRole("button", { name: /^On/ }));
     expect(screen.getByRole("link", { name: "sarah" })).toBeVisible();
     expect(screen.queryByRole("link", { name: "kid" })).not.toBeInTheDocument();
     await ui.click(screen.getByRole("button", { name: /^Needs attention/ }));
@@ -750,26 +836,32 @@ describe("UsersPage — Plex Home accounts", () => {
     await waitFor(() => expect(removeUser).toHaveBeenCalledWith(SARAH.id));
   });
 
-  it("flags an account the last run measured seeing other people's rows", async () => {
+  it("flags an account that can see other people's rows", async () => {
     // The Users list is where an owner scans, so the one account with a live privacy exposure has to
     // be distinguishable HERE — not only after clicking into it. Plex refuses a share filter for a
     // profiled account, so nothing Shortlist does can hide those rows; saying so is all it can do.
-    getUsers.mockResolvedValue([{ ...managed("older_kid"), unhidden_rows: 3 }]);
+    getUsers.mockResolvedValue([managed("older_kid")]);
+    getPrivacyStatus.mockResolvedValue(
+      privacy([{ user_id: 9, state: "refused_by_plex", missing: ["shortlist_sarah", "shortlist_mike", "shortlist_jess"] }]),
+    );
     renderPage();
 
-    expect(await screen.findByText(/sees 3 rows/i)).toBeInTheDocument();
+    expect(await screen.findByText(/can see 3 rows/i)).toBeInTheDocument();
   });
 
   it("does not flag a profiled account that sees nothing", async () => {
-    // `little_kid` genuinely sees no collections. A badge on every profiled account would train the
-    // owner to ignore the one that matters.
-    getUsers.mockResolvedValue([
-      { ...managed("little_kid"), unhidden_rows: 0 },
-    ]);
+    // `little_kid` genuinely sees no collections: a run looked through its eyes and saw none. A badge
+    // on every profiled account would train the owner to ignore the one that matters.
+    getUsers.mockResolvedValue([managed("little_kid")]);
+    getPrivacyStatus.mockResolvedValue({
+      ...privacy([{ user_id: 9, state: "refused_by_plex", missing: ["shortlist_sarah", "shortlist_mike"] }]),
+      enforcement: { unhideable_measured: true, unhideable: {} } as unknown as PrivacyStatus["enforcement"],
+    });
     renderPage();
 
     await screen.findByText("Younger Kid");
-    expect(screen.queryByText(/sees \d+ row/i)).toBeNull();
+    expect(await screen.findByText("Won’t accept hide rules")).toBeInTheDocument();
+    expect(screen.queryByText(/can see \d+ row/i)).toBeNull();
   });
 
   it("names the actual restriction profile rather than a bare 'Restricted'", async () => {
@@ -876,5 +968,173 @@ describe("UsersPage — reaching the watching account", () => {
     expect(
       screen.queryByRole("link", { name: /watching account/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+/** The Users card (design refresh, app-users): one state vocabulary, a Privacy column read from the
+ *  same live reading as the Privacy page, a Rows column, and bulk actions behind a selection mode. */
+describe("UsersPage — one state vocabulary and the privacy column", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+    getRequestRowSources.mockReset();
+    getRequestRowSources.mockResolvedValue(sources([]));
+  });
+
+  const KID: User = {
+    ...SARAH,
+    id: 9,
+    username: "kid",
+    slug: "kid",
+    user_type: "managed",
+    restricted: true,
+    restriction_profile: "older_kid",
+    enabled: true,
+  };
+
+  it("says On, Paused or Off for every person", async () => {
+    getUsers.mockResolvedValue([
+      SARAH,
+      { ...MIKE, prefs: { paused: true } },
+      { ...SARAH, id: 6, username: "jess", slug: "jess", enabled: false },
+    ]);
+    renderPage();
+
+    const stateOf = async (name: string) =>
+      within((await screen.findByRole("link", { name })).closest("tr") as HTMLElement).getByTestId("user-state");
+    expect(await stateOf("sarah")).toHaveTextContent(/^On$/);
+    expect(await stateOf("mike")).toHaveTextContent(/^Paused$/);
+    expect(await stateOf("jess")).toHaveTextContent(/^Off$/);
+    expect(screen.queryByText("Active")).toBeNull();
+  });
+
+  it("shows a restriction profile as its own neutral pill, never as the state and never red", async () => {
+    getUsers.mockResolvedValue([KID]);
+    renderPage();
+
+    const profile = await screen.findByText("Older Kid");
+    const pill = profile.closest("[data-testid='restricted-pill']") as HTMLElement;
+    expect(pill).toHaveTextContent("Restricted · Older Kid");
+    expect(pill.className).not.toMatch(/destructive/);
+    // Plex refuses hide rules for a profiled account, so no row is built for it: the state is Off,
+    // the same answer its switch gives.
+    const tr = profile.closest("tr") as HTMLElement;
+    expect(within(tr).getByTestId("user-state")).toHaveTextContent(/^Off$/);
+  });
+
+  it("filters by All, Needs attention, On, Paused and Off, with counts", async () => {
+    getUsers.mockResolvedValue([SARAH, { ...MIKE, prefs: { paused: true } }, KID]);
+    renderPage();
+    await screen.findByRole("link", { name: "sarah" });
+
+    const filters = screen.getByRole("group", { name: "Show" });
+    expect(within(filters).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "All3",
+      "Needs attention1",
+      "On1",
+      "Paused1",
+      "Off1",
+    ]);
+
+    await userEvent.click(within(filters).getByRole("button", { name: /^Off/ }));
+    expect(screen.getByRole("link", { name: "kid" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "sarah" })).toBeNull();
+  });
+
+  it("reads each person's privacy from the live plex.tv reading, in the Privacy page's words", async () => {
+    getUsers.mockResolvedValue([SARAH, KID]);
+    getPrivacyStatus.mockResolvedValue(
+      privacy([
+        { user_id: SARAH.id, state: "hiding" },
+        { user_id: KID.id, state: "refused_by_plex" },
+      ]),
+    );
+    renderPage();
+
+    const sarahRow = (await screen.findByRole("link", { name: "sarah" })).closest("tr") as HTMLElement;
+    expect(await within(sarahRow).findByText("Hiding every row")).toBeInTheDocument();
+    const kidRow = screen.getByRole("link", { name: "kid" }).closest("tr") as HTMLElement;
+    expect(within(kidRow).getByText("Won’t accept hide rules")).toBeInTheDocument();
+  });
+
+  it("puts how many rows a person can see under the privacy state that explains it", async () => {
+    getUsers.mockResolvedValue([KID]);
+    getPrivacyStatus.mockResolvedValue(
+      privacy([{ user_id: KID.id, state: "refused_by_plex", missing: ["shortlist_sarah", "shortlist_mike", "shortlist_jess"] }]),
+    );
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: /kid can see 3 rows that aren’t theirs/ });
+    expect(link).toHaveTextContent("Can see 3 rows that aren’t theirs");
+    expect(link).toHaveAttribute("href", `/users/${KID.id}`);
+  });
+
+  it("counts rows the way the Dashboard and Privacy do, not the run's per-library collections", async () => {
+    // The run measured five COLLECTIONS (each row once per library); the live reading says three ROWS,
+    // the figure the Dashboard and the Privacy page's "Hides 0 of 3 rows" print. One account, one number.
+    getUsers.mockResolvedValue([{ ...KID, unhidden_rows: 5 }]);
+    getPrivacyStatus.mockResolvedValue(
+      privacy([{ user_id: KID.id, state: "refused_by_plex", missing: ["shortlist_sarah", "shortlist_mike", "shortlist_jess"] }]),
+    );
+    renderPage();
+
+    const kidRow = (await screen.findByRole("link", { name: "kid" })).closest("tr") as HTMLElement;
+    expect(await within(kidRow).findByText("Can see 3 rows that aren’t theirs")).toBeInTheDocument();
+    expect(within(kidRow).queryByText(/5 rows/)).toBeNull();
+  });
+
+  it("says the privacy reading failed rather than leaving the column blank", async () => {
+    getUsers.mockResolvedValue([SARAH]);
+    getPrivacyStatus.mockRejectedValue(new ApiError(502, "plex.tv timed out"));
+    renderPage();
+
+    const sarahRow = (await screen.findByRole("link", { name: "sarah" })).closest("tr") as HTMLElement;
+    expect(await within(sarahRow).findByText("Couldn’t read")).toBeInTheDocument();
+  });
+
+  it("counts the rows each person is in, and none for someone who is off", async () => {
+    getUsers.mockResolvedValue([SARAH, { ...MIKE, enabled: false }]);
+    listCollections.mockResolvedValue([
+      row(1),
+      row(2, { audience: "subset", audience_user_ids: [SARAH.id] }),
+      row(3, { audience: "subset", audience_user_ids: [MIKE.id] }),
+      row(4, { enabled: false }),
+    ]);
+    renderPage();
+
+    const sarahRow = (await screen.findByRole("link", { name: "sarah" })).closest("tr") as HTMLElement;
+    await waitFor(() => expect(within(sarahRow).getByTestId("user-rows")).toHaveTextContent(/^2$/));
+    const mikeRow = screen.getByRole("link", { name: "mike" }).closest("tr") as HTMLElement;
+    expect(within(mikeRow).getByTestId("user-rows")).toHaveTextContent(/^—$/);
+  });
+
+  it("keeps the bulk controls out of the way until you choose to select people", async () => {
+    getUsers.mockResolvedValue([SARAH, MIKE]);
+    renderPage();
+    await screen.findByRole("link", { name: "sarah" });
+
+    expect(screen.queryByRole("checkbox", { name: "Select sarah" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Select people" }));
+    expect(screen.getByRole("checkbox", { name: "Select sarah" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Done selecting" }));
+    expect(screen.queryByRole("checkbox", { name: "Select sarah" })).toBeNull();
+  });
+
+  it("pulls new people from Plex with the page's one primary action", async () => {
+    getUsers.mockResolvedValue([SARAH]);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add people" }));
+
+    await waitFor(() => expect(syncUsers).toHaveBeenCalledTimes(1));
+  });
+
+  it("says what pausing really does: rows come off Home, nothing is deleted", async () => {
+    // users.py: pausing queues `user.pause.hide`, which demotes the rows off every surface at once —
+    // the collections stay. "Rows stay on Plex exactly as they are" would be wrong.
+    getUsers.mockResolvedValue([SARAH]);
+    renderPage();
+
+    expect(await screen.findByText(/come off Home and Recommended/)).toBeInTheDocument();
   });
 });

@@ -59,15 +59,15 @@ describe("NotificationsSection", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
-  it("points at Connections when no address is saved", () => {
+  it("points at the webhook row above it when no address is saved", () => {
     renderSection({ "notify.webhook.enabled": true });
-    const link = screen.getByRole("link", { name: /Add the webhook in Connections/i });
-    expect(link.getAttribute("href")).toBe("#connections");
+    const link = screen.getByRole("link", { name: /Set up the webhook above/i });
+    expect(link.getAttribute("href")).toBe("#connection-notify");
   });
 
   it("does not ask for an address it already has", () => {
     renderSection(on);
-    expect(screen.queryByRole("link", { name: /Add the webhook in Connections/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Set up the webhook above/i })).toBeNull();
   });
 
   it("no longer carries the address or the header itself", () => {

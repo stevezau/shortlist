@@ -31,28 +31,18 @@
     </button>
 
     {%- comment -%}
-      Worded, and coloured to match the app's sidebar: a gold star and a pink cup. The bare GitHub
-      mark and the heart they replace said nothing about what a click does — a lone star glyph reads
-      as "favourite this page" as easily as "star the repo". The words drop before anything
-      structural as the bar narrows (see main.css); the coffee goes first, and it is still in the
-      footer.
-
-      "Star" opens the repo, where GitHub's own Star button is: there is no URL that stars a repo.
+      The GitHub pill: a gold star, the word "GitHub", and the live star count once site.js has it
+      (the GitHub API, cached for the tab session). With no script, or when the API is unreachable, it
+      reads "GitHub" alone. The word drops as the bar narrows (see main.css); the count stays. The
+      coffee link that used to sit beside it lives in the footer.
     {%- endcomment -%}
-    <a class="nav-pill nav-pill--coffee" href="https://ko-fi.com/stevezau"
-       aria-label="Buy me a coffee on Ko-fi" title="Buy me a coffee on Ko-fi">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M17 8h1a4 4 0 0 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4ZM6 2v2M10 2v2M14 2v2"/>
-      </svg>
-      <span class="nav-pill__label">Coffee</span>
-    </a>
-
     <a class="nav-pill nav-pill--star" href="{{ site.repo }}"
-       aria-label="Star Shortlist on GitHub" title="Star Shortlist on GitHub">
+       aria-label="Shortlist on GitHub" title="Shortlist on GitHub">
       <svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1Z"/>
       </svg>
-      <span class="nav-pill__label">Star</span>
+      <span class="nav-pill__label">GitHub</span>
+      <span class="nav-pill__count" data-stars data-stars-wrap hidden></span>
     </a>
 
     <button class="icon-btn nav__burger" id="menu-toggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="mobile-navigation" hidden>

@@ -1,10 +1,9 @@
 ---
 layout: home
 permalink: /
-title: Per-user Plex recommendations from watch history
+title: A private recommendation row for every Plex user
 description: >-
-  Give every user on your Plex server their own recommendations, based on what they
-  actually watched. Shortlist builds a private "Picked for You" row on each person's
-  Plex home screen, visible only to them. Self-hosted, one Docker container, no AI
-  key required.
+  Shortlist is a free, open-source, self-hosted tool that gives each person on your Plex server their
+  own Picked for You row, built from what they watched and hidden from everyone else.
+updated: 2026-10-03
 ---

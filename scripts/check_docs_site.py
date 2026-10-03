@@ -55,6 +55,20 @@ def check_links(site: Path, origin: str = "https://shortlistapp.dev") -> list[st
     return sorted(set(problems))
 
 
+def browser_routes(site: Path) -> list[str]:
+    """Every page route the browser pass loads, sorted.
+
+    jekyll-redirect-from's stubs for merged pages are left out: each one sends the browser to the live
+    site's absolute URL, so loading it would leave the local build mid-check.
+    """
+    routes = []
+    for page in site.rglob("index.html"):
+        if 'http-equiv="refresh"' in page.read_text():
+            continue
+        routes.append("/" + str(page.relative_to(site)).removesuffix("index.html"))
+    return sorted(routes)
+
+
 def check_browser(site: Path) -> int:
     """Exercise the built site using a local server and headless Chromium."""
     from playwright.sync_api import expect, sync_playwright
@@ -67,14 +81,14 @@ def check_browser(site: Path) -> int:
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_port}"
-    routes = ["/" + str(p.relative_to(site)).removesuffix("index.html") for p in site.rglob("index.html")]
+    routes = browser_routes(site)
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
-            for route in sorted(routes):
+            for route in routes:
                 for width in (320, 390, 1440):
                     page.set_viewport_size({"width": width, "height": 900})
                     response = page.goto(base + route, wait_until="networkidle")

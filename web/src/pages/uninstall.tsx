@@ -1,5 +1,5 @@
-import { useMutation } from "@tanstack/react-query";
-import { AlertTriangle, Check, Eye, Loader2 } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Check, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
 import { Link } from "react-router";
 
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { api, apiErrorMessage } from "@/lib/api";
 import { useSSE } from "@/lib/sse";
 import type { UninstallResult } from "@/lib/types";
@@ -37,19 +38,21 @@ function LogBox({ lines }: { lines: string[] }) {
   );
 }
 
-function ChangeSummary({ result }: { result: UninstallResult }) {
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * What the uninstall will do, as counts. Labels have no count of their own: the only labels
+ * Shortlist adds are on its collections, and they go with them.
+ */
+function PlanSummary({ result }: { result: UninstallResult }) {
+  const filters =
+    result.filters_restored === 1
+      ? "1 share filter from its snapshot"
+      : `${result.filters_restored} share filters from their snapshots`;
   return (
-    <p>
-      {result.filters_restored} share filter
-      {result.filters_restored === 1 ? "" : "s"} ·{" "}
-      {result.collections_deleted.length} collection
-      {result.collections_deleted.length === 1 ? "" : "s"} ·{" "}
-      {result.rows_disabled} row{result.rows_disabled === 1 ? "" : "s"}
-      {result.filters_skipped.length > 0 && (
-        <> · {result.filters_skipped.length} account
-        {result.filters_skipped.length === 1 ? "" : "s"} that can&rsquo;t be
-        restored</>
-      )}
+    <p className="font-medium">
+      Restores {filters}, deletes {plural(result.collections_deleted.length, "collection", "collections")} and
+      switches off {plural(result.rows_disabled, "row", "rows")}.
     </p>
   );
 }
@@ -119,7 +122,14 @@ export function UninstallPage() {
   const inputId = useId();
   const confirmed = typed.trim().toLowerCase() === CONFIRM_PHRASE;
 
-  const preview = useMutation({ mutationFn: () => api.uninstall(true) });
+  // The dry run IS the page: the counts are what the confirm acts on, so it loads on arrival and
+  // the confirm stays locked until it has. Not cached between visits — the counts must be current.
+  const preview = useQuery({
+    queryKey: ["uninstall", "preview"],
+    queryFn: () => api.uninstall(true),
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
   const uninstall = useMutation({ mutationFn: () => api.uninstall(false) });
 
   // The live log: each `uninstall.progress` event streamed from the server is one line.
@@ -134,7 +144,6 @@ export function UninstallPage() {
     <div className="max-w-2xl space-y-6">
       <BackLink to="/settings" label="Settings" />
       <PageHeader
-        icon={AlertTriangle}
         title="Uninstall Shortlist"
         subtitle="Remove Shortlist from this server and put Plex back exactly as it was."
       />
@@ -186,41 +195,35 @@ export function UninstallPage() {
               This cannot be undone.
             </p>
 
-            <div className="space-y-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => preview.mutate()}
-                disabled={preview.isPending || running}
-              >
-                {preview.isPending ? (
-                  <Loader2 className="animate-spin" aria-hidden="true" />
-                ) : (
-                  <Eye aria-hidden="true" />
-                )}
-                Preview what would change
-              </Button>
-              {preview.data && (
-                <div className="rounded-md border bg-card p-3 text-sm">
-                  <ChangeSummary result={preview.data} />
-                  {preview.data.collections_deleted.length > 0 && (
-                    <p className="mt-1 text-muted-foreground">
-                      {preview.data.collections_deleted.join(" · ")}
-                    </p>
-                  )}
-                  <p className="mt-1 text-muted-foreground">
-                    {preview.data.message}
+            {preview.isPending && (
+              <div role="status" className="space-y-2 border-y py-3 text-sm">
+                <p className="text-muted-foreground">Working out what uninstall will change…</p>
+                <Skeleton className="h-4 w-3/4" />
+              </div>
+            )}
+            {preview.isError && (
+              <MutationAlert
+                error={preview.error}
+                lead="Uninstall stays locked until this preview loads."
+                fallback="Couldn’t work out what uninstall would change. Try again."
+                onRetry={() => void preview.refetch()}
+                retryDisabled={preview.isFetching}
+              />
+            )}
+            {preview.data && (
+              <div className="space-y-1 border-y py-3 text-sm">
+                <PlanSummary result={preview.data} />
+                {preview.data.collections_deleted.length > 0 && (
+                  <p className="text-muted-foreground">
+                    {preview.data.collections_deleted.join(" · ")}
                   </p>
-                  <div className="mt-2">
-                    <AccountsNotRestored result={preview.data} preview />
-                  </div>
+                )}
+                <p className="text-muted-foreground">{preview.data.message}</p>
+                <div className="pt-1">
+                  <AccountsNotRestored result={preview.data} preview />
                 </div>
-              )}
-              {preview.isError && (
-                <MutationAlert error={preview.error} fallback="Couldn’t preview the uninstall. Try again."
-                  onRetry={() => preview.mutate()} />
-              )}
-            </div>
+              </div>
+            )}
 
             {running && (
               <div
@@ -277,7 +280,7 @@ export function UninstallPage() {
               </Button>
               <Button
                 variant="destructive"
-                disabled={!confirmed || running}
+                disabled={!confirmed || !preview.isSuccess || running}
                 onClick={() => {
                   setLog([]);
                   uninstall.mutate();

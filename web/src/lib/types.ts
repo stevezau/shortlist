@@ -532,6 +532,9 @@ export type PrivacyStatus = Schemas["PrivacyStatusOut"];
 /** One account on that screen. `state` is decided server-side so the copy lives in one place. */
 export type AccountPrivacy = Schemas["AccountPrivacyOut"];
 
+/** GET /api/events/log — one audit row. `message` is the writer's own diff; its keys depend on `scope`. */
+export type AuditEvent = Schemas["EventOut"];
+
 // ---------------------------------------------------------------------------
 // Hand-written — the shapes the schema genuinely cannot describe.
 //

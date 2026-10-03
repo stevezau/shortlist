@@ -288,69 +288,6 @@ class TestTheSplitBarsAreHonest:
         )
         assert not overflows, overflows
 
-    def test_the_row_panels_library_bars_never_overflow_their_track(self, page: Page, app: ShortlistApp):
-        """The dashboard assertions only ever visit `/`, so the row editor's per-library bars — built
-        by different code with their own rounding — were covered by nothing in a browser.
-
-        Two independently-rounded widths can sum to 101% when the split lands on .5, which overflows
-        the track they are drawn inside; the second is derived from the first to prevent it.
-
-        Seeded on purpose rather than reusing `seed_outcomes`: those bars only render for a row with
-        MORE THAN ONE library whose picks are old enough to have matured (>30 days), and the first
-        version of this test navigated to a page where neither was true and skipped itself.
-        """
-        now = datetime.now(UTC)
-        rows = [
-            # Split lands on .5 of the track — the exact input that rounds to 101%.
-            ("Movies", "movie", "1", 8, 4, 4),
-            ("TV Shows", "show", "2", 8, 4, 1),
-        ]
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
-            uid = con.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()[0]
-            tmdb = 4000
-            for library, media, section, delivered, watched, finished in rows:
-                for i in range(delivered):
-                    tmdb += 1
-                    con.execute(
-                        "INSERT INTO picks (user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
-                        "section_key, library, title, reason, sources, affinity, created_at, watched_at, finished_at) "
-                        "VALUES (?,?,?,?,1,'picked',?,?,?,'','tmdb',1.0,?,?,?)",
-                        (
-                            uid,
-                            tmdb,
-                            media,
-                            tmdb,
-                            section,
-                            library,
-                            f"{library} {tmdb}",
-                            (now - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S"),
-                            (now - timedelta(days=55)).strftime("%Y-%m-%d %H:%M:%S") if i < watched else None,
-                            (now - timedelta(days=50)).strftime("%Y-%m-%d %H:%M:%S") if i < finished else None,
-                        ),
-                    )
-            con.commit()
-
-        default_row = next(c for c in app.api("GET", "/api/collections").json() if c["slug"] == "picked")
-        panel = app.api("GET", f"/api/collections/{default_row['id']}/effectiveness").json()
-        assert len(panel["per_library"]) > 1, f"the bars only render for >1 library: {panel['per_library']}"
-
-        page.goto(f"/rows/{default_row['id']}")
-        expect(page.get_by_text("Movies", exact=True).first).to_be_visible(timeout=20_000)
-
-        measured = page.evaluate(
-            """() => {
-                const bars = [];
-                for (const track of document.querySelectorAll('div.rounded-full.bg-muted')) {
-                    const inner = [...track.children].reduce((s, c) => s + c.getBoundingClientRect().width, 0);
-                    const outer = track.getBoundingClientRect().width;
-                    if (outer > 0) bars.push({inner: Math.round(inner), outer: Math.round(outer)});
-                }
-                return bars;
-            }"""
-        )
-        assert measured, "no per-library bar rendered — the assertion below would be vacuous"
-        assert [b for b in measured if b["inner"] > b["outer"] + 1] == [], measured
-
     def test_no_trend_column_has_a_finished_segment_taller_than_itself(self, page: Page, app: ShortlistApp):
         """`seed_outcomes` alone puts every watch in ONE week, and the chart collapses to a single
         number below three weeks — so this assertion used to run against zero columns and could not

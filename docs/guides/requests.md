@@ -3,6 +3,8 @@ title: "Requests: Radarr and Sonarr"
 description: Let Shortlist ask Radarr or Sonarr for titles your people want that the library doesn't have yet, with an approval inbox and guardrails.
 heading: Requests (Radarr and Sonarr)
 nav_order: 6
+updated: 2026-10-03
+dev_preview: true
 ---
 
 ## Reviewing the inbox
@@ -132,7 +134,7 @@ Overseerr — once it's on Plex and until they've watched it — in a private ro
 arrival first. It reads Overseerr, Radarr and Sonarr whenever their address and key are set on this
 Connections screen, whether or not Shortlist sends requests of its own, so it works on a server where
 people request and Shortlist never does. How the row is set up, matched to people and emptied is in
-[Rows → Your requests rows](rows.md#your-requests-rows). Three things to know from this side:
+[Your requests rows](#your-requests-rows). Three things to know from this side:
 
 - **Turn on Tag Requests in Overseerr** (_Settings → Services_, on each Radarr and Sonarr server) so
   each title it sends carries a tag naming who asked for it. Only requests made after that switch is on
@@ -314,8 +316,7 @@ note saying so, with a link to Settings.
 reached by a row that more than one person gets. Set it above 1 on a row whose audience is a single
 person and the editor warns you: any value above 1 there means the row will never ask for anything.
 
-See [Rows → Requests on a row](rows.md#requests-on-a-row) for these settings from the row editor's own
-side.
+See [Requests on a row](#requests-on-a-row) for these settings from the row editor's own side.
 
 Two things stay server-wide on purpose:
 
@@ -354,3 +355,95 @@ titles. The Requests inbox shows every row that wanted it, not just the one that
 A shared row ("Popular on your server") has no request settings, and the editor doesn't show the
 section for one. It's built from titles people have already watched, which are by definition already
 on your server — so there is never anything missing for it to ask for.
+
+## Requests on a row
+
+A per-person row (any kind except Popular on this server, which never requests anything missing — see
+[Shared rows](#shared-rows)) can override the server-wide request settings in its own
+**Requests** group in the Row editor. Full detail — including how rows share the run's request limit,
+and what happens when two rows both want the same title — is in
+[Requests → Different settings per row](#different-settings-per-row). Three things worth
+knowing about the group in the row editor itself:
+
+- Every on/off setting in it is a switch, the same as everywhere else in the editor.
+- A setting the row can't actually use is left off the screen rather than shown disabled: Radarr's
+  root folder and quality profile only appear when requests go to Radarr and the row has a movie
+  library (the same pairing applies to Sonarr, plus Sonarr's "how much of a show" setting, for a show
+  library); the request tag and "tag with who it's for" only appear when requests go to Radarr/Sonarr,
+  since Overseerr/Jellyseerr has no tags field for them to reach. If requests are off entirely, the
+  group just shows a note saying so, linking to Settings.
+- **How many people must want it** only means something when the row reaches more than one person.
+  Set it above 1 on a row whose audience is a single person and the editor warns that any value above
+  1 means the row will never request anything.
+
+## Your requests rows
+
+A row of what each person asked for, once it is on Plex. This row kind is not in stable
+{{ site.stable_version }}.
+
+<details class="dev-preview" markdown="1">
+<summary><span class="dev-preview__tag">Development preview</span> How a Your requests row works</summary>
+<div class="dev-preview__body" markdown="1">
+
+Choose **Your requests** as a row's kind — or start from the _Your requests_ template — and each
+person gets a private row of the titles **they** asked for that are now on Plex and they haven't
+watched yet, newest arrival first. Nothing is recommended, ranked or padded, and no AI is involved:
+the row is exactly what they asked for, or nothing. A title leaves the row once they've watched it,
+and a person with nothing ready has no row at all — theirs is taken off Plex rather than left holding
+titles they've already seen.
+
+**Where requests are read from.** Two sources, both read whenever their address and key are filled
+in under **Settings › Connections** — whether or not Shortlist's own requests are switched on, and
+wherever those go:
+
+- **Overseerr's request list** (Jellyseerr and Seerr too). A request counts once it's approved, and
+  shows in the row once the title is on Plex.
+- **Radarr and Sonarr requester tags.** Overseerr can stamp every title it sends with a tag naming who
+  asked for it, like `12-sarah`. Shortlist reads those tags and traces them back to the person through
+  Overseerr's user list. The tag stays on the title after the request is gone, so **deleting a filled
+  request in Overseerr is fine** — the title stays in the row, and Overseerr still remembers when it
+  arrived.
+
+To get those tags, turn on **Tag Requests** in Overseerr under _Settings → Services_, on each Radarr
+and Sonarr server it sends to. Only titles requested **after** that switch was turned on carry a tag;
+requests made before it are covered by Overseerr's own list for as long as they're still in it. The
+editor's **Where requests are read from** panel shows each source's state, whether Tag Requests is on
+for each server, how many titles the tags credit to someone, and how many people on your server are
+linked to an Overseerr account.
+
+**People are matched by Plex account, and nothing else.** An Overseerr account is linked to a person
+when it signed in with the same Plex account; a tag names that account through Overseerr. A tag that
+fits nobody, or that two people could both claim, is ignored and listed in the panel, because a wrong
+guess would put one person's requests in another person's private row. The **Users** page has a
+**Requests** column that says where each person stands: **Linked**, **No account** (nobody in
+Overseerr signed in as them), **Can't use Overseerr** (a Home profile can't sign in to Overseerr at
+all), or the tag they've been given by hand.
+
+**Use my own tags.** If you tag requests yourself in Radarr/Sonarr rather than through Overseerr,
+open **Use my own tags** in the editor and give the row a **tag pattern** such as `req-{username}`:
+`{username}` is their Plex username, `{name}` their name in Shortlist. Matching ignores case, and
+spaces count as dashes, which is how Radarr and Sonarr store a tag. Press **Check** to see every tag
+the pattern (or Overseerr) matched and who it belongs to, before anything is saved. For a tag that
+fits no pattern, a person's own page has **Their request tag in Radarr/Sonarr**, which credits that
+one tag to them. Overseerr's tags are still read alongside either. Titles Shortlist requested itself —
+carrying its own request tag, or filed by the **Request as** account in Overseerr — never count as
+anyone's request.
+
+**Which requests show up.** **Show titles that landed in the last** (default 90 days) drops older
+arrivals, so a request they've lost interest in doesn't sit there for good; 0 keeps every title until
+they've watched it. Beyond that the row uses the same **Libraries**, **Row size** and schedule
+settings as any other row. A show counts as ready when the season they asked for has landed (from
+Overseerr) or when it has episodes they haven't watched (from a tag), and a title their Plex
+restrictions hide from them stays out. A run's **How we picked** page has a **What they asked for**
+step listing every request and where it ended up: in the row, not on Plex yet, that season hasn't
+landed, already watched, landed more than N days ago, hidden by their Plex restrictions, or past the
+row size.
+
+A requests row is private the same way every per-person row is — see
+[How rows stay private](../reference/concepts.md#how-rows-stay-private). Because the row disappears
+when a person has nothing ready, each run costs one collections listing per library per person with
+an empty row, to check there is nothing left to remove. It is only ever removed on a night every
+request source was read in full: if Overseerr or an Arr is down, every row stays as it was.
+
+</div>
+</details>

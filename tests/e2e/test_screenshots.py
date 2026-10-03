@@ -2,7 +2,7 @@
 
 Skipped in CI (writes only when SHOTS_DIR is set). Regenerate with:
     SHOTS_DIR=docs/images .venv/bin/python -m pytest tests/e2e/test_screenshots.py -m e2e --no-cov -n0
-Fake data: the users are sarah/mike/jess and nobody real watched anything. The library names real
+Fake data: the users are sarah/mike/jess/kid and nobody real watched anything. The library names real
 films and shows so the screens look like what an owner would actually see — see `DEMO_MOVIES` in
 `tests/fakes/fake_plex.py`, and `scripts/fetch_demo_posters.py` for the cover art.
 
@@ -113,16 +113,83 @@ def _fit_viewport(page: Page) -> None:
         page.wait_for_timeout(500)
 
 
-def _capture(page: Page, path: str, name: str, *, wait: str | None = None) -> None:
+def _capture(page: Page, path: str, *names: str, wait: str | None = None) -> None:
+    """Open `path` and write one capture under each of `names`.
+
+    Several screens are shown twice — once in the README's set, once in the docs' "Development
+    preview" gallery — and the two must be the same picture, so they come from one capture.
+    """
     page.set_viewport_size(VIEWPORT)  # reset: the previous shot may have resized to fit its content
     page.goto(path)  # no networkidle: the app holds an SSE stream open, so it never goes idle
     if wait is not None:
         # Best-effort: capture whatever rendered; this is a screenshot tool, not a correctness test.
+        # Scoped to <main>: the nav rail's own links ("Runs", "Requests") would otherwise satisfy a
+        # wait meant for the page's content.
         with contextlib.suppress(Exception):
-            expect(page.get_by_text(re.compile(wait, re.I)).first).to_be_visible(timeout=LOAD)
+            expect(page.locator("main").get_by_text(re.compile(wait, re.I)).first).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(1200)
     _fit_viewport(page)
-    _shot(page, name)
+    for name in names:
+        _shot(page, name)
+
+
+#: Titles for the Requests inbox. Real films and a real show, none of them in the fake library — the
+#: inbox is titles the library does NOT have. No poster path: the inbox would fetch TMDB's image host,
+#: and no capture may touch the network, so each draws its placeholder tile.
+DEMO_REQUESTS = (
+    ("movie", 666277, "Past Lives", 2023, 7.8, 3, ["sarah", "jess", "mike"], "Columbus"),
+    ("movie", 840430, "The Holdovers", 2023, 7.7, 2, ["sarah", "mike"], "Lady Bird"),
+    ("show", 126308, "Shōgun", 2024, 8.6, 2, ["mike", "jess"], "Severance"),
+    ("movie", 915935, "Anatomy of a Fall", 2023, 7.7, 1, ["sarah"], "Parasite"),
+)
+
+
+def _seed_requests(app: ShortlistApp) -> None:
+    """Turn Requests on with Radarr and Sonarr set up, and put four titles in the inbox.
+
+    The seeded install has none, so the Requests screen was an empty state — which says nothing
+    about Send, Delete and Reject sitting beside each title. Written through the ORM so every
+    column's default applies, exactly as a run would leave the row.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from shortlist.server.db.models import RequestCandidate
+
+    settings = {
+        "requests.enabled": True,
+        "requests.radarr.url": "http://radarr.invalid",
+        "requests.radarr.apikey": "demo-key",
+        "requests.sonarr.url": "http://sonarr.invalid",
+        "requests.sonarr.apikey": "demo-key",
+    }
+    assert app.api("PUT", "/api/settings", json={"values": settings}).status_code == 200
+    engine = create_engine(f"sqlite:///{app.config_dir / 'shortlist.db'}")
+    try:
+        with Session(engine) as session:
+            for media, tmdb_id, title, year, rating, demand, wanters, seed in DEMO_REQUESTS:
+                row = "✨ TV Shows Picked for You" if media == "show" else "✨ Movies Picked for You"
+                session.add(
+                    RequestCandidate(
+                        tmdb_id=tmdb_id,
+                        media_type=media,
+                        title=title,
+                        year=year,
+                        rating=rating,
+                        vote_count=2400,
+                        demand=demand,
+                        wanters=wanters,
+                        why=[
+                            {"user": user, "row": row, "seed": seed, "source": "tmdb", "row_slug": "picked"}
+                            for user in wanters
+                        ],
+                        row_slug="picked",
+                        status="pending",
+                    )
+                )
+            session.commit()
+    finally:
+        engine.dispose()
 
 
 #: Three more row DEFINITIONS for rows.png, copied verbatim from the production templates in
@@ -171,14 +238,22 @@ def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
 
     sarah = _users_by_name(app)["sarah"]["id"]
     run_id = app.api("GET", "/api/runs").json()[0]["id"]
+    default_row = next(c for c in app.api("GET", "/api/collections").json() if c["slug"] == "picked")
 
-    _capture(shot_page, "/", "dashboard.webp", wait="picked|watched|run")
+    # The fake server carries a managed account with a parental preset ("kid"), which Plex will not
+    # filter — so this run finishes "OK with warnings", the state the run and privacy screens exist
+    # to explain. Nothing here stages it; it is what the fixture's server really is.
+    _capture(shot_page, "/", "dashboard.webp", "preview-dashboard.webp", wait="Last run")
     _capture(shot_page, f"/users/{sarah}", "user-detail.webp", wait="Because you watched")
-    _capture(shot_page, "/users", "users.webp", wait="sarah")
+    _capture(shot_page, "/users", "users.webp", "preview-users.webp", wait="sarah")
     _capture(shot_page, "/runs", "runs.webp", wait="succeeded|ok")
-    _capture(shot_page, f"/runs/{run_id}", "run-detail.webp", wait="AI tokens")
-    _capture(shot_page, "/requests", "requests.webp", wait="request")
-    _capture(shot_page, "/settings", "settings.webp", wait="Connections")
+    _capture(shot_page, f"/runs/{run_id}", "run-detail.webp", "preview-run-live.webp", wait="with warnings")
+    _capture(shot_page, f"/rows/{default_row['id']}", "preview-row-editor.webp", wait="Live on Plex")
+    _capture(shot_page, "/privacy", "preview-privacy.webp", wait="Read from plex.tv at")
+    _capture(shot_page, "/activity?tab=changes", "preview-activity.webp", wait="share|filter")
+    _capture(shot_page, "/settings/connections", "settings.webp", "preview-settings.webp", wait="Plex")
+    _seed_requests(app)
+    _capture(shot_page, "/requests", "requests.webp", "preview-requests.webp", wait="Past Lives")
 
     # rows.png needs row VARIETY, and the seeded install has exactly one row, so it came out as one
     # card in an empty frame. The extra rows go in HERE rather than in `build_real_rows`, which is
@@ -189,7 +264,7 @@ def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
     for payload in EXTRA_ROWS:
         created = app.api("POST", "/api/collections", json=payload)
         assert created.status_code == 201, created.text
-    _capture(shot_page, "/rows", "rows.webp", wait="Picked for You")
+    _capture(shot_page, "/rows", "rows.webp", "preview-rows.webp", wait="Picked for You")
 
 
 @skip_unless_capturing

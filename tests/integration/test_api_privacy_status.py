@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from shortlist.engine.models import OwnedRow
-from shortlist.server.db.models import Run, User
+from shortlist.server.db.models import RestrictionSnapshotRow, Run, User
 from tests.integration.conftest import OWNER_ID
 
 pytestmark = pytest.mark.integration
@@ -653,7 +653,16 @@ class TestTheEndpointContract:
 
         body = client.get("/api/privacy/status").json()
 
-        assert set(body) == {"read_at", "accounts", "rows_on_plex", "rows_error", "error", "enforcement", "summary"}
+        assert set(body) == {
+            "read_at",
+            "accounts",
+            "rows_on_plex",
+            "rows_error",
+            "error",
+            "enforcement",
+            "summary",
+            "snapshots_kept",
+        }
         assert set(body["accounts"][0]) == ACCOUNT_KEYS
         assert body["accounts"][0]["other_conditions"] == ["filterMovies: label!=Kids"], (
             "the owner's own conditions are shown, so rule 3's byte-preservation is visible"
@@ -686,6 +695,55 @@ class TestTheEndpointContract:
             a["missing"] for a in support["accounts"]
         ]
         assert status["rows_on_plex"] == support["rows_on_plex"]
+
+
+class TestSnapshotsKept:
+    """The strip's "Snapshots kept" cell: how many pre-Shortlist share-filter records uninstall can
+    restore from (plex-safety rule 2). A database count, so it does not wait on plex.tv."""
+
+    def test_a_server_with_no_snapshots_reports_zero(self, client: TestClient, monkeypatch):
+        _rows_on_plex(monkeypatch, [])
+        _roster(monkeypatch, {})
+
+        assert client.get("/api/privacy/status").json()["snapshots_kept"] == 0
+
+    def test_it_counts_every_snapshot_row(self, client: TestClient, monkeypatch):
+        _seed_users(
+            client,
+            [
+                {"slug": "sarah", "plex_account_id": 1000, "enabled": True},
+                {"slug": "mike", "plex_account_id": 1001, "enabled": True},
+            ],
+        )
+        with client.app.state.sessions() as session:
+            ids = {u.slug: u.id for u in session.query(User).filter(User.slug.in_(["sarah", "mike"]))}
+            session.add(RestrictionSnapshotRow(user_id=ids["sarah"], reason="initial", filters_before={}))
+            session.add(RestrictionSnapshotRow(user_id=ids["sarah"], reason="sync", filters_before={}))
+            session.add(RestrictionSnapshotRow(user_id=ids["mike"], reason="initial", filters_before={}))
+            session.commit()
+        _rows_on_plex(monkeypatch, ["sarah", "mike"])
+        _roster(monkeypatch, {"sarah": {}, "mike": {}}, ids={"sarah": 1000, "mike": 1001})
+
+        assert client.get("/api/privacy/status").json()["snapshots_kept"] == 3
+
+    def test_it_is_reported_even_when_plextv_cannot_be_read(self, client: TestClient, monkeypatch):
+        from shortlist.server.services import privacy_status
+
+        _seed_users(client, [{"slug": "sarah", "plex_account_id": 1000, "enabled": True}])
+        with client.app.state.sessions() as session:
+            uid = session.query(User).filter_by(slug="sarah").one().id
+            session.add(RestrictionSnapshotRow(user_id=uid, reason="initial", filters_before={}))
+            session.commit()
+        _rows_on_plex(monkeypatch, ["sarah"])
+
+        def _down():
+            raise RuntimeError("plex.tv unreachable")
+
+        monkeypatch.setattr(privacy_status, "_plextv_client", lambda _store, _mid: SimpleNamespace(list_users=_down))
+
+        body = client.get("/api/privacy/status").json()
+        assert body["error"]
+        assert body["snapshots_kept"] == 1
 
 
 class TestAMeasuredUnhideableRowIsNeverPaintedGreen:

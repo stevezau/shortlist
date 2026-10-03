@@ -61,3 +61,9 @@ docs/Gemfile.local.lock
 # Real cover art for the demo library, fetched by scripts/fetch_demo_posters.py. Third-party
 # posters: the repo ships the finished screenshots, never a library of them.
 tests/e2e/assets/posters/
+
+# Impeccable working files: review captures, critique snapshots and approval mockups stay local.
+# PRODUCT.md, DESIGN.md, .impeccable/design.json and .impeccable/surfaces/ are committed.
+.impeccable/review/
+.impeccable/critique/
+.impeccable/mocks/
