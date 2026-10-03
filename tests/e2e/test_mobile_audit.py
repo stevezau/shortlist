@@ -157,16 +157,20 @@ def _routes(app: ShortlistApp) -> list[tuple[str, str, str | None]]:
         ("row edit", f"/rows/{row_id}", "Schedule|Audience|Name"),
         ("row rename", f"/rows/{row_id}/rename", "name|Rename"),
         ("users", "/users", "sarah"),
-        ("sharing", "/sharing", "Sharing and privacy"),
+        ("privacy", "/privacy", "Privacy"),
         ("user detail", f"/users/{sarah}", "Because you watched|sarah"),
         ("runs", "/runs", "succeeded|ok"),
         # "AI tokens|Summary|user" matched nothing this page renders — it shows DURATION,
         # ROWS BUILT, PEOPLE. It only ever "passed" by falling through the 8s timeout.
         ("run detail", f"/runs/{run_id}", "ROWS BUILT|DURATION|Run #"),
         ("requests", "/requests", "request"),
-        ("jobs", "/jobs", "Schedules|job|Backup"),
-        ("logs", "/logs", "log|level"),
+        ("activity jobs", "/activity?tab=jobs", "Schedules|job|Backup"),
+        ("activity history", "/activity?tab=history", "job|run|history"),
+        ("activity log", "/activity?tab=log", "log|level"),
+        ("activity changes", "/activity?tab=changes", "Plex|change"),
         ("settings", "/settings", "Connections"),
+        ("settings defaults", "/settings/defaults", "Title sources"),
+        ("settings system", "/settings/system", "Advanced|API access|Danger"),
         ("uninstall", "/settings/uninstall", "Uninstall|remove"),
     ]
 
@@ -275,11 +279,12 @@ def test_the_mobile_drawer_opens_and_covers_the_nav(browser: Browser, app: Short
 
 #: (label, route, the control that opens it, text proving it opened). Dialogs are the blind spot a
 #: route sweep cannot reach: they mount over the page, size themselves independently of it, and a
-#: footer of buttons is exactly the shape that runs off a narrow screen.
-DIALOGS = [
-    ("rename a row", "/rows", "Rename", "Rename|name"),
-    ("delete a row", "/rows", "Delete", "Delete|permanently|for good"),
-    ("remove a row from Plex", "/rows", "Remove from Plex", "Remove|Plex"),
+#: footer of buttons is exactly the shape that runs off a narrow screen. `{row}` is the first row's
+#: id: a row's three dialogs open from its editor (Live on Plex and the Danger zone), not the list.
+DIALOGS: list[tuple[str, str, str | re.Pattern[str], str]] = [
+    ("rename a row", "/rows/{row}", "Rename on Plex…", "Rename|name"),
+    ("delete a row", "/rows/{row}", re.compile(r"^Delete "), "Delete|permanently|for good"),
+    ("remove a row from Plex", "/rows/{row}", re.compile(r"^Remove .* from Plex$"), "Remove|Plex"),
     ("run selected rows", "/runs", "Run selected rows…", "Run|rows|select"),
 ]
 
@@ -293,6 +298,7 @@ def test_no_dialog_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistA
     on a touch screen. Nothing else in this file opens one.
     """
     build_real_rows(app)
+    row_id = app.api("GET", "/api/collections").json()[0]["id"]
     context = _phone(browser, app, width=width)
     page = context.new_page()
     overflow: dict[str, list] = {}
@@ -300,13 +306,12 @@ def test_no_dialog_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistA
     skipped: list[str] = []
     try:
         for label, path, opener, proof in DIALOGS:
-            page.goto(path)
+            page.goto(path.format(row=row_id))
             button = page.get_by_role("button", name=opener).first
             try:
                 # Replaces a blind 1200ms sleep, and is stricter too: that sleep was the only thing
                 # stopping a slow render from reading count()==0 and skipping the dialog silently.
-                # Kept SHORT deliberately — "Rename" and "Remove from Plex" are genuinely absent at
-                # phone width, so this budget is paid in full on every run and a 5s one cost 10s.
+                # Kept short: a control absent at phone width pays this budget in full on every run.
                 button.wait_for(timeout=1500)
             except Exception:
                 skipped.append(label)
@@ -337,7 +342,6 @@ def test_no_dialog_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistA
     # Every `continue` above is a dialog that went unmeasured. Without this the test could audit
     # nothing at all and still pass green, which is exactly how the nav-link match hid for so long.
     assert audited, f"opened no dialogs at {width}px — expected {[d[0] for d in DIALOGS]}"
-    # Only 2 of the 4 open at phone width — "Rename" and "Remove from Plex" are not reachable there.
     # Printed rather than asserted: this test measures layout, and which controls a phone exposes is
     # a product question. But it should be VISIBLE, not silently skipped as it was before.
     if skipped:

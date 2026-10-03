@@ -12,6 +12,7 @@ import {
   type RowKind,
 } from "@/lib/row-kinds";
 import { cn } from "@/lib/utils";
+import { selectedVerticalClass } from "@/lib/selected";
 
 /**
  * A radio list where each choice is a title plus one line on what it means. Native radios, so the
@@ -46,7 +47,7 @@ function RadioCards<T extends string>({
             htmlFor={id}
             className={cn(
               "flex items-start gap-3 rounded-md border px-3 py-2 text-sm transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
-              checked && "border-primary bg-primary/5",
+              checked && selectedVerticalClass,
               disabled
                 ? "cursor-not-allowed opacity-60"
                 : "cursor-pointer hover:bg-muted/50",

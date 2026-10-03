@@ -15,6 +15,17 @@ import { toInput } from "@/lib/collections";
 import { useSaveCollection } from "@/lib/queries";
 import type { Collection } from "@/lib/types";
 
+/** What "on" means on Plex today. A row that is on but between seasons, or not on today's days, is
+ *  on and still absent from Plex — "showing on Plex" would be the wrong answer to "where is it?". */
+function onPlexLabel(collection: Collection): string {
+  if (!collection.enabled) return "Off";
+  if ((collection.seasons ?? []).length > 0 && collection.season_status && !collection.season_status.showing) {
+    return "On, between seasons";
+  }
+  if ((collection.show_days ?? []).length > 0 && !collection.shown_today) return "On, hidden today";
+  return "On, showing on Plex";
+}
+
 /**
  * A row's on/off switch, with the confirmation turning it off deserves.
  *
@@ -26,14 +37,15 @@ import type { Collection } from "@/lib/types";
  */
 export function RowEnableToggle({
   collection,
-  showLabel = false,
+  showLabel,
   disabled = false,
   onSaving,
   onSaved,
 }: {
   collection: Collection;
-  /** The editor has room for a word beside the switch; the card's action strip does not. */
-  showLabel?: boolean;
+  /** A word beside the switch ("short": On/Off, for the Rows card), or what that means on Plex today
+   *  ("long", for the editor's Live on Plex strip). Omitted, the switch stands alone. */
+  showLabel?: "short" | "long";
   /** Holds the switch and its Try again, e.g. while a form holding the row saves it. */
   disabled?: boolean;
   /** Called with true when a change starts saving and false once it's done, either way. */
@@ -69,7 +81,7 @@ export function RowEnableToggle({
         />
         {showLabel && (
           <span className="text-sm text-muted-foreground">
-            {collection.enabled ? "On" : "Off"}
+            {showLabel === "long" ? onPlexLabel(collection) : collection.enabled ? "On" : "Off"}
           </span>
         )}
       </span>

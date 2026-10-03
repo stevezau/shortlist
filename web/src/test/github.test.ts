@@ -17,6 +17,7 @@ function makeRun(overrides: Partial<RunDetail> = {}): RunDetail {
     shared_rows: [],
     error: null,
     promotion_blockers: [],
+    privacy: null,
     ...overrides,
   };
 }

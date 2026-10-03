@@ -32,6 +32,7 @@ const SUBSET_ROW: Collection = {
   slug: "hidden-gems",
   name: "Hidden Gems",
   last_run_id: null,
+  preview_titles: [],
   build: "per_person",
   audience: "subset",
   audience_user_ids: [4],

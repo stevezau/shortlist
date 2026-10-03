@@ -32,6 +32,8 @@ import type {
   RunRowCost,
 } from "@/lib/types";
 
+const NOBODY = new Set<string>();
+
 /** Why this person got, or did not get, this row. */
 const DECISION_LABEL: Record<string, string> = {
   muted: "muted for them",
@@ -174,6 +176,7 @@ function RowCard({
   defaultOpen,
   idBySlug,
   focusUser,
+  notPrivate,
 }: {
   group: RunRowGroup;
   run: RunDetail;
@@ -182,6 +185,8 @@ function RowCard({
   focusUser?: string | null;
   /** person slug -> user id, so their panel can link to their own trace. */
   idBySlug: Map<string, number>;
+  /** Lower-cased usernames this run found could see rows that are not theirs. */
+  notPrivate: Set<string>;
 }) {
   const inThisRow = focusUser
     ? group.people.some((person) => person.result.slug === focusUser)
@@ -207,9 +212,17 @@ function RowCard({
   let chosenPerson: RunRowPerson | undefined;
   const costBySlug = new Map<string, RunRowCost | null>();
   const builtBySlug = new Map<string, boolean | null>();
+  // `result.breakdown` is already narrowed to THIS row, so this is what the row added for them.
+  const newBySlug = new Map<string, number>();
+  let notPrivateHere = 0;
   for (const person of group.people) {
     costBySlug.set(person.result.slug, person.cost);
     builtBySlug.set(person.result.slug, person.built);
+    newBySlug.set(
+      person.result.slug,
+      person.result.breakdown.reduce((n, entry) => n + entry.added.length, 0),
+    );
+    if (notPrivate.has(person.result.username.toLowerCase())) notPrivateHere += 1;
     if (person.result.slug === chosen?.slug) chosenPerson = person;
   }
   const decision = chosenPerson?.decision;
@@ -243,6 +256,9 @@ function RowCard({
             <span className="text-xs text-muted-foreground">
               {group.kind === "shared" ? "Shared" : "Per-person"} ·{" "}
               {notStarted ? "waiting to build" : rowSummary(group)}
+              {notPrivateHere > 0 && (
+                <span className="text-warning">{` · ${notPrivateHere} not private`}</span>
+              )}
               {time !== null && (
                 <span
                   title={
@@ -311,6 +327,8 @@ function RowCard({
               showSummary={false}
               costBySlug={costBySlug}
               builtBySlug={builtBySlug}
+              newBySlug={newBySlug}
+              notPrivate={notPrivate}
             />
             <div className="min-w-0">
               {decision && decision !== "due" && (
@@ -349,6 +367,7 @@ export function RunRowsTab({
   idBySlug,
   liveLog,
   focusUser,
+  notPrivate = NOBODY,
 }: {
   run: RunDetail;
   titles: Record<string, string>;
@@ -357,6 +376,8 @@ export function RunRowsTab({
   /** Person slug from `?user=` — their row opens with them selected, so a link from their own page
    *  lands on their result rather than the top of a run with forty others in it. */
   focusUser?: string | null;
+  /** Lower-cased usernames this run's privacy measurement flagged; empty when it measured nothing. */
+  notPrivate?: Set<string>;
 }) {
   const { groups, notInRun } = groupRunByRow(run, titles, idBySlug);
   const [showSkipped, setShowSkipped] = useState(false);
@@ -386,7 +407,7 @@ export function RunRowsTab({
               : run.error
                 ? "The error above says why. The Log tab has anything the run recorded before it stopped."
                 : notInRun.length > 0
-                  ? `Nothing was due to rebuild. ${notInRun.length} row${notInRun.length === 1 ? " was" : "s were"} considered and skipped.`
+                  ? `Nothing was due to run. ${notInRun.length} row${notInRun.length === 1 ? " was" : "s were"} considered and skipped.`
                   : "Runs from before this view existed recorded their results per person rather than per row — the Log tab still has everything that happened."}
           </p>
         </div>
@@ -405,6 +426,7 @@ export function RunRowsTab({
           liveLog={liveLog}
           idBySlug={idBySlug}
           focusUser={focusUser}
+          notPrivate={notPrivate}
           // One row is the whole story of a scoped run — open it on arrival rather than making the
           // operator click to see the only thing that happened.
           defaultOpen={groups.length === 1}

@@ -8,7 +8,8 @@ import type * as ApiModule from "@/lib/api";
 import { RunDetailPage } from "@/pages/run-detail";
 import type { RunLogEntry, RunDetail } from "@/lib/types";
 
-const { getRun, getUsers, getRunLog, listCollections } = vi.hoisted(() => ({
+const { getRun, getUsers, getRunLog, listCollections, startRun } = vi.hoisted(() => ({
+  startRun: vi.fn(),
   // The Rows tab names a row from the collections config. Unmocked, that query never settles and no
   // row finishes rendering — which looks exactly like a row needing to be expanded.
   listCollections: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getUsers: () => getUsers(),
       listCollections: () => listCollections(),
       getRunLog: (id: number) => getRunLog(id),
+      startRun: (body: unknown) => startRun(body),
     },
   };
 });
@@ -69,6 +71,7 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
     stats: { users_ok: 1, users_error: 0, titles_requested: 0 },
     error: null,
     promotion_blockers: [],
+    privacy: null,
     users: [
       {
         username: "MooHouse",
@@ -1417,6 +1420,7 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
       status: "error",
       error: null,
       promotion_blockers: [],
+      privacy: null,
       stats: {
         users_ok: ok,
         users_error: failures.length,
@@ -1519,5 +1523,48 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
 
     await screen.findAllByText(/MooHouse/);
     expect(screen.queryByTestId("run-failure")).toBeNull();
+  });
+});
+
+describe("RunDetailPage — header actions", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getUsers.mockResolvedValue([]);
+    getRunLog.mockReset();
+    getRunLog.mockResolvedValue([]);
+    listCollections.mockResolvedValue([]);
+    startRun.mockReset();
+    startRun.mockResolvedValue({ run_id: 42 });
+  });
+
+  it("offers the log as a download, the same file the Log tab gives", async () => {
+    getRun.mockResolvedValue(run([]));
+    renderDetail();
+
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
+    const download = within(header).getByRole("link", { name: /Download log/ });
+    expect(download.getAttribute("href")).toMatch(/\/api\/runs\/2\/log\?format=text$/);
+    expect(download).toHaveAttribute("download");
+  });
+
+  it("starts a new run from Run now and opens it", async () => {
+    getRun.mockResolvedValue(run([]));
+    renderDetail();
+
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
+    await userEvent.click(within(header).getByRole("button", { name: /Run now/ }));
+
+    expect(startRun).toHaveBeenCalledWith({});
+    await waitFor(() => expect(getRun).toHaveBeenCalledWith(42));
+  });
+
+  it("offers no second run while this one is still going", async () => {
+    getRun.mockResolvedValue({ ...run([]), status: "running", finished_at: null });
+    renderDetail();
+
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
+    expect(within(header).queryByRole("button", { name: /Run now/ })).toBeNull();
+    expect(within(header).getByRole("button", { name: /Cancel run/ })).toBeInTheDocument();
   });
 });

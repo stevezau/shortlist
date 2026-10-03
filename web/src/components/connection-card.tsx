@@ -10,7 +10,6 @@ import {
   Card,
   CardContent,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { ModelField } from "@/components/model-field";
 import { Input } from "@/components/ui/input";
@@ -26,6 +25,29 @@ import { useCuratorModels, useSaveSettings } from "@/lib/queries";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import type { Settings, TestableService } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+type PillTone = "ok" | "bad" | "warn" | "neutral";
+
+const PILL_TONES: Record<PillTone, string> = {
+  ok: "border-success/40 bg-success/10 text-success",
+  bad: "border-destructive/40 bg-destructive/10 text-destructive-text",
+  warn: "border-warning/40 bg-warning/10 text-warning",
+  neutral: "border-border-strong bg-elevated text-muted-foreground",
+};
+
+function StatusPill({ tone, children }: { tone: PillTone; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-px text-[11px] font-medium leading-4",
+        PILL_TONES[tone],
+      )}
+    >
+      {tone === "ok" && <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-success" />}
+      {children}
+    </span>
+  );
+}
 
 /** One editable field on a connection card. `showIf` hides it based on the other fields' values. */
 export type ConnectionField =
@@ -90,6 +112,7 @@ export function ConnectionCard({
   summary,
   footnote,
   testLabel = "Test",
+  unsetLabel,
 }: {
   service: TestableService;
   /** False for a service whose probe is too expensive to run unasked. The dot then stays amber
@@ -123,6 +146,9 @@ export function ConnectionCard({
   footnote?: ReactNode;
   /** Wording for the test button, where the test is not a silent ping: the webhook's posts a message. */
   testLabel?: string;
+  /** What the pill says while an optional service is not set up. "Optional" by default; a service
+   *  that another feature waits on (a request app, the webhook) says "Not set up" instead. */
+  unsetLabel?: "Optional" | "Not set up";
 }) {
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
   const save = useSaveSettings();
@@ -182,26 +208,18 @@ export function ConnectionCard({
     }
   }, [autoTest, configured, editing, service, test]);
 
-  // Status dot on the logo tile: green = last test passed, red = failed, amber = configured but
-  // untested, grey = nothing set. A quick scan across the cards shows what's wired up. The dot is
-  // colour-only and aria-hidden, so the same state is spelled out for screen readers alongside it.
-  const dot = test.isSuccess
-    ? test.data.ok
-      ? "bg-success"
-      : "bg-destructive"
-    : test.isError
-      ? "bg-destructive"
-      : configured
-        ? "bg-warning"
-        : "bg-muted-foreground/40";
-  const status =
+  // One pill says the state in words: whether it works when it is set up, and whether Shortlist
+  // needs it when it isn't. "Connected" only ever comes from a test that passed.
+  const pill: { label: string; tone: PillTone } =
     test.isSuccess && test.data.ok
-      ? "Connection OK"
+      ? { label: "Connected", tone: "ok" }
       : test.isSuccess || test.isError
-        ? "Connection failed"
+        ? { label: "Connection failed", tone: "bad" }
         : configured
-          ? "Configured, untested"
-          : "Not set up";
+          ? { label: test.isPending ? "Checking…" : "Not tested yet", tone: "neutral" }
+          : need === "required"
+            ? { label: "Not set up", tone: "warn" }
+            : { label: unsetLabel ?? "Optional", tone: "neutral" };
 
   const openEditor = () => {
     setValues(initialValues(settings, fields));
@@ -254,32 +272,37 @@ export function ConnectionCard({
   };
 
   return (
-    <Card data-testid={testId ?? `connection-${service}`} className="rounded-none border-0 bg-transparent shadow-none">
-      <CardHeader className="space-y-2 px-4 py-4 sm:px-5">
-        {/* Wraps, and the name side may shrink: the glyph, the service name and the Set up/Test
-            buttons together held the card open to 326px on a 320px screen. */}
-        <CardTitle className="flex flex-wrap items-center justify-between gap-2">
-          <span className="flex min-w-0 items-center gap-3">
-            <span className="relative">
-              <span className="grid h-8 w-8 place-items-center rounded-lg border bg-elevated [&>svg]:h-5 [&>svg]:w-5">
-                {glyph}
-              </span>
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-card",
-                  dot,
-                )}
-              />
+    <Card
+      data-testid={testId ?? `connection-${service}`}
+      id={testId ?? `connection-${service}`}
+      className="scroll-mt-32 rounded-none border-0 bg-transparent shadow-none md:scroll-mt-8"
+    >
+      <CardHeader className="px-4 py-4 sm:px-5">
+        {/* Wraps, and the name side may shrink: the glyph, the service name and the buttons together
+            held the row open past a 320px screen. */}
+        <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+          <div className="flex min-w-0 flex-1 basis-60 items-start gap-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border bg-elevated [&>svg]:h-4 [&>svg]:w-4">
+              {glyph}
             </span>
-            <span className="min-w-0">
-              <span className="flex flex-wrap items-center gap-2 text-[13px]">{title}<span className="text-[10px] font-normal text-muted-foreground">{need === "required" ? "Required" : "Optional"}</span></span>
-              <span className={`mt-1 block text-[11px] font-normal ${test.isSuccess && test.data.ok ? "text-success" : "text-muted-foreground"}`}>{status}</span>
-            </span>
-          </span>
+            <div className="min-w-0 space-y-1">
+              <h3 className="flex flex-wrap items-center gap-2 text-[13px] font-semibold leading-6">
+                {title}
+                <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
+                {/* "Optional" says whether it is needed, not whether it is set up — say that too. */}
+                {!configured && need !== "required" && <span className="sr-only">Not set up</span>}
+              </h3>
+              <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">{purpose}</p>
+              {next && <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">{next}</p>}
+              {configured && !editing && <p className="break-words text-xs text-foreground/80">{summary}</p>}
+              {test.isSuccess && test.data.ok && !testRequested && !editing && (
+                <TestResult result={test.data} className="text-xs [&>svg]:h-3.5 [&>svg]:w-3.5" />
+              )}
+            </div>
+          </div>
           {!editing &&
             (confirmRemove ? (
-              // Inline confirm on the idle card — the destructive tap and its "keep it" escape sit
+              // Inline confirm on the idle row — the destructive tap and its "keep it" escape sit
               // right where Remove was, so it never wipes a connection on a single click.
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
@@ -307,49 +330,50 @@ export function ConnectionCard({
                   </p>
                 )}
               </div>
-            ) : (
-              <div className="flex items-center gap-2">
+            ) : configured ? (
+              <div className="flex shrink-0 items-center gap-1.5">
                 <Button variant="ghost" size="sm" onClick={openEditor}>
-                  {configured ? "Edit" : "Set up"}
+                  Edit
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => { setTestRequested(true); test.mutate(); }}
                   loading={test.isPending}
-                  disabled={!configured}
                 >
                   {!test.isPending && <PlugZap aria-hidden="true" />}
                   {testLabel}
                 </Button>
-                {configured && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Remove ${title} connection`}
-                    className="text-muted-foreground hover:text-destructive-text"
-                    onClick={() => setConfirmRemove(true)}
-                  >
-                    <Trash2 aria-hidden="true" />
-                  </Button>
-                )}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove ${title} connection`}
+                  className="text-muted-foreground hover:text-destructive-text"
+                  onClick={() => setConfirmRemove(true)}
+                >
+                  <Trash2 aria-hidden="true" />
+                </Button>
               </div>
+            ) : (
+              // Nothing to test until something is on file, so the only action is the one that
+              // gets it there.
+              <Button variant="outline" size="sm" className="shrink-0" onClick={openEditor}>
+                Set up
+              </Button>
             ))}
-        </CardTitle>
-        <div className="pl-11 text-xs text-muted-foreground">
-          {requires && <Badge variant="warning" className="mb-2"><TriangleAlert aria-hidden className="h-3 w-3" />{requires}</Badge>}
-          <details>
-            <summary className="w-fit cursor-pointer text-[11px] hover:text-foreground">About {title}</summary>
-            <p className="pt-2 leading-relaxed">{purpose}</p>
-            {next && <p className="pt-1 leading-relaxed">{next}</p>}
-            {summary && <p className="break-words pt-1">{summary}</p>}
-            {test.isSuccess && !testRequested && test.data.message !== status && <div className="pt-2"><TestResult result={test.data} /></div>}
-          </details>
         </div>
       </CardHeader>
-      {(editing || testRequested || test.isError || (test.isSuccess && !test.data.ok) || footnote) && <CardContent className="px-4 pb-4 pt-0 sm:px-5">
+      {(editing || testRequested || test.isError || (test.isSuccess && !test.data.ok) || footnote) && <CardContent className="px-4 pb-4 pt-0 sm:pl-16 sm:pr-5">
         {editing ? (
           <div className="space-y-3">
+            {/* Seen when going to get a key, which is when it matters (issue #73) — not on the idle
+                row, where it read as a warning about something not even set up. */}
+            {requires && (
+              <Badge variant="warning">
+                <TriangleAlert aria-hidden className="h-3 w-3" />
+                {requires}
+              </Badge>
+            )}
             {fields.map((field, i) => {
               if (field.showIf && !field.showIf(values)) return null;
               const id = `${fieldId}-${i}`;
@@ -480,13 +504,7 @@ export function ConnectionCard({
           <TestResult result={test.data} />
         ) : test.isError ? (
           <TestResult error={test.error} />
-        ) : (
-          // Only when there IS something to say. The old fallback printed "Not set up yet — choose
-          // Set up to connect." on every unconfigured card — five identical sentences down one
-          // page, each of them directly beneath a button labelled "Set up". The absence of a
-          // connected line, next to that button, already says it.
-          summary && <p className="text-sm text-muted-foreground">{summary}</p>
-        )}
+        ) : null}
         {footnote && !editing && (
           <p className="mt-2 text-xs text-muted-foreground">{footnote}</p>
         )}

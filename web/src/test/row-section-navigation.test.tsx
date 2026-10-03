@@ -1,94 +1,132 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useRef } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { RowSectionNavigation } from "@/components/rows/row-section-navigation";
-import { SettingsGroup } from "@/components/rows/settings-group";
+import { RowSectionNavigation, type RowSection } from "@/components/rows/row-section-navigation";
 
-const names = ["Appearance", "Row settings", "Audience", "Titles & filters", "Schedule", "Plex placement", "Requests"];
+const SECTIONS: RowSection[] = [
+  { id: "name-and-look", label: "Name & look" },
+  { id: "who-gets-it", label: "Who gets it" },
+  { id: "what-goes-in", label: "What goes in" },
+  { id: "schedule", label: "Schedule" },
+  { id: "placement", label: "Placement" },
+  { id: "requests", label: "Requests" },
+  { id: "danger-zone", label: "Danger zone" },
+];
+
+/** Captures the observer the jump list creates, so a test can say which sections are in view. */
+let observed: { callback: IntersectionObserverCallback; targets: Element[] } | null = null;
+
+class FakeIntersectionObserver {
+  constructor(callback: IntersectionObserverCallback) {
+    observed = { callback, targets: [] };
+  }
+  observe(target: Element) {
+    observed?.targets.push(target);
+  }
+  unobserve() {}
+  disconnect() {}
+  takeRecords() {
+    return [];
+  }
+}
+
+function inView(...ids: string[]) {
+  const entries = (observed?.targets ?? []).map(
+    (target) => ({ target, isIntersecting: ids.includes(target.id) }) as IntersectionObserverEntry,
+  );
+  act(() => observed?.callback(entries, {} as IntersectionObserver));
+}
+
 function Example() {
-  const root = useRef<HTMLDivElement>(null);
-  return <div ref={root}><RowSectionNavigation root={root} showRequests />{names.map((name) => <SettingsGroup key={name} title={name} description="Settings" defaultOpen={name === "Appearance"}><input aria-label={`${name} draft`} defaultValue="Unsaved value" /></SettingsGroup>)}</div>;
+  return (
+    <div>
+      <RowSectionNavigation sections={SECTIONS} />
+      {SECTIONS.map((section) => (
+        <section key={section.id} id={section.id} aria-labelledby={`${section.id}-heading`}>
+          <h2 id={`${section.id}-heading`} tabIndex={-1}>
+            {section.label}
+          </h2>
+          <input aria-label={`${section.label} draft`} defaultValue="Unsaved value" />
+        </section>
+      ))}
+    </div>
+  );
 }
 
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+beforeEach(() => {
+  observed = null;
+  vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
+});
 
-function layout() {
-  let audienceTop = 700;
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    const title = this.dataset.settingsGroup;
-    const top = this.tagName === "NAV" ? 64 : title === "Appearance" ? -300 : title === "Row settings" ? -100 : title === "Audience" ? audienceTop : 2000;
-    return { top, bottom: top + 300, left: 0, right: 500, width: 500, height: this.tagName === "NAV" ? 100 : 300, x: 0, y: top, toJSON() {} };
-  });
-  const getStyle = window.getComputedStyle.bind(window);
-  vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
-    const style = getStyle(element);
-    if (element.tagName === "NAV") Object.defineProperty(style, "top", { value: "64px", configurable: true });
-    return style;
-  });
-  const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
-  return { scroll, setAudienceTop: (value: number) => { audienceTop = value; } };
-}
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
-describe("Row section navigation", () => {
-  it("uses the same names as the section headings and leaves all draft fields mounted", () => {
+describe("Row section jump list", () => {
+  it("lists every section in order as a link to it, with every draft field left on the page", () => {
     render(<Example />);
-    for (const name of names) {
-      expect(screen.getByRole("button", { name })).toBeVisible();
-      expect(screen.getByRole("heading", { name, hidden: true })).toBeInTheDocument();
-      expect(screen.getByLabelText(`${name} draft`)).toHaveValue("Unsaved value");
+    const nav = screen.getByRole("navigation", { name: "Row settings sections" });
+    const links = Array.from(nav.querySelectorAll("a"));
+
+    expect(links.map((link) => link.textContent)).toEqual(SECTIONS.map((section) => section.label));
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(SECTIONS.map((section) => `#${section.id}`));
+    for (const section of SECTIONS) {
+      expect(screen.getByLabelText(`${section.label} draft`)).toHaveValue("Unsaved value");
     }
   });
 
-  it("opens, focuses without a second scroll, offsets the heading and highlights repeated clicks", async () => {
-    const { scroll } = layout();
-    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+  it("marks the first section current before anything has scrolled", () => {
     render(<Example />);
-    await userEvent.click(screen.getByRole("button", { name: "Audience" }));
-    const group = document.querySelector('[data-settings-group="Audience"]')!;
-    expect(group).toHaveAttribute("open");
-    expect(group).toHaveAttribute("data-navigation-highlight", "true");
-    expect(group.querySelector("summary")).toHaveFocus();
-    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
-    expect(scroll).toHaveBeenLastCalledWith({ top: 524, behavior: "smooth" });
-    await userEvent.click(screen.getByRole("button", { name: "Audience" }));
-    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("link", { name: "Name & look" })).toHaveAttribute("aria-current", "location");
   });
 
-  it("tracks manual scrolling instead of retaining the last clicked section", () => {
-    const { setAudienceTop } = layout();
+  it("follows the section in view, the topmost when several are", () => {
     render(<Example />);
-    expect(screen.getByRole("button", { name: "Row settings" })).toHaveAttribute("aria-current", "location");
-    setAudienceTop(150);
-    fireEvent.scroll(window);
-    expect(screen.getByRole("button", { name: "Audience" })).toHaveAttribute("aria-current", "location");
-    expect(screen.getByRole("button", { name: "Row settings" })).not.toHaveAttribute("aria-current");
+    inView("schedule", "placement");
+
+    expect(screen.getByRole("link", { name: "Schedule" })).toHaveAttribute("aria-current", "location");
+    expect(screen.getByRole("link", { name: "Name & look" })).not.toHaveAttribute("aria-current");
+
+    inView("placement");
+    expect(screen.getByRole("link", { name: "Placement" })).toHaveAttribute("aria-current", "location");
   });
 
-  it("clears destination highlights and pending work when unmounted", () => {
-    vi.useFakeTimers();
-    layout();
-    const remove = vi.spyOn(window, "removeEventListener");
-    const { unmount } = render(<Example />);
-    fireEvent.click(screen.getByRole("button", { name: "Audience" }));
-    const group = document.querySelector('[data-settings-group="Audience"]')!;
-    expect(group).toHaveAttribute("data-navigation-highlight", "true");
-    vi.advanceTimersByTime(1400);
-    expect(group).not.toHaveAttribute("data-navigation-highlight");
-    fireEvent.click(screen.getByRole("button", { name: "Audience" }));
-    unmount();
-    expect(group).not.toHaveAttribute("data-navigation-highlight");
-    expect(remove).toHaveBeenCalledWith("scroll", expect.any(Function));
-    expect(remove).toHaveBeenCalledWith("resize", expect.any(Function));
-    expect(vi.getTimerCount()).toBe(0);
+  it("keeps the last section current while the gap between two sections is in view", () => {
+    render(<Example />);
+    inView("requests");
+    inView();
+    expect(screen.getByRole("link", { name: "Requests" })).toHaveAttribute("aria-current", "location");
   });
 
-  it("uses immediate scrolling when reduced motion is requested", async () => {
-    const { scroll } = layout();
+  it("jumps from the keyboard: scrolls the section in and moves focus to its heading", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    render(<Example />);
+
+    const link = screen.getByRole("link", { name: "Who gets it" });
+    link.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect(screen.getByRole("heading", { name: "Who gets it" })).toHaveFocus();
+    expect(link).toHaveAttribute("aria-current", "location");
+  });
+
+  it("jumps without animation when reduced motion is asked for", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
     vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
     render(<Example />);
-    await userEvent.click(screen.getByRole("button", { name: "Audience" }));
-    expect(scroll).toHaveBeenLastCalledWith({ top: 524, behavior: "instant" });
+
+    await userEvent.click(screen.getByRole("link", { name: "Danger zone" }));
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "start" });
+  });
+
+  it("observes every section it lists", () => {
+    render(<Example />);
+    expect(observed?.targets.map((target) => target.id)).toEqual(SECTIONS.map((section) => section.id));
   });
 });

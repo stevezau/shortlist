@@ -1,7 +1,6 @@
-import { Check, Copy, ScrollText, TriangleAlert } from "lucide-react";
+import { Check, Copy, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
 import { DownloadButton } from "@/components/download-button";
@@ -79,7 +78,8 @@ function toPlainText(lines: LogLine[]): string {
     .join("\n");
 }
 
-export function LogsPage() {
+/** The Log tab of the Activity page (it was the Logs page until the two merged). */
+export function LogsPanel() {
   const [level, setLevel] = useState<Level>("INFO");
   // The next level DOWN, for the empty state's "show me more" button — a hardcoded "DEBUG" would be
   // a no-op when you are already on it, and the button has to disappear rather than do nothing.
@@ -113,39 +113,38 @@ export function LogsPage() {
 
   return (
     <div>
-      <PageHeader
-        icon={ScrollText}
-        title="Logs"
-        subtitle="What Shortlist has been doing. Passwords, tokens and API keys are redacted. Review account names, titles and server addresses before sharing."
-        actions={
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => copy(toPlainText(lines))}
-              disabled={lines.length === 0}
-            >
-              {copyState === "copied" ? (
-                <Check aria-hidden="true" />
-              ) : copyState === "error" ? (
-                <TriangleAlert aria-hidden="true" />
-              ) : (
-                <Copy aria-hidden="true" />
-              )}
-              {copyState === "copied"
-                ? "Copied"
-                : copyState === "error"
-                  ? "Couldn’t copy — try again"
-                  : "Copy"}
-            </Button>
-            <DownloadButton
-              url={api.logsDownloadUrl()}
-              filename="shortlist-logs.zip"
-            >
-              Download .zip
-            </DownloadButton>
-          </div>
-        }
-      />
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <p className="min-w-[16rem] flex-1 text-sm text-muted-foreground">
+          Passwords, tokens and API keys are redacted. Review account names, titles and server
+          addresses before sharing.
+        </p>
+        <div className="flex shrink-0 gap-2">
+          <Button
+            variant="outline"
+            onClick={() => copy(toPlainText(lines))}
+            disabled={lines.length === 0}
+          >
+            {copyState === "copied" ? (
+              <Check aria-hidden="true" />
+            ) : copyState === "error" ? (
+              <TriangleAlert aria-hidden="true" />
+            ) : (
+              <Copy aria-hidden="true" />
+            )}
+            {copyState === "copied"
+              ? "Copied"
+              : copyState === "error"
+                ? "Couldn’t copy — try again"
+                : "Copy"}
+          </Button>
+          <DownloadButton
+            url={api.logsDownloadUrl()}
+            filename="shortlist-logs.zip"
+          >
+            Download .zip
+          </DownloadButton>
+        </div>
+      </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Segmented<Level>

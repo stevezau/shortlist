@@ -102,15 +102,15 @@ export function refreshDaysDescription(days: number): string {
   if (days <= 0)
     return "Frozen — once built, the row never changes on its own. Pin a shelf you want to stay put.";
   if (days === 1)
-    return "Rebuilds every night — the strongest two-thirds stay, the rest are swapped for new picks. Most variety, most Plex writes.";
-  return `Rebuilds every ${days} days: keeps the strongest two-thirds and swaps the rest for new picks. On the other nights the row stays exactly as it is.`;
+    return "Titles refresh every night — the strongest two-thirds stay, the rest are swapped for new picks. Most variety, most Plex writes.";
+  return `Titles refresh every ${days} days: keeps the strongest two-thirds and swaps the rest for new picks. On the other nights the row stays exactly as it is.`;
 }
 
 /** Terse label for a row card's "this row overrides the cadence" badge. */
 export function refreshDaysBadgeLabel(days: number): string {
-  if (days <= 0) return "Rebuilds: never";
-  if (days === 1) return "Rebuilds: nightly";
-  return `Rebuilds: every ${days} days`;
+  if (days <= 0) return "Titles refresh: never";
+  if (days === 1) return "Titles refresh: nightly";
+  return `Titles refresh: every ${days} days`;
 }
 
 /**

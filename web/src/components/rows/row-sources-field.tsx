@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { Segmented } from "@/components/segmented";
 import { Label } from "@/components/ui/label";
@@ -6,6 +7,9 @@ import { Switch } from "@/components/ui/switch";
 import { useSettings } from "@/lib/queries";
 import { SOURCES, sourceBlockedReason } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
+
+const GLOBAL_SOURCES_HREF = "/settings/defaults#sources";
+const LINK_CLASS = "underline underline-offset-2 hover:text-foreground";
 
 /** The sources a row actually gathers from: its own override, else the server's set. Exported so
  *  the editor can hide settings that only affect a source this row does not use. */
@@ -101,7 +105,10 @@ export function RowSourcesField({
       )}
       {!custom ? (
         <p className="text-sm text-muted-foreground">
-          This row uses the sources you enabled in Settings → Finding titles
+          This row uses the sources you enabled in{" "}
+          <Link to={GLOBAL_SOURCES_HREF} className={LINK_CLASS}>
+            Settings → Defaults → Title sources
+          </Link>
           {globalSourceLabels(settings.data) &&
             ` — currently ${globalSourceLabels(settings.data)}`}
           .
@@ -140,7 +147,11 @@ export function RowSourcesField({
             // so it's role="status".
             <p role="status" className="text-sm text-warning">
               Nothing ticked, so this row falls back to the sources you switched
-              on in Settings → Finding titles, the set every row starts from.
+              on in{" "}
+              <Link to={GLOBAL_SOURCES_HREF} className={LINK_CLASS}>
+                Settings → Defaults → Title sources
+              </Link>
+              , the set every row starts from.
               Tick at least one above to give this row its own.
             </p>
           ) : (

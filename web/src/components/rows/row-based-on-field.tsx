@@ -13,6 +13,7 @@ import {
 } from "@/lib/row-kinds";
 import type { CollectionInput, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { selectedVerticalClass } from "@/lib/selected";
 
 const BLEND_MAX = 100;
 
@@ -39,7 +40,7 @@ function RadioRow({
     <div
       className={cn(
         "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border px-3 py-2 text-sm has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
-        checked && "border-primary bg-primary/5",
+        checked && selectedVerticalClass,
         disabled && "opacity-60",
       )}
     >

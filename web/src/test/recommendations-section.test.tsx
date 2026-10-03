@@ -28,7 +28,7 @@ function renderSection(settings: Settings, expand = true) {
   );
   if (!expand) return;
   // These tests exercise the full controls; the compact disclosure defaults are checked separately.
-  for (const title of ["How often rows rebuild", "Already-watched titles", "Recent releases", "Web search", "More recommendation controls"]) {
+  for (const title of ["Web search", "More recommendation controls"]) {
     const summary = screen.getAllByText(title).map((node) => node.closest("summary")).find(Boolean);
     if (summary && !(summary.parentElement as HTMLDetailsElement).open) fireEvent.click(summary);
   }
@@ -39,7 +39,10 @@ describe("RecommendationsSection", () => {
 
   it("keeps common controls and enabled web-search guidance visible", () => {
     renderSection({ "candidates.sources": ["llm_web"], "curator.provider": "none", "llm_web.search_provider": "native" }, false);
-    expect(screen.getAllByText("How often rows rebuild").find((node) => node.closest("summary"))?.closest("details")).toHaveAttribute("open");
+    // The cadence, the watched cap and recent releases are always on screen, not behind a disclosure.
+    expect(screen.getByText("Titles refresh every")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: /titles refresh every, in days/i })).toBeVisible();
+    expect(screen.getByText("Already-watched titles").closest("details")).toBeNull();
     expect(screen.getByText("More recommendation controls").closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText(/the search runs inside it/i)).toBeVisible();
   });
@@ -193,7 +196,7 @@ describe("RecommendationsSection", () => {
       screen.getByRole("slider", { name: /release date counts/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("spinbutton", { name: /how often the row rebuilds/i }),
+      screen.getByRole("spinbutton", { name: /titles refresh every, in days/i }),
     ).toBeInTheDocument();
   });
 
@@ -201,7 +204,7 @@ describe("RecommendationsSection", () => {
     renderSection({ "recommendations.idle_hold_days": 0 });
     // Off is the shipped default, so the control has to explain the DEFAULT, not just the feature.
     expect(
-      screen.getByText(/rebuild on schedule whatever/i),
+      screen.getByText(/refresh when due, whatever/i),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^a month$/i }));
@@ -217,7 +220,7 @@ describe("RecommendationsSection", () => {
     // what this is for, and the number is the only thing on screen that says otherwise.
     renderSection({ "recommendations.idle_hold_days": 30 });
     expect(
-      screen.getByText(/rebuilds anyway after 30 days/i),
+      screen.getByText(/refreshes anyway after 30 days/i),
     ).toBeInTheDocument();
   });
 
@@ -241,7 +244,7 @@ describe("RecommendationsSection", () => {
       "recommendations.refresh_days": 0,
       "recommendations.idle_hold_days": 30,
     });
-    expect(screen.getByText(/never rebuild/i)).toBeInTheDocument();
+    expect(screen.getByText(/never refresh/i)).toBeInTheDocument();
   });
 
   it("does not warn when the hold is above the cadence", () => {

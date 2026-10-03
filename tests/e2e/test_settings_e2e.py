@@ -27,13 +27,15 @@ def _open_settings(page: Page, section: str = "connections") -> None:
 
 
 def test_requests_shortcut_reveals_connections_and_preserves_the_request_form(page: Page, app: ShortlistApp):
-    """Section shortcuts navigate the continuous page without resetting the Requests form."""
+    """Section shortcuts switch tabs without resetting the Requests form."""
     app.api("PUT", "/api/settings", json={"values": {"requests.enabled": True}})
     _open_settings(page, "requests")
     page.get_by_role("button", name="Go to Connections", exact=True).first.click()
-    expect(page).to_have_url(re.compile(r"/settings#connections$"))
+    expect(page).to_have_url(re.compile(r"/settings/connections#connections$"))
     expect(page.get_by_test_id("connection-radarr")).to_be_visible()
-    expect(page.locator("#requests")).to_be_visible()
+    # Requests lives on the Defaults tab now. A tab out of view stays mounted (hidden), so the form
+    # is kept rather than torn down and rebuilt — attached, not visible, is that promise.
+    expect(page.locator("#requests")).to_be_attached()
     page.goto("/settings#requests")
     expect(page.get_by_role("button", name="Radarr & Sonarr")).to_have_attribute("aria-pressed", "true")
     assert app.api("GET", "/api/settings").json()["requests.enabled"] is True
@@ -80,7 +82,8 @@ class TestConnectionCards:
         # signal regressed. The visible one is the button, which reads "Set up" precisely when the
         # connection isn't.
         expect(tautulli.get_by_role("button", name="Set up")).to_be_visible()
-        expect(tautulli.get_by_role("button", name="Test")).to_be_disabled()
+        # No Test at all until a key is on file: there is nothing to test.
+        expect(tautulli.get_by_role("button", name="Test")).to_have_count(0)
         expect(tautulli).not_to_contain_text("Connected —")
 
 
@@ -189,7 +192,7 @@ class TestDangerZone:
         page.get_by_role("link", name="Uninstall Shortlist…").click()
         expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)
 
-        page.get_by_role("button", name="Preview what would change").click()
+        # The preview loads on arrival; there is no button to press for it.
         body = page.locator("body")
         expect(body).to_contain_text("5 collections", timeout=SLOW)
         expect(body).to_contain_text("3 share filters")

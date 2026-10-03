@@ -606,9 +606,11 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
     maxPerRun: form.maxPerRun,
   });
 
-  // Use the section link so repeated jumps also work after scrolling away from Connections.
+  // Straight to the Connections tab. Each navigation gets a new location key, so a repeated jump
+  // still scrolls after the owner has scrolled away; the Defaults tab stays mounted, so this form
+  // is exactly as it was when they come back.
   const goToConnections = () =>
-    void navigate({ pathname: "/settings", search, hash: "#connections" });
+    void navigate({ pathname: "/settings/connections", search, hash: "#connections" });
 
   // Auto-save: no Save button. Any change persists shortly after you stop (so text fields never
   // save mid-keystroke; toggles feel instant).

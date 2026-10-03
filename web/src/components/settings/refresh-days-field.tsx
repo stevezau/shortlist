@@ -5,6 +5,7 @@ import {
   clampRefreshDays,
   refreshDaysDescription,
 } from "@/lib/constants";
+import { selectedClass } from "@/lib/selected";
 import { cn } from "@/lib/utils";
 
 interface RefreshDaysFieldProps {
@@ -59,26 +60,17 @@ export function RefreshDaysField({
     if (next !== value) onChange(next);
   };
 
+  const custom = !PRESETS.some((preset) => preset.days === value);
+
   return (
     <div className={cn("space-y-2", className)}>
-      <div className="flex items-center gap-2">
-        <input
-          id={id}
-          type="number"
-          inputMode="numeric"
-          min={0}
-          max={MAX_REFRESH_DAYS}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={(e) => commit(e.target.value)}
-          aria-label="How often the row rebuilds, in days"
-          className="h-9 w-24 rounded-md border border-input bg-background px-3 text-sm tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-        <span className="text-sm text-muted-foreground">
-          {value === 1 ? "day" : "days"}
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
+      {/* One control: the presets and the custom number are one strip, so exactly one of them
+          reads as chosen — never a typed "30" beside a separately highlighted "Monthly". */}
+      <div
+        role="group"
+        aria-label="Titles refresh every"
+        className="inline-flex max-w-full flex-wrap items-stretch gap-0.5 rounded-md border border-border-strong bg-elevated p-0.5"
+      >
         {PRESETS.map((preset) => (
           <button
             key={preset.label}
@@ -86,15 +78,35 @@ export function RefreshDaysField({
             onClick={() => onChange(preset.days)}
             aria-pressed={value === preset.days}
             className={cn(
-              "rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "rounded border px-3 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               value === preset.days
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                ? cn(selectedClass, "font-medium")
+                : "border-transparent text-muted-foreground hover:bg-raised hover:text-foreground",
             )}
           >
             {preset.label}
           </button>
         ))}
+        <label
+          className={cn(
+            "flex items-center gap-1.5 rounded border px-2 text-xs transition-colors",
+            custom ? cn(selectedClass, "font-medium") : "border-transparent text-muted-foreground",
+          )}
+        >
+          <input
+            id={id}
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={MAX_REFRESH_DAYS}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={(e) => commit(e.target.value)}
+            aria-label="Titles refresh every, in days"
+            className="h-7 w-14 rounded border border-input bg-background px-2 text-xs tabular-nums text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          {value === 1 ? "day" : "days"}
+        </label>
       </div>
       <p className="text-sm text-muted-foreground">
         {refreshDaysDescription(value)}

@@ -54,7 +54,9 @@ describe("RestrictedNote", () => {
     );
 
     expect(
-      screen.getByText(/kid can see 3 rows that belong to other people/i),
+      // COLLECTIONS: the run counts one per row per library. "Rows" is the live per-person figure the
+      // Users list and Privacy page print, and the two must never share a noun.
+      screen.getByText(/kid can see 3 collections that belong to other people/i),
     ).toBeInTheDocument();
   });
 
@@ -67,7 +69,7 @@ describe("RestrictedNote", () => {
       />,
     );
 
-    expect(screen.getByText(/1 row that belongs to/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 collection that belongs to/i)).toBeInTheDocument();
   });
 
   it("says plainly that nothing in Shortlist can fix it", () => {

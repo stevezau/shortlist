@@ -1,10 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Clock, Loader2, Pen, X } from "lucide-react";
+import { Check, Clock, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
+import { MutationAlert } from "@/components/mutation-alert";
+import { PageHeader } from "@/components/page-header";
+import { RowName } from "@/components/rows/row-name";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +16,8 @@ import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, apiUrl } from "@/lib/api";
 import { TOP_SEED } from "@/lib/placeholders";
-import { useCollections } from "@/lib/queries";
+import { useCollections, useUsers } from "@/lib/queries";
+import type { Collection, User } from "@/lib/types";
 
 interface RenameEvent {
   user?: string;
@@ -30,12 +34,35 @@ interface RenameEvent {
   error?: string;
 }
 
+/**
+ * How many people this row is built for: its audience, less anyone switched off or gone from the
+ * server. It is the most a rename can reach — someone with too little history may have no collection
+ * yet — and the stream's own total says how many were renamed in the end. An exact count before the
+ * click needs a preview the server does not offer: the rename stream's `dry_run` saves the new name
+ * before it previews anything.
+ */
+function renameReach(collection: Collection, users: User[]): number {
+  const live = users.filter((user) => user.enabled && !user.departed);
+  if (collection.audience === "everyone") return live.length;
+  const audience = new Set(collection.audience_user_ids);
+  return live.filter((user) => audience.has(user.id)).length;
+}
+
+function reachSentence(collection: Collection, people: number): string {
+  if (people === 0) return "Nobody enabled has this row yet, so only its name changes.";
+  const who = `${people} ${people === 1 ? "person" : "people"}`;
+  return collection.build === "shared"
+    ? `Renames this row’s shared collection, seen by ${who}.`
+    : `Renames this row’s collection for ${who}.`;
+}
+
 export function RowRenamePage() {
   const { id } = useParams();
   const collectionId = Number(id);
   const queryClient = useQueryClient();
   const collections = useCollections();
   const collection = collections.data?.find((c) => c.id === collectionId);
+  const users = useUsers();
   const location = useLocation();
   const navState = location.state as {
     proposedName?: string;
@@ -186,20 +213,21 @@ export function RowRenamePage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to="/rows" label="Back to Rows" />
-      <header className="space-y-1">
-        <h1 className="flex min-w-0 items-start gap-2 text-2xl font-semibold tracking-tight">
-          <Pen className="mt-1.5 h-5 w-5 shrink-0" aria-hidden="true" />
-          <span className="min-w-0 [overflow-wrap:anywhere]">{confirmed
-            ? `Renaming ${collection?.name || "row"}`
-            : `Rename ${collection?.name || "row"}`}</span>
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {confirmed
+      <BackLink to="/rows" label="Rows" />
+      <PageHeader
+        className="mb-0"
+        title={
+          <>
+            {confirmed ? "Renaming " : "Rename "}
+            {collection?.name ? <RowName name={collection.name} className="" /> : "row"}
+          </>
+        }
+        subtitle={
+          confirmed
             ? "Renaming every collection on Plex for every user who has this row."
-            : "This renames every collection on Plex for every user who has this row."}
-        </p>
-      </header>
+            : "This renames every collection on Plex for every user who has this row."
+        }
+      />
 
       {/* Loading, a failed fetch, and "the URL names a row that does not exist" all fell through
           this `collection &&` guard and rendered the header above a blank space — no skeleton, no
@@ -254,9 +282,28 @@ export function RowRenamePage() {
               </p>
             )}
           </div>
+          {/* The reach comes before the button, and the button waits for it: a rename retitles a
+              collection on every account that has this row, so the number is the decision. */}
+          {users.isPending && (
+            <p role="status" className="text-sm text-muted-foreground">
+              Counting the people this row reaches…
+            </p>
+          )}
+          {users.isError && (
+            <MutationAlert
+              error={users.error}
+              lead="Rename stays locked until this count loads."
+              fallback="Couldn’t count the people this row reaches. Try again."
+              onRetry={() => void users.refetch()}
+              retryDisabled={users.isFetching}
+            />
+          )}
+          {users.data && (
+            <p className="text-sm font-medium">{reachSentence(collection, renameReach(collection, users.data))}</p>
+          )}
           <Button
             loading={saving}
-            disabled={!newName.trim()}
+            disabled={!newName.trim() || !users.isSuccess}
             onClick={handleSubmit}
           >
             Rename on Plex

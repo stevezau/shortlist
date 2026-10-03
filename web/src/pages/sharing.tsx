@@ -1,10 +1,13 @@
-import { ShieldCheck } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router";
+import { EyeOff, Info, RefreshCw, ScanEye, ShieldCheck, ShieldX } from "lucide-react";
+import { type ReactNode, useState } from "react";
+import { Link, useNavigate } from "react-router";
 
+import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
+import { SaveStatus } from "@/components/save-status";
 import { UserAvatar } from "@/components/user-avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -14,8 +17,11 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { usePrivacyStatus } from "@/lib/queries";
+import { Switch } from "@/components/ui/switch";
+import { settingBool } from "@/lib/format";
+import { usePrivacyStatus, useSaveSettings, useSettings, useStartRun } from "@/lib/queries";
 import type { AccountPrivacy, PrivacyStatus } from "@/lib/types";
+import { USER_TYPE_LABEL } from "@/lib/user-profile";
 import { cn } from "@/lib/utils";
 
 /**
@@ -43,18 +49,23 @@ export function SharingPage() {
   return (
     <div className="space-y-6 [overflow-wrap:anywhere]">
       <PageHeader
-        icon={ShieldCheck}
-        title="Sharing and privacy"
-        // Promise first, mechanism second. It used to lead with what each account is "set to do",
-        // which is how the hiding WORKS — the reader has to already know about share filters for
-        // that sentence to mean anything. What they came for is whether it holds.
-        subtitle="Check which personal rows each account can see, using live plex.tv restrictions. The server owner remains an exception: Plex cannot filter its own account."
+        title="Privacy"
+        // Promise first, mechanism second: what they came for is whether the hiding holds, and that
+        // it is a live reading. The owner's own view — Plex cannot filter it — is a fact row under
+        // Policy rather than a clause in this line.
+        subtitle="Which rows each Plex account can see, read live from plex.tv."
+        actions={
+          <Button variant="outline" onClick={() => void query.refetch()} loading={query.isFetching}>
+            {!query.isFetching && <RefreshCw aria-hidden="true" />}
+            Read again
+          </Button>
+        }
       />
       <QueryBoundary
         query={query}
         skeleton={
           <div className="space-y-3">
-            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-20 w-full" />
             <Skeleton className="h-48 w-full" />
             <Skeleton className="h-32 w-full" />
           </div>
@@ -70,13 +81,201 @@ export function SharingPage() {
       >
         {(data) => (
           <div className="space-y-6">
+            <StatusStrip data={data} />
             <Summary data={data} onRetry={() => void query.refetch()} />
             <AccountsTable accounts={data.accounts} />
-            <EnforcementPanel data={data} />
           </div>
         )}
       </QueryBoundary>
+      {/* Outside the live read on purpose: a server-wide setting must stay reachable when plex.tv
+          is down, which is exactly when an owner comes here. */}
+      <PolicyPanel />
+      {query.data && query.data.accounts.length > 0 && <EnforcementPanel data={query.data} />}
     </div>
+  );
+}
+
+/** "sarah, mike and jess" — or "sarah, mike and 3 more" past three names. */
+function nameList(names: string[]): string {
+  if (names.length <= 3) return names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+}
+
+type Tone = "ok" | "warn" | "bad" | "neutral";
+
+const DOT: Record<Tone, string> = {
+  ok: "bg-success",
+  warn: "bg-warning",
+  bad: "bg-destructive",
+  neutral: "",
+};
+
+function StripCell({ label, tone, value, sub }: { label: string; tone: Tone; value: ReactNode; sub: ReactNode }) {
+  return (
+    <div className="min-w-0 space-y-1 bg-card px-4 py-3 sm:px-5">
+      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {tone !== "neutral" && <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", DOT[tone])} />}
+        {label}
+      </p>
+      <div className="text-lg font-semibold tabular-nums leading-7">{value}</div>
+      <p className="text-xs text-muted-foreground">{sub}</p>
+    </div>
+  );
+}
+
+/** States in which an account can see rows that are not its own. A choice to leave an account alone
+ *  is not one of them — that account hides nothing, but by the owner's own decision. */
+const EXPOSED_STATES = ["missing", "unreadable_filter", "refused_by_plex", "unknown"];
+const UNHIDEABLE_REASON: Record<string, string> = {
+  refused_by_plex: "Restriction Profile",
+  unreadable_filter: "“&” in a label",
+};
+
+/**
+ * Four readings at a glance, each from the same live read as the rest of the page and never more
+ * confident than it: a failed read is "Unknown", an empty server says so instead of "0 of 0", and an
+ * unmeasured enforcement check is a warning, because nothing says the rules are being applied. The
+ * snapshot count is the exception that is not a live read: it is Shortlist's own record of each
+ * account's filters before it changed them, so it stays true when plex.tv cannot be read.
+ */
+function StatusStrip({ data }: { data: PrivacyStatus }) {
+  const unreadable = data.summary === "unreadable" || data.summary === "rows_unknown";
+  // The owner has no share to filter (Plex), so they are not in the count either way.
+  const filterable = data.accounts.filter((account) => account.state !== "owner");
+  const hiding = filterable.filter((account) => account.state === "hiding");
+  const unhideable = filterable.filter((account) => account.state in UNHIDEABLE_REASON);
+  const { measured, measured_at, run_id, not_enforced } = data.enforcement;
+  const ignored = Object.keys(not_enforced).length > 0;
+
+  const hidingCell = unreadable
+    ? { tone: "warn" as Tone, value: "Unknown", sub: "Couldn’t read every filter from Plex" }
+    : filterable.length === 0
+      ? { tone: "neutral" as Tone, value: "—", sub: "No shared or managed accounts" }
+      : {
+          tone: (hiding.length === filterable.length
+            ? "ok"
+            : filterable.some((account) => EXPOSED_STATES.includes(account.state))
+              ? "warn"
+              : "neutral") as Tone,
+          value: `${hiding.length} of ${filterable.length}`,
+          sub: hiding.length ? nameList(hiding.map((account) => account.display_name)) : "None yet",
+        };
+
+  return (
+    <section aria-label="Privacy status" className="grid gap-px overflow-hidden rounded-lg border bg-border sm:grid-cols-2 lg:grid-cols-4">
+      <StripCell label="Accounts hiding every row" {...hidingCell} />
+      <StripCell
+        label="Accounts that cannot be hidden"
+        tone={unreadable ? "warn" : unhideable.length ? "warn" : "neutral"}
+        value={unreadable ? "Unknown" : unhideable.length}
+        sub={
+          unreadable
+            ? "Read again once plex.tv answers"
+            : unhideable.length
+              ? nameList(unhideable.map((account) => `${account.display_name} · ${UNHIDEABLE_REASON[account.state]}`))
+              : "None"
+        }
+      />
+      <StripCell
+        label="Last verified"
+        tone={!measured ? "warn" : ignored ? "bad" : "ok"}
+        value={
+          !measured ? (
+            <Badge variant="warning" className="font-medium">Not checked recently</Badge>
+          ) : measured_at ? (
+            new Date(measured_at).toLocaleDateString()
+          ) : (
+            "Checked"
+          )
+        }
+        sub={!measured ? "The last few runs didn’t get that far" : ignored ? `Run #${run_id}: Plex ignored the rules` : `Run #${run_id}`}
+      />
+      <StripCell label="Snapshots kept" tone="neutral" value={data.snapshots_kept} sub="Restored on uninstall" />
+    </section>
+  );
+}
+
+/**
+ * Server-wide rules for who sees what. The switch saves the moment it is flipped (the same key and
+ * the same save it had under Settings › Advanced), and applies on the next run.
+ */
+function PolicyPanel() {
+  const settings = useSettings();
+  const save = useSaveSettings();
+  const [saved, setSaved] = useState(false);
+  const flip = (on: boolean) => {
+    setSaved(false);
+    save.mutate({ "privacy.hide_shared_from_disabled": on }, { onSuccess: () => setSaved(true) });
+  };
+
+  return (
+    // The same Card, title and type sizes as Accounts and "Is Plex applying the rules?" beside it: a
+    // panel drawn a size smaller than its neighbours reads as less important, and this one is not.
+    <Card aria-labelledby="privacy-policy-title" role="region">
+      <CardHeader>
+        <CardTitle id="privacy-policy-title" role="heading" aria-level={2}>
+          Policy
+        </CardTitle>
+        <CardDescription>
+          Server-wide rules for who sees what. A switch saves as you flip it, and applies on the next run.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="divide-y">
+          <div className="space-y-2 pb-4">
+            <div className="flex items-start justify-between gap-5">
+              <div className="min-w-0 space-y-1">
+                <p className="font-medium">Disabled users see nothing</p>
+                <p className="max-w-prose text-sm text-muted-foreground">
+                  When you disable a user, hide every shared row from them too, even the public
+                  &ldquo;Popular on this server&rdquo; rows everyone else sees.
+                </p>
+              </div>
+              {settings.isPending ? (
+                <Skeleton className="h-6 w-11 shrink-0 rounded-full" />
+              ) : settings.isError ? null : (
+                <Switch
+                  className="shrink-0"
+                  checked={settingBool(settings.data, "privacy.hide_shared_from_disabled", true)}
+                  onCheckedChange={flip}
+                  disabled={save.isPending}
+                  aria-label="Hide shared rows from disabled users"
+                />
+              )}
+            </div>
+            <p className="flex items-start gap-1.5 text-sm text-foreground">
+              <EyeOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent-foreground" aria-hidden="true" />
+              On: a disabled account sees no Shortlist row at all. Off: it still sees public shared rows
+              like any other account with library access.
+            </p>
+            {settings.isError && (
+              <MutationAlert
+                error={settings.error}
+                fallback="Couldn’t read this setting. Try again."
+                onRetry={() => void settings.refetch()}
+              />
+            )}
+            <SaveStatus
+              isPending={save.isPending}
+              isError={save.isError}
+              error={save.error}
+              saved={saved}
+              onRetry={() => save.variables && flip(save.variables["privacy.hide_shared_from_disabled"] === true)}
+            />
+          </div>
+          <div className="flex items-start justify-between gap-5 pt-4">
+            <div className="min-w-0 space-y-1">
+              <p className="font-medium">Your own account sees every row</p>
+              <p className="max-w-prose text-sm text-muted-foreground">
+                Plex cannot filter its own account — the one that owns the server — so your Home shows
+                everyone&rsquo;s rows. What you see is not what they see.
+              </p>
+            </div>
+            <Badge className="shrink-0 font-medium">Plex limit</Badge>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -99,28 +298,38 @@ function Summary({
 }) {
   if (data.summary === "unreadable") {
     return (
-      <Banner tone="bad" role="alert">
+      <Banner
+        tone="bad"
+        role="alert"
+        action={
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            Try again
+          </Button>
+        }
+      >
         <p>
           Couldn't read your Plex sharing settings from plex.tv, so nothing
           below is current. {data.error}
         </p>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Try again
-        </Button>
       </Banner>
     );
   }
   if (data.summary === "rows_unknown") {
     return (
-      <Banner tone="bad" role="alert">
+      <Banner
+        tone="bad"
+        role="alert"
+        action={
+          <Button variant="outline" size="sm" onClick={onRetry}>
+            Try again
+          </Button>
+        }
+      >
         <p>
           Couldn't read your rows from Plex, so there's nothing to check the
           filters against. The filters below are real — what's unknown is
           whether they cover every row. {data.rows_error}
         </p>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          Try again
-        </Button>
       </Banner>
     );
   }
@@ -185,17 +394,20 @@ function Summary({
     // reading", printed above an all-clear enforcement panel — so the one thing the escalation
     // exists to surface appeared nowhere on the page.
     const blocked = Object.keys(data.enforcement?.unhideable ?? {});
+    // One paragraph, the verdict first and in bold: who, and that a run SAW it. The remedy and its
+    // cost follow in plain weight, so the bold sentence is the one a skimming eye takes away.
     return (
       <Banner tone="bad">
         <p>
-          Plex will not hide other people&rsquo;s rows from{" "}
-          {blocked.length === 1 ? blocked[0] : `${blocked.length} accounts`} at
-          all, and a run has confirmed they can see them. Accounts with a
-          Restriction Profile in Plex reject hide rules outright.
-        </p>
-        <p>
-          Set that account&rsquo;s Restriction Profile to <strong>None</strong>{" "}
-          in Plex only if that matches the account’s parental-control needs. This changes Plex’s age restrictions; Shortlist never changes that profile for you. The next run can then hide their view.{" "}
+          <strong className="font-semibold">
+            Plex will not hide other people&rsquo;s rows from{" "}
+            {blocked.length === 1 ? blocked[0] : `${blocked.length} accounts`} at all, and a run has
+            confirmed they can see them.
+          </strong>{" "}
+          Accounts with a Restriction Profile in Plex reject hide rules outright. Set that
+          account&rsquo;s Restriction Profile to <strong>None</strong> in Plex only if that matches the
+          account&rsquo;s parental-control needs. This changes Plex&rsquo;s age restrictions; Shortlist
+          never changes that profile for you. The next run can then hide their view.{" "}
           <ReadAt at={data.read_at} />
         </p>
       </Banner>
@@ -275,26 +487,44 @@ function Summary({
   );
 }
 
+const BANNER_ICON = { good: ShieldCheck, bad: ShieldX, neutral: Info } as const;
+
 function Banner({
   tone,
   role,
+  action,
   children,
 }: {
   tone: "good" | "bad" | "neutral";
   role?: string;
-  children: React.ReactNode;
+  /** A button beside the text (a retry), kept out of the paragraph so the sentence reads whole. */
+  action?: ReactNode;
+  children: ReactNode;
 }) {
+  const Icon = BANNER_ICON[tone];
   return (
     <div
       role={role}
       className={cn(
-        "flex flex-col items-start gap-3 rounded-lg border p-4 text-sm sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col items-start gap-3 rounded-lg border px-3.5 py-3 text-sm sm:flex-row sm:items-center sm:justify-between",
         tone === "bad" && "border-destructive/40 bg-destructive/10",
         tone === "good" && "border-success/40 bg-success/10",
         tone === "neutral" && "bg-muted/40",
       )}
     >
-      {children}
+      <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2.5">
+        <Icon
+          className={cn(
+            "mt-0.5 h-4 w-4",
+            tone === "bad" && "text-destructive-text",
+            tone === "good" && "text-success",
+            tone === "neutral" && "text-muted-foreground",
+          )}
+          aria-hidden="true"
+        />
+        <div className="min-w-0 space-y-1">{children}</div>
+      </div>
+      {action}
     </div>
   );
 }
@@ -364,7 +594,7 @@ function AccountRow({ account }: { account: AccountPrivacy }) {
       <div className="flex min-w-0 flex-1 items-start gap-3 [overflow-wrap:anywhere]">
         <UserAvatar name={account.display_name} />
         <div className="min-w-0">
-          <p className="break-words font-medium">
+          <p className="flex flex-wrap items-baseline gap-x-2 break-words font-medium">
             {account.user_id !== null ? (
               <Link
                 to={`/users/${account.user_id}`}
@@ -374,6 +604,14 @@ function AccountRow({ account }: { account: AccountPrivacy }) {
               </Link>
             ) : (
               account.display_name
+            )}
+            {/* Shared or Managed decides what Plex lets an owner restrict, so it sits by the name.
+                Not for the owner (the state says it), nor for an account Shortlist has not synced,
+                whose kind is only a fallback (see the note below). */}
+            {account.user_id !== null && account.user_type !== "owner" && USER_TYPE_LABEL[account.user_type] && (
+              <span className="text-[13px] font-normal text-muted-foreground">
+                {USER_TYPE_LABEL[account.user_type]}
+              </span>
             )}
           </p>
           <p className={cn("text-sm", copy?.tone)}>{copy?.label}</p>
@@ -474,6 +712,8 @@ function AccountRow({ account }: { account: AccountPrivacy }) {
 function EnforcementPanel({ data }: { data: PrivacyStatus }) {
   const { measured, run_id, measured_at, not_enforced } = data.enforcement;
   const exposed = Object.keys(not_enforced);
+  const navigate = useNavigate();
+  const startRun = useStartRun();
 
   return (
     <Card>
@@ -484,23 +724,19 @@ function EnforcementPanel({ data }: { data: PrivacyStatus }) {
           reads one account of each kind as that person.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3 text-sm">
+      <CardContent className="space-y-4 text-sm">
         {/* Staleness with something to DO about it. This used to report "not checked recently" and
             stop — a status with no next step, on the panel an owner opens when they are already
             worried. The check rides a RUN (it looks through one real account's eyes per kind), so
-            the honest action is to start one, not to press a button here that cannot exist. */}
+            the honest action is to start one. */}
         {!measured && (
-          <div className="space-y-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+            <Badge variant="warning" className="w-fit shrink-0 font-medium">Not checked recently</Badge>
             <p className="text-muted-foreground">
-              <strong className="text-foreground">Not checked recently.</strong>{" "}
               The last few runs didn&rsquo;t get as far as looking, so nothing
               here says whether Plex is applying the rules. Every run tries
-              again, so the next one may answer it &mdash; or start one now
-              and come back.
+              again, so the next one may answer it.
             </p>
-            <Button asChild variant="outline" size="sm">
-              <Link to="/runs">Go to Runs</Link>
-            </Button>
           </div>
         )}
         {measured && exposed.length === 0 && (
@@ -520,7 +756,31 @@ function EnforcementPanel({ data }: { data: PrivacyStatus }) {
             an issue — there is no setting here that fixes it.
           </p>
         )}
-        <p className="text-muted-foreground">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <Button
+            className="w-fit"
+            loading={startRun.isPending}
+            onClick={() =>
+              startRun.mutate({}, { onSuccess: (created) => void navigate(`/runs/${created.run_id}`) })
+            }
+          >
+            {!startRun.isPending && <ScanEye aria-hidden="true" />}
+            Verify now
+          </Button>
+          {/* Said before the click: this is a full run, the same as "Run all rows now", with the
+              check partway through — not a read-only probe. */}
+          <p className="text-xs text-muted-foreground">
+            Starts a run of every row now. Partway through, it looks at Home as
+            one shared and one managed account.
+          </p>
+        </div>
+        {startRun.isError && (
+          <MutationAlert
+            error={startRun.error}
+            fallback="Couldn’t start a run. Check the server log and try again."
+          />
+        )}
+        <p className="text-xs text-muted-foreground">
           These checks cover the Home screen. Shortlist has no way to confirm
           what Plex does on the Collections tab or in Related shelves.
         </p>

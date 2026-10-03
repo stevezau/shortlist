@@ -425,12 +425,7 @@ export function UserPanel({
             )
           )}
           {result.has_trace && userId !== null && userId !== undefined && (
-            <Button
-              asChild
-              variant="secondary"
-              size="sm"
-              className="shrink-0 gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
-            >
+            <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5">
               <Link to={`/runs/${run.id}/trace/${userId}`}>
                 <Telescope className="h-3.5 w-3.5" aria-hidden="true" />
                 How we picked

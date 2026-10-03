@@ -751,7 +751,8 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     size: 15,
     delivered: 15,
     candidates: 62,
-    cut_cap: 40,
+    // `candidates` is what the cut LEFT, so for one media type it can never exceed the cap.
+    cut_cap: 80,
     carried: 0,
     new: 15,
     refresh_night: true,
@@ -781,11 +782,11 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
       />,
     );
     expect(screen.getByText(/not re-picked tonight/i)).toBeInTheDocument();
-    expect(screen.getByText(/rebuilds every 8 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/titles refresh every 8 days/i)).toBeInTheDocument();
     // Names the control that EXISTS, and the right direction — the cadence is a day count now, so
     // you lower it to rebuild sooner. This asserted "Raise Freshness" for a control that was gone.
     expect(
-      screen.getByText(/Lower .How often rows rebuild./i),
+      screen.getByText(/Lower .Titles refresh every./i),
     ).toBeInTheDocument();
   });
 
@@ -849,10 +850,10 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     // ordered at all, so explaining ordering without it describes half the mechanism.
     render(<TraceView data={withSelection()} />);
     expect(
-      screen.getByText(/62 candidates survived filtering/i),
+      screen.getByText(/62 titles made the shortlist here/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/strongest 40 per media type/i),
+      screen.getByText(/at most 80 per media type/i),
     ).toBeInTheDocument();
   });
 
@@ -911,7 +912,7 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
   it("adds no shortlisted step for a run recorded before this existed", () => {
     // Absent must read as "not recorded", never as a stage with empty numbers.
     render(<TraceView data={okTrace()} />);
-    expect(screen.queryByText(/survived filtering/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/made the shortlist here/i)).not.toBeInTheDocument();
   });
 });
 
@@ -1252,4 +1253,114 @@ describe("Trace step navigation", () => {
     expect(screen.getByRole("combobox", { name: "Trace step" })).toHaveValue("Movies-watched");
   });
 
+});
+
+describe("TraceView — the stage counts", () => {
+  /** A movie library that ran a full flow: 3 seeds, 2 sources × 3 searches, a 10-title shortlist and
+   *  2 titles delivered. The numbers are the engine's own shape: `candidates` is the shortlist AFTER
+   *  the cut, so it never exceeds `cut_cap` for a single media type. */
+  function funnelTrace(): RunUserTraceResponse {
+    const base = okTrace();
+    const library = base.breakdown[0];
+    const pick = library?.picks[0];
+    if (!library || !pick) throw new Error("okTrace() must deliver one pick");
+    const seed = (title: string, tmdb_id: number, recency_days: number) => ({
+      title,
+      media: "movie",
+      library: "Movies",
+      tmdb_id,
+      weight: 1,
+      watch_count: 1,
+      recency_days,
+    });
+    const source = (name: string) => ({
+      source: name,
+      status: "ok",
+      contributed: 12,
+      detail: "",
+      searched: { movie: 3 },
+      queries: [],
+    });
+    return {
+      ...base,
+      trace: {
+        ...base.trace,
+        seeds: [seed("Toy Story", 862, 0), seed("Up", 14160, 0), seed("Coco", 354912, 4)],
+        gathers: [{ pool: "movie · tmdb_similar, trakt", sources: [source("tmdb_similar"), source("trakt")] }],
+        selection: [
+          {
+            row: "picked",
+            library: "Movies",
+            decision: "rebuilt",
+            size: 2,
+            delivered: 2,
+            candidates: 10,
+            cut_cap: 80,
+            carried: 0,
+            new: 2,
+            refresh_night: true,
+            rebuild_every_days: 8,
+            recency: 0,
+            watched_pct: 0,
+            pick_order: "best",
+          },
+        ],
+      },
+      breakdown: [
+        {
+          ...library,
+          picks: [
+            { ...pick, rank: 1 },
+            { ...pick, rank: 2, title: "Cars" },
+          ],
+        },
+      ],
+    } as RunUserTraceResponse;
+  }
+
+  function railCounts(): Record<string, string> {
+    const rail = screen.getByRole("navigation", { name: "Steps" });
+    return Object.fromEntries(
+      within(rail)
+        .getAllByRole("link")
+        .map((link) => {
+          const label = link.querySelector("[data-rail-label]")?.textContent ?? "";
+          const count = link.querySelector("[data-rail-count]")?.textContent ?? "";
+          return [label, count];
+        }),
+    );
+  }
+
+  it("never grows from the shortlist to delivery, and names what every count counts", () => {
+    render(<TraceView data={funnelTrace()} />);
+
+    const counts = railCounts();
+    // The two input stages count seeds and searches, so they say so: a bare "6" beside a title
+    // count read as six titles found.
+    expect(counts["Watched recently"]).toBe("3 seeds");
+    expect(counts["Searched"]).toBe("6 searches");
+    // From the shortlist on, every stage counts titles, drawn from the same selection entries.
+    const titles = ["Shortlisted", "Ordered", "Delivered"].map((stage) => {
+      const match = /^(\d+) titles?$/.exec(counts[stage] ?? "");
+      if (!match) throw new Error(`${stage} should count titles, got "${counts[stage]}"`);
+      return Number(match[1]);
+    });
+    expect(titles).toEqual([10, 10, 2]);
+    for (let i = 1; i < titles.length; i++) expect(titles[i]).toBeLessThanOrEqual(titles[i - 1] ?? 0);
+  });
+
+  it("says the shortlist count is what the cut left, never 'the strongest 80 kept' of 10", () => {
+    render(<TraceView data={funnelTrace()} />);
+
+    expect(screen.getByText(/10 titles made the shortlist here/)).toBeInTheDocument();
+    expect(screen.getByText(/at most 80 per media type/)).toBeInTheDocument();
+    expect(screen.queryByText(/strongest 80/)).not.toBeInTheDocument();
+  });
+
+  it("says 'watched most recently' once, not on every seed watched that day", () => {
+    render(<TraceView data={funnelTrace()} />);
+
+    expect(screen.getAllByText("watched most recently")).toHaveLength(1);
+    expect(screen.getByText("4 days ago")).toBeInTheDocument();
+  });
 });

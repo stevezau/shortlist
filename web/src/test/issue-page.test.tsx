@@ -706,7 +706,7 @@ describe("IssuePage — a problem runs every check it promises", () => {
 
     for (const heading of [
       /is background work stuck/i,
-      /when does each row next rebuild/i,
+      /when do each row.s titles next refresh/i,
       /are the clocks right/i,
     ]) {
       expect(

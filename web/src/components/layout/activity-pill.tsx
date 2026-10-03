@@ -72,7 +72,7 @@ export function ActivityPill() {
       className={cn(
         "mx-3 mb-1 flex items-center gap-2 rounded-lg border px-3 py-2 text-xs transition-colors",
         activity.tone === "active" &&
-          "border-primary/40 bg-primary/10 text-foreground",
+          "border-border-strong bg-elevated text-foreground",
         activity.tone === "ok" && "border-success/40 bg-success/10",
         activity.tone === "error" && "border-destructive/40 bg-destructive/10",
       )}

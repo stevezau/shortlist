@@ -128,7 +128,9 @@ export function ColdStartBadge({ user }: { user: User }) {
   return (
     <Badge
       variant="warning"
-      title="Not enough watch history for recommendations yet. What their recommendation rows show until then — popular titles, or nothing — is the cold-start setting in Settings → Finding titles. A Your requests row is unaffected."
+      // A two-word pill broken over two lines reads as two pills; the line around it wraps instead.
+      className="whitespace-nowrap"
+      title="Not enough watch history for recommendations yet. What their recommendation rows show until then — popular titles, or nothing — is the cold-start setting in Settings → Defaults → Refresh & variety. A Your requests row is unaffected."
     >
       New viewer
     </Badge>

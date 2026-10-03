@@ -135,6 +135,8 @@ class TestUsers:
         before = _users_by_name(app)
         page.goto("/users")
         page.get_by_label("Search users").fill("sarah")
+        # The checkboxes appear once selecting is switched on.
+        page.get_by_role("button", name="Select people", exact=True).click()
         page.get_by_role("checkbox", name="Select sarah", exact=True).check()
         page.get_by_role("button", name="Pause rebuilding", exact=True).click()
         _wait_until(
@@ -151,6 +153,7 @@ class TestUsers:
         for name in before.keys() - {"sarah"}:
             assert paused[name]["prefs"] == before[name]["prefs"]
 
+        page.get_by_role("button", name="Select people", exact=True).click()  # a reload leaves selecting off
         page.get_by_role("checkbox", name="Select sarah", exact=True).check()
         page.get_by_role("button", name="Resume rebuilding", exact=True).click()
         _wait_until(

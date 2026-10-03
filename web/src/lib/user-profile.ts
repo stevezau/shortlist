@@ -17,3 +17,6 @@ export function profileName(user: User): string {
   const key = user.restriction_profile ?? "";
   return PROFILE_NAMES[key] ?? key;
 }
+
+/** A Plex account's kind as the owner reads it — Users and Privacy name it the same way. */
+export const USER_TYPE_LABEL: Record<string, string> = { owner: "Owner", managed: "Managed", shared: "Shared" };

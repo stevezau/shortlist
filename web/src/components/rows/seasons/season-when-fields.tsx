@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MAX_AFTER_DAYS, MAX_EASTER_OFFSET, MAX_LEAD_DAYS, clampDays, daysOffered } from "@/lib/season-draft";
 import { MONTH_NAMES, WEEKDAY_NAMES } from "@/lib/seasons";
+import { selectedClass, unselectedClass } from "@/lib/selected";
 import type { DateRule } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -116,9 +117,9 @@ export function SeasonWhenFields({
               key={kind}
               type="button"
               size="sm"
-              variant={active ? "secondary" : "outline"}
+              variant="outline"
               aria-pressed={active}
-              className={cn(active && "border border-primary/60 text-primary")}
+              className={active ? selectedClass : unselectedClass}
               onClick={() => set({ kind })}
             >
               {label}

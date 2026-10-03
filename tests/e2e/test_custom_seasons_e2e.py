@@ -51,7 +51,6 @@ def test_a_ready_made_season_with_a_film_picked_by_hand_is_saved_and_ticked_in_a
     page.get_by_role("group", name="Templates", exact=True).get_by_role("button", name=re.compile(r"^Seasonal")).click()
     page.get_by_role("button", name="Use template").click()
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible(timeout=LOAD)
-    page.locator('details[data-settings-group="Row settings"] > summary').click()
 
     seasons = page.locator("li[data-season]")
     expect(seasons).to_have_count(len(BUILT_INS), timeout=LOAD)

@@ -1,4 +1,4 @@
-"""E2E: the poster proxy and the Sharing and privacy screen, against the fake PMS and plex.tv.
+"""E2E: the poster proxy and the Privacy screen, against the fake PMS and plex.tv.
 
 Both are read-only surfaces that answer a question the owner cannot check any other way — "is that
 the artwork my server actually holds" and "is everyone's row really hidden from everyone else". Both
@@ -90,14 +90,13 @@ class TestTheSharingScreen:
     def test_it_reports_a_healthy_server_from_a_live_read(self, app: ShortlistApp, reset_fake_plex, page: Page):
         build_real_rows(app)
 
-        page.goto(f"{app.url}/sharing")
+        page.goto(f"{app.url}/privacy")
 
-        expect(page.get_by_text("Sharing and privacy").first).to_be_visible(timeout=LOAD)
+        expect(page.get_by_role("heading", name="Privacy", level=1)).to_be_visible(timeout=LOAD)
         # State what the live check establishes, and name the owner exception rather than promise
         # that every account can be filtered. The provenance assertion below remains essential.
-        expect(page.get_by_text("Check which personal rows each account can see", exact=False)).to_be_visible(
-            timeout=LOAD
-        )
+        subtitle = page.get_by_text("Which rows each Plex account can see, read live from plex.tv", exact=False)
+        expect(subtitle).to_be_visible(timeout=LOAD)
         expect(page.get_by_text("Plex cannot filter its own account", exact=False)).to_be_visible()
         # The provenance is on screen: a reading without a timestamp reads as a standing guarantee.
         expect(page.get_by_text("Read from plex.tv at", exact=False).first).to_be_visible()
@@ -117,7 +116,7 @@ class TestTheSharingScreen:
         )
         victim.filters.update(stripped)
 
-        page.goto(f"{app.url}/sharing")
+        page.goto(f"{app.url}/privacy")
 
         expect(page.get_by_text("can see a row that isn't theirs", exact=False).first).to_be_visible(timeout=LOAD)
         expect(page.get_by_text("Can see:", exact=False).first).to_be_visible()
@@ -127,7 +126,7 @@ class TestTheSharingScreen:
         outside Home, so the screen must say so rather than imply coverage it cannot back."""
         build_real_rows(app)
 
-        page.goto(f"{app.url}/sharing")
+        page.goto(f"{app.url}/privacy")
 
         expect(page.get_by_text("These checks cover the Home screen", exact=False)).to_be_visible(timeout=LOAD)
         expect(page.get_by_text("no way to confirm what Plex does on the Collections tab", exact=False)).to_be_visible()
@@ -137,8 +136,9 @@ class TestTheSharingScreen:
     ):
         page.goto(f"{app.url}/users")
 
-        link = page.get_by_role("link", name="Sharing and privacy")
+        # Scoped to the page: the nav rail carries a "Privacy" link of its own.
+        link = page.get_by_role("main").get_by_role("link", name="Privacy", exact=True)
         expect(link).to_be_visible(timeout=LOAD)
         link.click()
 
-        expect(page).to_have_url(f"{app.url}/sharing", timeout=LOAD)
+        expect(page).to_have_url(f"{app.url}/privacy", timeout=LOAD)

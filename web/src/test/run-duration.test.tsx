@@ -16,6 +16,7 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     stats: {} as Run["stats"],
     error: null,
     promotion_blockers: [],
+    privacy: null,
     ...overrides,
   };
 }

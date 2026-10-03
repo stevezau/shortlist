@@ -45,9 +45,11 @@ import { Button } from "@/components/ui/button";
 import {
   useBlockSeed,
   useCollections,
+  useRun,
   useRunSharedRowTrace,
   useRunUserTrace,
 } from "@/lib/queries";
+import { ApiError } from "@/lib/api";
 import {
   buildLibraries,
   fateLabel,
@@ -108,6 +110,12 @@ export function RunUserTracePage() {
   const userQuery = useRunUserTrace(runId, uid, valid && !isRow);
   const rowQuery = useRunSharedRowTrace(runId, rowSlug ?? "", valid && isRow);
   const query = isRow ? rowQuery : userQuery;
+  // A 404 here means the run has no such shared row: nothing to retry, and the server's own words
+  // ("no such shared row in this run") are not a sentence for a person. Whether the run built ANY
+  // shared row decides which true sentence to say, so the run is read only once that is the question.
+  const rowNotInRun =
+    isRow && rowQuery.error instanceof ApiError && rowQuery.error.status === 404;
+  const run = useRun(runId, rowNotInRun);
   const collections = useCollections();
   const rowName = isRow
     ? collections.data?.find((row) => row.slug === rowSlug)?.name || undefined
@@ -138,11 +146,21 @@ export function RunUserTracePage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to={`/runs/${runId}`} label={`Back to run #${runId}`} />
+      <BackLink to={`/runs/${runId}`} label={`Run #${runId}`} />
       {!valid ? (
         <EmptyState
           title="That trace doesn’t exist"
           hint="The link may be wrong, or the run was removed."
+        />
+      ) : rowNotInRun ? (
+        <EmptyState
+          title={
+            run.data && run.data.shared_rows.length === 0
+              ? "This run built no shared rows"
+              : `This row was not part of run #${runId}`
+          }
+          hint="The run’s page lists every row it did build."
+          action={<BackLink to={`/runs/${runId}`} label={`Back to run #${runId}`} />}
         />
       ) : (
         <QueryBoundary
@@ -326,8 +344,8 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
     <div className="mt-3 space-y-2">
       <p className="text-sm font-medium">
         {partial
-          ? `What happened to the ${total} candidates the run recorded`
-          : `What happened to all ${total} candidates`}
+          ? `What happened to the ${plural(total, "returned title")} the run recorded`
+          : `What happened to all ${plural(total, "title")} the searches returned`}
       </p>
       {partial && (
         <p className="text-xs text-muted-foreground">
@@ -346,7 +364,7 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
           >
             <summary className="cursor-pointer text-sm">
               <span className={cn("font-medium", kept && "text-success")}>
-                {kept ? "Made the shortlist" : fateLabel(group.fate)}
+                {kept ? "Made the cut" : fateLabel(group.fate)}
               </span>{" "}
               <span className="text-muted-foreground">
                 — {group.titles.length}
@@ -431,9 +449,9 @@ function shortlistBody(
             {entry.candidates != null && (
               <>
                 {" — "}
-                {entry.candidates} candidates survived filtering
+                {plural(entry.candidates, "title")} made the shortlist here
                 {entry.cut_cap
-                  ? `, and the strongest ${entry.cut_cap} per media type were kept. Anything below that line could not reach the row.`
+                  ? `: what survived filtering, cut to at most ${entry.cut_cap} per media type, strongest first. Anything below that line could not reach the row.`
                   : "."}
               </>
             )}
@@ -500,14 +518,14 @@ function cadenceLine(entry: TraceSelection): string {
   switch (entry.decision) {
     case "carried_forward":
       return `— not re-picked tonight; last run's titles were redelivered unchanged${
-        every ? `. This row rebuilds every ${every} days` : ""
-      }. Lower “How often rows rebuild”, or change a setting that decides its titles, to rebuild it sooner.`;
+        every ? `. This row's titles refresh every ${every} days` : ""
+      }. Lower “Titles refresh every”, or change a setting that decides its titles, to refresh it sooner.`;
     case "held_idle":
-      return `— it was this row's night to rebuild, but they haven't watched anything since it was built, so it was left alone${
+      return `— it was this row's night to refresh, but they haven't watched anything since it was built, so it was left alone${
         entry.idle_hold_days
-          ? `. It rebuilds anyway once it is ${entry.idle_hold_days} days old`
+          ? `. It refreshes anyway once it is ${entry.idle_hold_days} days old`
           : ""
-      }. Turn down “Hold rows for inactive viewers” to rebuild it regardless.`;
+      }. Turn down “Hold rows for inactive viewers” to refresh it regardless.`;
     case "settings_changed":
       return "— rebuilt now because a setting that decides its titles changed.";
     case "seed_moved":
@@ -605,7 +623,7 @@ function LibraryTabs({
               className={cn(
                 "rounded-full px-1.5 py-0.5 text-xs font-medium tabular-nums",
                 selected
-                  ? "bg-primary/10 text-primary"
+                  ? "bg-raised text-foreground"
                   : "bg-muted text-muted-foreground",
               )}
             >
@@ -629,9 +647,24 @@ interface FlowStepDef {
   rail: string;
   /** A count shown as a chip next to the rail label and step title (omit to hide). */
   count?: number;
+  /** What `count` counts, singular then plural. Every chip names its unit: the stages count seeds,
+   *  searches and titles, and a bare "6" beside a title count read as six titles found. */
+  unit?: readonly [string, string];
   title: string;
   subtitle?: string;
   body: ReactNode;
+}
+
+const TITLES = ["title", "titles"] as const;
+
+/** A stage's count and its unit. (`Pick` here is the delivered-pick type, so not the utility.) */
+type StepCount = { count?: number; unit?: readonly [string, string] };
+
+/** "6 searches", "1 title" — a chip's count with its unit. */
+function countLabel(step: StepCount): string {
+  const n = step.count ?? 0;
+  if (!step.unit) return String(n);
+  return `${n} ${n === 1 ? step.unit[0] : step.unit[1]}`;
 }
 
 function LibraryFlow({
@@ -671,12 +704,33 @@ function LibraryFlow({
   const requestEntries = selection.filter((e) => e.decision === "requests");
   const pickEntries = selection.filter((e) => e.decision !== "requests");
   const requestsOnly = requestEntries.length > 0 && pickEntries.length === 0;
+  // The shortlist each row was picked from tonight, summed across this library's rows — the same
+  // per-row sum the delivered count is, so the two can be read as one funnel. `candidates` is what
+  // the pre-rank cut LEFT (engine: `len(sub)` of the cut pool), not what survived filtering before it.
+  const shortlisted = pickEntries.some((e) => e.candidates != null)
+    ? pickEntries.reduce((n, e) => n + (e.candidates ?? 0), 0)
+    : undefined;
+  // Seeds when the run resolved any; otherwise the watched total. Never one quantity under another's
+  // name: the unit says which this is.
+  const watchedCount: StepCount =
+    lib.seeds.length > 0
+      ? { count: lib.seeds.length, unit: ["seed", "seeds"] }
+      : totalWatched > 0
+        ? { count: totalWatched, unit: ["title watched", "titles watched"] }
+        : { count: lib.watched.length, unit: ["recent watch", "recent watches"] };
+  const searches = searchesRun(lib);
+  const searchedCount: StepCount = isCold
+    ? { count: deliveredCount, unit: TITLES }
+    : searches > 0
+      ? { count: searches, unit: ["search", "searches"] }
+      : { count: placesSearched, unit: ["place", "places"] };
   const requestSteps: Omit<FlowStepDef, "n">[] = requestEntries.map(
     (entry) => ({
       id: `${lib.key}-requests-${entry.row}`,
       icon: Inbox,
       rail: "Asked for",
       count: entry.delivered,
+      unit: TITLES,
       title: "What they asked for",
       subtitle: `${plural(entry.candidates ?? entry.requests?.length ?? 0, "request")} looked at`,
       body: (
@@ -717,6 +771,7 @@ function LibraryFlow({
     icon: ArrowRight,
     rail: "Delivered",
     count: deliveredCount,
+    unit: TITLES,
     title: `What we put in ${lib.label}, and why`,
     body:
       lib.delivered.length > 0 ? (
@@ -735,7 +790,7 @@ function LibraryFlow({
       id: `${lib.key}-watched`,
       icon: History,
       rail: "Watched recently",
-      count: lib.seeds.length || totalWatched || lib.watched.length,
+      ...watchedCount,
       title: sharedRow
         ? `What the server watched in ${lib.label}`
         : `What they watched recently in ${lib.label}`,
@@ -752,7 +807,7 @@ function LibraryFlow({
       id: `${lib.key}-searched`,
       icon: Search,
       rail: isCold ? "Popular titles" : "Searched",
-      count: isCold ? deliveredCount : searchesRun(lib) || placesSearched,
+      ...searchedCount,
       title: isCold
         ? `What we pulled for ${lib.label}`
         : "Where we searched, and every title in and out",
@@ -760,7 +815,7 @@ function LibraryFlow({
         ? "With too little history to search from, we pulled the highest-rated titles on this server."
         : lib.sharedSearch
           ? `Each title above fans out to every place we look for ${searchNoun}s. We search by taste, not by library, so these results are shared across your ${searchNoun} libraries — each title shows whether it made this library's shortlist or why it fell out.`
-          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.${
+          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the cut or the reason it didn't.${
               searchesSampled(lib)
                 ? " The per-search detail below is a sample; the count above is every search that ran."
                 : ""
@@ -783,7 +838,8 @@ function LibraryFlow({
             id: `${lib.key}-shortlisted`,
             icon: Filter,
             rail: "Shortlisted",
-            count: pickEntries[0]?.candidates,
+            count: shortlisted,
+            unit: TITLES,
             title: "What survived, and what release date did to it",
             subtitle:
               "Everything found above is filtered (already watched, wrong library, excluded genres) and then cut to the strongest few per media type. Release date is part of that cut, not applied after it.",
@@ -804,6 +860,9 @@ function LibraryFlow({
             id: `${lib.key}-ranked`,
             icon: ListOrdered,
             rail: "Ordered",
+            // Ordering scores the whole shortlist and drops nothing; the row then takes the top few.
+            count: shortlisted,
+            unit: TITLES,
             title: "How we ordered the shortlist",
             subtitle:
               "Everything that made the shortlist above is scored and ordered in plain code — no AI decides the order. Here's exactly how.",
@@ -902,9 +961,9 @@ function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
                 className={cn(
                   "z-10 flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
                   on
-                    ? "border-primary bg-primary text-primary-foreground"
+                    ? "border-primary bg-raised text-foreground"
                     : done
-                      ? "border-primary/40 bg-primary/10 text-primary"
+                      ? "border-border-strong bg-elevated text-foreground"
                       : "border-border bg-background text-muted-foreground group-hover:border-primary/40 group-hover:text-foreground",
                 )}
               >
@@ -920,10 +979,10 @@ function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
                     : "text-muted-foreground group-hover:text-foreground",
                 )}
               >
-                {step.rail}
+                <span data-rail-label>{step.rail}</span>
                 {step.count !== undefined && step.count > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {step.count}
+                  <span data-rail-count className="text-xs text-muted-foreground">
+                    {countLabel(step)}
                   </span>
                 )}
               </span>
@@ -952,7 +1011,7 @@ function FlowStep({ step }: { step: FlowStepDef }) {
             {step.title}
             {step.count !== undefined && step.count > 0 && (
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
-                {step.count}
+                {countLabel(step)}
               </span>
             )}
           </h2>
@@ -1077,31 +1136,46 @@ function BlockSeedButton({
   );
 }
 
+/** Seeds in runs that share one recency label, newest first. The label heads its run once: a person
+ *  who watched eight things on their latest day read "watched most recently" eight times. */
+function seedGroups(seeds: TraceSeed[]): { label: string; seeds: TraceSeed[] }[] {
+  const groups: { label: string; seeds: TraceSeed[] }[] = [];
+  for (const seed of seeds) {
+    const label = seedWhy(seed);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.seeds.push(seed);
+    else groups.push({ label, seeds: [seed] });
+  }
+  return groups;
+}
+
 function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
   return (
-    <ol className="space-y-1.5">
-      {seeds.map((s) => (
-        <li
-          key={`${s.media}-${s.tmdb_id}`}
-          className="group flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3"
-        >
-          <span className="min-w-0 break-words text-sm font-medium">{s.title}</span>
-          <div className="flex min-w-0 flex-wrap items-baseline gap-2">
-            {seedWhy(s) && (
-              <span className="text-xs text-muted-foreground">
-                {seedWhy(s)}
-              </span>
-            )}
-            {/* This is where a bad seed is actually noticed — the page that says "these are the
-                watches your picks came from". Blocking anywhere else means remembering a title and
-                going to find it. */}
-            {userId !== undefined && (
-              <BlockSeedButton seed={s} userId={userId} />
-            )}
-          </div>
-        </li>
+    <div className="space-y-3">
+      {seedGroups(seeds).map((group, i) => (
+        <div key={`${group.label}-${i}`} className="space-y-1.5">
+          {group.label && (
+            <p className="text-xs text-muted-foreground">{group.label}</p>
+          )}
+          <ol className="space-y-1.5">
+            {group.seeds.map((s) => (
+              <li
+                key={`${s.media}-${s.tmdb_id}`}
+                className="group flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3"
+              >
+                <span className="min-w-0 break-words text-sm font-medium">{s.title}</span>
+                {/* This is where a bad seed is actually noticed — the page that says "these are the
+                    watches your picks came from". Blocking anywhere else means remembering a title and
+                    going to find it. */}
+                {userId !== undefined && (
+                  <BlockSeedButton seed={s} userId={userId} />
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
       ))}
-    </ol>
+    </div>
   );
 }
 
@@ -1356,7 +1430,7 @@ function SourceCard({
                   <p className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1 text-success">
                       <Check className="h-3 w-3" aria-hidden="true" />
-                      {kept} made the shortlist
+                      {kept} made the cut
                     </span>
                     <span aria-hidden="true">·</span>
                     <span>{droppedCount} dropped (see below)</span>

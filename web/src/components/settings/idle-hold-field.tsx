@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { MAX_REFRESH_DAYS, clampRefreshDays } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { selectedClass, unselectedClass } from "@/lib/selected";
 
 interface IdleHoldFieldProps {
   id?: string;
@@ -29,9 +30,9 @@ const PRESETS: { label: string; days: number }[] = [
  *  unmissable: a hold that never ended would be the opposite of what this is for. */
 function description(days: number): string {
   if (days <= 0) {
-    return "Off — rows rebuild on schedule whatever the person has been watching.";
+    return "Off — titles refresh when due, whatever the person has been watching.";
   }
-  return `A row due to rebuild is left alone while the person it belongs to hasn't watched anything since it was built — and rebuilds anyway after ${days} days, so a row never goes stale.`;
+  return `A row due to refresh is left alone while the person it belongs to hasn't watched anything since it was built — and refreshes anyway after ${days} days, so a row never goes stale.`;
 }
 
 /**
@@ -52,21 +53,21 @@ function inertBecause(
   // some of them are forced nightly and unaffected by whatever the cadence here says.
   const caveat =
     scope === "global"
-      ? " (a row named after a watch rebuilds nightly, so the hold still works there)"
+      ? " (a row named after a watch refreshes nightly, so the hold still works there)"
       : "";
   // Cadence 0 is "Never" — a one-click preset on both controls. Such a row never comes due, so there
   // is no rebuild for the hold to postpone. Distinct from the cadence-beats-it case below, and not
   // the same advice: raising the hold cannot help here.
   if (cadence <= 0) {
     return scope === "row"
-      ? "No effect: this row never rebuilds, so there is nothing to hold."
-      : `No effect: rows on this cadence never rebuild, so there is nothing to hold${caveat}.`;
+      ? "No effect: this row's titles never refresh, so there is nothing to hold."
+      : `No effect: rows on this cadence never refresh, so there is nothing to hold${caveat}.`;
   }
   if (days > cadence) return null;
   const subject =
     scope === "row"
-      ? "this row already rebuilds"
-      : "rows on this cadence already rebuild";
+      ? "this row already refreshes"
+      : "rows on this cadence already refresh";
   return `No effect: ${subject} every ${cadence} days, so ${scope === "row" ? "it" : "they"} never reach ${days} days old${caveat}. Set the hold above ${cadence} days to use it.`;
 }
 
@@ -128,9 +129,7 @@ export function IdleHoldField({
             aria-pressed={value === preset.days}
             className={cn(
               "rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              value === preset.days
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-input text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+              value === preset.days ? selectedClass : unselectedClass,
             )}
           >
             {preset.label}

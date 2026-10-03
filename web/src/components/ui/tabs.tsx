@@ -19,7 +19,7 @@ export function Tabs<T extends string>({ id, value, onChange, options, ariaLabel
       aria-controls={`${id}-panel-${option.value}`}
       aria-selected={value === option.value}
       tabIndex={value === option.value ? 0 : -1}
-      className={cn("shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", value === option.value ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground")}
+      className={cn("shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", value === option.value ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")}
       onClick={() => onChange(option.value)}
       onKeyDown={(event) => {
         const offset = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;

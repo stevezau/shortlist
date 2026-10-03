@@ -107,7 +107,6 @@ def test_a_requests_row_reaches_only_the_person_who_asked_when_built_from_the_te
     _open_add_a_row(page)
     page.get_by_role("button", name="Your requests").click()
     page.get_by_role("button", name="Use template").click()
-    page.locator('details[data-settings-group="Row settings"] > summary').click()
     expect(page.get_by_text("Which requests show up")).to_be_visible(timeout=LOAD)
     # The Check button lives under the collapsed "Use my own tags" disclosure.
     page.get_by_text("Use my own tags").click()

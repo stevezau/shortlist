@@ -3,6 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { Loader2 } from "lucide-react";
 import * as React from "react";
 
+import { coarseHitArea } from "@/lib/hit-area";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
@@ -13,18 +14,19 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        // Hover is neutral on purpose: amber marks the one primary action, never "the pointer is here".
         outline:
-          "border border-input bg-transparent hover:bg-accent hover:text-accent-foreground",
+          "border border-border-strong bg-elevated text-foreground hover:bg-raised",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
+        ghost: "hover:bg-elevated hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
         default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
+        sm: `h-8 rounded-md px-3 text-xs ${coarseHitArea}`,
         lg: "h-10 rounded-md px-8",
-        icon: "h-9 w-9",
+        icon: `h-9 w-9 ${coarseHitArea}`,
       },
     },
     defaultVariants: {

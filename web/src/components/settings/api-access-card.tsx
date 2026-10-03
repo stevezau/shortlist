@@ -96,8 +96,8 @@ export function ApiAccessCard() {
   const exampleUrl = apiUrl("/api/runs");
 
   return (
-    <section aria-labelledby="api-access-heading" className="space-y-3">
-      <h2 id="api-access-heading" className="text-lg font-semibold">
+    <section id="api-access" aria-labelledby="api-access-heading" className="scroll-mt-32 space-y-3 md:scroll-mt-8">
+      <h2 id="api-access-heading" className="text-base font-semibold tracking-tight">
         API access
       </h2>
       <Dialog open={confirm !== null} onOpenChange={(open) => { if (!open) setConfirm(null); }}>

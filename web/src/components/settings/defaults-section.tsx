@@ -2,14 +2,16 @@ import { useId, useState } from "react";
 
 import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { useSaveBarReport } from "@/components/settings/save-bar-context";
+import { SettingsPanel, SettingsSection } from "@/components/settings/section-layout";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { ROW_SIZE_DEFAULT } from "@/lib/constants";
 import { renderRowName, settingNumber, settingString } from "@/lib/format";
+import { unselectedClass } from "@/lib/selected";
 import type { Settings } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 /** The default row name template and row size applied to the "Picked for You" row. */
 export function DefaultsSection({ settings }: { settings: Settings }) {
@@ -30,43 +32,60 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
     "row.size": rowSize,
   }));
 
+  const inSaveBar = useSaveBarReport("row-defaults", save);
+
   return (
-    <section aria-labelledby="defaults-heading" className="space-y-3">
-      <h2 id="defaults-heading" className="text-lg font-semibold">
-        Row defaults
-      </h2>
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="space-y-2">
-            <Label htmlFor={rowNameId}>Row name template</Label>
-            <Input
-              id={rowNameId}
-              value={rowNameTpl}
-              onChange={(event) => setRowNameTpl(event.target.value)}
-            />
-            <div className="flex flex-wrap items-center gap-2" aria-label="Insert a name variable">
-              {["library_name", "user", "top_seed"].map((token) => <Button key={token} type="button" size="sm" variant="outline" onClick={() => setRowNameTpl((name) => `${name}${name.endsWith(" ") ? "" : " "}{${token}}`)}>{token.replaceAll("_", " ")}</Button>)}
-            </div>
-            <details className="text-sm text-muted-foreground"><summary className="cursor-pointer">How name variables work</summary><p className="pt-2">Library name becomes Movies or TV Shows; user becomes the person’s name; top seed becomes a title they recently watched. Row names do not change your Plex sharing settings.</p></details>
-            <div className="rounded-md border bg-card p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                On Plex this looks like
-              </p>
-              <p className="font-medium text-primary">
-                {renderRowName(rowNameTpl) || "✨ Picked for You"}
-              </p>
-            </div>
-          </div>
-          <RowSizeField value={rowSize} onChange={setRowSize} />
-          <SaveStatus
-            isPending={save.isPending}
-            isError={save.isError}
-            error={save.error}
-            saved={save.saved}
-            onRetry={save.retry}
+    <SettingsSection
+      id="row-defaults"
+      title="Row defaults"
+      description="What a new row is called and how many titles it holds. Existing rows keep their own."
+    >
+      {!inSaveBar && (
+        <SaveStatus
+          isPending={save.isPending}
+          isError={save.isError}
+          error={save.error}
+          saved={save.saved}
+          onRetry={save.retry}
+        />
+      )}
+      <SettingsPanel>
+        <div className="space-y-3 px-4 py-4 sm:px-5">
+          <Label htmlFor={rowNameId} className="text-[13px]">Row name template</Label>
+          <Input
+            id={rowNameId}
+            value={rowNameTpl}
+            onChange={(event) => setRowNameTpl(event.target.value)}
           />
-        </CardContent>
-      </Card>
-    </section>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" role="group" aria-label="Insert a name variable">
+            <span className="mr-1">Insert</span>
+            {["library_name", "user", "top_seed"].map((token) => (
+              <button
+                key={token}
+                type="button"
+                aria-label={`Insert ${token.replaceAll("_", " ")}`}
+                onClick={() => setRowNameTpl((name) => `${name}${name.endsWith(" ") ? "" : " "}{${token}}`)}
+                className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", unselectedClass)}
+              >
+                + {token.replaceAll("_", " ")}
+              </button>
+            ))}
+          </div>
+          <details className="text-xs text-muted-foreground">
+            <summary className="w-fit cursor-pointer text-accent-foreground underline-offset-2 hover:underline">How name variables work</summary>
+            <p className="max-w-prose pt-2 leading-relaxed">Library name becomes Movies or TV Shows; user becomes the person’s name; top seed becomes a title they recently watched. Row names do not change your Plex sharing settings.</p>
+          </details>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md border bg-elevated px-3 py-2.5">
+            <span className="text-xs text-muted-foreground">On Plex this looks like</span>
+            <span className="font-medium text-foreground [overflow-wrap:anywhere]">
+              {renderRowName(rowNameTpl) || "✨ Picked for You"}
+            </span>
+          </div>
+        </div>
+        <div className="px-4 py-4 sm:px-5">
+          <RowSizeField value={rowSize} onChange={setRowSize} />
+        </div>
+      </SettingsPanel>
+    </SettingsSection>
   );
 }
