@@ -1,5 +1,6 @@
 import {
   ArrowUpDown,
+  ChevronRight,
   Clapperboard,
   ExternalLink,
   Inbox,
@@ -508,7 +509,7 @@ function PendingRow({
         />
         </div>
         <details className="group order-3 sm:col-span-2">
-          <summary className="w-fit cursor-pointer rounded-sm text-xs font-medium text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Details & title links</summary>
+          <summary className="flex w-fit cursor-pointer items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />Details & title links</summary>
           <div className="mt-3 grid gap-5 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_15rem]">
             <div className="space-y-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">The story</p><Synopsis text={item.overview} /><ExternalLinks item={item} /></div>
             <div className="space-y-3 sm:border-l sm:pl-5"><p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Why it’s here</p><WhyBreakdown why={item.why} nameOf={nameOf} />{item.detail && <p className="text-xs text-muted-foreground">Last recorded reason: {item.detail}</p>}</div>
@@ -1858,7 +1859,7 @@ export function RequestsPage() {
                                 Reject
                               </Button>
                             </div>
-                            <details className="ml-auto text-xs text-muted-foreground"><summary className="cursor-pointer">Delete or Reject?</summary><p className="max-w-md pt-2">
+                            <details className="group ml-auto text-xs text-muted-foreground"><summary className="flex cursor-pointer items-center gap-1.5 list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />Delete or Reject?</summary><p className="max-w-md pt-2">
                               <strong className="font-medium text-foreground">Delete</strong>{" "}
                               can come back on a later run &middot;{" "}
                               <strong className="font-medium text-foreground">Reject</strong>{" "}

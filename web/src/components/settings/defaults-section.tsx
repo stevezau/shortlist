@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
 
 import { RowSizeField } from "@/components/row-size-field";
@@ -51,7 +52,7 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
       )}
       <SettingsPanel>
         <div className="space-y-3 px-4 py-4 sm:px-5">
-          <Label htmlFor={rowNameId} className="text-[13px]">Row name template</Label>
+          <Label htmlFor={rowNameId}>Row name template</Label>
           <Input
             id={rowNameId}
             value={rowNameTpl}
@@ -71,8 +72,8 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
               </button>
             ))}
           </div>
-          <details className="text-xs text-muted-foreground">
-            <summary className="w-fit cursor-pointer text-accent-foreground underline-offset-2 hover:underline">How name variables work</summary>
+          <details className="group text-xs text-muted-foreground">
+            <summary className="flex w-fit cursor-pointer items-center gap-1.5 text-accent-foreground underline-offset-2 hover:underline list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />How name variables work</summary>
             <p className="max-w-prose pt-2 leading-relaxed">Library name becomes Movies or TV Shows; user becomes the person’s name; top seed becomes a title they recently watched. Row names do not change your Plex sharing settings.</p>
           </details>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md border bg-elevated px-3 py-2.5">

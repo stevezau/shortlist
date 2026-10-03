@@ -777,7 +777,7 @@ export function RowEditor({
             {/* First: the kind decides every setting after it (design §3). Folded to its one line,
                 because the six kinds with their descriptions are a page of their own. */}
             <details data-setting="kind" className="group">
-              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
                 <span className="min-w-0">
                   <span className="block font-medium">Row type: {kindTitle(current)}</span>
                   <span className="block text-sm text-muted-foreground">{KIND_META[current.kind].description}</span>

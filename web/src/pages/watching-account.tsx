@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, Loader2, UserPlus } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, Loader2, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
@@ -161,7 +161,7 @@ export function WatchingAccountPage() {
         subtitle="Why the Recommended shelf in your libraries shows every person's row to you, and the three ways to deal with it."
       />
 
-      <details className="rounded-lg border bg-card p-4"><summary className="cursor-pointer text-sm font-medium">Why the owner sees everyone’s rows</summary><div className="pt-3"><Step title="What's happening">
+      <details className="group rounded-lg border bg-card p-4"><summary className="flex cursor-pointer items-center gap-1.5 text-sm font-medium list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />Why the owner sees everyone’s rows</summary><div className="pt-3"><Step title="What's happening">
         <p className="text-sm text-muted-foreground">
           Shortlist gives each person their own row and keeps them apart with a
           Plex label, hidden from everyone else through the{" "}

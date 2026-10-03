@@ -58,11 +58,11 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
         >
           {/* What the switch costs, on its own line: it is the one Shortlist control that touches
               rows it did not make (plex-safety rule 4's shelf-position exception). */}
-          <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
             <ArrowUpDown className="h-3.5 w-3.5 text-accent-foreground" aria-hidden="true" />
             Moves other tools’ rows on the shelf.
           </p>
-          <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
+          <p className="max-w-prose text-sm text-muted-foreground">
             Their order relative to each other is kept; only their position
             shifts so Shortlist’s rows can sit among them. Turn it{" "}
             <strong className="text-foreground">off</strong> if another tool
@@ -81,7 +81,7 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
               This line stays on screen at all rather than being left to the "something is
               reordering your shelf" notification, because that one only fires while this
               switch is ON — and turning it off is the fix it recommends. */}
-          <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
+          <p className="max-w-prose text-sm text-muted-foreground">
             Running one of those? An out-of-date{" "}
             <strong className="text-foreground">Agregarr</strong> can put
             other people’s rows on <em>your</em> Home between runs.{" "}
@@ -96,7 +96,7 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
             .
           </p>
           {!manageOrder && (
-            <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Shelf ordering is off — Shortlist won’t touch the Recommended
               shelf order. Your rows are still built, delivered and kept
               private; Plex drops new ones at the end of the shelf and they

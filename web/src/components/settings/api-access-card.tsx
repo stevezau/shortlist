@@ -179,7 +179,7 @@ export function ApiAccessCard() {
                   Revoke
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 Regenerating replaces the current token; revoking turns it off.
                 Either way, any script still using the old token stops working
                 right away.

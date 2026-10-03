@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { NumberPresets } from "@/components/number-presets";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Tabs } from "@/components/ui/tabs";
 
 describe("selected states", () => {
@@ -105,5 +106,23 @@ describe("selected states", () => {
 
     expect(screen.getByText("Plain").classList.contains("bg-primary")).toBe(false);
     expect(screen.getByText("Loud").className).toMatch(/primary/);
+  });
+
+  it("draws an on-switch as a light neutral track, never amber", () => {
+    render(
+      <>
+        <Switch aria-label="On" checked onCheckedChange={() => {}} />
+        <Switch aria-label="Off" checked={false} onCheckedChange={() => {}} />
+      </>,
+    );
+
+    const on = screen.getByRole("switch", { name: "On" });
+    const off = screen.getByRole("switch", { name: "Off" });
+    expect(on).toHaveAttribute("data-state", "checked");
+    expect(off).toHaveAttribute("data-state", "unchecked");
+    // The track colour is a data-state variant, so assert the variant the component ships.
+    expect(on.className).toContain("data-[state=checked]:bg-foreground");
+    expect(on.className).not.toMatch(/bg-primary/);
+    expect(off.className).toContain("data-[state=unchecked]:bg-input");
   });
 });

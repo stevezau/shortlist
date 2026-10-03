@@ -197,8 +197,8 @@ export function SettingRow({
     <div id={id} className="scroll-mt-32 px-4 py-4 sm:px-5 md:scroll-mt-8">
       <div className="flex items-start justify-between gap-5">
         <div className="min-w-0 space-y-1">
-          <p className="text-[13px] font-medium">{title}</p>
-          {description && <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">{description}</p>}
+          <p className="text-sm font-medium">{title}</p>
+          {description && <p className="max-w-prose text-sm text-muted-foreground">{description}</p>}
         </div>
         {control && <div className="shrink-0">{control}</div>}
       </div>
@@ -227,15 +227,15 @@ export function SettingBlock({
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-1">
           {htmlFor ? (
-            <label htmlFor={htmlFor} className="block text-[13px] font-medium">
+            <label htmlFor={htmlFor} className="block text-sm font-medium">
               {title}
             </label>
           ) : (
-            <p className="text-[13px] font-medium">{title}</p>
+            <p className="text-sm font-medium">{title}</p>
           )}
-          {description && <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">{description}</p>}
+          {description && <p className="max-w-prose text-sm text-muted-foreground">{description}</p>}
         </div>
-        {value && <span className="shrink-0 text-xs font-medium tabular-nums">{value}</span>}
+        {value && <span className="shrink-0 text-sm font-medium tabular-nums">{value}</span>}
       </div>
       {children}
     </div>

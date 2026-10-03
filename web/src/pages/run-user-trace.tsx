@@ -354,63 +354,65 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
           been recorded.
         </p>
       )}
-      {groups.map((group) => {
-        const kept = group.fate === "kept";
-        return (
-          <details
-            key={group.fate}
-            open={kept}
-            className="rounded-md border bg-muted/30 px-3 py-2"
-          >
-            <summary className="cursor-pointer text-sm">
-              <span className={cn("font-medium", kept && "text-success")}>
-                {kept ? "Made the cut" : fateLabel(group.fate)}
-              </span>{" "}
-              <span className="text-muted-foreground">
-                — {group.titles.length}
-              </span>
-            </summary>
-            <ul className="mt-2 space-y-0.5">
-              {group.titles.map((t) => (
-                <li
-                  key={t.tmdb_id}
-                  className="flex flex-wrap items-baseline gap-x-2 text-xs"
-                >
-                  <span className={cn(!kept && "text-muted-foreground")}>
-                    {t.title}
-                    {t.year ? ` (${t.year})` : ""}
-                  </span>
-                  {t.rating != null && (
-                    <span className="text-muted-foreground">
-                      rated {t.rating.toFixed(1)}
+      <div className="divide-y border-t">
+        {groups.map((group) => {
+          const kept = group.fate === "kept";
+          return (
+            <details key={group.fate} open={kept} className="group py-2">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm [&::-webkit-details-marker]:hidden">
+                <ChevronRight
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+                />
+                <span className={cn("font-medium", kept && "text-success")}>
+                  {kept ? "Made the cut" : fateLabel(group.fate)}
+                </span>{" "}
+                <span className="text-muted-foreground">
+                  — {group.titles.length}
+                </span>
+              </summary>
+              <ul className="mt-2 space-y-0.5 pl-5">
+                {group.titles.map((t) => (
+                  <li
+                    key={t.tmdb_id}
+                    className="flex flex-wrap items-baseline gap-x-2 text-xs"
+                  >
+                    <span className={cn(!kept && "text-muted-foreground")}>
+                      {t.title}
+                      {t.year ? ` (${t.year})` : ""}
                     </span>
-                  )}
-                  {/* The release-date multiplier actually applied — the answer to "why did a 2003
-                      title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
-                  {t.age_weight != null && t.age_weight !== 1 && (
-                    <span className="font-mono text-muted-foreground">
-                      release date &times;{t.age_weight.toFixed(2)}
-                    </span>
-                  )}
-                  {/* This group IS the Radarr/Sonarr pool, so say what was asked for and what was
-                      not — the two halves of the product were never joined up on screen. */}
-                  {(() => {
-                    // Keyed "<tmdb_id>:<media>" — the pair, because a tmdb_id is NOT unique on
-                    // its own (`uq_request_candidate_title` is (tmdb_id, media_type)). Falling back
-                    // to the movie key would report a movie's request against a show of the same id.
-                    const note = requestNote(
-                      requests[`${t.tmdb_id}:${t.media}`],
-                    );
-                    return note ? (
-                      <span className="text-primary/80">{note}</span>
-                    ) : null;
-                  })()}
-                </li>
-              ))}
-            </ul>
-          </details>
-        );
-      })}
+                    {t.rating != null && (
+                      <span className="text-muted-foreground">
+                        rated {t.rating.toFixed(1)}
+                      </span>
+                    )}
+                    {/* The release-date multiplier actually applied — the answer to "why did a 2003
+                        title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
+                    {t.age_weight != null && t.age_weight !== 1 && (
+                      <span className="font-mono text-muted-foreground">
+                        release date &times;{t.age_weight.toFixed(2)}
+                      </span>
+                    )}
+                    {/* This group IS the Radarr/Sonarr pool, so say what was asked for and what was
+                        not — the two halves of the product were never joined up on screen. */}
+                    {(() => {
+                      // Keyed "<tmdb_id>:<media>" — the pair, because a tmdb_id is NOT unique on
+                      // its own (`uq_request_candidate_title` is (tmdb_id, media_type)). Falling back
+                      // to the movie key would report a movie's request against a show of the same id.
+                      const note = requestNote(
+                        requests[`${t.tmdb_id}:${t.media}`],
+                      );
+                      return note ? (
+                        <span className="text-primary/80">{note}</span>
+                      ) : null;
+                    })()}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1329,15 +1331,15 @@ function SourcesFlow({
         </span>
       </div>
       {/* The branch: a vertical spine down the left with each place tee'd off it. */}
-      <ul className="relative space-y-3 border-l-2 border-dashed border-border pl-5">
+      <ul className="relative divide-y border-l-2 border-dashed border-border pl-5">
         {sources.map((src) => (
-          <li key={src.source} className="relative">
+          <li key={src.source} className="relative py-3">
             <BranchConnector />
             <SourceCard src={src} discoverGenres={discoverGenres} />
           </li>
         ))}
         {(web || webSource) && (
-          <li className="relative">
+          <li className="relative py-3">
             <BranchConnector />
             <WebSourceCard web={web} source={webSource} />
           </li>
@@ -1347,12 +1349,12 @@ function SourcesFlow({
   );
 }
 
-/** The short horizontal elbow that ties a branch card back to the spine on its left. */
+/** The short horizontal elbow that ties a place back to the spine on its left, level with its name. */
 function BranchConnector() {
   return (
     <span
       aria-hidden="true"
-      className="absolute -left-5 top-6 h-px w-5 bg-border"
+      className="absolute -left-5 top-[1.375rem] h-px w-3 bg-border"
     />
   );
 }
@@ -1398,8 +1400,8 @@ function SourceCard({
     .reduce((n, [, c]) => n + c, 0);
 
   return (
-    <div className="overflow-hidden rounded-lg border bg-background">
-      <div className="flex items-start justify-between gap-3 p-3">
+    <div>
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1.5">
           <p className="text-sm font-medium">{sourceLabel(src.source)}</p>
           {failed ? (
@@ -1450,21 +1452,21 @@ function SourceCard({
 
       {src.source === "tmdb_discover" &&
         Object.keys(discoverGenres).length > 0 && (
-          <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+          <p className="mt-2 text-xs text-muted-foreground">
             {discoverGenreSentence(discoverGenres)}
           </p>
         )}
 
       {queries.length > 0 && (
-        <details className="group border-t">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <details className="group mt-2">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
             <ChevronRight
               className="h-3.5 w-3.5 transition-transform group-open:rotate-90"
               aria-hidden="true"
             />
             Follow it title by title
           </summary>
-          <ul className="space-y-3 border-t px-3 py-3">
+          <ul className="space-y-3 pb-1 pt-2">
             {queries.map((q, i) => (
               <SeedQueryRow
                 key={`${q.seed}-${i}`}
@@ -1709,8 +1711,8 @@ function WebSourceCard({
   const freshCount = searches.length - cachedCount;
 
   return (
-    <div className="overflow-hidden rounded-lg border">
-      <div className="flex items-start gap-2 p-3">
+    <div>
+      <div className="flex items-start gap-2">
         <Globe
           className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
           aria-hidden="true"
@@ -1733,12 +1735,12 @@ function WebSourceCard({
       </div>
 
       {failed && source?.detail && (
-        <p className="border-t px-3 py-2 text-xs text-destructive-text">
+        <p className="mt-2 text-xs text-destructive-text">
           Couldn’t reach it — {source.detail}
         </p>
       )}
 
-      <div className="space-y-4 border-t p-3">
+      <div className="mt-3 space-y-4">
         {searches.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-xs font-medium">
@@ -1843,8 +1845,12 @@ function WebSourceCard({
         )}
 
         {web?.rag_user && (
-          <details className="rounded-lg border bg-muted/20 p-3 text-sm">
-            <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground">
+          <details className="group text-sm">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronRight
+                aria-hidden="true"
+                className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
+              />
               {searches.length > 0
                 ? "See the exact prompt the AI got in step 2"
                 : "See the exact prompt the AI was given"}
@@ -1954,11 +1960,15 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
       .filter((t): t is string => Boolean(t)),
   );
   return (
-    <details className="rounded-md border bg-muted/30 px-3 py-2">
-      <summary className="cursor-pointer text-sm font-medium">
+    <details className="group border-t pt-3">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+        />
         The order it produced for {entry.row_title} — {rows.length} picks
       </summary>
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="mt-2 pl-5 text-xs text-muted-foreground">
         These {rows.length} picks came from{" "}
         <span className="font-medium text-foreground">
           {sources.size} source{sources.size === 1 ? "" : "s"}
@@ -1970,7 +1980,7 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
         </span>{" "}
         — spread across your tastes, not stacked on one.
       </p>
-      <ol className="mt-2 space-y-0.5">
+      <ol className="mt-2 space-y-0.5 pl-5">
         {rows.map(({ pick, newSource, newSeed }) => (
           <li
             key={pick.rank}
@@ -2023,7 +2033,7 @@ function DeliveredList({ delivered }: { delivered: RunLibraryBreakdown[] }) {
           {delivered.length > 1 && (
             <p className="text-sm font-medium">{b.row_title}</p>
           )}
-          <ol className="divide-y rounded-lg border bg-background">
+          <ol className="divide-y border-t">
             {b.picks.map((p) => (
               <DeliveredPick key={p.rank} pick={p} />
             ))}
@@ -2037,7 +2047,7 @@ function DeliveredList({ delivered }: { delivered: RunLibraryBreakdown[] }) {
 function DeliveredPick({ pick }: { pick: Pick }) {
   const prov = provenanceLabel(pick);
   return (
-    <li className="flex items-start gap-3 p-3 text-sm">
+    <li className="flex items-start gap-3 py-3 text-sm">
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-elevated text-xs font-semibold tabular-nums text-muted-foreground ring-1 ring-inset ring-border-strong">
         {pick.rank}
       </span>

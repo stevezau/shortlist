@@ -1,3 +1,4 @@
+import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { useId, useState } from "react";
 import { Link } from "react-router";
@@ -418,7 +419,8 @@ export function YourRequestsBlock(props: KindBlockProps) {
           open={input.requests_tag_pattern || sources.isError ? true : undefined}
           className="group space-y-3"
         >
-          <summary className="cursor-pointer text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <summary className="flex cursor-pointer items-center gap-1.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring list-none [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />
             Use my own tags
           </summary>
           <div className="space-y-2">

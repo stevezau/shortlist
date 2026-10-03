@@ -99,8 +99,8 @@ export function NotificationsSection({ settings }: { settings: Settings }) {
     <div className="space-y-4 px-4 py-4 sm:pl-16 sm:pr-5">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-0.5">
-          <p className="text-[13px] font-medium">Send alerts to a webhook</p>
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="text-sm font-medium">Send alerts to a webhook</p>
+          <p className="text-sm text-muted-foreground">
             Posts a message for each thing you tick below. No message ever
             names anybody.
           </p>
@@ -112,15 +112,19 @@ export function NotificationsSection({ settings }: { settings: Settings }) {
         />
       </div>
 
-      <p className="text-xs text-muted-foreground">{hasAddress ? `${events.length} events selected · webhook configured` : "Webhook address missing"}</p>
-      <SaveStatus fallback="Couldn’t save that. Try again." isPending={save.isPending} isError={save.isError} error={save.error} saved={save.isSuccess} onRetry={() => {
-        const values = save.variables;
-        if (!values) return;
-        save.mutate(values, { onSuccess: () => {
-          if (typeof values["notify.webhook.enabled"] === "boolean") setEnabled(values["notify.webhook.enabled"]);
-          if (Array.isArray(values["notify.webhook.events"])) setEvents(values["notify.webhook.events"] as string[]);
-        } });
-      }} />
+      {/* The save readout shares the status line: on a line of its own its idle (empty, fixed-height)
+          slot left a blank band in the middle of the block. A failure wraps onto its own line. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 [&>[role=alert]]:basis-full">
+        <p className="text-sm text-muted-foreground">{hasAddress ? `${events.length} events selected · webhook configured` : "Webhook address missing"}</p>
+        <SaveStatus fallback="Couldn’t save that. Try again." isPending={save.isPending} isError={save.isError} error={save.error} saved={save.isSuccess} onRetry={() => {
+          const values = save.variables;
+          if (!values) return;
+          save.mutate(values, { onSuccess: () => {
+            if (typeof values["notify.webhook.enabled"] === "boolean") setEnabled(values["notify.webhook.enabled"]);
+            if (Array.isArray(values["notify.webhook.events"])) setEvents(values["notify.webhook.events"] as string[]);
+          } });
+        }} />
+      </div>
 
       {enabled && !hasAddress && (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
@@ -169,9 +173,7 @@ export function NotificationsSection({ settings }: { settings: Settings }) {
           </div>
         </fieldset>
       ) : (
-        // The secondary size of everything around it (the switch's description, the status line):
-        // at text-sm it was the largest text in a block whose title is 13px.
-        <p className="text-xs leading-relaxed text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           Until this is on, a failed run shows up in the bell at the top of
           the page — the next time you look.
         </p>
