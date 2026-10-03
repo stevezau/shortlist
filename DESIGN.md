@@ -261,7 +261,7 @@ Quiet, compact and exact about what they do.
 - **Active:** Raised fill, Paper Text, 2px amber edge down the left. A warning dot or a count may sit at the right end of an item.
 - **Footer block:** help, issue, GitHub and coffee links and the signed-in identity, separated from the main list by a hairline.
 - **Mobile:** a sticky top bar with the wordmark, and the same list in a drawer that slides in from the left (0.2s).
-- **Brand mark (incumbent, not a rule):** an amber-to-Plex-gold gradient tile with a line sparkle beside the "Shortlist" wordmark. The owner has not decided whether it is binding (PRODUCT.md); keep it in refinements, and propose any replacement as a choice.
+- **Brand mark:** a Plex-gold rounded square (`fill-plex`) with two drawn sparkles (`fill-plex-foreground`), flat, beside the "Shortlist" wordmark (`components/brand.tsx`). It is the same drawing as the browser-tab icon and the website logo; decided by the owner 2026-10-03. No gradient, no glow.
 
 ### Status strip (signature)
 One panel holding a row of facts: four on the dashboard (last run, next run, privacy, Plex), five on a run. Each cell is Card surface, 16px by 12px padding: a fact label with a status dot or a small icon, the value in Title type, and a 13px Quiet Text line under it. Cells are separated by hairlines drawn through a 1px grid gap; four across on desktop, two on a phone, and an odd last cell spans both columns. Never a card per fact.

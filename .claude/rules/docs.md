@@ -42,6 +42,15 @@ python scripts/build_feed.py
 `docs/feed.xml` is an Atom feed of the newest 20 releases, built from CHANGELOG.md for the same reason
 as llms-full: nothing on GitHub Pages can build it. `tests/unit/test_feed.py` fails if it drifts.
 
+## After a website change has deployed
+
+Tell Bing and the other IndexNow engines the pages changed (no account needed; the key file is
+`docs/<key>.txt`):
+
+```bash
+python scripts/indexnow_ping.py
+```
+
 ## Breaking Changes
 
 Document what changed, provide before/after examples, and include migration steps (+ Alembic

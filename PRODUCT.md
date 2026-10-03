@@ -83,9 +83,9 @@ pre-Shortlist filter state, restored on uninstall) · **dry run** (a run that lo
 - Name: **Shortlist**. Fixed.
 - Current mark: a rounded amber square (Plex gold, `#e5a00d`) with a centred sparkle; hand-drawn service
   glyphs for Plex, Claude etc. in `web/src/components/brand-glyphs.tsx`.
-- **Whether the amber + sparkle mark is binding is undecided** (owner answered "i dunno", 2026-10-03). Treat
-  it as the incumbent, not as sacred: a refinement keeps it; a redesign may propose a replacement but must
-  present it as a choice, not ship it silently.
+- **The mark is decided (owner, 2026-10-03):** the Plex-gold rounded square with two drawn sparkles, flat
+  (no gradient, no glow). The same drawing is the app's rail mark, the browser-tab icon and the website logo.
+
 - Voice (from `.claude/docs/shortlist-design.md`): plain English; controls say exactly what happens; errors
   say what went wrong and how to fix it, never raw codes; constraints are stated up front; every pick carries
   a "Because you watched X" reason.
