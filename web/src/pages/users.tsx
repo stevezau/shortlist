@@ -255,7 +255,7 @@ function PicksCell({ user }: { user: User }) {
   );
 }
 
-/** "02:30 today", "02:30 yesterday", "28 Sept, 02:30" — when the person's rows were last built. */
+/** "02:30 today", "02:30 yesterday", "28 Sept, 02:30" — when the last run that included the person finished. It counts dry and cancelled runs too, so it must never be labelled as a build. */
 function builtAt(iso: string | null): string {
   if (!iso) return "Never";
   const date = new Date(iso);
@@ -734,7 +734,7 @@ export function UsersPage() {
                 <p role="status">Showing {visibleUsers.length} of {list.length} people</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2">Sort by<select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-xs"><option value="name">Name A–Z</option><option value="history">Most watch history</option><option value="last-run">Last built</option></select></label>
+                <label className="flex items-center gap-2">Sort by<select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-xs"><option value="name">Name A–Z</option><option value="history">Most watch history</option><option value="last-run">Last run</option></select></label>
                 {/* Always here, and deliberately not behind the owner note — that note is dismissible,
                     and dismissing "you see everyone's rows" is how people say "yes, I know" rather than
                     "I never want the tool again". Before this, hiding the note hid the only way back to
@@ -765,7 +765,7 @@ export function UsersPage() {
               <div className="overflow-hidden rounded-xl border bg-card">
                 <Table>
                   <TableHeader className="hidden lg:table-header-group">
-                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead>Picks watched (30 days)</TableHead><TableHead>Privacy</TableHead><TableHead>Last built</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
+                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead>Picks watched (30 days)</TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
                   </TableHeader>
                   <TableBody className="grid lg:table-row-group">
                     {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
@@ -792,7 +792,7 @@ export function UsersPage() {
                       <TableCell className="text-sm lg:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
                       <TableCell className="text-sm"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
                       <TableCell className="text-sm"><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
-                      <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? new Date(user.last_run_at).toLocaleString() : undefined}><CellLabel>Last built</CellLabel>{builtAt(user.last_run_at)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? new Date(user.last_run_at).toLocaleString() : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
                       <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap lg:table-cell lg:pr-4 lg:text-right">
                         <GatedSwitch
                           checked={user.enabled && !user.restriction_profile}
