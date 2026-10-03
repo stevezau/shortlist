@@ -117,8 +117,15 @@ from shortlist.engine import seasons as s
 class TestEasterSunday:
     @pytest.mark.parametrize(
         ("year", "expected"),
-        [(2024, date(2024, 3, 31)), (2025, date(2025, 4, 20)), (2026, date(2026, 4, 5)),
-         (2027, date(2027, 3, 28)), (2028, date(2028, 4, 16)), (2029, date(2029, 4, 1)), (2030, date(2030, 4, 21))],
+        [
+            (2024, date(2024, 3, 31)),
+            (2025, date(2025, 4, 20)),
+            (2026, date(2026, 4, 5)),
+            (2027, date(2027, 3, 28)),
+            (2028, date(2028, 4, 16)),
+            (2029, date(2029, 4, 1)),
+            (2030, date(2030, 4, 21)),
+        ],
     )
     def test_matches_the_published_dates(self, year: int, expected: date) -> None:
         assert s.easter_sunday(year) == expected
@@ -174,8 +181,16 @@ class TestDateRule:
 
 
 def _custom(slug: str, rule: s.DateRule, lead: int | None = None, after: int | None = None) -> s.Season:
-    return s.Season(slug=slug, name=slug.title(), emoji="*", rule=rule, description="", keywords=(1,),
-                    lead_days=lead, after_days=after)
+    return s.Season(
+        slug=slug,
+        name=slug.title(),
+        emoji="*",
+        rule=rule,
+        description="",
+        keywords=(1,),
+        lead_days=lead,
+        after_days=after,
+    )
 
 
 class TestPerSeasonTiming:
@@ -204,7 +219,11 @@ class TestCatalogueArgument:
     def test_normalise_orders_by_calendar_and_knows_custom_slugs(self) -> None:
         pat = _custom("pat", s.DateRule("fixed", month=3, day=17))
         catalogue = {**s.BUILTIN_SEASONS, "pat": pat}
-        assert s.normalise_slugs(["christmas", "pat", "valentines"], catalogue=catalogue) == ["valentines", "pat", "christmas"]
+        assert s.normalise_slugs(["christmas", "pat", "valentines"], catalogue=catalogue) == [
+            "valentines",
+            "pat",
+            "christmas",
+        ]
 
     def test_unknown_slug_is_refused(self) -> None:
         with pytest.raises(ValueError, match="unknown season"):
@@ -220,7 +239,14 @@ Also add to `tests/unit/test_placeholders.py`:
 
 ```python
 def test_season_renderings_include_custom_seasons() -> None:
-    pat = Season(slug="pat", name="St Patrick's Day", emoji="☘️", rule=DateRule("fixed", month=3, day=17), description="", keywords=(1,))
+    pat = Season(
+        slug="pat",
+        name="St Patrick's Day",
+        emoji="☘️",
+        rule=DateRule("fixed", month=3, day=17),
+        description="",
+        keywords=(1,),
+    )
     catalogue = {**BUILTIN_SEASONS, "pat": pat}
     assert "☘️ St Patrick's Day picks" in season_renderings("{season_emoji} {season} picks", catalogue)
 ```
@@ -237,8 +263,20 @@ Expected: FAIL. `easter_sunday`, `DateRule` and `BUILTIN_SEASONS` are not define
 from collections.abc import Mapping
 from typing import Literal
 
-_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
-           "October", "November", "December")
+_MONTHS = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _ORDINALS = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
 #: Any year sorts a catalogue into calendar order; a fixed one keeps `normalise_slugs` free of a clock.
@@ -545,8 +583,9 @@ class TestLoadTitles:
     def test_left_out_genres_drop_tag_and_collection_films_but_never_a_hand_pick(self) -> None:
         plex = _Plex({("1", "C"): [LibraryTitle(60, MediaType.MOVIE, "Scary", 2000)]})
         tmdb = _Tmdb({"1": [_item(1, [27]), _item(2, [35])]}, {60: _item(60, [27]), 50: _item(50, [27])})
-        season = _custom_season(keywords=(1,), excluded=(27,), collections=(s.CollectionRef("1", "C"),),
-                                picks=((50, MediaType.MOVIE),))
+        season = _custom_season(
+            keywords=(1,), excluded=(27,), collections=(s.CollectionRef("1", "C"),), picks=((50, MediaType.MOVIE),)
+        )
         ids = {i["id"] for i in s.load_titles(tmdb, plex, season, self.LIB).in_library[MediaType.MOVIE]}
         assert ids == {2, 50}
 
@@ -684,8 +723,18 @@ class SeasonDef(Base):
 
 ```python
 def test_custom_seasons_follow_the_built_ins(session) -> None:
-    session.add(SeasonDef(slug="st-patricks-day", name="St Patrick's Day", emoji="☘️", rule_kind="fixed", month=3, day=17,
-                          tags=[{"id": 209352, "name": "st. patrick's day"}], excluded_genres=[27]))
+    session.add(
+        SeasonDef(
+            slug="st-patricks-day",
+            name="St Patrick's Day",
+            emoji="☘️",
+            rule_kind="fixed",
+            month=3,
+            day=17,
+            tags=[{"id": 209352, "name": "st. patrick's day"}],
+            excluded_genres=[27],
+        )
+    )
     session.commit()
     catalogue = load_catalogue(session)
     assert list(catalogue)[:3] == ["valentines", "halloween", "christmas"]
@@ -695,11 +744,14 @@ def test_custom_seasons_follow_the_built_ins(session) -> None:
     assert pat.content_hash == season_content_hash(pat)
 
 
-@pytest.mark.parametrize(("name", "taken", "slug"), [
-    ("St Patrick's Day", set(), "st-patricks-day"),
-    ("Christmas", {"christmas"}, "christmas-2"),
-    ("🎆", set(), "season"),
-])
+@pytest.mark.parametrize(
+    ("name", "taken", "slug"),
+    [
+        ("St Patrick's Day", set(), "st-patricks-day"),
+        ("Christmas", {"christmas"}, "christmas-2"),
+        ("🎆", set(), "season"),
+    ],
+)
 def test_make_slug(name, taken, slug) -> None:
     assert make_slug(name, taken) == slug
 ```
