@@ -1,5 +1,5 @@
 import { ListChecks, Lock } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import { PageHeader } from "@/components/page-header";
@@ -14,7 +14,7 @@ import { RowContentsFields } from "@/components/rows/row-contents-fields";
 import { draftChanges } from "@/components/rows/row-draft-diff";
 import { mediaLabel, rowLibraries, rowReach } from "@/components/rows/row-facts";
 import { RowKindChangeDialog } from "@/components/rows/row-kind-change-dialog";
-import { RowKindPicker } from "@/components/rows/row-kind-picker";
+import { RowBuildPicker, RowKindPicker } from "@/components/rows/row-kind-picker";
 import { RowLiveStrip } from "@/components/rows/row-live-strip";
 import { RowName } from "@/components/rows/row-name";
 import { RowKindSettings, TakeTurns } from "@/components/rows/row-kind-settings";
@@ -79,6 +79,7 @@ import {
   type RowKind,
   type RowKindChoice,
   type RowKindContext,
+  type RowFill,
 } from "@/lib/row-kinds";
 import { sentenceCaseHighlights, type RowTemplate } from "@/lib/row-templates";
 import {
@@ -280,6 +281,7 @@ export function RowEditor({
   const [kindBaseline, setKindBaseline] = useState<Partial<CollectionInput>>(() =>
     baselineOf(input),
   );
+  const lastPersonalFill = useRef<Exclude<RowFill, "popular"> | null>(null);
 
   // Held apart from `input` on purpose — see the Name field. The saved value is the TEMPLATE, since
   // that is what a rename rewrites; `name` is only its rendered form.
@@ -388,6 +390,7 @@ export function RowEditor({
     );
 
   const applyKind = (choice: RowKindChoice, renameTo: string | null) => {
+    if (current.fill !== "popular" && choice.fill === "popular") lastPersonalFill.current = current.fill;
     // The switch starts from the baseline's name, so a saved row keeps its saved one in the form.
     setInput(switched(choice));
     // Exactly this switch's rename, or none: an earlier switch's rename never outlives it.
@@ -416,6 +419,7 @@ export function RowEditor({
     // with the season in it, be refused).
     const rename = describeSwitch(choice).rename;
     const next = switched(choice);
+    if (current.fill !== "popular" && choice.fill === "popular") lastPersonalFill.current = current.fill;
     setInput(
       rename?.required
         ? {
@@ -434,6 +438,20 @@ export function RowEditor({
       kind,
       fill: kind !== "seasonal" ? kind : current.fill === "requests" ? "picked" : current.fill,
     });
+
+  const pickBuild = (build: CollectionInput["build"]) => {
+    if (build === input.build) return;
+    const remembered = lastPersonalFill.current ?? "picked";
+    const fill = build === "shared" ? "popular" : current.kind === "seasonal" && remembered === "requests" ? "picked" : remembered;
+    requestKind({ kind: current.kind === "seasonal" ? "seasonal" : fill, fill });
+  };
+
+  const disabledKindReason = (kind: RowKind) => {
+    if (kind === current.kind) return null;
+    const reason = kindDisabledReason(kind, draft, kindCtx);
+    if (reason !== SEED_NAME_IN_SETTINGS) return reason;
+    return <>{reason}{" "}<Link to={DEFAULT_ROW_NAME_SETTINGS} className="not-italic underline underline-offset-2 hover:text-foreground">Settings › Row defaults</Link></>;
+  };
 
   // "[]" means every library OF THIS ROW'S TYPE. Saying "every library" on a movies row
   // contradicted the picker right beside it, which ticks only the movie ones.
@@ -524,6 +542,7 @@ export function RowEditor({
     const back = savedRow ? toInput(savedRow) : input;
     setInput(back);
     setKindBaseline(baselineOf(back));
+    lastPersonalFill.current = null;
     setPendingKind(null);
     setPendingRename(null);
     setDraftVersion((version) => version + 1);
@@ -754,20 +773,21 @@ export function RowEditor({
                   audienceUserIds={input.audience_user_ids}
                   users={users}
                   onChange={set}
-                />
+                >
+                  <RowAudienceTable
+                    input={input}
+                    users={users}
+                    libraries={landsIn}
+                    accounts={privacy.data?.accounts ?? []}
+                    privacy={privacy.isError ? "error" : privacy.isPending ? "loading" : "ready"}
+                    onSelect={(id, checked) => set({
+                      audience: "subset",
+                      audience_user_ids: checked ? [...input.audience_user_ids, id] : input.audience_user_ids.filter((selected) => selected !== id),
+                    })}
+                  />
+                </AudiencePicker>
               )}
             </div>
-            {audienceState === "ready" && users.length > 0 && (
-              <div className="border-t pt-4">
-                <RowAudienceTable
-                  input={input}
-                  users={users}
-                  libraries={landsIn}
-                  accounts={privacy.data?.accounts ?? []}
-                  privacy={privacy.isError ? "error" : privacy.isPending ? "loading" : "ready"}
-                />
-              </div>
-            )}
           </EditorSection>
 
           <EditorSection
@@ -777,8 +797,9 @@ export function RowEditor({
           >
             {/* First: the kind decides every setting after it (design §3). Folded to its one line,
                 because the six kinds with their descriptions are a page of their own. */}
+            <RowBuildPicker value={input.build} onChange={pickBuild} sharedDisabledReason={disabledKindReason("popular")} seasonal={isSeasonal} />
             <details data-setting="kind" className="group">
-              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
                 <span className="min-w-0">
                   <span className="block font-medium">Row type: {kindTitle(current)}</span>
                   <span className="block text-sm text-muted-foreground">{KIND_META[current.kind].description}</span>
@@ -790,24 +811,10 @@ export function RowEditor({
               <div className="pt-4">
                 <RowKindPicker
                   value={current.kind}
+                  build={input.build}
                   onChange={pickKind}
                   // The row's own kind is never disabled, even before the season list loads.
-                  disabledReason={(kind) => {
-                    if (kind === current.kind) return null;
-                    const reason = kindDisabledReason(kind, draft, kindCtx);
-                    if (reason !== SEED_NAME_IN_SETTINGS) return reason;
-                    return (
-                      <>
-                        {reason}{" "}
-                        <Link
-                          to={DEFAULT_ROW_NAME_SETTINGS}
-                          className="not-italic underline underline-offset-2 hover:text-foreground"
-                        >
-                          Settings › Row defaults
-                        </Link>
-                      </>
-                    );
-                  }}
+                  disabledReason={disabledKindReason}
                 />
               </div>
             </details>

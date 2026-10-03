@@ -31,6 +31,7 @@ import {
   autoSendBarsMatchGuardrails,
   describeRequestFlow,
 } from "@/lib/request-flow";
+import { selectedClass } from "@/lib/selected";
 import type { SonarrMonitor } from "@/lib/sonarr-monitor";
 import {
   asSonarrMonitor,
@@ -40,6 +41,7 @@ import {
 } from "@/lib/sonarr-monitor";
 import { hasMdblist } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 const MAX_PER_RUN = [3, 5, 10];
 
@@ -198,126 +200,122 @@ function ArrCard({
   const monitorId = useId();
 
   return (
-    <Card>
-      <CardContent className="space-y-4 pt-6">
-        <div className="flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-lg border bg-elevated text-primary [&>svg]:h-5 [&>svg]:w-5">
-            {icon}
-          </span>
-          <div>
-            <p className="font-medium">{title}</p>
-            <p className="text-sm text-muted-foreground">
-              {service === "radarr"
-                ? "Fetches the films Shortlist asks for."
-                : "Fetches the TV shows Shortlist asks for."}
-            </p>
-          </div>
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <p className="flex items-center gap-2 font-medium">
+          <span className="text-muted-foreground [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
+          {title}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          {service === "radarr"
+            ? "Fetches the films Shortlist asks for."
+            : "Fetches the TV shows Shortlist asks for."}
+        </p>
+      </div>
+
+      {/* Profiles and folders come from the app itself once it's connected — no hunting for ids. */}
+      {!connected ? (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            {title} isn&rsquo;t connected yet. Add its address and API key on
+            the {title} card in{" "}
+            <strong className="font-medium text-foreground">
+              Connections
+            </strong>
+            , then come back and choose how good a copy to grab and which
+            folder to save it in.
+          </p>
+          <Button variant="outline" size="sm" onClick={onGoToConnections}>
+            Go to Connections
+          </Button>
         </div>
-
-        {/* Profiles and folders come from the app itself once it's connected — no hunting for ids. */}
-        {!connected ? (
-          <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3">
-            <p className="text-sm text-muted-foreground">
-              {title} isn&rsquo;t connected yet. Add its address and API key on
-              the {title} card in{" "}
-              <strong className="font-medium text-foreground">
-                Connections
-              </strong>
-              , then come back and choose how good a copy to grab and which
-              folder to save it in.
+      ) : (
+        <>
+          {options.isError ? (
+            <p className="text-sm text-destructive-text">
+              Couldn&rsquo;t reach {title} to load its quality profiles and
+              folders. Check its address and API key on the {title} card in
+              Connections, and press Test there.
             </p>
-            <Button variant="outline" size="sm" onClick={onGoToConnections}>
-              Go to Connections
-            </Button>
-          </div>
-        ) : (
-          <>
-            {options.isError ? (
-              <p className="text-sm text-destructive-text">
-                Couldn&rsquo;t reach {title} to load its quality profiles and
-                folders. Check its address and API key on the {title} card in
-                Connections, and press Test there.
-              </p>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor={profileId}>Quality</Label>
-                  <select
-                    id={profileId}
-                    className={selectClass}
-                    disabled={options.isPending}
-                    value={form.qualityProfileId}
-                    onChange={(e) =>
-                      onChange({
-                        ...form,
-                        qualityProfileId: Number(e.target.value),
-                      })
-                    }
-                  >
-                    <option value={0} disabled>
-                      {options.isPending
-                        ? "Loading…"
-                        : "Choose a quality profile"}
-                    </option>
-                    {options.data?.quality_profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor={folderId}>Save to</Label>
-                  <select
-                    id={folderId}
-                    className={selectClass}
-                    disabled={options.isPending}
-                    value={form.rootFolder}
-                    onChange={(e) =>
-                      onChange({ ...form, rootFolder: e.target.value })
-                    }
-                  >
-                    <option value="" disabled>
-                      {options.isPending ? "Loading…" : "Choose a folder"}
-                    </option>
-                    {options.data?.root_folders.map((f) => (
-                      <option key={f.id} value={f.path}>
-                        {f.path}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {/* Sonarr only, and outside the error branch above on purpose: this list is Sonarr's
-                enum, not something fetched, so an unreachable Sonarr is no reason to hide it. */}
-            {monitor !== undefined && onMonitorChange && (
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor={monitorId}>How much of a show to grab</Label>
+                <Label htmlFor={profileId}>Quality</Label>
                 <select
-                  id={monitorId}
+                  id={profileId}
                   className={selectClass}
-                  value={monitor}
+                  disabled={options.isPending}
+                  value={form.qualityProfileId}
                   onChange={(e) =>
-                    onMonitorChange(asSonarrMonitor(e.target.value))
+                    onChange({
+                      ...form,
+                      qualityProfileId: Number(e.target.value),
+                    })
                   }
                 >
-                  {SONARR_MONITOR_MODES.map((mode) => (
-                    <option key={mode} value={mode}>
-                      {SONARR_MONITOR_LABELS[mode]}
+                  <option value={0} disabled>
+                    {options.isPending
+                      ? "Loading…"
+                      : "Choose a quality profile"}
+                  </option>
+                  {options.data?.quality_profiles.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
                     </option>
                   ))}
                 </select>
-                <p className="text-sm text-muted-foreground">
-                  {SONARR_MONITOR_HINTS[monitor]}
-                </p>
               </div>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+              <div className="space-y-2">
+                <Label htmlFor={folderId}>Save to</Label>
+                <select
+                  id={folderId}
+                  className={selectClass}
+                  disabled={options.isPending}
+                  value={form.rootFolder}
+                  onChange={(e) =>
+                    onChange({ ...form, rootFolder: e.target.value })
+                  }
+                >
+                  <option value="" disabled>
+                    {options.isPending ? "Loading…" : "Choose a folder"}
+                  </option>
+                  {options.data?.root_folders.map((f) => (
+                    <option key={f.id} value={f.path}>
+                      {f.path}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Sonarr only, and outside the error branch above on purpose: this list is Sonarr's
+              enum, not something fetched, so an unreachable Sonarr is no reason to hide it. */}
+          {monitor !== undefined && onMonitorChange && (
+            <div className="space-y-2">
+              <Label htmlFor={monitorId}>How much of a show to grab</Label>
+              <select
+                id={monitorId}
+                className={selectClass}
+                value={monitor}
+                onChange={(e) =>
+                  onMonitorChange(asSonarrMonitor(e.target.value))
+                }
+              >
+                {SONARR_MONITOR_MODES.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {SONARR_MONITOR_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+              <p className="text-sm text-muted-foreground">
+                {SONARR_MONITOR_HINTS[monitor]}
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -379,154 +377,150 @@ function OverseerrCard({
   );
 
   return (
-    <Card>
-      <CardContent className="space-y-4 pt-6">
-        <div className="flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-lg border bg-elevated text-primary [&>svg]:h-5 [&>svg]:w-5">
-            <Inbox aria-hidden="true" />
-          </span>
-          <div>
-            <p className="font-medium">Overseerr / Jellyseerr</p>
-            <p className="text-sm text-muted-foreground">
-              Files a request for films and shows alike, and it decides the
-              quality, the folder and who approves it. Overseerr, Jellyseerr and
-              Seerr all speak the same API, so any of them works here.
-            </p>
-          </div>
-        </div>
+    <div className="space-y-4 border-t pt-5">
+      <div className="space-y-1">
+        <p className="flex items-center gap-2 font-medium">
+          <Inbox aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
+          Overseerr / Jellyseerr
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Files a request for films and shows alike, and it decides the
+          quality, the folder and who approves it. Overseerr, Jellyseerr and
+          Seerr all speak the same API, so any of them works here.
+        </p>
+      </div>
 
-        {!connected ? (
-          <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3">
-            <p className="text-sm text-muted-foreground">
-              Overseerr isn&rsquo;t connected yet. Add its address and API key
-              on the Overseerr card in{" "}
-              <strong className="font-medium text-foreground">
-                Connections
-              </strong>
-              , then come back and choose who requests go out as.
-            </p>
-            <Button variant="outline" size="sm" onClick={onGoToConnections}>
-              Go to Connections
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {/* Label and control on one line. A single short choice in a full-width box reads as an
-                empty text field waiting to be typed into — the two Arr cards get away with w-full
-                because they sit two-up in a grid, and this one does not. Stacks under `sm`. */}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <Label htmlFor={userSelectId} className="shrink-0">
-                Request as
-              </Label>
-              {/* The error is shown ABOVE the control, never instead of it. An unreachable Overseerr
-                cannot name its accounts, but the choice already saved is still the owner's to see
-                and to undo — hiding the select left someone whose instance was briefly down unable
-                to put it back to Server default. Same reasoning as the Sonarr monitor select. */}
-              {options.isError && (
-                <p className="text-sm text-destructive-text">
-                  Couldn&rsquo;t reach Overseerr to load its accounts. Check its
-                  address and API key on the Overseerr card in Connections, and
-                  press Test there. You can still change this back to the server
-                  default in the meantime.
-                </p>
-              )}
-              <select
-                id={userSelectId}
-                className={`${selectBase} w-full sm:w-auto sm:min-w-[24rem] sm:max-w-full`}
-                disabled={options.isPending}
-                value={userId}
-                onChange={(e) => onUserChange(Number(e.target.value))}
-              >
-                {/* The default carries its effect too, and it is the one that matters most — it is
-                  what nearly everyone will leave selected. `default_user_id` is what makes it
-                  nameable at all; without it this said "whoever owns the API key", which is a
-                  shrug where the consequence should be. */}
-                <option value={0}>
-                  {options.isPending
-                    ? "Loading…"
-                    : defaultAccount
-                      ? `Server default (${defaultAccount.name}) — ${accountEffect(defaultAccount)}`
-                      : "Server default (whoever owns the API key)"}
-                </option>
-                {/* Only accounts made FOR this. The default is already the option above, and real
-                  people are deliberately absent — see `peopleHidden` below. */}
-                {/* Accounts made for this first, then real people. People ARE offered: on most
-                    instances every account that does not auto-approve belongs to one, so hiding
-                    them left owners with nothing to pick and every title downloading immediately.
-                    An option that can be misused but has a real use gets a warning, not a ban —
-                    the note under the picker says what choosing a person costs them. */}
-                {serviceAccounts.length > 0 && (
-                  <optgroup label="Accounts made for this">
-                    {serviceAccounts.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} &mdash; {accountEffect(u)}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {people.length > 0 && (
-                  <optgroup label="People on your server">
-                    {people.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} &mdash; {accountEffect(u)}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {/* A saved account the list does not contain — because the fetch failed, or because
-                  it was since deleted in Overseerr. Without it the select falls back to its first
-                  option and the screen silently misreports the saved value as "Server default",
-                  which the next autosave would then WRITE. Keyed on the LIST, not on isError, so
-                  the deleted-account case is covered by the same three lines. */}
-                {userId !== 0 && !chosen && (
-                  <option value={userId}>Account #{userId}</option>
-                )}
-              </select>
-            </div>
-            {/* Only the ACTION. The dropdown above already states whether this account approves,
-                and the summary below states what that means for a title — saying it a third time
-                here meant hedging ("usually an admin, so they'll be approved") what the dropdown
-                states as fact, and promising "go straight to Radarr/Sonarr", which is Overseerr's
-                own setup to decide, not ours. An account that already holds requests needs no line
-                at all: the other two have said it. */}
-            {chosen &&
-              (chosen.auto_approve_movies || chosen.auto_approve_tv) && (
-                <p className="text-sm text-muted-foreground">
-                  Want to check them in Overseerr first?{" "}
-                  {holdingAccount ? (
-                    <>
-                      Pick{" "}
-                      <strong className="font-medium text-foreground">
-                        {holdingAccount.name}
-                      </strong>{" "}
-                      above.
-                    </>
-                  ) : (
-                    <>
-                      Make a user there without auto-approve, and pick it here.
-                    </>
-                  )}
-                </p>
-              )}
-            {/* Only when a real person is actually chosen. A title here is usually wanted by
-                several people at once while an Overseerr request has one requester, so this is a
-                real cost — but it is the owner's server and their call, so it is stated at the
-                moment they make it rather than used to remove the option. */}
-            {chosen?.is_plex_user && (
-              <p className="text-sm text-muted-foreground">
-                Every request will show as{" "}
-                <strong className="font-medium text-foreground">
-                  {chosen.name}
-                </strong>
-                &rsquo;s, count against their quota, and notify them &mdash;
-                including titles they had nothing to do with. A local account in
-                Overseerr avoids that.
+      {!connected ? (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Overseerr isn&rsquo;t connected yet. Add its address and API key
+            on the Overseerr card in{" "}
+            <strong className="font-medium text-foreground">
+              Connections
+            </strong>
+            , then come back and choose who requests go out as.
+          </p>
+          <Button variant="outline" size="sm" onClick={onGoToConnections}>
+            Go to Connections
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* Label and control on one line. A single short choice in a full-width box reads as an
+              empty text field waiting to be typed into — the two Arr cards get away with w-full
+              because they sit two-up in a grid, and this one does not. Stacks under `sm`. */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <Label htmlFor={userSelectId} className="shrink-0">
+              Request as
+            </Label>
+            {/* The error is shown ABOVE the control, never instead of it. An unreachable Overseerr
+              cannot name its accounts, but the choice already saved is still the owner's to see
+              and to undo — hiding the select left someone whose instance was briefly down unable
+              to put it back to Server default. Same reasoning as the Sonarr monitor select. */}
+            {options.isError && (
+              <p className="text-sm text-destructive-text">
+                Couldn&rsquo;t reach Overseerr to load its accounts. Check its
+                address and API key on the Overseerr card in Connections, and
+                press Test there. You can still change this back to the server
+                default in the meantime.
               </p>
             )}
+            <select
+              id={userSelectId}
+              className={`${selectBase} w-full sm:w-auto sm:min-w-[24rem] sm:max-w-full`}
+              disabled={options.isPending}
+              value={userId}
+              onChange={(e) => onUserChange(Number(e.target.value))}
+            >
+              {/* The default carries its effect too, and it is the one that matters most — it is
+                what nearly everyone will leave selected. `default_user_id` is what makes it
+                nameable at all; without it this said "whoever owns the API key", which is a
+                shrug where the consequence should be. */}
+              <option value={0}>
+                {options.isPending
+                  ? "Loading…"
+                  : defaultAccount
+                    ? `Server default (${defaultAccount.name}) — ${accountEffect(defaultAccount)}`
+                    : "Server default (whoever owns the API key)"}
+              </option>
+              {/* Only accounts made FOR this. The default is already the option above, and real
+                people are deliberately absent — see `peopleHidden` below. */}
+              {/* Accounts made for this first, then real people. People ARE offered: on most
+                  instances every account that does not auto-approve belongs to one, so hiding
+                  them left owners with nothing to pick and every title downloading immediately.
+                  An option that can be misused but has a real use gets a warning, not a ban —
+                  the note under the picker says what choosing a person costs them. */}
+              {serviceAccounts.length > 0 && (
+                <optgroup label="Accounts made for this">
+                  {serviceAccounts.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} &mdash; {accountEffect(u)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {people.length > 0 && (
+                <optgroup label="People on your server">
+                  {people.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} &mdash; {accountEffect(u)}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {/* A saved account the list does not contain — because the fetch failed, or because
+                it was since deleted in Overseerr. Without it the select falls back to its first
+                option and the screen silently misreports the saved value as "Server default",
+                which the next autosave would then WRITE. Keyed on the LIST, not on isError, so
+                the deleted-account case is covered by the same three lines. */}
+              {userId !== 0 && !chosen && (
+                <option value={userId}>Account #{userId}</option>
+              )}
+            </select>
           </div>
-        )}
-      </CardContent>
-    </Card>
+          {/* Only the ACTION. The dropdown above already states whether this account approves,
+              and the summary below states what that means for a title — saying it a third time
+              here meant hedging ("usually an admin, so they'll be approved") what the dropdown
+              states as fact, and promising "go straight to Radarr/Sonarr", which is Overseerr's
+              own setup to decide, not ours. An account that already holds requests needs no line
+              at all: the other two have said it. */}
+          {chosen &&
+            (chosen.auto_approve_movies || chosen.auto_approve_tv) && (
+              <p className="text-sm text-muted-foreground">
+                Want to check them in Overseerr first?{" "}
+                {holdingAccount ? (
+                  <>
+                    Pick{" "}
+                    <strong className="font-medium text-foreground">
+                      {holdingAccount.name}
+                    </strong>{" "}
+                    above.
+                  </>
+                ) : (
+                  <>
+                    Make a user there without auto-approve, and pick it here.
+                  </>
+                )}
+              </p>
+            )}
+          {/* Only when a real person is actually chosen. A title here is usually wanted by
+              several people at once while an Overseerr request has one requester, so this is a
+              real cost — but it is the owner's server and their call, so it is stated at the
+              moment they make it rather than used to remove the option. */}
+          {chosen?.is_plex_user && (
+            <p className="text-sm text-muted-foreground">
+              Every request will show as{" "}
+              <strong className="font-medium text-foreground">
+                {chosen.name}
+              </strong>
+              &rsquo;s, count against their quota, and notify them &mdash;
+              including titles they had nothing to do with. A local account in
+              Overseerr avoids that.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -747,7 +741,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 onGoToConnections={goToConnections}
               />
             ) : (
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-x-8 gap-y-6 border-t pt-5 lg:grid-cols-2">
                 <ArrCard
                   service="radarr"
                   title="Radarr"
@@ -820,8 +814,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 like the bar for requesting at all, and the owner only met the second, higher bar two
                 fieldsets later. The big choice — sent on its own, or waits for you — comes first;
                 the floor underneath both comes after it. */}
-            <fieldset className="space-y-4 rounded-lg border p-4">
-              <legend className="px-1 text-sm font-medium">
+            <fieldset className="space-y-4">
+              <legend className="w-full border-t pt-5 font-medium">
                 Send on its own, or ask me first
               </legend>
               <div className="flex items-start justify-between gap-4">
@@ -955,8 +949,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
               )}
             </fieldset>
 
-            <fieldset className="space-y-4 rounded-lg border p-4">
-              <legend className="px-1 text-sm font-medium">Guardrails</legend>
+            <fieldset className="space-y-4">
+              <legend className="w-full border-t pt-5 font-medium">Guardrails</legend>
               <p className="text-sm text-muted-foreground">
                 The lowest bar a title must clear before Shortlist will ask for
                 it at all &mdash; whether it goes out on its own or waits in
@@ -1040,7 +1034,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       {form.preferredLanguages.map((code) => (
                         <span
                           key={code}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/5 py-1 pl-3 pr-1 text-sm"
+                          className={cn("inline-flex items-center gap-1.5 rounded-full border py-1 pl-3 pr-1 text-sm", selectedClass)}
                         >
                           {languageName(code)}
                           <span className="font-mono text-xs text-muted-foreground">

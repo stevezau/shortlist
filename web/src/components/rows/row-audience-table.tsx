@@ -2,6 +2,8 @@ import { Eye } from "lucide-react";
 import { Link } from "react-router";
 
 import { reachedUsers } from "@/components/rows/row-facts";
+import { PeopleBrowser } from "@/components/rows/people-browser";
+import { Switch } from "@/components/ui/switch";
 import { UserAvatar } from "@/components/user-avatar";
 import type { AccountPrivacy, CollectionInput, PlexLibrary, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -78,6 +80,7 @@ export function RowAudienceTable({
   libraries,
   accounts,
   privacy,
+  onSelect,
 }: {
   input: Pick<CollectionInput, "audience" | "audience_user_ids">;
   users: User[];
@@ -85,11 +88,14 @@ export function RowAudienceTable({
   libraries: PlexLibrary[] | null;
   accounts: AccountPrivacy[];
   privacy: "loading" | "error" | "ready";
+  /** In Choose people, selection shares this table instead of adding a second roster. */
+  onSelect?: (id: number, checked: boolean) => void;
 }) {
   // The owner is the line under the table, not a row in it: Plex can't restrict them, so "does
   // their account hide other rows" has only one answer, and it is the caveat itself.
   const reached = reachedUsers(input, users);
-  const people = reached.filter((user) => user.user_type !== "owner");
+  const choosing = input.audience === "subset" && onSelect !== undefined;
+  const people = choosing ? users : reached.filter((user) => user.user_type !== "owner");
   // Shortlist doesn't know which libraries each share opens, only which ones the row lands in, so
   // every line names the same libraries and the note under the table says what decides the rest.
   const where =
@@ -101,16 +107,18 @@ export function RowAudienceTable({
 
   return (
     <div className="space-y-3">
-      {people.length === 0 ? (
+      <PeopleBrowser users={people} empty={
         <p className={cn("text-sm", reached.length === 0 ? "text-warning" : "text-muted-foreground")}>
-          {reached.length === 0
+          {users.length === 0
+            ? "No users yet — bring your Plex users in with “Sync users” on the Users page first."
+            : reached.length === 0
             ? "Nobody gets this row yet: no one enabled is in its audience."
             : "Only you get this row: no one else enabled is in its audience."}
         </p>
-      ) : (
+      }>{(visible) => (
         <div className="min-w-0 overflow-hidden rounded-md border">
-          <table className="w-full table-fixed text-sm">
-            <thead className="border-b bg-elevated text-left text-xs text-muted-foreground">
+          <table aria-label="People" className="w-full table-fixed text-sm">
+            <thead className="hidden border-b bg-elevated text-left text-xs text-muted-foreground sm:table-header-group">
               <tr>
                 <th scope="col" className="px-3 py-2 font-medium">
                   Person
@@ -124,30 +132,35 @@ export function RowAudienceTable({
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y">
-              {people.map((user) => {
+            <tbody className="block divide-y sm:table-row-group">
+              {visible.map((user) => {
                 const name = user.display_name || user.username;
+                const copy = !user.enabled ? "Shortlist disabled" : user.prefs?.paused ? "Paused" : choosing && !input.audience_user_ids.includes(user.id) ? "Not selected" : where;
                 return (
-                  <tr key={user.id}>
-                    <td className="px-3 py-2.5 align-middle">
+                  <tr key={user.id} className="grid grid-cols-2 gap-3 p-3 sm:table-row sm:p-0">
+                    <td className="col-span-2 min-w-0 align-middle sm:px-3 sm:py-2.5">
                       <div className="flex min-w-0 items-center gap-2">
+                        {choosing && <Switch checked={input.audience_user_ids.includes(user.id)} onCheckedChange={(checked) => onSelect(user.id, checked)} aria-label={user.username} />}
                         <UserAvatar name={user.username} size="sm" />
                         <div className="min-w-0">
-                          <p className="truncate font-medium" title={name}>
+                          <p className="break-words font-medium sm:truncate" title={name}>
                             {name} <span className="text-xs font-normal text-muted-foreground">{user.user_type}</span>
                           </p>
-                          <p className="text-xs text-muted-foreground sm:hidden">{where}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="hidden px-3 py-2.5 align-middle sm:table-cell">{where}</td>
-                    <td className="px-3 py-2.5 align-middle">
-                      <Hides
+                    <td className="min-w-0 break-words align-middle text-xs sm:px-3 sm:py-2.5 sm:text-sm">
+                      <span className="mb-1 block text-xs text-muted-foreground sm:hidden">Gets a copy in</span>
+                      {copy}
+                    </td>
+                    <td className="min-w-0 break-words align-middle text-xs sm:px-3 sm:py-2.5 sm:text-sm">
+                      <span className="mb-1 block text-xs text-muted-foreground sm:hidden">Hides other rows</span>
+                      {user.user_type === "owner" ? <span className="text-muted-foreground">Owner — cannot be restricted</span> : <Hides
                         answer={hidesAnswer(
                           accounts.find((account) => account.user_id === user.id),
                           privacy,
                         )}
-                      />
+                      />}
                     </td>
                   </tr>
                 );
@@ -155,7 +168,7 @@ export function RowAudienceTable({
             </tbody>
           </table>
         </div>
-      )}
+      )}</PeopleBrowser>
       <p className="text-xs text-muted-foreground">
         A person only sees the copies in libraries their share opens.
         {privacy === "error" && " Couldn't read each account's hide rules from plex.tv just now."}

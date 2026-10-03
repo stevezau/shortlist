@@ -13,6 +13,7 @@ import {
 } from "@/lib/row-kinds";
 import { cn } from "@/lib/utils";
 import { selectedVerticalClass } from "@/lib/selected";
+import type { CollectionInput } from "@/lib/types";
 
 /**
  * A radio list where each choice is a title plus one line on what it means. Native radios, so the
@@ -86,13 +87,49 @@ function RadioCards<T extends string>({
   );
 }
 
-/** "What kind of row is this?" — the six kinds, in the picker's order, with the design's copy. */
+export function RowBuildPicker({ value, onChange, sharedDisabledReason, seasonal }: {
+  value: CollectionInput["build"];
+  onChange: (build: CollectionInput["build"]) => void;
+  sharedDisabledReason: ReactNode | null;
+  seasonal: boolean;
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm font-medium">One row each, or one for everyone?</p>
+      <RadioCards
+        label="One row each, or one for everyone?"
+        value={value}
+        onChange={onChange}
+        options={[
+          {
+            value: "per_person",
+            title: "Per person",
+            description: "Each person gets their own row, based on their viewing or requests. Choose how it is filled below.",
+            disabledReason: null,
+          },
+          {
+            value: "shared",
+            title: "Shared",
+            description: seasonal
+              ? "One row for everyone in its audience, filled with the season's most-watched titles on your server."
+              : "One row for everyone in its audience, filled with the titles the most people on your server have watched.",
+            disabledReason: value === "shared" ? null : sharedDisabledReason,
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
+/** Row types compatible with the explicit Per person / Shared choice. */
 export function RowKindPicker({
   value,
+  build,
   onChange,
   disabledReason,
 }: {
   value: RowKind;
+  build: CollectionInput["build"];
   onChange: (kind: RowKind) => void;
   /** Why a kind can't be picked right now, or null when it can. */
   disabledReason: (kind: RowKind) => ReactNode | null;
@@ -102,7 +139,7 @@ export function RowKindPicker({
       label={KIND_GROUP.title}
       value={value}
       onChange={onChange}
-      options={ROW_KINDS.map((kind) => ({
+      options={ROW_KINDS.filter((kind) => kind === "seasonal" || (build === "shared" ? kind === "popular" : kind !== "popular")).map((kind) => ({
         value: kind,
         ...KIND_META[kind],
         disabledReason: disabledReason(kind),
@@ -115,11 +152,24 @@ export function RowKindPicker({
  *  when it lands, so no season decides whether it shows). */
 export function RowFillPicker({
   value,
+  build,
   onChange,
 }: {
   value: RowFill;
+  build: CollectionInput["build"];
   onChange: (fill: RowFill) => void;
 }) {
+  if (build === "shared") {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm font-medium">How it&rsquo;s filled</p>
+        <p className="text-sm text-muted-foreground">
+          Popular on this server · Shared. The season&rsquo;s titles that the most people here have watched.
+          Choose Per person above for personal recommendations or favourites to rewatch.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="space-y-2">
       <p className="text-sm font-medium">
@@ -133,7 +183,7 @@ export function RowFillPicker({
         label="How it's filled"
         value={value}
         onChange={onChange}
-        options={SEASONAL_FILLS.map((fill) => ({
+        options={SEASONAL_FILLS.filter((fill) => fill !== "popular").map((fill) => ({
           value: fill,
           ...FILL_META[fill],
           disabledReason: null,

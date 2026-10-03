@@ -98,7 +98,7 @@ function LibraryAnchor({
   };
 
   return (
-    <div className="space-y-2 rounded-md border p-3">
+    <div className="space-y-2 py-3 first:pt-0 last:pb-0">
       <p className="text-sm font-medium">{library.title}</p>
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
@@ -306,7 +306,7 @@ export function RowShelfPlacement({
           );
         }
         return (
-          <div className="space-y-2">
+          <div className="divide-y">
             {targeted.map((library) => (
               <LibraryAnchor
                 key={library.key}

@@ -147,7 +147,7 @@ describe("SeasonEditorDialog", () => {
     mocks.previewSeason.mockResolvedValue(preview({ total: 26, from_tags: 26, per_tag: { "4543": 26 } }));
     renderEditor({ kind: "preset", preset: THANKSGIVING_US });
     expect(
-      await screen.findByText("People's rows will be much alike — works best in a shared row"),
+      await screen.findByText("People's rows will be much alike. Choose Shared in the row editor to use the season's most-watched titles."),
     ).toBeInTheDocument();
     expect(screen.getByText("26 in your libraries")).toBeInTheDocument();
   });

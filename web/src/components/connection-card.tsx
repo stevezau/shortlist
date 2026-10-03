@@ -286,17 +286,17 @@ export function ConnectionCard({
               {glyph}
             </span>
             <div className="min-w-0 space-y-1">
-              <h3 className="flex flex-wrap items-center gap-2 text-[13px] font-semibold leading-6">
+              <h3 className="flex flex-wrap items-center gap-2 text-sm font-semibold leading-6">
                 {title}
                 <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
                 {/* "Optional" says whether it is needed, not whether it is set up — say that too. */}
                 {!configured && need !== "required" && <span className="sr-only">Not set up</span>}
               </h3>
-              <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">{purpose}</p>
-              {next && <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">{next}</p>}
-              {configured && !editing && <p className="break-words text-xs text-foreground/80">{summary}</p>}
+              <p className="max-w-prose text-sm text-muted-foreground">{purpose}</p>
+              {next && <p className="max-w-prose text-sm text-muted-foreground">{next}</p>}
+              {configured && !editing && <p className="break-words text-sm text-foreground/80">{summary}</p>}
               {test.isSuccess && test.data.ok && !testRequested && !editing && (
-                <TestResult result={test.data} className="text-xs [&>svg]:h-3.5 [&>svg]:w-3.5" />
+                <TestResult result={test.data} className="text-sm [&>svg]:h-3.5 [&>svg]:w-3.5" />
               )}
             </div>
           </div>
@@ -306,7 +306,7 @@ export function ConnectionCard({
               // right where Remove was, so it never wipes a connection on a single click.
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Remove?</span>
+                  <span className="text-sm text-muted-foreground">Remove?</span>
                   <Button
                     variant="destructive"
                     size="sm"
@@ -325,7 +325,7 @@ export function ConnectionCard({
                   </Button>
                 </div>
                 {save.isError && (
-                  <p className="text-xs text-destructive-text">
+                  <p className="text-sm text-destructive-text">
                     {apiErrorMessage(save.error, "Remove failed.")}
                   </p>
                 )}
@@ -419,7 +419,7 @@ export function ConnectionCard({
                         }
                       />
                       {field.hint?.(values) && (
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-sm text-muted-foreground">
                           {field.hint(values)}
                         </p>
                       )}
@@ -463,7 +463,7 @@ export function ConnectionCard({
                     />
                   )}
                   {field.kind !== "select" && field.hint && (
-                    <p className="text-xs text-muted-foreground">{field.hint}</p>
+                    <p className="text-sm text-muted-foreground">{field.hint}</p>
                   )}
                 </div>
               );

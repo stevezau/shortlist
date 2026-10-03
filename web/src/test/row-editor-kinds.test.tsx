@@ -22,7 +22,7 @@ import {
   visibleSettings,
   type RowKindChoice,
 } from "@/lib/row-kinds";
-import { findRowTemplate, type RowTemplate } from "@/lib/row-templates";
+import { findRowTemplate, ROW_TEMPLATES, type RowTemplate } from "@/lib/row-templates";
 import type { Collection, CollectionInput } from "@/lib/types";
 import { BYW_NAME, CTX, FIXTURES, named, row } from "@/test/row-kind-fixtures";
 import { BUILTINS, CATALOGUE } from "@/test/season-fixtures";
@@ -103,12 +103,27 @@ const kindRadio = (name: string) =>
     name,
   });
 
+const buildRadio = (name: "Per person" | "Shared") =>
+  within(screen.getByRole("radiogroup", { name: "One row each, or one for everyone?" })).getByRole("radio", { name });
+
 /** Picks a kind on a saved row and confirms the dialog, taking whatever name it proposes. */
 async function switchTo(kind: string) {
-  await userEvent.click(kindRadio(kind));
-  const dialog = await screen.findByRole("dialog");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Change it" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  const confirm = async () => {
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Change it" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  };
+  if (kind !== "Seasonal") {
+    const mode = buildRadio(kind === "Popular on this server" ? "Shared" : "Per person");
+    if (!(mode as HTMLInputElement).checked) {
+      await userEvent.click(mode);
+      await confirm();
+    }
+  }
+  if (!(kindRadio(kind) as HTMLInputElement).checked) {
+    await userEvent.click(kindRadio(kind));
+    await confirm();
+  }
 }
 
 const savedBody = async () => {
@@ -123,6 +138,97 @@ beforeEach(() => {
   settingsData.current = {};
   librariesData.current = [];
   catalogueData.current = BUILTINS;
+});
+
+describe("explicit Per person / Shared choice", () => {
+  it.each(ROW_TEMPLATES)("$title exposes its mode before any section is opened", (template) => {
+    renderEditor(null, template);
+    document.querySelectorAll<HTMLDetailsElement>("details").forEach((group) => { group.open = false; });
+
+    expect(buildRadio("Per person")).toBeVisible();
+    expect(buildRadio("Shared")).toBeVisible();
+    expect(buildRadio(template.values.build === "shared" ? "Shared" : "Per person")).toBeChecked();
+  });
+
+  it("a new seasonal row switches to shared without losing its season or other choices", async () => {
+    const template = findRowTemplate("seasonal")!;
+    renderEditor(null, { ...template, values: {
+      ...template.values, seasons: ["halloween"], season_lead_days: 17,
+      season_after_days: 4, library_keys: ["1"], audience: "subset", audience_user_ids: [7],
+    } });
+    await userEvent.click(buildRadio("Shared"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(kindRadio("Seasonal")).toBeChecked();
+    expect(buildRadio("Shared")).toBeChecked();
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledTimes(1));
+    expect(createCollection.mock.calls[0]?.[0]).toMatchObject({
+      build: "shared", seasons: ["halloween"], season_lead_days: 17,
+      season_after_days: 4, library_keys: ["1"], audience: "subset", audience_user_ids: [7],
+    });
+  });
+
+  it.each(["because-you-watched", "seen-it-already", "your-requests"])(
+    "%s returns to its personal settings after trying Shared", async (id) => {
+      const template = findRowTemplate(id)!;
+      renderEditor(null, template);
+      await userEvent.click(buildRadio("Shared"));
+      await userEvent.click(buildRadio("Per person"));
+      await save();
+      await waitFor(() => expect(createCollection).toHaveBeenCalledTimes(1));
+      expect(createCollection.mock.calls[0]?.[0]).toMatchObject(template.values);
+    },
+  );
+
+  it("a saved row stays unchanged when Shared is cancelled", async () => {
+    const collection = row({ rewatch: true, request_tag: "family" });
+    renderEditor(collection);
+    await userEvent.click(buildRadio("Shared"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Saving removes everyone's own copy/)).toBeInTheDocument();
+    expect(updateCollection).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(buildRadio("Per person")).toBeChecked();
+    expect(await savedBody()).toEqual(toInput(collection));
+  });
+
+  it("saved Shared confirms the name change and submits through the existing save", async () => {
+    const { onRename } = renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
+    await userEvent.click(buildRadio("Shared"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("New name")).toHaveValue("👥 Popular {library_name} on this server");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Change it" }));
+    expect(updateCollection).not.toHaveBeenCalled();
+    expect(await savedBody()).toMatchObject({ build: "shared", defer_rename: false });
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
+  it("an existing shared seasonal row can become personal and keep its seasons", async () => {
+    renderEditor(row({ ...named("{season} picks"), build: "shared", seasons: ["christmas"] }));
+    await userEvent.click(buildRadio("Per person"));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Change it" }));
+    expect(await savedBody()).toMatchObject({ build: "per_person", seasons: ["christmas"] });
+  });
+
+  it("cannot bypass the default row's watch-based name restriction", async () => {
+    settingsData.current = { "row.name_template": BYW_NAME };
+    renderEditor(row({ slug: "picked", name: "" }));
+    await waitFor(() => expect(buildRadio("Shared")).toBeDisabled());
+    expect(buildRadio("Shared")).toHaveAccessibleDescription(/Change it in Settings first/);
+    expect(screen.getAllByRole("link", { name: "Settings › Row defaults" }).length).toBeGreaterThan(0);
+  });
+
+  it("Discard forgets an unsaved personal fill when reopening the saved shared draft", async () => {
+    renderEditor(row({ build: "shared" }));
+    await switchTo("Watch it again");
+    await switchTo("Popular on this server");
+    await userEvent.type(screen.getByLabelText("Description"), "Draft description");
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(updateCollection).not.toHaveBeenCalled();
+    await userEvent.click(buildRadio("Per person"));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Change it" }));
+    expect(await savedBody()).toMatchObject({ build: "per_person", rewatch: false, description: "" });
+  });
 });
 
 describe("opening a row never changes it", () => {
@@ -153,7 +259,7 @@ describe("each kind shows exactly its settings", () => {
 
   it("keeps matching after a switch, with the settings of the new kind", async () => {
     renderEditor(null);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
 
     const after = applyRowKind(blankInput(), { kind: "popular", fill: "popular" }, CTX);
     expect(renderedSettings()).toEqual([...visibleSettings(after, CTX)].filter((key) => key !== "enabled").sort());
@@ -161,7 +267,7 @@ describe("each kind shows exactly its settings", () => {
 });
 
 describe("the kind picker", () => {
-  it("lists the six kinds with what viewers see, the row's own kind checked", async () => {
+  it("lists the personal kinds with what viewers see, the row's own kind checked", async () => {
     renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
     const group = screen.getByRole("radiogroup", { name: "What kind of row is this?" });
     const titles = [
@@ -170,7 +276,6 @@ describe("the kind picker", () => {
       "Watch it again",
       "Your requests",
       "Seasonal",
-      "Popular on this server",
     ];
     const radios = within(group).getAllByRole("radio");
     expect(radios).toHaveLength(titles.length);
@@ -185,7 +290,7 @@ describe("the kind picker", () => {
     renderEditor(row({ slug: "picked", name: "✨ {library_name} Picked for You" }));
     expect(kindRadio("Seasonal")).toBeDisabled();
     expect(kindRadio("Seasonal")).toHaveAccessibleDescription(/The default row can't be seasonal/);
-    expect(kindRadio("Popular on this server")).toBeEnabled();
+    expect(buildRadio("Shared")).toBeEnabled();
   });
 
   it("switches a NEW row with no dialog", async () => {
@@ -264,7 +369,7 @@ describe("the confirm dialog on a saved row", () => {
   it("says what the switch will do, in describeKindChange's words", async () => {
     const collection = row({ request_tag: "family" });
     renderEditor(collection);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
 
     const dialog = await screen.findByRole("dialog");
     const change = describeKindChange(toInput(collection), choice, CTX);
@@ -277,7 +382,7 @@ describe("the confirm dialog on a saved row", () => {
   it("changes nothing on Cancel", async () => {
     const collection = row();
     renderEditor(collection);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -291,7 +396,7 @@ describe("the confirm dialog on a saved row", () => {
   it("applies exactly applyRowKind once confirmed", async () => {
     const collection = row({ request_tag: "family", seed_window: 1 });
     renderEditor(collection);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     await userEvent.click(screen.getByRole("button", { name: "Change it" }));
 
     expect(kindRadio("Popular on this server")).toBeChecked();
@@ -331,7 +436,7 @@ describe("the confirm dialog on a saved row", () => {
     // Popular, not Watch it again: the engine names a Watch it again row after a watch too, but a
     // shared row has none to fill {top_seed} with (`rows._shared_row`).
     renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     const dialog = await screen.findByRole("dialog");
     const name = within(dialog).getByLabelText("New name");
     await userEvent.clear(name);
@@ -557,8 +662,8 @@ describe("switching kind is reversible, and only the last switch counts", () => 
     await waitFor(() => expect(kindRadio("Seasonal")).toBeEnabled());
 
     kindRadio("Picked for You").focus();
-    // Down through every kind to Popular, then back up to Seasonal.
-    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowUp}");
+    // Down through the personal kinds to Seasonal.
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
     expect(kindRadio("Seasonal")).toBeChecked();
     await save();
 
@@ -566,10 +671,9 @@ describe("switching kind is reversible, and only the last switch counts", () => 
     const body = createCollection.mock.calls[0]?.[0] as CollectionInput;
     expect(body.unstarted_only).toBe(true);
     expect(body.watched_pct).toBe(0);
-    // Seasonal keeps the kind on screen when it is entered — here Popular, itself worked out from the
-    // template, not from the kinds passed on the way.
+    // Your requests cannot be seasonal, so Seasonal starts with Picked for You.
     expect(body).toEqual(
-      applyRowKind({ ...blankInput(), ...template.values }, { kind: "seasonal", fill: "popular" }, CTX),
+      applyRowKind({ ...blankInput(), ...template.values }, { kind: "seasonal", fill: "picked" }, CTX),
     );
   });
 
@@ -661,12 +765,20 @@ describe("switching kind is reversible, and only the last switch counts", () => 
     const ownFill = FILL_META[ownKind.fill].title;
 
     for (const kind of ROW_KINDS.map((k) => KIND_META[k].title)) {
-      if (kind === own || kindRadio(kind).hasAttribute("disabled")) continue;
+      const available = within(screen.getByRole("radiogroup", { name: "What kind of row is this?" })).queryByRole("radio", { name: kind });
+      if (kind === own || available?.hasAttribute("disabled") || (kind === "Popular on this server" && buildRadio("Shared").hasAttribute("disabled"))) continue;
       await switchTo(kind);
       await switchTo(own);
       expect(kindRadio(own), `back from ${kind}`).toBeChecked();
       // Seasonal keeps the kind on screen as its fill; the row's own fill is then picked under it.
       if (ownKind.kind === "seasonal") {
+        const mode = buildRadio(ownKind.fill === "popular" ? "Shared" : "Per person");
+        if (!(mode as HTMLInputElement).checked) {
+          await userEvent.click(mode);
+          await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Change it" }));
+          await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        }
+        if (ownKind.fill === "popular") continue;
         const fill = within(screen.getByRole("radiogroup", { name: "How it's filled" })).getByRole("radio", {
           name: ownFill,
         });
@@ -691,7 +803,7 @@ describe("the default row named after a watch in Settings", () => {
     await waitFor(() => expect(kindRadio("Picked for You")).toBeDisabled());
 
     // Your requests has no watch to fill a {top_seed} name with either.
-    for (const kind of ["Picked for You", "Your requests", "Popular on this server"]) {
+    for (const kind of ["Picked for You", "Your requests"]) {
       expect(kindRadio(kind), kind).toBeDisabled();
       expect(kindRadio(kind), kind).toHaveAccessibleDescription(
         /This row's name \(set in Settings\) follows one watch\. Change it in Settings first\./,
@@ -700,7 +812,7 @@ describe("the default row named after a watch in Settings", () => {
     expect(kindRadio("Watch it again")).toBeEnabled();
     expect(kindRadio("Because you watched")).toBeChecked();
     const links = within(screen.getByRole("radiogroup", { name: "What kind of row is this?" })).getAllByRole("link");
-    expect(links).toHaveLength(3);
+    expect(links).toHaveLength(2);
     for (const link of links) expect(link).toHaveAttribute("href", "/settings#defaults");
   });
 
@@ -782,7 +894,7 @@ describe("saving a kind switch that renames the row", () => {
     // nothing left on Plex to rename: no rename screen, and no deferred rename.
     const collection = row({ ...named(BYW_NAME), max_seeds: 2 });
     const { onClose, onRename } = renderEditor(collection);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("The new name is used when the row is rebuilt.")).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Change it" }));
@@ -887,10 +999,10 @@ describe("the dialog's nightly line", () => {
 describe("focus after the dialog", () => {
   it("goes back to the kind that was picked when the dialog is cancelled", async () => {
     renderEditor(row());
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
 
-    await waitFor(() => expect(kindRadio("Popular on this server")).toHaveFocus());
+    await waitFor(() => expect(buildRadio("Shared")).toHaveFocus());
   });
 
   it("goes back to the kind that was picked when the dialog is closed with Escape", async () => {
@@ -1012,7 +1124,7 @@ describe("a switch never leaves a pair the API refuses", () => {
       await switchTo(away);
       await userEvent.click(await screen.findByRole("checkbox", { name: /TV Shows/ }));
 
-      await userEvent.click(kindRadio("Picked for You"));
+      await userEvent.click(away === "Popular on this server" ? buildRadio("Per person") : kindRadio("Picked for You"));
       const dialog = await screen.findByRole("dialog");
       const lines = within(within(dialog).getByRole("list", { name: "What this changes" }))
         .getAllByRole("listitem")

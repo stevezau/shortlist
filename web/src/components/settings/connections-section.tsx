@@ -256,7 +256,7 @@ function ConnectionGroup({
           <h2 id={`${id}-title`} className="text-sm font-semibold">
             {title}
           </h2>
-          <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">{description}</p>
+          <p className="max-w-prose text-sm text-muted-foreground">{description}</p>
         </div>
         {count && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count}</span>}
       </div>

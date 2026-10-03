@@ -121,7 +121,7 @@ describe("RowSeasonsField", () => {
     expect(within(item).getByText("Yours")).toBeInTheDocument();
     expect(box).toHaveAccessibleDescription(/from 14 days before/);
     expect(await within(item).findByText("26 films")).toBeInTheDocument();
-    expect(within(item).getByText("People's rows will be much alike — works best in a shared row")).toBeInTheDocument();
+    expect(within(item).getByText("People's rows will be much alike. Choose Shared in the row editor to use the season's most-watched titles.")).toBeInTheDocument();
     expect(within(item).getByRole("button", { name: "Edit Thanksgiving" })).toBeInTheDocument();
   });
 

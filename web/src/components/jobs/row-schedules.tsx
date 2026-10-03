@@ -73,48 +73,53 @@ export function RowSchedules() {
         {groups.map((entry, index) => {
           const rows = entry.rows ?? [];
           return (
+            // The icon sits in the job rows' icon column and the text on their name line, so this
+            // list lines up with the two around it: the leading inset is the width of a job row's
+            // chevron and its gap, which a schedule (nothing to expand) has no use for.
             <div
               key={entry.cron}
-              className={`space-y-2 px-3 py-2.5 ${index > 0 ? "border-t" : ""}`}
+              className={`flex items-start gap-2.5 py-2.5 pl-[2.375rem] pr-3 ${index > 0 ? "border-t" : ""}`}
             >
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <CalendarClock
-                  aria-hidden="true"
-                  className="size-4 shrink-0 text-muted-foreground"
-                />
-                <p className="text-sm font-medium">
-                  {describeCron(entry.cron) || entry.cron}
-                </p>
-                {entry.next_run && (
-                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Clock className="size-3 shrink-0" aria-hidden="true" />
-                    {timeUntil(entry.next_run)}
+              <CalendarClock
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+              />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <p className="text-sm font-medium">
+                    {describeCron(entry.cron) || entry.cron}
+                  </p>
+                  {entry.next_run && (
+                    <span className="flex items-center gap-1.5 self-center text-xs text-muted-foreground">
+                      <Clock className="size-3 shrink-0" aria-hidden="true" />
+                      {timeUntil(entry.next_run)}
+                    </span>
+                  )}
+                  {/* The count is what makes the chips below read as a list rather than as tags on
+                      the schedule — and it is the number that matters when one cron drives twelve. */}
+                  <span className="text-xs text-muted-foreground/80">
+                    · builds {rows.length} {rows.length === 1 ? "row" : "rows"}
                   </span>
-                )}
-                {/* The count is what makes the chips below read as a list rather than as tags on
-                    the schedule — and it is the number that matters when one cron drives twelve. */}
-                <span className="text-xs text-muted-foreground/80">
-                  · builds {rows.length} {rows.length === 1 ? "row" : "rows"}
-                </span>
-              </div>
+                </div>
 
-              {/* One link per row, to that row's own editor. The old single "Edit" button pointed
-                  at /rows — the list — because with N names on one line there was no single row it
-                  could mean. It read as "edit this schedule" and could not be. */}
-              <div className="flex flex-wrap gap-1.5">
-                {rows.map((row) => {
-                  const label = row.name || row.slug;
-                  return (
-                    <Link
-                      key={row.id}
-                      to={`/rows/${row.id}`}
-                      title={`Edit ${label}`}
-                      className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      <RowName name={label} className="min-w-0 break-words font-normal" />
-                    </Link>
-                  );
-                })}
+                {/* One link per row, to that row's own editor. The old single "Edit" button pointed
+                    at /rows — the list — because with N names on one line there was no single row it
+                    could mean. It read as "edit this schedule" and could not be. */}
+                <div className="flex flex-wrap gap-1.5">
+                  {rows.map((row) => {
+                    const label = row.name || row.slug;
+                    return (
+                      <Link
+                        key={row.id}
+                        to={`/rows/${row.id}`}
+                        title={`Edit ${label}`}
+                        className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <RowName name={label} className="min-w-0 break-words font-normal" />
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           );

@@ -7,10 +7,13 @@ decides what Shortlist builds, so "I clicked Add and it saved" has to be true en
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
 
+from shortlist.server.db.models import User
+from shortlist.server.db.session import make_engine, make_session_factory
 from tests.e2e.conftest import ShortlistApp
 
 pytestmark = pytest.mark.e2e
@@ -85,9 +88,7 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
     _open_rows(page)
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Popular Here")
-    # One row for everyone is the Popular on this server kind; a new row switches with no dialog.
-    page.locator("details[data-setting=kind] > summary").click()
-    page.get_by_role("radio", name="Popular on this server", exact=True).click()
+    page.get_by_role("radio", name="Shared", exact=True).click()
     # The aggregate-privacy control appears only for shared rows.
     expect(page.get_by_text("Only titles watched by at least")).to_be_visible()
     page.get_by_role("button", name="Add row").click()
@@ -95,6 +96,159 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
     expect(page.get_by_text("Popular Here").first).to_be_visible(timeout=LOAD)
     created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == "Popular Here")
     assert created["build"] == "shared"
+
+
+@pytest.mark.parametrize(("build", "width"), [("shared", 390), ("per_person", 1440)])
+def test_a_seasonal_template_keeps_its_seasons_when_choosing_shared_or_per_person(
+    page: Page, app: ShortlistApp, build: str, width: int, tmp_path: Path
+):
+    page.set_viewport_size({"width": width, "height": 900})
+    _open_rows(page)
+    page.get_by_role("button", name="Add a row").click()
+    page.get_by_role("group", name="Templates", exact=True).get_by_role("button", name=re.compile(r"^Seasonal")).click()
+    page.get_by_role("button", name="Use template").click()
+    expect(page.get_by_role("heading", name="Add a row")).to_be_visible(timeout=LOAD)
+    expect(page.get_by_role("radio", name="Per person", exact=True)).to_be_checked()
+    page.get_by_role("radiogroup", name="How it's filled").get_by_role(
+        "radio", name="Watch it again", exact=True
+    ).click()
+    page.locator('li[data-season="valentines"]').get_by_role("checkbox").uncheck()
+    name = f"Seasonal {build} regression"
+    page.get_by_label("Name", exact=True).fill(name)
+
+    page.get_by_role("radio", name="Shared", exact=True).click()
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    if build == "per_person":
+        page.get_by_role("radio", name="Per person", exact=True).click()
+        expect(
+            page.get_by_role("radiogroup", name="How it's filled").get_by_role(
+                "radio", name="Watch it again", exact=True
+            )
+        ).to_be_checked()
+    page.get_by_role("radio", name="Shared", exact=True).scroll_into_view_if_needed()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=tmp_path / f"row-sharing-{width}.png")
+    page.get_by_role("button", name="Add row").click()
+    expect(_saved_row(page, name)).to_be_visible(timeout=LOAD)
+
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == name)
+    assert created["build"] == build
+    assert set(created["seasons"]) == {"halloween", "christmas"}
+    assert created["rewatch"] is (build == "per_person")
+    _edit_row(page, name)
+    expect(page.get_by_role("radio", name="Shared" if build == "shared" else "Per person", exact=True)).to_be_checked()
+
+
+def test_changing_a_saved_rows_sharing_requires_confirmation_and_save(page: Page, app: ShortlistApp):
+    _open_rows(page)
+    _add_a_row(page)
+    name = "Sharing confirmation regression"
+    page.get_by_label("Name", exact=True).fill(name)
+    page.get_by_role("button", name="Add row").click()
+    expect(_saved_row(page, name)).to_be_visible(timeout=LOAD)
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == name)
+    row_id = created["id"]
+
+    for choice, previous, expected in [("Shared", "per_person", "shared"), ("Per person", "shared", "per_person")]:
+        _edit_row(page, name)
+        page.get_by_role("radio", name=choice, exact=True).click()
+        dialog = page.get_by_role("dialog")
+        expect(dialog).to_contain_text("Saving removes")
+        dialog.get_by_role("button", name="Cancel", exact=True).click()
+        expect(
+            page.get_by_role("radio", name="Per person" if previous == "per_person" else "Shared", exact=True)
+        ).to_be_checked()
+        assert next(c for c in app.api("GET", "/api/collections").json() if c["id"] == row_id)["build"] == previous
+
+        page.get_by_role("radio", name=choice, exact=True).click()
+        dialog.get_by_role("button", name="Change it", exact=True).click()
+        expect(page.get_by_role("radio", name=choice, exact=True)).to_be_checked()
+        assert next(c for c in app.api("GET", "/api/collections").json() if c["id"] == row_id)["build"] == previous
+        page.get_by_role("button", name="Save changes").click()
+        expect(_saved_row(page, name)).to_be_visible(timeout=LOAD)
+        assert next(c for c in app.api("GET", "/api/collections").json() if c["id"] == row_id)["build"] == expected
+
+
+@pytest.mark.parametrize("width", [320, 390, 1440])
+def test_a_large_audience_keeps_selections_across_pages_search_and_save(
+    page: Page, app: ShortlistApp, width: int, tmp_path: Path
+):
+    engine = make_engine(app.config_dir)
+    try:
+        with make_session_factory(engine)() as session:
+            session.add_all(
+                User(
+                    plex_account_id=600_000 + index,
+                    username=f"audience{index:03}",
+                    slug=f"audience{index:03}",
+                    enabled=True,
+                )
+                for index in range(1, 97)
+            )
+            session.commit()
+    finally:
+        engine.dispose()
+    users = {user["username"]: user["id"] for user in app.api("GET", "/api/users").json()}
+    assert len(users) == 100
+    page.set_viewport_size({"width": width, "height": 900})
+    _open_rows(page)
+    _add_a_row(page)
+    name = f"Audience pagination {width}"
+    page.get_by_label("Name", exact=True).fill(name)
+    audience = page.locator('[data-setting="audience"]')
+    table = audience.get_by_role("table", name="People")
+    search = audience.get_by_role("searchbox", name="Search people")
+    expect(table.locator("tbody tr")).to_have_count(10)
+    expect(audience.get_by_role("switch")).to_have_count(0)
+    audience.get_by_role("button", name="Next page", exact=True).click()
+    expect(audience.get_by_role("status")).to_contain_text("11\u201320 of 100 people")
+    search.fill("audience096")
+    expect(table.locator("tbody tr")).to_have_count(1)
+    search.fill("")
+    search.evaluate("element => element.scrollIntoView({behavior: 'instant', block: 'center'})")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=tmp_path / f"audience-everyone-{width}.png")
+    audience.get_by_role("button", name="Choose people", exact=True).click()
+    audience.get_by_role("combobox", name="People per page").select_option("25")
+
+    first = audience.get_by_role("switch").first
+    first_name = first.get_attribute("aria-label")
+    first.click()
+    audience.get_by_role("button", name="Next page", exact=True).click()
+    second = audience.get_by_role("switch").first
+    second_name = second.get_attribute("aria-label")
+    second.click()
+    search.fill("audience096")
+    audience.get_by_role("switch", name="audience096", exact=True).click()
+    selected = {users[first_name], users[second_name], users["audience096"]}
+    assert len(selected) == 3
+    search.fill("nobody-matches-this")
+    expect(audience.get_by_role("switch")).to_have_count(0)
+    search.fill("")
+    expect(audience.get_by_role("switch", name=first_name, exact=True)).to_be_checked()
+    expect(audience.get_by_role("switch")).to_have_count(25)
+    assert table.locator(f'[title="{first_name}"]').evaluate("element => element.scrollWidth <= element.clientWidth")
+    search.evaluate("element => element.scrollIntoView({behavior: 'instant', block: 'center'})")
+    if width == 1440:
+        for medium_width in (1024, 1280):
+            page.set_viewport_size({"width": medium_width, "height": 900})
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            expect(audience.get_by_role("switch", name=first_name, exact=True)).to_be_visible()
+        page.set_viewport_size({"width": width, "height": 900})
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=tmp_path / f"audience-pagination-{width}.png")
+    page.get_by_role("button", name="Add row").click()
+    expect(_saved_row(page, name)).to_be_visible(timeout=LOAD)
+
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == name)
+    assert created["audience"] == "subset"
+    assert set(created["audience_user_ids"]) == selected
+    _edit_row(page, name)
+    audience.get_by_role("button", name="3 of 100 people chosen").click()
+    for username in (first_name, second_name, "audience096"):
+        audience.get_by_role("searchbox", name="Search people").fill(username)
+        expect(audience.get_by_role("switch", name=username, exact=True)).to_be_checked()
+    expect(page.get_by_role("button", name="Discard", exact=True)).to_be_disabled()
 
 
 def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp):

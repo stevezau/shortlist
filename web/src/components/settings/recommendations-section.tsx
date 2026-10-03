@@ -236,9 +236,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               {enabled.includes(source.id) && <InlineFix sourceId={source.id} settings={settings} />}
             </SettingRow>
           ))}
-          {enabled.length === 0 && <p role="status" className="px-4 py-3 text-xs text-warning sm:px-5">Nothing enabled — Shortlist falls back to its defaults (TMDB similar + discover). Turn on at least one source to choose your own.</p>}
+          {enabled.length === 0 && <p role="status" className="px-4 py-3 text-sm text-warning sm:px-5">Nothing enabled — Shortlist falls back to its defaults (TMDB similar + discover). Turn on at least one source to choose your own.</p>}
           <SettingDisclosure title="Web search" value={webSearchOn ? "On" : "Off"} description="Discovery beyond the usual sources, through AI & web search." defaultOpen={webSearchOn}>
-            <p className="text-xs leading-relaxed text-muted-foreground">The TMDB sources find titles without AI. Set the provider to <strong>None</strong> in <Link to="/settings/connections#connection-llm" className="font-medium text-primary hover:underline">Connections</Link> and you still get full rows, ranked by score with plain reasons.</p>
+            <p className="text-sm text-muted-foreground">The TMDB sources find titles without AI. Set the provider to <strong>None</strong> in <Link to="/settings/connections#connection-llm" className="font-medium text-primary hover:underline">Connections</Link> and you still get full rows, ranked by score with plain reasons.</p>
             <AiWebSearchCard settings={settings} enabled={webSearchOn} onToggle={() => toggle("llm_web")} />
             <AiInstructionsDefault value={aiInstructions} onChange={setAiInstructions} webSearchOn={webSearchOn} builtin={builtin} />
           </SettingDisclosure>

@@ -2,7 +2,7 @@
 title: Rows and templates
 description: Start a row from a template, choose what kind of row it is, and name it. What fills each kind, seasonal rows and where a row sits on Plex each have their own page.
 heading: Rows and templates
-updated: 2026-10-03
+updated: 2026-10-04
 dev_preview: true
 ---
 
@@ -32,6 +32,8 @@ what it changes; every field remains editable afterwards.
 The compact gallery adds search, filters and a selected-template preview.
 **Use template** opens the editor; **Start from scratch** opens an empty row directly. The development
 build also adds _Your requests_, for titles someone requested that are now ready on Plex.
+In the editor, **Per person / Shared** stays visible above **Row type**, whichever template you
+start from. The template selects a starting choice; you can change it before saving.
 
 </div>
 </details>
@@ -46,23 +48,27 @@ operations have their own actions.
 <summary><span class="dev-preview__tag">Development preview</span> Editor navigation</summary>
 <div class="dev-preview__body" markdown="1">
 
-The editor labels its current **Row type** and starts with the appearance fields. The sticky section
-buttons use the same names as their headings: **Appearance**, **Row settings**, **Audience**,
-**Titles & filters**, **Schedule**, **Plex placement** and **Requests**. Choosing one opens it,
-places its heading below the navigation and briefly highlights the destination. The active button
-also follows the section you read while scrolling. Keyboard focus moves to the section heading;
-reduced-motion preferences disable animated scrolling. Folding a section keeps its draft intact.
-Delivery and watch metrics are visible under **How this row is doing**, including when it is too
-early to judge a row. The preview shows an explicitly illustrative row, audience, size, the viewing
-basis and sources, watched-title policy, schedule and placement. **All outcome details** retains
-the remaining settings summary.
-The outcome facts stay beside the form on a desktop and remain visible above the settings on a
-phone; its section buttons appear immediately below the page heading, before the visible performance
-and outcome facts. Only the illustrative artwork preview is folded there. **Save changes** remains at the bottom of the screen.
+The editor shows **One row each, or one for everyone?** with **Per person** and **Shared** choices,
+then labels its current **Row type**. **Per person** gives each person their own picks; **Shared**
+gives everyone in the selected audience the same server-popular titles. The row types offered follow
+that choice, and Seasonal is available in both.
+
+The section links use the same names as their headings: **Name & look**, **Who gets it**,
+**What goes in**, **Schedule**, **Placement** and **Requests**. They jump to that
+part of the editor. The save bar summarizes draft changes before you apply them.
 
 Row settings stay a draft until you save. **Rename**, artwork operations and the row's on/off switch
 keep their separate actions. **Rated by · global setting** saves immediately and affects every row
 and Requests; its saving, success or error message appears beside that control.
+
+Under **Who gets it**, **Everyone** reaches everyone with Shortlist enabled; **Choose people** lets
+you select individual recipients. The people lists show ten per page by default. Use **Search
+people** to find someone, or **Show** to display 10, 25, 50 or All people. The result count and
+Previous/Next controls show where you are in the list.
+
+Searching and paging only change the list you see, not who gets the row. Selections stay selected
+across searches and pages and apply when you save the row. The audience table keeps the library
+and account-hiding information for each recipient.
 
 </div>
 </details>
@@ -70,7 +76,8 @@ and Requests; its saving, success or error message appears beside that control.
 ## Row kinds
 
 Stable has five row kinds; the development build adds **Your requests** as a sixth. In stable,
-use **What kind of row is this?**; in the development editor, choose **Change row type**. Each kind fills the row in a different way, and picking one changes which
+use **What kind of row is this?**; in the development editor, choose **Per person** or **Shared**,
+then **Change row type**. Each kind fills the row in a different way, and picking one changes which
 settings appear below it, so you're never hunting for a setting that doesn't apply to what your row
 does:
 
@@ -89,6 +96,9 @@ others. Pick it, choose which seasons the row follows, then choose **how it's fi
 Because you watched, Watch it again, or Popular on this server. The settings for whichever fill you
 pick then show underneath, exactly as they would if the row weren't seasonal at all — so every
 combination (a seasonal "Because you watched" row, a seasonal shared row, and so on) stays reachable.
+In the development editor, **Per person** offers the three personal fills under **What goes in →
+How it's filled**. Choose **Shared** above **Row type** to fill a seasonal row with Popular on this
+server instead. Switching between these choices keeps the seasons and their timing.
 A Your requests row is the one kind that can't be seasonal: a request lands when it lands, so no
 season decides whether the row shows. See [Seasonal rows](rows/seasonal.md).
 
@@ -103,6 +113,8 @@ first: "Change this row to X?", then a plain sentence for each thing that will c
 appear, settings that disappear, and anything the new kind forces (a row whose name follows a watch,
 for example, picks new titles every night). Nothing is applied until you confirm. On a new, unsaved
 row the switch just applies, since there's nothing on Plex yet to warn you about.
+The development editor's **Per person / Shared** choice uses this same confirmation. Cancelling
+leaves the draft unchanged; confirming updates the draft, and saving applies it.
 
 Switching is always worked out from the row as you opened it (or, for a new row, as its template
 filled it in), plus anything you've changed by hand in a setting that kind has — never from the kind
