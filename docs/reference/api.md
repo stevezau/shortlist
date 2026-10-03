@@ -164,6 +164,16 @@ PATCH /api/collections/{id} {dry_run: true} · DELETE /api/collections/{id}?dry_
      unknown" — two answers that otherwise arrive as the same empty plan.
      `dry_run` is rejected with 422 on POST: creating a row has nothing to preview, and silently
      ignoring the flag would mean a documented preview parameter that writes.
+POST/PATCH /api/collections: `ai_instructions: {mode: "default"|"add"|"own", text}`
+     Per-row instructions for AI web search. `default` follows the server-wide `llm_web.instructions`
+     setting, `add` appends the row's text after it, `own` uses only the row's text. `text` is up to 2000
+     characters. `add` or `own` with no text is rejected with 422 "Write the AI instructions, or choose
+     Use the default."
+POST /api/ai/web-prompt-preview {ai_instructions?, server_text?} -> {backend, system, builtin_guidance, builtin_template, inert}
+     What AI web search would be told, without searching or saving anything (owner only). `builtin_template`
+     is `builtin_guidance` with `{count}`, `{year}` and `{last_year}` left unfilled. `inert` is true when the
+     instructions would have no effect: no AI provider is configured, or the backend is native and the
+     provider can't search the web itself.
 GET  /api/picks/{rating_key}/poster -> image bytes
      A pick's artwork, proxied from the PMS rather than fetched from TMDB. Every `Pick` carries a
      `rating_key` and only one of the four construction sites carries a `poster_path`, so the PMS is the

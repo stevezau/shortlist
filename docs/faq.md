@@ -93,7 +93,7 @@ See [AI and cost](guides/ai.md) for the full breakdown and cost controls.
 ## Which web-search backend should I use?
 
 The optional web-search source can search in three ways, and you pick one in
-**Settings → Connections → Web search**:
+**Settings → Connections → AI & Web search**:
 
 | Option                              | Works with                         | Trade-off                                                 |
 | ----------------------------------- | ---------------------------------- | --------------------------------------------------------- |

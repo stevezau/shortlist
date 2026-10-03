@@ -162,3 +162,50 @@ people's copies of one row shuffle differently.
 arrived, so there is nothing to put in front. How often that happens is **How often rows rebuild**,
 not this setting. If the front of a row feels stuck, the rebuild cadence is usually the dial you
 want, and **Taking turns** is the one that moves the front every night regardless.
+
+## AI instructions
+
+When **AI web search** is one of a row's sources, the row editor shows an **AI instructions** field
+under **What goes in**. It tells the AI what to look for, such as "prefer award-winning dramas from
+the last ten years" or "no horror". You can also set a server-wide default in **Settings → Defaults →
+Title sources**, inside the **Web search** panel. It saves on its own. Leave it empty and Shortlist's
+built-in guidance is used. **Write your own** there starts from Shortlist's wording, placeholders
+included, and saving it unchanged keeps the built-in default, so no row rebuilds.
+
+Each row picks one of three modes:
+
+- **Use the default**: the row follows the server-wide text.
+- **Add to the default**: the server-wide text, then yours after it.
+- **Write your own**: your text replaces the default guidance. Shortlist's fixed parts, listed below,
+  still apply.
+
+The text can be up to 2000 characters. Three placeholders fill in when the AI is asked:
+`{count}` is how many titles it is asked for, `{year}` is this year and `{last_year}` is last year. Any
+other brace is sent exactly as you typed it.
+
+Shortlist always adds a few things you can't change: today's year, an instruction to search rather
+than answer from memory, the exact title and release year for every pick, released titles only, and
+the reply format. Every suggestion is still checked against your library, each person's watch history
+and what they're allowed to see, so instructions can narrow a row but can't put a title in front of
+someone who shouldn't see it.
+
+What to expect:
+
+- **Only AI web search reads them.** TMDB and Trakt sources on the same row don't, so a row with
+  both is a mix.
+- **With Exa**, searches start from each person's recent watches and are shared between people. The
+  instructions decide which of Exa's titles the AI keeps, not what Exa searches for.
+- **With Claude, GPT or Gemini searching for themselves**, the instructions steer the search too.
+- **With SearXNG**, they decide which titles the AI picks from the results.
+- **With no AI provider**, they have no effect. Exa's titles are used as found, and the other
+  backends don't run AI web search at all.
+- **With a provider that can't search for itself**, such as a local model, and no Exa or SearXNG
+  chosen, they have no effect either. Choose Exa or SearXNG in **Settings → Connections**.
+- **Changing them rebuilds the row** on its next run. That goes for a row's own instructions and for
+  the server-wide default a row uses.
+- **Cost.** Rows with different instructions can't share one AI web search, so such a row may cost
+  its own AI call per person each run.
+- **There are no per-person instructions.**
+
+Before saving you can open the preview in the editor to see exactly what the AI will be sent. It
+writes nothing.

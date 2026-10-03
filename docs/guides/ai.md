@@ -47,7 +47,13 @@ works with **any** provider, including a local Ollama, llama.cpp or LM Studio se
 access of its own. A local model that could never search the web still gets to recommend from current
 web results.
 
-You choose the search backend in **Settings → Connections → Web search**, which is also where
+**Telling it what to look for.** You can add your own guidance for the AI, such as "prefer
+award-winning dramas" or "no horror". Set a server-wide default in **Settings → Defaults → Title
+sources**, or write it per row in the row editor under **What goes in**. Shortlist still checks every
+suggestion against your library and what each person may see. The
+[full details](rows/what-goes-in.md#ai-instructions) cover the modes and what each backend does with it.
+
+You choose the search backend in **Settings → Connections → AI & Web search**, which is also where
 that backend's credentials live:
 
 | Backend                             | Works with                                 | Trade-off                                              |

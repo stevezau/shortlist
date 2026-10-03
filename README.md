@@ -114,16 +114,17 @@ anything.</sub>
   container serves your whole server, and the owner gets a row too, so it's worth running on a
   one-person server.
 - 🧠 **Smart picks, no hallucinations** — every pick is a title verified to exist in your library,
-  never invented. **No AI key required**: the built-in picker runs entirely in code. An optional LLM
-  (Claude / GPT / Gemini, or any local server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI) writes
-  the reasons and adds one extra source, a live web search for what to watch next.
+  never invented. **No AI key required**: ranking and the reasons are written in code. An optional AI
+  provider (Claude / GPT / Gemini, or any local server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI)
+  powers one extra source, a live web search for what to watch next.
 - 🌐 **Candidates from more than one place** — TMDB, Trakt, and an optional web search for current,
   well-reviewed titles those two miss.
 - 🔎 **Web search that works with _any_ model, even offline ones** — Shortlist runs the search
   itself, so your model never needs internet access. Via your provider's own web search, an
   [Exa](https://exa.ai) key, or your own [SearXNG](https://docs.searxng.org).
-  [How it works →](https://shortlistapp.dev/guides/ai/#the-one-ai-powered-source)
-- 💬 **Explains itself** — every pick says "Because you watched X".
+  [How it works →](https://shortlistapp.dev/guides/ai/#the-one-ai-powered-source) Tell it what to look
+  for with AI instructions, server-wide or per row.
+- 💬 **Explains itself** — every pick says "Because you watched X", with the reason written in code.
 - 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, so one series
   can't drown out everything else.
 

@@ -2,7 +2,7 @@
 
 A private, AI-curated "Picked for You" row for every user on a Plex server. One Docker container:
 FastAPI backend + React SPA + SQLite, with a pure-Python engine (per-user watched set read from the
-PMS via each share's server token → TMDB similar-titles → LLM curate/explain → per-user Plex
+PMS via each share's server token → TMDB similar-titles (+ optional AI web search) → ranking and reasons in code → per-user Plex
 collection + label-restriction privacy).
 
 **Status: 1.0.** In production on the maintainer's server: the FastAPI server runs the engine on

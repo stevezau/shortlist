@@ -40,7 +40,7 @@ label-restriction behaviour in PMS 1.43.2 (May 2026).
 - Admin signs in once with Plex (PIN flow, no passwords), completes a 7-step setup wizard, picks which users
   get rows, and leaves it.
 - Each run: read each person's watch history from the PMS, fetch candidates (TMDB similar/recommendations,
-  Trakt, optional web search), optionally curate and explain with an LLM, write a per-user Plex collection,
+  Trakt, optional web search), optionally ask an AI to suggest titles through web search, write a per-user Plex collection,
   merge privacy excludes, then promote. Optional: auto-request great picks not in the library via
   Radarr/Sonarr/Seerr.
 - Coexists with Kometa, Agregarr and other tools that manage collections on the same server; it must touch
