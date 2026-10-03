@@ -639,15 +639,10 @@ hr {
   text-wrap: pretty;
 }
 
-/* The stage keeps the site's own dark values in both themes: the Plex captures on it are dark, and
-   a light frame around them reads as a hole in the page. */
+/* No frame of its own: each capture is already a card (its corners are transparent), so the two
+   Homes sit straight on the page and the captions below them use the page's own text colours. */
 .home-stage {
   margin: 0;
-  padding: clamp(0.6rem, 0.4rem + 0.6vw, 1rem);
-  background: #0d0d10;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
 }
 
 .home-homes {
@@ -663,41 +658,39 @@ hr {
 
 .home-home img {
   width: 100%;
-  border-radius: 10px;
-  /* The crop stops mid-row, the way a Plex row runs off the screen. */
-  -webkit-mask-image: linear-gradient(90deg, #000 84%, transparent 100%);
-  mask-image: linear-gradient(90deg, #000 84%, transparent 100%);
+  height: auto;
+  filter: drop-shadow(0 18px 32px rgba(0, 0, 0, 0.28));
 }
 
 .home-home__cap {
-  margin: 0.65rem 0.2rem 0;
+  margin: 0.75rem 0.2rem 0;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.1rem 0.6rem;
   font-size: 0.95rem;
   line-height: 1.45;
-  color: #c9c9d1;
+  color: var(--text-soft);
 }
 
 .home-home__cap strong {
-  color: #f4f4f5;
+  color: var(--text);
   font-weight: 650;
 }
 
 .home-home__cap i {
   font-style: normal;
-  color: #f4f4f5;
+  color: var(--text);
 }
 
 .home-stage figcaption {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin: 0.95rem 0.2rem 0.1rem;
-  padding-top: 0.8rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
-  color: #f4f4f5;
+  margin: 1rem 0.2rem 0;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  color: var(--text);
   font-size: 0.95rem;
   font-weight: 560;
 }
@@ -712,8 +705,8 @@ hr {
 .home-install {
   display: grid;
   gap: 1.25rem clamp(2rem, 1rem + 3vw, 3.5rem);
-  margin-top: clamp(1.25rem, 0.9rem + 1.4vw, 2rem);
-  align-items: center;
+  margin-top: clamp(1.5rem, 1rem + 1.6vw, 2.25rem);
+  align-items: start;
 }
 
 @media (min-width: 1000px) {
@@ -781,13 +774,22 @@ hr {
   color: var(--muted);
 }
 
+/* Every fact carries a leading "·"; the list is pulled left by one separator's width and that strip
+   is clipped, so the separator at the start of each wrapped line disappears and no line ends on one. */
+.home-facts {
+  margin-left: -1.6rem;
+  clip-path: inset(-1px 0 0 1.6rem);
+}
+
 .home-facts li {
   white-space: nowrap;
 }
 
-.home-facts li:not(:last-child)::after {
+.home-facts li::before {
   content: "·";
-  margin: 0 0.7rem;
+  display: inline-block;
+  width: 1.6rem;
+  text-align: center;
   color: var(--border-strong);
 }
 
@@ -868,8 +870,29 @@ hr {
 }
 
 .home-ledger h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
   font-size: 1.08rem;
-  margin-bottom: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+/* One drawn mark per column, in a small tile, so the three heads read as a set. */
+.home-ledger__icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-soft);
+}
+
+.home-ledger__col--undo .home-ledger__icon {
+  color: var(--accent-text);
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
 }
 
 .home-ledger ul {
@@ -877,26 +900,40 @@ hr {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.75rem;
 }
 
+/* Hairlines between items, not loose dots: each claim is one row of the ledger. */
 .home-ledger li {
   position: relative;
-  padding-left: 1.05rem;
+  padding: 0.8rem 0 0.8rem 1.1rem;
+  border-top: 1px solid var(--border);
   color: var(--muted);
   font-size: 0.93rem;
   line-height: 1.6;
   text-wrap: pretty;
 }
 
+.home-ledger li:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
 .home-ledger li::before {
   content: "";
   position: absolute;
   left: 0;
-  top: 0.62em;
-  width: 6px;
-  height: 6px;
+  top: calc(0.8rem + 0.62em);
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.home-ledger li:first-child::before {
+  top: 0.62em;
+}
+
+.home-ledger__col--undo li::before {
   background: var(--accent-line);
 }
 
@@ -917,10 +954,25 @@ hr {
 }
 
 .home-ledger__note {
-  margin: 1.5rem 0 0;
-  font-size: 0.88rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin: clamp(1.5rem, 1rem + 1vw, 2rem) 0 0;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 0.9rem;
+  line-height: 1.55;
   color: var(--muted);
-  max-width: 60rem;
+}
+
+.home-ledger__note svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 0.12em;
+  color: var(--text-soft);
 }
 
 .home-kinds-head {
@@ -942,64 +994,121 @@ hr {
   font-size: 0.95rem;
 }
 
-/* One strip, not an icon grid: the 1px gaps over a border-coloured background draw the rules. */
+/* Six little Plex rows: the title as Plex shows it over three posters, on the same dark "screen" in
+   both themes (Plex is dark, like the hero captures), with the kind's own line under it. */
 .home-kinds {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
+  gap: clamp(1.25rem, 0.9rem + 1vw, 1.75rem) clamp(1rem, 0.6rem + 1vw, 1.5rem);
 }
 
 @media (min-width: 700px) {
   .home-kinds {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (min-width: 1100px) {
   .home-kinds {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
-.home-kinds li {
+.home-kind {
   display: grid;
   align-content: start;
-  gap: 0.3rem;
-  padding: 1rem 1.1rem 1.1rem;
-  background: var(--surface);
+  gap: 0.7rem;
 }
 
-.home-kinds strong {
-  font-size: 0.97rem;
-  font-weight: 640;
+.home-kind__screen {
+  padding: 0.95rem 0 1rem 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #141417;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.home-kind__row {
+  margin: 0 1rem 0.7rem 0;
+  font-size: 0.98rem;
+  font-weight: 650;
   letter-spacing: -0.01em;
-  color: var(--text);
+  color: #ececef;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.home-kinds span {
-  font-size: 0.86rem;
+/* The third poster runs to the screen's edge and fades there, the way a Plex row carries on past
+   the screen; nothing is cut off with a label under it. */
+.home-kind__posters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent 100%);
+  mask-image: linear-gradient(90deg, #000 88%, transparent 100%);
+}
+
+.home-kind__posters img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #1d1d22;
+}
+
+.home-kind__desc {
+  margin: 0 0.15rem;
+  font-size: 0.9rem;
   line-height: 1.5;
   color: var(--muted);
   text-wrap: pretty;
 }
 
-.home-kinds .tag {
-  margin: 0.1rem 0 0;
+.home-kind__desc strong {
+  color: var(--text);
+  font-weight: 640;
+}
+
+.home-kind .tag {
+  margin: -0.2rem 0 0 0.15rem;
   justify-self: start;
   white-space: nowrap;
 }
 
 .home-kinds-more {
-  margin: 1rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+  margin: clamp(1.5rem, 1rem + 1vw, 2rem) 0 0;
   font-size: 0.9rem;
   color: var(--muted);
+}
+
+.home-chips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.home-chips li {
+  padding: 0.22rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 .home-split .faq {
@@ -1026,7 +1135,10 @@ hr {
   /* The stage reaches halfway into the side gutter on a phone, so each Home is at least 340px wide. */
   .home-stage {
     margin-inline: calc(var(--gutter) / -2);
-    padding: 0.5rem;
+  }
+  .home-home__cap,
+  .home-stage figcaption {
+    margin-inline: calc(var(--gutter) / 2);
   }
   .home .codeblock pre {
     font-size: 0.75rem;
@@ -1262,8 +1374,10 @@ hr {
     margin-top: 0.3rem;
     /* A width, not a max-width: each step is its own grid, so an auto column
        sizes to that row's own text and the chips come out ragged down the
-       left. Fixing the width lines all four up into one rail. */
-    width: 13rem;
+       left. Fixing the width lines all four up into one rail. Wide enough for the longest chip
+       ("On the intended viewer's Home") on one line: a pill that wraps reads as broken. */
+    width: 15rem;
+    white-space: nowrap;
   }
 }
 
@@ -1619,11 +1733,28 @@ hr {
   flex-wrap: wrap;
   gap: 0.5rem 1.5rem;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   border-top: 1px solid var(--border);
   padding-top: 1.5rem;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.footer__notices {
+  display: grid;
+  gap: 0.25rem;
+}
+
+@media (min-width: 900px) {
+  .footer__notices {
+    text-align: right;
+  }
+}
+
+/* The footer spans the same width as the nav and the docs grid above it, so its left edge lines up
+   with the logo and the sidebar instead of sitting 80px inside them. */
+.footer .wrap {
+  width: min(100% - var(--gutter) * 2, 1400px);
 }
 
 /* ---------------------------------------------------------- docs layout -- */
@@ -1822,13 +1953,13 @@ hr {
   font-weight: 640;
 }
 
+/* A callout is a tinted box with one even hairline, not a thick coloured stripe down its left side. */
 .prose blockquote {
   margin: 1.5rem 0;
   padding: 0.9rem 1.2rem;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
+  border: 1px solid var(--accent-line);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--accent-quiet);
   color: var(--text-soft);
 }
 
@@ -2129,8 +2260,7 @@ hr {
 /* Development preview: one closed box per section of dev-only text, never interleaved with stable. */
 .prose .dev-preview {
   margin: 1.5rem 0 1.75rem;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
