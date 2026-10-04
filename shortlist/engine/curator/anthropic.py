@@ -107,14 +107,14 @@ class AnthropicCurator:
         text = "".join(b.text for b in response.content if b.type == "text")
         return parse_web_titles(text, k)
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         """Plain completion (no tools) — the external-search ``llm_web`` path (see base.complete)."""
         import anthropic
 
         try:
             response = self._client.messages.create(
                 model=self._model,
-                max_tokens=2048,
+                max_tokens=max_tokens or 2048,
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )

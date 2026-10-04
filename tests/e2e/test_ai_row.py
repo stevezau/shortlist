@@ -41,7 +41,7 @@ class _FakeCurator:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         self.calls.append((system, user))
         return json.dumps(
             {

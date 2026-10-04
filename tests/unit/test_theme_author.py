@@ -33,8 +33,9 @@ class _Curator:
         self.answer = answer
         self.calls: list[tuple[str, str]] = []
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         self.calls.append((system, user))
+        self.max_tokens = max_tokens
         return self.answer
 
 
@@ -334,12 +335,62 @@ class TestCaps:
         assert "b" * 1001 not in user
 
 
+def _cut_off_reply(complete_titles: int = 30, cut: str = ' {"media": "movie", "title": "The Pre') -> str:
+    """The shape of the live failure: a ```json fence that is never closed, ending mid-object."""
+    done = ",".join(
+        json.dumps({"media": "movie", "title": "Memento", "year": 2000, "reason": "Told {backwards}."})
+        for _ in range(complete_titles)
+    )
+    return (
+        '```json\n{"name": "Twist Endings", "emoji": "🌀", "rules": {"max_runtime": null}, '
+        '"tags": [], "genres": ["Thriller"], "drop_tags": [], "drop_genres": [], "titles": [' + done + "," + cut
+    )
+
+
+class TestCutOffReply:
+    def test_asks_for_a_long_reply(self):
+        _, curator = _author(_answer())
+
+        assert curator.max_tokens == 8000
+
+    def test_a_reply_cut_inside_the_titles_keeps_the_complete_ones(self):
+        draft, _ = _author(_cut_off_reply())
+
+        assert draft.stats.truncated is True
+        assert draft.stats.named == 30
+        assert draft.spec.name == "Twist Endings"
+
+    def test_a_whole_answer_is_not_flagged_truncated(self):
+        draft, _ = _author(_answer())
+
+        assert draft.stats.truncated is False
+
+    def test_a_reply_cut_inside_the_name_gives_the_plain_error(self):
+        with pytest.raises(ThemeAuthorError) as error:
+            _author('```json\n{"name": "Twist End')
+
+        assert "cut off or unreadable" in str(error.value)
+
+    def test_a_reply_cut_inside_the_rules_gives_the_plain_error(self):
+        with pytest.raises(ThemeAuthorError) as error:
+            _author('```json\n{"name": "Twist Endings", "rules": {"max_runtime": 1')
+
+        assert "cut off or unreadable" in str(error.value)
+
+    def test_a_cut_before_any_title_completes_gives_the_plain_error(self):
+        with pytest.raises(ThemeAuthorError) as error:
+            _author(_cut_off_reply(complete_titles=0).replace('"titles": [,', '"titles": ['))
+
+        assert "cut off or unreadable" in str(error.value)
+        assert "titles" not in str(error.value)
+
+
 class TestFailures:
     def test_provider_exception_gives_plain_error_without_its_message(self):
         from loguru import logger
 
         class _Boom(_Curator):
-            def complete(self, system, user):
+            def complete(self, system, user, **_):
                 raise RuntimeError("bad key sk-secret")
 
         logs: list[str] = []

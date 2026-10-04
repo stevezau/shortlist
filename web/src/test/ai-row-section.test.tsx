@@ -55,7 +55,7 @@ function theme(patch: Partial<Theme> = {}): Theme {
 function preview(patch: Partial<ThemePreview> = {}): ThemePreview {
   return {
     draft: theme({ id: null, ai_tokens: 0, stats: {} }),
-    stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, unwatched_median: null },
+    stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, unwatched_median: null, truncated: false },
     diff: null,
     tokens: 321,
     ...patch,
@@ -193,6 +193,29 @@ describe("AiRowSection building", () => {
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ origin: "ai", draft: expect.objectContaining({ name: "Twist endings" }) }));
   });
 
+  it("says the AI's list was cut short, and how many titles were kept, only when it was", async () => {
+    api.previewTheme.mockResolvedValueOnce(
+      preview({ stats: { named: 31, resolved: 20, in_library: 15, after_rules: 12, unwatched_median: null, truncated: true } }),
+    );
+    renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
+    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.getByText(/the AI.s list was cut short; 31 titles kept/i)).toBeInTheDocument();
+  });
+
+  it("shows no cut-short note for a whole list", async () => {
+    renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
+    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.queryByText(/cut short/i)).not.toBeInTheDocument();
+  });
+
   it("does not count tokens twice when the same list is built again", async () => {
     renderSection();
     await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
@@ -248,7 +271,7 @@ describe("AiRowSection changing a list", () => {
         { tmdb_id: 3, media: "movie", origin: "ai", reason: "Quiet horror", title: "Hereditary", year: 2018 },
       ],
     }),
-    stats: { named: 55, resolved: 38, in_library: 31, after_rules: 22, unwatched_median: null },
+    stats: { named: 55, resolved: 38, in_library: 31, after_rules: 22, unwatched_median: null, truncated: false },
     diff: {
       rules_changed: true,
       added: ["Hereditary"],

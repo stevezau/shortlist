@@ -55,6 +55,10 @@ BUILD_SYSTEM_MECHANICS = (
     "the names from the current theme that no longer fit, otherwise leave them empty."
 )
 
+# Room for ~60 titles with reasons; the provider default (2048 on Anthropic) cuts the list off mid-object.
+_REPLY_TOKENS = 8000
+_UNREADABLE = "The AI's answer was not a theme I could read. Try again, or reword the brief."
+_CUT_OFF = "The AI's answer was cut off or unreadable. Try again, or pick a provider that gives longer replies."
 _MAX_REASON = 160
 _MAX_TITLES = 60
 _MAX_TAGS = 10
@@ -82,6 +86,8 @@ class ThemeStats:
     in_library: int
     after_rules: int
     unwatched_median: int | None
+    #: The AI's reply was cut off at the token cap and only the titles before the cut were kept.
+    truncated: bool = False
 
 
 @dataclass(frozen=True)
@@ -147,7 +153,7 @@ def author_theme(
     tag_names = dict(current_tag_names or {})
     user = _user_message(brief, change, medias, profile, current, tag_names, tmdb)
     try:
-        raw = curator.complete(system, user)
+        raw = curator.complete(system, user, max_tokens=_REPLY_TOKENS)
     except Exception as exc:
         # Class name only: an SDK's message can carry a fragment of the key.
         logger.warning("theme author: AI call failed ({})", type(exc).__name__)
@@ -157,7 +163,7 @@ def author_theme(
     tokens = int(getattr(curator, "last_tokens", 0) or 0)
     if not (raw or "").strip():
         raise ThemeAuthorError("The AI did not answer. Try again in a moment.")
-    proposal = _parse(raw)
+    proposal, truncated = _parse(raw)
 
     picks, titles, named = _resolve_titles(proposal, medias, tmdb)
     tags = _resolve_tags(proposal, tmdb)
@@ -190,7 +196,12 @@ def author_theme(
     # Rules come from TMDB, so a pick the rules drop must not be offered as the AI's reason for a row.
     kept_reasons = {(p.media, p.tmdb_id): p.reason for p in picks if (p.media, p.tmdb_id) in loaded.reasons}
     stats = ThemeStats(
-        named=named, resolved=len(picks), in_library=held, after_rules=after_rules, unwatched_median=None
+        named=named,
+        resolved=len(picks),
+        in_library=held,
+        after_rules=after_rules,
+        unwatched_median=None,
+        truncated=truncated,
     )
     logger.info("theme authored: {} named, {} resolved, {} after rules", named, len(picks), after_rules)
     return ThemeDraft(
@@ -319,24 +330,96 @@ def _describe(spec: ThemeSpec, tag_names: Mapping[int, str], tmdb: TmdbClient) -
     return json.dumps(described)
 
 
-def _parse(raw: str) -> dict:
-    """The JSON object in ``raw``, tolerating a ```json fence and prose around it."""
+def _parse(raw: str) -> tuple[dict, bool]:
+    """The JSON object in ``raw`` and whether it had to be salvaged from a cut-off reply.
+
+    Tolerates a ```json fence and prose around it. A reply that stops mid-way through the titles array is
+    cut back to its last complete title (see ``_salvage_truncated``); anything else unreadable raises.
+    """
     text = raw.strip()
     fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if fenced:
         text = fenced.group(1).strip()
     start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ThemeAuthorError("The AI's answer was not a theme I could read. Try again, or reword the brief.")
+    if start == -1:
+        raise ThemeAuthorError(_UNREADABLE)
     try:
-        data = json.loads(text[start : end + 1])
+        data = json.loads(text[start : end + 1]) if end > start else None
     except ValueError:
-        raise ThemeAuthorError(
-            "The AI's answer was not a theme I could read. Try again, or reword the brief."
-        ) from None
-    if not isinstance(data, dict):
-        raise ThemeAuthorError("The AI's answer was not a theme I could read. Try again, or reword the brief.")
+        data = None
+    if isinstance(data, dict):
+        return data, False
+    if data is None:
+        salvaged = _salvage_truncated(text[start:])
+        if salvaged is not None:
+            return salvaged, True
+        raise ThemeAuthorError(_CUT_OFF)
+    raise ThemeAuthorError(_UNREADABLE)
+
+
+def _salvage_truncated(text: str) -> dict | None:
+    """``text`` (a JSON object that stops mid-way) cut back to its last complete title, or None.
+
+    Conservative: only when the cut falls inside the ``titles`` array, everything before that array is
+    complete, and the name and at least one whole title survive. Quotes are tracked so a brace inside a
+    reason is not mistaken for the end of a title.
+    """
+    match = re.search(r'"titles"\s*:\s*\[', text)
+    if match is None or not _balanced_to_depth_one(text[: match.start()]):
+        return None
+    last_complete = None
+    depth = 0
+    in_string = escaped = False
+    for i in range(match.end(), len(text)):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            if depth == 0:
+                return None  # the array closed itself: this is not a cut inside it
+            depth -= 1
+            if depth == 0 and ch == "}":
+                last_complete = i
+    if last_complete is None:
+        return None
+    try:
+        data = json.loads(text[: last_complete + 1] + "]}")
+    except ValueError:
+        return None
+    titles = data.get("titles") if isinstance(data, dict) else None
+    if not (isinstance(titles, list) and titles and isinstance(data.get("name"), str) and data["name"].strip()):
+        return None
     return data
+
+
+def _balanced_to_depth_one(prefix: str) -> bool:
+    """Whether ``prefix`` is inside the top-level object only, with no string left open."""
+    depth = 0
+    in_string = escaped = False
+    for ch in prefix:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+    return depth == 1 and not in_string
 
 
 def _strings(value: object) -> list[str]:

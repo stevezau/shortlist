@@ -31,7 +31,7 @@ const SAMPLE_SIZE = 12;
 const PAUSED_REASON = "AI is paused for this row. Resume it below to build or change its list.";
 const SAVE_FIRST_REASON = "Save the row first, then you can change its list in words.";
 
-type Counts = Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules">;
+type Counts = Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules"> & { truncated?: boolean };
 
 /**
  * An AI row's list (#138), in What goes in: describe it, build it with one AI call, change it in words, and
@@ -298,6 +298,12 @@ function ListCard({ theme, counts, unsaved }: { theme: Theme; counts: Counts | n
           <Count label="On your server" value={counts.in_library} />
           <Count label="After your limits" value={counts.after_rules} />
         </dl>
+      )}
+      {counts?.truncated && (
+        <p role="status" className="text-sm text-warning">
+          The AI’s list was cut short; {counts.named} {counts.named === 1 ? "title" : "titles"} kept. Build again for a
+          fuller list.
+        </p>
       )}
       {missing > 0 && (
         <p className="text-sm text-muted-foreground">

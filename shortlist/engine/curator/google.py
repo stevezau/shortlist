@@ -178,12 +178,13 @@ class GoogleCurator:
             model=self._model, contents=user, config=types.GenerateContentConfig(**config)
         )
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         """Plain completion (no tools) — the external-search ``llm_web`` path (see base.complete)."""
+        config: dict = {"system_instruction": system}
+        if max_tokens is not None:
+            config["max_output_tokens"] = max_tokens
         try:
-            r = self._client.models.generate_content(
-                model=self._model, contents=user, config={"system_instruction": system}
-            )
+            r = self._client.models.generate_content(model=self._model, contents=user, config=config)
         except Exception as e:
             # Type only — the google-genai error text carries the API key (`?key=AIza…`).
             logger.warning("complete (google) failed ({})", type(e).__name__)

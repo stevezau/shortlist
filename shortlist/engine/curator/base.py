@@ -57,10 +57,13 @@ class Curator(Protocol):
     # The output share of `last_tokens` — billed at a higher rate than input, so reported apart.
     last_output_tokens: int
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         """Plain text completion — no tools, no schema. Powers the external-search ``llm_web`` path,
         where the app has already done the web search and just needs the model to pick titles from the
         results. Degrades to an empty string on a provider error (the source's own guard is the backstop).
+
+        ``max_tokens`` caps the reply; None keeps the provider's own default. A caller that wants a long
+        answer (a themed row names ~60 titles) must ask, or a reply is cut off mid-object.
         """
         ...
 
