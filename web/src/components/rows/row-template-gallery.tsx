@@ -192,7 +192,7 @@ function TemplatePicker({ onPick, onClose, noSource }: {
   onClose: () => void;
   noSource: boolean;
 }) {
-  const [picked, setSelected] = useState(ROW_TEMPLATES[0]!);
+  const [picked, setSelected] = useState<RowTemplate | null>(null);
   const [filter, setFilter] = useState(FILTERS[0]!);
   const [search, setSearch] = useState("");
   const query = search.trim().toLowerCase();
@@ -201,8 +201,10 @@ function TemplatePicker({ onPick, onClose, noSource }: {
     [template.title, template.summary, template.blurb, ...template.highlights]
       .join(" ").toLowerCase().includes(query),
   );
-  // A filter or search that hides the picked template hands the panel to the first one still listed.
-  const selected = visible.some((template) => template.id === picked.id) ? picked : (visible[0] ?? picked);
+  // Only the opening default follows the filter: a template the owner clicked stays selected while they browse.
+  const fallback = ROW_TEMPLATES[0]!;
+  const selected =
+    picked ?? (visible.some((template) => template.id === fallback.id) ? fallback : (visible[0] ?? fallback));
   const needsRequestSource = Boolean(selected.values.requests_row && noSource);
 
   return (
