@@ -17,25 +17,22 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.curator import make_curator
 from shortlist.engine.models import MediaType, RowLimits
-from shortlist.engine.placeholders import uses_theme
 from shortlist.engine.themes import _MOVIE_GENRE_IDS, ThemeSpec, theme_content_hash
-from shortlist.server.api import collections as collections_api
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.seasons import CollectionIO, TagIO, _off_loop, _plex
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, Theme
-from shortlist.server.services.audit import add_audit
+from shortlist.server.services import theme_store
 from shortlist.server.services.context_builder import curator_kwargs
 from shortlist.server.services.library_index import library_index
 from shortlist.server.services.theme_author import (
     BUILD_SYSTEM_GUIDANCE,
     BUILD_SYSTEM_MECHANICS,
     ThemeAuthorError,
-    ThemeDiff,
     author_theme,
     diff_themes,
 )
-from shortlist.server.services.theme_store import pick_titles, spec_from_row, unique_slug
+from shortlist.server.services.theme_store import pick_titles, spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/themes", tags=["themes"], dependencies=[Depends(require_owner)])
@@ -264,14 +261,7 @@ async def create_theme(body: ThemeSaveIn, request: Request) -> dict:
     state = request.app.state
     with state.sessions() as session:
         _refuse_unusable(body.draft)
-        collection = _spend_on(session, body)
-        row = Theme(slug=unique_slug(session, body.draft.name), origin=body.draft.origin, ai_tokens=body.tokens)
-        _write(row, body)
-        session.add(row)
-        session.flush()
-        if collection is not None:
-            collection.ai_tokens += body.tokens
-        _audit(session, row, body, diff=None)
+        row = _save(session, state, body)
         session.commit()
         return _row_view(row)
 
@@ -283,21 +273,7 @@ async def update_theme(theme_id: int, body: ThemeSaveIn, request: Request) -> di
     with state.sessions() as session:
         row = _stored(session, theme_id)
         _refuse_unusable(body.draft)
-        collection = _spend_on(session, body)
-        before, titles = spec_from_row(row), pick_titles(row)
-        _write(row, body)
-        session.flush()
-        after = spec_from_row(row)
-        _reject_title_clashes(session, state, row)
-        row.ai_tokens = (row.ai_tokens or 0) + body.tokens
-        if collection is not None:
-            collection.ai_tokens += body.tokens
-        _audit(
-            session,
-            row,
-            body,
-            diff=diff_themes(before, after, {**titles, **pick_titles(row)}, {t["id"]: t["name"] for t in row.tags}),
-        )
+        row = _save(session, state, body, existing=row)
         session.commit()
         return _row_view(row)
 
@@ -348,16 +324,16 @@ def _row_libraries(session: Session, collection_id: int | None) -> list[str]:
     return [str(k) for k in collection.library_keys or []]
 
 
-def _spend_on(session: Session, body: ThemeSaveIn) -> Collection | None:
-    """The row a save's tokens are charged to; 409 when it is paused and the save spent any."""
-    if body.collection_id is None:
-        return None
-    collection = session.get(Collection, body.collection_id)
-    if collection is None:
-        raise HTTPException(status_code=404, detail="collection not found")
-    if collection.ai_paused and body.tokens > 0:
-        raise HTTPException(status_code=409, detail=_PAUSED)
-    return collection
+def _save(session: Session, state, body: ThemeSaveIn, *, existing: Theme | None = None) -> Theme:
+    """`theme_store.save_theme`, with its refusals as the HTTP answers they have always been."""
+    try:
+        return theme_store.save_theme(session, state.secrets, body, existing=existing)
+    except theme_store.RowPaused:
+        raise HTTPException(status_code=409, detail=_PAUSED) from None
+    except theme_store.TitleClash as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+    except LookupError:
+        raise HTTPException(status_code=404, detail="collection not found") from None
 
 
 def _refuse_unusable(draft: ThemeIn) -> None:
@@ -370,83 +346,6 @@ def _refuse_unusable(draft: ThemeIn) -> None:
     low, high = draft.rules.min_year, draft.rules.max_year
     if low is not None and high is not None and low > high:
         raise HTTPException(status_code=422, detail="The earliest year can't be later than the latest year.")
-
-
-def _unique[T](items: list[T], key) -> list[T]:
-    kept: dict[object, T] = {}
-    for item in items:
-        kept.setdefault(key(item), item)
-    return list(kept.values())
-
-
-def _write(row: Theme, body: ThemeSaveIn) -> None:
-    """Set every content column from the request and the hash from those columns — never from the request."""
-    draft = body.draft
-    row.name = draft.name
-    row.origin = draft.origin
-    row.emoji = draft.emoji or None
-    row.brief = draft.brief
-    row.media = list(dict.fromkeys(draft.media))
-    row.tags = [{"id": t.id, "name": t.name} for t in _unique(draft.tags, lambda t: t.id)]
-    row.genres = list(dict.fromkeys(g.strip() for g in draft.genres))
-    row.excluded_genres = list(dict.fromkeys(g.strip() for g in draft.excluded_genres))
-    row.collections = [
-        {"section_key": c.section_key, "section_title": c.section_title, "title": c.title}
-        for c in _unique(draft.collections, lambda c: (c.section_key, c.title))
-    ]
-    row.picks = [
-        {
-            "tmdb_id": p.tmdb_id,
-            "media": p.media,
-            "origin": p.origin,
-            "reason": p.reason,
-            "title": p.title,
-            "year": p.year,
-        }
-        for p in _unique(draft.picks, lambda p: (p.tmdb_id, p.media))
-    ]
-    row.rules = {k: v for k, v in draft.rules.model_dump().items() if v is not None}
-    row.content_hash = theme_content_hash(spec_from_row(row))
-    if body.stats:
-        row.stats = {k: int(body.stats[k]) for k in _STATS_KEYS if k in body.stats}
-
-
-def _audit(session: Session, row: Theme, body: ThemeSaveIn, *, diff: ThemeDiff | None) -> None:
-    add_audit(
-        session,
-        "theme.build",
-        "info",
-        theme=row.slug,
-        name=row.name,
-        origin=row.origin,
-        collection_id=body.collection_id,
-        tokens=body.tokens,
-        picks=len(row.picks),
-        diff=None if diff is None else dataclasses.asdict(diff),
-    )
-
-
-def _reject_title_clashes(session: Session, state, theme: Theme) -> None:
-    """422 when renaming a theme would title a row what another row is already titled, in a library both share.
-
-    The theme is already flushed with its new name, so every row on it is checked as it would now be titled.
-    """
-    spec = spec_from_row(theme)
-    for row in session.query(Collection).filter(Collection.theme_id == theme.id):
-        template = row.name_template or row.name
-        if not uses_theme(template):
-            continue
-        collections_api._reject_duplicate_name(
-            session,
-            state.secrets,
-            template,
-            exclude_slug=row.slug,
-            build=row.build or "",
-            fallback_name=row.fallback_name or "",
-            media=row.media or "both",
-            library_keys=row.library_keys or [],
-            theme=spec,
-        )
 
 
 def _rules_view(row_rules: dict) -> dict:
