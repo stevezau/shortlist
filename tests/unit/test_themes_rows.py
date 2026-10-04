@@ -533,6 +533,77 @@ def _ids(report, username: str, row_slug: str = "ai-twists") -> list[int]:
     return [p.tmdb_id for p in _picks(report, username, row_slug)]
 
 
+NAMED = [50, 51, 52, 53]  # 50, 51 action and 52, 53 comedy; the AI named all four
+POOL = list(range(60, 80))  # twenty tag titles, action, rated far above the named ones
+
+
+@pytest.fixture
+def named_ctx(ctx):
+    """Sarah watches an action film and Mike a comedy; the theme's tag lists POOL and the AI named NAMED."""
+    ctx.plex.build_library_index.return_value = {900: 999, 901: 998, **{t: 1000 + t for t in [*NAMED, *POOL]}}
+    ctx.history_source.fetch.side_effect = lambda user, **_: [
+        make_watched("Seed", days_ago=i, rating_key=999 if user.username == "sarah" else 998) for i in range(1, 5)
+    ]
+    ctx.tmdb.genre_ids_for.side_effect = lambda tmdb_id, media_type: [28] if tmdb_id == 900 else [35]
+    ctx.tmdb.suggestions.return_value = []
+
+    def theme_list(media_type, params):
+        if media_type is not MediaType.MOVIE or params.get("with_keywords") != str(TAG):
+            return []
+        named = [
+            {"id": t, "title": f"Named {t}", "genre_ids": [28] if t < 52 else [35], "vote_average": 5.0 + t * 0.01}
+            for t in NAMED
+        ]
+        pool = [{"id": t, "title": f"Pool {t}", "genre_ids": [28], "vote_average": 9.0} for t in POOL]
+        return [*pool, *named]
+
+    ctx.tmdb.discover_all.side_effect = theme_list
+    return ctx
+
+
+def _named_theme(ids: list[int]) -> ThemeSpec:
+    return theme_spec(picks=tuple(ThemePick(t, MediaType.MOVIE, "ai", None) for t in ids))
+
+
+class TestNamedTitlesLead:
+    def test_every_named_title_is_in_the_row_ahead_of_the_pool(self, named_ctx):
+        named_ctx.config.rows = [theme_row(_named_theme(NAMED[:3]), size=6)]
+        report = pipeline_mod.run(named_ctx, [make_profile("sarah", account_id=100)])
+
+        ids = _ids(report, "sarah")
+        assert set(NAMED[:3]) <= set(ids)
+        assert len(ids) == 6 and set(ids) - set(NAMED[:3]) <= set(POOL)
+
+    def test_a_watched_named_title_is_replaced_by_pool_top_ups(self, named_ctx):
+        named_ctx.history_source.fetch.side_effect = lambda user, **_: [
+            *(make_watched("Seed", days_ago=i, rating_key=999) for i in range(1, 5)),
+            make_watched("Named 50", days_ago=5, rating_key=1050),
+        ]
+        named_ctx.config.rows = [theme_row(_named_theme(NAMED[:3]), size=6)]
+        report = pipeline_mod.run(named_ctx, [make_profile("sarah", account_id=100)])
+
+        ids = _ids(report, "sarah")
+        assert 50 not in ids
+        assert {51, 52} <= set(ids)
+        assert len(set(ids) & set(POOL)) == 4
+
+    def test_two_people_with_different_tastes_order_the_named_group_differently(self, named_ctx):
+        named_ctx.config.rows = [theme_row(_named_theme(NAMED), size=3)]
+        report = pipeline_mod.run(named_ctx, _people())
+
+        sarah, mike = _ids(report, "sarah"), _ids(report, "mike")
+        assert set(sarah) <= set(NAMED) and set(mike) <= set(NAMED)
+        assert sarah[:2] == [51, 50] or set(sarah[:2]) == {50, 51}
+        assert set(mike[:2]) == {52, 53}
+        assert sarah != mike
+
+    def test_a_row_with_no_named_titles_ranks_the_pool_alone(self, named_ctx):
+        named_ctx.config.rows = [theme_row(size=6)]
+        report = pipeline_mod.run(named_ctx, [make_profile("sarah", account_id=100)])
+
+        assert set(_ids(report, "sarah")) <= set(POOL)
+
+
 class TestOverTimeControls:
     def test_refresh_share_changes_how_many_picks_swap(self, big_ctx):
         prior_ids = BIG[:4]

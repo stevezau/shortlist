@@ -179,6 +179,7 @@ def cut_for_recency(
     genre_avoidance: float = 0.0,
     franchise: float = 0.0,
     cast: float = 0.0,
+    named: frozenset[tuple[object, int]] = frozenset(),
 ) -> list[Candidate]:
     """Re-take the per-media ``pre_rank`` cut at this row's own release-date weight.
 
@@ -191,12 +192,16 @@ def cut_for_recency(
 
     Per media type, exactly like the pool's own cut: a `both` row whose pool skews one way must not
     truncate the other type away before its library's collection is ever built.
+
+    ``named`` is an AI row's named titles, as (media type, tmdb id): they are cut among themselves and
+    lead the result, so the cap can never push a title the AI named out for one a tag merely found.
     """
     return [
         c
         for kind in kinds
+        for group in (True, False)
         for c in pre_rank(
-            [x for x in in_library if x.media_type is kind],
+            [x for x in in_library if x.media_type is kind and ((x.media_type, x.tmdb_id) in named) is group],
             keep,
             recency,
             year_now,

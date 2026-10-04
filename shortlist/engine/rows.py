@@ -1433,6 +1433,7 @@ def _rank_pool(
     limits: RowLimits | None,
     gather_stats: candidates_mod.GatherStats,
     who: str,
+    named: frozenset[tuple[MediaType, int]] = frozenset(),
 ) -> tuple[Pool, candidates_mod.GatherStats]:
     """The second half of ``_candidate_pool``: the row's limits, then the pre-rank cut. ``who`` names the
     person and row in the log."""
@@ -1463,6 +1464,7 @@ def _rank_pool(
         ctx.config.genre_avoidance,
         ctx.config.franchise,
         0.0,
+        named,
     )
     # AFTER the cut, unlike the other two: cast overlap needs both sides' cast lists, so it is
     # the one signal whose cost scales with the pool. Bounded here to `candidates_pre_rank`
@@ -1478,6 +1480,7 @@ def _rank_pool(
             ctx.config.genre_avoidance,
             ctx.config.franchise,
             ctx.config.cast,
+            named,
         )
     # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
     # entirely from the lists selection already produced above — so the trace can follow every title
@@ -2411,6 +2414,7 @@ class RowPolicy:
                     self.cfg.genre_avoidance,
                     self.cfg.franchise,
                     cast,
+                    _named_titles(spec),
                 )
 
             # `cast` is deliberately 0.0 for the FIRST cut, and this is not a shortcut.
@@ -2628,6 +2632,7 @@ class RowPolicy:
                     limits=limits,
                     gather_stats=gathered.stats_for_ranking(),
                     who=f"{self.user.username}/{spec.slug}",
+                    named=_named_titles(spec),
                 )
             except Exception as e:
                 self.pool_failures[key] = f"{type(e).__name__}: {e}"
@@ -2676,12 +2681,21 @@ class NothingToBuildFrom(RuntimeError):
     owes nothing: an out-of-season row of theirs still has to come off their Home."""
 
 
+def _named_titles(spec: RowSpec) -> frozenset[tuple[MediaType, int]]:
+    """The titles an AI row's theme names (the AI's or the owner's picks): they lead the row. Empty otherwise."""
+    return frozenset((pick.media, pick.tmdb_id) for pick in spec.theme.picks) if spec.theme is not None else frozenset()
+
+
 def _theme_reason_args(ctx: EngineContext, spec: RowSpec) -> dict:
     """The keywords `picker.build_picks` takes to word an AI row's picks; empty for any other row."""
     if spec.theme is None:
         return {}
     found = ctx.theme_titles.get(spec.theme.slug)
-    return {"theme_name": spec.theme.name, "theme_reasons": found.reasons if found is not None else {}}
+    return {
+        "theme_name": spec.theme.name,
+        "theme_reasons": found.reasons if found is not None else {},
+        "theme_named": _named_titles(spec),
+    }
 
 
 def _unreadable_season(ctx: EngineContext, spec: RowSpec) -> str:
@@ -2918,11 +2932,19 @@ def _season_cold_picks(
     *,
     theme_name: str | None = None,
     theme_reasons: dict[tuple[MediaType, int], str] | None = None,
+    theme_named: frozenset[tuple[MediaType, int]] = frozenset(),
 ) -> list[Pick]:
     """A seasonal row's fill for someone with too little history: the season's titles in this library, best
-    rated first. The server's top-rated films are almost never Christmas films."""
+    rated first (an AI row's named titles ahead of the rest). The server's top-rated films are almost never
+    Christmas films."""
     held = [item for item in season.in_library.get(kind, []) if int(item["id"]) in sec_idx]
-    held.sort(key=lambda item: (-float(item.get("vote_average") or 0.0), item.get("title") or item.get("name") or ""))
+    held.sort(
+        key=lambda item: (
+            (kind, int(item["id"])) not in theme_named,
+            -float(item.get("vote_average") or 0.0),
+            item.get("title") or item.get("name") or "",
+        )
+    )
     return [
         Pick(
             tmdb_id=int(item["id"]),
@@ -3134,6 +3156,12 @@ def _build_section_picks(
         pct = policy.effective_watched_pct(spec)
         theme_reasons = _theme_reason_args(ctx, spec)
         sub = [c for c in pool_for_row if c.media_type is kind and c.tmdb_id in sec_idx]
+        if theme_reasons:
+            # The theme's named titles lead the pool, so every ordering below agrees with the picker's choice.
+            named = theme_reasons["theme_named"]
+            sub = [c for c in sub if (c.media_type, c.tmdb_id) in named] + [
+                c for c in sub if (c.media_type, c.tmdb_id) not in named
+            ]
         # The watch this library's row is built from, for a row NAMED after one: its title falls back to
         # it when no pick carries a seed of its own, which is every pick discover and web search make.
         lead = (
@@ -4318,6 +4346,7 @@ def _pad_picks(
     *,
     theme_name: str | None = None,
     theme_reasons: dict[tuple[MediaType, int], str] | None = None,
+    theme_named: frozenset[tuple[MediaType, int]] = frozenset(),
 ) -> list[Pick]:
     """Top up a short row from the ranked pool (never invents titles).
 
@@ -4337,6 +4366,7 @@ def _pad_picks(
         k - len(picks),
         theme_name=theme_name,
         theme_reasons=theme_reasons,
+        theme_named=theme_named,
     )
     out = list(picks)
     for f in fillers:

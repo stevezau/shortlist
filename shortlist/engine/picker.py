@@ -140,6 +140,7 @@ def build_picks(
     *,
     theme_name: str | None = None,
     theme_reasons: dict[tuple[MediaType, int], str] | None = None,
+    theme_named: frozenset[tuple[MediaType, int]] = frozenset(),
 ) -> list[Pick]:
     """The top ``k`` picks for a row: spread across the tastes that seeded them, each with a reason.
 
@@ -149,9 +150,20 @@ def build_picks(
 
     ``theme_name`` is an AI row's theme: a candidate the ``theme`` source found gets the theme's reason,
     with ``theme_reasons``'s AI line for it when there is one.
+
+    ``theme_named`` is the titles the theme's AI or owner named: they fill the row first, and the rest of the
+    pool only tops up what they leave short. Each group keeps its own best-first, seed-spread order.
     """
     theme_reasons = theme_reasons or {}
-    chosen = ranking.diversify_by_seed(candidates, k) if k > 0 else []
+    chosen: list[Candidate] = []
+    if k > 0 and theme_named:
+        named = [c for c in candidates if (c.media_type, c.tmdb_id) in theme_named]
+        chosen = ranking.diversify_by_seed(named, k)
+        if len(chosen) < k:
+            rest = [c for c in candidates if (c.media_type, c.tmdb_id) not in theme_named]
+            chosen = [*chosen, *ranking.diversify_by_seed(rest, k - len(chosen))]
+    elif k > 0:
+        chosen = ranking.diversify_by_seed(candidates, k)
     picks: list[Pick] = []
     for c in chosen:
         seed = c.top_seed
