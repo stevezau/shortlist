@@ -6,13 +6,13 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, RowLimits, slugify
 from shortlist.engine.placeholders import uses_theme
 from shortlist.engine.themes import ThemeCollection, ThemePick, ThemeSpec, theme_content_hash
-from shortlist.server.db.models import Collection, Theme
+from shortlist.server.db.models import Collection, Theme, ThemeHistory, User
 from shortlist.server.services.audit import add_audit
 
 if TYPE_CHECKING:
@@ -23,9 +23,11 @@ __all__ = [
     "RowPaused",
     "ThemeStoreError",
     "TitleClash",
+    "add_row_tokens",
     "audit_theme_build",
     "charge_tokens",
     "pick_titles",
+    "reject_person_title_clash",
     "reject_title_clashes",
     "save_theme",
     "spec_from_row",
@@ -45,7 +47,14 @@ class RowPaused(ThemeStoreError):
 
 
 class TitleClash(ThemeStoreError):
-    """Saving would title a row what another row in a shared library is already titled."""
+    """Saving would title a row what another row in a shared library is already titled.
+
+    ``theme_name`` is the theme that caused it when a person's theme did, so a retry can steer clear of it.
+    """
+
+    def __init__(self, message: str = "", *, theme_name: str = "") -> None:
+        super().__init__(message)
+        self.theme_name = theme_name
 
 
 def spec_from_row(row: Theme) -> ThemeSpec:
@@ -181,6 +190,33 @@ def reject_title_clashes(session: Session, secrets, theme: Theme) -> None:
             )
         except HTTPException as e:
             raise TitleClash(str(e.detail)) from None
+    # A person's explore row is titled from their own theme and no row follows it as its base theme.
+    held = session.query(ThemeHistory).filter(
+        ThemeHistory.theme_id == theme.id, ThemeHistory.state.in_(("current", "next"))
+    )
+    for entry in held:
+        collection = session.get(Collection, entry.collection_id)
+        if collection is not None and collection.theme_mode == "explore":
+            reject_person_title_clash(session, secrets, collection, entry.user_id, spec)
+
+
+def reject_person_title_clash(session: Session, secrets, collection: Collection, user_id: int, theme) -> None:
+    """Raise `TitleClash` when ``theme`` would title ``collection`` for this person what another of their rows
+    already wears in a library the two share. ``theme`` is a `ThemeSpec` or a stored `Theme`."""
+    # Imported here: the reconcile service imports this module.
+    from shortlist.server.services import collection_reconcile
+
+    person = session.get(User, user_id)
+    if person is None:
+        return
+    spec = theme if isinstance(theme, ThemeSpec) else spec_from_row(theme)
+    clash = collection_reconcile.person_title_clash(session, secrets, collection, person, spec)
+    if clash is not None:
+        raise TitleClash(
+            f"The theme {spec.name!r} would title this row the same as the row {clash.name!r} ({clash.slug}) "
+            "for this person, in a library both build in. Two rows with one title become one collection on Plex.",
+            theme_name=spec.name,
+        )
 
 
 def charge_tokens(session: Session, body: ThemeSaveIn) -> Collection | None:
@@ -193,6 +229,15 @@ def charge_tokens(session: Session, body: ThemeSaveIn) -> Collection | None:
     if collection.ai_paused and body.tokens > 0:
         raise RowPaused
     return collection
+
+
+def add_row_tokens(session: Session, collection: Collection, tokens: int) -> None:
+    """Charge ``tokens`` to a row in SQL, not as `ai_tokens += n` on a possibly stale read: a concurrent charge
+    (a rotation pass and a regenerate) would otherwise be lost."""
+    session.execute(
+        update(Collection).where(Collection.id == collection.id).values(ai_tokens=Collection.ai_tokens + tokens)
+    )
+    session.refresh(collection)
 
 
 def save_theme(
@@ -220,8 +265,8 @@ def save_theme(
         row.ai_tokens = (row.ai_tokens or 0) + body.tokens
     session.flush()
     reject_title_clashes(session, secrets, row)
-    if collection is not None:
-        collection.ai_tokens += body.tokens
+    if collection is not None and body.tokens:
+        add_row_tokens(session, collection, body.tokens)
     if before is not None and diff is None:
         # An in-place rewrite always says what it changed.
         from shortlist.server.services.theme_author import diff_themes

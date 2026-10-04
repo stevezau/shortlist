@@ -83,3 +83,72 @@ class TestSaveTheme:
     def test_unknown_collection_is_a_lookup_error(self, session):
         with pytest.raises(LookupError):
             theme_store.save_theme(session, SECRETS, body(collection_id=99))
+
+
+class TestPersonThemeTitles:
+    """An explore row is titled from each person's own theme (#121 class): no row follows that theme as its base."""
+
+    @staticmethod
+    def seed(session):
+        from datetime import datetime
+
+        from shortlist.server.db.models import ThemeHistory, User
+
+        base = Theme(slug="base", name="Base", media=["movie"], genres=["Drama"])
+        person_theme = Theme(slug="mine", name="Cosy Nights", media=["movie"], genres=["Drama"])
+        user = User(plex_account_id=7, username="ann", slug="ann", enabled=True, user_type="shared")
+        session.add_all([base, person_theme, user])
+        session.flush()
+        explore = Collection(
+            slug="explore",
+            name="Explore",
+            name_template="{theme}",
+            theme_id=base.id,
+            theme_mode="explore",
+            build="per_person",
+            enabled=True,
+            media="movie",
+        )
+        session.add(explore)
+        session.flush()
+        session.add(
+            ThemeHistory(
+                collection_id=explore.id,
+                user_id=user.id,
+                theme_id=person_theme.id,
+                theme_name="Cosy Nights",
+                state="current",
+                started_at=datetime(2026, 10, 1),
+            )
+        )
+        session.flush()
+        return explore, person_theme, user
+
+    def test_a_new_row_cannot_take_the_title_a_person_theme_renders(self, session):
+        from shortlist.server.services import collection_reconcile
+
+        self.seed(session)
+
+        clashes = collection_reconcile.rows_titled_from(session, "Cosy Nights", build="per_person", media="movie")
+
+        assert [row.slug for row in clashes] == ["explore"]
+
+    def test_renaming_a_theme_a_person_holds_is_refused_when_a_sibling_has_that_name(self, session):
+        _, person_theme, _ = self.seed(session)
+        session.add(Collection(slug="sibling", name="Renamed", build="per_person", enabled=True, media="movie"))
+        person_theme.name = "Renamed"
+        session.flush()
+
+        with pytest.raises(theme_store.TitleClash):
+            theme_store.reject_title_clashes(session, SECRETS, person_theme)
+
+    def test_a_sibling_the_person_is_not_in_the_audience_of_does_not_clash(self, session):
+        explore, person_theme, user = self.seed(session)
+        session.add(
+            Collection(
+                slug="sibling", name="Cosy Nights", build="per_person", enabled=True, media="movie", audience="subset"
+            )
+        )
+        session.flush()
+
+        theme_store.reject_person_title_clash(session, SECRETS, explore, user.id, person_theme)

@@ -514,16 +514,18 @@ class TestConcurrentPasses:
 
 
 class TestSpendSurvivesAFailedSave:
-    def test_tokens_are_charged_when_the_save_fails_after_the_ai_call(self, sessions, monkeypatch):
-        from shortlist.server.services import theme_store
-
-        row_id, (uid,) = seed(sessions)
+    def test_tokens_are_charged_when_the_save_fails_after_the_ai_call(self, sessions):
+        # A REAL clash (#121 class): the explore row is titled "{theme}", and a sibling per-person row in the same
+        # library is already called what the AI names the theme.
+        row_id, (uid,) = seed(sessions, name_template="{theme}", build="per_person")
         add_history(sessions, row_id, uid, "current", started=NAIVE_NOW - timedelta(days=9), name="Cosy")
-
-        def clash(*a, **k):
-            raise theme_store.TitleClash("That title is taken.")
-
-        monkeypatch.setattr(theme_rotation, "save_theme", clash)
+        with sessions() as s:
+            s.add(
+                Collection(
+                    slug="sibling", name="Theme 1", media="movie", library_keys=["1"], enabled=True, build="per_person"
+                )
+            )
+            s.commit()
 
         outcomes = rotate(sessions, FakeAuthor(tokens=60))
 
@@ -531,8 +533,66 @@ class TestSpendSurvivesAFailedSave:
         assert history_of(sessions, row_id, uid) == [("current", "Cosy")]
         with sessions() as s:
             assert s.get(Collection, row_id).ai_tokens == 60
+            assert s.query(Theme).filter(Theme.name == "Theme 1").count() == 0
         [event] = events(sessions, "error")
-        assert event.message["detail"] == "That title is taken."
+        assert "Theme 1" in event.message["detail"] and "sibling" in event.message["detail"]
+        assert event.message["clash"] == "Theme 1"
+
+    def test_a_clashing_theme_name_is_kept_out_of_the_next_try(self, sessions):
+        seed(sessions, name_template="{theme}", build="per_person")
+        with sessions() as s:
+            s.add(
+                Collection(
+                    slug="sibling", name="Theme 1", media="movie", library_keys=["1"], enabled=True, build="per_person"
+                )
+            )
+            s.commit()
+        first = FakeAuthor()
+        rotate(sessions, first)
+        second = FakeAuthor()
+        second._n = itertools.count(2)  # a stand-in AI that heeds the avoid line
+
+        outcomes = rotate(sessions, second)
+
+        assert [o.action for o in outcomes] == ["authored_current"]
+        assert "Theme 1" in second.calls[0]["brief"].split("Avoid these recent theme names:")[1]
+
+    def test_a_row_in_another_library_does_not_clash(self, sessions):
+        seed(sessions, name_template="{theme}", build="per_person")
+        with sessions() as s:
+            s.add(
+                Collection(
+                    slug="sibling", name="Theme 1", media="show", library_keys=["2"], enabled=True, build="per_person"
+                )
+            )
+            s.commit()
+
+        outcomes = rotate(sessions, FakeAuthor())
+
+        assert [o.action for o in outcomes] == ["authored_current"]
+
+    def test_another_ai_rows_current_theme_is_in_the_brief(self, sessions):
+        _, (uid,) = seed(sessions, name_template="{theme}", build="per_person")
+        with sessions() as s:
+            other = Collection(
+                slug="other-ai",
+                name="Other",
+                media="movie",
+                library_keys=["1"],
+                enabled=True,
+                build="per_person",
+                theme_mode="explore",
+                theme_id=s.query(Theme).one().id,
+            )
+            s.add(other)
+            s.commit()
+            other_id = other.id
+        add_history(sessions, other_id, uid, "current", started=NAIVE_NOW - timedelta(days=1), name="Noir Nights")
+        author = FakeAuthor()
+
+        rotate(sessions, author)
+
+        assert "Noir Nights" in author.calls[0]["brief"]
 
     def test_an_unusable_theme_is_refused_like_the_themes_api_does(self, sessions, monkeypatch):
         row_id, (uid,) = seed(sessions)

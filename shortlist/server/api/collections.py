@@ -2768,6 +2768,7 @@ async def get_theme_rotation(collection_id: int, request: Request) -> dict:
 async def set_up_next(collection_id: int, body: UpNextRequest, request: Request) -> dict:
     """Point a person's "Up next" at a saved theme, replacing any theme already queued. Changes no Plex state."""
     from shortlist.server.services.theme_rotation import queue_next
+    from shortlist.server.services.theme_store import TitleClash
 
     with request.app.state.sessions() as session:
         collection = _ai_row(session, collection_id)
@@ -2777,7 +2778,12 @@ async def set_up_next(collection_id: int, body: UpNextRequest, request: Request)
         theme = session.get(Theme, body.theme_id)
         if theme is None:
             raise HTTPException(status_code=404, detail="theme not found")
-        queued = queue_next(session, collection, person.id, theme, datetime.now(UTC))
+        try:
+            queued = queue_next(
+                session, collection, person.id, theme, datetime.now(UTC), secrets=request.app.state.secrets
+            )
+        except TitleClash as e:
+            raise HTTPException(status_code=422, detail=str(e)) from None
         add_audit(
             session,
             "collection.up_next",
@@ -2841,7 +2847,9 @@ async def regenerate_up_next(collection_id: int, body: RegenerateRequest, reques
                 raise HTTPException(status_code=409, detail=_PAUSED) from None
             except theme_store.TitleClash as e:
                 raise HTTPException(status_code=422, detail=str(e)) from None
-            queued = theme_rotation.queue_next(session, collection, body.user_id, theme, datetime.now(UTC))
+            queued = theme_rotation.queue_next(
+                session, collection, body.user_id, theme, datetime.now(UTC), checked=True
+            )
             session.commit()
             return _theme_ref(queued, {theme.id: theme})
 

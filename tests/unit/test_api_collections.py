@@ -263,6 +263,19 @@ class TestUpNext:
         with client.app.state.sessions() as session:
             assert session.query(ThemeHistory).filter_by(state="next", user_id=ann).count() == 1
 
+    def test_a_theme_titled_like_a_sibling_row_of_that_person_is_refused(self, client: TestClient):
+        ann, _ = add_people(client, "ann", "bob")
+        row = ai_row(client, make_theme(client), name="Explore", name_template="{theme}", theme_mode="explore")
+        plain_row(client, "Fresh")
+
+        r = client.put(
+            f"/api/collections/{row['id']}/up-next", json={"user_id": ann, "theme_id": make_theme(client, "Fresh")}
+        )
+
+        assert r.status_code == 422 and "Fresh" in r.text
+        with client.app.state.sessions() as session:
+            assert session.query(ThemeHistory).filter_by(state="next").count() == 0
+
     def test_a_missing_theme_is_a_404(self, client: TestClient, explore):
         r = client.put(
             f"/api/collections/{explore['row']['id']}/up-next", json={"user_id": explore["ann"], "theme_id": 9999}

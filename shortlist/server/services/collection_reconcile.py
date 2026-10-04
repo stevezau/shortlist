@@ -57,7 +57,7 @@ from shortlist.engine.placeholders import (
 )
 from shortlist.engine.seasons import Catalogue, Season
 from shortlist.engine.themes import ThemeSpec
-from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Run, Theme, User
+from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Run, Theme, ThemeHistory, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import write_audit
@@ -260,10 +260,59 @@ def _title_keys(session, collection: Collection, secrets, *, catalogue: Catalogu
     dropped — a `{top_seed}` row with no fallback renders to nothing for a person with no watch, and
     "no title" cannot clash with "no title": neither row is built for them.
     """
-    keys = title_keys(
-        row_template(session, collection.slug, secrets), catalogue=catalogue, theme=_theme_of(session, collection)
-    ) | {title_key(collection.fallback_name or "")}
+    template = row_template(session, collection.slug, secrets)
+    keys = title_keys(template, catalogue=catalogue, theme=_theme_of(session, collection)) | {
+        title_key(collection.fallback_name or "")
+    }
+    # An explore row wears each person's OWN theme (#138), so the title a person's collection really has is
+    # not the base theme's. Every person's current and queued theme counts, audience aside: refusing a name
+    # too many is recoverable, two rows on one collection is not (#121).
+    for person_theme in _person_theme_specs(session, collection):
+        keys |= title_keys(template, catalogue=catalogue, theme=person_theme)
     return {k for k in keys if k}
+
+
+def _person_theme_specs(session, collection: Collection) -> list[ThemeSpec]:
+    """The themes people hold on an explore row as `current` or `next`; empty for any other row."""
+    if collection.theme_id is None or collection.theme_mode != "explore":
+        return []
+    themes = (
+        session.query(Theme)
+        .join(ThemeHistory, ThemeHistory.theme_id == Theme.id)
+        .filter(ThemeHistory.collection_id == collection.id, ThemeHistory.state.in_(("current", "next")))
+        .all()
+    )
+    return [spec_from_row(theme) for theme in {t.id: t for t in themes}.values()]
+
+
+def person_title_clash(session, secrets, collection: Collection, user: User, theme: ThemeSpec) -> Collection | None:
+    """Another row of THIS person's that already wears the title ``theme`` would give ``collection``, or None.
+
+    An explore row is titled from each person's own theme, so no row follows a person's theme as its base and
+    `rows_titled_from` cannot see it (#121 again). The check is that person's: another row counts only if it
+    builds for them, in a library the two could share, as THEY see it (their own current theme on an explore row).
+    """
+    template = collection.name_template or collection.name
+    if not uses_theme(template):
+        return None
+    catalogue = load_catalogue(session)
+    wanted = title_keys(template, catalogue=catalogue, theme=theme)
+    if not wanted:
+        return None
+    others = _other_rows(session, secrets, collection.slug)
+    for spec in others.specs:
+        if spec.audience is not None and user.plex_account_id not in spec.audience:
+            continue
+        if not rows_can_share_a_library(
+            collection.media or "both", collection.library_keys or [], spec.media, spec.library_keys
+        ):
+            continue
+        seen = spec.for_person(user.slug)
+        keys = title_keys(spec.name_template or others.global_template, catalogue=catalogue, theme=seen.theme)
+        keys |= {title_key(spec.fallback_name)}
+        if (keys - {""}) & wanted:
+            return session.query(Collection).filter_by(slug=spec.slug).first()
+    return None
 
 
 def row_titled_from(
