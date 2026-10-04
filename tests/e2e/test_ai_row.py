@@ -1,7 +1,7 @@
 """E2E: an AI row, from the template gallery to a practice run for one person (#138).
 
 Full stack: the built SPA and the real API, the fake PMS and TMDB. Only the AI provider is faked, at the
-`make_curator` boundary, so the one call "Build the list" makes is seen and counted. The row is added, its list
+`make_curator` boundary, so the one call "Write the list" makes is seen and counted. The row is added, its list
 previewed and saved, and "Try it" runs it as a dry run for one person: the picks and the reasons come back, and
 nothing reaches Plex.
 """
@@ -32,7 +32,7 @@ TITLES = {
 
 
 class _FakeCurator:
-    """The AI provider: answers "Build the list" with canned JSON and counts every call."""
+    """The AI provider: answers "Write the list" with canned JSON and counts every call."""
 
     name = "anthropic"
     can_complete = True
@@ -91,8 +91,8 @@ def test_an_ai_row_is_added_from_the_gallery_and_tried_for_one_person_with_nothi
     expect(page.get_by_role("button", name="Add row")).to_be_disabled()
 
     # 2. One AI call writes the list; every title is checked against TMDB and the library, and shown with its reason.
-    page.get_by_label("Describe it").fill(BRIEF)
-    page.get_by_role("button", name="Build the list").click()
+    page.get_by_label("What should this row be?").fill(BRIEF)
+    page.get_by_role("button", name="Write the list").click()
     card = page.get_by_role("region", name="The list")
     expect(card).to_contain_text("Tense Thrillers", timeout=RUN)
     for title, (_year, reason) in TITLES.items():
@@ -103,11 +103,11 @@ def test_an_ai_row_is_added_from_the_gallery_and_tried_for_one_person_with_nothi
     assert BRIEF in curator.calls[0][1]
     assert not any(c.get("theme_id") for c in app.api("GET", "/api/collections").json()), "a preview saves nothing"
 
-    # 3. Adding the row saves the list and the row, switched off.
+    # 3. Adding the row saves the list and the row, switched on like every other row (owner decision 2026-10-05).
     page.get_by_role("button", name="Add row").click()
     expect(page).to_have_url(re.compile(r"/rows$"), timeout=LOAD)
     row = next(c for c in app.api("GET", "/api/collections").json() if c.get("theme_id"))
-    assert row["enabled"] is False
+    assert row["enabled"] is True
     theme = app.api("GET", f"/api/themes/{row['theme_id']}").json()
     assert theme["brief"] == BRIEF and theme["origin"] == "ai"
     assert [pick["title"] for pick in theme["picks"]] == list(TITLES)
