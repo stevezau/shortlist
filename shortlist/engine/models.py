@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -191,6 +191,39 @@ class Attribution:
     seed_title: str
     seed_tmdb_id: int
     detail: str = ""  # the shared actor's name, or the franchise's
+
+
+TitleKey = tuple[MediaType, int]  # (media, tmdb_id)
+
+_KEEP_FRACTION = 2 / 3  # on a refresh night, keep the strongest ~two-thirds; swap the weakest third
+
+
+@dataclass(frozen=True)
+class OverTime:
+    """How an AI row changes from night to night (#138): all three unset is the behaviour before they existed."""
+
+    refresh_share: float | None = None
+    repeat_cooldown_days: int | None = None
+    avoid_rows: tuple[str, ...] = ()
+
+    @property
+    def active(self) -> bool:
+        return self.refresh_share is not None or self.repeat_cooldown_days is not None or bool(self.avoid_rows)
+
+    def fingerprint(self) -> str:
+        """Set parts only, fixed order, avoid sorted: "share=0.5;cooldown=30;avoid=a,b"."""
+        parts = []
+        if self.refresh_share is not None:
+            parts.append(f"share={self.refresh_share:g}")
+        if self.repeat_cooldown_days is not None:
+            parts.append(f"cooldown={self.repeat_cooldown_days}")
+        if self.avoid_rows:
+            parts.append(f"avoid={','.join(sorted(self.avoid_rows))}")
+        return ";".join(parts)
+
+    def keep_fraction(self) -> float:
+        """The share of a row kept on a refresh night; the pre-existing two-thirds when unset."""
+        return _KEEP_FRACTION if self.refresh_share is None else 1 - self.refresh_share
 
 
 @dataclass
@@ -664,6 +697,17 @@ class RowSpec:
     # An AI row (#138): its titles are a theme's, read once per run and ranked per person in code. None on
     # every other row.
     theme: ThemeSpec | None = None
+    # Night-to-night controls for an AI row (#138); the default changes nothing.
+    over_time: OverTime = field(default_factory=OverTime)
+    # Per-person themes (#138): (user slug, that person's theme). A person absent here gets ``theme``.
+    person_themes: tuple[tuple[str, ThemeSpec], ...] = ()
+
+    def for_person(self, user_slug: str) -> RowSpec:
+        """This row as ``user_slug`` sees it: with their own theme when they have one."""
+        for slug, person_theme in self.person_themes:
+            if slug == user_slug:
+                return replace(self, theme=person_theme)
+        return self
 
     def limits(self) -> RowLimits:
         return RowLimits(self.max_runtime, self.min_year, self.max_year, self.min_rating)
@@ -1566,6 +1610,9 @@ class UserRunReport:
     # `status` says what became of it. Naming it "built" would claim a success that a later error in
     # the pipeline can still take away. {} on a cold-start skip, which never reaches the decision.
     rows_considered: dict[str, str] = field(default_factory=dict)
+    # Row slugs whose no-repeat / keep-out exclusions were ignored tonight because they would have left
+    # the row empty (#138). The adapter persists each as an event; the engine cannot write events.
+    exclusions_skipped: list[str] = field(default_factory=list)
     # Seconds spent on work EVERY row shares — the watch-history fetch and the candidate gather.
     # All AI spend happens here (see `pool_costs`), so on a typical person this dwarfs the rows.
     # Reported as its own line rather than divided between rows, which would invent a split.

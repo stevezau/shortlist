@@ -57,6 +57,7 @@ from shortlist.engine.models import (
     WatchedItem,
     WrittenDetails,
 )
+from shortlist.engine.over_time import apply_exclusions, excluded_titles
 from shortlist.engine.placeholders import names_a_seed
 from shortlist.engine.requests_row import build_requests_picks
 from shortlist.engine.themes import theme_content_hash
@@ -614,9 +615,6 @@ def _started_shows(watched_shows: dict[int, tuple[int, int | None]]) -> set[tupl
     return {(tid, MediaType.SHOW) for tid, (viewed, _total) in watched_shows.items() if viewed and viewed > 0}
 
 
-_KEEP_FRACTION = 2 / 3  # on a refresh night, keep the strongest ~two-thirds; swap the weakest third
-
-
 def _is_refresh_night(row_slug: str, owner_slug: str, run_day: int, refresh_days: int) -> bool:
     """Whether this row rebuilds today, vs redelivering last run's picks unchanged.
 
@@ -979,6 +977,7 @@ def _shuffle_key(row_slug: str, user_slug: str, run_day: int, tmdb_id: int) -> i
 _RECIPE_SEASON = "season="
 #: How `row_recipe` starts its theme part.
 _RECIPE_THEME = "theme="
+_RECIPE_OVER_TIME = "over_time="
 
 
 def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
@@ -1061,6 +1060,8 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
             # AI rows only (#138): the theme's contents, so editing them rebuilds the row while renaming it
             # only renames it.
             *((f"{_RECIPE_THEME}{spec.theme.slug}#{theme_content_hash(spec.theme)}",) if spec.theme else ()),
+            # Only when a control is set (#138): rows without one keep their recipe byte for byte.
+            *((f"{_RECIPE_OVER_TIME}{spec.over_time.fingerprint()}",) if spec.over_time.active else ()),
         )
     )
 
@@ -2935,6 +2936,32 @@ def _season_cold_picks(
     ]
 
 
+def _without_excluded(
+    policy: RowPolicy, spec: RowSpec, candidates: list[Candidate], *, spare: set[tuple[MediaType, int]]
+) -> list[Candidate]:
+    """``candidates`` minus what this AI row's no-repeat and keep-out controls rule out (#138).
+
+    Applied to NEW candidates only: picks the row already carries are never touched. When the controls
+    would leave nothing to pick from they are ignored for the night and the row says so on the report.
+    """
+    ctx = policy.ctx
+    if not spec.over_time.active:
+        return candidates
+    excluded = excluded_titles(
+        spec.over_time,
+        user_slug=policy.user.slug,
+        row_slug=spec.slug,
+        today=(_utc(ctx.run_at) or datetime.now(UTC)).date(),
+        history=ctx.pick_history,
+        built_this_run=ctx.built_this_run,
+        spare=spare,
+    )
+    result = apply_exclusions(candidates, excluded)
+    if result.skipped and spec.slug not in policy.report.exclusions_skipped:
+        policy.report.exclusions_skipped.append(spec.slug)
+    return result.kept
+
+
 def _build_section_picks(
     policy: RowPolicy,
     spec: RowSpec,
@@ -3256,11 +3283,12 @@ def _build_section_picks(
             # rest for genuinely-new titles.
             # Pick only from candidates NOT already in the row so a just-rotated-out title can't
             # bounce straight back — the internal anti-immediate-repeat guard that replaced staleness_runs.
-            keep_n = min(len(prior_valid), round(_KEEP_FRACTION * k))
+            keep_n = min(len(prior_valid), round(spec.over_time.keep_fraction() * k))
             kept = prior_valid[:keep_n]
             if _names_a_seed(spec, user, policy.cfg):
                 kept = _reseed_survivors(kept, sub, policy.seeds_for(spec))
             fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
+            fresh_pool = _without_excluded(policy, spec, fresh_pool, spare={(p.media_type, p.tmdb_id) for p in kept})
             new_picks = picker.build_picks(fresh_pool, k, **theme_reasons)
             newcomers = [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
             # Take only what there is ROOM for, before ordering. Handing the whole merged list to
@@ -3298,10 +3326,11 @@ def _build_section_picks(
                     getattr(section, "title", section.key),
                 )
                 continue
-            sec_picks = picker.build_picks(sub, k, **theme_reasons)
+            fresh_pool = _without_excluded(policy, spec, sub, spare=set())
+            sec_picks = picker.build_picks(fresh_pool, k, **theme_reasons)
             if len(sec_picks) < k:
-                sec_picks = _pad_picks(sec_picks, sub, k, **theme_reasons)
-            spares, reselect = sub, True
+                sec_picks = _pad_picks(sec_picks, fresh_pool, k, **theme_reasons)
+            spares, reselect = fresh_pool, True
 
         if spec.rewatch:
             # A rewatch row wants the opposite of the cap: finished titles FIRST. Checked before
@@ -3352,6 +3381,7 @@ def _build_section_picks(
         ]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
+        ctx.built_this_run.setdefault((user.slug, spec.slug), set()).update((p.media_type, p.tmdb_id) for p in ranked)
         # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the
         # watched cap and the rewatch reordering above can both backfill titles from `sub` that the
         # branch never saw — those are new to the row too, and `new_first` has to lead with them.
@@ -3589,6 +3619,8 @@ def _run_user(
     #     re-opens the same takeover through a different door.
     owned = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec)]
     specs = [s for s in owned if not _is_muted(user, s) and cfg.should_build(s) and not s.dormant]
+    # Each AI row as THIS person sees it, so the recipe, pool key and theme reads all see their theme (#138).
+    specs = [s.for_person(user.slug) for s in specs]
     # Rows out of season (discussion #124) build nothing, but their collections still have to be HIDDEN,
     # and promotion is where a row's `off` placement is applied — to people this returns True for. So
     # someone whose only row is out of season is still a promotion candidate; otherwise the row they had

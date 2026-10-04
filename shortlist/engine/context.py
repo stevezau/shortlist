@@ -25,7 +25,8 @@ from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.curator import Curator
 from shortlist.engine.history import HistorySource
-from shortlist.engine.models import EngineConfig, Pick, UserProfile, UserRunReport, WrittenDetails
+from shortlist.engine.models import EngineConfig, Pick, TitleKey, UserProfile, UserRunReport, WrittenDetails
+from shortlist.engine.over_time import PickHistory
 from shortlist.engine.privacy import SnapshotStore
 from shortlist.engine.seasons import SeasonTitles
 from shortlist.engine.themes import ThemeTitles
@@ -59,6 +60,12 @@ class EngineContext:
     # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
     # bootstraps by curating fresh, exactly like a first run.
     previous_picks: dict[tuple[str, str, str], list[Pick]] = field(default_factory=dict)
+    # What earlier real runs showed, for an AI row's no-repeat and keep-out controls (#138); None on direct
+    # engine runs, where the controls then see only what this run built.
+    pick_history: PickHistory | None = None
+    # (user_slug, row_slug) -> the titles that row settled on in THIS run, filled as each person's rows
+    # build; a keep-out row built earlier tonight is read from here rather than from last night's history.
+    built_this_run: dict[tuple[str, str], set[TitleKey]] = field(default_factory=dict)
     # (user_slug, row_slug, section_key) -> the Plex ratingKey that row last delivered there, from the
     # delivery ledger. Delivery's ONE identity question is "is the collection in front of me this
     # row's, under a title it no longer renders to?" — a rename in place versus a fresh build. It used

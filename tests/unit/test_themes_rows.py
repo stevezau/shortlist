@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from loguru import logger
 
 import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.context import EngineContext
 from shortlist.engine.delivery import row_marker
-from shortlist.engine.models import EngineConfig, MediaType, Pick, RowLimits, RowSpec
+from shortlist.engine.models import EngineConfig, MediaType, OverTime, Pick, RowLimits, RowSpec, TitleKey
 from shortlist.engine.picker import sanitise_ai_reason
 from shortlist.engine.placeholders import needs_a_run, uses_theme
 from shortlist.engine.rows import RowPolicy, _rating_key_resolver, effective_row_sources, row_recipe
@@ -142,6 +145,43 @@ class TestTheRecipe:
         )
         assert row_recipe(policy, plain) == "both||tmdb_similar|0.0|0.0|False|False|30|1|popular"
         assert policy.pool_key(plain) == (("tmdb_similar",), "both", (), True, False, 0, (), "", "")
+
+    def test_recipe_is_byte_identical_with_controls_off(self):
+        """Pinned from the code before the over-time controls: their part must not exist while they are unset."""
+        themed = theme_row()
+        policy = _policy(MagicMock(config=EngineConfig()), themed)
+        assert row_recipe(policy, themed) == (
+            "movie||tmdb_similar|0.0|0.0|False|False|30|1|popular|theme=twists#35ef9e486295e91a56dc34506a26496802107977"
+        )
+        assert policy.pool_key(themed) == (
+            ("tmdb_similar",),
+            "movie",
+            (),
+            True,
+            False,
+            0,
+            (),
+            "",
+            "",
+            "twists",
+            "35ef9e486295e91a56dc34506a26496802107977",
+        )
+
+    @pytest.mark.parametrize(
+        ("over_time", "part"),
+        [
+            (OverTime(refresh_share=0.5), "over_time=share=0.5"),
+            (OverTime(repeat_cooldown_days=30), "over_time=cooldown=30"),
+            (OverTime(avoid_rows=("b", "a")), "over_time=avoid=a,b"),
+        ],
+    )
+    def test_each_control_changes_the_recipe_and_clearing_it_restores_it(self, over_time, part):
+        plain = theme_row()
+        controlled = theme_row(over_time=over_time)
+        policy = _policy(MagicMock(config=EngineConfig()), plain)
+
+        assert row_recipe(policy, controlled).endswith(part)
+        assert row_recipe(policy, dataclasses.replace(controlled, over_time=OverTime())) == row_recipe(policy, plain)
 
     def test_recipe_carries_slug_and_content_hash(self, ctx):
         row = theme_row()
@@ -420,3 +460,223 @@ class TestOtherRowsClaimAThemedTitle:
         )
 
         assert deleted == []
+
+
+class TestForPerson:
+    def test_each_person_gets_their_own_theme_and_everyone_else_the_base(self):
+        base, theirs = theme_spec(), theme_spec(slug="heists", name="Heists")
+        row = theme_row(base, person_themes=(("sarah", theirs),))
+
+        assert row.for_person("sarah").theme == theirs
+        assert row.for_person("mike").theme == base
+        assert row.for_person("nobody").theme == base
+
+    def test_for_person_changes_nothing_but_the_theme(self):
+        row = theme_row(
+            person_themes=(("sarah", theme_spec(slug="heists")),), over_time=OverTime(repeat_cooldown_days=9)
+        )
+
+        assert row.for_person("sarah") == dataclasses.replace(row, theme=row.person_themes[0][1])
+        assert row.for_person("mike") is row
+
+
+class FakeHistory:
+    def __init__(self, first_shown: set[TitleKey] | None = None):
+        self.first_shown = first_shown or set()
+        self.calls: list[tuple[str, str, date]] = []
+
+    def first_shown_since(self, user_slug: str, row_slug: str, since: date) -> set[TitleKey]:
+        self.calls.append((user_slug, row_slug, since))
+        return self.first_shown
+
+    def latest(self, user_slug: str, row_slug: str) -> set[TitleKey]:
+        return set()
+
+
+BIG = list(range(41, 61))  # twenty theme films, all in the library, best-rated first
+
+
+@pytest.fixture
+def big_ctx(ctx):
+    """The theme holds BIG; vote_average falls with the id, so the ranking is 41, 42, ... and the pool keeps ten."""
+    ctx.plex.build_library_index.return_value = {900: 999, **{t: 1000 + t for t in BIG}}
+
+    def theme_list(media_type, params):
+        if media_type is MediaType.MOVIE and params.get("with_keywords") == str(TAG):
+            return [
+                {"id": t, "title": f"Film {t}", "genre_ids": [28], "vote_average": 9.0 - (t - 41) * 0.1} for t in BIG
+            ]
+        return []
+
+    ctx.tmdb.discover_all.side_effect = theme_list
+    return ctx
+
+
+def _prior(ids: list[int]) -> list[Pick]:
+    return [
+        Pick(
+            tmdb_id=t,
+            rating_key=1000 + t,
+            title=f"Film {t}",
+            rank=i + 1,
+            reason="kept",
+            media_type=MediaType.MOVIE,
+            collection_slug="ai-twists",
+            section_key="1",
+            library="Movies",
+        )
+        for i, t in enumerate(ids)
+    ]
+
+
+def _ids(report, username: str, row_slug: str = "ai-twists") -> list[int]:
+    return [p.tmdb_id for p in _picks(report, username, row_slug)]
+
+
+class TestOverTimeControls:
+    def test_refresh_share_changes_how_many_picks_swap(self, big_ctx):
+        prior_ids = BIG[:4]
+        big_ctx.previous_picks = {("sarah", "ai-twists", "1"): _prior(prior_ids)}
+        big_ctx.config.rows = [theme_row(size=4, refresh_days=1, over_time=OverTime(refresh_share=0.5))]
+        report = pipeline_mod.run(big_ctx, [make_profile("sarah", account_id=100)])
+
+        ids = _ids(report, "sarah")
+        assert set(ids) & set(prior_ids) == set(prior_ids[:2]), "kept titles are the strongest half by rank"
+        assert len(ids) == 4
+
+    def test_unset_share_keeps_two_thirds(self, big_ctx):
+        big_ctx.previous_picks = {("sarah", "ai-twists", "1"): _prior(BIG[:6])}
+        big_ctx.config.rows = [theme_row(size=6, refresh_days=1)]
+        report = pipeline_mod.run(big_ctx, [make_profile("sarah", account_id=100)])
+
+        assert set(_ids(report, "sarah")) & set(BIG[:6]) == set(BIG[:4])
+
+    def test_cooldown_drops_recent_titles_from_new_picks(self, big_ctx):
+        person = [make_profile("sarah", account_id=100)]
+        big_ctx.config.rows = [theme_row(size=5)]
+        baseline = _ids(pipeline_mod.run(big_ctx, person), "sarah")
+        history = FakeHistory({(MediaType.MOVIE, t) for t in baseline[:2]})
+        big_ctx.pick_history = history
+        big_ctx.config.rows = [theme_row(size=5, over_time=OverTime(repeat_cooldown_days=14))]
+        ids = _ids(pipeline_mod.run(big_ctx, person), "sarah")
+
+        assert len(ids) == 5
+        assert not set(ids) & set(baseline[:2])
+        assert history.calls
+        user_slug, row_slug, since = history.calls[0]
+        assert (user_slug, row_slug) == ("sarah", "ai-twists")
+        assert (date.today() - since).days == 14
+
+    def test_cooldown_spares_kept_picks(self, big_ctx):
+        prior_ids = BIG[:6]
+        big_ctx.previous_picks = {("sarah", "ai-twists", "1"): _prior(prior_ids)}
+        big_ctx.pick_history = FakeHistory({(MediaType.MOVIE, 41)})
+        big_ctx.config.rows = [theme_row(size=6, refresh_days=1, over_time=OverTime(repeat_cooldown_days=14))]
+        report = pipeline_mod.run(big_ctx, [make_profile("sarah", account_id=100)])
+
+        assert 41 in _ids(report, "sarah")
+
+    def test_avoid_rows_drops_titles_from_the_named_row(self, big_ctx):
+        big_ctx.config.rows = [
+            theme_row(slug="ai-a", size=5),
+            theme_row(slug="ai-b", size=5, over_time=OverTime(avoid_rows=("ai-a",))),
+        ]
+        report = pipeline_mod.run(big_ctx, [make_profile("sarah", account_id=100)])
+
+        first, second = _ids(report, "sarah", "ai-a"), _ids(report, "sarah", "ai-b")
+        assert len(first) == len(second) == 5
+        assert not set(first) & set(second)
+
+    def test_exclusions_skipped_event_field_is_set(self, ctx):
+        ctx.pick_history = FakeHistory({(MediaType.MOVIE, t) for t in (20, 30, 31)})
+        ctx.config.rows = [theme_row(over_time=OverTime(repeat_cooldown_days=30))]
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert sarah.exclusions_skipped == ["ai-twists"]
+        assert {p.tmdb_id for p in sarah.picks} == {20, 30, 31}
+
+    def test_a_row_without_controls_reports_no_skipped_exclusions(self, ctx):
+        ctx.config.rows = [theme_row()]
+        report = pipeline_mod.run(ctx, _people())
+
+        assert all(u.exclusions_skipped == [] for u in report.users)
+
+
+class TestPersonThemes:
+    @staticmethod
+    def _themes_by_tag(ctx, tags_to_ids: dict[str, list[int]]) -> None:
+        def theme_list(media_type, params):
+            if media_type is not MediaType.MOVIE:
+                return []
+            return [
+                {"id": t, "title": f"T{t}", "genre_ids": [28], "vote_average": 7.0}
+                for t in tags_to_ids.get(params.get("with_keywords"), [])
+            ]
+
+        ctx.tmdb.discover_all.side_effect = theme_list
+
+    def test_person_theme_resolved_per_person(self, ctx):
+        self._themes_by_tag(ctx, {"601": [20, 30, 31], "602": [30]})
+        mine, yours = theme_spec(slug="a", tags=(601,)), theme_spec(slug="b", tags=(602,))
+        ctx.config.rows = [theme_row(person_themes=(("sarah", mine), ("mike", yours)))]
+        report = pipeline_mod.run(ctx, _people())
+
+        assert {p.tmdb_id for p in _picks(report, "sarah", "ai-twists")} == {20, 30, 31}
+        assert {p.tmdb_id for p in _picks(report, "mike", "ai-twists")} == {30}
+        assert {"a", "b"} <= set(ctx.theme_titles)
+
+    def test_person_theme_is_loaded_once_per_distinct_slug(self, ctx):
+        shared = theme_spec(slug="solo", tags=(601,))
+        self._themes_by_tag(ctx, {"601": [20, 30]})
+        row = RowSpec(
+            slug="ai-twists",
+            name_template="{theme}",
+            size=5,
+            media="movie",
+            theme=None,
+            person_themes=(("sarah", shared), ("mike", shared)),
+        )
+        ctx.config.rows = [row]
+        with patch.object(pipeline_mod, "load_theme", wraps=load_theme) as loaded:
+            report = pipeline_mod.run(ctx, _people())
+
+        assert [call.args[2].slug for call in loaded.call_args_list] == ["solo"]
+        assert "solo" in ctx.theme_titles
+        assert {p.tmdb_id for p in _picks(report, "sarah", "ai-twists")} == {20, 30}
+
+    def test_failing_person_theme_keeps_prior_picks(self, ctx):
+        self._themes_by_tag(ctx, {"601": [20, 30], "602": [30, 31]})
+        bad, good = theme_spec(slug="bad", tags=(601,)), theme_spec(slug="good", tags=(602,))
+        ctx.previous_picks = {("sarah", "ai-twists", "1"): _prior([20, 30])}
+        row = SimpleNamespace(title="Twist endings" + row_marker(100), ratingKey=5151, labels=[])
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: [row] if label == "shortlist_sarah" else []
+        ctx.config.rows = [theme_row(person_themes=(("sarah", bad), ("mike", good)))]
+
+        def load(tmdb, plex, theme, index):
+            if theme.slug == "bad":
+                raise RuntimeError("TMDB 503")
+            return load_theme(tmdb, plex, theme, index)
+
+        with patch.object(pipeline_mod, "load_theme", side_effect=load):
+            report = pipeline_mod.run(ctx, _people())
+
+        assert "bad" in ctx.theme_failures and "good" not in ctx.theme_failures
+        assert _picks(report, "sarah", "ai-twists") == []
+        assert {p.tmdb_id for p in _picks(report, "mike", "ai-twists")} == {30, 31}
+
+    def test_person_themes_beyond_the_cap_keep_prior_picks(self, ctx, monkeypatch):
+        monkeypatch.setattr(pipeline_mod, "_MAX_PERSON_THEMES", 2)
+        themes = [theme_spec(slug=f"t{i}", tags=(601,)) for i in range(3)]
+        self._themes_by_tag(ctx, {"601": [20, 30]})
+        ctx.config.rows = [theme_row(person_themes=tuple(zip(("sarah", "mike", "zed"), themes, strict=True)))]
+        messages: list[str] = []
+        sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            pipeline_mod.run(ctx, _people())
+        finally:
+            logger.remove(sink)
+
+        assert set(ctx.theme_failures) == {"t2"}
+        assert {"t0", "t1"} <= set(ctx.theme_titles) and "t2" not in ctx.theme_titles
+        assert sum("per-run cap" in m for m in messages) == 1

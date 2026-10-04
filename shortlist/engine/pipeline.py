@@ -66,7 +66,7 @@ from shortlist.engine.privacy import (
 )
 from shortlist.engine.request_config import resolve_request_config
 from shortlist.engine.requests_row import collect_requests
-from shortlist.engine.themes import load_theme
+from shortlist.engine.themes import ThemeSpec, load_theme
 
 #: How many accounts of one type the filter-enforcement spot-check may try before giving up.
 _ENFORCEMENT_SPOT_CHECK_ATTEMPTS = 3
@@ -448,6 +448,9 @@ def _load_season_titles(
             )
 
 
+_MAX_PERSON_THEMES = 100  # distinct person themes read from TMDB in one run
+
+
 def _load_theme_titles(
     ctx: EngineContext, users: list[UserProfile], library_index: dict[MediaType, dict[int, int]]
 ) -> None:
@@ -458,7 +461,26 @@ def _load_theme_titles(
     """
     if not users:
         return
-    wanted = {spec.theme.slug: spec.theme for spec in ctx.config.rows if spec.theme and ctx.config.should_build(spec)}
+    wanted: dict[str, ThemeSpec] = {}
+    person_only: dict[str, ThemeSpec] = {}
+    for spec in ctx.config.rows:
+        if not ctx.config.should_build(spec):
+            continue
+        if spec.theme:
+            wanted[spec.theme.slug] = spec.theme
+        for _, person_theme in spec.person_themes:
+            person_only.setdefault(person_theme.slug, person_theme)
+    # Row-level themes always load; only the per-person ones count against the cap.
+    loaded_person_themes = 0
+    for slug, theme in person_only.items():
+        if slug in wanted:
+            continue
+        if loaded_person_themes >= _MAX_PERSON_THEMES:
+            ctx.theme_failures[slug] = "too many themes to read in one run"
+            logger.warning("person theme {} not read: over the per-run cap of {}", theme.name, _MAX_PERSON_THEMES)
+            continue
+        wanted[slug] = theme
+        loaded_person_themes += 1
     for slug, theme in wanted.items():
         try:
             ctx.theme_titles[slug] = load_theme(ctx.tmdb, ctx.plex, theme, library_index)
