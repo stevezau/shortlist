@@ -426,6 +426,70 @@ class TestExploreRowEditsCheckEachPersonsThemeTitles:
         assert sibling_unchanged.status_code == 200, sibling_unchanged.text
 
 
+class TestFallbackNamesCountInPersonTitleChecks:
+    @staticmethod
+    def explore_with_themes(client: TestClient, *people_and_themes: tuple[int, str]) -> dict:
+        row = ai_row(
+            client,
+            make_theme(client),
+            name="Explore",
+            name_template="{theme}",
+            theme_mode="explore",
+            library_keys=["1"],
+        )
+        with client.app.state.sessions() as session:
+            session.get(Collection, row["id"]).enabled = True  # switching an AI row on needs a provider
+            session.commit()
+        for user_id, name in people_and_themes:
+            history(client, row["id"], user_id, "current", name, theme_id=make_theme(client, name))
+        return row
+
+    def test_a_siblings_fallback_name_may_not_be_moved_onto_a_title_a_person_wears(self, client: TestClient):
+        ann, bob = add_people(client, "ann", "bob")
+        self.explore_with_themes(client, (ann, "Cosy Nights"))
+        sibling = plain_row(
+            client, "Plain", library_keys=["1"], fallback_name="Nothing yet", audience="subset", audience_user_ids=[bob]
+        )
+        # Her theme is written while she is outside the sibling's audience; the sibling's fallback name is the title.
+        assert patch(client, sibling, fallback_name="Cosy Nights").status_code == 422
+        with client.app.state.sessions() as session:  # the server-wide check refuses this through the API
+            session.get(Collection, sibling["id"]).fallback_name = "Cosy Nights"
+            session.commit()
+
+        r = patch(client, sibling, audience="subset", audience_user_ids=[bob, ann])
+
+        assert r.status_code == 422 and "Cosy Nights" in r.text
+
+    def test_an_edit_is_refused_only_for_the_clashes_it_adds(self, client: TestClient):
+        ann, bob, carol = add_people(client, "ann", "bob", "carol")
+        self.explore_with_themes(client, (ann, "Alpha"), (bob, "Beta"), (carol, "Gamma"))
+        with client.app.state.sessions() as session:
+            sibling = Collection(
+                slug="sib",
+                name="Alpha",
+                fallback_name="Gamma",
+                media="both",
+                library_keys=["1"],
+                enabled=True,
+                build="per_person",
+                audience="subset",
+            )
+            session.add(sibling)
+            session.flush()
+            session.add(CollectionAudience(collection_id=sibling.id, user_id=ann))
+            session.commit()
+            sibling_id = sibling.id
+        row = {"id": sibling_id, "name": "Alpha"}
+
+        swaps_one_clash_for_another = patch(client, row, audience="subset", audience_user_ids=[bob, carol])
+        keeps_the_existing_one = patch(client, row, audience="subset", audience_user_ids=[ann, bob])
+        drops_it = patch(client, row, audience="subset", audience_user_ids=[bob])
+
+        assert swaps_one_clash_for_another.status_code == 422 and "Gamma" in swaps_one_clash_for_another.text
+        assert keeps_the_existing_one.status_code == 200, keeps_the_existing_one.text
+        assert drops_it.status_code == 200, drops_it.text
+
+
 class TestWritesTakeThePersonsRotationLock:
     @pytest.fixture
     def locked(self, monkeypatch) -> list[tuple[int, int]]:

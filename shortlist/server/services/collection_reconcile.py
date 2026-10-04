@@ -292,6 +292,7 @@ class RowView:
     slug: str
     name: str
     template: str
+    fallback_name: str
     media: str
     library_keys: tuple[str, ...]
     #: Plex account ids the row builds for; None is everyone.
@@ -306,6 +307,7 @@ def _row_view(session, collection: Collection, secrets, account_by_user, audienc
         slug=collection.slug,
         name=collection.name,
         template=row_template(session, collection.slug, secrets),
+        fallback_name=collection.fallback_name or "",
         media=collection.media or "both",
         library_keys=tuple(str(k) for k in collection.library_keys or []),
         audience=_frozenset_or_none(
@@ -340,6 +342,9 @@ def _titles_for(view: RowView, user: User, held, catalogue: Catalogue) -> dict[s
         shown = fill_theme(view.template, theme) if theme is not None else view.template
         for key in title_keys(view.template, catalogue=catalogue, theme=theme):
             titles.setdefault(key, shown)
+    # The name for people with nothing watched yet is a real title too (#84).
+    if fallback := title_key(view.fallback_name):
+        titles.setdefault(fallback, view.fallback_name)
     return titles
 
 

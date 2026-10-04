@@ -823,3 +823,28 @@ class TestQueuedThemesAndPromotionClashes:
         assert "failed" in [o.action for o in outcomes]
         assert history_of(sessions, row_id, uid) == []
         assert "Theme 1" in events(sessions, "error")[0].message["clash"]
+
+
+class TestFallbackNamesCountInRotation:
+    def test_a_theme_named_like_a_siblings_fallback_name_keeps_the_current_theme(self, sessions):
+        row_id, (uid,) = seed(sessions, name_template="{theme}", build="per_person")
+        add_history(sessions, row_id, uid, "current", started=NAIVE_NOW - timedelta(days=9), name="Cosy")
+        with sessions() as s:
+            s.add(
+                Collection(
+                    slug="sib",
+                    name="Plain",
+                    fallback_name="Theme 1",
+                    media="movie",
+                    library_keys=["1"],
+                    enabled=True,
+                    build="per_person",
+                )
+            )
+            s.commit()
+
+        outcomes = rotate(sessions, FakeAuthor())
+
+        assert [o.action for o in outcomes] == ["failed"]
+        assert history_of(sessions, row_id, uid) == [("current", "Cosy")]
+        assert events(sessions, "error")[0].message["clash"] == "Theme 1"

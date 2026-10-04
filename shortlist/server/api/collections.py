@@ -1372,6 +1372,8 @@ _TITLE_MOVING_FIELDS = {
     "audience_user_ids",
     "theme_mode",
     "theme_id",
+    "enabled",
+    "fallback_name",
 }
 
 
@@ -1407,6 +1409,7 @@ def _reject_new_person_title_clash(
         slug=collection.slug,
         name=collection.name,
         template=_merged_template(collection, body, sent),
+        fallback_name=(body.fallback_name if "fallback_name" in sent else collection.fallback_name) or "",
         media=media or "both",
         library_keys=tuple(str(k) for k in library_keys),
         audience=accounts,
