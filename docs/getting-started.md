@@ -3,7 +3,6 @@ title: Install Shortlist for Plex with Docker
 description: Requirements, Docker install, first login and the setup wizard that connects your Plex server and builds each user's first personalized row.
 heading: Getting started
 updated: 2026-10-03
-dev_preview: true
 ---
 
 ## Requirements
@@ -34,14 +33,12 @@ dev_preview: true
 
 ## Release channels
 
-The commands below install **stable {{ site.stable_version }}**, using the `:latest` image tag.
-This is the default for a new installation.
+The commands below install the current release, using the `:latest` image tag. This is the default
+for a new installation.
 
-**Development preview (`:dev`)** includes unreleased changes, including the redesigned editor,
-Users and Settings screens and **Your requests** rows. Screenshots marked Development preview
-show that build, so some controls differ from stable. To choose it deliberately, replace `:latest`
-with `:dev` in your image configuration and recreate the container. Back up `/config` before
-changing channels; do not downgrade a migrated database in place.
+The `:dev` tag follows the development branch and can include changes that are not released yet. To
+choose it deliberately, replace `:latest` with `:dev` in your image configuration and recreate the
+container. Back up `/config` before changing channels; do not downgrade a migrated database in place.
 
 ## Install (Docker)
 
@@ -74,8 +71,8 @@ what claims the instance for you); from then on Shortlist only opens for that ac
 
 <figure class="shot">
   <img src="{{ '/images/wizard.webp' | relative_url }}" width="1440" height="1000"
-       alt="Development preview: the Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
-  <figcaption>The wizard's Welcome step in the development preview. Its layout differs from stable {{ site.stable_version }}; the steps below follow stable.</figcaption>
+       alt="The Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
+  <figcaption>The wizard's Welcome step.</figcaption>
 </figure>
 
 Every screenshot on this page is of a throwaway test server, so no real account, address or
@@ -85,7 +82,7 @@ library appears in one.
 > anyone who can open the page could claim it as theirs, so don't put it on the public internet
 > until you've finished the wizard. Once you've claimed it, it's yours.
 
-The wizard has **7 steps**. The list below follows stable {{ site.stable_version }}:
+The wizard has **7 steps**:
 
 1. **Welcome** — a short intro screen. Read it and continue.
 2. **Connect Plex** — sign in with a PIN, then pick your server. Shortlist checks your Plex
@@ -105,7 +102,8 @@ The wizard has **7 steps**. The list below follows stable {{ site.stable_version
 5. **Pick your users** — everyone you share with, with badges showing how much history each
    person has.
 6. **Make it yours** — choose the row's name, how many titles it holds and its refresh cadence.
-   Each row keeps its own schedule.
+   Each row keeps its own schedule. A live title preview shows the name as you type, and
+   **Save & continue** saves the name and size before moving on.
 
    The name can be plain text, or use a placeholder that fills itself in per person, such as
    `{library_name}`, `{user}` or `{top_seed}`. See [Naming a row](guides/rows.md#naming-a-row)
@@ -114,16 +112,6 @@ The wizard has **7 steps**. The list below follows stable {{ site.stable_version
 7. **First run** — watch it build, person by person. Reloading resumes the same run. Results
    distinguish built, skipped and failed users. You can finish setup while the run continues,
    or skip building until later.
-
-<details class="dev-preview" markdown="1">
-<summary><span class="dev-preview__tag">Development preview</span> The Make it yours step</summary>
-<div class="dev-preview__body" markdown="1">
-
-The customization step shows a live title preview and uses **Save & continue** to save the name and
-size before moving on.
-
-</div>
-</details>
 
 ## Trying it safely
 
@@ -142,7 +130,7 @@ share filter. Later runs are much faster. Most rows are unchanged and skipped.
 Every row is hidden from every other account before it is ever put on a home screen, so nobody finds
 a row that was built for someone else. (You are the exception: Plex cannot hide anything from the
 server owner — see below.) Your share filters are copied before the first change, so **Uninstall**
-(Settings → Danger Zone) restores that saved copy and reports any accounts it cannot restore. The hiding relies on Plex Media Server
+(Settings → System → Danger zone) restores that saved copy and reports any accounts it cannot restore. The hiding relies on Plex Media Server
 1.43.2.10687 or newer — older builds ignore it, which is why the wizard surfaces your version before
 you begin.
 
@@ -163,7 +151,7 @@ Everyone has a row and it will refresh on its own. Worth doing next:
 
 - **Check it landed.** Sign in as somebody who isn't you and confirm they see their row, and only
   theirs. The owner account sees everybody's, so it can't tell you this.
-- **Add another kind of row.** Stable includes nine templates; the development build also includes "Your requests".
+- **Add another kind of row.** There are ten templates, including "Your requests".
   See [Rows and templates](guides/rows.md).
 - **Decide how often rows change.** Each row keeps its own schedule.
   See [Schedules](guides/schedules.md).

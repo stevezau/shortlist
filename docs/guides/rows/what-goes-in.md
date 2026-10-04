@@ -100,7 +100,7 @@ of a rewatch row). A fill-up title can still be requested if your library doesn'
 ## People without enough watch history
 
 Someone new to the server, or someone who barely watches, has too little history for Shortlist to
-recommend from. **Settings → Finding titles → Enough watch history** is where that line sits
+recommend from. **Settings → Defaults → Refresh & variety → Enough watch history** is where that line sits
 (10 watched titles by default), and the setting beneath it decides what those people get:
 
 | Choice                                     | What lands on their Plex                                                                                                  |
@@ -143,7 +143,7 @@ displays.
 about when a film or show came out, the second about when it joined this row.
 
 **Highest rated** uses TMDB by default, which needs no setup. To sort on IMDb, Trakt, Rotten Tomatoes
-or Metacritic instead, set **Settings → Finding titles → Rate titles using**. Those come from MDBList
+or Metacritic instead, set **Settings → Defaults → Refresh & variety → Rate titles using**. Those come from MDBList
 and need its API key (the same one the Requests feature uses). Without a key, or once MDBList's daily
 quota is spent, the row falls back to TMDB for its _whole_ ordering rather than sorting half the row
 on one scale and half on another.

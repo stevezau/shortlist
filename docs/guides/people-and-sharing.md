@@ -3,37 +3,32 @@ title: People and sharing
 description: The Users page in Shortlist, turning people on, off and paused, per-person settings, leaving one account's Plex sharing alone, people who leave the server, and accounts Plex restricts.
 heading: People and sharing
 updated: 2026-10-03
-dev_preview: true
 ---
 
 <figure class="shot">
   <img src="{{ '/images/user-detail.webp' | relative_url }}" width="1440" height="1000" loading="lazy"
-       alt="A person's page in Shortlist 1.9.3: sarah, 12 titles watched, with tabs for Rows, Runs, Settings and Watched, and her Picked for You row listing the reason for each pick">
+       alt="A person's page in Shortlist: sarah, 12 titles watched, with tabs for Rows, Runs, Settings and Watched, and her Picked for You row listing the reason for each pick">
   <figcaption>Open a person on the <strong>Users</strong> page for their history, their picks and their settings.</figcaption>
 </figure>
 
 Everyone the server is shared with, plus you (badged `owner`, because plex.tv's user list leaves the owner
 out, so Shortlist adds you itself).
 
-<details class="dev-preview" markdown="1">
-<summary><span class="dev-preview__tag">Development preview</span> The redesigned roster</summary>
-<div class="dev-preview__body" markdown="1">
-
-The redesigned roster adds search and filters. Search by name and filter **All**, **Active**,
-**Paused**, **Off** or **Needs attention**. Active means enabled, not paused and not blocked by a Plex
-restriction profile; a paused person can still have their Enabled switch on.
+The roster has search and filters. Search by name and filter **All**, **Active**, **Paused**, **Off**
+or **Needs attention**. Active means enabled, not paused and not blocked by a Plex restriction
+profile; a paused person can still have their Enabled switch on.
 
 Account type, request-link status and picks watched stay visible beside each person's identity.
 Picks watched is how many different picks they watched in the last 30 days; hover it for when they
-last watched one. The column that shows Active, Paused, Off or Restricted is headed **Status**.
-**Select visible users** and **Sort** sit above the roster at every screen width. **All users…**
-closes with Escape or an outside click; its Enable/Disable actions still require confirmation.
+last watched one. The column that shows Active, Paused, Off or Restricted is headed **Status**. A
+**Requests** column says whether each person is linked to an Overseerr account. A Privacy column
+says whether the account is hiding every row, is missing hide rules, is left alone by your choice,
+or is the server owner. **Select visible users** and **Sort** sit above the roster at every screen
+width. **All users…** closes with Escape or an outside click; its Enable/Disable actions still
+require confirmation.
 
 Open a person for **Rows**, **Runs**, **Settings** and **Watched**; these tabs keep their own links,
 and keyboard users can move between them with the arrow, Home and End keys.
-
-</div>
-</details>
 
 ## Keeping the list current
 
@@ -53,31 +48,24 @@ Select specific people to **Pause rebuilding** or **Resume rebuilding** without 
 - **Pause** keeps their row but skips them on runs. It takes their rows off every shelf, and
   **unpause** puts them straight back. Neither waits for a run.
 
-All of this runs as background jobs, visible on the **Jobs** page.
+All of this runs as background jobs, visible under **Activity**.
 
 ## Per-person settings
 
-Set a request tag, or add per-person row overrides: mute a row, resize it, or set its watch-history
+Add per-person row overrides: mute a row, resize it, or set its watch-history
 depth just for them. Opening a person shows their recent watch history (distinct titles, with season
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
 
-<details class="dev-preview" markdown="1">
-<summary><span class="dev-preview__tag">Development preview</span> A person's Settings tab</summary>
-<div class="dev-preview__body" markdown="1">
+A person's Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
+into labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also
+renames existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history
+but stops it shaping recommendations, and you can unblock it from the same section.
 
-Their Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles** into
-labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also renames
-existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history but stops
-it shaping recommendations, and you can unblock it from the same section.
+## Privacy and your watching account
 
-</div>
-</details>
-
-## Sharing and your watching account
-
-**Sharing** shows what Shortlist knows about each account’s visibility rules, including the
-read time, exceptions and failures. Stored rules and verified effects are different; an unavailable
+The **Privacy** page shows what Shortlist knows about each account’s visibility rules, one line per
+Plex account, including the read time, exceptions and failures. Stored rules and verified effects are different; an unavailable
 read is reported rather than treated as success.
 
 **Watching account** explains the owner exception and offers a separate-account flow. It retains
@@ -94,7 +82,7 @@ labels you named.
 Open that person, go to **Settings → Plex sharing**, and turn off **Manage their Plex sharing
 settings**. Shortlist takes back out the exclusions it added and never touches that account again.
 Their row in the Users list is badged **Sharing untouched** so you can see it at a glance, and
-Support → Sharing lists them separately instead of reporting them as a fault.
+the Privacy page marks them as left alone by your choice instead of reporting them as a fault.
 
 The trade-off, plainly: that account can then see other people's rows, unless — as with an allow-only
 list — its own Plex restrictions already keep it away from them. Everyone else still hides _this_

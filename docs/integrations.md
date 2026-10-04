@@ -70,7 +70,7 @@ until they've watched them. [How the row works →](/guides/requests/#your-reque
 
 The webhook is a JSON POST that works with Discord, Slack, Home Assistant, n8n or anything that
 accepts one. Add its address on the **Webhook** card in Settings → Connections, then turn it on and
-tick what to send in Settings → Notifications: runs starting, finishing or failing, jobs starting,
+tick what to send in Settings → Connections → Webhook: runs starting, finishing or failing, jobs starting,
 finishing or failing, someone able to see a row that isn't theirs, titles waiting for your approval,
 and new versions. A failed run and a privacy problem are ticked to begin with. No message names
 anybody.

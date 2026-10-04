@@ -77,7 +77,7 @@ services:
 | -------- | ----------------------------------------------------- |
 | `latest` | The current stable release                            |
 | `X.Y.Z`  | A specific release, pinned                            |
-| `dev`    | Every green push to `dev`: newest code, less settled  |
+| `dev`    | The development build: newest code, less settled      |
 
 Multi-arch: `linux/amd64` and `linux/arm64`.
 
@@ -96,7 +96,7 @@ Multi-arch: `linux/amd64` and `linux/arm64`.
   Christmas films in December, romance for Valentine's, ranked for each person and hidden between
   seasons.
 - **Radarr/Sonarr or Overseerr requests (optional)** when a strong pick isn't in your library yet.
-- **A "Your requests" row** (`dev` tag only, not yet in stable) — what each person asked for in Overseerr, or tagged with
+- **A "Your requests" row** — what each person asked for in Overseerr, or tagged with
   their name in Radarr/Sonarr, once it's on Plex and until they've watched it. No AI; a person with
   nothing ready simply has no row.
 - **Kometa-friendly**: never touches a collection it didn't create.

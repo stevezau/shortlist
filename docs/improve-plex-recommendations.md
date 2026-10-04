@@ -108,6 +108,6 @@ The mechanics of each part:
 - [Per-user collections](plex-per-user-collections.md) — making a row only one person can see
 - [Plex recommendation tools compared](plex-recommendation-tools.md) — which project does which part
 
-{% include seo-closing.html shot="rows-crop.webp" shot_w="1560" shot_h="800"
-   shot_alt="The Rows page in Shortlist 1.9.3: a Picked for You row, a Because you watched row, a Watch it again row and a shared Popular on this server row."
+{% include seo-closing.html shot="rows-crop.webp" shot_w="1560" shot_h="918"
+   shot_alt="The Rows page: a Picked for You row, a Because you watched row, a Watch it again row and a shared Popular on this server row."
    shot_caption="Four kinds of row on one server. Each is built per person except Popular on this server." %}

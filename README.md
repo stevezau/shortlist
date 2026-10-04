@@ -95,7 +95,7 @@ is private.
 
 | Every pick, and _why_ it was picked                    | Watch every run, step by step                    |
 | ------------------------------------------------------ | ------------------------------------------------ |
-| ![A user's picks and why](docs/images/user-detail.webp) | ![A run in progress](docs/images/run-detail.webp) |
+| ![A user's picks and why](docs/images/user-detail.webp) | ![A finished run and the picks it built](docs/images/run-detail.webp) |
 
 <sub>App screenshots come from a test library, not a real server. The titles are real films and shows,
 but nobody pictured here watched anything.</sub>
@@ -114,6 +114,8 @@ but nobody pictured here watched anything.</sub>
   so your model never needs internet access. Use your provider's own web search, an
   [Exa](https://exa.ai) key, or your own [SearXNG](https://docs.searxng.org).
   [How it works](https://shortlistapp.dev/guides/ai/#the-source-that-uses-ai)
+- ✍️ **AI instructions.** Tell AI web search what to look for, server-wide or per row.
+  [Details](https://shortlistapp.dev/guides/rows/what-goes-in/#ai-instructions)
 - 💬 **Every pick explains itself**: "Because you watched X", with the reason written in code.
 - 📚 **Whole shows, not episodes.** A 20-episode binge counts as one show, so one series can't drown
   out everything else.
@@ -125,8 +127,11 @@ but nobody pictured here watched anything.</sub>
   a template rather than a blank form.
 - 🗓️ **A rebuild cadence you control**: nightly, weekly, monthly or never, so nobody opens Plex to a
   completely reshuffled row every day.
-- 🎃 **Seasonal rows**: one row that follows the calendar (Halloween, Christmas and Valentine's Day),
-  picked for each person and hidden between seasons.
+- 🎃 **Seasonal rows**: one row that follows the calendar: Halloween, Christmas, Valentine's Day plus ten
+  ready-made holidays such as Thanksgiving and Easter, or your own dates. Picked for each person and
+  hidden between seasons.
+- 🚫 **Block a bad seed.** A film someone put on for a friend shouldn't shape their picks. Block it
+  from a run's "How we picked" page. The watch stays in their Plex history and just stops seeding.
 - 📍 **Row placement**: choose which Plex shelf each row lands on (Home, the library's Recommended
   tab, or both) and where it sits.
 - 🎨 **Custom row posters (optional)**: upload artwork or generate it from text, reusing your AI key.
@@ -137,6 +142,9 @@ but nobody pictured here watched anything.</sub>
   **Radarr/Sonarr** for it, or file a request in **Overseerr/Jellyseerr**. Off by default and
   cautious: the strongest few auto-send each night, and the rest wait in a **Requests** inbox for
   one-click approval.
+- 📬 **A "Your requests" row.** What each person asked for in Overseerr (or tagged with their name in
+  Radarr/Sonarr), once it's on Plex and until they've watched it. Private per person, newest first,
+  no AI. A person with nothing ready simply has no row.
 
 **Trust and safety**
 
@@ -145,26 +153,12 @@ but nobody pictured here watched anything.</sub>
   your server exactly as Shortlist found it.
 - 📊 **Know if it's working.** A dashboard tracks what was delivered against what people actually
   watched, per user and per row, and separates a title they **started** from one they **finished**.
+- 🖥️ **A clear dashboard.** Dashboard, Users and Activity pages, a row editor with a jump list, and
+  three-tab Settings. See [the interface guide](https://shortlistapp.dev/guides/interface/).
 - 🧪 **Safe mode.** Set `SHORTLIST_DRY_RUN=1` to try it against your real server without writing a
   single change.
 - 📦 **Homelab-native**: one container, a `/config` volume, a multi-arch image on GHCR, a healthcheck
   and an Unraid template.
-
-**In the development preview (`:dev`), not yet in stable 1.9.3**
-
-- 📬 **A "Your requests" row.** What each person asked for in Overseerr (or tagged with their name in
-  Radarr/Sonarr), once it's on Plex and until they've watched it. Private per person, newest first,
-  no AI. A person with nothing ready simply has no row.
-- 🚫 **Block a bad seed.** A film someone put on for a friend shouldn't shape their picks. Block it
-  from a run's "How we picked" page. The watch stays in their Plex history and just stops seeding.
-- 🎉 **More seasons**: ten ready-made holidays, such as Thanksgiving and Easter, and your own date
-  ranges.
-- ✍️ **AI instructions.** Tell AI web search what to look for, server-wide or per row.
-  [Details](https://shortlistapp.dev/guides/rows/what-goes-in/#ai-instructions)
-- 🖥️ **A redesigned interface**: a new dashboard, Users and Activity pages, a row editor with a jump
-  list, and three-tab Settings. See
-  [the preview](https://shortlistapp.dev/guides/interface/#development-preview-the-updated-interface).
-  The screenshots above show stable 1.9.3.
 
 ## Where it fits
 
@@ -219,8 +213,8 @@ minutes. A single `docker run` command and the Docker Hub image are in
 To try it without touching your server first, add `SHORTLIST_DRY_RUN=1` under `environment:`.
 Shortlist will show what it _would_ do and write nothing to Plex.
 
-`:latest` is the stable release (1.9.3). The development preview is `ghcr.io/stevezau/shortlist:dev`;
-back up `/config` before switching, and don't downgrade a migrated database in place.
+`:latest` is the latest stable release; `:dev` (`ghcr.io/stevezau/shortlist:dev`) is the development
+build. Back up `/config` before switching, and don't downgrade a migrated database in place.
 
 ## Documentation
 

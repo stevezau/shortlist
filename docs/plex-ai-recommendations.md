@@ -112,7 +112,7 @@ your library, and only then does an optional model (Claude, GPT, Gemini, or an O
 server you run yourself) rank and explain them.
 
 {% include seo-closing.html shot="run-detail.webp" shot_w="1440" shot_h="1000"
-   shot_alt="A run in progress in Shortlist 1.9.3: 13 of 46 people processed, each working row labelled with the watch it follows, such as Because you watched For All Mankind."
+   shot_alt="A finished run in Shortlist: the result, duration, people and privacy summary, then the picks built for sarah, each with the reason it was chosen, such as Because you watched drama like GoodFellas."
    shot_caption="A nightly run: every row says which watch it follows, so a bad pick can be traced back to its seed." %}
 
 ## Related

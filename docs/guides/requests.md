@@ -4,7 +4,6 @@ description: Let Shortlist ask Radarr or Sonarr for titles your people want that
 heading: Requests (Radarr and Sonarr)
 nav_order: 6
 updated: 2026-10-03
-dev_preview: true
 ---
 
 ## Reviewing the inbox
@@ -24,7 +23,7 @@ Off by default. When on, Shortlist notices the titles your people's taste surfac
 doesn't have yet. That means everything the recommendation sources turned up, not just what made it
 into a row. It then asks for a few of the best ones on each run.
 
-You choose **where requests go**, under Settings → Requests:
+You choose **where requests go**, under Settings → Defaults → Requests:
 
 - **Radarr & Sonarr** (the default) — Shortlist adds the title itself, using a quality profile and
   folder you pick here.
@@ -32,7 +31,7 @@ You choose **where requests go**, under Settings → Requests:
   own quality settings, folder rules and approvals. See
   [Requesting through Overseerr](#requesting-through-overseerr) below.
 
-Set it up under **Settings → Requests**:
+Set it up under **Settings → Defaults → Requests**:
 
 1. Turn on **Fill in the gaps automatically**.
 2. For each app, paste its **address** (e.g. `http://localhost:7878` for Radarr,
@@ -201,7 +200,7 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 ### Why is a title still waiting?
 
 The bar for sending on its own is higher than the bar for being requestable at all. Under
-**Settings → Requests → Send the strongest titles without asking**, a title has to clear **both**
+**Settings → Defaults → Requests → Send the strongest titles without asking**, a title has to clear **both**
 bars: **Send without asking when wanted by** (3 people by default, counted **within one row**) and
 **Send without asking when rated** (8.0 by default). A 7.9 wanted by twenty people still waits.
 Beyond that:
@@ -262,7 +261,7 @@ the popular English titles, what's left missing skews non-English before any set
 the rating floor then favours it further, because TMDB's audience rates anime and K-drama generously.
 The result is a nightly run that mostly asks for subtitled titles.
 
-**Settings → Requests → Guardrails → Language** fixes it without throwing the good ones away:
+**Settings → Defaults → Requests → Guardrails → Language** fixes it without throwing the good ones away:
 
 - **Any language** — one bar for everything. This is the default and how Shortlist has always
   behaved; nothing changes until you pick something else.
@@ -300,7 +299,7 @@ editor, under **Requests** — a kids row can file into its own folder at a lowe
 only the first season of a show, stay English-only, ask for a lower rating, and hold itself to one
 title a night, while your main row carries on as it was.
 
-A field left on "use the setting from Settings › Requests" follows the global, and follows it as you
+A field left on "use the setting from Settings → Defaults → Requests" follows the global, and follows it as you
 change it. Only the ones you deliberately override differ. Every on/off setting in this group,
 including that "use the setting from Settings" choice, is a switch — there are no checkboxes here,
 only where you're picking items from a list (languages, tags, and the like).
@@ -378,12 +377,7 @@ knowing about the group in the row editor itself:
 
 ## Your requests rows
 
-A row of what each person asked for, once it is on Plex. This row kind is not in stable
-{{ site.stable_version }}.
-
-<details class="dev-preview" markdown="1">
-<summary><span class="dev-preview__tag">Development preview</span> How a Your requests row works</summary>
-<div class="dev-preview__body" markdown="1">
+A row of what each person asked for, once it is on Plex.
 
 Choose **Your requests** as a row's kind — or start from the _Your requests_ template — and each
 person gets a private row of the titles **they** asked for that are now on Plex and they haven't
@@ -393,7 +387,7 @@ and a person with nothing ready has no row at all — theirs is taken off Plex r
 titles they've already seen.
 
 **Where requests are read from.** Two sources, both read whenever their address and key are filled
-in under **Settings › Connections** — whether or not Shortlist's own requests are switched on, and
+in under **Settings → Connections** — whether or not Shortlist's own requests are switched on, and
 wherever those go:
 
 - **Overseerr's request list** (Jellyseerr and Seerr too). A request counts once it's approved, and
@@ -449,6 +443,3 @@ A requests row is private the same way every per-person row is — see
 when a person has nothing ready, each run costs one collections listing per library per person with
 an empty row, to check there is nothing left to remove. It is only ever removed on a night every
 request source was read in full: if Overseerr or an Arr is down, every row stays as it was.
-
-</div>
-</details>

@@ -7,7 +7,7 @@ nav_order: 4
 
 ## Schedules
 
-**The Jobs page** lists everything on a timer. Each job carries its own next run on its line, and
+**Activity → Jobs** lists everything on a timer. Each job carries its own next run on its line, and
 opening one reveals its frequency picker; underneath, **Rows** lists the rows that build on a
 schedule, grouped by the cron they share. Three rows on the same schedule are one trigger that
 builds all three, not three timers. That list is read-only: a row's schedule is edited in the row

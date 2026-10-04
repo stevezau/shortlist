@@ -86,7 +86,7 @@ Open the library in Plex → **Manage Recommendations**. If the collection you a
 list with every toggle off, turn one on, or pick a different anchor. Plex's own rows — "Recently
 Added" and the like — always work as anchors.
 
-Shortlist leaves the rows where they are until then, and says so. On the **Logs** page, search for
+Shortlist leaves the rows where they are until then, and says so. On the **Activity → Log** tab, search for
 `hub order`: the line names the library and the anchor. The same outcome is recorded in the change
 log as well, which has no screen yet — read it at `/api/events/log?scope=run.hub_unplaced` after a
 nightly run, or `?scope=shelf.unplaced` after **Check and fix rows on Plex**. (A privacy sync no
@@ -94,7 +94,7 @@ longer touches shelf order, so it records nothing here.)
 
 A row that has never been built in that library yet looks the same from the shelf, but is not the
 same thing: there is nothing to position until the row exists. Run it once and it lands in place.
-Nothing is recorded in the change log for this, and usually nothing on the Logs page either — the
+Nothing is recorded in the change log for this, and usually nothing on the Activity → Log tab either — the
 exception is a library where another row has its own placement, which puts a `hub order` line there
 naming the row that is missing.
 
@@ -111,14 +111,14 @@ as people join and leave, and needs no updating.
 That field is newer than Agregarr's v2.9.1 release — at the time of writing it is on the maintained
 fork's `:develop` image (`bitr8/agregarr:develop`).
 
-Shortlist's own side is one switch, **Settings → Row placement → Let Shortlist order the Recommended
+Shortlist's own side is one switch, **Settings → Defaults → Row placement → Let Shortlist order the Recommended
 shelf**; turning it off leaves the order entirely to the other tool. Where each row goes is set on
 the row itself.
 
 ## Your AI web search finds nothing new
 
 The `llm_web` source asks the web what to watch next. Which backend it asks is
-**Settings → AI web search**, and the three choices behave very differently.
+**Settings → Connections → AI & web search**, and the three choices behave very differently.
 
 **Gemini answers from memory, not from the web.** Google's grounding tool is attached on every
 call, and Gemini decides for itself whether to use it — for "what should I watch next" it almost
