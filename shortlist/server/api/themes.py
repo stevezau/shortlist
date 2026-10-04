@@ -8,6 +8,7 @@ request. Keys never leave the settings store: no response, event or error carrie
 from __future__ import annotations
 
 import dataclasses
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -114,6 +115,8 @@ class ThemeOut(PassthroughModel):
     content_hash: str
     ai_tokens: int
     stats: dict[str, int]
+    #: When the one extra AI call that extended this theme's list was made; null until then.
+    topped_up_at: datetime | None = None
 
 
 class PreviewIn(BaseModel):
@@ -376,6 +379,7 @@ def _row_view(row: Theme) -> dict:
         "content_hash": row.content_hash,
         "ai_tokens": row.ai_tokens or 0,
         "stats": dict(row.stats or {}),
+        "topped_up_at": row.topped_up_at,
     }
 
 

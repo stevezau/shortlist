@@ -208,6 +208,22 @@ describe("AiRowSection building", () => {
     expect(card.getByText(/the AI.s list was cut short; 31 titles kept/i)).toBeInTheDocument();
   });
 
+  it("says when a theme was topped up and by how many titles, and says nothing for one that never was", async () => {
+    api.getTheme.mockResolvedValue(
+      theme({ topped_up_at: "2026-10-10T01:30:00Z", stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, topped_up: 12 } }),
+    );
+    renderSection({ collection: savedRow() });
+
+    expect(await screen.findByText(/topped up once on .*2026 — 12 more titles/i)).toBeInTheDocument();
+  });
+
+  it("shows no top-up line for a theme that was never topped up", async () => {
+    renderSection({ collection: savedRow() });
+
+    await screen.findByRole("region", { name: /the list/i });
+    expect(screen.queryByText(/topped up once/i)).not.toBeInTheDocument();
+  });
+
   it("says a row covering both kinds stays out of the TV libraries when the AI named only films", async () => {
     api.previewTheme.mockResolvedValueOnce(preview());
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "both" } });

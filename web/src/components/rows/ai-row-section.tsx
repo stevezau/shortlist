@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ErrorState, QueryBoundary } from "@/components/query-boundary";
 import { apiErrorMessage } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import {
   ruleChips,
   savedStats,
@@ -362,6 +363,13 @@ function ListCard({
           {only === "movie"
             ? "Films only — the AI named no TV series, so this row stays out of your TV libraries."
             : "TV series only — the AI named no films, so this row stays out of your movie libraries."}
+        </p>
+      )}
+      {theme.topped_up_at && (
+        <p className="text-sm text-muted-foreground">
+          {`Topped up once on ${formatDate(theme.topped_up_at, { dateOnly: true })}`}
+          {theme.stats.topped_up != null &&
+            ` — ${theme.stats.topped_up} more ${theme.stats.topped_up === 1 ? "title" : "titles"}`}
         </p>
       )}
       {counts && (

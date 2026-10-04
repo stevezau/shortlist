@@ -2177,6 +2177,11 @@ has no request settings.
 your TV libraries even when the row covers both. If **Change it**, or an Explore theme, drops a kind, the
 row's existing collection in those libraries is removed on its next run.
 
+**A list is topped up once.** When someone has watched most of the titles the AI named, their row starts
+filling with tag and genre matches. The nightly **Pick new row themes** job then asks the AI once for about 40
+more titles and adds them to the list, keeping everything already there. It never does this twice for the
+same theme, a paused row or a missing provider is skipped, and nothing else about a night uses AI.
+
 **Controls in the editor:**
 
 - **AI prompts** shows what the AI is told. You can edit the guidance. The mechanics that keep the

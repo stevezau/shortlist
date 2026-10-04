@@ -21,17 +21,19 @@ from typing import Literal
 from fastapi import HTTPException
 from loguru import logger
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserProfile
 from shortlist.engine.web_guidance import AiInstructions
-from shortlist.server.api.themes import ThemeIn, ThemeSaveIn, _refuse_unusable, _spec_view, _TagNames
+from shortlist.server.api.themes import ThemeIn, ThemeSaveIn, _refuse_unusable, _row_view, _spec_view, _TagNames
 from shortlist.server.db.models import (
     Collection,
     CollectionAudience,
     CollectionUserOverride,
     Event,
+    PickRow,
+    Run,
     Theme,
     ThemeHistory,
     User,
@@ -46,6 +48,7 @@ from shortlist.server.services.theme_store import (
     add_row_tokens,
     reject_person_title_clash,
     save_theme,
+    spec_from_row,
 )
 
 #: The next theme is built this many days before it starts, so the owner can look at it and change it.
@@ -55,6 +58,7 @@ _RECENT_NAMES = 6
 _CLASH_NAMES = 3
 _CLASH_EVENTS_READ = 50
 _DEFAULT_BRIEF = "Choose a theme this person would love from what they watch."
+TOP_UP_CHANGE = "Add about 40 more titles that fit this theme. Do not repeat any title already on the list."
 
 Action = Literal["authored_current", "authored_next", "promoted", "kept", "skipped_paused", "failed"]
 
@@ -636,3 +640,181 @@ def _log_failure(sessions, collection_id: int, user_id: int, error: Exception, *
 def _naive_utc(moment: datetime) -> datetime:
     """The DB keeps these timestamps as naive UTC."""
     return moment.astimezone(UTC).replace(tzinfo=None) if moment.tzinfo else moment
+
+
+# --- Top-up: one extra AI call per theme, once someone has run out of its named titles (#138) ----------------
+
+
+def top_up_rows(sessions) -> list[int]:
+    """The enabled AI rows whose lists could be topped up: not paused, and built per person from a theme."""
+    with sessions() as session:
+        return list(
+            session.scalars(
+                select(Collection.id).where(
+                    Collection.enabled.is_(True),
+                    Collection.theme_id.is_not(None),
+                    Collection.build == "per_person",
+                    Collection.ai_paused.is_not(True),
+                )
+            )
+        )
+
+
+def _row_themes(session: Session, collection: Collection) -> dict[int, list[int]]:
+    """{theme id -> the people it is on}: the row's one theme, or each person's current Explore theme."""
+    people = rotating_users(session, collection)
+    if collection.theme_mode != "explore":
+        return {collection.theme_id: [u.id for u in people]} if collection.theme_id is not None else {}
+    themes: dict[int, list[int]] = {}
+    for user in people:
+        current = _history(session, collection.id, user.id)["current"]
+        if current is not None and current.theme_id is not None:
+            themes.setdefault(current.theme_id, []).append(user.id)
+    return themes
+
+
+def _shows_filler(session: Session, slug: str, user_id: int, theme: Theme) -> bool:
+    """Whether the person's latest real run of the row carried a title the AI did not name for this theme."""
+    latest = (
+        select(func.max(PickRow.run_id))
+        .join(Run, Run.id == PickRow.run_id)
+        .where(PickRow.user_id == user_id, PickRow.collection_slug == slug, Run.dry_run.is_not(True))
+        .scalar_subquery()
+    )
+    shown = session.execute(
+        select(PickRow.tmdb_id, PickRow.media_type).where(
+            PickRow.user_id == user_id, PickRow.collection_slug == slug, PickRow.run_id == latest
+        )
+    ).all()
+    named = {(int(p["tmdb_id"]), p["media"]) for p in theme.picks or [] if p.get("origin") == "ai"}
+    return any((tmdb_id, media) not in named for tmdb_id, media in shown)
+
+
+def top_up_themes(
+    sessions: Callable[[], Session],
+    *,
+    now: datetime,
+    secrets=None,
+    author=author_theme,
+    tools: Callable[[], AuthoringTools],
+    dry_run: bool = False,
+) -> int:
+    """Extend each AI row's theme ONCE, when someone's row has run out of the titles the AI named.
+
+    Read from the database only: a theme is low when a person's latest real run of the row held a title the
+    theme's AI picks do not name (tag and genre filler). One AI call per theme, ever: ``topped_up_at`` is set
+    whenever a call was made, whatever it returned, and left alone when none was (paused, no provider, a
+    setup failure). The new picks are MERGED into the list; nothing the theme has is removed or changed.
+    Returns how many themes were topped up. A dry run makes no call and writes nothing.
+    """
+    moment = _naive_utc(now)
+    tools = _once(tools)
+    done = 0
+    for collection_id in top_up_rows(sessions):
+        with sessions() as session:
+            collection = session.get(Collection, collection_id)
+            if collection is None:
+                continue
+            low = [
+                theme_id
+                for theme_id, people in _row_themes(session, collection).items()
+                if (theme := session.get(Theme, theme_id)) is not None
+                and theme.topped_up_at is None
+                and any(_shows_filler(session, collection.slug, user_id, theme) for user_id in people)
+            ]
+        for theme_id in low:
+            if dry_run:
+                logger.info("[dry-run] theme {} on row {} is low: would top it up once", theme_id, collection_id)
+                continue
+            try:
+                with _target_lock(collection_id, -theme_id), sessions() as session:
+                    done += _top_up_one(session, collection_id, theme_id, moment, sessions, secrets, author, tools)
+            except Exception as e:
+                # Not marked: the failure came before any AI call was made.
+                logger.warning("theme top-up: theme {} not topped up ({})", theme_id, type(e).__name__)
+    return done
+
+
+def _top_up_one(session, collection_id, theme_id, moment, sessions, secrets, author, tools) -> int:
+    """One theme's top-up in its own transaction; 1 when an AI call was made, else 0."""
+    collection = session.get(Collection, collection_id, populate_existing=True)
+    theme = session.get(Theme, theme_id, populate_existing=True)
+    if collection is None or theme is None or theme.topped_up_at is not None or collection.ai_paused:
+        return 0
+    tool = tools()
+    if tool.unavailable:
+        logger.info("theme top-up: theme {} waits ({})", theme_id, tool.unavailable)
+        return 0
+    names = _TagNames(tool.tmdb)
+    index = library_index(
+        tool.plex,
+        sessions,
+        media=collection.media or "both",
+        library_keys=[str(k) for k in collection.library_keys or []],
+    )
+    before = len(theme.picks or [])
+    tokens = 0
+    try:
+        draft = author(
+            brief=theme.brief,
+            media=_row_media(collection),
+            curator=tool.curator,
+            tmdb=names,
+            plex=tool.plex,
+            library_index=index,
+            current=spec_from_row(theme),
+            change=TOP_UP_CHANGE,
+            current_tag_names={t["id"]: t["name"] for t in theme.tags or []},
+            guidance=theme_guidance(AiInstructions.from_stored(collection.prompt)),
+        )
+        tokens = draft.tokens
+        theme = _merge_new_picks(session, secrets, collection, theme, draft)
+        ok = True
+    except Exception as e:
+        # The call was made, so the one spend is used: an unreadable answer is not retried.
+        session.rollback()
+        ok = False
+        logger.warning("theme top-up: theme {} kept its list ({})", theme_id, type(e).__name__)
+        theme = session.get(Theme, theme_id, populate_existing=True)
+        if tokens:
+            # The save rolled back but the call was paid for.
+            theme.ai_tokens = (theme.ai_tokens or 0) + tokens
+            add_row_tokens(session, session.get(Collection, collection_id, populate_existing=True), tokens)
+    theme.topped_up_at = moment
+    add_audit(
+        session,
+        "theme.topped_up",
+        "info" if ok else "error",
+        theme_id=theme_id,
+        collection_id=collection_id,
+        titles_before=before,
+        titles_after=len(theme.picks or []),
+        tokens=tokens,
+        ok=ok,
+    )
+    session.commit()
+    return 1
+
+
+def _merge_new_picks(session, secrets, collection: Collection, theme: Theme, draft: ThemeDraft) -> Theme:
+    """Save ``theme`` with the draft's new AI picks appended and everything else exactly as it was."""
+    have = {(int(p["tmdb_id"]), p["media"]) for p in theme.picks or []}
+    added = [
+        {
+            "tmdb_id": p.tmdb_id,
+            "media": p.media.value,
+            "origin": "ai",
+            "reason": p.reason,
+            "title": draft.titles.get((p.media, p.tmdb_id), ""),
+            "year": None,
+        }
+        for p in draft.spec.picks
+        if p.origin == "ai" and (p.tmdb_id, p.media.value) not in have
+    ]
+    view = _row_view(theme)
+    view["picks"] = [*view["picks"], *added]
+    body = ThemeSaveIn(draft=ThemeIn.model_validate(view), tokens=draft.tokens, collection_id=collection.id)
+    saved = save_theme(session, secrets, body, existing=theme)
+    # Kept in the stats the theme card already shows, so the card can say how many titles the top-up added.
+    saved.stats = {**(saved.stats or {}), "topped_up": len(added)}
+    return saved

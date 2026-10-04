@@ -1388,23 +1388,41 @@ def _themes_rotate(state, payload: dict) -> dict:
     Authoring needs an AI provider, a TMDB key and a connected Plex. Without one, no theme changes: every
     person who needed one keeps theirs and gets an event saying why, and the next pass tries again.
     """
-    from shortlist.server.services.theme_rotation import authoring_tools, rotate_themes, rotation_targets
+    from shortlist.server.services.theme_rotation import (
+        _once,
+        authoring_tools,
+        rotate_themes,
+        rotation_targets,
+        top_up_rows,
+        top_up_themes,
+    )
 
-    # Nothing to do means nothing is built: an install with an AI provider but no Explore row must not connect
+    # Nothing to do means nothing is built: an install with an AI provider but no AI row must not connect
     # to Plex every night, or ring the bell when Plex is down.
-    if not rotation_targets(state.sessions):
+    targets = rotation_targets(state.sessions)
+    if not targets and not top_up_rows(state.sessions):
         return {"targets": 0}
+    now = datetime.now(UTC)
+    tools = _once(lambda: authoring_tools(state))
     outcomes = rotate_themes(
         state.sessions,
-        now=datetime.now(UTC),
+        now=now,
         secrets=state.secrets,
-        tools=lambda: authoring_tools(state),
+        tools=tools,
         profile_for=state.run_service.profile_with_history,
     )
     counts: dict[str, int] = {}
     for outcome in outcomes:
         counts[outcome.action] = counts.get(outcome.action, 0) + 1
-    return {"targets": len(outcomes), **counts}
+    # After the rotation, so a theme just written is judged on its own list; before the nightly row run.
+    topped_up = top_up_themes(
+        state.sessions,
+        now=now,
+        secrets=state.secrets,
+        tools=tools,
+        dry_run=bool(payload.get("dry_run", False)),
+    )
+    return {"targets": len(outcomes), **counts, "topped_up": topped_up}
 
 
 @handler("maintenance.prune")

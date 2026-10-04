@@ -8662,6 +8662,18 @@
             },
             "title": "Tags",
             "type": "array"
+          },
+          "topped_up_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topped Up At"
           }
         },
         "required": [

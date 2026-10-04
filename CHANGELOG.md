@@ -29,6 +29,9 @@ All notable changes to this project are documented here. This project follows
 - **An AI row only covers the kinds of title its AI named (#138).** A films-only list no longer fills your
   TV libraries with genre filler on a row that covers both. If a change or an Explore theme drops a kind,
   the row's existing collection in those libraries is removed on its next run.
+- **An AI row's list is topped up once (#138).** When someone has watched most of the titles the AI named,
+  the nightly **Pick new row themes** job asks the AI once for about 40 more and adds them, keeping what
+  the list already has. Never repeated for a theme, and the theme card says when it happened.
 - **Over-time controls on AI rows (#138).** **How much changes each time** (a fifth, a third by default,
   half, or almost everything), **Don't repeat a title for N days** (off by default), and **Keep out titles
   already in** other per-person rows. See [Explore](https://shortlistapp.dev/guides/ai/#explore-a-new-theme-every-few-days).

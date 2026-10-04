@@ -6715,6 +6715,8 @@ export interface components {
             };
             /** Tags */
             tags: components["schemas"]["TagIO"][];
+            /** Topped Up At */
+            topped_up_at?: string | null;
         } & {
             [key: string]: unknown;
         };
