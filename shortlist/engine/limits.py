@@ -17,6 +17,9 @@ from shortlist.engine.models import Candidate, MediaType, RowLimits
 __all__ = ["LimitResult", "RowLimits", "apply_limits", "runtime_minutes"]
 
 
+_MAX_CONSECUTIVE_FAILURES = 5
+
+
 @dataclass
 class LimitResult:
     kept: list[Candidate]
@@ -39,46 +42,95 @@ def runtime_minutes(details: dict, media_type: str) -> int | None:
     return minutes if isinstance(minutes, int) and minutes > 0 else None
 
 
+class _DetailsFetcher:
+    """TMDB details with a circuit breaker: after ``_MAX_CONSECUTIVE_FAILURES`` failures in a row, stop asking.
+
+    Failures are not cached and a stalled TMDB can take ~90s each, so a pool of hundreds would otherwise
+    stall the run for hours. Titles that would have needed details count as unknown (kept).
+    """
+
+    def __init__(self, tmdb: TmdbClient) -> None:
+        self._tmdb = tmdb
+        self._streak = 0
+        self.failures = 0
+        self.skipped = 0
+
+    @property
+    def open(self) -> bool:
+        return self._streak >= _MAX_CONSECUTIVE_FAILURES
+
+    def get(self, c: Candidate) -> dict | None:
+        if self.open:
+            self.skipped += 1
+            return None
+        try:
+            details = self._tmdb.details(c.tmdb_id, c.media_type)
+        except Exception:
+            self._streak += 1
+            self.failures += 1
+            logger.debug("limits: details failed for {} {}", c.media_type, c.tmdb_id)
+            return None
+        self._streak = 0
+        return details
+
+
 def apply_limits(candidates: list[Candidate], limits: RowLimits, tmdb: TmdbClient) -> LimitResult:
     """Drop candidates outside ``limits``. Returns ``candidates`` itself, untouched, when none are set.
 
-    Year and rating come from data the candidate already carries. Runtime costs a (cached) details call,
-    made only when ``max_runtime`` is set and only for titles that passed the cheaper checks.
+    Year comes from data the candidate already carries. Rating does too, except for a title with no votes
+    (Trakt candidates arrive 0.0/0): those look up TMDB details, and stay unknown if that fails. Runtime
+    needs details whenever ``max_runtime`` is set. Details are cached by the client, and one title is
+    fetched once per call even when both rating and runtime need it.
     """
     if not limits.active:
         return LimitResult(kept=candidates)
     result = LimitResult(kept=[])
+    fetcher = _DetailsFetcher(tmdb)
     for c in candidates:
-        if _outside_year_or_rating(c, limits):
+        unknown = c.year is None and (limits.min_year is not None or limits.max_year is not None)
+        dropped = _outside_year(c, limits)
+        details: dict | None = None
+        fetched = False
+        if not dropped and limits.rating_limited and limits.min_rating is not None:
+            rating = c.rating
+            if c.vote_count == 0:
+                details, fetched = fetcher.get(c), True
+                if details is None:
+                    rating = None
+                else:
+                    voted = bool(details.get("vote_count"))
+                    rating = float(details.get("vote_average") or 0.0) if voted else 0.0
+            if rating is None:
+                unknown = True
+            elif rating < limits.min_rating:
+                dropped = True
+        if not dropped and limits.max_runtime is not None:
+            if not fetched:
+                details = fetcher.get(c)
+            minutes = runtime_minutes(details, c.media_type) if details is not None else None
+            if minutes is None:
+                unknown = True
+            elif minutes > limits.max_runtime:
+                dropped = True
+        if dropped:
             result.dropped += 1
             result.dropped_candidates.append(c)
             continue
-        if c.year is None and (limits.min_year is not None or limits.max_year is not None):
-            result.unknown += 1
-        if limits.max_runtime is not None:
-            minutes = _runtime_of(c, tmdb)
-            if minutes is None:
-                result.unknown += 1
-            elif minutes > limits.max_runtime:
-                result.dropped += 1
-                result.dropped_candidates.append(c)
-                continue
+        result.unknown += unknown
         result.kept.append(c)
+    if fetcher.failures:
+        logger.warning(
+            "limits: {} TMDB details lookups failed{}; {} titles kept as unknown",
+            fetcher.failures,
+            f", then stopped asking after {_MAX_CONSECUTIVE_FAILURES} in a row" if fetcher.open else "",
+            result.unknown,
+        )
     return result
 
 
-def _outside_year_or_rating(c: Candidate, limits: RowLimits) -> bool:
-    if c.year is not None:
-        if limits.min_year is not None and c.year < limits.min_year:
-            return True
-        if limits.max_year is not None and c.year > limits.max_year:
-            return True
-    return limits.min_rating is not None and c.rating < limits.min_rating
-
-
-def _runtime_of(c: Candidate, tmdb: TmdbClient) -> int | None:
-    try:
-        return runtime_minutes(tmdb.details(c.tmdb_id, c.media_type), c.media_type)
-    except Exception:
-        logger.debug("limits: no runtime for {} {} (details failed)", c.media_type, c.tmdb_id)
-        return None
+def _outside_year(c: Candidate, limits: RowLimits) -> bool:
+    if c.year is None:
+        return False
+    if limits.min_year is not None and c.year < limits.min_year:
+        return True
+    return limits.max_year is not None and c.year > limits.max_year

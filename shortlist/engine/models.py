@@ -454,7 +454,12 @@ class RowLimits:
 
     @property
     def active(self) -> bool:
-        return any(v is not None for v in (self.max_runtime, self.min_year, self.max_year, self.min_rating))
+        return any(v is not None for v in (self.max_runtime, self.min_year, self.max_year)) or self.rating_limited
+
+    @property
+    def rating_limited(self) -> bool:
+        # 0 or less excludes nothing, so it means "no limit" — it must not change the recipe.
+        return self.min_rating is not None and self.min_rating > 0
 
     def fingerprint(self) -> str:
         """The set limits in a fixed order, e.g. ``rt<=120;y>=1990;y<=2010;r>=7.0``."""
@@ -462,7 +467,7 @@ class RowLimits:
             f"rt<={self.max_runtime}" if self.max_runtime is not None else "",
             f"y>={self.min_year}" if self.min_year is not None else "",
             f"y<={self.max_year}" if self.max_year is not None else "",
-            f"r>={self.min_rating}" if self.min_rating is not None else "",
+            f"r>={self.min_rating}" if self.rating_limited else "",
         ]
         return ";".join(p for p in parts if p)
 

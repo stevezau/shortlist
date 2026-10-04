@@ -8200,7 +8200,12 @@ class TestRowLimitsRecipe:
         assert recipe == "movie||tmdb_similar|0.0|0.0|False|False|30|1|popular|limits=rt<=120"
 
     def test_clearing_the_limits_restores_the_original_recipe(self):
-        assert self._recipe(min_year=None, max_runtime=None) == self._recipe()
+        original = self._recipe()
+        assert self._recipe(min_year=1990) != original
+        assert self._recipe(min_year=None, max_runtime=None) == original
+
+    def test_a_zero_min_rating_leaves_the_recipe_alone(self):
+        assert self._recipe(min_rating=0.0) == self._recipe()
 
 
 class TestRowLimitsInThePipeline:

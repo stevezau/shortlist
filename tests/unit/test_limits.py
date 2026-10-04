@@ -36,6 +36,20 @@ class TestRowLimits:
         assert not RowLimits().active
         assert RowLimits(min_year=2000).active
 
+    def test_a_zero_min_rating_means_no_limit(self):
+        assert not RowLimits(min_rating=0).active
+        assert not RowLimits(min_rating=0.0).active
+        assert RowLimits(min_rating=0.1).active
+        assert RowLimits(min_rating=0.0, min_year=2000).fingerprint() == RowLimits(min_year=2000).fingerprint()
+        assert RowLimits(min_rating=0.0).fingerprint() == RowLimits().fingerprint() == ""
+
+    def test_a_zero_min_rating_leaves_the_pool_untouched(self):
+        pool = [make_candidate(1, "A", rating=0.0)]
+        tmdb = MagicMock()
+        result = apply_limits(pool, RowLimits(min_rating=0.0), tmdb)
+        assert result.kept is pool
+        tmdb.details.assert_not_called()
+
     def test_rowspec_builds_its_limits(self):
         spec = RowSpec(slug="x", name_template="", size=4, max_runtime=100, min_year=1980)
         assert spec.limits() == RowLimits(max_runtime=100, min_year=1980)
@@ -63,11 +77,18 @@ class TestApplyLimits:
         assert _ids(result) == [1]
         assert result.unknown == 1
 
+    def test_unknown_counts_titles_not_fields(self):
+        tmdb = _tmdb({1: {}})
+        pool = [make_candidate(1, "A", year=None, vote_count=5)]
+        result = apply_limits(pool, RowLimits(min_year=1990, max_year=2000, max_runtime=100), tmdb)
+        assert _ids(result) == [1]
+        assert result.unknown == 1
+
     def test_min_rating_drops_unrated_titles(self):
         pool = [
-            make_candidate(1, "A", rating=0.0),
-            make_candidate(2, "B", rating=6.9),
-            make_candidate(3, "C", rating=7.0),
+            make_candidate(1, "A", rating=0.0, vote_count=5),
+            make_candidate(2, "B", rating=6.9, vote_count=5),
+            make_candidate(3, "C", rating=7.0, vote_count=5),
         ]
         result = apply_limits(pool, RowLimits(min_rating=7.0), MagicMock())
         assert _ids(result) == [3]
@@ -111,10 +132,10 @@ class TestApplyLimits:
     def test_details_is_not_fetched_for_titles_year_or_rating_already_dropped(self):
         tmdb = _tmdb({2: {"runtime": 90}, 3: {"runtime": 90}})
         pool = [
-            make_candidate(1, "old", year=1950, rating=8.0),
-            make_candidate(2, "ok", year=2000, rating=8.0),
-            make_candidate(3, "unrated", year=2000, rating=8.5),
-            make_candidate(4, "low", year=2000, rating=3.0),
+            make_candidate(1, "old", year=1950, rating=8.0, vote_count=9),
+            make_candidate(2, "ok", year=2000, rating=8.0, vote_count=9),
+            make_candidate(3, "unrated", year=2000, rating=8.5, vote_count=9),
+            make_candidate(4, "low", year=2000, rating=3.0, vote_count=9),
         ]
         apply_limits(pool, RowLimits(max_runtime=120, min_year=1990, min_rating=7.0), tmdb)
         assert [c.args[0] for c in tmdb.details.call_args_list] == [2, 3]
@@ -124,6 +145,88 @@ class TestApplyLimits:
         tmdb = MagicMock()
         apply_limits([make_candidate(1, "A", year=2000)], RowLimits(min_year=1990), tmdb)
         tmdb.details.assert_not_called()
+
+
+class TestRatingLookup:
+    """A title with no votes (Trakt candidates arrive 0.0/0) is rated from TMDB details, never read as 0."""
+
+    @staticmethod
+    def _run(min_rating: float, candidate, details):
+        tmdb = _tmdb({candidate.tmdb_id: details})
+        return apply_limits([candidate], RowLimits(min_rating=min_rating), tmdb), tmdb
+
+    def test_a_rated_candidate_needs_no_details_call(self):
+        result, tmdb = self._run(6.0, make_candidate(1, "A", rating=7.0, vote_count=50), {})
+        assert _ids(result) == [1]
+        tmdb.details.assert_not_called()
+
+    def test_an_unvoted_candidate_is_rated_from_details_and_kept(self):
+        c = make_candidate(1, "A", rating=0.0, vote_count=0)
+        result, tmdb = self._run(6.0, c, {"vote_average": 7.2, "vote_count": 90})
+        assert _ids(result) == [1]
+        assert result.unknown == 0
+        tmdb.details.assert_called_once_with(1, MediaType.MOVIE)
+
+    def test_an_unvoted_candidate_is_dropped_when_details_rate_it_too_low(self):
+        c = make_candidate(1, "A", rating=0.0, vote_count=0)
+        result, tmdb = self._run(8.0, c, {"vote_average": 7.2, "vote_count": 90})
+        assert _ids(result) == []
+        assert result.dropped == 1
+        tmdb.details.assert_called_once_with(1, MediaType.MOVIE)
+
+    def test_a_title_with_no_votes_even_in_details_is_unrated_and_dropped(self):
+        c = make_candidate(1, "A", rating=0.0, vote_count=0)
+        result, _ = self._run(6.0, c, {"vote_average": 0.0, "vote_count": 0})
+        assert _ids(result) == []
+        assert result.dropped == 1
+
+    def test_a_details_failure_keeps_the_title_as_unknown(self):
+        c = make_candidate(1, "A", rating=0.0, vote_count=0)
+        result, tmdb = self._run(6.0, c, RuntimeError("boom"))
+        assert _ids(result) == [1]
+        assert result.unknown == 1
+        tmdb.details.assert_called_once_with(1, MediaType.MOVIE)
+
+    def test_one_details_call_serves_both_rating_and_runtime(self):
+        c = make_candidate(1, "A", rating=0.0, vote_count=0)
+        tmdb = _tmdb({1: {"vote_average": 7.0, "vote_count": 10, "runtime": 90}})
+        result = apply_limits([c], RowLimits(min_rating=6.0, max_runtime=100), tmdb)
+        assert _ids(result) == [1]
+        assert tmdb.details.call_count == 1
+
+
+class TestDetailsCircuitBreaker:
+    def test_five_consecutive_failures_stop_further_calls_and_keep_the_rest(self):
+        tmdb = MagicMock()
+        tmdb.details.side_effect = RuntimeError("timeout")
+        pool = [make_candidate(i, str(i)) for i in range(1, 11)]
+        result = apply_limits(pool, RowLimits(max_runtime=120), tmdb)
+        assert tmdb.details.call_count == 5
+        assert _ids(result) == list(range(1, 11))
+        assert result.unknown == 10
+
+    def test_a_success_resets_the_streak(self):
+        details = {i: RuntimeError("x") for i in range(1, 11)}
+        details[5] = {"runtime": 90}
+        tmdb = _tmdb(details)
+        pool = [make_candidate(i, str(i)) for i in range(1, 11)]
+        apply_limits(pool, RowLimits(max_runtime=120), tmdb)
+        assert tmdb.details.call_count == 10
+
+    def test_one_warning_with_counts_is_logged(self):
+        from loguru import logger
+
+        messages: list[str] = []
+        sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+        try:
+            tmdb = MagicMock()
+            tmdb.details.side_effect = RuntimeError("timeout")
+            apply_limits([make_candidate(i, str(i)) for i in range(1, 9)], RowLimits(max_runtime=120), tmdb)
+        finally:
+            logger.remove(sink)
+        assert len(messages) == 1
+        assert "5 TMDB details lookups failed" in messages[0]
+        assert "8 titles kept as unknown" in messages[0]
 
 
 class TestRuntimeMinutes:
