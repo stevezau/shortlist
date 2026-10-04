@@ -561,26 +561,30 @@ _NUMBER_WORDS = {
 _SUBTITLE = re.compile(r"\s*:\s*|\s+-\s+")
 
 
-def _fold(title: str) -> str:
-    """A title as comparable words: no accents, case, punctuation or articles; "&" is "and"; numbers are digits."""
+def _fold(title: str, *, numbers: bool = True) -> str:
+    """A title as comparable words: no accents, case, punctuation or articles; "&" is "and"; numbers are digits
+    (unless ``numbers`` is off)."""
     plain = "".join(c for c in unicodedata.normalize("NFKD", title) if not unicodedata.combining(c))
     plain = re.sub(r"['\u2019]", "", plain.casefold().replace("&", " and "))
     words = re.sub(r"[^\w\s]", " ", plain).split()
-    return " ".join(_NUMBER_WORDS.get(w, w) for w in words if w not in _ARTICLES)
+    return " ".join((_NUMBER_WORDS.get(w, w) if numbers else w) for w in words if w not in _ARTICLES)
 
 
 def _main_title(title: str) -> str:
     return _fold(_SUBTITLE.split(title, maxsplit=1)[0])
 
 
-def _title_closeness(asked: str, name: str) -> int:
-    """How well one title name matches the asked one: 3 the same, 2 one contains the other with a small length
-    gap, 1 the same before a subtitle ("Rogue One" / "Rogue One: A Star Wars Story"), 0 not the same."""
+def _title_closeness(asked: str, name: str, *, original: bool = False) -> int:
+    """How well one title name matches the asked one: 3 the same (``exact``), then looser: 2 the same once number
+    words are digits, or one contains the other with a small length gap, 1 the same before a subtitle
+    ("Rogue One" / "Rogue One: A Star Wars Story"). 0 is not the same. An original-language name is never exact."""
     want, got = _fold(asked), _fold(name)
     if not want or not got:
         return 0
+    if _fold(asked, numbers=False) == _fold(name, numbers=False):
+        return 2 if original else 3
     if want == got:
-        return 3
+        return 2
     shorter, longer = sorted((want, got), key=len)
     if shorter in longer and (len(longer) - len(shorter)) <= 0.3 * len(longer):
         return 2
@@ -592,20 +596,22 @@ def _match_rank(asked: str, year: int | None, hit: dict) -> tuple[int, int] | No
     """How well a TMDB hit is the title the AI named, or None when it is not that title.
 
     ``TmdbClient.search`` ranks by year but never filters, so its top result can be anything ("The Italian Job"
-    resolved to a docuseries). Titles must match (any of the hit's names, so an original-language title counts);
-    a year, when both sides have one, may differ by 1. Better is lower, for ``min``.
+    resolved to a docuseries). An exact title match needs no year, but when both sides have one they may differ
+    by 1. Any looser match (a subtitle, containment, number words, an original-language name) is only believed
+    when both sides HAVE a year and they agree within 1. Better is lower, for ``min``.
     """
     closeness = max(
-        _title_closeness(asked, str(hit.get(field) or ""))
+        _title_closeness(asked, str(hit.get(field) or ""), original=field.startswith("original"))
         for field in ("title", "name", "original_title", "original_name")
     )
     if closeness == 0:
         return None
     date = str(hit.get("release_date") or hit.get("first_air_date") or "")
-    gap = abs(int(date[:4]) - year) if year is not None and date[:4].isdigit() else 0
-    if gap > 1:
-        return None
-    return (-closeness, gap)
+    hit_year = int(date[:4]) if date[:4].isdigit() else None
+    if year is None or hit_year is None:
+        return (-closeness, 0) if closeness == 3 else None
+    gap = abs(hit_year - year)
+    return (-closeness, gap) if gap <= 1 else None
 
 
 def _best_match(results: list[dict], asked: str, year: int | None) -> dict | None:

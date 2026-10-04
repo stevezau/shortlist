@@ -892,15 +892,19 @@ class TestResolvedTitleIsTheOneAsked:
         draft, _ = _run(answer, _Many())
         return [p.tmdb_id for p in draft.spec.picks]
 
-    def test_a_different_title_is_rejected_when_the_hit_is_a_docuseries(self):
-        hit = {"id": 7, "name": "Italian Job - The Serie A Story 93/94", "first_air_date": "2020-01-01"}
-        assert self._resolve(hit, year=1969) == []
+    @pytest.mark.parametrize("year", [None, 1969])
+    def test_a_different_title_is_rejected_when_the_hit_is_a_docuseries(self, year):
+        hit = {"id": 1, "name": "Italian Job - The Serie A Story 93/94", "first_air_date": "2020-01-01"}
+        assert self._resolve(hit, year=year) == []
 
-    def test_exact_match_after_normalising_is_accepted(self):
+    def test_exact_match_after_normalising_is_accepted_without_a_year(self):
         assert self._resolve({"id": 1, "title": "Italian Job!"}) == [1]
 
-    def test_a_close_containing_title_is_accepted(self):
-        assert self._resolve({"id": 1, "title": "The Italian Job 2"}) == [1]
+    def test_a_loose_match_needs_a_year_on_both_sides(self):
+        hit = {"id": 1, "title": "The Italian Job 2", "release_date": "2003-05-30"}
+        assert self._resolve({"id": 1, "title": "The Italian Job 2"}, year=2003) == []
+        assert self._resolve(hit) == []
+        assert self._resolve(hit, year=2003) == [1]
 
     def test_a_year_five_off_is_rejected(self):
         hit = {"id": 1, "title": "The Italian Job", "release_date": "2003-05-30"}
@@ -910,26 +914,44 @@ class TestResolvedTitleIsTheOneAsked:
         hit = {"id": 1, "title": "The Italian Job", "release_date": "1969-05-30"}
         assert self._resolve(hit, year=1970) == [1]
 
-    def test_a_missing_year_on_either_side_does_not_block(self):
+    def test_an_exact_match_with_a_year_missing_on_either_side_is_accepted(self):
         assert self._resolve({"id": 1, "title": "The Italian Job"}, year=1969) == [1]
         assert self._resolve({"id": 1, "title": "The Italian Job", "release_date": "2003-05-30"}) == [1]
+
+    def test_rogue_one_matches_its_subtitled_title_only_with_agreeing_years(self):
+        hit = {"id": 1, "title": "Rogue One: A Star Wars Story", "release_date": "2016-12-14"}
+        assert self._resolve(hit, title="Rogue One", year=2016) == [1]
+        assert self._resolve(hit, title="Rogue One") == []
 
     @pytest.mark.parametrize(
         ("asked", "found"),
         [
-            ("Amelie", "Amélie"),
-            ("Fast and Furious", "Fast & Furious"),
-            ("Rogue One", "Rogue One: A Star Wars Story"),
             ("Kill Bill", "Kill Bill: Vol. 1"),
             ("Ocean's 11", "Ocean's Eleven"),
         ],
     )
-    def test_real_variants_of_a_title_are_accepted(self, asked, found):
+    def test_loose_variants_are_accepted_with_a_year(self, asked, found):
+        assert self._resolve({"id": 1, "title": found, "release_date": "2003-01-01"}, title=asked, year=2003) == [1]
+        assert self._resolve({"id": 1, "title": found, "release_date": "2003-01-01"}, title=asked) == []
+
+    @pytest.mark.parametrize(("asked", "found"), [("Amelie", "Amélie"), ("Fast and Furious", "Fast & Furious")])
+    def test_accent_and_ampersand_variants_are_exact(self, asked, found):
         assert self._resolve({"id": 1, "title": found}, title=asked) == [1]
 
-    def test_the_original_title_counts(self):
-        hit = {"id": 1, "title": "Spirited Away", "original_title": "Sen to Chihiro no kamikakushi"}
-        assert self._resolve(hit, title="Sen to Chihiro no kamikakushi") == [1]
+    def test_the_original_title_counts_only_with_agreeing_years(self):
+        hit = {
+            "id": 1,
+            "title": "Spirited Away",
+            "original_title": "Sen to Chihiro no kamikakushi",
+            "release_date": "2001-07-20",
+        }
+        assert self._resolve(hit, title="Sen to Chihiro no kamikakushi", year=2001) == [1]
+        assert self._resolve(hit, title="Sen to Chihiro no kamikakushi") == []
+
+    def test_an_exact_match_beats_an_earlier_loose_one(self):
+        loose = {"id": 2, "title": "Kill Bill: Vol. 1", "release_date": "2003-01-01"}
+        exact = {"id": 1, "title": "Kill Bill", "release_date": "2003-01-01"}
+        assert self._resolve([loose, exact], title="Kill Bill", year=2003) == [1]
 
     def test_a_good_match_below_a_bad_top_hit_is_found(self):
         hits = [{"id": 2, "name": "Italian Job - The Serie A Story", "first_air_date": "2020-01-01"}]
