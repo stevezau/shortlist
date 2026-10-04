@@ -245,7 +245,7 @@ export function UserTabs({
 
       {/* One scannable, scrollable list — failures first, so a partly-failed run opens on what you
           came for. A vertical list reads far better than a wrapped grid of 48 near-identical pills. */}
-      <div className="overflow-hidden rounded-lg border">
+      <div>
         <div className="max-h-96 divide-y divide-border/50 overflow-y-auto">
           {bothGroups && failed.length > 0 && (
             <GroupLabel>Failed · {failed.length}</GroupLabel>

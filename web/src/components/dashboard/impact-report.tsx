@@ -1088,7 +1088,7 @@ function MostWatched({
               />
               <span
                 className={cn(
-                  "absolute left-1.5 top-1.5 rounded px-1.5 text-[11px] font-bold tabular-nums",
+                  "absolute left-1.5 top-1.5 rounded px-1.5 text-xs font-bold tabular-nums",
                   "bg-black/65 text-foreground",
                 )}
               >
@@ -1199,7 +1199,7 @@ function RecentlyWatched({
             {w.year != null && (
               <span className="text-xs tabular-nums text-muted-foreground">{w.year}</span>
             )}
-            <span className={cn("rounded-full px-2 text-[11px] font-semibold capitalize", VERB_BADGE[verb])}>
+            <span className={cn("rounded-full px-2 text-xs font-semibold capitalize", VERB_BADGE[verb])}>
               {verb}
             </span>
           </div>
@@ -1253,7 +1253,7 @@ function RecentlyWatched({
       <ul aria-label={label} className="space-y-1">
         {days.map(({ day, watches: dayWatches }) => (
           <li key={day}>
-            <h3 className="pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
+            <h3 className="pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground/80">
               {day}
             </h3>
             <ul className="divide-y divide-border/40">{dayWatches.map(line)}</ul>

@@ -11,8 +11,10 @@ requests in another person's private row.
 
 from __future__ import annotations
 
+import contextvars
 import re
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -177,6 +179,29 @@ def collect_requests(
             prev = by_pattern.get(t.pattern)
             by_pattern[t.pattern] = t if prev is None else _merge_titles(prev, t)
 
+    arr_clients = [
+        (kind, client)
+        for kind, client in (
+            (MediaType.MOVIE, radarr or (RadarrClient(sources.radarr) if sources.radarr else None)),
+            (MediaType.SHOW, sonarr or (SonarrClient(sources.sonarr) if sources.sonarr else None)),
+        )
+        if client is not None
+    ]
+    # Each Arr library is one whole-library dump its server takes seconds to build (live: 5.3s to first
+    # byte for 10,211 movies, 4.1s for 4,992 series), and the three apps are independent servers. So both
+    # Arr reads start now and run beside the Overseerr read below: the wall time is the slowest read, not
+    # the sum of all three. Their results are still APPLIED in the old order — Overseerr, Radarr, Sonarr —
+    # because an Overseerr-format tag resolves through Overseerr's user list, and merge ties and the
+    # order of `problems` must not depend on which server answered first.
+    pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="requests-row")
+    # Each submit runs in a copy of this thread's context, or loguru's `contextualize` run key is lost
+    # on the pool threads' retry warnings.
+    arr_reads = [
+        (kind, client, pool.submit(contextvars.copy_context().run, _read_arr, kind, client))
+        for kind, client in arr_clients
+    ]
+    pool.shutdown(wait=False)  # takes no more work; each read submitted above still runs to its end
+
     if seerr_client is not None:
         try:
             seerr_plex = seerr_client.user_plex_ids()
@@ -211,15 +236,9 @@ def collect_requests(
             ledger.problems.append(f"Overseerr could not be read: {e}")
             logger.warning("requests row: Overseerr read failed ({})", e)
 
-    for kind, client in (
-        (MediaType.MOVIE, radarr or (RadarrClient(sources.radarr) if sources.radarr else None)),
-        (MediaType.SHOW, sonarr or (SonarrClient(sources.sonarr) if sources.sonarr else None)),
-    ):
-        if client is None:
-            continue
+    for kind, client, read in arr_reads:
         try:
-            tags = client.tags()
-            items = client.movies() if kind is MediaType.MOVIE else client.series()
+            tags, items = read.result()
         except Exception as e:
             ledger.complete = False
             ledger.unreadable.add(client.app_name)
@@ -264,6 +283,13 @@ def collect_requests(
     )
     ledger.tag_matches = _merge_tag_matches(ledger.tag_matches)
     return ledger
+
+
+def _read_arr(kind: MediaType, client: RadarrClient | SonarrClient) -> tuple[dict[int, str], list[dict]]:
+    """One Arr's tags and its whole library, read off the calling thread by `collect_requests`."""
+    tags = client.tags()
+    items = client.movies() if kind is MediaType.MOVIE else client.series()
+    return tags, items
 
 
 def _merge_titles(prev: RequestedTitle, t: RequestedTitle) -> RequestedTitle:

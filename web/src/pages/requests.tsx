@@ -511,8 +511,8 @@ function PendingRow({
         <details className="group order-3 sm:col-span-2">
           <summary className="flex w-fit cursor-pointer items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />Details & title links</summary>
           <div className="mt-3 grid gap-5 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_15rem]">
-            <div className="space-y-3"><p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">The story</p><Synopsis text={item.overview} /><ExternalLinks item={item} /></div>
-            <div className="space-y-3 sm:border-l sm:pl-5"><p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Why it’s here</p><WhyBreakdown why={item.why} nameOf={nameOf} />{item.detail && <p className="text-xs text-muted-foreground">Last recorded reason: {item.detail}</p>}</div>
+            <div className="space-y-3"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">The story</p><Synopsis text={item.overview} /><ExternalLinks item={item} /></div>
+            <div className="space-y-3 sm:border-l sm:pl-5"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Why it’s here</p><WhyBreakdown why={item.why} nameOf={nameOf} />{item.detail && <p className="text-xs text-muted-foreground">Last recorded reason: {item.detail}</p>}</div>
           </div>
         </details>
         {/* Deliberately does NOT promise the row disappears next run: the tidy-up matches shows by
@@ -1663,7 +1663,7 @@ export function RequestsPage() {
                                 <SlidersHorizontal aria-hidden="true" />
                                 Filters <span className="ml-auto font-normal">Rating · votes · language</span>
                                 {menuFiltersSet > 0 && (
-                                  <span className="rounded-full bg-raised px-1.5 text-[11px] font-bold tabular-nums text-foreground">
+                                  <span className="rounded-full bg-raised px-1.5 text-xs font-bold tabular-nums text-foreground">
                                     {menuFiltersSet}
                                   </span>
                                 )}

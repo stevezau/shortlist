@@ -1798,6 +1798,10 @@ def _list_and_detail(client: TestClient, run_id: int) -> tuple[dict, dict]:
     return listed, client.get(f"/api/runs/{run_id}").json()
 
 
+#: The three "could not vouch for" lists, as a run recorded before they existed reports them.
+NOT_RECORDED = {"unchecked": None, "write_failed": None, "left_alone": None}
+
+
 class TestRunPrivacy:
     """`privacy` reports the facts a run persisted about who can see whose rows. Reporting only.
 
@@ -1815,7 +1819,7 @@ class TestRunPrivacy:
 
         # `zed` sees nothing of anyone else's, so an empty list is not a finding. No
         # `filters_not_enforced` key: that check did not measure, so it is None, not [].
-        expected = {"can_see_others": ["kid"], "unreadable_filters": [], "filters_not_enforced": None}
+        expected = {"can_see_others": ["kid"], "unreadable_filters": [], "filters_not_enforced": None, **NOT_RECORDED}
         assert listed["privacy"] == expected
         assert detail["privacy"] == expected
         assert listed["status"] == detail["status"] == "ok"
@@ -1839,7 +1843,7 @@ class TestRunPrivacy:
 
         listed, detail = _list_and_detail(client, run_id)
 
-        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": None}
+        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": None, **NOT_RECORDED}
         assert listed["privacy"] == expected
         assert detail["privacy"] == expected
 
@@ -1848,7 +1852,7 @@ class TestRunPrivacy:
 
         listed, detail = _list_and_detail(client, run_id)
 
-        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": []}
+        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": [], **NOT_RECORDED}
         assert listed["privacy"] == expected
         assert detail["privacy"] == expected
 
@@ -1857,7 +1861,7 @@ class TestRunPrivacy:
 
         listed, detail = _list_and_detail(client, run_id)
 
-        expected = {"can_see_others": [], "unreadable_filters": None, "filters_not_enforced": []}
+        expected = {"can_see_others": [], "unreadable_filters": None, "filters_not_enforced": [], **NOT_RECORDED}
         assert listed["privacy"] == expected
         assert detail["privacy"] == expected
 
@@ -1882,7 +1886,7 @@ class TestRunPrivacy:
 
         listed, detail = _list_and_detail(client, run_id)
 
-        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": ["mike"]}
+        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": ["mike"], **NOT_RECORDED}
         assert listed["privacy"] == expected
         assert detail["privacy"] == expected
         assert listed["status"] == detail["status"] == "ok"
@@ -1905,6 +1909,7 @@ class TestRunPrivacy:
             "can_see_others": ["kid"],
             "unreadable_filters": ["lisa"],
             "filters_not_enforced": ["mike"],
+            **NOT_RECORDED,
         }
 
     def test_every_privacy_list_is_sorted_case_insensitively(self, client: TestClient):
@@ -1920,7 +1925,66 @@ class TestRunPrivacy:
             "can_see_others": ordered,
             "unreadable_filters": ordered,
             "filters_not_enforced": ordered,
+            **NOT_RECORDED,
         }
+
+    def test_accounts_the_run_could_not_vouch_for_are_reported(self, client: TestClient):
+        """The run page counts every account it is not told about as hiding every row. These three
+        never are: one nobody could look through, one whose filter write failed, one left alone."""
+        run_id = _finished_run(
+            client,
+            {
+                "unhideable_rows": {},
+                "unreadable_filters": {},
+                "filters_not_enforced": {},
+                "privacy_unchecked": ["kid"],
+                "privacy_write_failed": ["mike"],
+                "privacy_left_alone": ["tom", "Ann"],
+            },
+        )
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        expected = {
+            "can_see_others": [],
+            "unreadable_filters": [],
+            "filters_not_enforced": [],
+            "unchecked": ["kid"],
+            "write_failed": ["mike"],
+            "left_alone": ["Ann", "tom"],
+        }
+        assert listed["privacy"] == expected
+        assert detail["privacy"] == expected
+        assert listed["status"] == detail["status"] == "ok"
+
+    def test_a_run_that_looked_and_found_every_account_vouched_for_reports_empty_lists(self, client: TestClient):
+        run_id = _finished_run(
+            client,
+            {
+                "unhideable_rows": {},
+                "unreadable_filters": {},
+                "filters_not_enforced": {},
+                "privacy_unchecked": [],
+                "privacy_write_failed": [],
+                "privacy_left_alone": [],
+            },
+        )
+
+        _, detail = _list_and_detail(client, run_id)
+
+        assert detail["privacy"]["unchecked"] == []
+        assert detail["privacy"]["write_failed"] == []
+        assert detail["privacy"]["left_alone"] == []
+
+    def test_a_run_recorded_before_those_keys_existed_reports_none_never_empty(self, client: TestClient):
+        """An older run's silence is "not recorded", which must never read as "every account vouched for"."""
+        run_id = _finished_run(client, {"unhideable_rows": {}, "unreadable_filters": {}, "filters_not_enforced": {}})
+
+        _, detail = _list_and_detail(client, run_id)
+
+        assert detail["privacy"]["unchecked"] is None
+        assert detail["privacy"]["write_failed"] is None
+        assert detail["privacy"]["left_alone"] is None
 
 
 class TestClosedSetFieldsMatchWhatTheCodeWrites:

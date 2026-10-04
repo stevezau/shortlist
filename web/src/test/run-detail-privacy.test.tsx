@@ -69,6 +69,16 @@ function person(username: string, added: number): RunDetail["users"][number] {
   } as RunDetail["users"][number];
 }
 
+/** The three "could not vouch for" lists on a run that recorded them and named nobody. */
+const VOUCHED = { unchecked: [], write_failed: [], left_alone: [] };
+/** A run that measured everything and flagged nobody. */
+const MEASURED = { can_see_others: [], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED };
+
+/** The Privacy cell's status dot, whose colour is the verdict's tone. */
+function privacyDot(summary: HTMLElement): string {
+  return within(summary).getByText("Privacy").querySelector("span")?.className ?? "";
+}
+
 function run(overrides: Partial<RunDetail> = {}): RunDetail {
   return {
     id: 7,
@@ -82,7 +92,7 @@ function run(overrides: Partial<RunDetail> = {}): RunDetail {
     stats: { users_ok: 4, users_error: 0, titles_added: 60, titles_removed: 0 },
     error: null,
     promotion_blockers: [],
-    privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: [] },
+    privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED },
     users: [person("sarah", 20), person("mike", 10), person("jess", 20), person("kid", 10)],
     ...overrides,
   } as RunDetail;
@@ -114,7 +124,7 @@ beforeEach(() => {
 
 describe("the run summary's Result", () => {
   it("reads 'OK with warnings' when an OK run flagged an account", async () => {
-    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] } }));
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED } }));
     renderDetail();
 
     expect(within(await strip()).getByText("OK with warnings")).toBeInTheDocument();
@@ -140,7 +150,7 @@ describe("the run summary's Result", () => {
   });
 
   it("reads plain OK when the enforcement check did not run and nothing else was flagged", async () => {
-    getRun.mockResolvedValue(run({ privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: null } }));
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: null, ...VOUCHED } }));
     renderDetail();
 
     const summary = await strip();
@@ -151,7 +161,7 @@ describe("the run summary's Result", () => {
 
 describe("the run summary's Privacy cell", () => {
   it("counts the accounts that hide every row and links to Privacy naming the one that does not", async () => {
-    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] } }));
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED } }));
     renderDetail();
 
     const summary = await strip();
@@ -183,14 +193,14 @@ describe("the run summary's Privacy cell", () => {
   });
 
   it("still counts when only the enforcement spot-check did not run", async () => {
-    getRun.mockResolvedValue(run({ privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: null } }));
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: null, ...VOUCHED } }));
     renderDetail();
 
     expect(within(await strip()).getByText("4 of 4 accounts hide every row")).toBeInTheDocument();
   });
 
   it("says 'Not fully measured' — never 'every row' — when Plex's filter read did not run", async () => {
-    getRun.mockResolvedValue(run({ privacy: { can_see_others: [], unreadable_filters: null, filters_not_enforced: null } }));
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: [], unreadable_filters: null, filters_not_enforced: null, ...VOUCHED } }));
     renderDetail();
 
     const summary = await strip();
@@ -200,9 +210,64 @@ describe("the run summary's Privacy cell", () => {
   });
 });
 
+describe("the run summary's Privacy cell, for accounts the run could not vouch for", () => {
+  it("never reads green over an account nobody could look through, and names it", async () => {
+    getRun.mockResolvedValue(run({ privacy: { ...MEASURED, unchecked: ["kid"] } }));
+    renderDetail();
+
+    const summary = await strip();
+    expect(within(summary).getByText("3 of 4 accounts hide every row")).toBeInTheDocument();
+    expect(within(summary).getByText("Couldn’t check what kid can see")).toBeInTheDocument();
+    expect(within(summary).queryByText("Measured by this run")).toBeNull();
+    expect(privacyDot(summary)).toContain("bg-warning");
+  });
+
+  it("never reads green over an account whose hide rules were not saved, and names it", async () => {
+    getRun.mockResolvedValue(run({ status: "error", privacy: { ...MEASURED, write_failed: ["mike"] } }));
+    renderDetail();
+
+    const summary = await strip();
+    expect(within(summary).getByText("3 of 4 accounts hide every row")).toBeInTheDocument();
+    expect(within(summary).getByText("Couldn’t save hide rules for mike")).toBeInTheDocument();
+    expect(privacyDot(summary)).toContain("bg-warning");
+  });
+
+  it("names an account left alone without counting it as hiding or calling it a fault", async () => {
+    getRun.mockResolvedValue(run({ privacy: { ...MEASURED, left_alone: ["jess"] } }));
+    renderDetail();
+
+    const summary = await strip();
+    expect(within(summary).getByText("3 of 4 accounts hide every row")).toBeInTheDocument();
+    expect(within(summary).getByText("You left sharing alone for jess")).toBeInTheDocument();
+    expect(privacyDot(summary)).toContain("bg-muted-foreground");
+  });
+
+  it("names them beside a flagged account rather than instead of it", async () => {
+    getRun.mockResolvedValue(run({ privacy: { ...MEASURED, can_see_others: ["kid"], left_alone: ["jess"] } }));
+    renderDetail();
+
+    const summary = await strip();
+    expect(within(summary).getByText("2 of 4 accounts hide every row")).toBeInTheDocument();
+    expect(within(summary).getByRole("link", { name: /kid can see others’ rows/ })).toBeInTheDocument();
+    expect(within(summary).getByText(/You left sharing alone for jess/)).toBeInTheDocument();
+  });
+
+  it("says 'Not fully measured' — never a count — on a run that did not record them", async () => {
+    getRun.mockResolvedValue(
+      run({ privacy: { ...MEASURED, unchecked: null, write_failed: null, left_alone: null } }),
+    );
+    renderDetail();
+
+    const summary = await strip();
+    expect(within(summary).getByText("Not fully measured")).toBeInTheDocument();
+    expect(within(summary).getByText("From an older version that didn’t check every account")).toBeInTheDocument();
+    expect(within(summary).queryByText(/hide every row/)).toBeNull();
+  });
+});
+
 describe("the privacy callout", () => {
   it("names the account that can see other people's rows", async () => {
-    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] } }));
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED } }));
     renderDetail();
 
     const callout = await screen.findByTestId("run-privacy-callout");
@@ -221,7 +286,7 @@ describe("the privacy callout", () => {
 
 describe("the people list in a row", () => {
   it("shows each person's new picks and marks the flagged one as not private", async () => {
-    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] } }));
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED } }));
     renderDetail();
 
     const kid = await screen.findByRole("tab", { name: /kid/ });
@@ -234,7 +299,7 @@ describe("the people list in a row", () => {
   });
 
   it("lists every person in the run, the flagged one included", async () => {
-    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] } }));
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED } }));
     renderDetail();
 
     await screen.findByRole("tab", { name: /kid/ });

@@ -272,7 +272,7 @@ function builtAt(iso: string | null): string {
 /** A data cell's own label on a phone, where the person is a card and there are no column headers. */
 function CellLabel({ children }: { children: ReactNode }) {
   return (
-    <span className="mb-0.5 block text-[11px] font-semibold uppercase tracking-wide text-faint-foreground lg:hidden">
+    <span className="mb-0.5 block text-xs font-semibold uppercase tracking-wide text-faint-foreground xl:hidden">
       {children}
     </span>
   );
@@ -311,7 +311,7 @@ function RequestsCell({
   const dash = (reason: string) =>
     cell(
       <span title={reason} aria-label={reason}>
-        <span className="hidden lg:inline">—</span><span className="lg:hidden">{reason}</span>
+        <span className="hidden xl:inline">—</span><span className="xl:hidden">{reason}</span>
       </span>,
       null,
     );
@@ -328,9 +328,7 @@ function RequestsCell({
   // Without Overseerr only the tag applies — "hasn't signed in" would blame them for an account
   // that can't exist — but tag-credited titles still count as ready.
   if (data.overseerr === "off") {
-    return tag || readyNote
-      ? cell(null, readyNote)
-      : dash("Overseerr isn’t connected");
+    return tag || readyNote ? cell(null, readyNote) : null;
   }
   if (person?.linked) {
     return cell(<Badge variant="success" title="Requests linked to their Overseerr account">Linked</Badge>, readyNote);
@@ -764,12 +762,12 @@ export function UsersPage() {
             ) : (
               <div className="overflow-hidden rounded-xl border bg-card">
                 <Table>
-                  <TableHeader className="hidden lg:table-header-group">
+                  <TableHeader className="hidden xl:table-header-group">
                     <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead className="pr-8 text-right">Picks watched (30 days)</TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
                   </TableHeader>
-                  <TableBody className="grid lg:table-row-group">
-                    {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
-                      <TableCell className="min-w-0 lg:w-[34%] lg:pl-4">
+                  <TableBody className="grid xl:table-row-group">
+                    {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 xl:table-row xl:p-0 [&>td]:p-0 xl:[&>td]:px-3 xl:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
+                      <TableCell className="min-w-0 xl:w-[34%] xl:pl-4">
                         <div className="flex items-start gap-3">
                           {selecting && <label className={`mt-1.5 flex shrink-0 cursor-pointer ${coarseHitArea}`}><input type="checkbox" aria-label={`Select ${user.display_name || user.username}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="size-4 shrink-0 accent-primary" /></label>}
                           <UserAvatar name={user.username} size="sm" />
@@ -788,12 +786,12 @@ export function UsersPage() {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="justify-self-end lg:justify-self-auto"><StatePill user={user} /></TableCell>
-                      <TableCell className="text-sm lg:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
-                      <TableCell className="text-sm lg:pr-8 lg:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
+                      <TableCell className="justify-self-end xl:justify-self-auto"><StatePill user={user} /></TableCell>
+                      <TableCell className="text-sm xl:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
+                      <TableCell className="text-sm xl:pr-8 xl:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
                       <TableCell className="text-sm"><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
                       <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? new Date(user.last_run_at).toLocaleString() : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
-                      <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap lg:table-cell lg:pr-4 lg:text-right">
+                      <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap xl:table-cell xl:pr-4 xl:text-right">
                         <GatedSwitch
                           checked={user.enabled && !user.restriction_profile}
                           reason={

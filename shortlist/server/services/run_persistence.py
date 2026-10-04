@@ -229,7 +229,7 @@ def _row_slug(m) -> str | None:
     return next((w.row_slug for w in (m.why or []) if w.row_slug), None)
 
 
-def live_pick_ids(session: Session) -> dict[int, set[int]]:
+def live_pick_ids(session: Session, *, user_id: int | None = None) -> dict[int, set[int]]:
     """The picks that are on Plex RIGHT NOW, as ``{user_id: {pick_id}}``.
 
     A row+library's live contents are the picks from the MAX ``run_id`` that delivered it — the same
@@ -253,28 +253,34 @@ def live_pick_ids(session: Session) -> dict[int, set[int]]:
     so read as not-live until that row next delivers, which re-stamps them. Carry-forward already
     behaves exactly this way — the clear-runs endpoint says so in as many words — and the cost here
     is the same shape: a watch in that window is not credited.
+
+    Args:
+        session: An open DB session.
+        user_id: When given, read only that one user's picks and ledger entries; the result is then
+            ``{user_id: ...}`` or empty. ``None`` (the default) covers every user.
     """
     live_slugs = [slug for (slug,) in session.query(Collection.slug).filter(Collection.enabled.is_(True)).all()]
     if not live_slugs:
         return {}
     # Matched in Python, not as a third SQL join: the ledger is keyed by user SLUG where picks carry
     # user_id, and it is small (one row per row/user/library actually on the server).
-    slug_by_user = {uid: slug for uid, slug in session.query(User.id, User.slug).all()}
-    on_plex = {
-        (row.user_slug, row.collection_slug, row.library_key)
-        for row in session.query(Delivery).filter(Delivery.collection_slug.in_(live_slugs))
-    }
-    latest = (
-        session.query(
-            PickRow.user_id.label("user_id"),
-            PickRow.collection_slug.label("slug"),
-            PickRow.section_key.label("section_key"),
-            func.max(PickRow.run_id).label("mrun"),
-        )
-        .filter(PickRow.collection_slug.in_(live_slugs))
-        .group_by(PickRow.user_id, PickRow.collection_slug, PickRow.section_key)
-        .subquery()
-    )
+    users = session.query(User.id, User.slug)
+    if user_id is not None:
+        users = users.filter(User.id == user_id)
+    slug_by_user = {uid: slug for uid, slug in users.all()}
+    deliveries = session.query(Delivery).filter(Delivery.collection_slug.in_(live_slugs))
+    if user_id is not None:
+        deliveries = deliveries.filter(Delivery.user_slug == slug_by_user.get(user_id))
+    on_plex = {(row.user_slug, row.collection_slug, row.library_key) for row in deliveries}
+    newest = session.query(
+        PickRow.user_id.label("user_id"),
+        PickRow.collection_slug.label("slug"),
+        PickRow.section_key.label("section_key"),
+        func.max(PickRow.run_id).label("mrun"),
+    ).filter(PickRow.collection_slug.in_(live_slugs))
+    if user_id is not None:
+        newest = newest.filter(PickRow.user_id == user_id)
+    latest = newest.group_by(PickRow.user_id, PickRow.collection_slug, PickRow.section_key).subquery()
     rows = (
         session.query(PickRow.id, PickRow.user_id, PickRow.collection_slug, PickRow.section_key)
         .join(
@@ -1825,6 +1831,11 @@ def _finalize_run(
         # Same measured-flag discipline, same reason: the privacy loop that fills it ran, so empty is a
         # finding that clears the alert (#116 — filters Plex itself cannot read).
         stats["unreadable_filters"] = dict(report.unreadable_filters)
+        # Accounts the privacy loop could not vouch for, written empty too: absent reads as "not recorded",
+        # which the run page shows as not fully measured, never as "nobody".
+        stats["privacy_unchecked"] = list(report.privacy_unchecked)
+        stats["privacy_write_failed"] = list(report.privacy_write_failed)
+        stats["privacy_left_alone"] = list(report.privacy_left_alone)
     # Accounts the owner left alone whose excludes could not be taken back off. Written only when
     # non-empty: an empty key would read as a measurement on every run that never got this far.
     # Accounts whose filter Shortlist wrote and Plex is not applying. Written on every run that

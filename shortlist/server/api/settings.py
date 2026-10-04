@@ -7,14 +7,17 @@ import re
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel
 
+from shortlist.engine.clients.arr import ArrError
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.search import EXA_SEARCH_TYPES
+from shortlist.engine.clients.seerr import SeerrError
 from shortlist.engine.models import (
     LANGUAGE_MODES,
     MAX_REFRESH_DAYS,
@@ -831,6 +834,28 @@ class ArrOptionsOut(PassthroughModel):
     root_folders: list[RootFolderOut]
 
 
+def _origin_of(url: str) -> str:
+    """``scheme://host[:port]`` of a configured address: no credentials, path or query string."""
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}" if parsed.scheme and host else "the address you entered"
+
+
+def _service_error_detail(app: str, url: str, error: Exception) -> str:
+    """Plain-English reason a Sonarr/Radarr/Overseerr call failed, safe to show in the UI.
+
+    The clients' own messages ("Radarr rejected the API key") already read well and carry no secret,
+    so they pass through; an "unreachable (ConnectError)" and anything unexpected become a sentence
+    naming the address. The exception type and text go to the server log only.
+    """
+    logger.warning("{} request failed ({}): {}", app, type(error).__name__, redact(str(error)))
+    text = redact(str(error))
+    if isinstance(error, ArrError | SeerrError) and "unreachable" not in text:
+        return text
+    return f"{app} didn't answer at {_origin_of(url)}. Check the address and that it's running."
+
+
 @router.get("/arr/{service}/options", response_model=ArrOptionsOut)
 async def arr_options(service: str, request: Request) -> dict:
     """Quality profiles + root folders for a connected Sonarr/Radarr, so the UI offers dropdowns
@@ -856,7 +881,7 @@ async def arr_options(service: str, request: Request) -> dict:
     try:
         return await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
+        raise HTTPException(status_code=502, detail=_service_error_detail(service.title(), url, e)) from e
 
 
 class SeerrUserOut(PassthroughModel):
@@ -904,7 +929,7 @@ async def overseerr_options(request: Request) -> dict:
     try:
         return await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
+        raise HTTPException(status_code=502, detail=_service_error_detail("Overseerr", url, e)) from e
 
 
 class CuratorModelsOut(PassthroughModel):

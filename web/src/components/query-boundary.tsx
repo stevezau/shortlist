@@ -43,12 +43,8 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
-      <span
-        aria-hidden="true"
-        className="grid h-11 w-11 place-items-center rounded-full bg-muted text-muted-foreground"
-      >
-        <Icon className="h-5 w-5" />
-      </span>
+      {/* Bare, never on a tile: the design direction has no icon tiles. */}
+      <Icon aria-hidden="true" className="h-6 w-6 text-muted-foreground" />
       <div className="space-y-1">
         <p className="font-medium">{title}</p>
         <p className="mx-auto max-w-sm text-sm text-muted-foreground">{hint}</p>

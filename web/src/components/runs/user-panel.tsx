@@ -276,7 +276,7 @@ function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
  *  hovering to guess. Shown once above a person's rows. */
 function ResultsLegend() {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
       <span className="font-medium text-foreground/70">What changed:</span>
       <span className="inline-flex items-center gap-1.5">
         <span className="h-2 w-2 rounded-full bg-success" aria-hidden="true" />

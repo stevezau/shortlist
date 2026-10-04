@@ -138,7 +138,7 @@ export function LibraryPicker({
                         type="checkbox"
                         checked={checked}
                         onChange={() => toggle(lib.key)}
-                        className="h-4 w-4 accent-primary"
+                        className="h-4 w-4 accent-foreground"
                       />
                       <span className="font-medium">{lib.title}</span>
                       <span className="text-xs text-muted-foreground">

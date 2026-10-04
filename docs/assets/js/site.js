@@ -189,6 +189,21 @@
     scroller.appendChild(table);
   });
 
+  /* A phone stacks each row (CSS), so every cell carries its column's header as a label. */
+  document.querySelectorAll(".prose table").forEach(function (table) {
+    var heads = table.querySelectorAll("thead th");
+    if (!heads.length) return;
+    table.querySelectorAll("tbody tr").forEach(function (row) {
+      Array.prototype.forEach.call(row.children, function (cell, i) {
+        if (cell.tagName === "TD" && heads[i]) cell.setAttribute("data-label", heads[i].textContent.trim());
+      });
+      /* Short code in the second column (a default value) stays whole; a long one, or a list, may still break. */
+      row.querySelectorAll("td:nth-child(2) code").forEach(function (code) {
+        if (code.textContent.length <= 36 && code.textContent.indexOf(",") < 0) code.classList.add("code-whole");
+      });
+    });
+  });
+
   /* ------------------------------------------------------------------ toc */
 
   var tocList = document.getElementById("toc-list");

@@ -367,7 +367,11 @@ export function IssuePage() {
       <PageHeader
         className="mb-0"
         title="Have an issue?"
-        subtitle="Run a few read-only checks to find out what's happening — most answer the question on their own. If they don't, the last step turns what you found into a bug report. Nothing here changes your Plex server, your rows, or your settings."
+        subtitle={
+          <span className="block max-w-[65ch]">
+            Run a few read-only checks to find out what's happening — most answer the question on their own. If they don't, the last step turns what you found into a bug report. Nothing here changes your Plex server, your rows, or your settings.
+          </span>
+        }
       />
 
       {status.isLoading ? (
@@ -544,7 +548,7 @@ function ModeBanner({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <p className="text-sm font-semibold">
-            {enabled ? "Checks are switched on" : "Switch on the checks"}
+            {enabled ? "Checks are switched on" : "Read-only checks"}
           </p>
           <p className="text-xs text-muted-foreground">
             {enabled

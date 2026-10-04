@@ -1676,6 +1676,18 @@ class RunReport:
     # that failed early cleared a live exposure alert and every "Sees N rows of others'" badge while
     # the exposure was untouched, which is the exact silence the check exists to end.
     unhideable_measured: bool = False
+    # Accounts the privacy loop could NOT vouch for, by username. Read beside `unhideable_measured`. The
+    # run page counts every account it is not told about as hiding every row, so silence here printed a
+    # green "2 of 2" over a run whose own log said it "reports nothing rather than a false all-clear".
+    #   privacy_unchecked: a profiled account `_record_unhideable` could not look through (no token, no
+    #     usable collections read, a read that raised), or one whose 422 was skipped with its profile
+    #     unknown — no exclude written and nobody looked.
+    #   privacy_write_failed: its share-filter write failed — the named half of `promotion_blockers`.
+    #   privacy_left_alone: the owner chose to leave its sharing alone (`users.manage_sharing=0`), so it
+    #     keeps none of our excludes and sees every row, by design.
+    privacy_unchecked: list[str] = field(default_factory=list)
+    privacy_write_failed: list[str] = field(default_factory=list)
+    privacy_left_alone: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:

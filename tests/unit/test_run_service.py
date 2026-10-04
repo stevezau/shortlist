@@ -266,6 +266,10 @@ class TestRunExecution:
             "promotion_blockers": [],
             "unhideable_rows": {},
             "unreadable_filters": {},
+            # Written empty on every measured run: absent reads as "not fully measured" on the run page.
+            "privacy_unchecked": [],
+            "privacy_write_failed": [],
+            "privacy_left_alone": [],
         }
         with sessions() as session:
             run_users = session.query(RunUser).filter_by(run_id=run.id).all()
@@ -482,6 +486,25 @@ class TestRunExecution:
 
         with sessions() as s:
             assert s.get(Run, run_id).stats["unreadable_filters"] == {}
+
+    def test_the_accounts_a_run_could_not_vouch_for_are_recorded(self, sessions, tmp_path):
+        """The run page counts an account as hiding only when the run vouched for it; these three keys are
+        what it reads, and an absent key reads as "not fully measured" on every new run."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        run_id = self._new_run(sessions)
+        report = self._report(self._one_user_report("sarah"))
+        report.unhideable_measured = True
+        report.privacy_unchecked, report.privacy_write_failed, report.privacy_left_alone = ["kid"], ["mike"], ["tom"]
+
+        service._persist_report(run_id, report)
+
+        with sessions() as s:
+            stats = s.get(Run, run_id).stats
+            assert [stats["privacy_unchecked"], stats["privacy_write_failed"], stats["privacy_left_alone"]] == [
+                ["kid"],
+                ["mike"],
+                ["tom"],
+            ]
 
     def test_a_run_that_restored_an_owners_restriction_records_who(self, sessions, tmp_path):
         service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))

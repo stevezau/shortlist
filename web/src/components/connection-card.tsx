@@ -39,7 +39,7 @@ function StatusPill({ tone, children }: { tone: PillTone; children: ReactNode })
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2 py-px text-[11px] font-medium leading-4",
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-px text-xs font-medium leading-4",
         PILL_TONES[tone],
       )}
     >

@@ -118,6 +118,16 @@ class RunPrivacyOut(PassthroughModel):
     #: keys). None = that check did not measure — it has its own flag (`filters_enforcement_measured`),
     #: so a run can measure the rest and not this; [] = measured, none found.
     filters_not_enforced: list[str] | None
+    #: The accounts below are ones this run cannot say hide every row, so the page never counts them as
+    #: hiding. Each: None = not recorded (a run from before the key existed); [] = recorded, nobody.
+    #: Accounts with a Restriction Profile it could not look through (`stats.privacy_unchecked`).
+    unchecked: list[str] | None
+    #: Accounts whose share-filter write failed (`stats.privacy_write_failed`; the named half of
+    #: `promotion_blockers`).
+    write_failed: list[str] | None
+    #: Accounts the owner chose to leave alone (`users.manage_sharing=0`, `stats.privacy_left_alone`):
+    #: they keep none of Shortlist's excludes and see every row, by design. Not a fault.
+    left_alone: list[str] | None
 
 
 class RunSummaryOut(PassthroughModel):

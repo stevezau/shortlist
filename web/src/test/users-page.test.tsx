@@ -737,12 +737,11 @@ describe("UsersPage — the Requests column", () => {
     const tag = await screen.findByText("Tag: sarah-asked");
     expect(tag.closest("td")).toHaveTextContent("3 ready");
     expect(screen.queryByText("No account")).toBeNull();
-    // Only Mike, with no tag and nothing ready, gets the dash.
-    const dashes = screen.getAllByTitle("Overseerr isn’t connected");
-    expect(dashes).toHaveLength(1);
-    expect(dashes[0]).toHaveTextContent("—");
-    expect(dashes[0]).toHaveAttribute("aria-label", "Overseerr isn’t connected");
-    expect(dashes[0]?.closest("tr")).toHaveTextContent("mike");
+    // Mike has no tag and nothing ready, so with Overseerr off his line is absent, not a dash.
+    expect(screen.queryByTitle("Overseerr isn’t connected")).toBeNull();
+    expect(screen.queryByText(/isn’t connected/)).toBeNull();
+    const mikeRow = screen.getByText("mike").closest("tr") as HTMLElement;
+    expect(within(mikeRow).queryByText("Request status:")).toBeNull();
   });
 
   it("holds a skeleton in the cell while the sources are still being read", async () => {

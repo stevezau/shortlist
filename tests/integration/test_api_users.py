@@ -1239,7 +1239,7 @@ class TestUserRowsApi:
         """A dry run, or a run cancelled before this person's turn, writes a `run_users` row but no
         picks. Plex still holds the last real run's titles, so that is what the page shows — not
         "No picks in this row yet" for every person after one cancelled dry run."""
-        from shortlist.server.db.models import PickRow, Run, RunUser
+        from shortlist.server.db.models import Delivery, PickRow, Run, RunUser
 
         uid = self._sarah_id(client)
 
@@ -1258,6 +1258,8 @@ class TestUserRowsApi:
             )
 
         with client.app.state.sessions() as session:
+            # The ledger entry a real delivery leaves behind; `live_pick_ids` requires it.
+            session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=42))
             built = Run(trigger="schedule", status="ok")
             session.add(built)
             session.flush()
@@ -1283,6 +1285,50 @@ class TestUserRowsApi:
 
         row = client.get(f"/api/users/{uid}/rows").json()[0]
         assert [p["title"] for p in row["picks"]] == ["Contact"], "a newer build replaces the older one"
+
+    def test_rows_keep_each_rows_own_last_build_when_a_later_run_built_one_row(self, client: TestClient):
+        """Rows have their own crons, so the newest run is often scoped to ONE row. The other row's
+        picks are still on Plex, so the page must show them, not "No picks in this row yet"."""
+        from shortlist.server.db.models import Collection, Delivery, PickRow, Run, RunUser
+
+        uid = self._sarah_id(client)
+
+        def pick(run_id: int, slug: str, title: str) -> PickRow:
+            return PickRow(
+                run_id=run_id,
+                user_id=uid,
+                tmdb_id=329865,
+                media_type="movie",
+                rating_key=42,
+                rank=1,
+                collection_slug=slug,
+                section_key="1",
+                library="Movies",
+                title=title,
+            )
+
+        with client.app.state.sessions() as session:
+            session.add(
+                Collection(
+                    slug="weekend", name="Weekend", build="per_person", audience="everyone", enabled=True, sort_order=99
+                )
+            )
+            for slug in ("picked", "weekend"):
+                session.add(Delivery(collection_slug=slug, user_slug="sarah", library_key="1", rating_key=42))
+            run_a = Run(trigger="schedule", status="ok")
+            run_b = Run(trigger="schedule", status="ok")
+            session.add_all([run_a, run_b])
+            session.flush()
+            for run in (run_a, run_b):
+                session.add(RunUser(run_id=run.id, user_id=uid, status="ok"))
+            session.add(pick(run_a.id, "picked", "A picked"))
+            session.add(pick(run_a.id, "weekend", "A weekend"))
+            session.add(pick(run_b.id, "picked", "B picked"))
+            session.commit()
+
+        rows = {r["slug"]: r for r in client.get(f"/api/users/{uid}/rows").json()}
+        assert [p["title"] for p in rows["picked"]["picks"]] == ["B picked"]
+        assert [p["title"] for p in rows["weekend"]["picks"]] == ["A weekend"]
 
     def test_override_mute_and_resize_round_trip(self, client: TestClient):
         uid = self._sarah_id(client)

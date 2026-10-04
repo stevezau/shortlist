@@ -80,7 +80,7 @@ function finishedRun(overrides: Partial<Run> = {}): Run {
     finished_at: "2026-10-03T02:30:07Z",
     error: null,
     promotion_blockers: [],
-    privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: [] },
+    privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: [], unchecked: [], write_failed: [], left_alone: [] },
     stats: { users_ok: 3, users_error: 0 },
     ...overrides,
   } as Run;
@@ -256,7 +256,7 @@ describe("the dashboard's Last run", () => {
   it("reads 'OK with warnings', the run page's words, when the latest run flagged an account", async () => {
     // "OK · 1 warning" here and "OK with warnings" on the run it links to were two names for one state.
     getRuns.mockResolvedValue([
-      finishedRun({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] } }),
+      finishedRun({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], unchecked: [], write_failed: [], left_alone: [] } }),
     ]);
     renderDashboard();
 
@@ -317,7 +317,7 @@ describe("the dashboard's Last run", () => {
   it("reads the newest FINISHED run, not one still going", async () => {
     getRuns.mockResolvedValue([
       finishedRun({ id: 9, status: "running", finished_at: null, privacy: null }),
-      finishedRun({ id: 8, privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] } }),
+      finishedRun({ id: 8, privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], unchecked: [], write_failed: [], left_alone: [] } }),
     ]);
     renderDashboard();
 

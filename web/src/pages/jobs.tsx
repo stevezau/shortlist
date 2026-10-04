@@ -123,14 +123,14 @@ function GroupHeading({
   return (
     <div className="space-y-1 px-1">
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h2 className="text-sm font-semibold text-foreground">
           {title}
         </h2>
         {hint && (
-          <span className="text-xs text-muted-foreground">· {hint}</span>
+          <span className="text-sm text-muted-foreground">{hint}</span>
         )}
       </div>
-      {note && <p className="text-xs text-muted-foreground">{note}</p>}
+      {note && <p className="text-sm text-muted-foreground">{note}</p>}
     </div>
   );
 }

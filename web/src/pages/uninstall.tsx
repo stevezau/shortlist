@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, apiErrorMessage } from "@/lib/api";
+import { groupTitles } from "@/lib/group-titles";
 import { useSSE } from "@/lib/sse";
 import type { UninstallResult } from "@/lib/types";
 
@@ -215,7 +216,7 @@ export function UninstallPage() {
                 <PlanSummary result={preview.data} />
                 {preview.data.collections_deleted.length > 0 && (
                   <p className="text-muted-foreground">
-                    {preview.data.collections_deleted.join(" · ")}
+                    {groupTitles(preview.data.collections_deleted).join(" · ")}
                   </p>
                 )}
                 <p className="text-muted-foreground">{preview.data.message}</p>
