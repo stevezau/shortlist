@@ -80,20 +80,20 @@ def sanitise_ai_reason(text: str) -> str:
     return " ".join(_MARKDOWN.sub("", text).split())
 
 
-def theme_reason(candidate: Candidate | None, theme_name: str, ai_reason: str | None) -> str:
+def theme_reason(candidate: Candidate | None, theme_name: str, ai_reason: str | None, *, named: bool = True) -> str:
     """Why a theme pick is here: the theme it fits and, when it has one, the AI's line before the hook.
+
+    A title the theme did not name (a tag or genre match filling the row) only shares its genres, so it never
+    claims to fit the theme by name (``named=False``).
 
     ``{ai_reason} · {personal hook}``, cut to 160 characters. The hook is what makes it theirs, so it is
     the AI sentence that gives way.
     """
     seed = candidate.top_seed if candidate else None
-    hook = (
-        f"Fits {theme_name} \u2014 like {seed.title}, which you watched"
-        if seed
-        # No genre claim, as for a season: a theme title is admitted on theme fit and may share no genre with
-        # anything they watched.
-        else f"Fits {theme_name}"
-    )
+    fits = f"Fits {theme_name}" if named else "Shares its genres"
+    # No watched-genre claim, as for a season: a theme title is admitted on theme fit and may share no genre
+    # with anything they watched.
+    hook = f"{fits} \u2014 like {seed.title}, which you watched" if seed else fits
     line = sanitise_ai_reason(ai_reason) if ai_reason else ""
     if not line:
         return hook
@@ -174,14 +174,19 @@ def build_picks(
                 title=c.title,
                 rank=len(picks) + 1,
                 reason=(
-                    theme_reason(c, theme_name, theme_reasons.get((c.media_type, c.tmdb_id)))
+                    theme_reason(
+                        c,
+                        theme_name,
+                        theme_reasons.get((c.media_type, c.tmdb_id)),
+                        named=(c.media_type, c.tmdb_id) in theme_named,
+                    )
                     if theme_name and "theme" in c.sources
                     else reason_for(c)
                 ),
                 media_type=c.media_type,
                 seed_tmdb_id=seed.tmdb_id if seed else None,
                 seed_title=seed.title if seed else None,
-                sources=sorted(c.sources),
+                sources=sorted(c.sources | {"theme_named"} if (c.media_type, c.tmdb_id) in theme_named else c.sources),
                 affinity=c.affinity,
                 rating=c.rating,
                 year=c.year,

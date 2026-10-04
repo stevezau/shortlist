@@ -11,8 +11,10 @@ describe("the theme source (an AI row's list)", () => {
   });
 
   it("is named for what it is on a pick", () => {
-    expect(sourceLabel("theme")).toBe("AI row's theme");
-    const pick = { sources: ["theme"], affinity: 1 } as unknown as Pick;
-    expect(provenanceLabel(pick)).toMatch(/AI row's theme/);
+    expect(sourceLabel("theme")).toBe("the theme's genres and tags");
+    const filler = { sources: ["theme"], affinity: 1 } as unknown as Pick;
+    expect(provenanceLabel(filler)).toBe("suggested by the theme's genres and tags");
+    const named = { sources: ["theme", "theme_named"], affinity: 1 } as unknown as Pick;
+    expect(provenanceLabel(named)).toBe("suggested by the AI's list");
   });
 });

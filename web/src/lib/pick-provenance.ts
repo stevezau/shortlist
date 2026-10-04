@@ -9,7 +9,8 @@ const SOURCE_LABELS: Record<string, string> = {
   llm_web: "AI web search",
   cold_start: "Popular on this server",
   season: "Seasonal list",
-  theme: "AI row's theme",
+  theme: "the theme's genres and tags",
+  theme_named: "the AI's list",
   history: "Your watch history",
   tmdb_both: "TMDB (similar + your genres)",
 };
@@ -52,9 +53,12 @@ export function provenanceLabel(pick: Pick): string {
   // Both TMDB sources on one pick would read "TMDB (your genres) + TMDB", which looks like a bug.
   const both =
     sources.includes("tmdb_similar") && sources.includes("tmdb_discover");
+  // A title the theme named is "from the AI's list"; the generic theme source would only repeat it.
+  const named = sources.includes("theme_named");
+  const kept = named ? sources.filter((s) => s !== "theme") : sources;
   const shown = both
-    ? ["tmdb_both", ...sources.filter((s) => !s.startsWith("tmdb_"))]
-    : sources;
+    ? ["tmdb_both", ...kept.filter((s) => !s.startsWith("tmdb_"))]
+    : kept;
   const names = shown.map(sourceLabel).join(" + ");
   // ONLY tmdb_similar ranks its suggestions. tmdb_discover is "popular in genres you like" — it is
   // permanently 1.0, so matching it here would stamp "close match" on every discover pick forever.

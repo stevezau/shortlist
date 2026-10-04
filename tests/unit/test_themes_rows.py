@@ -256,19 +256,29 @@ class TestTheRow:
         assert ctx.previous_picks[("sarah", "ai-twists", "1")] == prior
         ctx.plex.delete_owned_collection.assert_not_called()
 
-    def test_seedless_pick_says_it_fits_the_theme_in_genres_they_watch(self, ctx):
+    def test_a_filler_pick_says_it_shares_genres_rather_than_fitting_the_theme(self, ctx):
         ctx.config.rows = [theme_row()]
         report = pipeline_mod.run(ctx, _people())
 
         elf = next(p for p in _picks(report, "sarah", "ai-twists") if p.tmdb_id == 30)
+        assert elf.reason == "Shares its genres"
+        assert elf.sources == ["theme"]
+
+    def test_a_named_pick_says_it_fits_the_theme_and_is_marked_as_named(self, ctx):
+        theme = theme_spec(picks=(ThemePick(30, MediaType.MOVIE, "ai", None),))
+        ctx.config.rows = [theme_row(theme)]
+        report = pipeline_mod.run(ctx, _people())
+
+        elf = next(p for p in _picks(report, "sarah", "ai-twists") if p.tmdb_id == 30)
         assert elf.reason == "Fits Twist endings"
+        assert elf.sources == ["theme", "theme_named"]
 
     def test_seeded_pick_names_the_watch(self, ctx):
         ctx.config.rows = [theme_row()]
         report = pipeline_mod.run(ctx, _people())
 
         die_hard_2 = next(p for p in _picks(report, "sarah", "ai-twists") if p.tmdb_id == 20)
-        assert die_hard_2.reason == "Fits Twist endings — like Die Hard, which you watched"
+        assert die_hard_2.reason == "Shares its genres — like Die Hard, which you watched"
 
     def test_theme_pick_reason_includes_ai_line_and_hook(self, ctx):
         theme = theme_spec(picks=(ThemePick(30, MediaType.MOVIE, "ai", "A *holiday* {twist}\nat the end"),))
@@ -308,7 +318,7 @@ class TestColdStart:
 
         by_id = {p.tmdb_id: p for p in _picks(report, "sarah", "ai-twists")}
         assert by_id[30].reason == "A festive turn \u00b7 Fits Twist endings"
-        assert by_id[20].reason == "Fits Twist endings"
+        assert by_id[20].reason == "Shares its genres"
         assert by_id[20].sources == ["theme"]
 
 

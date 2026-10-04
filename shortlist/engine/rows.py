@@ -3038,12 +3038,21 @@ def _season_cold_picks(
             rank=i + 1,
             # No watch to name: an AI row's cold pick is worded like its seedless one.
             reason=(
-                picker.theme_reason(None, theme_name, (theme_reasons or {}).get((kind, int(item["id"]))))
+                picker.theme_reason(
+                    None,
+                    theme_name,
+                    (theme_reasons or {}).get((kind, int(item["id"]))),
+                    named=(kind, int(item["id"])) in theme_named,
+                )
                 if theme_name
                 else "Well rated for the season"
             ),
             media_type=kind,
-            sources=["theme" if theme_name else "season"],
+            sources=(
+                ["theme", *(["theme_named"] if (kind, int(item["id"])) in theme_named else [])]
+                if theme_name
+                else ["season"]
+            ),
         )
         for i, item in enumerate(held)
     ]
