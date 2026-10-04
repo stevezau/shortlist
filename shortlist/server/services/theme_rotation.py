@@ -660,30 +660,47 @@ def top_up_rows(sessions) -> list[int]:
         )
 
 
-def _row_themes(session: Session, collection: Collection) -> dict[int, list[int]]:
-    """{theme id -> the people it is on}: the row's one theme, or each person's current Explore theme."""
+def _row_themes(session: Session, collection: Collection) -> dict[int, list[tuple[int, datetime | None]]]:
+    """{theme id -> [(person, when it became theirs)]}: the row's one theme, or each person's current Explore
+    theme. The start is None for a fixed theme, which belongs to everyone from the moment it was saved."""
     people = rotating_users(session, collection)
     if collection.theme_mode != "explore":
-        return {collection.theme_id: [u.id for u in people]} if collection.theme_id is not None else {}
-    themes: dict[int, list[int]] = {}
+        return {collection.theme_id: [(u.id, None) for u in people]} if collection.theme_id is not None else {}
+    themes: dict[int, list[tuple[int, datetime | None]]] = {}
     for user in people:
         current = _history(session, collection.id, user.id)["current"]
         if current is not None and current.theme_id is not None:
-            themes.setdefault(current.theme_id, []).append(user.id)
+            themes.setdefault(current.theme_id, []).append((user.id, _naive_utc(current.started_at)))
     return themes
 
 
-def _unnamed_shown(session: Session, slug: str, user_id: int, theme: Theme) -> set[tuple[int, str]]:
-    """The titles in the person's latest real run of the row that are none of the theme's picks (any origin)."""
-    latest = (
-        select(func.max(PickRow.run_id))
-        .join(Run, Run.id == PickRow.run_id)
-        .where(PickRow.user_id == user_id, PickRow.collection_slug == slug, Run.dry_run.is_not(True))
-        .scalar_subquery()
+def _saved_at(session: Session, theme: Theme) -> datetime:
+    """When the theme's current list was written: its creation, or the latest save recorded in the audit log."""
+    last_save = session.scalar(
+        select(func.max(Event.ts)).where(Event.scope == "theme.build", Event.message["theme"].as_string() == theme.slug)
     )
+    stamps = [_naive_utc(t) for t in (theme.created_at, last_save) if t is not None]
+    return max(stamps)
+
+
+def _unnamed_shown(session: Session, slug: str, user_id: int, theme: Theme, since: datetime) -> set[tuple[int, str]]:
+    """The titles in the person's latest real run of the row that are none of the theme's picks (any origin).
+
+    Empty when that run started before ``since``: it was built from an earlier theme or list, so what it showed
+    says nothing about this one.
+    """
+    latest = session.execute(
+        select(Run.id, Run.started_at)
+        .join(PickRow, PickRow.run_id == Run.id)
+        .where(PickRow.user_id == user_id, PickRow.collection_slug == slug, Run.dry_run.is_not(True))
+        .order_by(Run.id.desc())
+        .limit(1)
+    ).first()
+    if latest is None or _naive_utc(latest.started_at) <= since:
+        return set()
     shown = session.execute(
         select(PickRow.tmdb_id, PickRow.media_type).where(
-            PickRow.user_id == user_id, PickRow.collection_slug == slug, PickRow.run_id == latest
+            PickRow.user_id == user_id, PickRow.collection_slug == slug, PickRow.run_id == latest.id
         )
     ).all()
     named = {(int(p["tmdb_id"]), p["media"]) for p in theme.picks or []}
@@ -706,13 +723,27 @@ def _collection_members(theme: Theme, tools: Callable[[], AuthoringTools]) -> se
     return members
 
 
-def _is_low(session: Session, slug: str, people: list[int], theme: Theme, tools: Callable[[], AuthoringTools]) -> bool:
+def _is_low(
+    session: Session,
+    slug: str,
+    people: list[tuple[int, datetime | None]],
+    theme: Theme,
+    tools: Callable[[], AuthoringTools],
+) -> bool:
     """Whether someone's row shows a title that came only from the theme's tags and genres.
 
     A pick (the owner's or the AI's) and a member of one of the theme's collections is a named title, not filler.
     A collection that cannot be read tonight means "not low": no AI call is spent on a guess.
     """
-    unnamed = [u for u in (_unnamed_shown(session, slug, user_id, theme) for user_id in people) if u]
+    saved_at = _saved_at(session, theme)
+    unnamed = [
+        u
+        for u in (
+            _unnamed_shown(session, slug, user_id, theme, max(saved_at, started) if started else saved_at)
+            for user_id, started in people
+        )
+        if u
+    ]
     if not unnamed:
         return False
     if not theme.collections:
@@ -758,7 +789,7 @@ def top_up_themes(
                 logger.info("[dry-run] theme {} on row {} is low: would top it up once", theme_id, collection_id)
                 continue
             try:
-                with _target_lock(collection_id, -theme_id), sessions() as session:
+                with _target_lock(0, -theme_id), sessions() as session:
                     done += _top_up_one(session, collection_id, theme_id, moment, sessions, secrets, author, tools)
             except Exception as e:
                 # Not marked: the failure came before any AI call was made.
@@ -767,7 +798,11 @@ def top_up_themes(
 
 
 def _top_up_one(session, collection_id, theme_id, moment, sessions, secrets, author, tools) -> int:
-    """One theme's top-up in its own transaction; 1 when an AI call was made, else 0."""
+    """One theme's top-up; 1 when the provider answered (the one spend is used), else 0.
+
+    ``topped_up_at`` is committed BEFORE the call, so a crash during the minute the call takes cannot make a
+    second call the next night. It is cleared again when the provider raised without answering.
+    """
     collection = session.get(Collection, collection_id, populate_existing=True)
     theme = session.get(Theme, theme_id, populate_existing=True)
     if collection is None or theme is None or theme.topped_up_at is not None or collection.ai_paused:
@@ -783,35 +818,46 @@ def _top_up_one(session, collection_id, theme_id, moment, sessions, secrets, aut
         media=collection.media or "both",
         library_keys=[str(k) for k in collection.library_keys or []],
     )
-    before = len(theme.picks or [])
-    tokens = 0
+    request = {
+        "brief": theme.brief,
+        "media": _row_media(collection),
+        "curator": tool.curator,
+        "tmdb": names,
+        "plex": tool.plex,
+        "library_index": index,
+        "current": spec_from_row(theme),
+        "change": TOP_UP_CHANGE,
+        "current_tag_names": {t["id"]: t["name"] for t in theme.tags or []},
+        "guidance": theme_guidance(AiInstructions.from_stored(collection.prompt)),
+    }
+    theme.topped_up_at = moment
+    session.commit()
+    tokens, ok, drafted = 0, False, False
     try:
-        draft = author(
-            brief=theme.brief,
-            media=_row_media(collection),
-            curator=tool.curator,
-            tmdb=names,
-            plex=tool.plex,
-            library_index=index,
-            current=spec_from_row(theme),
-            change=TOP_UP_CHANGE,
-            current_tag_names={t["id"]: t["name"] for t in theme.tags or []},
-            guidance=theme_guidance(AiInstructions.from_stored(collection.prompt)),
-        )
-        tokens = draft.tokens
-        theme = _merge_new_picks(session, secrets, collection, theme, draft)
+        draft = author(**request)
+        tokens, drafted = draft.tokens, True
+        # The call can take a minute: merge onto what the theme holds NOW, so an edit made meanwhile survives.
+        session.rollback()
+        theme = session.get(Theme, theme_id, populate_existing=True)
+        before = len(theme.picks or [])
+        theme = _merge_new_picks(session, secrets, session.get(Collection, collection_id), theme, draft)
         ok = True
     except Exception as e:
-        # The call was made, so the one spend is used: an unreadable answer is not retried.
         session.rollback()
-        ok = False
+        tokens = tokens or int(getattr(e, "tokens", 0) or 0)
+        answered = drafted or tokens > 0 or bool(getattr(e, "answered", False))
         logger.warning("theme top-up: theme {} kept its list ({})", theme_id, type(e).__name__)
         theme = session.get(Theme, theme_id, populate_existing=True)
+        before = len(theme.picks or [])
+        if not answered:
+            # The provider never replied: nothing was spent, so the next pass tries again.
+            theme.topped_up_at = None
+            session.commit()
+            return 0
         if tokens:
-            # The save rolled back but the call was paid for.
+            # The reply is paid for even though nothing could be saved from it.
             theme.ai_tokens = (theme.ai_tokens or 0) + tokens
             add_row_tokens(session, session.get(Collection, collection_id, populate_existing=True), tokens)
-    theme.topped_up_at = moment
     add_audit(
         session,
         "theme.topped_up",

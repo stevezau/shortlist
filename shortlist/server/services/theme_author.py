@@ -74,7 +74,14 @@ _MARKUP = re.compile(r"[*_`#\[\]{}<>|~\\]")
 
 
 class ThemeAuthorError(Exception):
-    """The theme could not be written; ``str(error)`` is plain English for the owner."""
+    """The theme could not be written; ``str(error)`` is plain English for the owner.
+
+    ``answered`` is True when the provider sent a reply back (so a call was spent) and ``tokens`` is what that
+    reply cost. A failure before any reply leaves both at their defaults.
+    """
+
+    tokens: int = 0
+    answered: bool = False
 
 
 @dataclass(frozen=True)
@@ -170,8 +177,14 @@ def author_theme(
         ) from None
     tokens = int(getattr(curator, "last_tokens", 0) or 0)
     if not (raw or "").strip():
-        raise ThemeAuthorError("The AI did not answer. Try again in a moment.")
-    proposal, truncated = _parse(raw)
+        empty = ThemeAuthorError("The AI did not answer. Try again in a moment.")
+        empty.tokens, empty.answered = tokens, tokens > 0
+        raise empty
+    try:
+        proposal, truncated = _parse(raw)
+    except ThemeAuthorError as unreadable:
+        unreadable.tokens, unreadable.answered = tokens, True
+        raise
 
     picks, titles, named, failed_kinds = _resolve_titles(proposal, medias, tmdb)
     tags = _resolve_tags(proposal, tmdb)
@@ -182,9 +195,11 @@ def author_theme(
     kept = [p for p in current.picks if p.origin != "ai" and (p.media, p.tmdb_id) not in titles] if current else []
     kept_collections = current.collections if current else ()
     if not (picks or tags or genres or kept or kept_collections):
-        raise ThemeAuthorError(
+        nothing = ThemeAuthorError(
             "The AI didn't suggest anything Shortlist could find. Try describing the row differently."
         )
+        nothing.tokens, nothing.answered = tokens, True
+        raise nothing
     # A kind the AI named nothing for stays out: tag and genre matches alone would fill that library with filler.
     # A kind whose search errored may still have been named: only a kind the AI truly left out is dropped.
     named_kinds = {p.media for p in picks} | {p.media for p in kept} | failed_kinds

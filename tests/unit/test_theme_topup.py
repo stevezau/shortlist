@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -137,10 +137,14 @@ def seed(sessions, *, people: int = 1, mode: str = "fixed", paused: bool = False
         return row.id, theme.id, [u.id for u in users]
 
 
-def ran(sessions, user_id: int, tmdb_ids: list[int], *, dry_run: bool = False) -> None:
+def _ago(**delta) -> datetime:
+    return datetime.now(UTC) - timedelta(**delta)
+
+
+def ran(sessions, user_id: int, tmdb_ids: list[int], *, dry_run: bool = False, started: datetime | None = None) -> None:
     """A finished run in which the person's row showed these movies."""
     with sessions() as s:
-        run = Run(trigger="schedule", status="ok", dry_run=dry_run)
+        run = Run(trigger="schedule", status="ok", dry_run=dry_run, started_at=started or datetime.now(UTC))
         s.add(run)
         s.flush()
         for rank, tmdb_id in enumerate(tmdb_ids):
@@ -169,6 +173,11 @@ def stored(sessions, theme_id: int) -> Theme:
         theme = s.get(Theme, theme_id)
         s.expunge(theme)
         return theme
+
+
+def _answered(error: ThemeAuthorError, tokens: int = 0) -> ThemeAuthorError:
+    error.answered, error.tokens = True, tokens
+    return error
 
 
 class TestAThemeIsToppedUpOnce:
@@ -247,7 +256,7 @@ class TestAThemeIsToppedUpOnce:
     def test_an_unreadable_answer_uses_the_one_spend_and_keeps_the_list(self, sessions):
         _, theme_id, (uid,) = seed(sessions)
         ran(sessions, uid, [1, 500])
-        author = _Author(error=ThemeAuthorError("The AI did not answer."))
+        author = _Author(error=_answered(ThemeAuthorError("The AI replied with nonsense.")))
 
         assert top_up(sessions, author) == 1
         assert top_up(sessions, author) == 0
@@ -351,7 +360,7 @@ class TestExploreTopsUpOnlyTheThemeThatRanLow:
                         theme_id=theme.id,
                         theme_name=theme.name,
                         state="current",
-                        started_at=NOW.replace(tzinfo=None),
+                        started_at=_ago(days=1).replace(tzinfo=None),
                     )
                 )
             s.commit()
@@ -366,3 +375,116 @@ class TestExploreTopsUpOnlyTheThemeThatRanLow:
         assert author.calls[0]["current"].slug == "ann-theme"
         assert stored(sessions, ann_id).topped_up_at is not None
         assert stored(sessions, bob_id).topped_up_at is None
+
+
+def _age_theme(sessions, theme_id: int, **fields) -> None:
+    with sessions() as s:
+        theme = s.get(Theme, theme_id)
+        for key, value in fields.items():
+            setattr(theme, key, value)
+        s.commit()
+
+
+class TestItWaitsForARunOfTheCurrentTheme:
+    def test_a_promoted_explore_theme_with_only_an_older_run_is_not_low(self, sessions):
+        row_id, _, (uid,) = seed(sessions, mode="explore")
+        with sessions() as s:
+            theme = _theme("promoted", created_at=_ago(days=3))
+            s.add(theme)
+            s.flush()
+            s.add(
+                ThemeHistory(
+                    collection_id=row_id,
+                    user_id=uid,
+                    theme_id=theme.id,
+                    theme_name="Promoted",
+                    state="current",
+                    started_at=datetime.now(UTC).replace(tzinfo=None),
+                )
+            )
+            s.commit()
+        ran(sessions, uid, [1, 500], started=_ago(hours=1))
+        author = _Author()
+
+        assert top_up(sessions, author) == 0
+        assert author.calls == []
+
+    def test_a_theme_saved_after_the_only_run_is_not_low(self, sessions):
+        _, theme_id, (uid,) = seed(sessions)
+        _age_theme(sessions, theme_id, created_at=_ago(days=3))
+        ran(sessions, uid, [1, 500], started=_ago(hours=1))
+        with sessions() as s:
+            s.add(Event(scope="theme.build", level="info", message={"theme": "twists"}, ts=_ago(minutes=5)))
+            s.commit()
+        author = _Author()
+
+        assert top_up(sessions, author) == 0
+        assert author.calls == []
+
+    def test_a_run_after_the_save_that_shows_filler_triggers_the_call(self, sessions):
+        _, theme_id, (uid,) = seed(sessions)
+        _age_theme(sessions, theme_id, created_at=_ago(days=3))
+        with sessions() as s:
+            s.add(Event(scope="theme.build", level="info", message={"theme": "twists"}, ts=_ago(hours=2)))
+            s.commit()
+        ran(sessions, uid, [1, 500], started=_ago(hours=1))
+        author = _Author()
+
+        assert top_up(sessions, author) == 1
+
+
+class TestTheSpendIsOnlyUsedByAnAnswer:
+    def test_an_edit_made_during_the_call_survives_the_merge(self, sessions):
+        _, theme_id, (uid,) = seed(sessions)
+        ran(sessions, uid, [1, 500])
+        inner = _Author(new=[3])
+
+        def author(**kwargs):
+            with sessions() as s:
+                theme = s.get(Theme, theme_id)
+                theme.picks = [*theme.picks, {"tmdb_id": 9, "media": "movie", "origin": "owner", "title": "Mine"}]
+                s.commit()
+            return inner(**kwargs)
+
+        assert top_up(sessions, author) == 1
+
+        assert [p["tmdb_id"] for p in stored(sessions, theme_id).picks] == [1, 2, 9, 3]
+
+    def test_a_provider_that_never_answers_leaves_the_theme_for_the_next_night(self, sessions):
+        _, theme_id, (uid,) = seed(sessions)
+        ran(sessions, uid, [1, 500])
+        down = _Author(error=ThemeAuthorError("The AI provider didn't respond."))
+
+        assert top_up(sessions, down) == 0
+
+        assert stored(sessions, theme_id).topped_up_at is None
+        retry = _Author()
+        assert top_up(sessions, retry) == 1
+        assert len(retry.calls) == 1
+
+    def test_the_tokens_of_an_unreadable_answer_are_charged_and_recorded(self, sessions):
+        row_id, theme_id, (uid,) = seed(sessions)
+        ran(sessions, uid, [1, 500])
+        author = _Author(error=_answered(ThemeAuthorError("nonsense"), tokens=40))
+
+        assert top_up(sessions, author) == 1
+
+        assert stored(sessions, theme_id).ai_tokens == 50
+        with sessions() as s:
+            assert s.get(Collection, row_id).ai_tokens == 45
+            event = s.scalars(select(Event).where(Event.scope == "theme.topped_up")).one()
+            assert (event.message["tokens"], event.message["ok"]) == (40, False)
+
+    def test_the_theme_is_already_marked_while_the_call_is_in_flight(self, sessions):
+        _, theme_id, (uid,) = seed(sessions)
+        ran(sessions, uid, [1, 500])
+        seen: list = []
+        inner = _Author()
+
+        def author(**kwargs):
+            seen.append(stored(sessions, theme_id).topped_up_at)
+            return inner(**kwargs)
+
+        top_up(sessions, author)
+
+        assert seen[0] is not None
