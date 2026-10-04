@@ -574,8 +574,6 @@ def _rewatch_candidates(
     for _order, (tid, media), f in eligible:
         if len(out) >= limit:
             break
-        if _in_excluded_genre(policy, tid, kind):
-            continue
         candidate = Candidate(
             tmdb_id=tid,
             title=f.title,
@@ -585,6 +583,11 @@ def _rewatch_candidates(
             seeds=[Seed(tmdb_id=tid, title=f.title, media_type=media)],
             sources={"history"},
         )
+        # The free year check first: the genre check below can cost a TMDB call.
+        if limited and not limits_mod.passes_year_and_rating(candidate, limits):
+            continue
+        if _in_excluded_genre(policy, tid, kind):
+            continue
         reasons[(tid, media)] = _rewatch_reason(f, (tid, media) in taste)
         if not limited:
             out.append(candidate)
@@ -1389,6 +1392,17 @@ def _gather_pool(
     if visible is not None and in_library:
         in_library, hidden = _visible_candidates(ctx, in_library, visible)
         dropped.extend((c, "hidden_by_their_restrictions") for c in hidden)
+    # Stamped here, not per ranking: neither depends on a row's limits, and the candidates are shared by every
+    # row on this gather, so a second stamp would stack a second franchise reason on each of them.
+    # Measure genre avoidance BEFORE any cut, so the dial can rescue or demote a title across the
+    # truncation boundary rather than only reordering whatever already survived — the same reason
+    # `recency` participates in the cut. A no-op unless the owner turned the dial up, and the
+    # library tally is empty in that case, so nothing is computed either.
+    candidates_mod.stamp_genre_penalties(ctx.tmdb, in_library, seeds, ctx.library_genre_counts)
+    # Seed-side only, so it costs a handful of calls whatever the pool size — safe to run before
+    # the cut, where it can still rescue a sequel that would otherwise fall below the cap.
+    if ctx.config.franchise > 0:
+        candidates_mod.mark_franchise_members(in_library, ctx.tmdb)
     return _Gathered(
         pool=pool,
         in_library=in_library,
@@ -1419,15 +1433,6 @@ def _rank_pool(
         )
         dropped.extend((c, "outside_row_limits") for c in limited.dropped_candidates)
         in_library = limited.kept
-    # Measure genre avoidance BEFORE the cut, so the dial can rescue or demote a title across the
-    # truncation boundary rather than only reordering whatever already survived — the same reason
-    # `recency` participates in the cut. A no-op unless the owner turned the dial up, and the
-    # library tally is empty in that case, so nothing is computed either.
-    candidates_mod.stamp_genre_penalties(ctx.tmdb, in_library, seeds, ctx.library_genre_counts)
-    # Seed-side only, so it costs a handful of calls whatever the pool size — safe to run before
-    # the cut, where it can still rescue a sequel that would otherwise fall below the cap.
-    if ctx.config.franchise > 0:
-        candidates_mod.mark_franchise_members(in_library, ctx.tmdb)
     # Pre-rank EACH media type to its own cap, not the mixed pool to one cap — otherwise a 'both'
     # row whose pool skews one way (a mostly-TV watcher) truncates the other type away before the
     # per-media curate ever sees it, and that library's collection comes up empty.
@@ -1435,6 +1440,9 @@ def _rank_pool(
     cap = ctx.config.candidates_pre_rank
     # `recency` is the weight the CALLER resolved, not `ctx.config.recency`: the server's value, so every
     # row that inherits it shares one cached cut, and a row that overrides it re-cuts (`cut_at_recency`).
+    # The cast dial is 0.0 for this first cut, as in `cut_at_recency`: cast overlap is stamped on a cut's
+    # survivors, and candidates are shared with every row on this gather, so a sibling's stamps must not
+    # lean this row's cut. (cast_factor is exactly 1.0 at 0.0, which is what a fresh candidate scores.)
     ranked = ranking.cut_for_recency(
         in_library,
         kinds,
@@ -1443,7 +1451,7 @@ def _rank_pool(
         _run_year(ctx.run_day),
         ctx.config.genre_avoidance,
         ctx.config.franchise,
-        ctx.config.cast,
+        0.0,
     )
     # AFTER the cut, unlike the other two: cast overlap needs both sides' cast lists, so it is
     # the one signal whose cost scales with the pool. Bounded here to `candidates_pre_rank`
@@ -2123,6 +2131,8 @@ class RowPolicy:
     # pool_key -> that pool's gather, before any row's limits. A limited row ranks its own cut of it
     # (`pool_cache` is keyed by `pool_slot`), so the expensive part is paid once per `pool_key`.
     gathers: dict[tuple, _Gathered] = field(default_factory=dict)
+    # pool_key -> the `report.pool_costs` entry recorded for that gather, which later rankings of it join.
+    gather_costs: dict[tuple, dict] = field(default_factory=dict)
     # pool_key -> that pool's `report.pool_costs` entry, so a later row hitting the SAME cached pool
     # (never re-gathered) can still append its slug to `entry["rows"]` — the only way a cache hit
     # attributes its row to the cost it shared rather than paid for.
@@ -2605,13 +2615,21 @@ class RowPolicy:
                 pool_label += " · own AI instructions"
             if limits.active:
                 pool_label += " · limits"
-            _record_gather(
-                self.report,
-                gather_stats,
-                pool_label=pool_label,
-                duration_s=time.monotonic() - gather_started,
-            )
-            self.pool_rows[key] = self.report.pool_costs[-1]
+            if gather_key in self.gather_costs:
+                # A ranking of a gather another row already paid for and traced: it adds nothing to either,
+                # and a second copy of the queries would show every one twice. It joins that entry, which
+                # then no longer describes a limited pool alone.
+                entry = self.gather_costs[gather_key]
+                entry["label"] = entry["label"].removesuffix(" · limits") if not limits.active else entry["label"]
+                self.pool_rows[key] = entry
+            else:
+                _record_gather(
+                    self.report,
+                    gather_stats,
+                    pool_label=pool_label,
+                    duration_s=time.monotonic() - gather_started,
+                )
+                self.pool_rows[key] = self.gather_costs[gather_key] = self.report.pool_costs[-1]
         # Hit or miss: a cache hit is the case that proves this row SHARED an existing gather.
         entry = self.pool_rows.get(key)
         if entry is not None and spec.slug not in entry["rows"]:

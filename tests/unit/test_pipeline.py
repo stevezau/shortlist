@@ -8445,20 +8445,94 @@ class TestRowsDifferingOnlyByLimitsShareOneGather:
 
         assert any(line.startswith("sarah/old: limits: kept=6 dropped=4 unknown=0") for line in lines)
 
-    def test_the_limited_pool_label_says_limits(self, ctx, mock_plextv):
+    def _two_row_run(self, ctx, mock_plextv, rows):
         movies = MagicMock(type="movie", key="1", title="Movies")
         ctx.plex.sections.return_value = [movies]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
-        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
         ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
             [{"id": 10, "title": "T", "genre_ids": [], "vote_average": 8.0, "release_date": "1970-01-01"}]
         )
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
-        ctx.config.rows = [self._row("all"), self._row("old", max_year=2000)]
+        ctx.config.rows = rows
         ctx.config.min_history = 1
         mock_plextv.users = [plextv_user(100, "sarah")]
+        return pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
 
-        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+    def test_a_single_limited_row_labels_its_pool_limits(self, ctx, mock_plextv):
+        user = self._two_row_run(ctx, mock_plextv, [self._row("old", max_year=2000)])
+        assert [c["label"] for c in user.pool_costs] == ["movie · tmdb_similar · limits"]
 
-        labels = [c["label"] for c in report.users[0].pool_costs]
-        assert labels == ["movie · tmdb_similar", "movie · tmdb_similar · limits"]
+    def test_rows_sharing_a_gather_file_one_trace_entry_and_one_cost_entry(self, ctx, mock_plextv):
+        for rows in (
+            [self._row("all"), self._row("old", max_year=2000)],
+            [self._row("old", max_year=2000), self._row("all")],
+        ):
+            user = self._two_row_run(ctx, mock_plextv, rows)
+
+            assert len(user.trace["gathers"]) == 1
+            assert [c["label"] for c in user.pool_costs] == ["movie · tmdb_similar"]
+            assert sorted(user.pool_costs[0]["rows"]) == ["all", "old"]
+
+
+class TestSharedGatherIsRankedSafelyTwice:
+    """Two rows sharing a gather rank the SAME candidate objects, so no ranking step may leave a mark the
+    other row's ranking reads."""
+
+    @staticmethod
+    def _rows(order: str) -> list[RowSpec]:
+        plain = RowSpec(slug="all", name_template="all", size=3, media="movie")
+        limited = RowSpec(slug="old", name_template="old", size=3, media="movie", max_year=2000)
+        return [plain, limited] if order == "plain-first" else [limited, plain]
+
+    def _run(self, ctx, mock_plextv, rows):
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": (7.0 if i < 15 else 7.2) - 0.01 * i,
+                "release_date": "1980-01-01" if i < 15 else "2010-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.tmdb.details.side_effect = lambda tid, mt: {
+            "runtime": 90,
+            "belongs_to_collection": {"id": 7, "name": "Dune Collection"},
+        }
+        ctx.tmdb.collection_members.side_effect = lambda cid: set(range(10, 20))
+        casts = {900: ["Lead"], **{i: ["Lead", f"Extra{i}"] for i in range(10, 15)}}
+        ctx.tmdb.top_cast.side_effect = lambda tid, mt, n=5: casts.get(tid, [f"Other{tid}"])
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = rows
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 3
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        return pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
+
+    @pytest.mark.parametrize("order", ["plain-first", "limited-first"])
+    def test_a_franchise_reason_is_stamped_once_however_many_rows_share_the_gather(self, ctx, mock_plextv, order):
+        ctx.config.franchise = 1.0
+
+        user = self._run(ctx, mock_plextv, self._rows(order))
+
+        reasons = [p.reason for p in user.picks]
+        assert reasons and all("also part of" in r for r in reasons)
+        assert all(r.count("also part of") == 1 for r in reasons), reasons
+
+    @pytest.mark.parametrize("order", ["plain-first", "limited-first"])
+    def test_the_cast_dial_ranks_the_plain_row_the_same_with_or_without_a_limited_sibling(
+        self, ctx, mock_plextv, order
+    ):
+        ctx.config.cast = 1.0
+        alone = self._run(ctx, mock_plextv, self._rows("plain-first")[:1])
+        alone_ids = sorted(p.tmdb_id for p in alone.picks if p.collection_slug == "all")
+
+        shared = self._run(ctx, mock_plextv, self._rows(order))
+
+        assert sorted(p.tmdb_id for p in shared.picks if p.collection_slug == "all") == alone_ids
