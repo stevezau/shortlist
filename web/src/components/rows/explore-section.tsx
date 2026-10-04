@@ -100,7 +100,7 @@ export function ExploreSection({
             per person per change.
           </p>
           <div className="space-y-2">
-            <Label htmlFor={briefId}>What kind of themes? (optional)</Label>
+            <Label htmlFor={briefId}>What kinds of lists should it pick? (optional)</Label>
             <Textarea
               id={briefId}
               rows={2}

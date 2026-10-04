@@ -324,13 +324,12 @@ export const AI_TEMPLATES: RowTemplate[] = [
     summary: "Say what you want. The AI builds the list.",
     blurb:
       "Describe a row in your own words, like “films with a twist ending”. The AI writes the list once from your words, and Shortlist picks from it for each person every run. No more AI after that.",
-    highlights: ["One row each", "The AI writes the list once", "Off until you switch it on"],
+    highlights: ["One row each", "The AI writes the list once", "Live like any other row"],
     values: {
       // Named from the theme once there is one; the server refuses these placeholders on any other row.
       name: "{theme_emoji} {theme}",
       build: "per_person",
-      // The owner sees the list before anyone's Plex does: the API also forces this on create.
-      enabled: false,
+      enabled: true,
       size: 15,
     },
   },

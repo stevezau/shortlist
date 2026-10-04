@@ -126,12 +126,12 @@ describe("ExploreSection", () => {
   it("shows the days and the brief once Explore is chosen", async () => {
     renderSection(null);
 
-    expect(screen.queryByLabelText("What kind of themes? (optional)")).toBeNull();
+    expect(screen.queryByLabelText("What kinds of lists should it pick? (optional)")).toBeNull();
     await userEvent.click(screen.getByRole("radio", { name: /Pick a new theme every/ }));
 
     expect(changes).toHaveBeenLastCalledWith({ theme_mode: "explore" });
     expect(screen.getByLabelText("Days each theme lasts")).toHaveValue(7);
-    expect(screen.getByLabelText("What kind of themes? (optional)")).toHaveAttribute(
+    expect(screen.getByLabelText("What kinds of lists should it pick? (optional)")).toHaveAttribute(
       "placeholder",
       "Leave blank and each person gets a theme chosen from what they watch.",
     );
@@ -145,7 +145,7 @@ describe("ExploreSection", () => {
     await userEvent.clear(days);
     await userEvent.type(days, "14");
     expect(changes).toHaveBeenLastCalledWith({ theme_days: 14 });
-    await userEvent.type(screen.getByLabelText("What kind of themes? (optional)"), "x");
+    await userEvent.type(screen.getByLabelText("What kinds of lists should it pick? (optional)"), "x");
     expect(changes).toHaveBeenLastCalledWith({ explore_brief: "x" });
   });
 

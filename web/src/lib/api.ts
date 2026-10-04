@@ -589,7 +589,7 @@ export const api = {
   /** Whether an AI provider is set. Without one the AI row editor offers hand-editing instead. */
   getThemeCapabilities: (): Promise<ThemeCapabilities> => request("/api/themes/capabilities"),
 
-  /** The "Build the list" prompt: the default guidance and the locked mechanics. */
+  /** The "Write the list" prompt: the default guidance and the locked mechanics. */
   getThemePrompts: (): Promise<ThemePrompts> => request("/api/themes/prompts"),
 
   /** Write (or refine) a theme with one AI call and save nothing. Spends the owner's AI tokens. */

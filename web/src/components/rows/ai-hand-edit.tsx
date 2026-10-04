@@ -61,7 +61,7 @@ const RULE_FIELDS: { key: RuleKey; label: string; step?: string }[] = [
 ];
 
 /**
- * An AI row's list, written by hand: for a server with no AI provider, where "Build the list" is not on
+ * An AI row's list, written by hand: for a server with no AI provider, where "Write the list" is not on
  * offer. The same fields the AI fills — a name, TMDB tags, genres, limits and titles — saved with the row
  * and costing nothing.
  */

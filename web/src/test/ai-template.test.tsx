@@ -51,12 +51,13 @@ describe("the Describe a row template", () => {
     expect(template?.kind).toBe("ai");
   });
 
-  it("makes a disabled per-person row named after its theme, so nothing reaches Plex before the owner says so", () => {
+  it("makes an enabled per-person row named after its theme, live like every other row", () => {
     expect(template?.values).toMatchObject({
       name: "{theme_emoji} {theme}",
       build: "per_person",
-      enabled: false,
+      enabled: true,
     });
+    expect(template?.highlights.join(" ")).not.toMatch(/off until/i);
   });
 
   it("sets only fields the row input has", () => {

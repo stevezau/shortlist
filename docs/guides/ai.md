@@ -131,17 +131,18 @@ and it does so once, not every night.
 **To make one:**
 
 1. In **Add a row**, choose the AI filter, then the **Describe a row** template.
-2. Write what you want, for example "slow-burn heist films". Pick movies, shows or both.
-3. Click **Build the list**. The AI proposes a theme: a name, rules, TMDB tags and genres, and about 60
+2. Under **What should this row be?**, write what you want, for example "slow-burn heist films". It is used
+   once, to write the list, and is not shown on Plex. Pick movies, shows or both.
+3. Click **Write the list**. The AI proposes a theme: a name, rules, TMDB tags and genres, and about 60
    named titles with a one-line reason each.
 4. Read the result. Shortlist shows how many titles it found on TMDB, how many are in your library,
-   and how many survive the row's limits. Click **Change it** and say what to change; your own
+   and how many survive the row's limits. Click **Adjust the list** and say what to change; your own
    description stays as you wrote it, and you see what was added and removed (titles, tags and genres)
    before you keep anything. Tags and genres you added by hand stay unless the AI says to drop them.
 5. Click **Try it** and choose a person. It runs the row for them without writing anything to Plex.
    You can try a row that is switched off.
-6. Save, then switch the row on. **New AI rows start switched off**, so nothing reaches anyone's
-   shelf until you say so.
+6. Save. An AI row goes live like any other row. If you would rather look it over first, switch it off
+   before you save.
 
 **Every night after that uses no AI.** Each person's row is filled from the saved theme (its tags,
 genres and named titles), kept to titles in your library they have not watched, and ranked by their
@@ -150,7 +151,7 @@ already have: a title the AI named that your server lacks is left out and never 
 has no request settings.
 
 **An AI row only fills the kinds of title its AI named.** If the list is films only, the row stays out of
-your TV libraries even when the row covers both. If **Change it**, or an Explore theme, drops a kind, the
+your TV libraries even when the row covers both. If **Adjust the list**, or an Explore theme, drops a kind, the
 row's existing collection in those libraries is removed on its next run.
 
 **A list is topped up once.** When someone has watched most of the titles the AI named, their row starts
@@ -160,8 +161,8 @@ same theme, a paused row or a missing provider is skipped, and nothing else abou
 
 **Controls in the editor:**
 
-- **AI prompts** shows what the AI is told. You can edit the guidance. The mechanics that keep the
-  answer machine-readable are locked.
+- **Advanced: how the AI is instructed** (closed until you open it) shows what the AI is told. You can
+  edit the guidance. The mechanics that keep the answer machine-readable are locked.
 - **Usage** shows the tokens each row has spent building and changing its theme.
 - **Pause AI for this row** stops the row spending tokens. It keeps its theme and keeps filling from
   it every night. Resume it when you want to edit the theme again.
@@ -177,7 +178,7 @@ By default an AI row keeps the one theme you built. Switch it to **Pick a new th
 - **Per person.** Every person gets their own theme, chosen from what they watch. AI rows are never shared
   rows, so two people on the same row can be on different themes.
 - **Days each theme lasts.** 7 unless you change it (1 to 90).
-- **What kind of themes?** Optional. Leave it blank and the AI chooses from each person's watching; write
+- **What kinds of lists should it pick?** Optional. Leave it blank and the AI chooses from each person's watching; write
   "cosy mysteries" and every theme leans that way.
 - **Cost.** One call to your AI provider per person per change, counted against the row's usage. Nothing
   else in a night uses AI.

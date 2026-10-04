@@ -394,7 +394,7 @@ export function rowOverrides(
   if (usesAiWebSearch && collection.ai_instructions?.mode === "own") {
     parts.push("AI instructions: own");
   }
-  // On an AI row the same field holds the guidance "Build the list" is given, so it is badged as that.
+  // On an AI row the same field holds the guidance "Write the list" is given, so it is badged as that.
   if (isAiRow && collection.ai_instructions?.mode === "add") {
     parts.push("AI prompt: adds to the default");
   }

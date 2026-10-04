@@ -3,7 +3,6 @@ import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import { PageHeader } from "@/components/page-header";
-import { AiPromptsSection } from "@/components/rows/ai-prompts-section";
 import { AiRowSection } from "@/components/rows/ai-row-section";
 import { AiTryIt } from "@/components/rows/ai-try-it";
 import { RowRequestSettings } from "@/components/rows/row-request-settings";
@@ -59,7 +58,6 @@ import {
 } from "@/lib/queries";
 import { requestReadiness } from "@/lib/requests";
 import {
-  AI_KIND_META,
   aiRowSettings,
   applyRowKind,
   BASELINE_FIELDS,
@@ -490,7 +488,7 @@ export function RowEditor({
     : pendingTheme && selectsNothing(pendingTheme.draft)
       ? "Add at least one tag, genre or title to the list before saving."
       : !collection && !pendingTheme
-        ? "Build the row’s list before adding it."
+        ? "Write the row’s list before adding it."
         : null;
   const scheduleGroup = collection
     ? schedule.data?.rows.find((group) => group.rows.some((row) => row.id === collection.id))
@@ -620,12 +618,7 @@ export function RowEditor({
     { id: "name-and-look", label: "Name & look" },
     { id: "who-gets-it", label: "Who gets it" },
     { id: "what-goes-in", label: "What goes in" },
-    ...(aiRow
-      ? [
-          { id: "try-it", label: "Try it" },
-          { id: "ai-prompts", label: "AI prompts" },
-        ]
-      : []),
+    ...(aiRow ? [{ id: "try-it", label: "Try it" }] : []),
     { id: "schedule", label: "Schedule" },
     { id: "placement", label: "Placement" },
     // A Your requests row never searches, so it has nothing to ask for and nothing to set here, and
@@ -864,13 +857,9 @@ export function RowEditor({
                 because the six kinds with their descriptions are a page of their own. */}
             {aiRow ? (
               <>
-                {/* Fixed: an AI row can't be switched to another kind, and no other kind can become one,
-                    because it needs a list first (`isAiRow`). */}
+                {/* An AI row can't be switched to another kind, and no other kind can become one,
+                    because it needs a list first (`isAiRow`), so there is no row type to show. */}
                 <div data-setting="kind">
-                  <span className="block font-medium">Row type: {AI_KIND_META.title}</span>
-                  <span className="block text-sm text-muted-foreground">{AI_KIND_META.description}</span>
-                </div>
-                <div className="space-y-4 border-t pt-4">
                   <AiRowSection
                     input={draft}
                     collection={collection}
@@ -1048,23 +1037,13 @@ export function RowEditor({
           </EditorSection>
 
           {aiRow && (
-            <>
-              <EditorSection
-                id="try-it"
-                title="Try it"
-                description="Run this row for one person to see what it would pick, and why. Nothing is written to Plex."
-              >
-                <AiTryIt collection={collection} users={users} unsaved={changes.length > 0} />
-              </EditorSection>
-
-              <EditorSection
-                id="ai-prompts"
-                title="AI prompts"
-                description="What the AI is told when it builds or changes this row's list. The guidance is yours to change; the mechanics aren't."
-              >
-                <AiPromptsSection input={draft} set={set} />
-              </EditorSection>
-            </>
+            <EditorSection
+              id="try-it"
+              title="Try it"
+              description="Run this row for one person to see what it would pick, and why. Nothing is written to Plex."
+            >
+              <AiTryIt collection={collection} users={users} unsaved={changes.length > 0} />
+            </EditorSection>
           )}
 
           <EditorSection

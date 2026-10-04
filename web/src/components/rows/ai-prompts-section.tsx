@@ -35,7 +35,7 @@ function LoadingPrompt() {
 }
 
 /**
- * What "Build the list" and "Change it" tell the AI (#138): the guidance, which the owner can add to or
+ * What "Write the list" and "Adjust the list" tell the AI (#138): the guidance, which the owner can add to or
  * replace for this row, and the mechanics, which they can't. The mechanics are what make the answer
  * readable by code (the reply format, real titles with their years); a prompt without them returns prose
  * the parser can't use. The words are kept in the row's AI instructions, saved with Save changes.
@@ -106,8 +106,8 @@ function Prompt({
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        This is what the AI is told when you press Build the list or Change it. Changing it only affects lists built
-        after you save.
+        This is what the AI is told when you press Write the list or Adjust the list. Changing it only affects lists
+        written after you save.
       </p>
       <Segmented value={value.mode} options={MODES} ariaLabel="AI guidance" onChange={(mode) => onChange({ mode, text: value.text })} />
 
@@ -160,15 +160,17 @@ function Prompt({
         <pre className={PROMPT_CLASS}>{prompts.mechanics}</pre>
       </div>
 
-      <div className="space-y-1">
-        <p className="text-sm font-medium">Exactly what’s sent</p>
+      <details className="space-y-1">
+        <summary className="cursor-pointer text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          Exactly what’s sent
+        </summary>
         <pre aria-label="Exactly what’s sent" className={PROMPT_CLASS}>
           {buildPrompt(guidance, prompts.guidance, prompts.mechanics)}
         </pre>
         <p className="text-sm text-muted-foreground">
-          Then your description, and for a change, the current list. Titles only, never names.
+          Then your description, and for an adjustment, the current list. Titles only, never names.
         </p>
-      </div>
+      </details>
     </div>
   );
 }

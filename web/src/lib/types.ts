@@ -162,7 +162,7 @@ export type RowEffectiveness = Schemas["RowEffectivenessOut"];
 
 /** GET /api/themes/capabilities: whether an AI provider is set, so the AI row editor can offer its AI half. */
 export type ThemeCapabilities = Schemas["CapabilitiesOut"];
-/** GET /api/themes/prompts: the guidance "Build the list" starts from, and the mechanics no one may edit. */
+/** GET /api/themes/prompts: the guidance "Write the list" starts from, and the mechanics no one may edit. */
 export type ThemePrompts = Schemas["PromptsOut"];
 /** A theme as the API returns it, saved (`id` set) or an unsaved draft from a preview (`id` null). */
 export type Theme = Schemas["ThemeOut"];

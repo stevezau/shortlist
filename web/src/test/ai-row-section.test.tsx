@@ -133,7 +133,7 @@ describe("AiRowSection loading and failing", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Shortlist didn't answer.");
     await userEvent.click(screen.getByRole("button", { name: /try again/i }));
 
-    expect(await screen.findByLabelText("Describe it")).toBeInTheDocument();
+    expect(await screen.findByLabelText("What should this row be?")).toBeInTheDocument();
   });
 
   it("shows a skeleton, then an error with a retry, while a saved row's list loads", async () => {
@@ -148,31 +148,44 @@ describe("AiRowSection loading and failing", () => {
 });
 
 describe("AiRowSection with no list yet", () => {
-  it("explains what to do, and keeps Build the list off until something is described", async () => {
+  it("explains what to do, and keeps Write the list off until something is described", async () => {
     renderSection();
 
-    expect(await screen.findByText(/no list yet/i)).toHaveTextContent(/describe the row/i);
-    const build = screen.getByRole("button", { name: "Build the list" });
+    expect(await screen.findByText(/no list yet/i)).toHaveTextContent(/say what the row should be/i);
+    const build = screen.getByRole("button", { name: "Write the list" });
     expect(build).toBeDisabled();
 
-    await userEvent.type(screen.getByLabelText("Describe it"), "films with a twist");
+    await userEvent.type(screen.getByLabelText("What should this row be?"), "films with a twist");
 
     expect(build).toBeEnabled();
   });
 
-  it("starts a new row's note with the fact that it is off until switched on", async () => {
+  it("opens with one line saying what the AI does and when, and no longer says a new row starts off", async () => {
     renderSection();
 
-    expect(await screen.findByText(/starts switched off/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Describe the row. The AI writes a list of about 60 titles once. Every night Shortlist picks each person’s best matches from it, with no AI.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/starts switched off/i)).not.toBeInTheDocument();
+  });
+
+  it("says the description is used once and is not the row's Plex description", async () => {
+    renderSection();
+
+    await screen.findByLabelText("What should this row be?");
+    expect(screen.getByText("Used once, to write the list. It isn’t shown on Plex.")).toBeInTheDocument();
+    expect(screen.queryByText(/once per theme/i)).not.toBeInTheDocument();
   });
 });
 
 describe("AiRowSection building", () => {
   it("builds one list from the description and shows what it found", async () => {
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "  films with a twist ending ");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "  films with a twist ending ");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     await waitFor(() => expect(screen.getByRole("region", { name: /the list/i })).toBeInTheDocument());
     expect(api.previewTheme).toHaveBeenCalledWith({
@@ -190,7 +203,7 @@ describe("AiRowSection building", () => {
     expect(card.getByText("You")).toBeInTheDocument();
     // Was "10 titles the AI named aren't on your server" (resolved minus in_library, which counts tag matches too).
     expect(card.getByText("12 of the AI’s 60 titles are on your server.")).toBeInTheDocument();
-    expect(screen.getByText(/uses your AI provider once per theme/i)).toBeInTheDocument();
+    expect(screen.getByText("Uses your AI provider once.")).toBeInTheDocument();
     expect(spent).toHaveBeenCalledWith(321);
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ origin: "ai", draft: expect.objectContaining({ name: "Twist endings" }) }));
   });
@@ -200,9 +213,9 @@ describe("AiRowSection building", () => {
       preview({ stats: { named: 31, resolved: 20, in_library: 15, after_rules: 12, unwatched_median: null, truncated: true, runtime_total: 0, runtime_checked: 0, ai_kept: 12 } }),
     );
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "films with a twist ending");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     const card = within(await screen.findByRole("region", { name: /the list/i }));
     expect(card.getByText(/the AI.s list was cut short; 31 titles kept/i)).toBeInTheDocument();
@@ -227,9 +240,9 @@ describe("AiRowSection building", () => {
   it("says a row covering both kinds stays out of the TV libraries when the AI named only films", async () => {
     api.previewTheme.mockResolvedValueOnce(preview());
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "both" } });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "films with a twist ending");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     const card = within(await screen.findByRole("region", { name: /the list/i }));
     expect(card.getByText(/films only — the AI named no TV series/i)).toBeInTheDocument();
@@ -238,9 +251,9 @@ describe("AiRowSection building", () => {
   it("says nothing about kinds when the row covers one kind or the AI named both", async () => {
     api.previewTheme.mockResolvedValueOnce(preview());
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "films with a twist ending");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     const card = within(await screen.findByRole("region", { name: /the list/i }));
     expect(card.queryByText(/only — the AI named no/i)).not.toBeInTheDocument();
@@ -253,9 +266,9 @@ describe("AiRowSection building", () => {
       }),
     );
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "films with a twist ending");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     const card = within(await screen.findByRole("region", { name: /the list/i }));
     expect(card.getByText("Checked running time for 400 of 900 titles; the nightly run checks the rest.")).toBeInTheDocument();
@@ -263,9 +276,9 @@ describe("AiRowSection building", () => {
 
   it("shows no cut-short note for a whole list", async () => {
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "films with a twist ending");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     const card = within(await screen.findByRole("region", { name: /the list/i }));
     expect(card.queryByText(/cut short/i)).not.toBeInTheDocument();
@@ -273,11 +286,11 @@ describe("AiRowSection building", () => {
 
   it("does not count tokens twice when the same list is built again", async () => {
     renderSection();
-    await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "twists");
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
     await screen.findByRole("region", { name: /the list/i });
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Rewrite the list" }));
 
     await waitFor(() => expect(api.previewTheme).toHaveBeenCalledTimes(1));
     expect(spent).toHaveBeenCalledTimes(1);
@@ -285,9 +298,9 @@ describe("AiRowSection building", () => {
 
   it("sends the owner's own guidance with the build", async () => {
     renderSection({ input: { ...blankInput(), ai_instructions: { mode: "own", text: "Only films before 2000." } } });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "twists");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     await waitFor(() =>
       expect(api.previewTheme).toHaveBeenCalledWith(expect.objectContaining({ guidance: "Only films before 2000." })),
@@ -297,8 +310,8 @@ describe("AiRowSection building", () => {
   it("says why a build failed, in the server's words, and tries again on request", async () => {
     api.previewTheme.mockRejectedValueOnce(new ApiError(422, "The AI didn't suggest anything Shortlist could find."));
     renderSection();
-    await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "twists");
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The AI didn't suggest anything Shortlist could find.");
     await userEvent.click(screen.getByRole("button", { name: /try again/i }));
@@ -313,7 +326,7 @@ describe("AiRowSection building", () => {
     expect(card.getByText("Twist endings")).toBeInTheDocument();
     expect(card.getByText("Se7en (1995)")).toBeInTheDocument();
     expect(card.getByText("40")).toBeInTheDocument();
-    expect(screen.getByLabelText("Describe it")).toHaveValue("films with a twist ending");
+    expect(screen.getByLabelText("What should this row be?")).toHaveValue("films with a twist ending");
   });
 });
 
@@ -347,9 +360,9 @@ describe("AiRowSection changing a list", () => {
   it("refines the saved list by what was typed and shows what would change", async () => {
     api.previewTheme.mockResolvedValue(refined);
     renderSection({ collection: savedRow() });
-    await userEvent.type(await screen.findByLabelText("Change it"), "less gore");
+    await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
 
-    await userEvent.click(screen.getByRole("button", { name: "Change it" }));
+    await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
 
     const diff = within(await screen.findByRole("region", { name: /what would change/i }));
     expect(api.previewTheme).toHaveBeenCalledWith(
@@ -373,8 +386,8 @@ describe("AiRowSection changing a list", () => {
   it("Keep puts the new list in the editor, to be saved with the row", async () => {
     api.previewTheme.mockResolvedValue(refined);
     renderSection({ collection: savedRow() });
-    await userEvent.type(await screen.findByLabelText("Change it"), "less gore");
-    await userEvent.click(screen.getByRole("button", { name: "Change it" }));
+    await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
+    await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
     await screen.findByRole("region", { name: /what would change/i });
 
     await userEvent.click(screen.getByRole("button", { name: "Keep" }));
@@ -388,8 +401,8 @@ describe("AiRowSection changing a list", () => {
   it("Discard leaves the list as it was", async () => {
     api.previewTheme.mockResolvedValue(refined);
     renderSection({ collection: savedRow() });
-    await userEvent.type(await screen.findByLabelText("Change it"), "less gore");
-    await userEvent.click(screen.getByRole("button", { name: "Change it" }));
+    await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
+    await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
     await screen.findByRole("region", { name: /what would change/i });
 
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
@@ -398,33 +411,92 @@ describe("AiRowSection changing a list", () => {
     expect(screen.queryByRole("region", { name: /what would change/i })).not.toBeInTheDocument();
   });
 
-  it("shows no Change it box for a row that is not saved yet", async () => {
+  it("shows no Adjust the list box for a new row that has no list yet", async () => {
     renderSection({ collection: null });
 
-    await screen.findByLabelText("Describe it");
-    expect(screen.queryByLabelText("Change it")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Change it" })).not.toBeInTheDocument();
+    await screen.findByLabelText("What should this row be?");
+    expect(screen.queryByLabelText("Adjust the list")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adjust the list" })).not.toBeInTheDocument();
+  });
+
+  it("shows no Adjust the list box for a saved row that has no list yet", async () => {
+    renderSection({ collection: savedRow({ theme_id: null }) });
+
+    await screen.findByLabelText("What should this row be?");
+    expect(screen.queryByLabelText("Adjust the list")).not.toBeInTheDocument();
+  });
+
+  it("adjusts a list built here before the row is saved, sending that list as current_draft", async () => {
+    api.previewTheme.mockResolvedValue(refined);
+    renderSection({
+      collection: null,
+      pending: { draft: theme({ id: null }), stats: null, origin: "ai" },
+    });
+
+    await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
+    await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
+
+    await screen.findByRole("region", { name: /what would change/i });
+    const sent = api.previewTheme.mock.calls[0]![0];
+    expect(sent.change).toBe("less gore");
+    expect(sent.current_theme_id).toBeUndefined();
+    expect(sent.current_draft).toMatchObject({ name: "Twist endings", origin: "ai", media: ["movie"] });
+    expect(sent.current_draft.picks).toHaveLength(2);
     expect(screen.queryByText(/save the row first/i)).not.toBeInTheDocument();
   });
 
-  it("shows no Change it box for a saved row that has no list yet", async () => {
-    renderSection({ collection: savedRow({ theme_id: null }) });
+  it("adjusts a list built here on a saved row by that list, not by the saved id", async () => {
+    api.previewTheme.mockResolvedValue(refined);
+    renderSection({
+      collection: savedRow(),
+      pending: { draft: theme({ id: null }), stats: null, origin: "ai" },
+    });
 
-    await screen.findByLabelText("Describe it");
-    expect(screen.queryByLabelText("Change it")).not.toBeInTheDocument();
+    await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
+    await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
+
+    await screen.findByRole("region", { name: /what would change/i });
+    const sent = api.previewTheme.mock.calls[0]![0];
+    expect(sent.current_theme_id).toBeUndefined();
+    expect(sent.current_draft).toBeDefined();
   });
 
-  it("shows no Change it box while a list built here is waiting to be saved", async () => {
-    renderSection({ collection: savedRow(), pending: { draft: theme({ id: null }), stats: null, origin: "ai" } });
-
-    await screen.findByLabelText("Describe it");
-    expect(screen.queryByLabelText("Change it")).not.toBeInTheDocument();
-  });
-
-  it("shows the Change it box once the row is saved with a list", async () => {
+  it("shows the Adjust the list box once the row is saved with a list", async () => {
     renderSection({ collection: savedRow() });
 
-    expect(await screen.findByLabelText("Change it")).toBeEnabled();
+    expect(await screen.findByLabelText("Adjust the list")).toBeEnabled();
+  });
+});
+
+describe("AiRowSection advanced instructions", () => {
+  it("folds the AI's instructions away, closed, and opens them on a click", async () => {
+    renderSection();
+
+    const summary = await screen.findByText("Advanced: how the AI is instructed");
+    const details = summary.closest("details");
+    expect(details).not.toBeNull();
+    expect(details).not.toHaveAttribute("open");
+
+    await userEvent.click(summary);
+
+    expect(details).toHaveAttribute("open");
+    expect(await screen.findByText("Use the default")).toBeVisible();
+  });
+
+  it("keeps Exactly what's sent folded inside it until asked for", async () => {
+    renderSection();
+    await userEvent.click(await screen.findByText("Advanced: how the AI is instructed"));
+
+    const sent = (await screen.findByText("Exactly what’s sent", { selector: "summary" })).closest("details");
+    expect(sent).not.toHaveAttribute("open");
+  });
+
+  it("is not offered without an AI provider", async () => {
+    api.getThemeCapabilities.mockResolvedValue({ ai: false });
+    renderSection();
+
+    await screen.findByLabelText("Search TMDB tags");
+    expect(screen.queryByText("Advanced: how the AI is instructed")).not.toBeInTheDocument();
   });
 });
 
@@ -435,8 +507,8 @@ describe("AiRowSection without an AI provider", () => {
     renderSection();
 
     expect(await screen.findByLabelText("Search TMDB tags")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Describe it")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Build the list" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("What should this row be?")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Write the list" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Add a genre")).toBeInTheDocument();
     expect(screen.getByLabelText("Longest it can run (minutes)")).toBeInTheDocument();
     expect(screen.getByLabelText("Search your libraries")).toBeInTheDocument();
@@ -468,13 +540,13 @@ describe("AiRowSection without an AI provider", () => {
 });
 
 describe("AiRowSection pausing", () => {
-  it("disables Build the list and Change it, and says why, while the row's AI is paused", async () => {
+  it("disables Write the list and Adjust the list, and says why, while the row's AI is paused", async () => {
     renderSection({ collection: savedRow({ ai_paused: true }) });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
-    await userEvent.type(screen.getByLabelText("Change it"), "less gore");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "twists");
+    await userEvent.type(screen.getByLabelText("Adjust the list"), "less gore");
 
-    expect(screen.getByRole("button", { name: "Build the list" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Change it" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rewrite the list" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Adjust the list" })).toBeDisabled();
     expect(screen.getAllByText(/AI is paused for this row/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("switch", { name: "Pause AI for this row" })).toBeChecked();
   });
@@ -500,7 +572,7 @@ describe("AiRowSection pausing", () => {
   it("offers no pause for a row that is not saved yet", async () => {
     renderSection({ collection: null });
 
-    await screen.findByLabelText("Describe it");
+    await screen.findByLabelText("What should this row be?");
     expect(screen.queryByRole("switch", { name: "Pause AI for this row" })).not.toBeInTheDocument();
   });
 });
@@ -549,9 +621,9 @@ describe("AiRowSection over time", () => {
 describe("AiRowSection counts", () => {
   it("says how many of the AI's own titles are on the server, apart from the tag and genre matches", async () => {
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
-    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "films with a twist ending");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     const card = within(await screen.findByRole("region", { name: /the list/i }));
     expect(card.getByText("12 of the AI’s 60 titles are on your server.")).toBeInTheDocument();
@@ -566,9 +638,9 @@ describe("AiRowSection counts", () => {
       preview({ stats: { named: 5, resolved: 5, in_library: 4, after_rules: 4, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0, ai_kept: 4 } }),
     );
     renderSection();
-    await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "twists");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
     const card = within(await screen.findByRole("region", { name: /the list/i }));
     expect(card.getByText("4 of the AI’s 5 titles are on your server.")).toBeInTheDocument();
@@ -648,33 +720,33 @@ describe("AiRowSection limits", () => {
 });
 
 describe("AiRowSection while it builds", () => {
-  it("says it is working and may take a couple of minutes, and disables Build the list", async () => {
+  it("says it is working and may take a couple of minutes, and disables Write the list", async () => {
     let finish: (value: ThemePreview) => void = () => undefined;
     api.previewTheme.mockReturnValue(new Promise<ThemePreview>((resolve) => (finish = resolve)));
     renderSection();
-    await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), "twists");
 
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
 
-    const status = await screen.findByRole("status", { name: /building the list/i });
-    expect(status).toHaveTextContent(/building the list/i);
+    const status = await screen.findByRole("status", { name: /writing the list/i });
+    expect(status).toHaveTextContent(/writing the list/i);
     expect(status).toHaveTextContent(/couple of minutes/i);
-    expect(screen.getByRole("button", { name: "Build the list" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Write the list" })).toBeDisabled();
 
     finish(preview());
     await screen.findByRole("region", { name: /the list/i });
-    expect(screen.queryByRole("status", { name: /building the list/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Build the list" })).toBeEnabled();
+    expect(screen.queryByRole("status", { name: /writing the list/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rewrite the list" })).toBeEnabled();
   });
 
-  it("says it is changing the list while a change is asked for", async () => {
+  it("says it is adjusting the list while an adjustment is asked for", async () => {
     api.previewTheme.mockReturnValue(new Promise<ThemePreview>(() => undefined));
     renderSection({ collection: savedRow() });
-    await userEvent.type(await screen.findByLabelText("Change it"), "less gore");
+    await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
 
-    await userEvent.click(screen.getByRole("button", { name: "Change it" }));
+    await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
 
-    expect(await screen.findByRole("status", { name: /changing the list/i })).toHaveTextContent(/couple of minutes/i);
-    expect(screen.getByRole("button", { name: "Change it" })).toBeDisabled();
+    expect(await screen.findByRole("status", { name: /adjusting the list/i })).toHaveTextContent(/couple of minutes/i);
+    expect(screen.getByRole("button", { name: "Adjust the list" })).toBeDisabled();
   });
 });

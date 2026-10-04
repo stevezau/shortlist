@@ -1597,8 +1597,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             name=body.name,
             build=body.build,
             audience=body.audience,
-            # An AI row starts disabled whatever was asked: nothing is built, or spent, until the owner has seen it.
-            enabled=body.enabled and theme is None,
+            enabled=body.enabled,
             theme_id=None if theme is None else theme.id,
             **{column: getattr(body, column) for column in _EXPLORE_COLUMNS},
             schedule=body.schedule.strip(),

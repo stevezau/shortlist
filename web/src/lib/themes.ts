@@ -59,6 +59,7 @@ function previewKey(input: ThemePreviewInput, salt: string): string {
     (input.change ?? "").trim(),
     input.media ?? "both",
     input.current_theme_id ?? null,
+    input.current_draft ?? null,
     input.collection_id ?? null,
     (input.guidance ?? "").trim(),
     salt,
@@ -161,7 +162,7 @@ export function useSetAiPause() {
 }
 
 /**
- * The guidance to send "Build the list" for a row's AI instructions: nothing for the default (the
+ * The guidance to send "Write the list" for a row's AI instructions: nothing for the default (the
  * server then uses its own wording), the owner's text for "own", and the default followed by the
  * owner's text for "add". The mechanics are never part of it.
  */
@@ -172,7 +173,7 @@ export function themeGuidance(instructions: AiInstructions, defaultGuidance: str
   return "";
 }
 
-/** The system prompt "Build the list" sends, joined the way the server joins it. */
+/** The system prompt "Write the list" sends, joined the way the server joins it. */
 export function buildPrompt(guidance: string, defaultGuidance: string, mechanics: string): string {
   return `${guidance.trim() || defaultGuidance.trim()} ${mechanics}`;
 }
@@ -192,12 +193,29 @@ export function selectsNothing(theme: Pick<Theme, "tags" | "genres" | "collectio
   );
 }
 
+/** A theme's content as the API takes it, for a save or to refine an unsaved list. No hash or slug. */
+export function toThemeIn(pending: PendingTheme): ThemeSaveInput["draft"] {
+  const { draft } = pending;
+  return {
+    name: draft.name,
+    emoji: draft.emoji,
+    brief: draft.brief,
+    origin: pending.origin,
+    media: draft.media.filter((m): m is "movie" | "show" => m === "movie" || m === "show"),
+    tags: draft.tags,
+    genres: draft.genres,
+    excluded_genres: draft.excluded_genres,
+    collections: draft.collections,
+    picks: draft.picks,
+    rules: draft.rules,
+  };
+}
+
 /** A theme as the save endpoint takes it. The hash and slug are never sent: the server works them out. */
 export function toSaveBody(
   pending: PendingTheme,
   { tokens, collectionId }: { tokens: number; collectionId: number | null },
 ): ThemeSaveInput {
-  const { draft } = pending;
   const stats = pending.stats
     ? {
         named: pending.stats.named,
@@ -208,19 +226,7 @@ export function toSaveBody(
       }
     : undefined;
   return {
-    draft: {
-      name: draft.name,
-      emoji: draft.emoji,
-      brief: draft.brief,
-      origin: pending.origin,
-      media: draft.media.filter((m): m is "movie" | "show" => m === "movie" || m === "show"),
-      tags: draft.tags,
-      genres: draft.genres,
-      excluded_genres: draft.excluded_genres,
-      collections: draft.collections,
-      picks: draft.picks,
-      rules: draft.rules,
-    },
+    draft: toThemeIn(pending),
     tokens,
     collection_id: collectionId,
     ...(stats ? { stats } : {}),

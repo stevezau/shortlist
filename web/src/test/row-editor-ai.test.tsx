@@ -107,8 +107,8 @@ function renderEditor(props: { collection: Collection | null; template?: ReturnT
 }
 
 async function buildAList(brief = "films with a twist") {
-  await userEvent.type(await screen.findByLabelText("Describe it"), brief);
-  await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+  await userEvent.type(await screen.findByLabelText("What should this row be?"), brief);
+  await userEvent.click(screen.getByRole("button", { name: "Write the list" }));
   await screen.findByRole("region", { name: /the list/i });
 }
 
@@ -127,19 +127,21 @@ beforeEach(() => {
 describe("a new AI row", () => {
   const template = findRowTemplate("describe-a-row");
 
-  it("is a fixed AI row type with its own sections, and says it starts off", async () => {
+  it("is a fixed AI row type with Try it in its sidebar and no AI prompts entry, and does not say it starts off", async () => {
     renderEditor({ collection: null, template });
 
-    expect(await screen.findByText(/Row type: AI row/)).toBeInTheDocument();
+    expect(await screen.findByText(/Every night Shortlist picks each person’s best matches/)).toBeInTheDocument();
+    expect(screen.queryByText(/Row type: AI row/)).not.toBeInTheDocument();
     expect(screen.queryByText("Change row type…")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Try it" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "AI prompts" })).toBeInTheDocument();
-    expect(screen.getByText(/starts switched off/i)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "AI prompts" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "AI prompts" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/starts switched off/i)).not.toBeInTheDocument();
   });
 
   it("has no request settings, because an AI row only picks from what the server has", async () => {
     renderEditor({ collection: null, template });
-    await screen.findByText(/Row type: AI row/);
+    await screen.findByText(/Every night Shortlist picks each person’s best matches/);
 
     expect(screen.queryByRole("link", { name: "Requests" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Requests" })).not.toBeInTheDocument();
@@ -148,11 +150,11 @@ describe("a new AI row", () => {
   it("can't be added until its list is built", async () => {
     renderEditor({ collection: null, template });
 
-    expect(await screen.findByText("Build the row’s list before adding it.")).toBeInTheDocument();
+    expect(await screen.findByText("Write the row’s list before adding it.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add row" })).toBeDisabled();
   });
 
-  it("saves the list as a theme, then the row following it, switched off, with the tokens it cost", async () => {
+  it("saves the list as a theme, then the row following it, live like any other row, with the tokens it cost", async () => {
     renderEditor({ collection: null, template });
     await buildAList();
 
@@ -166,7 +168,7 @@ describe("a new AI row", () => {
       stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25 },
     });
     const body = api.createCollection.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(body).toMatchObject({ theme_id: 55, enabled: false, build: "per_person", name: "{theme_emoji} {theme}" });
+    expect(body).toMatchObject({ theme_id: 55, enabled: true, build: "per_person", name: "{theme_emoji} {theme}" });
   });
 
   it("replaces the theme it already saved, rather than making another, when the row save fails and is retried", async () => {
@@ -221,8 +223,8 @@ describe("a saved AI row", () => {
   it("keeps a refinement, then saves the theme in place and the row after it", async () => {
     api.previewTheme.mockResolvedValue(refined);
     renderEditor({ collection: aiRow() });
-    await userEvent.type(await screen.findByLabelText("Change it"), "less gore");
-    await userEvent.click(screen.getByRole("button", { name: "Change it" }));
+    await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
+    await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
     await userEvent.click(await screen.findByRole("button", { name: "Keep" }));
     expect(await screen.findByText(/1 unsaved change/)).toBeInTheDocument();
 
@@ -250,8 +252,8 @@ describe("a saved AI row", () => {
 
   it("Discard drops a list that wasn't saved", async () => {
     renderEditor({ collection: aiRow() });
-    await userEvent.type(await screen.findByLabelText("Describe it"), " again");
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), " again");
+    await userEvent.click(screen.getByRole("button", { name: "Rewrite the list" }));
     expect(await screen.findByText("Not saved yet")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
@@ -264,14 +266,14 @@ describe("tokens spent on a list that was discarded", () => {
   it("are still charged by the next theme save", async () => {
     api.previewTheme.mockResolvedValueOnce({ ...PREVIEW, tokens: 100 }).mockResolvedValueOnce({ ...PREVIEW, tokens: 50 });
     renderEditor({ collection: aiRow() });
-    await userEvent.type(await screen.findByLabelText("Describe it"), " one");
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.type(await screen.findByLabelText("What should this row be?"), " one");
+    await userEvent.click(screen.getByRole("button", { name: "Rewrite the list" }));
     await screen.findByText("Not saved yet");
     await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     await waitFor(() => expect(screen.queryByText("Not saved yet")).not.toBeInTheDocument());
 
-    await userEvent.type(screen.getByLabelText("Describe it"), " two");
-    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await userEvent.type(screen.getByLabelText("What should this row be?"), " two");
+    await userEvent.click(screen.getByRole("button", { name: "Rewrite the list" }));
     await screen.findByText("Not saved yet");
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 

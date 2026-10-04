@@ -461,12 +461,14 @@ class TestOwnerOnly:
 
 
 class TestAiRows:
-    def test_a_new_ai_row_is_created_disabled_whatever_was_asked(self, client: TestClient):
+    def test_a_new_ai_row_keeps_the_enabled_it_was_given_like_any_other_row(self, client: TestClient):
         theme = _save(client)
 
         row = _ai_row(client, theme["id"], enabled=True)
+        off = _ai_row(client, _save(client, name="Second")["id"], name="Second row", enabled=False)
 
-        assert (row["theme_id"], row["enabled"], row["ai_paused"], row["ai_tokens"]) == (theme["id"], False, False, 0)
+        assert (row["theme_id"], row["enabled"], row["ai_paused"], row["ai_tokens"]) == (theme["id"], True, False, 0)
+        assert off["enabled"] is False
 
     def test_a_row_without_a_theme_keeps_the_enabled_it_was_given(self, client: TestClient):
         r = client.post("/api/collections", json={"name": "Plain", "enabled": True})
@@ -607,7 +609,7 @@ class TestTokensReachTheRowThatFollowsTheTheme:
 
 
 class TestTryItOnASwitchedOffRow:
-    """A new AI row is made disabled, so its "Try it" has to reach it: a DRY run that names it builds it."""
+    """An AI row the owner switched off still needs its "Try it" to reach it: a DRY run that names it builds it."""
 
     def _config(self, client: TestClient, row_id: int, *, dry_run: bool, collection_ids: list[int] | None):
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
@@ -620,7 +622,7 @@ class TestTryItOnASwitchedOffRow:
             )
 
     def _disabled_row(self, client: TestClient) -> dict:
-        row = _ai_row(client, _save(client)["id"])
+        row = _ai_row(client, _save(client)["id"], enabled=False)
         assert row["enabled"] is False
         return row
 

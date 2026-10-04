@@ -1,8 +1,9 @@
 import { Loader2, X } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import { DiffCard } from "@/components/rows/ai-diff-card";
 import { AiHandEdit } from "@/components/rows/ai-hand-edit";
+import { AiPromptsSection } from "@/components/rows/ai-prompts-section";
 import { ExploreSection } from "@/components/rows/explore-section";
 import { OverTimeFields } from "@/components/rows/over-time-fields";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import { formatDate } from "@/lib/format";
 import {
   ruleChips,
   savedStats,
+  toThemeIn,
   themeGuidance,
   useSetAiPause,
   useTheme,
@@ -27,14 +29,16 @@ import {
   type PendingTheme,
   type RuleChip,
 } from "@/lib/themes";
-import type { Collection, CollectionInput, Theme, ThemePreview, ThemeStats } from "@/lib/types";
+import type { Collection, CollectionInput, Theme, ThemePreview, ThemeSaveInput, ThemeStats } from "@/lib/types";
+
+type ThemeIn = ThemeSaveInput["draft"];
 
 /** The API's limit on a brief (`PreviewIn.brief`). */
 const MAX_BRIEF = 1000;
 /** How many titles the sample shows before "and N more". */
 const SAMPLE_SIZE = 12;
 
-const PAUSED_REASON = "AI is paused for this row. Resume it below to build or change its list.";
+const PAUSED_REASON = "AI is paused for this row. Resume it below to write or adjust its list.";
 
 type Counts = Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules"> & {
   /** The AI's own titles left in the row; absent on a list saved before it was counted. */
@@ -45,7 +49,7 @@ type Counts = Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rule
 };
 
 /**
- * An AI row's list (#138), in What goes in: describe it, build it with one AI call, change it in words, and
+ * An AI row's list (#138), in What goes in: describe it, write it with one AI call, adjust it in words, and
  * see what the AI named. Nothing here is saved by itself — the list rides with the row's Save changes — but
  * the AI calls are real and spend tokens, so each says so.
  *
@@ -83,12 +87,10 @@ export function AiRowSection({
 
   return (
     <div className="space-y-5">
-      {collection === null && (
-        <p className="rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-          A new AI row starts switched off, so nothing reaches Plex until you switch it on. Build its list, add the
-          row, then look it over.
-        </p>
-      )}
+      <p className="text-sm text-muted-foreground">
+        Describe the row. The AI writes a list of about 60 titles once. Every night Shortlist picks each person’s best
+        matches from it, with no AI.
+      </p>
       <QueryBoundary query={capabilities} skeleton={<LoadingList />}>
         {({ ai }) =>
           ai ? (
@@ -116,8 +118,31 @@ export function AiRowSection({
           <OverTimeFields input={input} ownSlug={collection?.slug ?? null} onChange={change} />
         </>
       )}
+      <AdvancedPrompts input={input} onChange={change} />
       <UsageAndPause collection={collection} tokensSpent={tokensSpent} />
     </div>
+  );
+}
+
+/** The AI's instructions, folded away: most owners never need them, and they are the same data as ever. */
+function AdvancedPrompts({
+  input,
+  onChange,
+}: {
+  input: CollectionInput;
+  onChange: (patch: Partial<CollectionInput>) => void;
+}) {
+  const capabilities = useThemeCapabilities();
+  if (!capabilities.data?.ai) return null;
+  return (
+    <details className="group rounded-lg border bg-elevated">
+      <summary className="cursor-pointer list-none rounded-lg px-4 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        Advanced: how the AI is instructed
+      </summary>
+      <div className="border-t p-4">
+        <AiPromptsSection input={input} set={onChange} />
+      </div>
+    </details>
   );
 }
 
@@ -149,14 +174,14 @@ function AiHalf({
   onSpent: (tokens: number) => void;
 }) {
   const briefId = useId();
-  const changeId = useId();
+  const briefHintId = useId();
   const builder = useThemePreview();
   const prompts = useThemePrompts();
   const [typed, setTyped] = useState<string | null>(null);
   const [change, setChange] = useState("");
   const [refinement, setRefinement] = useState<ThemePreview | null>(null);
   const [failed, setFailed] = useState<{ message: string; retry: () => void } | null>(null);
-  const [working, setWorking] = useState<"build" | "change">("build");
+  const [working, setWorking] = useState<"build" | "adjust">("build");
 
   const savedTheme = saved.data ?? null;
   const shown: Theme | null = pending?.draft ?? savedTheme;
@@ -166,12 +191,14 @@ function AiHalf({
   // "Add to the default" is the default's words plus the owner's, so it can't be sent before the default is known.
   const guidanceReady = mode !== "add" || prompts.isSuccess;
   const guidance = guidanceReady ? themeGuidance(input.ai_instructions, prompts.data?.guidance ?? "") : "";
-  const canRefine = collection?.theme_id != null && pending === null;
   const media = input.media;
 
-  const run = async (request: { brief?: string; change?: string; current_theme_id?: number }, then: (p: ThemePreview) => void) => {
+  const run = async (
+    request: { brief?: string; change?: string; current_theme_id?: number; current_draft?: ThemeIn },
+    then: (p: ThemePreview) => void,
+  ) => {
     setFailed(null);
-    setWorking(request.change !== undefined ? "change" : "build");
+    setWorking(request.change !== undefined ? "adjust" : "build");
     try {
       const { preview, cached } = await builder.build(
         { ...request, media, guidance, ...(collection ? { collection_id: collection.id } : {}) },
@@ -193,12 +220,14 @@ function AiHalf({
       onPending({ draft: preview.draft, stats: preview.stats, origin: "ai" });
     });
 
+  // An unsaved list is sent whole, so adjusting works before the row is saved; the saved one is read by id.
   const refine = () =>
-    run({ change, current_theme_id: collection?.theme_id ?? undefined }, (preview) => setRefinement(preview));
+    run(
+      pending ? { change, current_draft: toThemeIn(pending) } : { change, current_theme_id: savedTheme?.id ?? undefined },
+      (preview) => setRefinement(preview),
+    );
 
   const buildReason = paused ? PAUSED_REASON : !guidanceReady ? "Loading the default instructions…" : null;
-  const changeReason = paused ? PAUSED_REASON : buildReason;
-  // Changing a list in words refines the SAVED list, so there is nothing to change until the row has one.
   const clearRule = (chip: RuleChip) => {
     if (shown === null) return;
     // The counts described the list with the limit on, so they are dropped rather than left to mislead.
@@ -212,15 +241,19 @@ function AiHalf({
   return (
     <div className="space-y-5">
       <div className="space-y-2">
-        <Label htmlFor={briefId}>Describe it</Label>
+        <Label htmlFor={briefId}>What should this row be?</Label>
         <Textarea
           id={briefId}
           rows={3}
           maxLength={MAX_BRIEF}
           value={brief}
           onChange={(event) => setTyped(event.target.value)}
+          aria-describedby={briefHintId}
           placeholder="e.g. Films with a twist ending that make you want to watch them again"
         />
+        <p id={briefHintId} className="text-sm text-muted-foreground">
+          Used once, to write the list. It isn’t shown on Plex.
+        </p>
         <div className="flex flex-wrap items-center gap-3">
           <Button
             type="button"
@@ -229,9 +262,9 @@ function AiHalf({
             loading={builder.isPending}
             disabled={!brief.trim() || buildReason !== null}
           >
-            Build the list
+            {shown ? "Rewrite the list" : "Write the list"}
           </Button>
-          <p className="text-sm text-muted-foreground">Building uses your AI provider once per theme.</p>
+          <p className="text-sm text-muted-foreground">Uses your AI provider once.</p>
         </div>
         {buildReason && <p className="text-sm text-warning">{buildReason}</p>}
       </div>
@@ -251,7 +284,7 @@ function AiHalf({
         <LoadingList />
       ) : shown === null && !builder.isPending && !saved.isError ? (
         <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-          No list yet. Describe the row above, then press Build the list. The AI names titles; Shortlist checks each
+          No list yet. Say what the row should be, then press Write the list. The AI names titles; Shortlist checks each
           one against TMDB and your libraries.
         </p>
       ) : (
@@ -262,7 +295,15 @@ function AiHalf({
             unsaved={pending !== null}
             rowCoversBoth={input.media === "both"}
             onClearRule={clearRule}
-          />
+          >
+            <AdjustList
+              value={change}
+              reason={buildReason}
+              busy={builder.isPending}
+              onChange={setChange}
+              onAdjust={() => void refine()}
+            />
+          </ListCard>
         )
       )}
       {saved.isError && (
@@ -282,41 +323,53 @@ function AiHalf({
         />
       )}
 
-      {canRefine && (
-        <div className="space-y-2 border-t pt-4">
-          <Label htmlFor={changeId}>Change it</Label>
-          <Textarea
-            id={changeId}
-            rows={2}
-            maxLength={MAX_BRIEF}
-            value={change}
-            disabled={changeReason !== null}
-            onChange={(event) => setChange(event.target.value)}
-            placeholder="e.g. Less gore, and more from the last ten years"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void refine()}
-            loading={builder.isPending}
-            disabled={!change.trim() || changeReason !== null}
-          >
-            Change it
-          </Button>
-          {changeReason && <p className="text-sm text-warning">{changeReason}</p>}
-          <p className="text-sm text-muted-foreground">
-            Tell the AI what to change. Your description stays as it is, and you see what would be added and removed
-            before anything is kept.
-          </p>
-        </div>
-      )}
+    </div>
+  );
+}
+
+/** Say what to change about the list on the card. Works before the row is saved. */
+function AdjustList({
+  value,
+  reason,
+  busy,
+  onChange,
+  onAdjust,
+}: {
+  value: string;
+  /** Why adjusting can't be done right now, or null. */
+  reason: string | null;
+  busy: boolean;
+  onChange: (next: string) => void;
+  onAdjust: () => void;
+}) {
+  const id = useId();
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <Label htmlFor={id}>Adjust the list</Label>
+      <Textarea
+        id={id}
+        rows={2}
+        maxLength={MAX_BRIEF}
+        value={value}
+        disabled={reason !== null}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="e.g. Less gore, and more from the last ten years"
+      />
+      <Button type="button" variant="outline" onClick={onAdjust} loading={busy} disabled={!value.trim() || reason !== null}>
+        Adjust the list
+      </Button>
+      {reason && <p className="text-sm text-warning">{reason}</p>}
+      <p className="text-sm text-muted-foreground">
+        Tell the AI what to change. What you wrote above stays as it is, and you see what would be added and removed
+        before anything is kept.
+      </p>
     </div>
   );
 }
 
 /** What the AI call is doing, for the minutes it can take: a long wait with no words reads as a hang. */
-function Working({ doing }: { doing: "build" | "change" }) {
-  const what = doing === "build" ? "Building the list" : "Changing the list";
+function Working({ doing }: { doing: "build" | "adjust" }) {
+  const what = doing === "build" ? "Writing the list" : "Adjusting the list";
   return (
     <div
       role="status"
@@ -335,12 +388,14 @@ function ListCard({
   unsaved,
   rowCoversBoth,
   onClearRule,
+  children,
 }: {
   theme: Theme;
   counts: Counts | null;
   unsaved: boolean;
   rowCoversBoth: boolean;
   onClearRule: (chip: RuleChip) => void;
+  children?: ReactNode;
 }) {
   const rules = ruleChips(theme.rules);
   const sample = theme.picks.slice(0, SAMPLE_SIZE);
@@ -389,7 +444,7 @@ function ListCard({
       )}
       {counts?.truncated && (
         <p role="status" className="text-sm text-warning">
-          The AI’s list was cut short; {counts.named} {counts.named === 1 ? "title" : "titles"} kept. Build again for a
+          The AI’s list was cut short; {counts.named} {counts.named === 1 ? "title" : "titles"} kept. Rewrite it for a
           fuller list.
         </p>
       )}
@@ -448,6 +503,7 @@ function ListCard({
           {more > 0 && <li className="text-muted-foreground">…and {more} more.</li>}
         </ul>
       )}
+      {children}
     </section>
   );
 }
@@ -487,7 +543,7 @@ function UsageAndPause({ collection, tokensSpent }: { collection: Collection | n
             <Label htmlFor={pauseId}>Pause AI for this row</Label>
             <p className="text-sm text-muted-foreground">
               A paused row keeps its list and keeps picking from it for each person. It just won’t spend tokens
-              building or changing one. This takes effect at once, apart from Save changes.
+              writing or adjusting one. This takes effect at once, apart from Save changes.
             </p>
           </div>
           <Switch

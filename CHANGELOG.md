@@ -13,10 +13,11 @@ All notable changes to this project are documented here. This project follows
   and the AI builds a theme once: a name, rules, TMDB tags and genres, and about 60 named titles with a
   one-line reason each. Shortlist checks every title against TMDB, your library and the row's limits.
   After that, every run fills the row for each person from that theme with no AI, ranked by their own
-  taste. The editor has **Build the list**, **Change it** (shows a diff before you save), **Try it** (a
-  practice run for one person that writes nothing to Plex, and works on a switched-off row), **AI
-  prompts** (your guidance, plus the locked mechanics), usage per row, and **Pause AI for this row**.
-  New AI rows start switched off. Per-person rows only, and library-only: a title your server lacks is
+  taste. The editor has **Write the list**, **Adjust the list** (shows a diff, and works before the row is
+  saved), **Try it** (a
+  practice run for one person that writes nothing to Plex, and works on a switched-off row), **Advanced: how
+  the AI is instructed** (your guidance, plus the locked mechanics), usage per row, and **Pause AI for this
+  row**. A new AI row goes live like any other row. Per-person rows only, and library-only: a title your server lacks is
   never requested. With no AI provider you can still hand-edit the
   tags, genres and limits. See [An AI row](https://shortlistapp.dev/guides/ai/#an-ai-row). (#138)
 - **Explore: an AI row that picks a new theme every few days (#138).** In an AI row's editor, choose
