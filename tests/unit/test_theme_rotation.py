@@ -364,6 +364,16 @@ class TestRotate:
         assert [o.user_id for o in outcomes] == [b]
 
 
+class TestTheRowAsksForItsOwnKinds:
+    def test_a_films_only_base_theme_does_not_narrow_what_the_ai_is_asked_for(self, sessions):
+        seed(sessions, media="both")
+        author = FakeAuthor()
+
+        rotate(sessions, author)
+
+        assert author.calls[0]["media"] == (MediaType.MOVIE, MediaType.SHOW)
+
+
 class TestQueuedNext:
     def test_a_queued_next_with_no_current_becomes_current_without_the_ai(self, sessions):
         row_id, (uid,) = seed(sessions)

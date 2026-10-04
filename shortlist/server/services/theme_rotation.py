@@ -46,7 +46,6 @@ from shortlist.server.services.theme_store import (
     add_row_tokens,
     reject_person_title_clash,
     save_theme,
-    spec_from_row,
 )
 
 #: The next theme is built this many days before it starts, so the owner can look at it and change it.
@@ -333,8 +332,7 @@ def author_for_person(
     """
     if unavailable:
         raise ThemeAuthorError(unavailable)
-    base = session.get(Theme, collection.theme_id) if collection.theme_id is not None else None
-    media = _row_media(collection, base)
+    media = _row_media(collection)
     index = library_index(
         plex,
         sessions,
@@ -574,9 +572,8 @@ def _theme_days(collection: Collection) -> int:
     return collection.theme_days or DEFAULT_THEME_DAYS
 
 
-def _row_media(collection: Collection, base: Theme | None) -> tuple[MediaType, ...]:
-    if base is not None and base.media:
-        return spec_from_row(base).media
+def _row_media(collection: Collection) -> tuple[MediaType, ...]:
+    """The kinds to ask the AI for: the row's own setting, never the base theme's (which a draft may have narrowed)."""
     if collection.media in ("movie", "show"):
         return (MediaType(collection.media),)
     return (MediaType.MOVIE, MediaType.SHOW)

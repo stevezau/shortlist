@@ -173,7 +173,7 @@ def author_theme(
         raise ThemeAuthorError("The AI did not answer. Try again in a moment.")
     proposal, truncated = _parse(raw)
 
-    picks, titles, named = _resolve_titles(proposal, medias, tmdb)
+    picks, titles, named, failed_kinds = _resolve_titles(proposal, medias, tmdb)
     tags = _resolve_tags(proposal, tmdb)
     genres = tuple(g for g in _strings(proposal.get("genres")) if g.strip().lower() in _MOVIE_GENRE_IDS)[:_MAX_GENRES]
     if current is not None:
@@ -186,7 +186,8 @@ def author_theme(
             "The AI didn't suggest anything Shortlist could find. Try describing the row differently."
         )
     # A kind the AI named nothing for stays out: tag and genre matches alone would fill that library with filler.
-    named_kinds = {p.media for p in picks} | {p.media for p in kept}
+    # A kind whose search errored may still have been named: only a kind the AI truly left out is dropped.
+    named_kinds = {p.media for p in picks} | {p.media for p in kept} | failed_kinds
     covered = tuple(m for m in medias if m in named_kinds) or medias
     spec = ThemeSpec(
         slug=current.slug if current else (slugify(name) or "theme"),
@@ -490,7 +491,8 @@ def _rules(value: object) -> RowLimits:
 
 def _resolve_titles(
     proposal: dict, medias: tuple[MediaType, ...], tmdb: TmdbClient
-) -> tuple[list[ThemePick], dict[tuple[MediaType, int], str], int]:
+) -> tuple[list[ThemePick], dict[tuple[MediaType, int], str], int, set[MediaType]]:
+    """Resolve the AI's titles. The last item is the kinds whose TMDB search ERRORED, as opposed to finding nothing."""
     raw = proposal.get("titles")
     entries = [
         e for e in (raw if isinstance(raw, list) else []) if isinstance(e, dict) and isinstance(e.get("title"), str)
@@ -499,6 +501,7 @@ def _resolve_titles(
     picks: list[ThemePick] = []
     titles: dict[tuple[MediaType, int], str] = {}
     seen: set[tuple[MediaType, int]] = set()
+    failed_kinds: set[MediaType] = set()
     searches = 0
     for entry in entries:
         # The AI says which kind each title is: searching both would resolve "Severance" to the 2006 film.
@@ -514,6 +517,7 @@ def _resolve_titles(
             key = (media, int(hit["id"])) if hit else None
         except Exception:
             logger.warning("theme author: TMDB search failed for a title")
+            failed_kinds.add(media)
             continue
         if key is None or key in seen:
             continue
@@ -521,7 +525,7 @@ def _resolve_titles(
         reason = _clean(str(entry.get("reason") or ""))[:_MAX_REASON].strip()
         picks.append(ThemePick(tmdb_id=key[1], media=media, origin="ai", reason=reason or None))
         titles[key] = str(hit.get("title") or hit.get("name") or title)
-    return picks, titles, len(entries)
+    return picks, titles, len(entries), failed_kinds
 
 
 def _resolve_tags(proposal: dict, tmdb: TmdbClient) -> tuple[int, ...]:

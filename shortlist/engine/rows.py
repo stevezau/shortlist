@@ -2044,13 +2044,6 @@ def _leave_uncovered_libraries(
     for section in uncovered:
         if str(section.key) not in ledger:
             continue
-        logger.info(
-            "{}: AI row '{}' left '{}' — its theme no longer covers {}",
-            user.slug,
-            spec.slug,
-            getattr(section, "title", "") or section.key,
-            section_kind(section).value,
-        )
         diff = report.diff if report.diff is not None else CollectionDiff()
         report.diff = diff
         with ctx.write_lock:
@@ -2066,6 +2059,15 @@ def _leave_uncovered_libraries(
                 other_rows=_rows_as_seen_by(cfg, user),
             )
         _forget(report, spec, removed_in)
+        if removed_in:
+            logger.info(
+                "{}{}: AI row '{}' left '{}' — its theme no longer covers {}",
+                "[dry-run] " if cfg.dry_run else "",
+                user.slug,
+                spec.slug,
+                getattr(section, "title", "") or section.key,
+                section_kind(section).value,
+            )
     return covered
 
 

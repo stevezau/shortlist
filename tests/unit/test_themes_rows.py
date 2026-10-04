@@ -16,7 +16,7 @@ from shortlist.engine.delivery import row_marker
 from shortlist.engine.models import EngineConfig, MediaType, OverTime, Pick, RowLimits, RowOverride, RowSpec, TitleKey
 from shortlist.engine.picker import sanitise_ai_reason
 from shortlist.engine.placeholders import needs_a_run, uses_theme
-from shortlist.engine.rows import RowPolicy, _rating_key_resolver, effective_row_sources, row_recipe
+from shortlist.engine.rows import RowPolicy, _rating_key_resolver, _rows_as_seen_by, effective_row_sources, row_recipe
 from shortlist.engine.themes import ThemePick, ThemeSpec, load_theme, theme_content_hash
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -1065,6 +1065,7 @@ class TestAnAiRowLeavesLibrariesItsThemeDropped:
         call = sarah_calls[0]
         assert [s.key for s in call.kwargs["sections"]] == ["2"]
         assert call.kwargs["delivered_keys"] == {"2": 555}
+        assert call.kwargs["other_rows"] == _rows_as_seen_by(both.config, make_profile("sarah", account_id=100))
         person = next(u for u in report.users if u.username == "sarah")
         assert {"row_slug": "ai-twists", "library_key": "2"} in person.removed_deliveries
         assert {p.section_key for p in _picks(report, "sarah", "ai-twists")} == {"1"}
@@ -1080,6 +1081,20 @@ class TestAnAiRowLeavesLibrariesItsThemeDropped:
         calls = [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "2"]
         assert len(calls) == 1
         assert calls[0].kwargs["dry_run"] is True
+
+    def test_an_explore_person_whose_own_theme_is_narrower_than_the_base_is_the_one_who_loses_the_library(self, both):
+        base = theme_spec(media=(MediaType.MOVIE, MediaType.SHOW))
+        spec = theme_row(base, media="both", person_themes=(("sarah", theme_spec(slug="films")),))
+        both.config.rows = [spec]
+        for slug in ("sarah", "mike"):
+            both.delivered_keys[(slug, spec.slug, "2")] = 555
+
+        with patch("shortlist.engine.rows.remove_row", return_value=["2"]) as removal:
+            pipeline_mod.run(both, _people())
+
+        tv_removals = [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "2"]
+        assert [c.args[1].slug for c in tv_removals] == ["sarah"]
+        assert tv_removals[0].kwargs["other_rows"] == _rows_as_seen_by(both.config, tv_removals[0].args[1])
 
     def test_a_theme_covering_both_kinds_removes_nothing(self, both):
         spec = theme_row(theme_spec(media=(MediaType.MOVIE, MediaType.SHOW)), media="both")

@@ -856,3 +856,21 @@ class TestAThemeCoversOnlyTheKindsItNamed:
 
         assert draft.stats.ai_kept == 1
         assert draft.stats.in_library == 1
+
+    def test_a_failed_show_search_keeps_shows_covered(self):
+        class _FailingShows(_KindTmdb):
+            def search(self, title, media, *, year=None):
+                if media is MediaType.SHOW:
+                    raise RuntimeError("tmdb down")
+                return super().search(title, media, year=year)
+
+        draft = author_theme(
+            brief=BRIEF,
+            media=TestAThemeCoversOnlyTheKindsItNamed.BOTH,
+            curator=_Curator(_answer(titles=[dict(self.MOVIE), dict(self.SHOW)], tags=[])),
+            tmdb=_FailingShows(),
+            plex=_Plex(),
+            library_index={MediaType.MOVIE: {1: 11}, MediaType.SHOW: {}},
+        )
+
+        assert draft.spec.media == self.BOTH
