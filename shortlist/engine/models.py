@@ -223,7 +223,7 @@ class OverTime:
 
     def keep_fraction(self) -> float:
         """The share of a row kept on a refresh night; the pre-existing two-thirds when unset."""
-        return _KEEP_FRACTION if self.refresh_share is None else 1 - self.refresh_share
+        return _KEEP_FRACTION if self.refresh_share is None else 1 - min(1.0, max(0.0, self.refresh_share))
 
 
 @dataclass

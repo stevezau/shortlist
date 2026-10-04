@@ -58,6 +58,10 @@ class TestOverTime:
     def test_fingerprint_is_ordered_and_sorts_avoid(self):
         assert OverTime(0.5, 30, ("b", "a")).fingerprint() == "share=0.5;cooldown=30;avoid=a,b"
 
+    def test_refresh_share_outside_zero_to_one_is_clamped(self):
+        assert OverTime(refresh_share=1.5).keep_fraction() == 0.0
+        assert OverTime(refresh_share=-0.2).keep_fraction() == 1.0
+
     def test_each_control_alone_is_active(self):
         assert OverTime(refresh_share=0.0).active
         assert OverTime(repeat_cooldown_days=0).active
@@ -110,6 +114,14 @@ class TestExcludedTitles:
         result = _excluded(OverTime(repeat_cooldown_days=7), history=history, spare={(MediaType.MOVIE, 1)})
 
         assert result == {(MediaType.MOVIE, 2)}
+
+    def test_a_kept_title_in_the_cooldown_window_survives_and_an_unkept_one_is_dropped(self):
+        history = FakeHistory(first_shown={(MediaType.MOVIE, 1), (MediaType.MOVIE, 2)})
+        excluded = _excluded(OverTime(repeat_cooldown_days=7), history=history, spare={(MediaType.MOVIE, 1)})
+        result = apply_exclusions([_candidate(1), _candidate(2), _candidate(3)], excluded)
+
+        assert [c.tmdb_id for c in result.kept] == [1, 3]
+        assert result.dropped == 1
 
     def test_no_cooldown_means_the_history_is_not_asked(self):
         history = FakeHistory(first_shown={(MediaType.MOVIE, 1)})

@@ -13,7 +13,7 @@ from loguru import logger
 import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.context import EngineContext
 from shortlist.engine.delivery import row_marker
-from shortlist.engine.models import EngineConfig, MediaType, OverTime, Pick, RowLimits, RowSpec, TitleKey
+from shortlist.engine.models import EngineConfig, MediaType, OverTime, Pick, RowLimits, RowOverride, RowSpec, TitleKey
 from shortlist.engine.picker import sanitise_ai_reason
 from shortlist.engine.placeholders import needs_a_run, uses_theme
 from shortlist.engine.rows import RowPolicy, _rating_key_resolver, effective_row_sources, row_recipe
@@ -567,14 +567,18 @@ class TestOverTimeControls:
         assert (user_slug, row_slug) == ("sarah", "ai-twists")
         assert (date.today() - since).days == 14
 
-    def test_cooldown_spares_kept_picks(self, big_ctx):
-        prior_ids = BIG[:6]
+    @pytest.mark.parametrize(
+        ("share", "size", "swapped"),
+        [(0.05, 5, 1), (1.5, 4, 4), (-0.2, 4, 0), (0.0, 4, 0)],
+        ids=["small share swaps one", "above one clamps to all", "negative clamps to none", "zero never swaps"],
+    )
+    def test_refresh_share_edges(self, big_ctx, share, size, swapped):
+        prior_ids = BIG[:size]
         big_ctx.previous_picks = {("sarah", "ai-twists", "1"): _prior(prior_ids)}
-        big_ctx.pick_history = FakeHistory({(MediaType.MOVIE, 41)})
-        big_ctx.config.rows = [theme_row(size=6, refresh_days=1, over_time=OverTime(repeat_cooldown_days=14))]
+        big_ctx.config.rows = [theme_row(size=size, refresh_days=1, over_time=OverTime(refresh_share=share))]
         report = pipeline_mod.run(big_ctx, [make_profile("sarah", account_id=100)])
 
-        assert 41 in _ids(report, "sarah")
+        assert len(set(_ids(report, "sarah")) - set(prior_ids)) == swapped
 
     def test_avoid_rows_drops_titles_from_the_named_row(self, big_ctx):
         big_ctx.config.rows = [
@@ -601,6 +605,27 @@ class TestOverTimeControls:
         report = pipeline_mod.run(ctx, _people())
 
         assert all(u.exclusions_skipped == [] for u in report.users)
+
+
+class TestSiblingTitlesUsePersonThemes:
+    def test_a_muted_rows_removal_leaves_the_collection_a_sibling_wears_for_this_person(self, ctx):
+        """Base theme "Mystery", sarah's own theme "Twist endings": her sibling row's collection is the latter's."""
+        ctx.plex.sections.return_value = ctx.plex.sections_by_type.return_value.values()
+        collection = SimpleNamespace(
+            title="Twist endings" + row_marker(100), ratingKey=5151, key="/library/metadata/5151", labels=[]
+        )
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: (
+            [collection] if label == "shortlist_sarah" else []
+        )
+        mystery = theme_spec(slug="mystery", name="Mystery", emoji=None)
+        twists = theme_spec(slug="twists", name="Twist endings", emoji=None)
+        ai = theme_row(mystery, name_template="{theme}", person_themes=(("sarah", twists),))
+        plain = RowSpec(slug="plain", name_template="Twist endings", size=5, media="movie")
+        ctx.config.rows = [plain, ai]
+        sarah = make_profile("sarah", account_id=100, row_overrides={"plain": RowOverride(muted=True)})
+        pipeline_mod.run(ctx, [sarah])
+
+        assert ctx.plex.delete_owned_collection.call_args_list == []
 
 
 class TestPersonThemes:

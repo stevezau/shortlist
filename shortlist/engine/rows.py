@@ -1798,6 +1798,11 @@ def _in_audience(user: UserProfile, spec: RowSpec) -> bool:
     return spec.audience is None or user.plex_account_id in spec.audience
 
 
+def _rows_as_seen_by(cfg: EngineConfig, user: UserProfile) -> list[RowSpec]:
+    """Every per-person row with this person's own theme, so a sibling row claims the title it really wears (#121)."""
+    return [spec.for_person(user.slug) for spec in cfg.per_person_rows()]
+
+
 def _is_muted(user: UserProfile, spec: RowSpec) -> bool:
     override = user.row_overrides.get(spec.slug)
     return bool(override and override.muted)
@@ -2044,7 +2049,7 @@ def _drop_cold_skipped_rows(
                 delivered_keys=_ledger_keys(ctx, user, spec),
                 # Every library is scanned, so a title another row builds under must not be taken for
                 # this one's (issue #121).
-                other_rows=cfg.per_person_rows(),
+                other_rows=_rows_as_seen_by(cfg, user),
             )
         _forget(report, spec, removed_in)
     return keep
@@ -2092,7 +2097,7 @@ def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: Engine
                 delivered_keys=_ledger_keys(ctx, user, spec),
                 # Scanning every library means meeting other rows' collections: a title one of them
                 # builds under in a library is that row's, not a stale copy of this one (issue #121).
-                other_rows=cfg.per_person_rows(),
+                other_rows=_rows_as_seen_by(cfg, user),
             )
         _forget(report, spec, removed_in)
 
@@ -3285,6 +3290,8 @@ def _build_section_picks(
             # Pick only from candidates NOT already in the row so a just-rotated-out title can't
             # bounce straight back — the internal anti-immediate-repeat guard that replaced staleness_runs.
             keep_n = min(len(prior_valid), round(spec.over_time.keep_fraction() * k))
+            if spec.over_time.refresh_share is not None and spec.over_time.keep_fraction() < 1 and k > 1:
+                keep_n = min(keep_n, k - 1)  # a share above zero always swaps at least one pick
             kept = prior_valid[:keep_n]
             if _names_a_seed(spec, user, policy.cfg):
                 kept = _reseed_survivors(kept, sub, policy.seeds_for(spec))
@@ -3779,7 +3786,7 @@ def _run_user(
                                 diff=diff,
                                 sections=[section],
                                 delivered_keys=_ledger_keys(ctx, user, spec),
-                                other_rows=cfg.per_person_rows(),
+                                other_rows=_rows_as_seen_by(cfg, user),
                             )
                         _forget(user_report, spec, removed_in)
                 if not any(section_picks.values()):
