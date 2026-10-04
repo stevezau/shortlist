@@ -36,7 +36,7 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
     slugify,
 )
-from shortlist.engine.placeholders import refusal, uses_season
+from shortlist.engine.placeholders import fill_theme, refusal, uses_season, uses_theme
 from shortlist.engine.rows import row_shown_today
 from shortlist.engine.web_guidance import INSTRUCTION_MODES, MAX_INSTRUCTIONS_CHARS, AiInstructions
 from shortlist.server.api.row_changes import (
@@ -63,13 +63,16 @@ from shortlist.server.db.models import (
     Run,
     RunSharedRow,
     SharedRowWatch,
+    Theme,
     User,
 )
 from shortlist.server.scheduler import crontab_trigger, rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs, poster_service, report_service
+from shortlist.server.services.audit import add_audit
 from shortlist.server.services.poster_service import load_upload
 from shortlist.server.services.season_catalogue import load_catalogue
+from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/collections", tags=["collections"], dependencies=[Depends(require_owner)])
@@ -336,6 +339,12 @@ class CollectionIn(StrictRequestModel):
         description="How many days after each season's day the row stays up.",
     )
 
+    # An AI row (#138): the theme it is filled from. Set it on create and the row is made disabled, so the
+    # owner sees the theme before the first build. Null is an ordinary row.
+    theme_id: int | None = Field(
+        default=None, description="The theme this AI row follows (see POST /api/themes). Null for an ordinary row."
+    )
+
     @field_validator("show_days")
     @classmethod
     def _check_show_days(cls, days: list[int]) -> list[int]:
@@ -534,6 +543,9 @@ class CollectionOut(PassthroughModel):
     library_keys: list[str]
     poster: PosterOut
     ai_instructions: AiInstructionsOut
+    theme_id: int | None = Field(description="The theme an AI row follows; null for an ordinary row.")
+    ai_paused: bool = Field(description="Whether the row's AI is paused: it keeps its theme but spends no tokens.")
+    ai_tokens: int = Field(description="Tokens the AI has spent writing this row's themes.")
     # The three keys below exist ONLY on a dry-run PATCH, where the row comes back unchanged and the
     # preview rides alongside it. Optional-with-None is a deliberate exception to `_closed_set_out`'s
     # "declare responses required so a dropped field fails loudly": these are genuinely absent on a
@@ -1107,14 +1119,37 @@ def _serialize(
         "library_keys": [str(k) for k in (collection.library_keys or [])],
         "poster": _poster_view(session, collection),
         "ai_instructions": _ai_instructions_view(collection.prompt),
+        "theme_id": collection.theme_id,
+        "ai_paused": bool(collection.ai_paused),
+        "ai_tokens": collection.ai_tokens or 0,
     }
 
 
-def _reject_season_name_without_seasons(template: str, seasons: list[str]) -> None:
-    """Refuse a name that uses the season on a row that follows none: it could never be filled in, so the
-    row would never be built for anyone (discussion #124)."""
-    if why := refusal(template or "", "row_name", row_has_seasons=bool(seasons)):
+def _reject_season_name_without_seasons(template: str, seasons: list[str], *, row_has_theme: bool = False) -> None:
+    """Refuse a name that uses the season on a row that follows none, or the theme on a row that is not an AI
+    row: it could never be filled in, so the row would never be built for anyone (discussion #124, #138)."""
+    if why := refusal(template or "", "row_name", row_has_seasons=bool(seasons), row_has_theme=row_has_theme):
         raise HTTPException(status_code=422, detail=why)
+
+
+def _validate_theme(session: Session, theme_id: int | None, *, build: str, seasons: list[str]) -> Theme | None:
+    """The theme an AI row follows, or None for an ordinary row; 422 for a row a theme cannot drive.
+
+    Keyword-only on what the row will be, like `_validate_requests_row`: a PATCH judges the MERGED row.
+    AI rows are per-person in v1, and a theme has no calendar, so a season is refused too.
+    """
+    if theme_id is None:
+        return None
+    theme = session.get(Theme, theme_id)
+    if theme is None:
+        raise HTTPException(status_code=422, detail="That theme doesn't exist. Write or pick one first.")
+    if build != "per_person":
+        raise HTTPException(status_code=422, detail="An AI row is always one row per person, never a shared row.")
+    if seasons:
+        raise HTTPException(
+            status_code=422, detail="An AI row can't also follow seasons — a theme has no calendar of its own."
+        )
+    return theme
 
 
 def _reject_duplicate_name(
@@ -1312,15 +1347,20 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     if body.dry_run:
         raise HTTPException(status_code=422, detail="dry_run is only supported on PATCH and DELETE")
     _validate(body)
-    _reject_season_name_without_seasons(body.name_template or body.name, body.seasons)
+    _reject_season_name_without_seasons(
+        body.name_template or body.name, body.seasons, row_has_theme=body.theme_id is not None
+    )
     with request.app.state.sessions() as session:
         catalogue = load_catalogue(session)
         body.seasons = _known_seasons(body.seasons, catalogue=catalogue)
-        # The template this row will actually be titled from, not the bare name — a POST may set both.
+        theme = _validate_theme(session, body.theme_id, build=body.build, seasons=body.seasons)
+        # The template this row will actually be titled from, not the bare name — a POST may set both. An AI
+        # row's has its theme filled in: that is the title it will wear.
+        template = body.name_template or body.name
         _reject_duplicate_name(
             session,
             request.app.state.secrets,
-            body.name_template or body.name,
+            template if theme is None else fill_theme(template, spec_from_row(theme)),
             build=body.build,
             fallback_name=body.fallback_name,
             media=body.media,
@@ -1333,7 +1373,9 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             name=body.name,
             build=body.build,
             audience=body.audience,
-            enabled=body.enabled,
+            # An AI row starts disabled whatever was asked: nothing is built, or spent, until the owner has seen it.
+            enabled=body.enabled and theme is None,
+            theme_id=None if theme is None else theme.id,
             schedule=body.schedule.strip(),
             size=body.size,
             media=body.media,
@@ -1458,6 +1500,7 @@ _PATCHABLE_COLUMNS = (
     "season_after_days",
     "pin_top",
     "library_keys",
+    "theme_id",
 )
 
 
@@ -1653,6 +1696,20 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         _validate_anchor_rows(session, body, editing_slug=collection.slug)
         before = _snapshot(session, collection)
         is_default = collection.slug == DEFAULT_SLUG
+        merged_theme_id = body.theme_id if "theme_id" in sent else collection.theme_id
+        merged_seasons = body.seasons if "seasons" in sent else list(collection.seasons or [])
+        theme = None
+        if is_default and body.theme_id is not None:
+            raise HTTPException(
+                status_code=422, detail="The default row can't be an AI row — add a new row from the AI template."
+            )
+        if sent & {"theme_id", "build", "seasons"}:
+            theme = _validate_theme(
+                session,
+                merged_theme_id,
+                build=body.build if "build" in sent else collection.build,
+                seasons=merged_seasons,
+            )
         if is_default:
             # The default row is everyone's everyday row and its title is the global template, which every
             # person's row renders: it follows no season, so it can neither take one nor wear its name.
@@ -1663,12 +1720,11 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 )
             if "name" in sent:
                 _reject_season_name_without_seasons(body.name, [])
-        elif sent & {"name", "name_template", "seasons"}:
+        elif sent & {"name", "name_template", "seasons", "theme_id"}:
             # Merged, like the title checks below: a PATCH that sends only the seasons, or only the name,
             # is judged against what the row will be once it lands.
             _reject_season_name_without_seasons(
-                _merged_template(collection, body, sent),
-                body.seasons if "seasons" in sent else list(collection.seasons or []),
+                _merged_template(collection, body, sent), merged_seasons, row_has_theme=merged_theme_id is not None
             )
         # A rename only matters for a NON-default per-person row (the default row's title follows the
         # global Settings template, not this column). The old effective template is what the
@@ -1762,6 +1818,19 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     session,
                     state.secrets,
                     reconcile.season_title(seasonal_template, catalogue[slug]),
+                    exclude_slug=collection.slug,
+                    build=merged_build,
+                    media=merged_media,
+                    library_keys=merged_keys,
+                )
+        # A theme newly set gives a `{theme}` row a title it never wore, as a ticked season does.
+        if theme is not None and "theme_id" in sent and theme.id != collection.theme_id and not is_default:
+            themed_template = _merged_template(collection, body, sent)
+            if uses_theme(themed_template):
+                _reject_duplicate_name(
+                    session,
+                    state.secrets,
+                    fill_theme(themed_template, spec_from_row(theme)),
                     exclude_slug=collection.slug,
                     build=merged_build,
                     media=merged_media,
@@ -2391,6 +2460,31 @@ def _require_collection(session, collection_id: int) -> Collection:
     if collection is None:
         raise HTTPException(status_code=404, detail="collection not found")
     return collection
+
+
+class AiPauseRequest(StrictRequestModel):
+    paused: bool
+
+
+@router.post("/{collection_id}/ai-pause", response_model=CollectionOut)
+async def pause_ai(collection_id: int, body: AiPauseRequest, request: Request) -> dict:
+    """Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; it just never
+    spends tokens writing or refining one (409 from the theme endpoints until resumed)."""
+    with request.app.state.sessions() as session:
+        collection = _require_collection(session, collection_id)
+        if collection.theme_id is None:
+            raise HTTPException(status_code=422, detail="Only an AI row has AI to pause.")
+        if collection.ai_paused != body.paused:
+            collection.ai_paused = body.paused
+            add_audit(
+                session,
+                "collection.ai_pause",
+                "info",
+                slug=collection.slug,
+                paused=body.paused,
+            )
+        session.commit()
+        return _serialize(session, collection, catalogue=load_catalogue(session))
 
 
 @router.post("/{collection_id}/poster/upload", response_model=PosterUploadOut)

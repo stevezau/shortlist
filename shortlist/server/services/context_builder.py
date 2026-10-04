@@ -54,6 +54,7 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
 )
 from shortlist.engine.rows import row_shown_today
+from shortlist.engine.themes import ThemeSpec
 from shortlist.engine.web_guidance import AiInstructions
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
 from shortlist.server.db.models import (
@@ -65,6 +66,7 @@ from shortlist.server.db.models import (
     PickRow,
     RequestCandidate,
     Server,
+    Theme,
     User,
     WatchedTitle,
     WatchSyncState,
@@ -76,6 +78,7 @@ from shortlist.server.services.plex_reachability import explained
 from shortlist.server.services.poster_service import load_upload, make_studio
 from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.sse import EventBus
+from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 #: The season editor's PMS reads (#137). A page waits on them, so a stalled server fails in seconds rather
@@ -1264,6 +1267,7 @@ class ContextBuilder:
                     sort_title_prefix=collection.sort_title_prefix or "",
                     seasons=list(collection.seasons or []),
                     season=season,
+                    theme=self._theme_spec(session, collection),
                     requests_row=bool(collection.requests_row),
                     requests_window_days=int(
                         collection.requests_window_days if collection.requests_window_days is not None else 90
@@ -1272,6 +1276,12 @@ class ContextBuilder:
                 )
             )
         return specs
+
+    @staticmethod
+    def _theme_spec(session: Session, collection: Collection) -> ThemeSpec | None:
+        """The theme an AI row (#138) is filled from, or None for an ordinary row."""
+        theme = session.get(Theme, collection.theme_id) if collection.theme_id is not None else None
+        return None if theme is None else spec_from_row(theme)
 
     @staticmethod
     def _build_poster(session: Session, collection) -> PosterSpec | None:

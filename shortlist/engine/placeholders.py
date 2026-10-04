@@ -97,7 +97,7 @@ def season_renderings(template: str, catalogue: Catalogue) -> list[str]:
 NameField = Literal["row_name", "fallback", "global_name", "person_name"]
 
 
-def refusal(text: str, field: NameField, *, row_has_seasons: bool = False) -> str | None:
+def refusal(text: str, field: NameField, *, row_has_seasons: bool = False, row_has_theme: bool = False) -> str | None:
     """Why ``text`` may not be saved in ``field``, in the words the API answers with; None when it may.
 
     Args:
@@ -106,6 +106,7 @@ def refusal(text: str, field: NameField, *, row_has_seasons: bool = False) -> st
             filled for; ``global_name`` — the default row's name (Settings); ``person_name`` — one person's
             override of the default row's name.
         row_has_seasons: For ``row_name``: whether the row follows any season.
+        row_has_theme: For ``row_name``: whether the row is an AI row, which follows a theme (#138).
     """
     if not text:
         return None
@@ -120,6 +121,11 @@ def refusal(text: str, field: NameField, *, row_has_seasons: bool = False) -> st
                 "the fallback name stands in when the row's own name can't be filled in, so it can't use "
                 "{season} or {season_emoji}. Use a name that stands on its own."
             )
+        if uses_theme(text):
+            return (
+                "the fallback name stands in when the row's own name can't be filled in, so it can't use "
+                "{theme} or {theme_emoji}. Use a name that stands on its own."
+            )
     elif field == "person_name":
         if names_a_seed(text):
             return (
@@ -132,14 +138,23 @@ def refusal(text: str, field: NameField, *, row_has_seasons: bool = False) -> st
                 "a per-person row name can't use {season} or {season_emoji} — it names the default row, which "
                 "follows no season. Give a seasonal row its own name instead."
             )
+        if uses_theme(text):
+            return (
+                "a per-person row name can't use {theme} or {theme_emoji} — only an AI row has a theme. Give "
+                "the AI row its own name instead."
+            )
     elif field == "global_name":
         if uses_season(text):
             # The default row follows no season, so the placeholder could never be filled and the row would
             # stop being built for everyone (discussion #124).
             return "can't use {season} or {season_emoji} — only a seasonal row's own name can"
+        if uses_theme(text):
+            return "can't use {theme} or {theme_emoji} — only an AI row's own name can"
     elif uses_season(text) and not row_has_seasons:
         return (
             "{season} and {season_emoji} only work on a row that follows seasons — pick its seasons, "
             "or take them out of the name."
         )
+    elif uses_theme(text) and not row_has_theme:
+        return "{theme} and {theme_emoji} only work on an AI row — give the row a theme, or take them out of the name."
     return None

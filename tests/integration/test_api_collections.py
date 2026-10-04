@@ -24,6 +24,9 @@ pytestmark = pytest.mark.integration
 #: Every key `collections._serialize` renders — `GET`, `POST` and `PATCH /api/collections` alike.
 COLLECTION_KEYS = {
     "ai_instructions",
+    "ai_paused",
+    "ai_tokens",
+    "theme_id",
     "id",
     "slug",
     "name",

@@ -146,6 +146,20 @@
         "title": "AiInstructionsOut",
         "type": "object"
       },
+      "AiPauseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "AiPauseRequest",
+        "type": "object"
+      },
       "ApiTokenCreatedOut": {
         "additionalProperties": true,
         "properties": {
@@ -536,6 +550,20 @@
           "enabled"
         ],
         "title": "BulkEnabledOut",
+        "type": "object"
+      },
+      "CapabilitiesOut": {
+        "additionalProperties": true,
+        "properties": {
+          "ai": {
+            "title": "Ai",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ai"
+        ],
+        "title": "CapabilitiesOut",
         "type": "object"
       },
       "CleanupOut": {
@@ -1299,6 +1327,18 @@
             "title": "Sort Title Prefix",
             "type": "string"
           },
+          "theme_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The theme this AI row follows (see POST /api/themes). Null for an ordinary row.",
+            "title": "Theme Id"
+          },
           "unstarted_only": {
             "default": false,
             "title": "Unstarted Only",
@@ -1330,6 +1370,16 @@
         "properties": {
           "ai_instructions": {
             "$ref": "#/components/schemas/AiInstructionsOut"
+          },
+          "ai_paused": {
+            "description": "Whether the row's AI is paused: it keeps its theme but spends no tokens.",
+            "title": "Ai Paused",
+            "type": "boolean"
+          },
+          "ai_tokens": {
+            "description": "Tokens the AI has spent writing this row's themes.",
+            "title": "Ai Tokens",
+            "type": "integer"
           },
           "audience": {
             "description": "Everyone, or the subset named by audience_user_ids.",
@@ -1937,6 +1987,18 @@
             "title": "Sort Title Prefix",
             "type": "string"
           },
+          "theme_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The theme an AI row follows; null for an ordinary row.",
+            "title": "Theme Id"
+          },
           "unstarted_only": {
             "title": "Unstarted Only",
             "type": "boolean"
@@ -2022,7 +2084,10 @@
           "hub_anchor",
           "library_keys",
           "poster",
-          "ai_instructions"
+          "ai_instructions",
+          "theme_id",
+          "ai_paused",
+          "ai_tokens"
         ],
         "title": "CollectionOut",
         "type": "object"
@@ -4433,6 +4498,97 @@
         "title": "PresetOut",
         "type": "object"
       },
+      "PreviewIn": {
+        "properties": {
+          "brief": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Brief",
+            "type": "string"
+          },
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
+          "current_theme_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Theme Id"
+          },
+          "media": {
+            "default": "both",
+            "enum": [
+              "movie",
+              "show",
+              "both"
+            ],
+            "title": "Media",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          }
+        },
+        "required": [
+          "brief"
+        ],
+        "title": "PreviewIn",
+        "type": "object"
+      },
+      "PreviewOut": {
+        "additionalProperties": true,
+        "properties": {
+          "diff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeDiffOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "draft": {
+            "$ref": "#/components/schemas/ThemeOut"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/ThemeStatsOut"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draft",
+          "stats",
+          "diff",
+          "tokens"
+        ],
+        "title": "PreviewOut",
+        "type": "object"
+      },
       "PreviewTitleOut": {
         "additionalProperties": true,
         "description": "One title from a row's latest delivery, for the Rows list's poster collage.",
@@ -5672,6 +5828,77 @@
           "tags"
         ],
         "title": "RowSourcesOut",
+        "type": "object"
+      },
+      "RulesIO": {
+        "additionalProperties": true,
+        "description": "A theme's hard limits. A missing or null one is no limit.",
+        "properties": {
+          "max_runtime": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runtime"
+          },
+          "max_year": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1850.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Year"
+          },
+          "min_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Rating"
+          },
+          "min_votes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Votes"
+          },
+          "min_year": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1850.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Year"
+          }
+        },
+        "title": "RulesIO",
         "type": "object"
       },
       "RunCancelledOut": {
@@ -7892,6 +8119,416 @@
         "title": "TagOut",
         "type": "object"
       },
+      "ThemeDiffOut": {
+        "additionalProperties": true,
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "added_count": {
+            "title": "Added Count",
+            "type": "integer"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          },
+          "removed_count": {
+            "title": "Removed Count",
+            "type": "integer"
+          },
+          "rules_changed": {
+            "title": "Rules Changed",
+            "type": "boolean"
+          },
+          "unchanged": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unchanged",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rules_changed",
+          "added",
+          "removed",
+          "unchanged",
+          "added_count",
+          "removed_count"
+        ],
+        "title": "ThemeDiffOut",
+        "type": "object"
+      },
+      "ThemeIn": {
+        "description": "A theme to store. Undeclared fields (a hash echoed back from a preview) are ignored, never stored.",
+        "properties": {
+          "brief": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Brief",
+            "type": "string"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
+          },
+          "emoji": {
+            "anyOf": [
+              {
+                "maxLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emoji"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Genres",
+            "type": "array"
+          },
+          "media": {
+            "items": {
+              "enum": [
+                "movie",
+                "show"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Media",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "default": "manual",
+            "enum": [
+              "ai",
+              "manual"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/ThemePickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/RulesIO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "media"
+        ],
+        "title": "ThemeIn",
+        "type": "object"
+      },
+      "ThemeOut": {
+        "additionalProperties": true,
+        "properties": {
+          "ai_tokens": {
+            "title": "Ai Tokens",
+            "type": "integer"
+          },
+          "brief": {
+            "title": "Brief",
+            "type": "string"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "emoji": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emoji"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres",
+            "type": "array"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "media": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Media",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/ThemePickIO"
+            },
+            "title": "Picks",
+            "type": "array"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/RulesIO"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Stats",
+            "type": "object"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "emoji",
+          "brief",
+          "origin",
+          "media",
+          "tags",
+          "genres",
+          "excluded_genres",
+          "collections",
+          "picks",
+          "rules",
+          "content_hash",
+          "ai_tokens",
+          "stats"
+        ],
+        "title": "ThemeOut",
+        "type": "object"
+      },
+      "ThemePickIO": {
+        "additionalProperties": true,
+        "description": "A title a theme names by TMDB id; ``origin`` says whether the AI or the owner chose it.",
+        "properties": {
+          "media": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media",
+            "type": "string"
+          },
+          "origin": {
+            "default": "owner",
+            "enum": [
+              "ai",
+              "owner"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media"
+        ],
+        "title": "ThemePickIO",
+        "type": "object"
+      },
+      "ThemeSaveIn": {
+        "description": "A save: the theme, what the AI call that wrote it cost, and the row it was written for.",
+        "properties": {
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/ThemeIn"
+          },
+          "stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Stats",
+            "type": "object"
+          },
+          "tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draft"
+        ],
+        "title": "ThemeSaveIn",
+        "type": "object"
+      },
+      "ThemeStatsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "after_rules": {
+            "title": "After Rules",
+            "type": "integer"
+          },
+          "in_library": {
+            "title": "In Library",
+            "type": "integer"
+          },
+          "named": {
+            "title": "Named",
+            "type": "integer"
+          },
+          "resolved": {
+            "title": "Resolved",
+            "type": "integer"
+          },
+          "unwatched_median": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unwatched Median"
+          }
+        },
+        "required": [
+          "named",
+          "resolved",
+          "in_library",
+          "after_rules",
+          "unwatched_median"
+        ],
+        "title": "ThemeStatsOut",
+        "type": "object"
+      },
       "TitleMatchOut": {
         "additionalProperties": true,
         "description": "TMDB's own best guess for a title search, for the \"block a seed\" picker.",
@@ -10062,6 +10699,59 @@
           }
         },
         "summary": "Update Collection",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/ai-pause": {
+      "post": {
+        "description": "Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; it just never\nspends tokens writing or refining one (409 from the theme endpoints until resumed).",
+        "operationId": "pause_ai_api_collections__collection_id__ai_pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiPauseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause Ai",
         "tags": [
           "collections"
         ]
@@ -14103,6 +14793,205 @@
         "summary": "Version",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/api/themes": {
+      "post": {
+        "description": "Save a theme. Its slug is made from its name now; its hash is worked out here.",
+        "operationId": "create_theme_api_themes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThemeSaveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Theme",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
+    "/api/themes/capabilities": {
+      "get": {
+        "description": "Whether an AI provider is set, so the editor can hide the half that needs one.",
+        "operationId": "capabilities_api_themes_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Capabilities",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
+    "/api/themes/preview": {
+      "post": {
+        "description": "Write or refine a theme from a brief with one AI call, without saving anything.\n\n409 while the row's AI is paused, 422 without an AI provider (neither makes a call).",
+        "operationId": "preview_theme_api_themes_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Theme",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
+    "/api/themes/{theme_id}": {
+      "get": {
+        "operationId": "get_theme_api_themes__theme_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "theme_id",
+            "required": true,
+            "schema": {
+              "title": "Theme Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Theme",
+        "tags": [
+          "themes"
+        ]
+      },
+      "put": {
+        "description": "Replace a theme's contents (a hand edit, or an AI refinement the owner kept), keeping its slug.",
+        "operationId": "update_theme_api_themes__theme_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "theme_id",
+            "required": true,
+            "schema": {
+              "title": "Theme Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThemeSaveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Theme",
+        "tags": [
+          "themes"
         ]
       }
     },
