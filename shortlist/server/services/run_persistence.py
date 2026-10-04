@@ -1368,6 +1368,18 @@ def _cost_blob(user_report) -> dict | None:
     }
 
 
+def _trace_with_dry_run_picks(user_report, dry_run: bool) -> dict:
+    """The user's trace, carrying a dry run's picks under ``"picks"``.
+
+    A dry run writes no `PickRow` (`previous_picks` carries those forward, and a rehearsal must not seed
+    tomorrow's run), so without this a practice run — "Try it" on an AI row — had nothing to show.
+    `get_run` serves them from here for dry runs only.
+    """
+    if not dry_run:
+        return user_report.trace
+    return {**(user_report.trace or {}), "picks": _pick_dicts(user_report)}
+
+
 def _persist_user_report(session: Session, run_id: int, user: User, user_report, dry_run: bool) -> None:
     """One user's RunUser row, their picks (non-dry-run only), and their run.user audit event."""
     user.cold_start = user_report.status == "cold_start"
@@ -1384,7 +1396,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
             exa_searches=user_report.exa_searches,
             diff=user_report.diff.__dict__ if user_report.diff else {},
             breakdown=user_report.breakdown,
-            trace=user_report.trace,
+            trace=_trace_with_dry_run_picks(user_report, dry_run),
             rows_considered=user_report.rows_considered or {},
             cost=_cost_blob(user_report),
         )

@@ -1892,9 +1892,17 @@ def _why_nothing_rebuilt(selection: list[dict]) -> str | None:
 _TITLE_NOUNS = {"movie": ("film", "films"), "show": ("show", "shows"), "both": ("title", "titles")}
 
 
+def _list_titles(ctx: EngineContext, spec: RowSpec) -> seasons_mod.SeasonTitles | None:
+    """The titles a seasonal or AI row builds from, as read tonight; None when they could not be read."""
+    if spec.theme is not None:
+        found = ctx.theme_titles.get(spec.theme.slug)
+        return found.titles if found is not None else None
+    return ctx.season_titles.get(spec.season.slug) if spec.season is not None else None
+
+
 def _season_in_row_libraries(ctx: EngineContext, spec: RowSpec) -> set[tuple[int, MediaType]]:
-    """Tonight's season's titles that this row's own libraries hold, of the kinds each library holds."""
-    season = ctx.season_titles.get(spec.season.slug) if spec.season is not None else None
+    """Tonight's season's (or theme's) titles that this row's own libraries hold, of the kinds each library holds."""
+    season = _list_titles(ctx, spec)
     held: set[tuple[int, MediaType]] = set()
     for section in target_sections(ctx.delivery_sections, spec) if season is not None else []:
         kind = section_kind(section)
@@ -1926,11 +1934,13 @@ def _why_season_row_empty(
     Returns:
         The sentence, or None for a season that could not be read tonight, which is reported as that.
     """
-    if spec.season is None or ctx.season_titles.get(spec.season.slug) is None:
+    if (spec.season is None and spec.theme is None) or _list_titles(ctx, spec) is None:
         return None
-    season = f"{spec.season.emoji} {spec.season.name}".strip()
+    # An AI row (#138) reads the same way, from its theme: its empty night is not the rebuild schedule's doing.
+    named = spec.theme if spec.theme is not None else spec.season
+    season = f"{named.emoji or ''} {named.name}".strip()
     one, many = _TITLE_NOUNS.get(spec.media, _TITLE_NOUNS["both"])
-    libraries = f"the {spec.season.name} row's libraries" if several else "this row's libraries"
+    libraries = f"the {named.name} row's libraries" if several else "this row's libraries"
     held = _season_in_row_libraries(ctx, spec)
     if not held:
         return f"No {season} {many} are in {libraries}, so it had nothing to show tonight."
@@ -3881,7 +3891,7 @@ def _run_user(
     # counts (`recent-runs.tsx`, `user-panel.tsx`, `run-user-trace.tsx`), so an empty seasonal row beside a row
     # that delivered must not set it.
     if user_report.reason is None and not all_picks:
-        empty = [spec for spec in specs if spec.season is not None]
+        empty = [spec for spec in specs if spec.season is not None or spec.theme is not None]
         seen = policy.zero_pct_exclusions() if empty else set()
         several = len(empty) > 1
         reasons = [why for spec in empty if (why := _why_season_row_empty(ctx, spec, seen=seen, several=several))]

@@ -644,6 +644,51 @@ class TestRunsApi:
         assert summary["error"] == 1
         assert summary["last_status"] == "error"  # the newest run
 
+    def test_a_dry_runs_picks_are_served_from_the_trace_and_never_stored_as_picks(self, client: TestClient):
+        """ "Try it" on an AI row is a dry run, which writes no PickRow (carry-forward reads those) and so
+        had nothing to show. Its picks ride on the person's trace, and only a dry run reads them there."""
+        from shortlist.engine.models import MediaType, Pick, UserRunReport
+        from shortlist.server.db.models import PickRow, Run
+        from shortlist.server.services.run_persistence import _persist_user_report
+
+        report = UserRunReport(
+            username="sarah",
+            slug="sarah",
+            status="ok",
+            picks=[
+                Pick(
+                    tmdb_id=7,
+                    rating_key=70,
+                    title="Se7en",
+                    rank=1,
+                    reason="Fits Twist endings",
+                    media_type=MediaType.MOVIE,
+                    sources=["theme"],
+                    year=1995,
+                )
+            ],
+        )
+        run_ids = {}
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter_by(slug="sarah").first()
+            for dry_run in (True, False):
+                run = Run(trigger="manual", status="success", dry_run=dry_run, stats={})
+                session.add(run)
+                session.flush()
+                _persist_user_report(session, run.id, user, report, dry_run)
+                run_ids[dry_run] = run.id
+            session.commit()
+            stored = session.query(PickRow).filter_by(run_id=run_ids[True]).count()
+
+        dry = client.get(f"/api/runs/{run_ids[True]}").json()["users"][0]["picks"]
+        real = client.get(f"/api/runs/{run_ids[False]}").json()["users"][0]["picks"]
+
+        assert stored == 0
+        assert [(p["title"], p["reason"], p["sources"], p["year"]) for p in dry] == [
+            ("Se7en", "Fits Twist endings", ["theme"], 1995)
+        ]
+        assert [p["title"] for p in real] == ["Se7en"]
+
     def test_clear_runs_deletes_history_but_keeps_picks_for_the_dashboard(self, client: TestClient):
         from shortlist.server.db.models import PickRow, Run, RunUser
 

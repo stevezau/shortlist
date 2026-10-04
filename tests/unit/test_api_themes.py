@@ -578,6 +578,15 @@ class TestThemeTitleClashes:
 
         assert r.status_code == 200, r.text
 
+    def test_dropping_the_suffix_of_an_ai_rows_template_onto_a_plain_rows_title_is_refused(self, client: TestClient):
+        theme = _save(client, name="Twist endings")
+        ai = _ai_row(client, theme["id"], name="Row", name_template="{theme} too")
+        client.post("/api/collections", json={"name": "Twist endings"})
+
+        r = client.patch(f"/api/collections/{ai['id']}", json={"name": "Row", "name_template": "{theme}"})
+
+        assert r.status_code == 422 and "is already the title of the row" in r.json()["detail"]
+
     def test_renaming_a_theme_onto_a_plain_rows_title_is_refused(self, client: TestClient):
         theme, _ = self._themed(client)
         client.post("/api/collections", json={"name": "Heist films"})

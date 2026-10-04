@@ -768,7 +768,9 @@ def titles_other_rows_build(
             continue  # builds nothing for this person, so no title of theirs can be its collection
         # A seasonal row claims the title of EVERY season, not only tonight's: its collection wears
         # whichever season it was last built for. Claiming more only ever removes less.
-        raw = raw_row_template(other, profile, config)
+        # A themed row's name follows its theme, which is known without picks: fill it, or its title
+        # renders empty and the row claims nothing.
+        raw = fill_theme(raw_row_template(other, profile, config), other.theme)
         templates = season_renderings(raw, config.season_catalogue()) if uses_season(raw) else [raw]
         for section in target_sections(sections, other):
             for template in templates:

@@ -261,6 +261,29 @@ class TestColdStart:
         assert by_id[20].sources == ["theme"]
 
 
+class TestAnEmptyThemeRowSaysSo:
+    def test_a_theme_row_with_nothing_unwatched_says_so_rather_than_blaming_the_schedule(self, ctx):
+        """The person has seen every title of the theme that the library holds."""
+        ctx.history_source.fetch.return_value = [
+            make_watched(f"Seen {key}", days_ago=key % 5 + 1, rating_key=key) for key in (999, 1020, 1030, 1031, 1010)
+        ]
+        ctx.config.rows = [theme_row()]
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert sarah.picks == []
+        assert sarah.reason is not None and "Twist endings" in sarah.reason
+        assert "night to rebuild" not in sarah.reason
+
+    def test_a_theme_with_no_title_in_the_library_says_so(self, ctx):
+        ctx.config.rows = [theme_row(theme_spec(tags=(TAG,)), library_keys=["1"])]
+        ctx.plex.build_library_index.return_value = {900: 999}
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert sarah.reason is not None and "are in this row's libraries" in sarah.reason
+
+
 class TestASharedRowWithATheme:
     def test_it_is_skipped_with_a_warning_never_built_as_an_ordinary_shared_row(self, ctx):
         ctx.config.rows = [theme_row(shared=True, min_watchers=1, slug="ai-shared")]
@@ -286,3 +309,89 @@ class TestTheName:
 
         sarah = next(u for u in report.users if u.username == "sarah")
         assert {title for (_library, title) in sarah.placement_titles} == {"\U0001f300 Twist endings" + row_marker(100)}
+
+
+class TestOtherRowsClaimAThemedTitle:
+    """`remove_row` of one row must never take the collection of an AI row that wears the same title."""
+
+    @staticmethod
+    def _plex_with(ai_collection, movies, tv):
+        deleted: list[str] = []
+
+        class FakePlex:
+            def find_owned_collections(self, section, label):
+                return [ai_collection] if section.key == tv.key else []
+
+            def delete_owned_collection(self, collection, prefix):
+                deleted.append(collection.title)
+
+            def sections(self):
+                return [movies, tv]
+
+        return FakePlex(), deleted
+
+    def test_the_themed_row_claims_its_filled_title(self):
+        from shortlist.engine.delivery import titles_other_rows_build
+
+        movies = SimpleNamespace(key="1", title="Movies", type="movie")
+        ai = theme_row(theme_spec(emoji=None, name="Twist endings"), name_template="{theme}", media="both")
+        claimed = titles_other_rows_build([movies], make_profile("sarah"), EngineConfig(), [ai], "plain")
+        assert claimed == {("1", "Twist endings")}
+
+    def test_removing_a_muted_plain_row_leaves_the_same_titled_ai_row(self):
+        from shortlist.engine.delivery import remove_row
+        from shortlist.engine.models import CollectionDiff
+
+        movies = SimpleNamespace(key="1", title="Movies", type="movie")
+        tv = SimpleNamespace(key="2", title="TV Shows", type="show")
+        profile = make_profile("sarah")
+        plain = RowSpec(slug="plain", name_template="Twist endings", size=10, media="movie")
+        ai = theme_row(theme_spec(emoji=None, name="Twist endings"), name_template="{theme}", media="show")
+        config = EngineConfig(rows=[plain, ai], rows_defined=True)
+        collection = SimpleNamespace(
+            title="Twist endings" + row_marker(profile.plex_account_id), ratingKey=900, key="/library/metadata/900"
+        )
+        plex, deleted = self._plex_with(collection, movies, tv)
+
+        remove_row(
+            plex,
+            profile,
+            config,
+            plain,
+            dry_run=False,
+            diff=CollectionDiff(),
+            sections=[movies, tv],
+            delivered_keys={},
+            other_rows=config.per_person_rows(),
+        )
+
+        assert deleted == []
+
+    def test_retiring_a_shared_row_leaves_the_same_titled_ai_row(self):
+        from shortlist.engine.delivery import remove_row
+        from shortlist.engine.models import CollectionDiff
+
+        movies = SimpleNamespace(key="1", title="Movies", type="movie")
+        tv = SimpleNamespace(key="2", title="TV Shows", type="show")
+        profile = make_profile("sarah")
+        ai = theme_row(theme_spec(emoji="🎄", name="Christmas"), media="both")
+        retired = RowSpec(slug="xmas", name_template="🎄 Christmas", size=10, media="both")
+        config = EngineConfig(rows=[ai], rows_defined=True, retired_rows=[retired])
+        collection = SimpleNamespace(
+            title="🎄 Christmas" + row_marker(profile.plex_account_id), ratingKey=900, key="/library/metadata/900"
+        )
+        plex, deleted = self._plex_with(collection, movies, tv)
+
+        remove_row(
+            plex,
+            profile,
+            config,
+            retired,
+            dry_run=False,
+            diff=CollectionDiff(),
+            sections=[movies, tv],
+            delivered_keys={},
+            other_rows=config.per_person_rows(),
+        )
+
+        assert deleted == []

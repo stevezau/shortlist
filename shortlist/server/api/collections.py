@@ -36,7 +36,7 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
     slugify,
 )
-from shortlist.engine.placeholders import refusal, uses_season, uses_theme
+from shortlist.engine.placeholders import fill_theme, refusal, uses_season, uses_theme
 from shortlist.engine.rows import row_shown_today
 from shortlist.engine.themes import ThemeSpec
 from shortlist.engine.web_guidance import INSTRUCTION_MODES, MAX_INSTRUCTIONS_CHARS, AiInstructions
@@ -1813,7 +1813,12 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             merged_fallback = (
                 body.fallback_name if "fallback_name" in sent else (collection.fallback_name or "")
             ) or ""
-            moved = reconcile.title_key(merged) != reconcile.title_key(collection.name_template or collection.name)
+            # A `{theme}` template keys on "" until filled, so "{theme} too" -> "{theme}" looked like no move at
+            # all: compare the titles the row wears before and after, each with its own theme filled in.
+            title_before = fill_theme(
+                collection.name_template or collection.name, reconcile._theme_of(session, collection)
+            )
+            moved = reconcile.title_key(fill_theme(merged, merged_spec)) != reconcile.title_key(title_before)
             fallback_moved = reconcile.title_key(merged_fallback) != reconcile.title_key(collection.fallback_name or "")
             # Only when the TITLE actually moves. The editor re-sends `name` on every save, so
             # checking on "was the field present" refused a size-only edit on a row that already

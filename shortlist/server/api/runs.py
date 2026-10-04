@@ -256,6 +256,41 @@ def _request_outcomes(session, tmdb_ids: set[int]) -> dict[str, dict]:
     }
 
 
+def _run_user_picks(run: Run, run_user: RunUser, picks: list) -> list[dict]:
+    """A person's picks for the run page: the picks table, or for a dry run (which writes none) the copy
+    kept on the run's trace."""
+    if run.dry_run:
+        stored = (run_user.trace or {}).get("picks") or []
+        return [
+            {
+                "rank": p.get("rank", 0),
+                "title": p.get("title", ""),
+                "reason": p.get("reason"),
+                "rating_key": p.get("rating_key") or 0,
+                "seed_title": p.get("seed_title"),
+                "sources": list(p.get("sources") or []),
+                "affinity": p.get("affinity", 1.0),
+                "year": p.get("year"),
+                "rating": p.get("rating"),
+            }
+            for p in stored
+        ]
+    return [
+        {
+            "rank": p.rank,
+            "title": p.title,
+            "reason": p.reason,
+            "rating_key": p.rating_key or 0,
+            "seed_title": p.seed_title,
+            "sources": [s for s in (p.sources or "").split(",") if s],
+            "affinity": p.affinity,
+            "year": p.year,
+            "rating": p.rating,
+        }
+        for p in picks
+    ]
+
+
 @router.get("/{run_id}", response_model=RunDetailOut)
 async def get_run(run_id: int, request: Request) -> dict:
     with request.app.state.sessions() as session:
@@ -286,20 +321,7 @@ async def get_run(run_id: int, request: Request) -> dict:
                     "llm_tokens_by_step": run_user.llm_tokens_by_step or {},
                     "exa_searches": run_user.exa_searches,
                     "diff": run_user.diff or {},
-                    "picks": [
-                        {
-                            "rank": p.rank,
-                            "title": p.title,
-                            "reason": p.reason,
-                            "rating_key": p.rating_key or 0,
-                            "seed_title": p.seed_title,
-                            "sources": [s for s in (p.sources or "").split(",") if s],
-                            "affinity": p.affinity,
-                            "year": p.year,
-                            "rating": p.rating,
-                        }
-                        for p in picks
-                    ],
+                    "picks": _run_user_picks(run, run_user, picks),
                     # Per-(row, library) breakdown; [] on legacy runs -> UI falls back to diff + picks.
                     "breakdown": _with_provenance(run_user.breakdown or [], picks),
                     # Whether a full pipeline trace was recorded for this user (fetched on demand from
