@@ -48,18 +48,22 @@ from shortlist.engine.pipeline import identity_map
 from shortlist.engine.placeholders import (
     catalogue_seasons,
     fill_season,
+    fill_theme,
     names_a_seed,
     needs_a_run,
     season_renderings,
     uses_season,
+    uses_theme,
 )
 from shortlist.engine.seasons import Catalogue, Season
-from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Run, User
+from shortlist.engine.themes import ThemeSpec
+from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Run, Theme, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import write_audit
 from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.season_catalogue import load_catalogue
+from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -214,12 +218,21 @@ def title_key(template: str) -> str:
     return render_row_name(probe, _PROBE_PROFILE, [], library_name=_PROBE_LIBRARY).casefold()
 
 
-def title_keys(template: str, *, catalogue: Catalogue) -> set[str]:
+def title_keys(template: str, *, catalogue: Catalogue, theme: ThemeSpec | None = None) -> set[str]:
     """Every key ``template`` can collide on: `title_key` itself, plus, for a seasonal name, the title it
     renders to in each season. In December `{season} picks` IS "Christmas picks", so a plain row with that
     name would share its collection. Every catalogue season rather than only the row's own: refusing a
-    few names too many is recoverable, one collection for two rows is not."""
-    keys = {title_key(template)} | {title_key(rendering) for rendering in season_renderings(template or "", catalogue)}
+    few names too many is recoverable, one collection for two rows is not.
+
+    An AI row's `{theme}` is filled from ITS theme (#138), not probed: two rows on different themes wear
+    different titles, so only a row on the same theme (or a plain row named like it) can clash. A name using
+    `{theme}` with no theme to fill it renders no title at all."""
+    template = template or ""
+    if uses_theme(template):
+        if theme is None:
+            return set()
+        template = fill_theme(template, theme)
+    keys = {title_key(template)} | {title_key(rendering) for rendering in season_renderings(template, catalogue)}
     return {key for key in keys if key}
 
 
@@ -229,6 +242,12 @@ def season_title(template: str, season: Season) -> str:
     return season_renderings(template or "", {season.slug: season})[0]
 
 
+def _theme_of(session, collection: Collection) -> ThemeSpec | None:
+    """The theme an AI row follows, as the engine reads it, or None."""
+    row = session.get(Theme, collection.theme_id) if collection.theme_id is not None else None
+    return None if row is None else spec_from_row(row)
+
+
 def _title_keys(session, collection: Collection, secrets, *, catalogue: Catalogue) -> set[str]:
     """Every title this row can end up with: from its own template, and from its fallback name.
 
@@ -236,9 +255,9 @@ def _title_keys(session, collection: Collection, secrets, *, catalogue: Catalogu
     dropped — a `{top_seed}` row with no fallback renders to nothing for a person with no watch, and
     "no title" cannot clash with "no title": neither row is built for them.
     """
-    keys = title_keys(row_template(session, collection.slug, secrets), catalogue=catalogue) | {
-        title_key(collection.fallback_name or "")
-    }
+    keys = title_keys(
+        row_template(session, collection.slug, secrets), catalogue=catalogue, theme=_theme_of(session, collection)
+    ) | {title_key(collection.fallback_name or "")}
     return {k for k in keys if k}
 
 
@@ -252,6 +271,7 @@ def row_titled_from(
     fallback_name: str = "",
     media: str = "both",
     library_keys=(),
+    theme: ThemeSpec | None = None,
 ) -> Collection | None:
     """The first of `rows_titled_from`, or None."""
     clashes = rows_titled_from(
@@ -263,6 +283,7 @@ def row_titled_from(
         fallback_name=fallback_name,
         media=media,
         library_keys=library_keys,
+        theme=theme,
     )
     return clashes[0] if clashes else None
 
@@ -277,6 +298,7 @@ def rows_titled_from(
     fallback_name: str = "",
     media: str = "both",
     library_keys=(),
+    theme: ThemeSpec | None = None,
 ) -> list[Collection]:
     """The rows whose collections are ALREADY titled from ``template`` in a library this row could reach.
 
@@ -294,6 +316,8 @@ def rows_titled_from(
     and the two silently shared one collection per user per library.
 
     ``exclude_slug`` is the row being edited, which must not clash with itself.
+
+    ``theme`` is the incoming row's theme, which fills its `{theme}` (#138).
 
     ``media`` and ``library_keys`` are where the incoming row builds; a row that can never build in any
     of the same libraries is skipped (issue #121). A title identifies a per-person row only within one
@@ -318,7 +342,7 @@ def rows_titled_from(
     """
     # Both of the incoming row's possible titles, for the same reason `_title_keys` collects both.
     catalogue = load_catalogue(session)
-    wanted_keys = title_keys(template, catalogue=catalogue) | {k for k in (title_key(fallback_name),) if k}
+    wanted_keys = title_keys(template, catalogue=catalogue, theme=theme) | {k for k in (title_key(fallback_name),) if k}
     # An unrenderable template has no title to collide on. Since issue #84 that includes every
     # `{top_seed}` template, which renders to "" without picks — an improvement: they all used to
     # render the same substitute name and so were refused against each other and against any row

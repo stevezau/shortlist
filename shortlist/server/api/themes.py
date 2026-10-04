@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.curator import make_curator
 from shortlist.engine.models import MediaType, RowLimits, UserProfile, UserType, WatchedItem
-from shortlist.engine.placeholders import fill_theme, uses_theme
+from shortlist.engine.placeholders import uses_theme
 from shortlist.engine.themes import _MOVIE_GENRE_IDS, ThemeSpec, theme_content_hash
 from shortlist.server.api import collections as collections_api
 from shortlist.server.api.schemas import PassthroughModel
@@ -309,6 +309,7 @@ def _row_libraries(session: Session, collection_id: int | None) -> list[str]:
     collection = session.get(Collection, collection_id)
     if collection is None:
         raise HTTPException(status_code=404, detail="collection not found")
+    # Pause blocks AI spend (preview); hand edits and 0-token saves stay legitimate (`_spend_on`).
     if collection.ai_paused:
         raise HTTPException(status_code=409, detail=_PAUSED)
     return [str(k) for k in collection.library_keys or []]
@@ -392,7 +393,10 @@ def _audit(session: Session, row: Theme, body: ThemeSaveIn, *, diff: ThemeDiff |
 
 
 def _reject_title_clashes(session: Session, state, theme: Theme) -> None:
-    """422 when renaming a theme would title a row what another row is already titled, in a library both share."""
+    """422 when renaming a theme would title a row what another row is already titled, in a library both share.
+
+    The theme is already flushed with its new name, so every row on it is checked as it would now be titled.
+    """
     spec = spec_from_row(theme)
     for row in session.query(Collection).filter(Collection.theme_id == theme.id):
         template = row.name_template or row.name
@@ -401,12 +405,13 @@ def _reject_title_clashes(session: Session, state, theme: Theme) -> None:
         collections_api._reject_duplicate_name(
             session,
             state.secrets,
-            fill_theme(template, spec),
+            template,
             exclude_slug=row.slug,
             build=row.build or "",
             fallback_name=row.fallback_name or "",
             media=row.media or "both",
             library_keys=row.library_keys or [],
+            theme=spec,
         )
 
 

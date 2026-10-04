@@ -36,8 +36,9 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
     slugify,
 )
-from shortlist.engine.placeholders import fill_theme, refusal, uses_season, uses_theme
+from shortlist.engine.placeholders import refusal, uses_season, uses_theme
 from shortlist.engine.rows import row_shown_today
+from shortlist.engine.themes import ThemeSpec
 from shortlist.engine.web_guidance import INSTRUCTION_MODES, MAX_INSTRUCTIONS_CHARS, AiInstructions
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
@@ -1163,6 +1164,7 @@ def _reject_duplicate_name(
     media: str = "both",
     library_keys=(),
     already_clashing: frozenset[str] = frozenset(),
+    theme: ThemeSpec | None = None,
 ) -> None:
     """Refuse a row title another row is already titled from — see `reconcile.row_titled_from` for
     what "already titled from" means and why the `name` column is the wrong thing to compare.
@@ -1187,6 +1189,7 @@ def _reject_duplicate_name(
                 fallback_name=fallback_name,
                 media=media,
                 library_keys=library_keys,
+                theme=theme,
             )
             if row.slug not in already_clashing
         ),
@@ -1355,16 +1358,17 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
         body.seasons = _known_seasons(body.seasons, catalogue=catalogue)
         theme = _validate_theme(session, body.theme_id, build=body.build, seasons=body.seasons)
         # The template this row will actually be titled from, not the bare name — a POST may set both. An AI
-        # row's has its theme filled in: that is the title it will wear.
+        # row's `{theme}` is filled from its theme by the check itself.
         template = body.name_template or body.name
         _reject_duplicate_name(
             session,
             request.app.state.secrets,
-            template if theme is None else fill_theme(template, spec_from_row(theme)),
+            template,
             build=body.build,
             fallback_name=body.fallback_name,
             media=body.media,
             library_keys=body.library_keys,
+            theme=None if theme is None else spec_from_row(theme),
         )
         _validate_anchor_rows(session, body, editing_slug="")
         slug = _unique_slug(session, slugify(body.name))
@@ -1710,6 +1714,9 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 build=body.build if "build" in sent else collection.build,
                 seasons=merged_seasons,
             )
+        # The theme the row will follow once this lands: it fills `{theme}` in every title check below.
+        stored_theme = session.get(Theme, merged_theme_id) if merged_theme_id is not None else None
+        merged_spec = None if stored_theme is None else spec_from_row(stored_theme)
         if is_default:
             # The default row is everyone's everyday row and its title is the global template, which every
             # person's row renders: it follows no season, so it can neither take one nor wear its name.
@@ -1756,6 +1763,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     fallback_name=fallback_now,
                     media=collection.media,
                     library_keys=old_keys,
+                    theme=reconcile._theme_of(session, collection),
                 )
             )
             _reject_duplicate_name(
@@ -1768,6 +1776,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 media=merged_media,
                 library_keys=merged_keys,
                 already_clashing=before_clashes,
+                theme=merged_spec,
             )
         # The clash check runs on the MERGED effective template, for the same reason `_validate_pairing`
         # does: a PATCH may send either half. Sending `name_template` ALONE changes the title and used
@@ -1805,6 +1814,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     fallback_name=merged_fallback,
                     media=merged_media,
                     library_keys=merged_keys,
+                    theme=merged_spec,
                 )
         # A season newly ticked gives a `{season}` row a title it never wore: "{season} picks" becomes
         # "Thanksgiving picks", the title a plain row beside it may already have (#137 I-2). The checks above run
@@ -1822,6 +1832,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     build=merged_build,
                     media=merged_media,
                     library_keys=merged_keys,
+                    theme=merged_spec,
                 )
         # A theme newly set gives a `{theme}` row a title it never wore, as a ticked season does.
         if theme is not None and "theme_id" in sent and theme.id != collection.theme_id and not is_default:
@@ -1830,11 +1841,12 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 _reject_duplicate_name(
                     session,
                     state.secrets,
-                    fill_theme(themed_template, spec_from_row(theme)),
+                    themed_template,
                     exclude_slug=collection.slug,
                     build=merged_build,
                     media=merged_media,
                     library_keys=merged_keys,
+                    theme=merged_spec,
                 )
         # The default row has no per-collection name: its title IS the global `row.name_template`
         # (Settings → Defaults), which delivery renders per library. So a rename of it writes that
@@ -2326,7 +2338,9 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
             # could hand two rows one title, or overwrite the global template, with nothing to stop
             # it. Checked BEFORE either write, so a refusal renames nothing here or on Plex.
             _reject_season_name_without_seasons(
-                new_template, [] if slug == DEFAULT_SLUG else list(collection.seasons or [])
+                new_template,
+                [] if slug == DEFAULT_SLUG else list(collection.seasons or []),
+                row_has_theme=collection.theme_id is not None,
             )
             _reject_duplicate_name(
                 session,
@@ -2336,6 +2350,7 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
                 build=build,
                 media=collection.media,
                 library_keys=collection.library_keys or [],
+                theme=reconcile._theme_of(session, collection),
             )
             # Same rule as the PATCH handler: the DEFAULT row's title IS the global setting, and its
             # own column must stay empty. Writing it here would undo that guard within the same

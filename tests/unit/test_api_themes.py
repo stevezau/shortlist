@@ -411,6 +411,58 @@ class TestAiRows:
         assert next(s for s in specs if s.slug == "picked").theme is None
 
 
+class TestThemeTitleClashes:
+    """The generic title check fills `{theme}` from each row's own theme, as it fills `{season}`."""
+
+    def _themed(self, client: TestClient, name: str = "Twist endings") -> tuple[dict, dict]:
+        theme = _save(client, name=name)
+        return theme, _ai_row(client, theme["id"], name=f"Row {name}", name_template="{theme}")
+
+    def test_a_plain_row_named_after_an_ai_rows_theme_is_refused_on_create(self, client: TestClient):
+        self._themed(client)
+
+        r = client.post("/api/collections", json={"name": "Twist endings"})
+
+        assert r.status_code == 422 and "is already the title of the row" in r.json()["detail"]
+
+    def test_a_plain_row_renamed_after_an_ai_rows_theme_is_refused(self, client: TestClient):
+        self._themed(client)
+        plain = client.post("/api/collections", json={"name": "Plain"}).json()
+
+        r = client.patch(f"/api/collections/{plain['id']}", json={"name": "Twist endings"})
+
+        assert r.status_code == 422 and "is already the title of the row" in r.json()["detail"]
+
+    def test_two_ai_rows_on_one_theme_with_one_template_are_refused(self, client: TestClient):
+        theme, _ = self._themed(client)
+
+        r = client.post(
+            "/api/collections", json={"name": "Second", "theme_id": theme["id"], "name_template": "{theme}"}
+        )
+
+        assert r.status_code == 422 and "is already the title of the row" in r.json()["detail"]
+
+    def test_moving_an_ai_row_to_a_different_theme_is_not_a_clash(self, client: TestClient):
+        self._themed(client)
+        other = _save(client, name="Heist films")
+        second = _ai_row(client, other["id"], name="Second", name_template="{theme} too")
+
+        r = client.patch(
+            f"/api/collections/{second['id']}",
+            json={"name": "Second", "name_template": "{theme}", "theme_id": other["id"]},
+        )
+
+        assert r.status_code == 200, r.text
+
+    def test_renaming_a_theme_onto_a_plain_rows_title_is_refused(self, client: TestClient):
+        theme, _ = self._themed(client)
+        client.post("/api/collections", json={"name": "Heist films"})
+
+        r = client.put(f"/api/themes/{theme['id']}", json={"draft": _body(name="Heist films"), "tokens": 0})
+
+        assert r.status_code == 422 and "is already the title of the row" in r.json()["detail"]
+
+
 class TestThemePlaceholderRefusal:
     def test_refusal_knows_theme_the_way_it_knows_season(self):
         assert refusal("{theme} picks", "row_name") is not None
