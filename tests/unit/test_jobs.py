@@ -508,6 +508,8 @@ class TestHandlers:
             # Takes no target either: it converges EVERY row onto the surfaces its own day schedule
             # asks for today, so aiming it at anything is meaningless (issue #102).
             "rows.visibility",
+            # Takes no target: one pass over every explore row's people (#138).
+            "themes.rotate",
         }
 
     def test_the_catalog_describes_every_registered_handler(self):
@@ -532,6 +534,7 @@ class TestHandlers:
             scheduler.SYNC_CHECK_JOB_ID,
             scheduler.MAINTENANCE_PRUNE_JOB_ID,
             scheduler.ROW_VISIBILITY_JOB_ID,
+            scheduler.THEMES_ROTATE_JOB_ID,
         }
         scheduled = {e.schedule_job_id for e in jobs.CATALOG if e.schedule_job_id}
         assert scheduled == ids
@@ -562,7 +565,15 @@ class TestHandlers:
         # `notify.send` touches neither Plex nor plex.tv — it POSTs one message to the owner's own
         # webhook. Classing it a writer would park every alert behind the Plex lock, so the news that
         # a run failed would wait on the very thing that just failed.
-        assert readers == {"sync.history", "backup.take", "maintenance.prune", "watch.reconcile", "notify.send"}
+        assert readers == {
+            "sync.history",
+            "backup.take",
+            "maintenance.prune",
+            "watch.reconcile",
+            "notify.send",
+            # Reads the libraries, writes only Shortlist's own database (#138).
+            "themes.rotate",
+        }
         writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
         assert "privacy.sync" in writers and "sync.check" in writers
         assert {"user.cleanup", "user.hide", "user.restore", "row.reconcile"} <= writers

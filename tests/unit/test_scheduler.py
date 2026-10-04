@@ -487,6 +487,7 @@ class TestScheduledWorkIsDurable:
             ("db-backup", "backup.take"),
             ("privacy-sync", "privacy.sync"),
             ("maintenance-prune", "maintenance.prune"),
+            ("themes-rotate", "themes.rotate"),
         ],
     )
     def test_each_scheduled_task_lands_on_the_queue(self, app, job_id, kind, monkeypatch):
@@ -683,6 +684,34 @@ class TestPrivacySyncSchedule:
 
         assert job is not None, "the retention prune has no schedule — it only runs if runs do"
         assert job.trigger is not None
+
+    def test_theme_rotation_is_scheduled_with_its_default_cron(self, app):
+        from shortlist.server.scheduler import DEFAULT_CRONS, THEMES_ROTATE_JOB_ID, build_scheduler, crontab_trigger
+
+        job = build_scheduler(app).get_job(THEMES_ROTATE_JOB_ID)
+
+        assert job is not None
+        assert str(job.trigger) == str(crontab_trigger(DEFAULT_CRONS["themes.rotate_cron"]))
+
+    def test_a_custom_rotation_cron_is_honoured(self, app):
+        from shortlist.server.scheduler import THEMES_ROTATE_JOB_ID, build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            SettingsStore(session).set("themes.rotate_cron", "0 9 * * *")
+
+        job = build_scheduler(app).get_job(THEMES_ROTATE_JOB_ID)
+        assert job is not None
+        assert "hour='9'" in str(job.trigger)
+
+    def test_a_blank_rotation_cron_registers_nothing(self, app):
+        from shortlist.server.scheduler import THEMES_ROTATE_JOB_ID, build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            SettingsStore(session).set("themes.rotate_cron", "")
+
+        assert build_scheduler(app).get_job(THEMES_ROTATE_JOB_ID) is None
 
     def test_the_prune_runs_after_every_other_schedule(self, app):
         """Order matters: it trims runs and events, so a pass that fired before the night's syncs

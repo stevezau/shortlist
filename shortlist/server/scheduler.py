@@ -31,6 +31,7 @@ PRIVACY_SYNC_JOB_ID = "privacy-sync"
 ROW_VISIBILITY_JOB_ID = "rows-visibility"
 SYNC_CHECK_JOB_ID = "sync-check"
 MAINTENANCE_PRUNE_JOB_ID = "maintenance-prune"
+THEMES_ROTATE_JOB_ID = "themes-rotate"
 JOBS_DRAIN_JOB_ID = "jobs.drain"
 JOBS_SWEEP_JOB_ID = "jobs.sweep"
 
@@ -73,12 +74,15 @@ DEFAULT_CRONS: dict[str, str] = {
     # 06:15 — last of the night, after every other schedule has finished writing runs and events, so
     # the retention pass trims a settled database rather than one still being appended to.
     "maintenance.prune_cron": "15 6 * * *",
+    # Once a day. Rows have their own crons and rotation reads the DB, never the clock, so when this
+    # fires is not load-bearing: a row that builds before it simply builds with the theme it already has.
+    "themes.rotate_cron": "30 1 * * *",
 }
 
 
 #: Schedules the owner can switch off entirely. For these, a stored blank means OFF; for every other
 #: key it means "inherit the built-in default".
-_OFF_ABLE = {"sync.check_cron"}
+_OFF_ABLE = {"sync.check_cron", "themes.rotate_cron"}
 
 
 def effective_cron(app, key: str) -> str:
@@ -414,6 +418,21 @@ def _register_maintenance_prune(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, crontab_trigger(cron), id=MAINTENANCE_PRUNE_JOB_ID, replace_existing=True)
 
 
+def _register_theme_rotation(scheduler: AsyncIOScheduler, app) -> None:
+    """The daily pass that gives explore rows' people their next theme (#138). Database only; clearing the
+    cron turns it off."""
+    cron = _resolve_cron(app, "themes.rotate_cron", DEFAULT_CRONS["themes.rotate_cron"], blank_means_off=True)
+    if not cron:
+        if scheduler.get_job(THEMES_ROTATE_JOB_ID):
+            scheduler.remove_job(THEMES_ROTATE_JOB_ID)
+        return
+
+    async def fire() -> None:
+        await _queue_and_drain(app, "themes.rotate")
+
+    scheduler.add_job(fire, crontab_trigger(cron), id=THEMES_ROTATE_JOB_ID, replace_existing=True)
+
+
 def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:
     """Drain the durable job queue on a short interval, and sweep abandoned jobs on a long one.
 
@@ -507,6 +526,7 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register_row_visibility(scheduler, app)
     _register_sync_check(scheduler, app)
     _register_maintenance_prune(scheduler, app)
+    _register_theme_rotation(scheduler, app)
     _register_jobs_worker(scheduler, app)
     logger.info(
         "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + row-visibility "
@@ -534,6 +554,7 @@ def rebuild_schedule(app) -> None:
     _register_row_visibility(scheduler, app)
     _register_sync_check(scheduler, app)
     _register_maintenance_prune(scheduler, app)
+    _register_theme_rotation(scheduler, app)
     logger.info(
         "rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync "
         "+ row-visibility + prune{}",

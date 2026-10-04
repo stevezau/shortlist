@@ -165,6 +165,10 @@ class RunService:
         """The owner's PMS, or None before setup — for the season editor's reads (issue #137). Connects."""
         return self._ctx.build_plex_reader()
 
+    def profile_with_history(self, session: Session, user_id: int):
+        """One person's profile with their watch history filled in, as a run reads it — for theme authoring."""
+        return self._ctx.profile_with_history(session, user_id)
+
     def build_request_sources_only(self):
         """Request sources + enabled roster + plex id -> DB id for the requests-row setup check."""
         return self._ctx.build_request_sources_only()

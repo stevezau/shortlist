@@ -655,6 +655,25 @@ class ContextBuilder:
             }
             return self._build_request_sources(store), profiles, db_ids
 
+    def profile_with_history(self, session: Session, user_id: int) -> UserProfile:
+        """One person's profile with their watch history read the way a run reads it — for authoring a theme.
+
+        Raises RuntimeError if Plex isn't configured yet, LookupError if the person is gone.
+        """
+        user = session.get(User, user_id)
+        if user is None:
+            raise LookupError("user not found")
+        store = SettingsStore(session, self._secrets)
+        plex_url, plex_token = store.get("plex.url"), store.get("plex.token")
+        if not plex_url or not plex_token:
+            raise RuntimeError("Plex connection is not configured yet")
+        profile = self._profile(user, {})
+        plex = PlexClient(plex_url, plex_token)
+        plextv = PlexTvClient(plex_token, plex.machine_id)
+        history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
+        profile.history = history.fetch(profile, min_completion=EngineConfig().min_completion)
+        return profile
+
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         """Recent watches for one user, newest first — the same source that feeds recommendations.
 

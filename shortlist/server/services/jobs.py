@@ -295,6 +295,26 @@ CATALOG: tuple[JobKind, ...] = (
         ),
     ),
     JobKind(
+        kind="themes.rotate",
+        label="Change explore rows' themes",
+        description=(
+            "For every AI row set to Explore, gives each person a new theme when their current one has "
+            "run its course, and writes the following theme a day early so you can look at it and change "
+            "it. It asks your AI provider for a theme only when one is needed, and the tokens are counted "
+            "against that row."
+            "\n\nIt changes nothing on Plex. A row picks up its new theme the next time the row itself "
+            "builds. If something goes wrong (the AI is paused or unreachable, TMDB has no key) the "
+            "person keeps the theme they have, the problem is recorded in the change log, and the next "
+            "pass tries again."
+            "\n\nRuns once a day by default. How often a theme changes is set on each row, not here."
+        ),
+        manual=True,
+        writes_plex=False,  # reads the libraries to see what the server holds; writes only Shortlist's database
+        schedule_job_id="themes-rotate",
+        schedule_setting="themes.rotate_cron",
+        schedule_optional=True,
+    ),
+    JobKind(
         kind="user.cleanup",
         label="Remove a disabled person's rows",
         description=(
@@ -1359,6 +1379,53 @@ def _watch_reconcile(state, payload: dict) -> dict:
     if changed:
         state.bus.publish("sync.finished", {"kind": "credited", "ok": True, "count": changed})
     return {"users_credited": changed}
+
+
+@handler("themes.rotate")
+def _themes_rotate(state, payload: dict) -> dict:
+    """Promote and author explore rows' per-person themes (#138). Writes Shortlist's own database only.
+
+    Authoring needs an AI provider, a TMDB key and a connected Plex. Without one, no theme changes: every
+    person who needed one keeps theirs and gets an event saying why, and the next pass tries again.
+    """
+    from shortlist.engine.curator import make_curator
+    from shortlist.server.services.context_builder import curator_kwargs
+    from shortlist.server.services.theme_rotation import rotate_themes
+
+    unavailable, curator, plex = "", None, None
+    with state.sessions() as session:
+        store = SettingsStore(session, state.secrets)
+        provider = str(store.get("curator.provider") or "").strip().lower()
+        if provider in ("", "none", "null"):
+            unavailable = "Choosing new themes needs an AI provider. Add one in Settings."
+        else:
+            try:
+                curator = make_curator(provider, **curator_kwargs(store.get))
+            except Exception as e:
+                # Class name only: an SDK's message can carry a fragment of the key.
+                logger.warning("themes.rotate: could not set up the AI provider ({})", type(e).__name__)
+                unavailable = "The AI provider isn't set up properly. Check it in Settings."
+    tmdb = state.run_service.build_tmdb_only()
+    if not unavailable and tmdb is None:
+        unavailable = "Add a TMDB API key in Settings first."
+    if not unavailable:
+        plex = state.run_service.build_plex_reader()
+        if plex is None:
+            unavailable = "Plex isn't connected yet."
+    outcomes = rotate_themes(
+        state.sessions,
+        now=datetime.now(UTC),
+        secrets=state.secrets,
+        unavailable=unavailable,
+        curator=curator,
+        tmdb=tmdb,
+        plex=plex,
+        profile_for=state.run_service.profile_with_history,
+    )
+    counts: dict[str, int] = {}
+    for outcome in outcomes:
+        counts[outcome.action] = counts.get(outcome.action, 0) + 1
+    return {"targets": len(outcomes), **counts}
 
 
 @handler("maintenance.prune")
