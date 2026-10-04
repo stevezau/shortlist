@@ -67,6 +67,22 @@ function report(runs: Partial<EffectivenessReport["runs"]> = {}, firstPick: stri
   } as unknown as EffectivenessReport;
 }
 
+// What the browser cache accepts: every object and array field the report body reads.
+function cachedReport() {
+  return {
+    ...report(),
+    overall: {},
+    coverage: {},
+    requests: {},
+    watch_sync: {},
+    trend: [],
+    per_user: [],
+    per_row: [],
+    top_titles: [],
+    recent: [],
+  };
+}
+
 const NO_RUN = report({ total: 0, in_window: 0, last_finished: null, last_status: null }, null);
 
 function finishedRun(overrides: Partial<Run> = {}): Run {
@@ -441,5 +457,55 @@ describe("the dashboard after a run", () => {
     expect(screen.getByRole("button", { name: /^Run now$/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Dry run$/ })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /for the first time/ })).toBeNull();
+  });
+});
+
+describe("the dashboard while the report loads", () => {
+  it("shows a labelled skeleton, and no run buttons, when there is nothing cached", async () => {
+    getReport.mockReturnValue(new Promise(() => {}));
+
+    renderDashboard();
+
+    const skeleton = await screen.findByRole("status", { name: "Loading the impact report" });
+    expect(skeleton).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("button", { name: "Run now" })).not.toBeInTheDocument();
+  });
+
+  it("shows the remembered report at once, then lets the real one replace it", async () => {
+    localStorage.setItem("shortlist.report.v1.30", JSON.stringify(cachedReport()));
+    let resolve!: (value: EffectivenessReport) => void;
+    getReport.mockReturnValue(new Promise<EffectivenessReport>((r) => (resolve = r)));
+
+    renderDashboard();
+
+    expect(await screen.findByText("impact report")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading the impact report" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run now" })).toBeInTheDocument();
+
+    resolve(report());
+    expect(await screen.findByText("impact report")).toBeInTheDocument();
+  });
+
+  it("drops a cached normal report for the first-run panel once the real report says nothing has run", async () => {
+    localStorage.setItem("shortlist.report.v1.30", JSON.stringify(cachedReport()));
+    let resolve!: (value: EffectivenessReport) => void;
+    getReport.mockReturnValue(new Promise<EffectivenessReport>((r) => (resolve = r)));
+
+    renderDashboard();
+    expect(await screen.findByText("impact report")).toBeInTheDocument();
+
+    resolve(NO_RUN);
+
+    await vi.waitFor(() => expect(screen.queryByText("impact report")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Dry run" })).not.toBeInTheDocument();
+  });
+
+  it("does not show the first-run panel from a cached report that is not first-run shaped", async () => {
+    localStorage.setItem("shortlist.report.v1.30", JSON.stringify(cachedReport()));
+    getReport.mockReturnValue(new Promise(() => {}));
+
+    renderDashboard();
+
+    expect(await screen.findByText("impact report")).toBeInTheDocument();
   });
 });

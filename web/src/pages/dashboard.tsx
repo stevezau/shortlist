@@ -5,10 +5,10 @@ import { DashboardStatus } from "@/components/dashboard/dashboard-status";
 import { FirstRunPanel } from "@/components/dashboard/first-run-panel";
 import { ImpactReport } from "@/components/dashboard/impact-report";
 import { PrivacyCallout } from "@/components/dashboard/privacy-callout";
+import { ReportSkeleton } from "@/components/dashboard/report-skeleton";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { latestFinishedRun, nextRowRun } from "@/lib/dashboard-status";
 import { usePrivacyGlance } from "@/lib/privacy-attention";
 import {
@@ -93,7 +93,7 @@ export function DashboardPage() {
       <PrivacyCallout status={privacy.data} lastRun={latestFinishedRun(runs.data)} />
 
       {report.isPending ? (
-        <Skeleton className="h-96 w-full" />
+        <ReportSkeleton />
       ) : firstRun ? (
         <FirstRunPanel
           people={enabled}

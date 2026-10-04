@@ -12,7 +12,7 @@ import { Why } from "@/components/why";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ReportSkeleton } from "@/components/dashboard/report-skeleton";
 import { formatDate, timeAgo, weekStarting } from "@/lib/format";
 import {
   useClearDeletedRows,
@@ -887,12 +887,21 @@ function ReportBody({
   report,
   reportWindow,
   onWindowChange,
+  updating,
 }: {
   report: EffectivenessReport;
   reportWindow: ReportWindow;
   onWindowChange: (next: ReportWindow) => void;
+  updating: boolean;
 }) {
   const { overall, coverage, runs, requests } = report;
+
+  // The payload echoes its window: a mismatch means this is another window's report standing in
+  // while the selected one loads, so dim the figures rather than pass them off as current.
+  const dim = cn(
+    "transition-opacity motion-reduce:transition-none",
+    report.window !== reportWindow && "opacity-60",
+  );
 
   // `since === null` is the "all time" window, which by definition can't be narrower than the data.
   const coversEverything =
@@ -929,15 +938,22 @@ function ReportBody({
             )}
           </p>
         </div>
-        <Segmented
+        <div className="flex items-center gap-3">
+          {/* Always mounted so the live region is announced when its text appears, and sized by
+              min-width so toggling it never shifts the window control. */}
+          <span aria-live="polite" className="min-w-[4.5rem] text-right text-xs text-muted-foreground">
+            {updating ? "Updating…" : ""}
+          </span>
+          <Segmented
           joined
           value={reportWindow}
           onChange={onWindowChange}
           options={WINDOW_OPTIONS}
           ariaLabel="Report window"
         />
+        </div>
       </div>
-      {body}
+      <div className={dim}>{body}</div>
     </section>
   );
 
@@ -966,6 +982,8 @@ function ReportBody({
           reportWindow={reportWindow}
         />,
       )}
+
+      <div className={cn("space-y-6", dim)}>
 
       {/* The verdict's rate is the only one on this page — two cards printing the same ratio at two
           different roundings (1% beside 0.5%) is how a dashboard comes to disagree with itself. */}
@@ -1006,6 +1024,7 @@ function ReportBody({
           component because it is a separate request — the engagement scan is per-pick where the
           report above is aggregate, and making the dashboard wait on both would delay the numbers
           that are ready. */}
+      </div>
     </div>
   );
 }
@@ -1302,13 +1321,14 @@ export function ImpactReport() {
   return (
     <QueryBoundary
       query={report}
-      skeleton={<Skeleton className="h-96 w-full" />}
+      skeleton={<ReportSkeleton />}
     >
       {(data) => (
         <ReportBody
           report={data}
           reportWindow={reportWindow}
           onWindowChange={setReportWindow}
+          updating={report.isFetching}
         />
       )}
     </QueryBoundary>
