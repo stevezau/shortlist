@@ -57,6 +57,8 @@ export type KindBlockProps = {
   hidden: readonly RowSettingKey[];
   settings: Settings | undefined;
   users: User[];
+  /** The saved row's id; null for a row not saved yet. */
+  rowId?: number | null;
 };
 
 function KindBlock({ title, children }: { title: string; children: ReactNode }) {
@@ -337,7 +339,7 @@ function TagPreview({ tags }: { tags: RowSources["tags"] }) {
 export function YourRequestsBlock(props: KindBlockProps) {
   const { input, set } = props;
   const [checkedPattern, setCheckedPattern] = useState(input.requests_tag_pattern);
-  const sources = useRequestRowSources(checkedPattern, true);
+  const sources = useRequestRowSources(checkedPattern, true, props.rowId ?? null);
   const patternId = useId();
   const check = () => {
     if (input.requests_tag_pattern === checkedPattern) void sources.refetch();
@@ -513,7 +515,8 @@ export function RowKindSettings({
   /** The row as saved (its id and seasons); null for a row not saved yet. */
   savedRow: { id: number; seasons: readonly string[] } | null;
 }) {
-  if (choice.kind !== "seasonal") return <FillBlock {...props} fill={choice.fill} />;
+  const rowId = savedRow?.id ?? null;
+  if (choice.kind !== "seasonal") return <FillBlock {...props} rowId={rowId} fill={choice.fill} />;
   const { input, set } = props;
   return (
     <>
@@ -542,7 +545,7 @@ export function RowKindSettings({
       <div className="border-t pt-4">
         <RowFillPicker value={choice.fill} build={input.build} onChange={onChooseFill} />
       </div>
-      <FillBlock {...props} fill={choice.fill} />
+      <FillBlock {...props} rowId={rowId} fill={choice.fill} />
     </>
   );
 }

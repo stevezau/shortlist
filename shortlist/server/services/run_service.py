@@ -17,6 +17,7 @@ The thin methods below those section banners exist because `RunService` is the p
 from __future__ import annotations
 
 import asyncio
+import functools
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -34,6 +35,7 @@ from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs, notify, run_persistence
 from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.plex_reachability import error_text
+from shortlist.server.services.report_cache import invalidate_report_cache
 from shortlist.server.services.run_log import RunLogBuffer, capture_warnings, problem_line
 from shortlist.server.services.run_persistence import HIT_WINDOW_DAYS  # noqa: F401  (re-export)
 from shortlist.server.services.sse import EventBus
@@ -106,6 +108,8 @@ class RunService:
         # run_id -> cancel flag for the one in-flight run, so the /cancel endpoint can ask the engine
         # to stop. The engine checks it before each user (cooperative), so an in-flight user finishes.
         self._cancels: dict[int, threading.Event] = {}
+        # Runs whose engine has returned and whose results are being saved; see `cancel_run`.
+        self._settling: set[int] = set()
         self._tasks: set[asyncio.Task] = set()  # strong refs so in-flight runs aren't GC'd
         self._log = RunLogBuffer(session_factory)
         self._watch = WatchSync(session_factory, bus)
@@ -342,6 +346,7 @@ class RunService:
                             run.status = "aborted"
                             run.finished_at = datetime.now(UTC)
                             session.commit()
+                            invalidate_report_cache()
                     logger.info("run {} was cancelled before it started — nothing was built", run_id)
                     self._bus.publish("run.progress", {"run_id": run_id, "status": "aborted"})
                     self._bus.publish("run.finished", {"run_id": run_id, "status": "aborted"})
@@ -375,12 +380,18 @@ class RunService:
                     }
                     session.commit()
                 log_sink = self._new_run_log(run_id)
-                ctx = self.build_context(
-                    dry_run=dry_run,
-                    loop=loop,
-                    run_id=run_id,
-                    log_sink=log_sink,
-                    collection_ids=collection_ids,
+                # In an executor: building the context makes a PMS request (up to the 45s timeout),
+                # which on the loop stalled /api/system/health and SSE for as long.
+                ctx = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        self.build_context,
+                        dry_run=dry_run,
+                        loop=loop,
+                        run_id=run_id,
+                        log_sink=log_sink,
+                        collection_ids=collection_ids,
+                    ),
                 )
                 # Which rows this run will build, recorded UP FRONT — the row twin of
                 # `expected_users` above. Without it the page cannot know a run's SCOPE until the
@@ -433,12 +444,16 @@ class RunService:
                 async with jobs.plex_writer_lock():
                     report = await loop.run_in_executor(None, _engine_run_logged, run_id, log_sink, ctx, profiles)
                 aborted = cancel is not None and cancel.is_set()
-                # On the event loop on purpose, as are the crediting and the alert below. In a thread,
-                # `cancel_run` can interleave with the save (lost update on `Run.stats`), and a loop-side
-                # writer waiting on reconcile's SQLite lock fails after busy_timeout instead of waiting.
-                # Revisit only together with a settling guard in `cancel_run` and per-person commits in
-                # reconcile.
-                self._persist_report(run_id, report, status="aborted" if aborted else None)
+                # Settling: from here the run is finished as far as Cancel is concerned. `cancel_run`
+                # writes `Run.stats`, which the save below also writes, so it must stay out of the
+                # way (a lost update) — and a flag set on a finished run is stale anyway.
+                self._settling.add(run_id)
+                # Off the loop: the save, crediting and alert measured 4.4s+ on a 46-user run. Reconcile
+                # commits per person, so loop-side writers are never starved of SQLite's write lock.
+                await loop.run_in_executor(
+                    None,
+                    functools.partial(self._persist_report, run_id, report, status="aborted" if aborted else None),
+                )
                 # The engine filled each profile's history in place, so this is the one moment we hold
                 # both "what we recommended" and "what they have since watched". A dry run is a
                 # preview and mutates nothing, matching the rest of persistence.
@@ -450,7 +465,7 @@ class RunService:
                     # moved out of the persist transaction for exactly this reason. Whatever this
                     # pass misses, the nightly sync reaches from the same records.
                     try:
-                        self._reconcile_watched(profiles, live_picks)
+                        await loop.run_in_executor(None, self._reconcile_watched, profiles, live_picks)
                     except Exception as e:
                         logger.warning(
                             "run {}: crediting watches failed ({}) — the run itself is unaffected",
@@ -458,7 +473,7 @@ class RunService:
                             type(e).__name__,
                         )
                 status = "aborted" if aborted else ("ok" if report.ok else "error")
-                notify.enqueue_run_outcome(self._sessions, run_id)
+                await loop.run_in_executor(None, notify.enqueue_run_outcome, self._sessions, run_id)
                 # In an executor: the update check can reach GitHub (3s timeout, cached for 6h).
                 await loop.run_in_executor(None, notify.after_run, self._sessions, run_id, shortlist.__version__)
             except Exception as e:
@@ -478,6 +493,8 @@ class RunService:
                 return
             finally:
                 self._cancels.pop(run_id, None)
+                invalidate_report_cache()
+                self._settling.discard(run_id)
                 # In the `finally` so a crashed run still leaves its narration behind — that is
                 # exactly the run whose log someone will want to read.
                 self.flush_run_log(run_id)
@@ -552,6 +569,11 @@ class RunService:
         if event.is_set():
             return True  # already stopping — pressing again is a no-op, and a no-op is not an error
         event.set()
+        if run_id in self._settling:
+            # The engine has returned and the run is being saved. The Event above is moot, and the
+            # save owns `Run.stats` now: writing the flag would race it or outlive the run.
+            logger.info("run {} cancel ignored — it is already finishing", run_id)
+            return True
         # Recorded on the RUN, not just in memory and an SSE event, so any client can see it. The
         # button used to read "Stopping..." off local mutation state alone: a page refresh forgot,
         # offered a live-looking Cancel, and every press after that 409'd with "this run isn't
@@ -577,6 +599,7 @@ class RunService:
                         run.finished_at = datetime.now(UTC)
                         run.stats = {**(run.stats or {}), "cancel_requested": True}
                         session.commit()
+                        invalidate_report_cache()
                         logger.info("run {} cancelled while queued — it never started", run_id)
                         self._bus.publish("run.progress", {"run_id": run_id, "status": "aborted"})
                         self._bus.publish("run.finished", {"run_id": run_id, "status": "aborted"})

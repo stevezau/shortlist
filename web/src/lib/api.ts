@@ -535,8 +535,14 @@ export const api = {
   /** The request sources a "Your requests" row can read, with a preview of the own-tag pattern.
    *  Read-only on the server, but it reads every source in turn (dozens of external calls), so the
    *  UI asks once on mount and then only when the owner presses Check. */
-  getRequestRowSources: (pattern: string): Promise<RowSources> =>
-    request(`/api/requests/row-sources${pattern ? `?pattern=${encodeURIComponent(pattern)}` : ""}`),
+  getRequestRowSources: (pattern: string, rowId: number | null = null): Promise<RowSources> => {
+    const params = new URLSearchParams();
+    if (pattern) params.set("pattern", pattern);
+    // The saved row being edited: the server judges the tag against every OTHER enabled requests row too.
+    if (rowId !== null) params.set("row_id", String(rowId));
+    const query = params.toString();
+    return request(`/api/requests/row-sources${query ? `?${query}` : ""}`);
+  },
 
   /** Model ids a provider offers, for the model picker. The body carries the (possibly unsaved)
    *  provider + key/URL being edited so the list reflects the current form; blank fields fall back to

@@ -166,6 +166,19 @@ def list_backups(config_dir: Path) -> list[dict]:
     return result
 
 
+def _passes_integrity_check(path: Path) -> bool:
+    """True when SQLite opens `path` and `PRAGMA integrity_check` answers exactly 'ok'."""
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute("PRAGMA integrity_check").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    return rows == [("ok",)]
+
+
 def restore_backup(config_dir: Path, backup_name: str, *, max_keep: int = DEFAULT_MAX_BACKUPS) -> bool:
     """Restore a backup by copying it over the current DB. Returns True on success.
 
@@ -199,6 +212,14 @@ def restore_backup(config_dir: Path, backup_name: str, *, max_keep: int = DEFAUL
     except OSError as e:
         staged.unlink(missing_ok=True)
         logger.error("could not read backup {} ({}) — the database was not changed", backup_name, type(e).__name__)
+        return False
+
+    # A truncated or corrupt file would replace a working database and take the server down on the next boot.
+    if not _passes_integrity_check(staged):
+        staged.unlink(missing_ok=True)
+        logger.error(
+            "refusing to restore {}: it failed SQLite's integrity check, so the database was not changed", backup_name
+        )
         return False
 
     # The pre-restore backup is the ONLY way back from a restore chosen by mistake, so a restore

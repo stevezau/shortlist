@@ -22,7 +22,7 @@ import type { CollectionInput, RowSources } from "@/lib/types";
 import { CTX } from "@/test/row-kind-fixtures";
 
 const { getRequestRowSources } = vi.hoisted(() => ({
-  getRequestRowSources: vi.fn<(pattern: string) => Promise<RowSources>>(),
+  getRequestRowSources: vi.fn<(pattern: string, rowId: number | null) => Promise<RowSources>>(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -30,7 +30,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     api: {
-      getRequestRowSources: (pattern: string) => getRequestRowSources(pattern),
+      getRequestRowSources: (pattern: string, rowId: number | null = null) => getRequestRowSources(pattern, rowId),
     },
   };
 });
@@ -61,7 +61,15 @@ const NOTHING: RowSources = {
 };
 
 /** The block on a live form: `set` merges into the row, as the editor's does. */
-function Harness({ initial, set }: { initial: CollectionInput; set: (patch: Partial<CollectionInput>) => void }) {
+function Harness({
+  initial,
+  set,
+  rowId = null,
+}: {
+  initial: CollectionInput;
+  set: (patch: Partial<CollectionInput>) => void;
+  rowId?: number | null;
+}) {
   const [input, setInput] = useState(initial);
   return (
     <YourRequestsBlock
@@ -75,17 +83,18 @@ function Harness({ initial, set }: { initial: CollectionInput; set: (patch: Part
       hidden={[]}
       settings={undefined}
       users={[]}
+      rowId={rowId}
     />
   );
 }
 
-function renderBlock(input: CollectionInput) {
+function renderBlock(input: CollectionInput, rowId: number | null = null) {
   const set = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <Harness initial={input} set={set} />
+        <Harness initial={input} set={set} rowId={rowId} />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -134,7 +143,7 @@ describe("YourRequestsBlock", () => {
     renderBlock(requestsRow({ requests_tag_pattern: "req-{username}" }));
     await screen.findByText("Connected");
     expect(getRequestRowSources).toHaveBeenCalledTimes(1);
-    expect(getRequestRowSources).toHaveBeenCalledWith("req-{username}");
+    expect(getRequestRowSources).toHaveBeenCalledWith("req-{username}", null);
 
     const pattern = screen.getByLabelText("Tag pattern");
     await userEvent.type(pattern, "-x");
@@ -143,11 +152,22 @@ describe("YourRequestsBlock", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Check" }));
     await waitFor(() => expect(getRequestRowSources).toHaveBeenCalledTimes(2));
-    expect(getRequestRowSources).toHaveBeenLastCalledWith("req-{username}-x");
+    expect(getRequestRowSources).toHaveBeenLastCalledWith("req-{username}-x", null);
 
     // The same pattern again is still a fresh read, not a cache hit.
     await userEvent.click(await screen.findByRole("button", { name: "Check" }));
     await waitFor(() => expect(getRequestRowSources).toHaveBeenCalledTimes(3));
+  });
+
+  it("passes the saved row's id on every read so the server judges the tag against the other rows too", async () => {
+    renderBlock(requestsRow({ requests_tag_pattern: "req-{username}" }), 7);
+    await screen.findByText("Connected");
+    expect(getRequestRowSources).toHaveBeenLastCalledWith("req-{username}", 7);
+
+    await userEvent.type(screen.getByLabelText("Tag pattern"), "-x");
+    await userEvent.click(screen.getByRole("button", { name: "Check" }));
+    await waitFor(() => expect(getRequestRowSources).toHaveBeenCalledTimes(2));
+    expect(getRequestRowSources).toHaveBeenLastCalledWith("req-{username}-x", 7);
   });
 
   it("lists the tags it found, and says when one fits more than one person", async () => {
@@ -200,7 +220,7 @@ describe("YourRequestsBlock", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(getRequestRowSources).toHaveBeenCalledTimes(2));
-    expect(getRequestRowSources).toHaveBeenLastCalledWith("req-{username}");
+    expect(getRequestRowSources).toHaveBeenLastCalledWith("req-{username}", null);
   });
 
   it("says when the check itself failed, and Check tries again", async () => {

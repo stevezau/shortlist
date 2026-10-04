@@ -177,8 +177,23 @@ def schedule_groups(app) -> dict[str, list[int]]:
     return dict(groups)
 
 
+def _local_now() -> datetime:
+    """Now in the server's local time zone (the zone APScheduler evaluates crontabs in)."""
+    return datetime.now().astimezone()
+
+
 def _make_job(app, cron: str, collection_ids: list[int]):
+    last_slot: datetime | None = None
+
     async def fire() -> None:
+        nonlocal last_slot
+        # On the autumn clock change the repeated hour makes a cron slot inside it come round twice: same
+        # wall-clock minute, an hour apart. The second firing would queue a full duplicate run behind the first.
+        slot = _local_now().replace(tzinfo=None, second=0, microsecond=0)
+        if slot == last_slot:
+            logger.info("scheduled run skipped: cron '{}' already fired for {} (repeated hour)", cron, slot)
+            return
+        last_slot = slot
         logger.info("scheduled run firing: cron '{}' for {} row(s)", cron, len(collection_ids))
         try:
             await app.state.run_service.start_run(trigger="schedule", dry_run=False, collection_ids=collection_ids)

@@ -1699,3 +1699,136 @@ class TestTheLiveRowSnapshotIsTakenBeforeTheRebuild:
                 "the snapshot was taken after the rebuild — the row had already dropped the title she watched"
             )
             assert fresh.watched_at is None, "tonight's pick was never watched"
+
+
+class TestARunSettlesOffTheEventLoop:
+    """Building the context, saving the report, crediting and the alert were measured holding the loop
+    for 4.4s+ (and the context's PMS request for up to 45s), stalling /api/system/health and SSE."""
+
+    def _service(self, sessions, tmp_path, monkeypatch):
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+        service.state = None
+        return service
+
+    def test_context_report_crediting_and_alert_run_off_the_loop_when_a_run_finishes(
+        self, sessions, tmp_path, monkeypatch
+    ):
+        service = self._service(sessions, tmp_path, monkeypatch)
+        loop_thread = threading.get_ident()
+        seen: dict[str, int] = {}
+
+        def spy(name, real=None):
+            def wrapper(*args, **kwargs):
+                seen[name] = threading.get_ident()
+                return real(*args, **kwargs) if real else None
+
+            return wrapper
+
+        monkeypatch.setattr(service, "build_context", spy("build_context", lambda **kw: _fake_ctx()))
+        monkeypatch.setattr(service, "_persist_report", spy("persist", service._persist_report))
+        monkeypatch.setattr(service, "_reconcile_watched", spy("reconcile"))
+        monkeypatch.setattr(run_service_mod.notify, "enqueue_run_outcome", spy("outcome"))
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        asyncio.run(scenario())
+
+        assert set(seen) == {"build_context", "persist", "reconcile", "outcome"}
+        assert all(tid != loop_thread for tid in seen.values()), seen
+
+    def test_a_cancel_while_the_run_settles_leaves_no_stale_flag_on_the_finished_run(
+        self, sessions, tmp_path, monkeypatch
+    ):
+        service = self._service(sessions, tmp_path, monkeypatch)
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        results: list[bool] = []
+
+        def after_run_that_gets_cancelled(sessions_, run_id, version):
+            # Cancel pressed from the loop while the worker thread is inside `notify.after_run`.
+            results.append(asyncio.run_coroutine_threadsafe(_cancel(run_id), loop).result(5))
+
+        async def _cancel(run_id):
+            return service.cancel_run(run_id)
+
+        monkeypatch.setattr(run_service_mod.notify, "after_run", after_run_that_gets_cancelled)
+
+        async def scenario():
+            nonlocal loop
+            loop = asyncio.get_running_loop()
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        loop = None
+        run = asyncio.run(scenario())
+
+        assert results == [True], "pressing Cancel on a settling run is accepted, not an error"
+        assert run.status == "ok" or run.status == "error"
+        assert "cancel_requested" not in (run.stats or {})
+
+    def test_the_loop_keeps_ticking_while_a_slow_context_is_built(self, sessions, tmp_path, monkeypatch):
+        service = self._service(sessions, tmp_path, monkeypatch)
+
+        def slow_context(**kw):
+            time.sleep(0.6)  # stands in for the PMS request
+            return _fake_ctx()
+
+        monkeypatch.setattr(service, "build_context", slow_context)
+        gaps: list[float] = []
+        deadline = time.monotonic() + 1.5  # outlives the 0.6s context build; ends on its own
+
+        async def ticker():
+            last = time.monotonic()
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.02)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+
+        async def scenario():
+            tick = asyncio.create_task(ticker())
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            await _wait_for_run(sessions, run_id)
+            await tick
+
+        asyncio.run(scenario())
+
+        assert max(gaps) < 0.4, f"the loop stalled for {max(gaps):.2f}s"
+
+
+class TestAFinishedRunDropsTheCachedReport:
+    """The dashboard report is cached for a couple of minutes; a run changes what it reads."""
+
+    def test_a_run_that_completes_clears_the_cache(self, sessions, tmp_path, monkeypatch):
+        from shortlist.server.services import report_cache
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+        report_cache.store_report("30", {"stale": True})
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        asyncio.run(scenario())
+
+        assert report_cache.get_cached_report("30") is None
+
+    def test_a_run_cancelled_while_queued_clears_the_cache(self, sessions, tmp_path):
+        from shortlist.server.services import report_cache
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="queued")
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        service._cancels[run_id] = threading.Event()
+        report_cache.store_report("30", {"stale": True})
+
+        service.cancel_run(run_id)
+
+        assert report_cache.get_cached_report("30") is None

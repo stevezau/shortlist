@@ -1708,3 +1708,82 @@ def test_requested_by_tag_round_trips(client: TestClient):
     r = client.patch(f"/api/users/{uid}", json={"requested_by_tag": " children "})
     assert r.status_code == 200 and r.json()["requested_by_tag"] == "children"
     assert next(u for u in client.get("/api/users").json() if u["id"] == uid)["requested_by_tag"] == "children"
+
+
+def _seed_user_with_runs(session, slug: str, finished: datetime) -> list[str]:
+    """A user with two runs; only the LATER run's top three picks (by rank) may reach the preview."""
+    from shortlist.server.db.models import PickRow, Run, RunUser
+
+    user = User(plex_account_id=900000 + abs(hash(slug)) % 99999, username=slug, slug=slug)
+    session.add(user)
+    session.flush()
+    runs = []
+    for offset in (2, 1):
+        run = Run(trigger="manual", status="ok", finished_at=finished - timedelta(days=offset))
+        session.add(run)
+        session.flush()
+        session.add(RunUser(run_id=run.id, user_id=user.id, status="ok"))
+        runs.append(run)
+    for run, tag in zip(runs, ("old", "new"), strict=True):
+        for rank in (4, 1, 3, 2):
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=user.id,
+                    tmdb_id=rank,
+                    media_type="movie",
+                    rating_key=rank,
+                    rank=rank,
+                    title=f"{slug}-{tag}-{rank}",
+                )
+            )
+    return [f"{slug}-new-{rank}" for rank in (1, 2, 3)]
+
+
+class TestUsersListQueries:
+    def test_the_list_reports_last_run_time_and_a_three_title_preview_per_person(self, client: TestClient):
+        finished = datetime(2026, 6, 1, 12, tzinfo=UTC)
+        with client.app.state.sessions() as session:
+            expected = {slug: _seed_user_with_runs(session, slug, finished) for slug in ("ann", "bob", "cy")}
+            session.commit()
+
+        users = {u["username"]: u for u in client.get("/api/users").json()}
+
+        for slug, preview in expected.items():
+            assert users[slug]["preview_titles"] == preview
+            assert users[slug]["last_run_at"] == (finished - timedelta(days=1)).isoformat()
+        for slug in ("sarah", "mike"):
+            assert users[slug]["preview_titles"] == []
+            assert users[slug]["last_run_at"] is None
+
+    def test_the_number_of_queries_does_not_grow_with_the_number_of_people(self, client: TestClient):
+        from sqlalchemy import event
+
+        engine = client.app.state.sessions.kw["bind"]
+        finished = datetime(2026, 6, 1, 12, tzinfo=UTC)
+
+        def statements_for_list() -> int:
+            count = 0
+
+            def bump(*_args) -> None:
+                nonlocal count
+                count += 1
+
+            event.listen(engine, "before_cursor_execute", bump)
+            try:
+                assert client.get("/api/users").status_code == 200
+            finally:
+                event.remove(engine, "before_cursor_execute", bump)
+            return count
+
+        with client.app.state.sessions() as session:
+            for i in range(1, 3):
+                _seed_user_with_runs(session, f"few{i}", finished)
+            session.commit()
+        few = statements_for_list()
+        with client.app.state.sessions() as session:
+            for i in range(3, 30):
+                _seed_user_with_runs(session, f"many{i}", finished)
+            session.commit()
+
+        assert statements_for_list() == few

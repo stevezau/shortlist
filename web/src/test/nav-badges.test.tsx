@@ -57,12 +57,12 @@ it("shows no Rows count while the collections request is pending", () => {
   expect(screen.getByRole("link", { name: /^Rows/ })).toHaveTextContent(/^Rows$/);
 });
 
-it("does not request users on shell mount", async () => {
+it("shows the Users count on first render without visiting the Users page", async () => {
   listCollections.mockResolvedValue([]);
+  getUsers.mockResolvedValue([{ id: 1 }, { id: 2 }]);
 
   renderNav();
 
-  await vi.waitFor(() => expect(listCollections).toHaveBeenCalled());
-  expect(getUsers).not.toHaveBeenCalled();
-  expect(screen.getByRole("link", { name: /^Users/ })).toHaveTextContent(/^Users$/);
+  await vi.waitFor(() => expect(screen.getByRole("link", { name: /^Users/ })).toHaveTextContent("Users2"));
+  expect(getUsers).toHaveBeenCalledTimes(1);
 });

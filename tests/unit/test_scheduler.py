@@ -994,3 +994,45 @@ class TestCrontabDayOfMonthAndWeekday:
 
         with pytest.raises(ValueError):
             crontab_trigger("0 4 32 * 1")
+
+
+class TestRepeatedHourOnTheAutumnClockChange:
+    """Sydney falls back 2027-04-04 03:00 -> 02:00, so 02:30 happens twice, an hour apart."""
+
+    @staticmethod
+    def _fire_at(app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, times: list[datetime]) -> AsyncMock:
+        from zoneinfo import ZoneInfo
+
+        from shortlist.server import scheduler as scheduler_mod
+
+        start_run = AsyncMock()
+        app.state.run_service = SimpleNamespace(start_run=start_run)
+        fire = scheduler_mod._make_job(app, "30 2 * * *", [1])
+        clock = iter(t.astimezone(ZoneInfo("Australia/Sydney")) for t in times)
+        monkeypatch.setattr(scheduler_mod, "_local_now", lambda: next(clock))
+
+        async def go() -> None:
+            for _ in times:
+                await fire()
+
+        asyncio.run(go())
+        return start_run
+
+    def test_the_second_pass_through_the_same_wall_clock_slot_queues_no_run(
+        self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 02:30 AEDT (+11) = 15:30 UTC on the 3rd; 02:30 AEST (+10) = 16:30 UTC.
+        first = datetime(2027, 4, 3, 15, 30, 1, tzinfo=UTC)
+        second = datetime(2027, 4, 3, 16, 30, 1, tzinfo=UTC)
+
+        start_run = self._fire_at(app, monkeypatch, [first, second])
+
+        assert start_run.await_count == 1
+        assert start_run.await_args.kwargs["collection_ids"] == [1]
+
+    def test_a_normal_day_fires_every_night(self, app: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+        nights = [datetime(2027, 4, d, 16, 30, 1, tzinfo=UTC) for d in (5, 6, 7)]
+
+        start_run = self._fire_at(app, monkeypatch, nights)
+
+        assert start_run.await_count == 3

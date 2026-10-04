@@ -358,3 +358,51 @@ class TestABackupIsARestorePointOnlyOnceComplete:
 
         assert made["first"] is not None and made["first"].exists(), "the second backup destroyed the first"
         assert made["second"] is not None and made["second"].exists()
+
+
+class TestRestoreChecksIntegrity:
+    @staticmethod
+    def _db(path: Path, marker: str) -> None:
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("CREATE TABLE t (v TEXT)")
+            conn.execute("INSERT INTO t VALUES (?)", (marker,))
+            conn.commit()
+
+    @staticmethod
+    def _marker(path: Path) -> str:
+        with closing(sqlite3.connect(path)) as conn:
+            return conn.execute("SELECT v FROM t").fetchone()[0]
+
+    def test_a_truncated_backup_is_refused_and_the_live_database_is_untouched(self, tmp_path: Path):
+        self._db(tmp_path / "shortlist.db", "live")
+        backups = tmp_path / backup_mod.BACKUP_SUBDIR
+        backups.mkdir()
+        self._db(backups / "shortlist_20260901_000000.db", "old")
+        good = backups / "shortlist_20260901_000000.db"
+        bad = backups / "shortlist_20260902_000000.db"
+        bad.write_bytes(good.read_bytes()[:100] + b"\x00" * 50)
+
+        assert backup_mod.restore_backup(tmp_path, bad.name) is False
+
+        assert self._marker(tmp_path / "shortlist.db") == "live"
+        assert not (tmp_path / backup_mod.RESTORE_STAGING).exists()
+        assert not any("pre-restore" in p.name for p in backups.iterdir())
+
+    def test_a_not_a_database_file_is_refused(self, tmp_path: Path):
+        self._db(tmp_path / "shortlist.db", "live")
+        backups = tmp_path / backup_mod.BACKUP_SUBDIR
+        backups.mkdir()
+        junk = backups / "shortlist_20260902_000000.db"
+        junk.write_bytes(b"this is not sqlite" * 100)
+
+        assert backup_mod.restore_backup(tmp_path, junk.name) is False
+        assert self._marker(tmp_path / "shortlist.db") == "live"
+
+    def test_a_valid_backup_restores(self, tmp_path: Path):
+        self._db(tmp_path / "shortlist.db", "live")
+        backups = tmp_path / backup_mod.BACKUP_SUBDIR
+        backups.mkdir()
+        self._db(backups / "shortlist_20260901_000000.db", "old")
+
+        assert backup_mod.restore_backup(tmp_path, "shortlist_20260901_000000.db") is True
+        assert self._marker(tmp_path / "shortlist.db") == "old"

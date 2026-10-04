@@ -2713,10 +2713,10 @@ export interface paths {
          * List Users
          * @description Every user with their badges, watch depth, picks watched in 30 days and a pick preview.
          *
-         *     Deliberately a plain `def`, not `async def`: it issues two synchronous queries PER USER,
-         *     which on a 40-account server is ~80 round-trips. On the event loop that stalls SSE,
-         *     `/api/system/health` and every other request for the duration; as a sync handler Starlette
-         *     runs it in a worker thread instead.
+         *     Deliberately a plain `def`, not `async def`: it issues a handful of synchronous queries. On the
+         *     event loop that stalls SSE, `/api/system/health` and every other request for the duration; as a
+         *     sync handler Starlette runs it in a worker thread instead. Each metric is ONE grouped query for
+         *     everyone, never one per person — a 40-account server used to cost ~80 round-trips here.
          */
         get: operations["list_users_api_users_get"];
         put?: never;
@@ -8740,6 +8740,8 @@ export interface operations {
             query?: {
                 /** @description An own-tag pattern to preview, e.g. req-{username} */
                 pattern?: string;
+                /** @description The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them. */
+                row_id?: number | null;
             };
             header?: never;
             path?: never;

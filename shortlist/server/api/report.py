@@ -47,6 +47,7 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.scheduler import WATCH_SYNC_JOB_ID
 from shortlist.server.services import report_service
+from shortlist.server.services.report_cache import invalidate_report_cache
 from shortlist.server.services.report_service import DEFAULT_WINDOW
 
 router = APIRouter(prefix="/report", tags=["report"], dependencies=[Depends(require_owner)])
@@ -243,6 +244,7 @@ async def clear_deleted_rows(request: Request, slug: str | None = None) -> dict:
             )
         )
         session.commit()
+    invalidate_report_cache()
     # The reported total counts BOTH, so it matches what `deleted_rows` offered to clear. Reporting
     # only `picks` meant a shared-only clear said "0" after listing 2.
     total = deleted + shared_deleted
@@ -269,7 +271,7 @@ def effectiveness(
     job = scheduler.get_job(WATCH_SYNC_JOB_ID) if scheduler else None
     next_watch_sync = iso_utc(job.next_run_time) if job and job.next_run_time else None
     with request.app.state.sessions() as session:
-        return report_service.effectiveness(session, window, next_watch_sync=next_watch_sync)
+        return report_service.cached_effectiveness(session, window, next_watch_sync=next_watch_sync)
 
 
 @router.get("/engagement", response_model=EngagementOut)

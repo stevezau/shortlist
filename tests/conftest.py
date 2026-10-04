@@ -165,6 +165,16 @@ def _preseed_schema(request, tmp_path: Path, _schema_template: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _fresh_report_cache():
+    """The dashboard report is cached per process; every test starts (and ends) with it empty."""
+    from shortlist.server.services.report_cache import invalidate_report_cache
+
+    invalidate_report_cache()
+    yield
+    invalidate_report_cache()
+
+
+@pytest.fixture(autouse=True)
 def _no_retry_backoff_waits(monkeypatch):
     """Keep every retry ATTEMPT, drop the wall-clock WAIT between them.
 

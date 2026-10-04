@@ -468,6 +468,13 @@ async def get_row_sources(
         # 128 is the stored column's length: a longer pattern could never be saved, so it is not previewed.
         str, Query(max_length=128, description="An own-tag pattern to preview, e.g. req-{username}")
     ] = "",
+    row_id: Annotated[
+        int | None,
+        Query(
+            description="The requests row being edited. Its pattern is the typed one; every OTHER enabled "
+            "requests row's pattern joins it, because a run judges a tag against all of them."
+        ),
+    ] = None,
 ) -> dict:
     """Read every request source once and say whether a "Your requests" row can be built from it.
 
@@ -481,11 +488,18 @@ async def get_row_sources(
         from shortlist.engine.requests_row import RequestLedger, collect_requests
 
         sources, profiles, db_ids = svc.build_request_sources_only()
+        patterns = {pattern} if pattern else set()
+        if row_id is not None:
+            with request.app.state.sessions() as session:
+                others = session.query(Collection.requests_tag_pattern).filter(
+                    Collection.requests_row, Collection.enabled, Collection.id != row_id
+                )
+                patterns |= {p.strip() for (p,) in others if p and p.strip()}
         if sources is None:
             ledger = RequestLedger(titles=[], complete=True)
         else:
             try:
-                ledger = collect_requests(sources, profiles, patterns=frozenset({pattern} if pattern else ()))
+                ledger = collect_requests(sources, profiles, patterns=frozenset(patterns))
             except Exception as e:
                 # collect_requests swallows per-source failures itself; this is for anything that
                 # goes wrong before a read starts (a client refusing its URL, say).

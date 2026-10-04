@@ -16,7 +16,7 @@ from shortlist.engine.candidates import (
 )
 from shortlist.engine.clients.search import SearchResult, TitleCandidate
 from shortlist.engine.curator import NullCurator
-from shortlist.engine.curator.base import parse_web_titles
+from shortlist.engine.curator.base import parse_web_titles, try_parse_web_titles
 from shortlist.engine.models import MediaType, Pick, Seed
 from shortlist.engine.web_guidance import Guidance
 from tests.conftest import make_candidate
@@ -1022,6 +1022,44 @@ class TestParseWebTitles:
     def test_unparseable_reply_yields_empty(self):
         assert parse_web_titles("the model refused to answer", 10) == []
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("[]", []),
+            ("", []),
+            ("I cannot help with that.", []),
+            ('[{"title": "A"}, {"title": "B"}]', ["A", "B"]),
+            ('```json\n[{"title": "A"}]\n```', ["A"]),
+            ('```json\n[{"title": "A"}]\n```\nNotes [1] and [see above].', ["A"]),
+            ('As in [the list below]:\n```json\n[{"title": "A"}]\n```', ["A"]),
+            ('As in [1]:\n```json\n[{"title": "A"}]\n```', ["A"]),
+            ('[{"title": "A"}] and also [{"title": "B"}]', ["A"]),
+            ('[{"title": "Se7en [Director\'s Cut]"}] done [x]', ["Se7en [Director's Cut]"]),
+            ('[{"title": "A"}, {"title": "B', []),
+            ('[{"title": "Se7en [Director\'s Cut]"}, {"ti', []),
+        ],
+        ids=[
+            "empty-array",
+            "empty-reply",
+            "non-json",
+            "plain",
+            "fenced",
+            "fenced-trailing-bracket-prose",
+            "bracket-prose-before-fence",
+            "valid-json-prose-before-fence",
+            "two-arrays-first-wins",
+            "nested-brackets-in-title",
+            "truncated",
+            "truncated-with-nested-brackets",
+        ],
+    )
+    def test_title_array_extraction_matrix(self, text, expected):
+        assert [it["title"] for it in parse_web_titles(text, 10)] == expected
+
+    def test_unparseable_reply_is_none_but_empty_array_is_not(self):
+        assert try_parse_web_titles('{"a": 1} [oops', 10) is None
+        assert try_parse_web_titles("```json\n[]\n```\nnothing fits [sorry]", 10) == []
+
     def test_skips_non_dict_items_and_caps_at_limit(self):
         text = '[1, "junk", {"title": "A"}, {"title": "B"}, {"title": "C"}]'
         out = parse_web_titles(text, 2)
@@ -1830,11 +1868,11 @@ class TestAnUnparseableReplyIsDiagnosable:
         items = ",\n".join(f'  {{"title": "Synthetic Title {n}", "year": 2020, "media": "movie"}}' for n in range(40))
         return f'[\n{items},\n  {{"title": "The "Quoted" One", "year": 2020, "media": "movie"}}\n]'
 
-    def test_the_bracket_prose_input_is_recorded_as_failing_or_parsing_today(self):
-        """The production-defect hypothesis. The slice runs from the first `[` to the LAST `]`, which
-        is the one in `[movie]`, so the prose is inside the slice."""
+    def test_a_fenced_array_followed_by_bracketed_prose_parses(self):
+        """The hypothesised production defect: the old first-`[` to last-`]` slice swallowed the prose."""
         out = parse_web_titles(self._fenced_array_then_bracketed_prose(), 100)
-        assert out == [], "this input fails to parse today (hypothesis confirmed)"
+        assert len(out) == 40
+        assert out[0]["title"] == "Synthetic Title 0"
 
     def test_the_log_shows_the_tail_and_the_decode_error_position_when_parsing_fails(self):
         import json
@@ -1851,16 +1889,17 @@ class TestAnUnparseableReplyIsDiagnosable:
         assert reply[-200:] in text or repr(reply[-200:])[1:-1] in text, "the tail is where the defect hides"
         assert "Quoted" in text, "the context around the error position is shown"
 
-    def test_the_bracket_prose_failure_reports_the_error_of_the_slice_not_the_whole_reply(self):
+    def test_a_broken_array_followed_by_bracketed_prose_reports_the_arrays_error(self):
         import json
 
-        reply = self._fenced_array_then_bracketed_prose()
-        sliced = reply[reply.find("[") : reply.rfind("]") + 1]
+        broken = self._unescaped_quote()
+        reply = f"```json\n{broken}\n```\nNote: Example Title (2020) [movie] was left out."
         with pytest.raises(json.JSONDecodeError) as expected:
-            json.loads(sliced)
+            json.loads(broken)
         text = self._warnings(lambda: parse_web_titles(reply, 100))
 
-        assert f"char {expected.value.pos}" in text
+        assert "could not parse" in text
+        assert f"char {expected.value.pos + len('```json' + chr(10))} of" in text
         assert "was left out." in text
 
     def test_the_unparsed_reply_is_kept_in_the_trace_when_parsing_fails(self):

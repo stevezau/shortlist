@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from shortlist.engine.clients.plex_pms import SectionNotShared
 from shortlist.engine.models import MediaType, UserProfile, UserType
 from shortlist.server.db.models import User
+from shortlist.server.services.report_cache import invalidate_report_cache
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_cache import DEFAULT_FULL_EVERY, WatchCache
 from shortlist.server.services.watch_events import ingest_play_history
@@ -516,6 +517,7 @@ class WatchSync:
                 store.set("report.watch_synced_at", datetime.now(UTC).isoformat())
                 if sweep_dead:
                     store.set("report.watch_full_at", datetime.now(UTC).isoformat())
+            invalidate_report_cache()
             return total
 
         async with run_lock:

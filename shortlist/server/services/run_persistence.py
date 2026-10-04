@@ -848,7 +848,7 @@ def reconcile_watched(
     decides IF; those bounds decide where the report can see it.
 
     Args:
-        sessions: Session factory; one session covers the whole reconcile.
+        sessions: Session factory; one session covers the whole reconcile, committed per person.
         profiles: The profiles whose `history` this pass read. An empty history contributes nothing.
         live_picks: What was in each person's rows before this run rebuilt them, from
             :func:`live_pick_ids`. Computed fresh when omitted — correct for the standalone watch
@@ -968,7 +968,9 @@ def reconcile_watched(
                 existing,
                 membership,
             )
-        session.commit()
+            # Per person, so SQLite's write lock is released between people instead of held from
+            # the first to the last — loop-side writers fail after the 5s busy_timeout otherwise.
+            session.commit()
 
 
 def persist_user_live(

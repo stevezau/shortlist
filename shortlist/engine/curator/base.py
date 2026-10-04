@@ -9,6 +9,7 @@ hallucinated title simply resolves to nothing rather than reaching a row.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from datetime import UTC, datetime
 from typing import NamedTuple, Protocol
@@ -310,11 +311,46 @@ def build_web_pick_prompt(
     return system, user
 
 
+_FENCE = re.compile(r"```[a-zA-Z]*\s*(.*?)```", re.DOTALL)
+
+
+def _first_title_array(text: str) -> tuple[list | None, json.JSONDecodeError | None]:
+    """The first complete JSON array in a chatty reply that holds objects, else the first array at all.
+
+    Slicing first-``[`` to last-``]`` breaks on prose after the array that has its own brackets, so
+    decode from each ``[`` instead. A fenced block is tried first, since that is where a model puts
+    the answer; prose like ``[see above]`` is not valid JSON and is skipped. Also returns the decode
+    error of the first ``[`` in the whole reply (``pos`` is relative to ``text``), for the warning log.
+    """
+    decoder = json.JSONDecoder()
+    fenced = [m.group(1) for m in _FENCE.finditer(text)]
+    first_any: list | None = None
+    first_error: json.JSONDecodeError | None = None
+    first_error: json.JSONDecodeError | None = None
+    for chunk in [*fenced, text]:
+        pos = chunk.find("[")
+        while pos != -1:
+            try:
+                value, end = decoder.raw_decode(chunk, pos)
+            except json.JSONDecodeError as exc:
+                if chunk is text and first_error is None:
+                    first_error = exc
+                pos = chunk.find("[", pos + 1)
+                continue
+            if isinstance(value, list):
+                if any(isinstance(item, dict) for item in value):
+                    return value, None
+                if first_any is None:
+                    first_any = value
+            pos = chunk.find("[", end)
+    return first_any, (None if first_any is not None else first_error)
+
+
 def parse_web_titles(text: str, limit: int) -> list[dict]:
     """Pull the JSON array of ``{title, year, media}`` out of a model's (possibly chatty) reply.
 
     Tolerant by design: the model is asked for pure JSON but web-search answers sometimes wrap it in
-    prose, so we fall back to the outermost ``[...]`` slice. Every item is normalised; anything
+    prose, so we fall back to the first complete JSON array in the reply. Every item is normalised; anything
     unparseable yields an empty list (the source then simply contributes nothing).
     """
     return try_parse_web_titles(text, limit) or []
@@ -325,22 +361,16 @@ def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
     tell that from a reply that legitimately held an empty list."""
     raw = (text or "").strip()
     data: object = None
-    # The LAST decode attempt is the one worth reporting: the slice when there is one, else the reply.
+    # Report the error from the first array-looking `[` when there is one, else the whole reply's.
     decode_error: json.JSONDecodeError | None = None
     decoded = raw
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         decode_error = exc
-        start, end = raw.find("["), raw.rfind("]")
-        if 0 <= start < end:
-            decoded = raw[start : end + 1]
-            try:
-                data = json.loads(decoded)
-                decode_error = None
-            except json.JSONDecodeError as slice_exc:
-                decode_error = slice_exc
-                data = None
+        data, array_error = _first_title_array(raw)
+        if array_error is not None:
+            decode_error, decoded = array_error, raw
     # A provider answering under a JSON schema returns the array wrapped in an object, because a
     # bare top-level array is not expressible in OpenAI's strict Structured Outputs (the root must
     # be an object). Unwrap it, so the same parser serves the schema'd and the chatty replies.

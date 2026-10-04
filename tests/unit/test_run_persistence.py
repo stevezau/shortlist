@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import UserRunReport
 from shortlist.server.db.models import Base
-from shortlist.server.services.run_persistence import _cost_blob
+from shortlist.server.services.run_persistence import _cost_blob, reconcile_watched
 
 
 @pytest.fixture
@@ -621,3 +621,27 @@ class TestExclusionsSkippedAreAudited:
         _, events = self._events(sessions, skipped=[])
 
         assert events == []
+
+
+class TestReconcileCommitsPerPerson:
+    def test_reconcile_watched_commits_once_per_person_so_the_write_lock_is_not_held_for_the_whole_pass(self, tmp_path):
+        from sqlalchemy import event
+
+        from shortlist.server.db.models import User
+        from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
+
+        run_migrations(tmp_path)
+        engine = make_engine(tmp_path)
+        factory = make_session_factory(engine)
+        with factory() as session:
+            for n in range(3):
+                session.add(User(plex_account_id=700 + n, username=f"u{n}", slug=f"u{n}", enabled=True))
+            session.commit()
+        commits: list[int] = []
+        event.listen(engine, "commit", lambda conn: commits.append(1))
+        profiles = [type("P", (), {"slug": f"u{n}", "history": [], "history_complete": False})() for n in range(3)]
+
+        reconcile_watched(factory, profiles, {})
+
+        assert len(commits) >= 3
+        engine.dispose()

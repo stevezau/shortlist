@@ -35,6 +35,7 @@ from shortlist.server.db.models import (
     WatchSession,
     iso_utc,
 )
+from shortlist.server.services.report_cache import get_cached_report, store_report
 from shortlist.server.services.run_service import HIT_WINDOW_DAYS
 from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
@@ -976,6 +977,21 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
             rating_key, year = art.get((row["tmdb_id"], row["media_type"]), (0, None))
             row["rating_key"], row["year"] = rating_key, row["year"] or year
     return [{k: v for k, v in row.items() if not k.startswith("_")} for row in feed]
+
+
+def cached_effectiveness(session: Session, window: str, *, next_watch_sync: str | None = None) -> dict:
+    """:func:`effectiveness`, served from the short-lived cache when a fresh result exists.
+
+    `next_watch_sync` comes from the scheduler and is merged onto a copy per request, never cached.
+    """
+    if window not in WINDOWS:
+        window = DEFAULT_WINDOW
+    report = get_cached_report(window)
+    if report is None:
+        report = effectiveness(session, window)
+        store_report(window, report)
+    report["watch_sync"]["next"] = next_watch_sync
+    return report
 
 
 def effectiveness(session: Session, window: str, *, next_watch_sync: str | None = None) -> dict:

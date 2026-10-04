@@ -654,7 +654,7 @@ describe("UsersPage — the Requests column", () => {
       defaultOptions: { queries: { retry: false } },
     });
     client.setQueryData(
-      queryKeys.requestRowSources(""),
+      queryKeys.requestRowSources("", null),
       sources([{ user_id: SARAH.id, linked: false, ready: 0 }], {
         overseerr: "off",
         radarr: "connected",

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   BookOpen,
@@ -32,7 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { buildLabel, settingBool } from "@/lib/format";
 import { privacyNeedsAttention, usePrivacyGlance } from "@/lib/privacy-attention";
-import { queryKeys, useCollections, useSession, useSettings, useVersion } from "@/lib/queries";
+import { useCollections, useSession, useSettings, useUsers, useVersion } from "@/lib/queries";
 import { clearCachedReports } from "@/lib/report-cache";
 import { selectedVerticalClass } from "@/lib/selected";
 import { COFFEE_URL, DOCS_URL, STAR_URL } from "@/lib/support";
@@ -61,17 +61,16 @@ const navLinkIdleClass = "text-muted-foreground hover:bg-elevated hover:text-for
 /**
  * What the rail says beside its items, from answers the app already has.
  *
- * The Rows count fetches on first render (one cheap list, sharing the Rows page's cache entry), so
- * the number is there before anyone opens the page. The Users count stays cache-only on purpose: a
- * disabled observer reads whatever the Users page last fetched and never fetches itself, because
- * `/api/users` runs about two queries per user and would slow every page. The privacy status and
- * settings ARE fetched (both are cheap enough, and the privacy one is held for five minutes — see
- * `usePrivacyGlance`), because a warning that only appears after visiting the page it warns about is
+ * The Rows and Users counts fetch on first render (each shares its page's cache entry), so the
+ * numbers are there before anyone opens either page. The Users list used to stay cache-only because
+ * `/api/users` ran two queries per person; it is now one grouped query per metric, so it is cheap
+ * enough to load with the app. The privacy status and settings are fetched too (the
+ * privacy one is held for five minutes — see `usePrivacyGlance`), because a warning that only appears after visiting the page it warns about is
  * no warning.
  */
 function useNavBadges() {
   const rows = useCollections();
-  const users = useQuery({ queryKey: queryKeys.users, queryFn: api.getUsers, enabled: false });
+  const users = useUsers();
   const privacy = usePrivacyGlance();
   const settings = useSettings();
   return {

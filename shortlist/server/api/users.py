@@ -353,48 +353,67 @@ def _pick_watching(session: Session) -> dict[int, tuple[int, datetime | None]]:
     return {user_id: (count, last) for user_id, count, last in rows}
 
 
+def _latest_run_ids(session: Session):
+    """Subquery of (user_id, run_id): each person's most recent run."""
+    return (
+        session.query(RunUser.user_id.label("user_id"), func.max(RunUser.run_id).label("run_id"))
+        .group_by(RunUser.user_id)
+        .subquery()
+    )
+
+
+def _last_runs(session: Session) -> dict[int, tuple[int, datetime | None]]:
+    """user_id -> (their latest run id, when that run finished). One grouped query for everyone."""
+    latest = _latest_run_ids(session)
+    rows = session.query(latest.c.user_id, latest.c.run_id, Run.finished_at).join(Run, Run.id == latest.c.run_id).all()
+    return {user_id: (run_id, finished_at) for user_id, run_id, finished_at in rows}
+
+
+def _preview_titles(session: Session) -> dict[int, list[str]]:
+    """user_id -> the first three titles (by rank) of their latest run. One query for everyone."""
+    latest = _latest_run_ids(session)
+    rows = (
+        session.query(PickRow.user_id, PickRow.title)
+        .join(latest, (PickRow.user_id == latest.c.user_id) & (PickRow.run_id == latest.c.run_id))
+        .order_by(PickRow.user_id, PickRow.rank, PickRow.id)
+        .all()
+    )
+    previews: dict[int, list[str]] = {}
+    for user_id, title in rows:
+        titles = previews.setdefault(user_id, [])
+        if len(titles) < 3:
+            titles.append(title)
+    return previews
+
+
 @router.get("", response_model=list[UserOut])
 def list_users(request: Request) -> list[dict]:
     """Every user with their badges, watch depth, picks watched in 30 days and a pick preview.
 
-    Deliberately a plain `def`, not `async def`: it issues two synchronous queries PER USER,
-    which on a 40-account server is ~80 round-trips. On the event loop that stalls SSE,
-    `/api/system/health` and every other request for the duration; as a sync handler Starlette
-    runs it in a worker thread instead.
+    Deliberately a plain `def`, not `async def`: it issues a handful of synchronous queries. On the
+    event loop that stalls SSE, `/api/system/health` and every other request for the duration; as a
+    sync handler Starlette runs it in a worker thread instead. Each metric is ONE grouped query for
+    everyone, never one per person — a 40-account server used to cost ~80 round-trips here.
     """
     with request.app.state.sessions() as session:
         depths = _watch_depths(session)
         exposed = _unhidden_row_counts(session)
         pick_watching = _pick_watching(session)
+        last_runs = _last_runs(session)
+        previews = _preview_titles(session)
         out = []
         for user in session.query(User).filter(User.removed_at.is_(None)).order_by(User.username).all():
             watched = pick_watching.get(user.id)
             picks_watched_30d, last_pick_watched_at = watched if watched else (None, None)
-            last = (
-                session.query(RunUser)
-                .filter_by(user_id=user.id)
-                .join(RunUser.run)
-                .order_by(RunUser.run_id.desc())
-                .first()
-            )
-            preview = []
-            if last is not None:
-                preview = [
-                    p.title
-                    for p in session.query(PickRow)
-                    .filter_by(user_id=user.id, run_id=last.run_id)
-                    .order_by(PickRow.rank)
-                    .limit(3)
-                    .all()
-                ]
+            last = last_runs.get(user.id)
             out.append(
                 user_dict(
                     user,
                     depths.get(user.id, 0),
-                    last.run.finished_at if last else None,
+                    last[1] if last else None,
                     picks_watched_30d,
                     last_pick_watched_at,
-                    preview,
+                    previews.get(user.id, []),
                     exposed.get(user.username, 0),
                 )
             )

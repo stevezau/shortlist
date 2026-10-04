@@ -11,7 +11,7 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from shortlist.server.db.models import User
+from shortlist.server.db.models import Collection, User
 from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration
@@ -252,6 +252,63 @@ class TestRowSourcesSetupCheck:
         people = {p["display_name"]: p for p in out["people"]}
         assert people["mike"]["user_id"] == ids["mike"]
         assert [(t["label"], t["ambiguous"], t["user_id"]) for t in out["tags"]] == [("fam", True, None)]
+
+    @pytest.mark.parametrize(
+        "row_param,expected",
+        [
+            # No row_id: today's behaviour, only the typed pattern is in play.
+            pytest.param(None, ("req-mike", False, "mike"), id="no-row-id-previews-the-typed-pattern-alone"),
+            # With row_id: the OTHER enabled requests rows' patterns join, as in a run.
+            pytest.param("first", ("req-mike", True, ""), id="row-id-adds-the-other-enabled-rows-patterns"),
+            # A disabled row's pattern is not in a run, so it is not in the preview.
+            pytest.param("disabled", ("req-mike", False, "mike"), id="a-disabled-rows-pattern-is-not-in-play"),
+        ],
+    )
+    def test_row_sources_with_a_row_id_judges_the_tag_against_every_enabled_requests_row(
+        self, client: TestClient, row_param, expected
+    ):
+        """Sarah is nicknamed mike and Mike's username is mike: `req-mike` is Mike's under `req-{username}`
+        alone, and nobody's once another enabled row renders `req-{name}` too — what a run decides."""
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            store.set("requests.radarr.url", "http://radarr")
+            store.set("requests.radarr.apikey", "k")
+            session.query(User).filter_by(username="sarah").update({"nickname": "mike"})
+            session.query(User).filter_by(username="mike").update({"enabled": True})
+            session.add_all(
+                [
+                    Collection(
+                        slug="a", name="A", build="per_person", requests_row=True, requests_tag_pattern="req-{username}"
+                    ),
+                    Collection(
+                        slug="b",
+                        name="B",
+                        build="per_person",
+                        requests_row=True,
+                        requests_tag_pattern="req-{name}",
+                        enabled=row_param != "disabled",
+                    ),
+                ]
+            )
+            session.commit()
+            first = session.query(Collection).filter_by(slug="a").one().id
+        params: dict[str, object] = {"pattern": "req-{username}"}
+        if row_param is not None:
+            params["row_id"] = first
+        with respx.mock:
+            respx.get("http://radarr/api/v3/tag").mock(
+                return_value=httpx.Response(200, json=[{"id": 1, "label": "req-mike"}])
+            )
+            respx.get("http://radarr/api/v3/movie").mock(
+                return_value=httpx.Response(
+                    200, json=[{"tmdbId": 501, "title": "A", "tags": [1], "hasFile": True, "movieFile": {}}]
+                )
+            )
+            r = client.get("/api/requests/row-sources", params=params)
+
+        assert r.status_code == 200, r.text
+        tags = r.json()["tags"]
+        assert [(t["label"], t["ambiguous"], t["display_name"]) for t in tags] == [expected]
 
     def test_row_sources_radarr_alone_is_connected_even_when_its_tags_need_overseerr(self, client: TestClient):
         """The Arr-tags-without-Overseerr setup this screen exists for: the engine's advice names
