@@ -2023,6 +2023,18 @@ def _ledger_keys(ctx: EngineContext, user: UserProfile, spec: RowSpec) -> dict[s
     }
 
 
+def _own_titles_tonight(ctx: EngineContext, spec: RowSpec) -> frozenset[tuple[MediaType, int]]:
+    """The theme's own titles as loaded tonight; empty when it names none or could not be read."""
+    found = ctx.theme_titles.get(spec.theme.slug)
+    return found.own if found is not None else frozenset()
+
+
+def _holds_any(ctx: EngineContext, section, titles: frozenset[tuple[MediaType, int]]) -> bool:
+    index = ctx.section_index.get(section.key, {})
+    kind = section_kind(section)
+    return any(media == kind and tmdb_id in index for media, tmdb_id in titles)
+
+
 def _leave_uncovered_libraries(
     ctx: EngineContext,
     user: UserProfile,
@@ -2034,11 +2046,13 @@ def _leave_uncovered_libraries(
     """The libraries an AI row still builds in, after removing its copy from those its theme dropped.
 
     A theme covers only the kinds of title the AI named, so a row that once filled a TV library can lose
-    it. Delivery skips a library with no picks, which would leave the old collection frozen with stale
-    titles; the guarded ``remove_row`` takes it out, and only where the delivery ledger says this row
-    wrote one.
+    it. So can a library that holds none of the theme's own titles (its picks and collection members): a
+    heist list would otherwise fill a Sports library from genre matches alone. Delivery skips a library
+    with no picks, which would leave the old collection frozen with stale titles; the guarded
+    ``remove_row`` takes it out, and only where the delivery ledger says this row wrote one.
     """
-    covered = [s for s in targets if section_kind(s) in spec.theme.media]
+    own = _own_titles_tonight(ctx, spec)
+    covered = [s for s in targets if section_kind(s) in spec.theme.media and (not own or _holds_any(ctx, s, own))]
     uncovered = [s for s in targets if s not in covered]
     ledger = _ledger_keys(ctx, user, spec)
     for section in uncovered:
@@ -2061,12 +2075,11 @@ def _leave_uncovered_libraries(
         _forget(report, spec, removed_in)
         if removed_in:
             logger.info(
-                "{}{}: AI row '{}' left '{}' — its theme no longer covers {}",
+                "{}{}: AI row '{}' left '{}' — its theme has no titles there",
                 "[dry-run] " if cfg.dry_run else "",
                 user.slug,
                 spec.slug,
                 getattr(section, "title", "") or section.key,
-                section_kind(section).value,
             )
     return covered
 

@@ -1109,3 +1109,73 @@ class TestAnAiRowLeavesLibrariesItsThemeDropped:
         _, removal = self._run(both, spec)
 
         assert not [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "2"]
+
+
+class TestAnAiRowLeavesLibrariesHoldingNoneOfItsTitles:
+    """A library of the right kind that holds none of the theme's own titles gets no filler-only row."""
+
+    @pytest.fixture
+    def with_sports(self, ctx):
+        sports = MagicMock(type="movie", key="3", title="Sports")
+        sports.collections.return_value = []
+        movies = ctx.plex.sections.return_value[0]
+        ctx.plex.sections.return_value = [movies, sports]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        everything = {900: 999, 10: 1010, 20: 1020, 30: 1030, 31: 1031}
+        ctx.plex.build_library_index.side_effect = lambda section, **kw: (
+            {10: 2010, 30: 2030} if section.key == "3" else everything
+        )
+        return ctx
+
+    @staticmethod
+    def _run(ctx, spec: RowSpec, *, ledger: bool = True, dry_run: bool = False):
+        ctx.config.rows = [spec]
+        ctx.config.dry_run = dry_run
+        if ledger:
+            ctx.delivered_keys[("sarah", spec.slug, "3")] = 777
+        with patch("shortlist.engine.rows.remove_row", return_value=["3"]) as removal:
+            report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return report, removal
+
+    @staticmethod
+    def _sports_calls(removal):
+        return [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "3"]
+
+    def test_the_library_without_the_theme_titles_is_removed_and_the_other_delivered(self, with_sports):
+        spec = theme_row(theme_spec(picks=(ThemePick(tmdb_id=20, media=MediaType.MOVIE, origin="ai", reason=None),)))
+
+        report, removal = self._run(with_sports, spec)
+
+        (call,) = self._sports_calls(removal)
+        assert [s.key for s in call.kwargs["sections"]] == ["3"]
+        assert call.kwargs["delivered_keys"] == {"3": 777}
+        assert call.kwargs["dry_run"] is False
+        assert call.kwargs["other_rows"] == _rows_as_seen_by(with_sports.config, make_profile("sarah", account_id=100))
+        assert {p.section_key for p in _picks(report, "sarah", "ai-twists")} == {"1"}
+
+    def test_no_ledger_entry_means_nothing_is_removed(self, with_sports):
+        spec = theme_row(theme_spec(picks=(ThemePick(tmdb_id=20, media=MediaType.MOVIE, origin="ai", reason=None),)))
+
+        _, removal = self._run(with_sports, spec, ledger=False)
+
+        assert not self._sports_calls(removal)
+
+    def test_a_dry_run_passes_through(self, with_sports):
+        spec = theme_row(theme_spec(picks=(ThemePick(tmdb_id=20, media=MediaType.MOVIE, origin="ai", reason=None),)))
+
+        _, removal = self._run(with_sports, spec, dry_run=True)
+
+        assert self._sports_calls(removal)[0].kwargs["dry_run"] is True
+
+    def test_a_theme_naming_no_titles_judges_no_library(self, with_sports):
+        _, removal = self._run(with_sports, theme_row())
+
+        assert not self._sports_calls(removal)
+
+    def test_a_library_holding_a_named_title_keeps_its_row(self, with_sports):
+        with_sports.plex.build_library_index.side_effect = lambda section, **kw: {10: 2010, 20: 2020, 30: 2030}
+        spec = theme_row(theme_spec(picks=(ThemePick(tmdb_id=20, media=MediaType.MOVIE, origin="ai", reason=None),)))
+
+        _, removal = self._run(with_sports, spec)
+
+        assert not self._sports_calls(removal)

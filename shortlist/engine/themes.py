@@ -103,6 +103,9 @@ class ThemeTitles:
 
     titles: SeasonTitles
     reasons: dict[tuple[MediaType, int], str]
+    #: The theme's OWN titles that the libraries hold and its rules allow: its picks of any origin and its
+    #: collections' members, as opposed to the tag and genre matches that fill out a row.
+    own: frozenset[tuple[MediaType, int]] = frozenset()
     #: How many of the theme's titles the libraries hold, before its rules are applied.
     held: int = 0
     #: How many titles passed the cheap rules and so needed a running-time check, and how many got one. They
@@ -248,11 +251,15 @@ def load_theme(
         for pick in spec.picks
         if pick.reason and pick.tmdb_id in ids[pick.media]
     }
+    named = set(season.picks) | {
+        (title.tmdb_id, title.media_type) for _ref, found in reads.collections for title in found or ()
+    }
+    own = frozenset((media_type, tmdb_id) for tmdb_id, media_type in named if tmdb_id in ids.get(media_type, ()))
     titles = SeasonTitles(
         ids={media_type: frozenset(found) for media_type, found in ids.items()},
         in_library=in_library,
         missing_collections=tuple(ref.title for ref, found in reads.collections if found is None),
     )
     return ThemeTitles(
-        titles=titles, reasons=reasons, held=held, runtime_total=runtime_total, runtime_checked=runtime_checked
+        titles=titles, reasons=reasons, own=own, held=held, runtime_total=runtime_total, runtime_checked=runtime_checked
     )
