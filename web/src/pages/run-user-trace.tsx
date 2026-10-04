@@ -1486,9 +1486,10 @@ function SeedQueryRow({
 }) {
   // tmdb_discover queries by GENRE, not by a watched title — so it reads "In your genres · Crime,
   // Comedy" rather than "Searched from <a title>". The season source searches nothing at all: it is the
-  // season's own list. Every other source is seeded from a watch.
+  // season's own list, and an AI row's theme source reads the same way. Every other source is seeded
+  // from a watch.
   const isGenre = source === "tmdb_discover";
-  const isSeason = source === "season";
+  const isSeason = source === "season" || source === "theme";
   return (
     <li className="text-sm">
       <div className="flex items-center gap-1.5">

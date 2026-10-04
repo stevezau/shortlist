@@ -83,6 +83,9 @@ export const queryKeys = {
   seasonPresets: ["season-presets"] as const,
   seasonPreview: (draft: SeasonPreviewInput) => ["season-preview", draft] as const,
   seasonNextDate: (rule: DateRule) => ["season-next-date", rule] as const,
+  themeCapabilities: ["theme-capabilities"] as const,
+  themePrompts: ["theme-prompts"] as const,
+  theme: (id: number) => ["themes", id] as const,
   seasonSearch: (kind: "tags" | "collections" | "library", q: string) =>
     ["season-search", kind, q] as const,
   libraryCollections: (key: string) => ["library-collections", key] as const,

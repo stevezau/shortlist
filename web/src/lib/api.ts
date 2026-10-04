@@ -33,6 +33,12 @@ import type {
   SeasonPreview,
   SeasonPreviewInput,
   TmdbTag,
+  Theme,
+  ThemeCapabilities,
+  ThemePreview,
+  ThemePreviewInput,
+  ThemePrompts,
+  ThemeSaveInput,
   ConnectionTestResult,
   DateRule,
   LinkRequest,
@@ -575,6 +581,30 @@ export const api = {
    *  writes nothing; an omitted field falls back to what is saved. */
   previewWebPrompt: (body: WebPromptPreviewInput): Promise<WebPromptPreview> =>
     request("/api/ai/web-prompt-preview", { method: "POST", body: JSON.stringify(body) }),
+
+  // --- AI rows (#138) ---
+
+  /** Whether an AI provider is set. Without one the AI row editor offers hand-editing instead. */
+  getThemeCapabilities: (): Promise<ThemeCapabilities> => request("/api/themes/capabilities"),
+
+  /** The "Build the list" prompt: the default guidance and the locked mechanics. */
+  getThemePrompts: (): Promise<ThemePrompts> => request("/api/themes/prompts"),
+
+  /** Write (or refine) a theme with one AI call and save nothing. Spends the owner's AI tokens. */
+  previewTheme: (body: ThemePreviewInput): Promise<ThemePreview> =>
+    request("/api/themes/preview", { method: "POST", body: JSON.stringify(body) }),
+
+  getTheme: (id: number): Promise<Theme> => request(`/api/themes/${id}`),
+
+  createTheme: (body: ThemeSaveInput): Promise<Theme> =>
+    request("/api/themes", { method: "POST", body: JSON.stringify(body) }),
+
+  updateTheme: (id: number, body: ThemeSaveInput): Promise<Theme> =>
+    request(`/api/themes/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  /** Pause or resume an AI row's AI: it keeps its theme but spends no tokens. */
+  setAiPause: (collectionId: number, paused: boolean): Promise<Collection> =>
+    request(`/api/collections/${collectionId}/ai-pause`, { method: "POST", body: JSON.stringify({ paused }) }),
 
   /** When a date rule next falls, from the rule alone: no TMDB key or Plex needed. */
   getSeasonNextDate: (rule: DateRule): Promise<SeasonDate> =>

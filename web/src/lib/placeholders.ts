@@ -12,6 +12,8 @@ export const LIBRARY_NAME = "{library_name}";
 export const TOP_SEED = "{top_seed}";
 export const SEASON = "{season}";
 export const SEASON_EMOJI = "{season_emoji}";
+export const THEME = "{theme}";
+export const THEME_EMOJI = "{theme_emoji}";
 
 /** Every placeholder, with what it stands for in the words the editor's hints use. `seasonal` ones only mean
  *  something on a row that follows seasons. */
@@ -30,9 +32,20 @@ export function usesSeason(text: string): boolean {
   return SEASON_TOKENS.some((token) => text.includes(token));
 }
 
+/** An AI row's placeholders (#138): filled from the row's theme, and refused on any other row.
+ *  Apart from `PLACEHOLDERS` so the list every row shows stays as it was. */
+export const THEME_PLACEHOLDERS = [
+  { token: THEME, meaning: "the theme’s name (Twist endings)" },
+  { token: THEME_EMOJI, meaning: "that theme’s emoji (🌀)" },
+] as const;
+
+export function usesTheme(text: string): boolean {
+  return THEME_PLACEHOLDERS.some(({ token }) => text.includes(token));
+}
+
 // EXACTLY the tokens the engine substitutes, matched case-sensitively — not `\{[a-z_]+\}`. A loose pattern
 // would dress "Best of {genre}" up as a resolved placeholder while Plex receives the literal braces.
-const NAMES = PLACEHOLDERS.map((p) => p.token.slice(1, -1)).join("|");
+const NAMES = [...PLACEHOLDERS, ...THEME_PLACEHOLDERS].map((p) => p.token.slice(1, -1)).join("|");
 
 /** Splits a name around its placeholders, keeping them (for `String.split`). */
 export const PLACEHOLDER_SPLIT = new RegExp(`(\\{(?:${NAMES})\\})`);
@@ -46,15 +59,22 @@ export interface PlaceholderValues {
   user: string;
   libraryName: string;
   season: { name: string; emoji: string };
+  /** An AI row's theme; a sample stands in when a preview has none. */
+  theme?: { name: string; emoji: string };
 }
+
+const SAMPLE_THEME = { name: "Twist endings", emoji: "🌀" };
 
 /** Every placeholder filled, and nothing else changed: whitespace is the caller's business, since a one-line
  *  title collapses it and a description keeps its line breaks. */
 export function fillPlaceholders(template: string, values: PlaceholderValues): string {
+  const theme = values.theme ?? SAMPLE_THEME;
   return template
     .replaceAll(TOP_SEED, values.topSeed)
     .replaceAll(USER, values.user)
     .replaceAll(LIBRARY_NAME, values.libraryName)
     .replaceAll(SEASON_EMOJI, values.season.emoji)
-    .replaceAll(SEASON, values.season.name);
+    .replaceAll(SEASON, values.season.name)
+    .replaceAll(THEME_EMOJI, theme.emoji)
+    .replaceAll(THEME, theme.name);
 }

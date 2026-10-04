@@ -3,6 +3,9 @@ import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import { PageHeader } from "@/components/page-header";
+import { AiPromptsSection } from "@/components/rows/ai-prompts-section";
+import { AiRowSection } from "@/components/rows/ai-row-section";
+import { AiTryIt } from "@/components/rows/ai-try-it";
 import { RowRequestSettings } from "@/components/rows/row-request-settings";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { InheritableField } from "@/components/rows/inheritable-field";
@@ -56,6 +59,8 @@ import {
 } from "@/lib/queries";
 import { requestReadiness } from "@/lib/requests";
 import {
+  AI_KIND_META,
+  aiRowSettings,
   applyRowKind,
   BASELINE_FIELDS,
   baselineTakes,
@@ -64,6 +69,7 @@ import {
   FILL_META,
   followsAWatch as rowFollowsAWatch,
   hiddenButRead,
+  isAiRow,
   KIND_META,
   kindBaseline as baselineOf,
   kindDisabledReason,
@@ -82,6 +88,7 @@ import {
   type RowFill,
 } from "@/lib/row-kinds";
 import { sentenceCaseHighlights, type RowTemplate } from "@/lib/row-templates";
+import { selectsNothing, toSaveBody, useSaveTheme, type PendingTheme } from "@/lib/themes";
 import {
   idleHoldGlobal,
   idleHoldSeed,
@@ -256,6 +263,16 @@ export function RowEditor({
       ? toInput(collection)
       : { ...blankInput(), ...(template?.values ?? {}) },
   );
+  // An AI row (#138) is decided when the editor opens and never changes: a saved row follows a theme,
+  // and a new one starts from the Describe a row template. It has no theme until its list is built.
+  const [aiRow] = useState(() => isAiRow(input) || template?.kind === "ai");
+  // The list built or edited here and not saved yet; it is saved, as a theme, with the row.
+  const [pendingTheme, setPendingTheme] = useState<PendingTheme | null>(null);
+  // Tokens this edit's AI calls have spent. Charged to the row and its theme when the list is saved.
+  const [tokensSpent, setTokensSpent] = useState(0);
+  // A new row's theme is saved before the row, so a row save that fails can't make a second theme.
+  const [createdThemeId, setCreatedThemeId] = useState<number | null>(null);
+  const saveTheme = useSaveTheme();
   // Bumped by Discard, to remount the fields: several hold state of their own seeded from the value
   // they were first given (the schedule's mode, the poster's upload), which a reset `input` alone
   // would leave showing the discarded edit.
@@ -293,7 +310,7 @@ export function RowEditor({
   // Whether a rename would throw away settings edits (it leaves the page). Save is never gated on
   // it, because a form that refuses to save what it thinks is unchanged is unfixable when the
   // comparison is the thing that is wrong.
-  const unsaved = hasUnsavedChanges(input, savedRow);
+  const unsaved = hasUnsavedChanges(input, savedRow) || pendingTheme !== null;
 
   // A kind switch on a saved row waits here for the confirm dialog; the name it asked for waits in
   // `pendingRename` until Save sends it (the Name box edits it meanwhile), with the name the switch
@@ -362,8 +379,9 @@ export function RowEditor({
     }
   };
   const current = rowKindOf(draft, kindCtx);
-  const shown = visibleSettings(draft, kindCtx);
-  const hidden = hiddenButRead(draft, kindCtx);
+  // An AI row's titles come from its theme, so it shows its own short list of settings.
+  const shown = aiRow ? aiRowSettings() : visibleSettings(draft, kindCtx);
+  const hidden = aiRow ? [] : hiddenButRead(draft, kindCtx);
   // Whether the engine forces this row to a nightly cadence — which it does for a row that FOLLOWS
   // a watch, by name or by cycling.
   const followsAWatch = rowFollowsAWatch(draft, kindCtx);
@@ -460,11 +478,20 @@ export function RowEditor({
   const landsIn = libraries.data ? rowLibraries(input, libraries.data) : null;
   const reach = rowReach(input, users);
   const savedReach = savedRow ? rowReach(savedRow, users) : null;
-  const changes = draftChanges(
-    input,
-    savedRow,
-    pendingRename ? { name: pendingRename.name, from: savedName } : null,
-  );
+  const changes = [
+    ...draftChanges(input, savedRow, pendingRename ? { name: pendingRename.name, from: savedName } : null),
+    ...(pendingTheme
+      ? [{ label: "Its list of titles", to: pendingTheme.origin === "ai" ? "a new AI-written list" : "your edited list" }]
+      : []),
+  ];
+  // A row with no list has nothing to pick from, and the API refuses a theme that selects nothing.
+  const aiBlocked = !aiRow
+    ? null
+    : pendingTheme && selectsNothing(pendingTheme.draft)
+      ? "Add at least one tag, genre or title to the list before saving."
+      : !collection && !pendingTheme
+        ? "Build the row’s list before adding it."
+        : null;
   const scheduleGroup = collection
     ? schedule.data?.rows.find((group) => group.rows.some((row) => row.id === collection.id))
     : undefined;
@@ -510,11 +537,12 @@ export function RowEditor({
     const renameTo = saved && pendingRename ? pendingRename.name.trim() : null;
     const at = saved && renameTo ? renameAt(saved, input, renameTo) : null;
     const oldTemplate = savedName;
-    save.mutate(
+    const saveRow = (themeId: number | null) => save.mutate(
       {
         id: collection?.id ?? null,
         body: {
           ...withoutHiddenInstructions(input, kindCtx),
+          theme_id: themeId,
           hub_anchor,
           ...(renameTo
             ? {
@@ -534,6 +562,28 @@ export function RowEditor({
         },
       },
     );
+
+    if (!pendingTheme) {
+      saveRow(input.theme_id);
+      return;
+    }
+    // The theme first: the row can only follow one that exists. Its tokens are charged once, here.
+    const themeId = collection?.theme_id ?? createdThemeId;
+    saveTheme.mutate(
+      {
+        id: themeId,
+        body: toSaveBody(pendingTheme, { tokens: tokensSpent, collectionId: collection?.id ?? null }),
+      },
+      {
+        onSuccess: (theme) => {
+          // The list stays on screen until the row is saved too: if that fails, the retry replaces this
+          // theme instead of making another, and spends nothing more.
+          setCreatedThemeId(theme.id);
+          setTokensSpent(0);
+          saveRow(theme.id);
+        },
+      },
+    );
   };
 
   // Back to the row as saved, the way the page first opened it. The on/off switch's change is part
@@ -543,6 +593,8 @@ export function RowEditor({
     setInput(back);
     setKindBaseline(baselineOf(back));
     lastPersonalFill.current = null;
+    setPendingTheme(null);
+    setTokensSpent(0);
     setPendingKind(null);
     setPendingRename(null);
     setDraftVersion((version) => version + 1);
@@ -566,6 +618,12 @@ export function RowEditor({
     { id: "name-and-look", label: "Name & look" },
     { id: "who-gets-it", label: "Who gets it" },
     { id: "what-goes-in", label: "What goes in" },
+    ...(aiRow
+      ? [
+          { id: "try-it", label: "Try it" },
+          { id: "ai-prompts", label: "AI prompts" },
+        ]
+      : []),
     { id: "schedule", label: "Schedule" },
     { id: "placement", label: "Placement" },
     // A Your requests row never searches, so it has nothing to ask for and nothing to set here, and
@@ -685,7 +743,7 @@ export function RowEditor({
                     value={pendingRename.name}
                     onChange={(e) => setPendingRename({ ...pendingRename, name: e.target.value })}
                   />
-                  <TemplateVarsHint seasonal={isSeasonal} />
+                  <TemplateVarsHint seasonal={isSeasonal} themed={aiRow} />
                   {pendingProblem && (
                     <p role="alert" className="text-sm text-destructive-text">
                       {pendingProblem}
@@ -706,7 +764,7 @@ export function RowEditor({
                     placeholder="e.g. ✨ Hidden Gems for {user}"
                   />
                   {/* Just the placeholders. What the name BECOMES is the Plex card below. */}
-                  <TemplateVarsHint seasonal={isSeasonal} />
+                  <TemplateVarsHint seasonal={isSeasonal} themed={aiRow} />
                 </>
               )}
             </div>
@@ -742,6 +800,11 @@ export function RowEditor({
                 collectionId={collection?.id ?? null}
                 hasImage={collection?.poster?.has_image ?? false}
                 sampleSeason={chosenSeasons[0]}
+                sampleTheme={
+                  pendingTheme
+                    ? { name: pendingTheme.draft.name, emoji: pendingTheme.draft.emoji ?? "" }
+                    : undefined
+                }
               />
             </div>
           </EditorSection>
@@ -797,6 +860,27 @@ export function RowEditor({
           >
             {/* First: the kind decides every setting after it (design §3). Folded to its one line,
                 because the six kinds with their descriptions are a page of their own. */}
+            {aiRow ? (
+              <>
+                {/* Fixed: an AI row can't be switched to another kind, and no other kind can become one,
+                    because it needs a list first (`isAiRow`). */}
+                <div data-setting="kind">
+                  <span className="block font-medium">Row type: {AI_KIND_META.title}</span>
+                  <span className="block text-sm text-muted-foreground">{AI_KIND_META.description}</span>
+                </div>
+                <div className="space-y-4 border-t pt-4">
+                  <AiRowSection
+                    input={draft}
+                    collection={collection}
+                    pending={pendingTheme}
+                    tokensSpent={tokensSpent}
+                    onPending={setPendingTheme}
+                    onSpent={(tokens) => setTokensSpent((total) => total + tokens)}
+                  />
+                </div>
+              </>
+            ) : (
+              <>
             <RowBuildPicker value={input.build} onChange={pickBuild} sharedDisabledReason={disabledKindReason("popular")} seasonal={isSeasonal} />
             <details data-setting="kind" className="group">
               <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
@@ -842,6 +926,8 @@ export function RowEditor({
                 }
               />
             </div>
+              </>
+            )}
 
             <div data-setting="libraries" className="space-y-2 border-t pt-4">
               <LibraryPicker
@@ -941,7 +1027,7 @@ export function RowEditor({
               set={set}
               shown={shown}
               settings={settings.data}
-              fill={current.fill}
+              fill={aiRow ? "picked" : current.fill}
               takeTurns={
                 current.fill === "again" && (
                   <TakeTurns
@@ -957,6 +1043,26 @@ export function RowEditor({
               }
             />
           </EditorSection>
+
+          {aiRow && (
+            <>
+              <EditorSection
+                id="try-it"
+                title="Try it"
+                description="Run this row for one person to see what it would pick, and why. Nothing is written to Plex."
+              >
+                <AiTryIt collection={collection} users={users} unsaved={changes.length > 0} />
+              </EditorSection>
+
+              <EditorSection
+                id="ai-prompts"
+                title="AI prompts"
+                description="What the AI is told when it builds or changes this row's list. The guidance is yours to change; the mechanics aren't."
+              >
+                <AiPromptsSection input={draft} set={set} />
+              </EditorSection>
+            </>
+          )}
 
           <EditorSection
             id="schedule"
@@ -1156,14 +1262,24 @@ export function RowEditor({
               {apiErrorMessage(save.error, "Couldn’t save this row. Try again.")}
             </p>
           )}
+          {saveTheme.isError && (
+            <p role="alert" className="text-sm text-destructive-text">
+              {apiErrorMessage(saveTheme.error, "Couldn’t save this row’s list. Try again.")}
+            </p>
+          )}
+          {aiBlocked && (
+            <p role="status" className="text-sm text-warning">
+              {aiBlocked}
+            </p>
+          )}
         </div>
       </div>
 
       <RowSaveBar
         changes={changes}
         isNew={!collection}
-        saving={save.isPending}
-        saveDisabled={!input.name.trim() || pendingProblem !== null || enableSaving}
+        saving={save.isPending || saveTheme.isPending}
+        saveDisabled={!input.name.trim() || pendingProblem !== null || enableSaving || aiBlocked !== null}
         onSave={submit}
         onDiscard={discard}
         onCancel={onClose}

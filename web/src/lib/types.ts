@@ -160,6 +160,23 @@ export type PlexCollectionMatch = Schemas["PlexCollectionOut"];
 export type LibraryTitle = Schemas["LibraryTitleOut"];
 export type RowEffectiveness = Schemas["RowEffectivenessOut"];
 
+/** GET /api/themes/capabilities: whether an AI provider is set, so the AI row editor can offer its AI half. */
+export type ThemeCapabilities = Schemas["CapabilitiesOut"];
+/** GET /api/themes/prompts: the guidance "Build the list" starts from, and the mechanics no one may edit. */
+export type ThemePrompts = Schemas["PromptsOut"];
+/** A theme as the API returns it, saved (`id` set) or an unsaved draft from a preview (`id` null). */
+export type Theme = Schemas["ThemeOut"];
+export type ThemePick = Schemas["ThemePickIO"];
+export type ThemeRules = Schemas["RulesIO"];
+/** POST /api/themes/preview body: only the brief is required. */
+export type ThemePreviewInput = Partial<Schemas["PreviewIn"]> & { brief: string };
+/** What one AI call wrote: the draft, how it fared, what it spent, and (when refining) what it changed. */
+export type ThemePreview = Schemas["PreviewOut"];
+export type ThemeStats = Schemas["ThemeStatsOut"];
+export type ThemeDiff = Schemas["ThemeDiffOut"];
+/** POST /api/themes and PUT /api/themes/{id} body. */
+export type ThemeSaveInput = Partial<Schemas["ThemeSaveIn"]> & { draft: Schemas["ThemeIn"] };
+
 /** A Plex library on the server (GET /api/system/libraries). */
 export type PlexLibrary = Schemas["LibraryOut"];
 

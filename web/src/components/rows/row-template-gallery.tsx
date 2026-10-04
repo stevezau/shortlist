@@ -15,6 +15,7 @@ import {
   TrendingUp,
   Tv,
   Users,
+  WandSparkles,
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -31,27 +32,29 @@ import {
 import { Input } from "@/components/ui/input";
 import { renderRowName, sampleLibraryName } from "@/lib/format";
 import { useRequestRowSources } from "@/lib/queries";
-import type { RowKind } from "@/lib/row-kind-meta";
 import {
   CONNECTIONS_SETTINGS,
   NO_REQUEST_SOURCE,
   noRequestSource,
 } from "@/lib/row-kinds";
 import {
-  ROW_TEMPLATE_GROUPS,
+  AI_TEMPLATES,
+  GALLERY_GROUPS,
   ROW_TEMPLATES,
   type RowTemplate,
+  type TemplateKind,
 } from "@/lib/row-templates";
 import { cn } from "@/lib/utils";
 import { selectedClass, selectedVerticalClass } from "@/lib/selected";
 
-const FILTERS: { label: string; kinds?: RowKind[] }[] = [
+const FILTERS: { label: string; kinds?: TemplateKind[] }[] = [
   { label: "All templates" },
   { label: "Discover", kinds: ["picked", "byw"] },
   { label: "Rewatch", kinds: ["again"] },
   { label: "Requests", kinds: ["requests"] },
   { label: "Seasonal", kinds: ["seasonal"] },
   { label: "Popular", kinds: ["popular"] },
+  { label: "AI", kinds: ["ai"] },
 ];
 
 const TEMPLATE_ICONS: Record<string, LucideIcon> = {
@@ -65,10 +68,11 @@ const TEMPLATE_ICONS: Record<string, LucideIcon> = {
   "your-requests": Mail,
   seasonal: Star,
   "popular-here": TrendingUp,
+  "describe-a-row": WandSparkles,
 };
 
-const ORDERED_TEMPLATES = ROW_TEMPLATE_GROUPS.flatMap((group) =>
-  ROW_TEMPLATES.filter((template) => template.kind === group.kind),
+const ORDERED_TEMPLATES = GALLERY_GROUPS.flatMap((group) =>
+  [...ROW_TEMPLATES, ...AI_TEMPLATES].filter((template) => template.kind === group.kind),
 );
 
 function TemplatePreview({ template }: { template: RowTemplate }) {

@@ -91,6 +91,7 @@ export function blankInput(): CollectionInput {
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "" },
     ai_instructions: { mode: "default", text: "" },
+    theme_id: null,
   };
 }
 
@@ -177,6 +178,7 @@ export function toInput(collection: Collection): CollectionInput {
       mode: collection.ai_instructions?.mode ?? "default",
       text: collection.ai_instructions?.text ?? "",
     },
+    theme_id: collection.theme_id ?? null,
   };
 }
 
@@ -353,18 +355,31 @@ export function rowOverrides(
 
   // The instructions only reach AI web search, so a row that doesn't use it has nothing to badge.
   // Before settings load the global set is unknown, so a row with no sources of its own keeps the badge.
+  // An AI row is filled from its theme (`rows.effective_row_sources`), so it never searches the web.
+  const isAiRow = collection.theme_id != null;
   const usesAiWebSearch =
-    collection.candidate_sources.length > 0 || settings
+    !isAiRow &&
+    (collection.candidate_sources.length > 0 || settings
       ? withoutWebSearchWhenSeasonal(
           effectiveSources(collection.candidate_sources, settings),
           collection.seasons ?? [],
         ).includes("llm_web")
-      : true;
+      : true);
   if (usesAiWebSearch && collection.ai_instructions?.mode === "add") {
     parts.push("AI instructions: adds to the default");
   }
   if (usesAiWebSearch && collection.ai_instructions?.mode === "own") {
     parts.push("AI instructions: own");
+  }
+  // On an AI row the same field holds the guidance "Build the list" is given, so it is badged as that.
+  if (isAiRow && collection.ai_instructions?.mode === "add") {
+    parts.push("AI prompt: adds to the default");
+  }
+  if (isAiRow && collection.ai_instructions?.mode === "own") {
+    parts.push("AI prompt: own");
+  }
+  if (isAiRow && collection.ai_paused) {
+    parts.push("AI paused");
   }
 
   // null = no limit, so only a limit that is set gets a badge.

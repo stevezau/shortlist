@@ -20,7 +20,15 @@ import type { CollectionInput, RowSources } from "@/lib/types";
  */
 
 export type { KindMeta, RowFill, RowKind, RowKindChoice } from "@/lib/row-kind-meta";
-export { FILL_META, KIND_GROUP, KIND_META, ROW_FILLS, ROW_KINDS, SEASONAL_FILLS } from "@/lib/row-kind-meta";
+export {
+  AI_KIND_META,
+  FILL_META,
+  KIND_GROUP,
+  KIND_META,
+  ROW_FILLS,
+  ROW_KINDS,
+  SEASONAL_FILLS,
+} from "@/lib/row-kind-meta";
 
 /**
  * The server-wide values a row's kind depends on. Each function takes only the part it reads.
@@ -93,6 +101,15 @@ export function followsAWatch(
 export function takeTurnsEnabled(input: CollectionInput, ctx: Pick<RowKindContext, "globalMaxSeeds">): boolean {
   const seeds = effectiveMaxSeeds(input, ctx);
   return seeds >= 1 && seeds <= 2;
+}
+
+/**
+ * Whether the row follows an AI-written theme (#138). Kept apart from `rowKindOf` on purpose: an AI row
+ * is a way of FILLING a row with its own editor and its own limits, not one more fill a row can be
+ * switched to, so the kind picker never offers it and nothing here changes how the other kinds read.
+ */
+export function isAiRow(input: Pick<CollectionInput, "theme_id">): boolean {
+  return input.theme_id !== null;
 }
 
 function fillOf(input: CollectionInput, ctx: KindGlobals): RowFill {
@@ -444,6 +461,7 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   recency: "recency",
   recent_count: "recent_count",
   ai_instructions: "ai_instructions",
+  theme_id: "kind", // an AI row's theme is part of what kind of row it is
   max_seeds: "max_seeds",
   max_runtime: "limits",
   min_year: "limits",
@@ -563,6 +581,21 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
   popular: ["min_watchers"],
 };
 
+/**
+ * What an AI row shows beside the settings every row has. Its titles come from its theme, so there are
+ * no sources, watch counts or seasons to choose, and its limits are the theme's own rules.
+ */
+export function aiRowSettings(): ReadonlySet<RowSettingKey> {
+  return new Set<RowSettingKey>([
+    ...ALWAYS_VISIBLE,
+    "watched_pct",
+    "recency",
+    "refresh_days",
+    "idle_hold_days",
+    "requests",
+  ]);
+}
+
 /** The sources the engine gathers from for this row (`rows.effective_row_sources`). */
 function rowSources(input: CollectionInput, ctx: Pick<RowKindContext, "globalSources">): readonly string[] {
   const sources = input.candidate_sources.length > 0 ? input.candidate_sources : ctx.globalSources;
@@ -579,6 +612,7 @@ export function visibleSettings(
   input: CollectionInput,
   ctx: Pick<RowKindContext, "isDefault" | "globalMaxSeeds" | "defaultRowName" | "globalSources">,
 ): ReadonlySet<RowSettingKey> {
+  if (isAiRow(input)) return aiRowSettings();
   const { kind, fill } = rowKindOf(input, ctx);
   const shown = new Set<RowSettingKey>([...ALWAYS_VISIBLE, ...FILL_SETTINGS[fill]]);
 

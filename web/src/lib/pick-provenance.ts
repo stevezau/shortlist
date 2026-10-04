@@ -9,6 +9,7 @@ const SOURCE_LABELS: Record<string, string> = {
   llm_web: "AI web search",
   cold_start: "Popular on this server",
   season: "Seasonal list",
+  theme: "AI row's theme",
   history: "Your watch history",
   tmdb_both: "TMDB (similar + your genres)",
 };

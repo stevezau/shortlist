@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef } from "react";
 
 import { api } from "@/lib/api";
 import { renderRowName, sampleLibraryName } from "@/lib/format";
-import { fillPlaceholders, LIBRARY_NAME, TOP_SEED, USER, usesSeason } from "@/lib/placeholders";
+import { fillPlaceholders, LIBRARY_NAME, TOP_SEED, USER, usesSeason, usesTheme } from "@/lib/placeholders";
 import type { CollectionInput, Season } from "@/lib/types";
 
 /** The sample person and library every preview on this card is filled in for. */
@@ -17,8 +17,9 @@ function renderDescription(
   template: string,
   libraryName: string,
   season: { name: string; emoji: string } = { name: "Christmas", emoji: "🎄" },
+  theme?: { name: string; emoji: string },
 ): string {
-  return fillPlaceholders(template, { ...SAMPLE, libraryName, season }).trim();
+  return fillPlaceholders(template, { ...SAMPLE, libraryName, season, theme }).trim();
 }
 
 /** What varies about the name, in the words the caption uses — or null when nothing does. */
@@ -30,6 +31,9 @@ function nameCaption(input: CollectionInput, template: string): string | null {
   const perLibrary = template.includes(LIBRARY_NAME);
   if (usesSeason(template)) {
     return "Example only — the name follows the season the row is in.";
+  }
+  if (usesTheme(template)) {
+    return "Example only — the name follows the row’s theme.";
   }
   if (input.build !== "shared" && perPerson) {
     return "Example only — each person gets their own name here, from their own viewing.";
@@ -86,6 +90,7 @@ export function RowPlexCard({
   collectionId,
   hasImage,
   sampleSeason,
+  sampleTheme,
   compact = false,
 }: {
   input: CollectionInput;
@@ -93,14 +98,16 @@ export function RowPlexCard({
   hasImage: boolean;
   /** The first season the row follows, to fill `{season}` with a real one; undefined uses a sample. */
   sampleSeason?: Season;
+  /** An AI row's theme, to fill `{theme}` with its real name; undefined uses a sample. */
+  sampleTheme?: { name: string; emoji: string };
   compact?: boolean;
 }) {
   const template = input.name_template || input.name;
   const sampleLibrary = sampleLibraryName(input.media);
   const shown =
-    renderRowName(template, SAMPLE.topSeed, SAMPLE.user, sampleLibrary, sampleSeason) ||
+    renderRowName(template, SAMPLE.topSeed, SAMPLE.user, sampleLibrary, sampleSeason, sampleTheme) ||
     "Picked for You";
-  const description = renderDescription(input.description, sampleLibrary, sampleSeason);
+  const description = renderDescription(input.description, sampleLibrary, sampleSeason, sampleTheme);
   const caption = nameCaption(input, template);
   const mode = input.poster.mode;
   const posterTitle = renderRowName(
@@ -109,6 +116,7 @@ export function RowPlexCard({
     SAMPLE.user,
     sampleLibrary,
     sampleSeason,
+    sampleTheme,
   );
   const posterSubtitle = renderRowName(
     input.poster.subtitle,
@@ -116,6 +124,7 @@ export function RowPlexCard({
     SAMPLE.user,
     sampleLibrary,
     sampleSeason,
+    sampleTheme,
   );
 
   return (

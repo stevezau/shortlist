@@ -1,4 +1,4 @@
-import { KIND_META, ROW_KINDS, type RowKind } from "@/lib/row-kind-meta";
+import { AI_KIND_META, KIND_META, ROW_KINDS, type RowKind } from "@/lib/row-kind-meta";
 import type { CollectionInput } from "@/lib/types";
 
 /**
@@ -16,9 +16,12 @@ import type { CollectionInput } from "@/lib/types";
  * with the picker's own copy, so the two cannot describe a kind differently.
  */
 
+/** A template's kind: one of the six, or "ai" (#138), which the kind picker never offers. */
+export type TemplateKind = RowKind | "ai";
+
 export interface RowTemplate {
   id: string;
-  kind: RowKind;
+  kind: TemplateKind;
   emoji: string;
   title: string;
   summary: string;
@@ -38,6 +41,16 @@ export const ROW_TEMPLATE_GROUPS: {
   heading: KIND_META[kind].title,
   description: KIND_META[kind].description,
 }));
+
+/** The AI group's heading, in the same shape as the six kinds'. */
+export const AI_TEMPLATE_GROUP: { kind: "ai"; heading: string; description: string } = {
+  kind: "ai",
+  heading: AI_KIND_META.title,
+  description: AI_KIND_META.description,
+};
+
+/** The gallery's headings: the six kinds in the picker's order, then AI. */
+export const GALLERY_GROUPS = [...ROW_TEMPLATE_GROUPS, AI_TEMPLATE_GROUP];
 
 export const ROW_TEMPLATES: RowTemplate[] = [
   {
@@ -296,8 +309,36 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
 ];
 
+/**
+ * The AI templates. Kept apart from `ROW_TEMPLATES`, which is the six kinds' own: an AI row is not a
+ * kind a row can be switched to, and its name uses the theme placeholders that no other template may.
+ *
+ * "AI Picks" (a row that explores new themes over time) is not here: it needs the explore mode of a
+ * later phase, and a tile that promised it would deliver this fixed-theme row instead.
+ */
+export const AI_TEMPLATES: RowTemplate[] = [
+  {
+    id: "describe-a-row",
+    kind: "ai",
+    emoji: "🪄",
+    title: "Describe a row",
+    summary: "Say what you want. The AI builds the list.",
+    blurb:
+      "Describe a row in your own words, like “films with a twist ending”. The AI writes the list once from your words, and Shortlist picks from it for each person every run. No more AI after that.",
+    highlights: ["One row each", "The AI writes the list once", "Off until you switch it on"],
+    values: {
+      // Named from the theme once there is one; the server refuses these placeholders on any other row.
+      name: "{theme_emoji} {theme}",
+      build: "per_person",
+      // The owner sees the list before anyone's Plex does: the API also forces this on create.
+      enabled: false,
+      size: 15,
+    },
+  },
+];
+
 export function findRowTemplate(id: string): RowTemplate | undefined {
-  return ROW_TEMPLATES.find((template) => template.id === id);
+  return [...ROW_TEMPLATES, ...AI_TEMPLATES].find((template) => template.id === id);
 }
 
 /** Names a highlight may start with that keep their capital mid-sentence: the apps, and every season

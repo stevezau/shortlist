@@ -77,3 +77,14 @@ export const KIND_GROUP: Readonly<KindMeta> = {
   description:
     "Each kind fills the row in a different way. Pick one, and the settings below change to match it. You can switch later: you'll see exactly what will change before anything is saved.",
 };
+
+/**
+ * An AI row (#138): filled from a theme the AI wrote once from the owner's description. Not in
+ * `KIND_META` or the picker's list: a row can't be switched into it (it needs a theme first), so it
+ * is chosen from the gallery's "AI" group, and the editor shows it as a fixed row type.
+ */
+export const AI_KIND_META: Readonly<KindMeta> = {
+  title: "AI row",
+  description:
+    "Describe the row in your own words. The AI writes the list once, then Shortlist picks from it for each person every run, with no more AI.",
+};

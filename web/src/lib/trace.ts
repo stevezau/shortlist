@@ -216,6 +216,8 @@ export function sourceRole(source: string): string {
       return "With little history to go on, we pulled the highest-rated titles on this server.";
     case "season":
       return "We took the season's titles in your libraries and weighed each by how well it fits what they watch.";
+    case "theme":
+      return "We took the theme's titles in your libraries and weighed each by how well it fits what they watch.";
     default:
       return "We gathered candidate titles from this source.";
   }
