@@ -9,6 +9,7 @@ hallucinated title simply resolves to nothing rather than reaching a row.
 from __future__ import annotations
 
 import json
+import re
 import threading
 from datetime import UTC, datetime
 from typing import NamedTuple, Protocol
@@ -320,6 +321,34 @@ def parse_web_titles(text: str, limit: int) -> list[dict]:
     return try_parse_web_titles(text, limit) or []
 
 
+_FLAT_OBJECT = re.compile(r"\{[^{}]*\}")
+_BARE_NULL_AFTER_COMMA = re.compile(r",\s*null\s*(?=[,}])")
+_BARE_NULL_AFTER_BRACE = re.compile(r"\{\s*null\s*,")
+
+
+def _salvage_entries(decoded: str) -> tuple[list[dict], int]:
+    """Decode every flat ``{...}`` object in a reply the whole-array decode rejected.
+
+    Entries have no nested braces, so one malformed entry (or a reply cut off mid-entry) costs only
+    itself. The one malformation seen in production (runs 76 and 103) is a bare ``null`` written in
+    place of a key, ``{"title": "You", null, "media": "show"}``; it is dropped, and no year is invented.
+
+    Returns:
+        The decoded dicts and how many ``{...}`` objects were found, so the caller can report drops.
+    """
+    found = _FLAT_OBJECT.findall(decoded)
+    entries: list[dict] = []
+    for chunk in found:
+        repaired = _BARE_NULL_AFTER_BRACE.sub("{", _BARE_NULL_AFTER_COMMA.sub("", chunk))
+        try:
+            entry = json.loads(repaired)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries, len(found)
+
+
 def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
     """`parse_web_titles`, but ``None`` means the reply was unparseable (and was logged), so a caller can
     tell that from a reply that legitimately held an empty list."""
@@ -346,6 +375,9 @@ def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
     # be an object). Unwrap it, so the same parser serves the schema'd and the chatty replies.
     if isinstance(data, dict):
         data = data.get("titles")
+    salvaged: tuple[list[dict], int] = ([], 0)
+    if not isinstance(data, list) and decode_error is not None:
+        salvaged = _salvage_entries(decoded)
     if not isinstance(data, list):
         # SHOW THE REPLY. Without it this line says only that something went wrong, and the seed's
         # candidates are gone with no way to tell a refusal ("I can't help with that") from a
@@ -366,15 +398,29 @@ def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
             )
         else:
             diagnosis = f"; no decode error; last 200 chars {preview[-200:]!r}"
-        logger.warning(
-            "llm_web: could not parse a title list from the model reply ({} chars, parsed as {}): {!r}{}{}",
-            len(preview),
-            type(data).__name__,
-            preview[:400],
-            "…" if len(preview) > 400 else "",
-            diagnosis,
-        )
-        return None
+        if salvaged[0]:
+            entries, found = salvaged
+            logger.warning(
+                "llm_web: salvaged {} of {} entries from a malformed model reply (dropped {}) ({} chars): {!r}{}{}",
+                len(entries),
+                found,
+                found - len(entries),
+                len(preview),
+                preview[:400],
+                "…" if len(preview) > 400 else "",
+                diagnosis,
+            )
+            data = entries
+        else:
+            logger.warning(
+                "llm_web: could not parse a title list from the model reply ({} chars, parsed as {}): {!r}{}{}",
+                len(preview),
+                type(data).__name__,
+                preview[:400],
+                "…" if len(preview) > 400 else "",
+                diagnosis,
+            )
+            return None
     out: list[dict] = []
     for item in data:
         if not isinstance(item, dict):

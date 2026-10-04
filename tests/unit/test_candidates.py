@@ -16,7 +16,7 @@ from shortlist.engine.candidates import (
 )
 from shortlist.engine.clients.search import SearchResult, TitleCandidate
 from shortlist.engine.curator import NullCurator
-from shortlist.engine.curator.base import parse_web_titles
+from shortlist.engine.curator.base import parse_web_titles, try_parse_web_titles
 from shortlist.engine.models import MediaType, Pick, Seed
 from shortlist.engine.web_guidance import Guidance
 from tests.conftest import make_candidate
@@ -1033,6 +1033,73 @@ class TestParseWebTitles:
         assert out == [{"title": "A", "year": None, "media": "movie"}]
 
 
+class TestMalformedEntriesAreSalvaged:
+    """Runs 76 and 103 on the owner's server: the model wrote a bare `null` where a key belongs, and
+    the one bad entry threw away the other ~40."""
+
+    @staticmethod
+    def _warnings(fn) -> str:
+        from loguru import logger
+
+        seen: list[str] = []
+        sink = logger.add(seen.append, level="WARNING")
+        try:
+            fn()
+        finally:
+            logger.remove(sink)
+        return "".join(seen)
+
+    def test_a_bare_null_costs_only_the_year_of_its_own_entry(self):
+        reply = (
+            "```json\n[\n"
+            '  {"title": "Dune", "year": 2021, "media": "movie"},\n'
+            '  {"title": "You", null, "media": "show"},\n'
+            '  {"title": "Andor", "year": 2022, "media": "show"},\n'
+            '  {"title": "John Wick", null, "media": "movie"},\n'
+            '  {"title": "Sicario", "year": 2015, "media": "movie"}\n'
+            "]\n```"
+        )
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert out == [
+            {"title": "Dune", "year": 2021, "media": "movie"},
+            {"title": "You", "year": None, "media": "show"},
+            {"title": "Andor", "year": 2022, "media": "show"},
+            {"title": "John Wick", "year": None, "media": "movie"},
+            {"title": "Sicario", "year": 2015, "media": "movie"},
+        ]
+        assert "salvaged 5 of 5 entries" in text and "decode error" in text
+
+    def test_a_reply_cut_off_mid_entry_keeps_every_complete_entry(self):
+        reply = (
+            '[{"title": "Dune", "year": 2021, "media": "movie"}, {"title": "Andor", "media": "show"}, {"title": "Sic'
+        )
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert [it["title"] for it in out] == ["Dune", "Andor"]
+        assert "salvaged 2 of 2 entries" in text
+
+    def test_a_refusal_is_still_unparseable(self):
+        reply = "I can't help with that"
+        assert try_parse_web_titles(reply, 10) is None
+        text = self._warnings(lambda: try_parse_web_titles(reply, 10))
+        assert "could not parse" in text and "salvaged" not in text
+
+    def test_a_valid_array_logs_nothing(self):
+        reply = '[{"title": "Dune", "year": 2021, "media": "movie"}]'
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert out == [{"title": "Dune", "year": 2021, "media": "movie"}]
+        assert text == ""
+
+    def test_the_schemad_titles_wrapper_is_unchanged(self):
+        reply = '{"titles": [{"title": "Dune", "year": 2021, "media": "movie"}]}'
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert out == [{"title": "Dune", "year": 2021, "media": "movie"}]
+        assert text == ""
+
+
 class TestBuildWebQueryForTitle:
     """The per-title external-search query must center on the one title (so it's precise AND cacheable
     across users) with a sane fallback for an empty title."""
@@ -1827,14 +1894,15 @@ class TestAnUnparseableReplyIsDiagnosable:
 
     @staticmethod
     def _unescaped_quote() -> str:
-        items = ",\n".join(f'  {{"title": "Synthetic Title {n}", "year": 2020, "media": "movie"}}' for n in range(40))
-        return f'[\n{items},\n  {{"title": "The "Quoted" One", "year": 2020, "media": "movie"}}\n]'
+        # Bare strings, not objects: nothing in it is a flat `{...}` entry, so salvage recovers nothing.
+        items = ",\n".join(f'  "Synthetic Title {n} (2020)"' for n in range(40))
+        return f'[\n{items},\n  "The "Quoted" One (2020)"\n]'
 
-    def test_the_bracket_prose_input_is_recorded_as_failing_or_parsing_today(self):
-        """The production-defect hypothesis. The slice runs from the first `[` to the LAST `]`, which
-        is the one in `[movie]`, so the prose is inside the slice."""
+    def test_the_bracket_prose_input_is_salvaged_entry_by_entry(self):
+        """The slice runs from the first `[` to the LAST `]`, which is the one in `[movie]`, so the
+        prose is inside the slice and the whole-array decode fails; the 40 entries still come back."""
         out = parse_web_titles(self._fenced_array_then_bracketed_prose(), 100)
-        assert out == [], "this input fails to parse today (hypothesis confirmed)"
+        assert [it["title"] for it in out] == [f"Synthetic Title {n}" for n in range(40)]
 
     def test_the_log_shows_the_tail_and_the_decode_error_position_when_parsing_fails(self):
         import json
