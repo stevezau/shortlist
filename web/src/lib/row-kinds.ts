@@ -462,6 +462,13 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   recent_count: "recent_count",
   ai_instructions: "ai_instructions",
   theme_id: "kind", // an AI row's theme is part of what kind of row it is
+  // Explore and the over-time controls exist only on an AI row, which has its own section for them.
+  theme_mode: "kind",
+  explore_brief: "kind",
+  theme_days: "kind",
+  refresh_share: "kind",
+  repeat_cooldown_days: "kind",
+  avoid_rows: "kind",
   max_seeds: "max_seeds",
   max_runtime: "limits",
   min_year: "limits",

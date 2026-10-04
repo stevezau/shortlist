@@ -35,6 +35,8 @@ import type {
   TmdbTag,
   Theme,
   ThemeCapabilities,
+  ThemeRef,
+  ThemeRotation,
   ThemePreview,
   ThemePreviewInput,
   ThemePrompts,
@@ -605,6 +607,24 @@ export const api = {
   /** Pause or resume an AI row's AI: it keeps its theme but spends no tokens. */
   setAiPause: (collectionId: number, paused: boolean): Promise<Collection> =>
     request(`/api/collections/${collectionId}/ai-pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+
+  /** Where each person's Explore rotation stands. */
+  getThemeRotation: (collectionId: number): Promise<ThemeRotation> =>
+    request(`/api/collections/${collectionId}/theme-rotation`),
+
+  /** Point one person's "Up next" at a saved theme. Changes no Plex state. */
+  setUpNext: (collectionId: number, userId: number, themeId: number): Promise<ThemeRef> =>
+    request(`/api/collections/${collectionId}/up-next`, {
+      method: "PUT",
+      body: JSON.stringify({ user_id: userId, theme_id: themeId }),
+    }),
+
+  /** Write a new "Up next" theme for one person now, with one AI call. */
+  regenerateUpNext: (collectionId: number, userId: number): Promise<ThemeRef> =>
+    request(`/api/collections/${collectionId}/up-next/regenerate`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
 
   /** When a date rule next falls, from the rule alone: no TMDB key or Plex needed. */
   getSeasonNextDate: (rule: DateRule): Promise<SeasonDate> =>

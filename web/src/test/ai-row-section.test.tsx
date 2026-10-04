@@ -20,6 +20,7 @@ const api = vi.hoisted(() => ({
   setAiPause: vi.fn(),
   getTmdbTags: vi.fn(),
   searchLibrary: vi.fn(),
+  listCollections: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -440,5 +441,32 @@ describe("AiRowSection usage", () => {
     renderSection({ collection: savedRow({ ai_tokens: 0 }) });
 
     expect(await screen.findByText(/used 0 tokens on this row/i)).toBeInTheDocument();
+  });
+});
+
+describe("AiRowSection over time", () => {
+  beforeEach(() => {
+    api.listCollections.mockResolvedValue([]);
+  });
+
+  it("shows Explore and the over-time controls for a row with a theme", async () => {
+    renderSection({ collection: savedRow({ slug: "mine", theme_mode: "fixed" } as Partial<Collection>) });
+
+    expect(await screen.findByLabelText("How much changes each time")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Keep the same theme" })).toBeChecked();
+  });
+
+  it("shows them for a new row once its list is built", () => {
+    renderSection({ pending: { draft: theme({ id: null }), stats: null, origin: "ai" } });
+
+    expect(screen.getByLabelText("How much changes each time")).toBeInTheDocument();
+  });
+
+  it("shows neither for a row with no theme", async () => {
+    renderSection({ collection: savedRow({ theme_id: null }) });
+    await screen.findByText(/No list yet/);
+
+    expect(screen.queryByLabelText("How much changes each time")).toBeNull();
+    expect(screen.queryByRole("radio", { name: "Keep the same theme" })).toBeNull();
   });
 });

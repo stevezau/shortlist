@@ -44,7 +44,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
-import { blankInput, hasUnsavedChanges, toInput } from "@/lib/collections";
+import { blankInput, hasUnsavedChanges, OVER_TIME_DEFAULTS, toInput } from "@/lib/collections";
 import { describeCron } from "@/lib/cron";
 import { settingString } from "@/lib/format";
 import {
@@ -543,6 +543,8 @@ export function RowEditor({
         body: {
           ...withoutHiddenInstructions(input, kindCtx),
           theme_id: themeId,
+          // Without a theme the server resets these, and refuses a row that sends any other value.
+          ...(themeId === null ? OVER_TIME_DEFAULTS : {}),
           hub_anchor,
           ...(renameTo
             ? {
@@ -876,6 +878,7 @@ export function RowEditor({
                     tokensSpent={tokensSpent}
                     onPending={setPendingTheme}
                     onSpent={(tokens) => setTokensSpent((total) => total + tokens)}
+                    onChange={set}
                   />
                 </div>
               </>

@@ -177,6 +177,12 @@ export type ThemeDiff = Schemas["ThemeDiffOut"];
 /** POST /api/themes and PUT /api/themes/{id} body. */
 export type ThemeSaveInput = Partial<Schemas["ThemeSaveIn"]> & { draft: Schemas["ThemeIn"] };
 
+/** GET /api/collections/{id}/theme-rotation: each person's current theme, the one queued next, and what came before. */
+export type ThemeRotation = Schemas["ThemeRotationOut"];
+export type RotationTarget = Schemas["RotationTargetOut"];
+/** A theme as one person's rotation holds it: which one, when it started, and when it hands over. */
+export type ThemeRef = Schemas["ThemeRefOut"];
+
 /** A Plex library on the server (GET /api/system/libraries). */
 export type PlexLibrary = Schemas["LibraryOut"];
 

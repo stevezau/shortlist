@@ -129,6 +129,12 @@ function row(patch: Partial<Collection> = {}): Collection {
     theme_id: null,
     ai_paused: false,
     ai_tokens: 0,
+    theme_mode: "fixed",
+    explore_brief: "",
+    theme_days: null,
+    refresh_share: null,
+    repeat_cooldown_days: null,
+    avoid_rows: null,
     ...patch,
   };
 }

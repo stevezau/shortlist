@@ -86,6 +86,7 @@ export const queryKeys = {
   themeCapabilities: ["theme-capabilities"] as const,
   themePrompts: ["theme-prompts"] as const,
   theme: (id: number) => ["themes", id] as const,
+  themeRotation: (collectionId: number) => ["theme-rotation", collectionId] as const,
   seasonSearch: (kind: "tags" | "collections" | "library", q: string) =>
     ["season-search", kind, q] as const,
   libraryCollections: (key: string) => ["library-collections", key] as const,

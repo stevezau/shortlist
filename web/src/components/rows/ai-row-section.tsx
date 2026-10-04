@@ -1,6 +1,9 @@
 import { useId, useState } from "react";
 
+import { DiffCard } from "@/components/rows/ai-diff-card";
 import { AiHandEdit } from "@/components/rows/ai-hand-edit";
+import { ExploreSection } from "@/components/rows/explore-section";
+import { OverTimeFields } from "@/components/rows/over-time-fields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -21,7 +24,7 @@ import {
   useThemePrompts,
   type PendingTheme,
 } from "@/lib/themes";
-import type { Collection, CollectionInput, Theme, ThemeDiff, ThemePreview, ThemeStats } from "@/lib/types";
+import type { Collection, CollectionInput, Theme, ThemePreview, ThemeStats } from "@/lib/types";
 
 /** The API's limit on a brief (`PreviewIn.brief`). */
 const MAX_BRIEF = 1000;
@@ -47,6 +50,7 @@ export function AiRowSection({
   tokensSpent,
   onPending,
   onSpent,
+  onChange,
 }: {
   input: CollectionInput;
   /** The saved row; null while a new row is being added. */
@@ -57,12 +61,17 @@ export function AiRowSection({
   tokensSpent: number;
   onPending: (next: PendingTheme | null) => void;
   onSpent: (tokens: number) => void;
+  /** Writes Explore and the over-time controls into the row form. */
+  onChange?: (patch: Partial<CollectionInput>) => void;
 }) {
   const capabilities = useThemeCapabilities();
   const savedId = collection?.theme_id ?? null;
   const saved = useTheme(savedId);
   // A query that is switched off (a row with no list yet) also reads as pending, so ask for the id too.
   const waitingForSaved = savedId !== null && saved.isPending;
+  // Explore and the over-time controls belong to a row that has a theme, saved or built in this editor.
+  const hasTheme = savedId !== null || pending !== null;
+  const change = onChange ?? (() => undefined);
 
   return (
     <div className="space-y-5">
@@ -93,6 +102,12 @@ export function AiRowSection({
           )
         }
       </QueryBoundary>
+      {hasTheme && (
+        <>
+          <ExploreSection input={input} collection={collection} onChange={change} />
+          <OverTimeFields input={input} ownSlug={collection?.slug ?? null} onChange={change} />
+        </>
+      )}
       <UsageAndPause collection={collection} tokensSpent={tokensSpent} />
     </div>
   );
@@ -353,63 +368,6 @@ function Count({ label, value }: { label: string; value: number }) {
     <div>
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="text-lg font-semibold">{value}</dd>
-    </div>
-  );
-}
-
-function DiffCard({
-  preview,
-  diff,
-  onKeep,
-  onDiscard,
-}: {
-  preview: ThemePreview;
-  diff: ThemeDiff;
-  onKeep: () => void;
-  onDiscard: () => void;
-}) {
-  return (
-    <section aria-label="What would change" className="space-y-3 rounded-lg border border-border-strong bg-elevated p-4">
-      <h3 className="text-sm font-semibold">What would change</h3>
-      {diff.rules_changed && <p className="text-sm">The limits changed (length, year or rating).</p>}
-      <TitleList label={`Titles added (${diff.added_count})`} titles={diff.added} />
-      <TitleList label={`Titles removed (${diff.removed_count})`} titles={diff.removed} />
-      <TitleList label={`Tags added (${diff.tags_added.length})`} titles={diff.tags_added} />
-      <TitleList label={`Tags removed (${diff.tags_removed.length})`} titles={diff.tags_removed} />
-      <TitleList label={`Genres added (${diff.genres_added.length})`} titles={diff.genres_added} />
-      <TitleList label={`Genres removed (${diff.genres_removed.length})`} titles={diff.genres_removed} />
-      <p className="text-sm text-muted-foreground">
-        Named titles: {diff.before_count} before, {diff.after_count} after. {diff.unchanged.length}{" "}
-        {diff.unchanged.length === 1 ? "stays" : "stay"} the same. The new list has {preview.stats.after_rules}{" "}
-        titles on your server after limits.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" onClick={onKeep}>
-          Keep
-        </Button>
-        <Button type="button" variant="ghost" onClick={onDiscard}>
-          Discard
-        </Button>
-      </div>
-      <p className="text-sm text-muted-foreground">
-        Keep puts the new list in this editor. It is saved with the row when you press Save changes.
-      </p>
-    </section>
-  );
-}
-
-function TitleList({ label, titles }: { label: string; titles: string[] }) {
-  if (titles.length === 0) return null;
-  return (
-    <div className="space-y-1">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <ul className="flex flex-wrap gap-1.5 text-sm">
-        {titles.map((title) => (
-          <li key={title}>
-            <Badge variant="outline">{title}</Badge>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

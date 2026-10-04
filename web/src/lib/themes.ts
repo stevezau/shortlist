@@ -117,6 +117,39 @@ export function useSaveTheme() {
   });
 }
 
+/** Each person's Explore rotation on an AI row: current theme, Up next, and recent themes. */
+export function useThemeRotation(collectionId: number | null) {
+  return useQuery({
+    queryKey: queryKeys.themeRotation(collectionId ?? 0),
+    queryFn: () => api.getThemeRotation(collectionId as number),
+    enabled: collectionId !== null,
+  });
+}
+
+/** Point one person's Up next at a saved theme. Spends nothing and changes nothing on Plex. */
+export function useSetUpNext() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ collectionId, userId, themeId }: { collectionId: number; userId: number; themeId: number }) =>
+      api.setUpNext(collectionId, userId, themeId),
+    onSuccess: (_ref, { collectionId }) =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.themeRotation(collectionId) }),
+  });
+}
+
+/** Have the AI write a new Up next theme for one person now. One AI call, so it spends tokens. */
+export function useRegenerateUpNext() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ collectionId, userId }: { collectionId: number; userId: number }) =>
+      api.regenerateUpNext(collectionId, userId),
+    onSuccess: (_ref, { collectionId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.themeRotation(collectionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+    },
+  });
+}
+
 /** Pause or resume an AI row's AI. It takes effect at once, apart from Save changes. */
 export function useSetAiPause() {
   const queryClient = useQueryClient();

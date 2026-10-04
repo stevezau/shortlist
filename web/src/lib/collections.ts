@@ -92,8 +92,25 @@ export function blankInput(): CollectionInput {
     poster: { mode: "", title: "", subtitle: "", style: "" },
     ai_instructions: { mode: "default", text: "" },
     theme_id: null,
+    ...OVER_TIME_DEFAULTS,
   };
 }
+
+/**
+ * The AI row's Explore and over-time settings at their defaults (#138): one fixed theme, no brief, and
+ * every control off. A row with no theme sends these, matching what the server resets them to.
+ */
+export const OVER_TIME_DEFAULTS: Pick<
+  CollectionInput,
+  "theme_mode" | "explore_brief" | "theme_days" | "refresh_share" | "repeat_cooldown_days" | "avoid_rows"
+> = {
+  theme_mode: "fixed",
+  explore_brief: "",
+  theme_days: null,
+  refresh_share: null,
+  repeat_cooldown_days: null,
+  avoid_rows: null,
+};
 
 /** Project a saved collection onto the editable input shape the editor and PATCH share. */
 export function toInput(collection: Collection): CollectionInput {
@@ -179,6 +196,12 @@ export function toInput(collection: Collection): CollectionInput {
       text: collection.ai_instructions?.text ?? "",
     },
     theme_id: collection.theme_id ?? null,
+    theme_mode: collection.theme_mode ?? "fixed",
+    explore_brief: collection.explore_brief ?? "",
+    theme_days: collection.theme_days ?? null,
+    refresh_share: collection.refresh_share ?? null,
+    repeat_cooldown_days: collection.repeat_cooldown_days ?? null,
+    avoid_rows: collection.avoid_rows ?? null,
   };
 }
 

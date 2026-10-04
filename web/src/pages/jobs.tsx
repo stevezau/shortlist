@@ -55,6 +55,7 @@ const PENDING_LABELS: Record<string, string> = {
   "privacy.sync": "Privacy sync",
   "backup.take": "Back up the database",
   "maintenance.prune": "Clear out old records",
+  "themes.rotate": "Pick new row themes",
 };
 
 /**
