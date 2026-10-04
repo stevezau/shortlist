@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func
 
 from shortlist.engine.models import MAX_ROW_SIZE, MIN_ROW_SIZE
 from shortlist.server.api.schemas import PassthroughModel
@@ -22,6 +21,7 @@ from shortlist.server.db.models import (
     PickRow,
     User,
 )
+from shortlist.server.services.run_persistence import live_pick_ids
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
@@ -86,16 +86,15 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
 
-        # The picks of the newest run that built anything for this user, grouped by (row, library). A
-        # dry run, or a run cancelled before their turn, still writes a `run_users` row but no picks,
-        # and Plex keeps the earlier titles — so the newest `run_users` row is the wrong anchor. A row
-        # spanning multiple libraries is one Plex collection per library — show them as separate cards.
-        latest_built = session.query(func.max(PickRow.run_id)).filter(PickRow.user_id == user.id).scalar()
+        # What is on Plex right now, grouped by (row, library): each row's picks come from the newest run
+        # that delivered IT (`live_pick_ids`), not the newest run overall. Rows have their own crons, so
+        # a run that built one row must not blank the others, and a dry run or cancelled run writes no
+        # picks and changes nothing here. A row spanning multiple libraries is one Plex collection per
+        # library — show them as separate cards.
+        live_ids = live_pick_ids(session, user_id=user.id).get(user.id, set())
         picks_by_row_lib: dict[tuple[str, str], list[dict]] = {}
-        if latest_built is not None:
-            for pick in (
-                session.query(PickRow).filter_by(user_id=user.id, run_id=latest_built).order_by(PickRow.rank).all()
-            ):
+        if live_ids:
+            for pick in session.query(PickRow).filter(PickRow.id.in_(live_ids)).order_by(PickRow.rank).all():
                 key = (pick.collection_slug or DEFAULT_SLUG, pick.section_key or "")
                 picks_by_row_lib.setdefault(key, []).append(pick_dict(pick))
 

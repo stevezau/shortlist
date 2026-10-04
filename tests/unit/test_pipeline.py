@@ -8166,3 +8166,205 @@ class TestTagAmbiguityAcrossEveryEnabledRequestsRow:
         assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
             ("req-bob", 102, False)
         ]
+
+
+def _profiled_remote(profile: str, account_id: int = 500, username: str = "kid"):
+    """A Plex Home account with a parental Restriction Profile — the kind Plex refuses a hide-list for."""
+    from shortlist.engine.clients.plextv import PlexTvUser
+
+    return PlexTvUser(
+        id=account_id,
+        username=username,
+        user_type=UserType.MANAGED,
+        home=True,
+        restricted=True,
+        protected=False,
+        restriction_profile=profile,
+        filters=dict.fromkeys(("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos"), ""),
+    )
+
+
+class TestAccountsThePrivacyLoopCannotVouchFor:
+    """An account the privacy loop could not vouch for is RECORDED, never left silent.
+
+    The run page counts every account it is not told about as "hides every row". So a profiled account
+    `_record_unhideable` could not look through (no token, no usable collections read, a read that
+    raised), an account whose filter write failed, and an account the owner left alone all read as
+    hiding — a green "2 of 2" over a run whose own log says it "reports nothing rather than a false
+    all-clear". Reporting only: none of these changes what is written or promoted.
+    """
+
+    OWNED: ClassVar[dict] = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[11])}
+
+    @staticmethod
+    def _report():
+        return pipeline_mod.RunReport(started_at=datetime.now(UTC))
+
+    def test_a_profiled_account_no_token_could_be_minted_for_is_recorded_as_unchecked(self, ctx: EngineContext):
+        """The archetype: `canary_server_token` refuses a PIN-protected Home user."""
+        ctx.pms_for_user = lambda profile: None
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+        assert report.unhideable_rows == {}
+
+    def test_a_profiled_account_is_recorded_as_unchecked_when_the_collections_read_failed(self, ctx: EngineContext):
+        ctx.pms_for_user = MagicMock()
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), {}, False, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+        ctx.pms_for_user.assert_not_called()
+
+    def test_a_profiled_account_is_recorded_as_unchecked_when_the_collections_read_came_back_empty(
+        self, ctx: EngineContext
+    ):
+        """An empty read cannot prove no row exists (plex-safety rule 4), so it vouches for nobody."""
+        ctx.pms_for_user = MagicMock()
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), {}, True, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+
+    def test_a_profiled_account_is_recorded_as_unchecked_when_looking_through_it_raises(self, ctx: EngineContext):
+        ctx.pms_for_user = MagicMock(side_effect=RuntimeError("PMS timed out"))
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+        assert report.unhideable_rows == {}
+
+    def test_a_profiled_account_is_recorded_as_unchecked_when_the_engine_has_no_per_account_client(
+        self, ctx: EngineContext
+    ):
+        ctx.pms_for_user = None
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("little_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+
+    def test_a_profiled_account_that_was_looked_through_is_not_recorded_as_unchecked(
+        self, ctx: EngineContext, monkeypatch
+    ):
+        ctx.pms_for_user = MagicMock()
+        monkeypatch.setattr(pipeline_mod, "unhidden_rows_visible_to", lambda as_them, owned, slug: [])
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == []
+        assert report.unhideable_rows == {}
+
+    def test_a_profiled_account_seen_to_expose_rows_is_a_finding_not_unchecked(self, ctx: EngineContext, monkeypatch):
+        ctx.pms_for_user = MagicMock()
+        monkeypatch.setattr(pipeline_mod, "unhidden_rows_visible_to", lambda as_them, owned, slug: [11])
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == []
+        assert report.unhideable_rows == {"kid": [11]}
+
+    def test_an_account_with_no_profile_is_not_this_checks_business(self, ctx: EngineContext):
+        """Its hide-list was written and read back by the loop itself; this check is for profiled ones."""
+        ctx.pms_for_user = lambda profile: None
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("sarah", account_id=100), plextv_user(100, "sarah"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == []
+
+    def test_the_run_records_a_profiled_account_it_could_not_look_through(self, ctx: EngineContext, mock_plextv):
+        """End to end through the loop: the `little_kid` account is never written to, so the loop hands it to
+        `_record_unhideable`, which cannot mint a token for it."""
+        ctx.pms_for_user = lambda profile: None
+        ctx.plex.owned_collections.return_value = dict(self.OWNED)
+        mock_plextv.users = [plextv_user(100, "sarah"), _profiled_remote("little_kid")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("kid", account_id=500)])
+
+        assert report.unhideable_measured is True
+        assert report.privacy_unchecked == ["kid"]
+        assert report.privacy_write_failed == []
+        assert report.privacy_left_alone == []
+
+    def test_a_refused_write_on_an_account_whose_profile_could_not_be_read_is_unchecked(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The profile-unknown arm skips the account as expected — no exclude written, nothing looked
+        through, so the run cannot vouch for it either."""
+        mock_plextv.users = [plextv_user(100, "sarah"), _profiled_remote("")]
+        mock_plextv.home_profile_known.return_value = False
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("kid", account_id=500)])
+
+        assert not report.promotion_blockers
+        assert report.privacy_unchecked == ["kid"]
+
+    def test_an_account_whose_filter_write_plex_refused_is_recorded(self, ctx: EngineContext, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah"), _profiled_remote("")]
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("kid", account_id=500)])
+
+        assert report.promotion_blockers
+        assert report.privacy_write_failed == ["kid"]
+        assert report.privacy_unchecked == []
+
+    def test_an_account_whose_filter_write_raised_is_recorded(self, ctx: EngineContext, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(300, "jess")]
+
+        def fail_jess(account_id, fields):
+            if account_id == 300:
+                raise RuntimeError("connection reset")
+
+        mock_plextv.update_user_filters.side_effect = fail_jess
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("jess", account_id=300)])
+
+        assert report.promotion_blockers
+        assert report.privacy_write_failed == ["jess"]
+
+    def test_an_account_left_alone_is_recorded(self, ctx: EngineContext, mock_plextv):
+        """`manage_sharing=0`: it keeps none of our excludes, so it sees every row — by the owner's choice."""
+        ctx.unmanaged_account_ids = {300}
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(300, "jess")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert report.privacy_left_alone == ["jess"]
+        assert report.privacy_unchecked == []
+        assert report.privacy_write_failed == []

@@ -63,6 +63,10 @@ def _run_privacy(run: Run) -> dict | None:
         # vouch for every account type (`filters_enforcement_measured`).
         "unreadable_filters": _measured_names(stats, "unreadable_filters"),
         "filters_not_enforced": _measured_names(stats, "filters_not_enforced"),
+        # Accounts the run could not vouch for. None on a run recorded before these keys existed.
+        "unchecked": _measured_names(stats, "privacy_unchecked"),
+        "write_failed": _measured_names(stats, "privacy_write_failed"),
+        "left_alone": _measured_names(stats, "privacy_left_alone"),
     }
 
 

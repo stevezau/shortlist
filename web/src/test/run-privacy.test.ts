@@ -21,6 +21,9 @@ function privacy(overrides: Partial<RunPrivacy> = {}): RunPrivacy {
     can_see_others: [],
     unreadable_filters: [],
     filters_not_enforced: [],
+    unchecked: [],
+    write_failed: [],
+    left_alone: [],
     ...overrides,
   };
 }
@@ -125,6 +128,76 @@ describe("runPrivacyVerdict", () => {
   it("has no 0-of-0 claim to make when there are no accounts at all", () => {
     expect(runPrivacyVerdict(privacy(), [])).toEqual({ kind: "no_accounts" });
   });
+});
+
+describe("runPrivacyVerdict, for accounts the run could not vouch for", () => {
+  const people = ["sarah", "mike", "jess", "kid"];
+
+  it("does not count a profiled account nobody could look through as hiding", () => {
+    // The finding: a PIN-protected kid account with a Restriction Profile, which the engine logs as
+    // "reports nothing rather than a false all-clear", read green "2 of 2 accounts hide every row".
+    expect(runPrivacyVerdict(privacy({ unchecked: ["kid"] }), people)).toEqual({
+      kind: "unvouched",
+      hiding: 3,
+      total: 4,
+      flagged: [],
+      unchecked: ["kid"],
+      writeFailed: [],
+      leftAlone: [],
+    });
+  });
+
+  it("does not count an account whose filter write failed as hiding", () => {
+    expect(runPrivacyVerdict(privacy({ write_failed: ["mike"] }), people)).toMatchObject({
+      kind: "unvouched",
+      hiding: 3,
+      total: 4,
+      writeFailed: ["mike"],
+    });
+  });
+
+  it("does not count an account left alone as hiding — it sees every row, by the owner's choice", () => {
+    expect(runPrivacyVerdict(privacy({ left_alone: ["jess"] }), people)).toMatchObject({
+      kind: "unvouched",
+      hiding: 3,
+      total: 4,
+      leftAlone: ["jess"],
+    });
+  });
+
+  it("counts such an account that was not one of the run's people rather than claiming 4 of 4", () => {
+    expect(runPrivacyVerdict(privacy({ left_alone: ["guest"] }), people)).toMatchObject({
+      kind: "unvouched",
+      hiding: 4,
+      total: 5,
+    });
+  });
+
+  it("counts an account once however many lists name it, matching case-insensitively", () => {
+    const verdict = runPrivacyVerdict(
+      privacy({ unreadable_filters: ["Mike"], write_failed: ["mike"], unchecked: ["KID"] }),
+      people,
+    );
+
+    expect(verdict).toEqual({
+      kind: "unvouched",
+      hiding: 2,
+      total: 4,
+      flagged: ["Mike"],
+      unchecked: ["KID"],
+      writeFailed: [],
+      leftAlone: [],
+    });
+  });
+
+  it.each(["unchecked", "write_failed", "left_alone"] as const)(
+    "will not count every account as hiding on a run that did not record %s",
+    (key) => {
+      // An older run's silence is "not recorded", never "nobody": it is exactly the run this finding was
+      // about, so it may not keep its all-clear.
+      expect(runPrivacyVerdict(privacy({ [key]: null }), people)).toEqual({ kind: "partly_measured", flagged: [] });
+    },
+  );
 });
 
 describe("nameList", () => {

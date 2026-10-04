@@ -5457,8 +5457,14 @@ export interface components {
             can_see_others: string[];
             /** Filters Not Enforced */
             filters_not_enforced: string[] | null;
+            /** Left Alone */
+            left_alone: string[] | null;
+            /** Unchecked */
+            unchecked: string[] | null;
             /** Unreadable Filters */
             unreadable_filters: string[] | null;
+            /** Write Failed */
+            write_failed: string[] | null;
         } & {
             [key: string]: unknown;
         };

@@ -381,6 +381,31 @@ class TestOnlyLiveRowsAreCredited:
         with sessions() as session:
             assert live_pick_ids(session) == {}
 
+    def test_live_pick_ids_for_one_user_equals_that_users_slice_of_the_whole(self, sessions, user):
+        add_pick(sessions, tmdb_id=100, media_type="movie", created=NOW)
+        with sessions() as session:
+            session.add(User(id=2, plex_account_id=98, username="bo", slug="bo"))
+            session.add(Delivery(collection_slug="picked", user_slug="bo", library_key="1", rating_key=5))
+            session.add(
+                PickRow(
+                    user_id=2,
+                    run_id=LIVE_RUN,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    tmdb_id=200,
+                    media_type="movie",
+                    rating_key=3,
+                    rank=1,
+                    created_at=NOW,
+                )
+            )
+            session.commit()
+            everyone = live_pick_ids(session)
+            assert set(everyone) == {1, 2}
+            assert live_pick_ids(session, user_id=2) == {2: everyone[2]}
+            assert live_pick_ids(session, user_id=1) == {1: everyone[1]}
+
 
 class TestTheCreditIsVisibleToTheReport:
     """The report intersects at ROW level, so where the stamp lands decides what it can see.

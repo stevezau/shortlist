@@ -270,8 +270,11 @@ and **Dry run first**. A dry run writes nothing to Plex.
   <figure><a href="{{ '/images/preview-dashboard.webp' | relative_url }}"><img src="{{ '/images/preview-dashboard.webp' | relative_url }}" alt="Development preview: the dashboard with the Last run, Next run, Privacy and Plex status strip, a privacy callout and the Impact report" loading="lazy"></a><figcaption>Dashboard: the status strip, the privacy callout and the Impact report.</figcaption></figure>
 </div>
 
-**Run detail.** The summary strip includes **Privacy**: how many accounts hid every row that was not
-theirs. A run that finished fine but left an account able to see other people's rows reads
+**Run detail.** The summary strip includes **Privacy**: how many accounts the run could confirm hid
+every row that was not theirs. An account it couldn't check (such as a PIN-protected account with a
+Restriction Profile), one whose hide rules couldn't be saved, and one you left alone are never counted
+as hiding; they are named under the count instead. A run from an older version reads **Not fully
+measured**, because it didn't record those accounts. A run that finished fine but left an account able to see other people's rows reads
 **OK with warnings**, and the callout names the accounts. A dry run reads **Not measured**, because it
 writes no hide rules to measure. A failed run still says Failed.
 

@@ -771,13 +771,18 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
     path Plex's own documentation gives) or disable it in Shortlist.
 
     Never raises: this is a diagnostic on top of a sync that already succeeded, and a failed read here
-    must not fail the run. A read that fails is simply not reported as clean.
+    must not fail the run. An account it cannot look through is recorded in `report.privacy_unchecked`,
+    because the run page reads an account it is not told about as hiding every row.
 
     `owned` is this phase's own FRESH PMS enumeration, not `ctx.delivered_keys`. The ledger is loaded
     when the context is built, so on a first run it holds nothing and every account would measure as
     clean — silence indistinguishable from the bug.
     """
-    if ctx.pms_for_user is None or remote is None or not getattr(remote, "restriction_profile", ""):
+    if remote is None or not getattr(remote, "restriction_profile", ""):
+        return
+    if ctx.pms_for_user is None:
+        # No way to read the server as one account (the server always wires one; a bare engine may not).
+        report.privacy_unchecked.append(user.username)
         return
     if not collections_known or not owned:
         # We could not establish which rows exist, so "sees none of ours" would be an artefact of the
@@ -790,6 +795,7 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
             user.username,
             remote.restriction_profile,
         )
+        report.privacy_unchecked.append(user.username)
         return
     try:
         as_them = ctx.pms_for_user(user)
@@ -804,10 +810,12 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
                 user.username,
                 remote.restriction_profile,
             )
+            report.privacy_unchecked.append(user.username)
             return
         exposed = unhidden_rows_visible_to(as_them, owned, user.slug)
     except Exception as e:
         logger.warning("{}: could not check what this account can see ({})", user.username, type(e).__name__)
+        report.privacy_unchecked.append(user.username)
         return
     if not exposed:
         logger.debug("{}: '{}' account, and it sees none of our rows", user.username, remote.restriction_profile)
@@ -1105,6 +1113,7 @@ def _privacy_sync_phase(
             # "Plex refuses to hide these", and reporting a chosen state as a fault would train the
             # owner to ignore the one that is a fault.
             _leave_sharing_alone(ctx, user, roster.get(user.plex_account_id), report)
+            report.privacy_left_alone.append(user.username)
             continue
         try:
             own_slug = own_slugs.get(user.plex_account_id)
@@ -1196,11 +1205,15 @@ def _privacy_sync_phase(
                 # `restricted=0` with a profile set — the endpoint-disagreement case privacy.py
                 # deliberately allows through — which lands here instead, and was the one skip in the
                 # phase that reported nothing at all. (A profile-unknown account early-returns inside
-                # `_record_unhideable`, so this costs nothing for the other arm.)
+                # `_record_unhideable`, so this costs nothing for the other arm — which is why that arm
+                # is recorded here instead: no exclude written and nobody looked.)
                 _record_unhideable(ctx, user, remote_user, owned, collections_known, report)
+                if not remote_user.restriction_profile:
+                    report.privacy_unchecked.append(user.username)
             else:
                 sync_failed = True
                 report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
+                report.privacy_write_failed.append(user.username)
                 logger.error(
                     "{}: plex.tv 422 on an account with NO parental profile — blocking promotion, "
                     "because nothing else would stop their rows going public",
@@ -1214,6 +1227,7 @@ def _privacy_sync_phase(
             # Named, not just counted: this is the reason nothing gets promoted, so it has to reach
             # the operator's screen rather than only the container log.
             report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
+            report.privacy_write_failed.append(user.username)
             if user_report is not None:
                 user_report.status = "error"
                 user_report.error = f"{user_report.error} | {message}" if user_report.error else message

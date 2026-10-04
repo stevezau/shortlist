@@ -5879,6 +5879,34 @@
             ],
             "title": "Filters Not Enforced"
           },
+          "left_alone": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left Alone"
+          },
+          "unchecked": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unchecked"
+          },
           "unreadable_filters": {
             "anyOf": [
               {
@@ -5892,12 +5920,29 @@
               }
             ],
             "title": "Unreadable Filters"
+          },
+          "write_failed": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Write Failed"
           }
         },
         "required": [
           "can_see_others",
           "unreadable_filters",
-          "filters_not_enforced"
+          "filters_not_enforced",
+          "unchecked",
+          "write_failed",
+          "left_alone"
         ],
         "title": "RunPrivacyOut",
         "type": "object"

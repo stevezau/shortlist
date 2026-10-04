@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatDuration, runElapsedMs, runStatusLabel } from "@/lib/format";
 import {
   hasPrivacyWarning,
+  nameList,
   privacyFindings,
   runPrivacyVerdict,
   type RunPrivacy,
@@ -367,8 +368,9 @@ function findingPhrase(name: string, username: string, privacy: RunPrivacy): str
  * How many accounts hide every row that is not theirs, as far as THIS run can vouch for.
  *
  * Says "Not measured" rather than a count whenever the run did not look — an older run, a dry run, a
- * run that died before the merge — and "Not fully measured" when Plex's filter read did not run. A
- * count built on a check nobody ran is the all-clear this cell must never print.
+ * run that died before the merge — and "Not fully measured" when Plex's filter read did not run or the
+ * run did not record who it could not vouch for. Accounts it could not vouch for are named under the
+ * count. A count built on a check nobody ran is the all-clear this cell must never print.
  */
 function PrivacyCell({ run }: { run: RunDetail }) {
   const verdict = runPrivacyVerdict(
@@ -411,7 +413,12 @@ function PrivacyCell({ run }: { run: RunDetail }) {
           label="Privacy"
           tone={verdict.flagged.length > 0 ? "warn" : "neutral"}
           value="Not fully measured"
-          sub={flaggedLink(verdict.flagged) ?? "Plex’s share filters weren’t read on this run"}
+          sub={
+            flaggedLink(verdict.flagged) ??
+            (run.privacy?.unreadable_filters === null
+              ? "Plex’s share filters weren’t read on this run"
+              : "From an older version that didn’t check every account")
+          }
         />
       );
     case "no_accounts":
@@ -430,5 +437,32 @@ function PrivacyCell({ run }: { run: RunDetail }) {
           }
         />
       );
+    case "unvouched": {
+      const names = (usernames: string[]) => nameList(usernames.map(displayName));
+      const gaps = [
+        ...(verdict.writeFailed.length > 0 ? [`Couldn’t save hide rules for ${names(verdict.writeFailed)}`] : []),
+        ...(verdict.unchecked.length > 0 ? [`Couldn’t check what ${names(verdict.unchecked)} can see`] : []),
+        ...(verdict.leftAlone.length > 0 ? [`You left sharing alone for ${names(verdict.leftAlone)}`] : []),
+      ];
+      const link = flaggedLink(verdict.flagged);
+      const faults = verdict.flagged.length + verdict.writeFailed.length + verdict.unchecked.length;
+      return (
+        <StatusCell
+          label="Privacy"
+          // Left alone is the owner's own choice, so on its own it is no warning — but never the green all-clear.
+          tone={faults > 0 ? "warn" : "neutral"}
+          value={`${verdict.hiding} of ${verdict.total} accounts hide every row`}
+          sub={
+            link ? (
+              <>
+                {link} · {gaps.join(" · ")}
+              </>
+            ) : (
+              <HintParts parts={gaps} />
+            )
+          }
+        />
+      );
+    }
   }
 }
