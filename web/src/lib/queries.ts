@@ -9,6 +9,7 @@ import {
 import { api } from "./api";
 import { dailyCronTime, describeCron } from "./cron";
 import { runRefetchIntervalMs, runsListRefetchIntervalMs } from "./run-format";
+import { loadCachedReport, saveCachedReport } from "./report-cache";
 import { needsSetup } from "./season-draft";
 import { useSSE } from "./sse";
 import type {
@@ -1016,8 +1017,17 @@ export function useEngagement(window: ReportWindow = "30") {
 export function useReport(window: ReportWindow = "30") {
   return useQuery({
     queryKey: queryKeys.reportWindow(window),
-    queryFn: () => api.getReport(window),
+    queryFn: async () => {
+      const fresh = await api.getReport(window);
+      // Written here, not on `data`, so placeholder data is never saved back as if it were fetched.
+      saveCachedReport(window, fresh);
+      return fresh;
+    },
     staleTime: 60_000,
+    // Show the report remembered for the SELECTED window first; only without one, keep the previous
+    // window on screen while the new one loads. Placeholder (unlike initialData) leaves the query
+    // pending-then-refetching.
+    placeholderData: (previous) => loadCachedReport(window) ?? previous,
   });
 }
 

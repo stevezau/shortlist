@@ -33,6 +33,7 @@ import { api } from "@/lib/api";
 import { buildLabel, settingBool } from "@/lib/format";
 import { privacyNeedsAttention, usePrivacyGlance } from "@/lib/privacy-attention";
 import { queryKeys, useSession, useSettings, useVersion } from "@/lib/queries";
+import { clearCachedReports } from "@/lib/report-cache";
 import { selectedVerticalClass } from "@/lib/selected";
 import { COFFEE_URL, DOCS_URL, STAR_URL } from "@/lib/support";
 import { Toaster } from "sonner";
@@ -120,6 +121,7 @@ function SessionFooter() {
   const logout = useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
+      clearCachedReports();
       queryClient.clear(); // drop every cached query so no stale owner data lingers
       navigate("/login");
     },

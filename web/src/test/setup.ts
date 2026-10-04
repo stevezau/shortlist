@@ -21,6 +21,9 @@ configure({ asyncUtilTimeout: 2500 });
 
 afterEach(() => {
   cleanup();
+  // The report query remembers its last response here; one test's report must not be the next one's
+  // instant placeholder.
+  localStorage.clear();
 });
 
 // jsdom has no EventSource, and `useSSE` (lib/sse.ts) is now reachable from more than one page's

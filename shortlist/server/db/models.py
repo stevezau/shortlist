@@ -622,6 +622,11 @@ class RunSharedRow(Base):
 
 class PickRow(Base):
     __tablename__ = "picks"
+    __table_args__ = (
+        # The dashboard report's two heavy reads (`_avg_days_to_watch` covering, `_viewing_share` first pick).
+        Index("ix_picks_user_title_dates", "user_id", "tmdb_id", "media_type", "created_at", "watched_at"),
+        Index("ix_picks_user_created", "user_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), index=True, nullable=True)

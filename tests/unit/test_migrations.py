@@ -1790,6 +1790,51 @@ class TestRowLimits0097:
         assert not (self._LIMITS & set(self._columns(tmp_path)))
 
 
+class TestPicksReportIndexes0101:
+    """0101 adds the two composite `picks` indexes the dashboard report reads through."""
+
+    @staticmethod
+    def _indexes(config_dir: Path) -> dict[str, list[str]]:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            names = [r[1] for r in con.execute("PRAGMA index_list(picks)")]
+            return {n: [c[2] for c in con.execute(f"PRAGMA index_info({n})")] for n in names}
+
+    def test_head_has_both_indexes_with_their_columns_in_order(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        indexes = self._indexes(tmp_path)
+        assert indexes["ix_picks_user_title_dates"] == ["user_id", "tmdb_id", "media_type", "created_at", "watched_at"]
+        assert indexes["ix_picks_user_created"] == ["user_id", "created_at"]
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0100")
+        run_migrations(tmp_path)
+        assert "ix_picks_user_created" in self._indexes(tmp_path)
+
+    def test_the_downgrade_drops_both_and_keeps_the_single_column_indexes(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0100")
+
+        indexes = self._indexes(tmp_path)
+        assert not {"ix_picks_user_title_dates", "ix_picks_user_created"} & set(indexes)
+        assert {"ix_picks_user_id", "ix_picks_created_at"} <= set(indexes)
+
+    def test_the_average_days_query_is_answered_from_the_covering_index(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            plan = " ".join(
+                row[3]
+                for row in con.execute(
+                    "EXPLAIN QUERY PLAN SELECT user_id, tmdb_id, media_type, min(created_at), min(watched_at) "
+                    "FROM picks GROUP BY user_id, tmdb_id, media_type"
+                )
+            )
+        assert "USING COVERING INDEX ix_picks_user_title_dates" in plan
+        assert "TEMP B-TREE" not in plan
+
+
 class TestRowShowDaysDowngrade0088:
     """0089's downgrade re-creates `shown_state` for any install that had it, and 0088's downgrade has to
     take it out again, or a database downgraded past 0088 keeps a column no revision below it defines."""

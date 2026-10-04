@@ -1164,3 +1164,95 @@ describe("ImpactReport — the engagement split", () => {
     expect(screen.queryByText("<0.1%")).toBeNull();
   });
 });
+
+describe("ImpactReport — loading and updating", () => {
+  beforeEach(() => {
+    getReport.mockReset();
+    getDeletedRows.mockReset();
+    getDeletedRows.mockResolvedValue([]);
+  });
+
+  it("shows the labelled skeleton while nothing is cached", () => {
+    getReport.mockReturnValue(new Promise(() => {}));
+
+    renderReport();
+
+    expect(screen.getByRole("status", { name: "Loading the impact report" })).toBeInTheDocument();
+    expect(screen.queryByText("Updating…")).not.toBeInTheDocument();
+  });
+
+  it("shows the remembered report immediately, with Updating… until the fetch lands", async () => {
+    localStorage.setItem("shortlist.report.v1.30", JSON.stringify(REPORT));
+    let resolve!: (value: EffectivenessReport) => void;
+    getReport.mockReturnValue(new Promise<EffectivenessReport>((r) => (resolve = r)));
+
+    renderReport();
+
+    expect(await screen.findByTestId("verdict")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading the impact report" })).not.toBeInTheDocument();
+    expect(screen.getByText("Updating…")).toBeInTheDocument();
+
+    resolve(REPORT);
+    await vi.waitFor(() => expect(screen.queryByText("Updating…")).not.toBeInTheDocument());
+    expect(screen.getByTestId("verdict")).toBeInTheDocument();
+  });
+
+  it("keeps the previous window on screen while the next one loads", async () => {
+    getReport.mockImplementation((window: ReportWindow) =>
+      window === "30" ? Promise.resolve(REPORT) : new Promise(() => {}),
+    );
+    renderReport();
+    await screen.findByTestId("verdict");
+    expect(screen.queryByText("Updating…")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "90 days" }));
+
+    expect(await screen.findByText("Updating…")).toBeInTheDocument();
+    expect(screen.getByTestId("verdict")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading the impact report" })).not.toBeInTheDocument();
+  });
+
+  it("does not remember placeholder data under the new window's key", async () => {
+    getReport.mockImplementation((window: ReportWindow) =>
+      window === "30" ? Promise.resolve(REPORT) : new Promise(() => {}),
+    );
+    renderReport();
+    await screen.findByTestId("verdict");
+
+    await userEvent.click(screen.getByRole("button", { name: "90 days" }));
+    await screen.findByText("Updating…");
+
+    expect(localStorage.getItem("shortlist.report.v1.30")).not.toBeNull();
+    expect(localStorage.getItem("shortlist.report.v1.90")).toBeNull();
+  });
+
+  it("shows the remembered report for the selected window over the previous window's", async () => {
+    const cached90 = { ...REPORT, window: "90" as ReportWindow };
+    localStorage.setItem("shortlist.report.v1.90", JSON.stringify(cached90));
+    getReport.mockImplementation((window: ReportWindow) =>
+      window === "30" ? Promise.resolve(REPORT) : new Promise(() => {}),
+    );
+    renderReport();
+    await screen.findByTestId("verdict");
+
+    await userEvent.click(screen.getByRole("button", { name: "90 days" }));
+
+    await screen.findByText("Updating…");
+    expect(screen.getByTestId("verdict").parentElement?.className).not.toContain("opacity-60");
+    expect(screen.getByTestId("verdict").querySelector(".opacity-60")).toBeNull();
+  });
+
+  it("dims the figures while another window's report stands in", async () => {
+    getReport.mockImplementation((window: ReportWindow) =>
+      window === "30" ? Promise.resolve(REPORT) : new Promise(() => {}),
+    );
+    renderReport();
+    await screen.findByTestId("verdict");
+    expect(document.querySelector(".opacity-60")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "90 days" }));
+
+    await screen.findByText("Updating…");
+    expect(document.querySelectorAll(".opacity-60.motion-reduce\\:transition-none").length).toBeGreaterThan(0);
+  });
+});
