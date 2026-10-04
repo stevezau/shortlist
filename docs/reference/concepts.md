@@ -85,7 +85,7 @@ date would file old watches in the wrong week of the trend chart permanently. A 
 credited as watched is picked up on the first sync after it completes.
 
 **Why a watched title can still appear:** the read is per-run, so a title marked watched _after_ the
-last run stays eligible until the next run re-reads. Between runs, **Jobs → Sync history**
+last run stays eligible until the next run re-reads. Between runs, **Activity → Jobs → Sync watch history**
 (`POST /api/report/sync`) re-reads every user's watched set on demand. It writes nothing to Plex,
 only refreshes what Shortlist knows, so hit rates and the per-user "N titles watched" count stay
 current without waiting for a scheduled run.

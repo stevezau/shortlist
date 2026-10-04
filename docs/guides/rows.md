@@ -3,7 +3,6 @@ title: Rows and templates
 description: Start a row from a template, choose what kind of row it is, and name it. What fills each kind, seasonal rows and where a row sits on Plex each have their own page.
 heading: Rows and templates
 updated: 2026-10-04
-dev_preview: true
 ---
 
 A row is one Plex collection per person (or one shared by everyone, for Popular on this server),
@@ -20,18 +19,19 @@ of the rows guide is split by question:
 
 ## Starting from a template
 
-Stable {{ site.stable_version }} has nine starting templates: _Picked for You_, _Because you
-watched…_, _Watch it again_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_,
-_Movie night_ and _More TV to watch_. **Rows → Add a row** opens the gallery. Each tile describes
-what it changes; every field remains editable afterwards.
+There are ten starting templates: _Picked for You_, _Because you watched…_, _Watch it again_,
+_Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_, _Movie night_
+and _More TV to watch_. **Rows → Add a row** opens the compact gallery, with search, filters and a
+preview of the selected template. Each tile describes what it changes; every field remains editable
+afterwards. **Use template** opens the editor; **Start from scratch** opens an empty row directly.
+_Your requests_ is for titles someone requested that are now ready on Plex.
 
-<details class="dev-preview" markdown="1">
-<summary><span class="dev-preview__tag">Development preview</span> The compact template gallery</summary>
-<div class="dev-preview__body" markdown="1">
+<figure class="shot">
+  <img src="{{ '/images/templates.webp' | relative_url }}" width="1440" height="860" loading="lazy"
+       alt="The Add a row dialog: ten template tiles, a search box and category tabs, with the selected template's preview and settings on the right.">
+  <figcaption><strong>Rows → Add a row</strong>: ten templates, each with a preview before you commit.</figcaption>
+</figure>
 
-The compact gallery adds search, filters and a selected-template preview.
-**Use template** opens the editor; **Start from scratch** opens an empty row directly. The development
-build also adds _Your requests_, for titles someone requested that are now ready on Plex.
 In the editor, **Per person / Shared** stays visible above **Row type**, whichever template you
 start from. The template selects a starting choice; you can change it before saving.
 
@@ -51,31 +51,23 @@ Because you watched uses one recent watch for recommendations and web-search see
 and request limits follow your configured server settings. These starting defaults apply to new
 template rows; saved rows keep their settings.
 
-</div>
-</details>
-
 ## Editing a row
-
-On stable, the row editor groups its fields under descriptive headings such as **How it looks on
-Plex** and **What kind of row is this?**. Settings stay a draft until you save; renaming and artwork
-operations have their own actions.
-
-<details class="dev-preview" markdown="1">
-<summary><span class="dev-preview__tag">Development preview</span> Editor navigation</summary>
-<div class="dev-preview__body" markdown="1">
 
 The editor shows **One row each, or one for everyone?** with **Per person** and **Shared** choices,
 then labels its current **Row type**. **Per person** gives each person their own picks; **Shared**
 gives everyone in the selected audience the same server-popular titles. The row types offered follow
 that choice, and Seasonal is available in both.
 
-The section links use the same names as their headings: **Name & look**, **Who gets it**,
-**What goes in**, **Schedule**, **Placement** and **Requests**. They jump to that
-part of the editor. The save bar summarizes draft changes before you apply them.
+The row editor is one page. A jump list on the side goes to each section, which uses the same name
+as its heading: **Name & look**, **Who gets it**, **What goes in**, **Schedule**, **Placement**,
+**Requests** and **Danger zone**. The **Live on Plex** strip at the top holds the changes that apply
+to Plex immediately: the row's on/off switch, **Rename on Plex** and **Run now**. Everything else
+stays a draft until you save: the sticky save bar at the bottom lists what is about to change and
+has **Save changes** and **Discard**. Artwork operations keep their own actions. Removing or deleting
+a row is in the Danger zone, with a confirmation.
 
-Row settings stay a draft until you save. **Rename**, artwork operations and the row's on/off switch
-keep their separate actions. **Rated by · global setting** saves immediately and affects every row
-and Requests; its saving, success or error message appears beside that control.
+**Rated by · global setting** saves immediately and affects every row and Requests; its saving,
+success or error message appears beside that control.
 
 Under **Who gets it**, **Everyone** reaches everyone with Shortlist enabled; **Choose people** lets
 you select individual recipients. The people lists show ten per page by default. Use **Search
@@ -86,13 +78,9 @@ Searching and paging only change the list you see, not who gets the row. Selecti
 across searches and pages and apply when you save the row. The audience table keeps the library
 and account-hiding information for each recipient.
 
-</div>
-</details>
-
 ## Row kinds
 
-Stable has five row kinds; the development build adds **Your requests** as a sixth. In stable,
-use **What kind of row is this?**; in the development editor, choose **Per person** or **Shared**,
+There are six row kinds. In the editor, choose **Per person** or **Shared**,
 then **Change row type**. Each kind fills the row in a different way, and picking one changes which
 settings appear below it, so you're never hunting for a setting that doesn't apply to what your row
 does:
@@ -101,7 +89,7 @@ does:
 - **Because you watched** — More like one thing they watched recently. Named after it, like "Because
   you watched Dune".
 - **Watch it again** — Favourites they've already finished, ready to rewatch.
-- **Your requests** (development preview) — What they asked for in Overseerr, once it's on Plex. Each
+- **Your requests** — What they asked for in Overseerr, once it's on Plex. Each
   title leaves once they've watched it. See [Your requests rows](requests.md#your-requests-rows).
 - **Seasonal** — Only appears around the holidays you pick, like Halloween or Christmas. Filled in any
   of the ways above, except Your requests.
@@ -112,7 +100,7 @@ others. Pick it, choose which seasons the row follows, then choose **how it's fi
 Because you watched, Watch it again, or Popular on this server. The settings for whichever fill you
 pick then show underneath, exactly as they would if the row weren't seasonal at all — so every
 combination (a seasonal "Because you watched" row, a seasonal shared row, and so on) stays reachable.
-In the development editor, **Per person** offers the three personal fills under **What goes in →
+In the editor, **Per person** offers the three personal fills under **What goes in →
 How it's filled**. Choose **Shared** above **Row type** to fill a seasonal row with Popular on this
 server instead. Switching between these choices keeps the seasons and their timing.
 A Your requests row is the one kind that can't be seasonal: a request lands when it lands, so no
@@ -120,7 +108,7 @@ season decides whether the row shows. See [Seasonal rows](rows/seasonal.md).
 
 The default row can't be Seasonal — its name is the one every person's everyday row uses — so the
 picker shows Seasonal disabled there, with an explanation. Every other kind is still available on the
-default row, unless its name (which lives in **Settings › Row defaults**) uses `{top_seed}`: that
+default row, unless its name (which lives in **Settings → Defaults → Row defaults**) uses `{top_seed}`: that
 name makes it a Because you watched row whatever else you pick, so the other kinds are disabled, with
 a link to where the name is changed.
 
@@ -129,7 +117,7 @@ first: "Change this row to X?", then a plain sentence for each thing that will c
 appear, settings that disappear, and anything the new kind forces (a row whose name follows a watch,
 for example, picks new titles every night). Nothing is applied until you confirm. On a new, unsaved
 row the switch just applies, since there's nothing on Plex yet to warn you about.
-The development editor's **Per person / Shared** choice uses this same confirmation. Cancelling
+The **Per person / Shared** choice uses this same confirmation. Cancelling
 leaves the draft unchanged; confirming updates the draft, and saving applies it.
 
 Switching is always worked out from the row as you opened it (or, for a new row, as its template
@@ -219,7 +207,7 @@ where that lives — see [Because you watched rows](rows/what-goes-in.md#because
 what each one means for the name.
 
 There is a server-wide default for how many recent watches every discovery source searches from, in
-**Settings → Finding titles → How many recent watches to match**, and a row can override it in the
+**Settings → Defaults → Refresh & variety → How many recent watches to match**, and a row can override it in the
 row's own kind settings (for a Picked for You row that's under **How picks are chosen**; for Watch it
 again, under **When their finished titles run out**). The global stops at 5 while a row can go down to
 1, because narrowing to one watch is a choice worth making for a single row rather than imposing on

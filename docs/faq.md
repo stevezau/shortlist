@@ -124,7 +124,7 @@ what to watch next. No usernames, no account IDs, no genres, no viewing times.
 
 ## What if I uninstall?
 
-Open **Settings → Danger zone → Uninstall** before removing the container. Review the preview,
+Open **Settings → System → Danger zone → Uninstall** before removing the container. Review the preview,
 then confirm the cleanup. It restores the saved sharing settings and deletes Shortlist's collections,
 with a report of what succeeded and what needs attention. Deleting the Docker container alone does
 not remove its rows or sharing filters from Plex.

@@ -117,7 +117,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
      Worth checking whether it can exclude by _label or pattern_ rather than per collection — a
      per-collection exclusion has to be redone every time you add a Plex user, because that creates
      a new row the other tool will discover and start managing.
-  2. Let the other tool own the shelf: Settings → Row placement → turn off **Let Shortlist order the
+  2. Let the other tool own the shelf: Settings → Defaults → Row placement → turn off **Let Shortlist order the
      Recommended shelf**. Shortlist stops touching the order entirely and the two stop fighting.
      Your rows are still built, delivered and kept private exactly as before — only their position
      on the shelf is handed over.
@@ -131,7 +131,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   2. _You're looking at the wrong account._ Watched state in Plex is per person, so a title ticked
      off on your account says nothing about theirs.
   3. _Timing._ The watched set is read per run, so a title marked watched after the last run stays
-     eligible until the next one. **Jobs → Sync history** re-reads everyone's set immediately
+     eligible until the next one. **Activity → Jobs → Sync watch history** re-reads everyone's set immediately
      (writes nothing to Plex); any run after that drops it. Note also that a row only re-picks its
      titles on a rebuild night — every 8 days by default — so a change can take
      until then to show. The **"When does each row next rebuild?"** check gives the date.
@@ -140,10 +140,10 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   watched for a row left at 0%, so two episodes in is enough to keep it out. See
   [what "already watched" means for a show](../reference/concepts.md#what-already-watched-means-for-a-show).
 
-- **Everything broke, get me out** — Settings → Danger Zone → **Uninstall** restores every
+- **Everything broke, get me out** — Settings → System → Danger zone → **Uninstall** restores every
   user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled
   collection. Kometa and other tools' collections are never touched.
-- **Did anything drift out of sync?** — Settings → Danger Zone → **What Shortlist has on your
+- **Did anything drift out of sync?** — Settings → System → Danger zone → **What Shortlist has on your
   Plex** ("Check Plex") lists every shortlist-labeled collection read straight from the server (not
   the database), flagging any whose user/row no longer exists in the app. Every collection is
   labeled at creation, in one step, so a collection that can't be labeled is deleted rather than left
@@ -151,7 +151,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
 
 ## Backups
 
-Shortlist copies its whole database to `/config/backups` on a schedule (Jobs → Backups; nightly at
+Shortlist copies its whole database to `/config/backups` on a schedule (Activity → Jobs → Back up the database; nightly at
 3 AM by default), before every upgrade, and before any restore. It keeps the newest 10 by default.
 
 A backup holds everything Shortlist knows: settings and connections, your rows and their audiences,
@@ -160,7 +160,7 @@ copies of each user's original Plex share filters that an uninstall restores fro
 
 Restoring one takes effect when you restart the container: Shortlist saves a copy of the current
 database and swaps the backup in as it starts, before anything else opens the database. Until that
-restart it keeps running on the database it has, and Jobs → Backups says a restore is waiting, with a
+restart it keeps running on the database it has, and Activity → Jobs → Back up the database says a restore is waiting, with a
 button to cancel it. A restore still waiting a day later is dropped rather than applied by whatever
 restarts the container next.
 

@@ -3,16 +3,15 @@ title: Seasonal rows
 description: "A seasonal row follows the calendar: Halloween films and horror in October, Christmas films in December, romance before Valentine's Day. Between seasons it is hidden from every Plex screen, and it comes back by itself when its next season opens."
 heading: Seasonal rows
 updated: 2026-10-04
-dev_preview: true
 ---
 
 <figure class="shot">
   <picture>
-    <source media="(max-width: 600px)" srcset="{{ '/images/rows-crop-sm.webp' | relative_url }}" width="792" height="835">
-    <img src="{{ '/images/rows-crop.webp' | relative_url }}" width="1560" height="800" loading="lazy"
-         alt="The Rows page in Shortlist 1.9.3: four rows, each with an on/off switch, Run now and Edit, and an Add a row button at the top right.">
+    <source media="(max-width: 600px)" srcset="{{ '/images/rows-crop-sm.webp' | relative_url }}" width="792" height="836">
+    <img src="{{ '/images/rows-crop.webp' | relative_url }}" width="1560" height="918" loading="lazy"
+         alt="The Rows page: four rows, each with an on/off switch, a Run now button and a more-actions menu, and an Add a row button at the top right.">
   </picture>
-  <figcaption><strong>Rows → Add a row</strong> opens the template gallery. <em>Seasonal</em> is one of the nine starting templates on stable {{ site.stable_version }}.</figcaption>
+  <figcaption><strong>Rows → Add a row</strong> opens the template gallery. <em>Seasonal</em> is one of the ten starting templates.</figcaption>
 </figure>
 
 ## Start a seasonal row
@@ -24,10 +23,22 @@ Seasonal is a schedule wrapped around one of the other four kinds, not a fifth w
 **How it's filled**: Picked for You, Because you watched, Watch it again, or Popular on this server.
 That kind's own settings show underneath.
 
+**Template defaults.** Seasonal starts as **Shared** for **Everyone**, with 15 films watched by at
+least two people. It follows the three built-in seasons and rebuilds nightly. Titles are ordered by
+how many people have watched them, so rebuilding does not guarantee a different set of films each
+night. With too little overlapping viewing, the row can be short or empty. Choose **Per person**
+for individual recommendations instead. This default applies when starting from the template;
+making an existing row seasonal keeps its current sharing choice.
+
+**Per person or Shared.** Choose this above **Row type** in the row editor. **Per person** offers
+Picked for You, Because you watched and Watch it again under **How it's filled**. **Shared** uses
+the season's most-watched titles for everyone in the selected audience. Switching between them
+keeps the selected seasons and their timing.
+
 ## The seasons
 
-Three seasons are built in. Tick the ones this row follows. Each row ticks its own, so one seasonal
-row can follow Halloween and another Christmas.
+Three seasons are built in, ten more ready-made holidays can be added, and you can make your own.
+Tick the ones this row follows. Each row ticks its own, so one seasonal row can follow Halloween and another Christmas.
 
 <div class="table-scroll table--compact">
 <table>
@@ -44,31 +55,14 @@ row can follow Halloween and another Christmas.
 
 ### When a season shows
 
-**Start showing (days before)** (0–90, default 30) and **Keep it up (days after)** (0–30, default 0)
-set each season's window. They give the dates in the table above. When two windows overlap, the
-season coming up next wins. Weekdays under **Where and when people see it** narrow a season further.
+**Built-in seasons show from N days before and stay N days after** (0–90 days before, default 30;
+0–30 days after, default 0) set each built-in season's window. They give the dates in the table above.
+When two windows overlap, the season coming up next wins. Weekdays under **Placement** narrow a
+season further. Your own seasons carry their own timing.
 
-<details class="dev-preview" markdown="1">
-<summary><span class="dev-preview__tag">Development preview</span> Your own seasons, and ten ready-made holidays</summary>
-<div class="dev-preview__body" markdown="1">
+### Your own seasons and ready-made holidays
 
-On the `:dev` image, not stable {{ site.stable_version }}. Everything outside this box applies to both.
-
-**Template defaults.** Seasonal starts as **Shared** for **Everyone**, with 15 films watched by at
-least two people. It follows the three built-in seasons and rebuilds nightly. Titles are ordered by
-how many people have watched them, so rebuilding does not guarantee a different set of films each
-night. With too little overlapping viewing, the row can be short or empty. Choose **Per person**
-for individual recommendations instead. This default applies when starting from the template;
-making an existing row seasonal keeps its current sharing choice.
-
-**Per person or Shared.** Choose this above **Row type** in the row editor. **Per person** offers
-Picked for You, Because you watched and Watch it again under **How it's filled**. **Shared** uses
-the season's most-watched titles for everyone in the selected audience. Switching between them
-keeps the selected seasons and their timing.
-
-**Built-in timing, renamed.** The two window settings read **Built-in seasons show from N days before
-and stay N days after**, with the same ranges and defaults, because your own seasons carry their own
-timing. The year strip under the list draws every ticked season's window and says where two overlap.
+The year strip under the season list draws every ticked season's window and says where two overlap.
 
 **Adding a ready-made season.** Open **Add more seasons** and press **Add** on a card. The editor opens
 filled in, so you can check it, rename it or change the films before saving. Saving ticks it in the
@@ -127,12 +121,6 @@ after keeps its row on screen, and the row is rebuilt for the new day at its nex
 **Editing and deleting.** Built-in seasons can't be edited or deleted. Deleting one of your own
 seasons unticks it in every row that follows it. If it is a row's only season, Shortlist refuses and
 names the rows: give them another season, or delete them, first.
-
-[Release channels](../../getting-started.md#release-channels) explains how to switch to `:dev` and
-back.
-
-</div>
-</details>
 
 ## Name it after the season
 

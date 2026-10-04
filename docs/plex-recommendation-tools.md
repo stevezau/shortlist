@@ -16,7 +16,7 @@ toc: false
 <span class="answer__date">As of <time datetime="{{ page.facts_checked | date: '%Y-%m-%d' }}">{{ page.facts_checked | date: "%-d %B %Y" }}</time></span>
 </div>
 <ul class="verdicts">
-<li class="verdicts__ours"><span class="verdicts__tool"><a href="#shortlist">Shortlist</a></span><span class="verdicts__need">For private per-user rows: each person gets their own row on their Plex Home, hidden from every other account.</span></li>
+<li class="verdicts__ours"><span class="verdicts__tool"><a href="#shortlist">Shortlist</a></span><span class="verdicts__need">For private per-user rows: each person gets their own rows (Picked for You, Because you watched, seasonal and more) on their Plex Home, hidden from every other account.</span></li>
 <li><span class="verdicts__tool"><a href="#immaculaterr">Immaculaterr</a></span><span class="verdicts__need">For the richest set of automatic collections, reacting in real time, when it doesn&rsquo;t matter who sees whose row.</span></li>
 <li><span class="verdicts__tool"><a href="#curatarr">Curatarr</a></span><span class="verdicts__need">For per-user collections without Docker: standalone binaries for Windows, macOS and Linux.</span></li>
 <li><span class="verdicts__tool"><a href="#suggestarr">SuggestArr</a></span><span class="verdicts__need">For getting new content: it requests titles like what you watched through Seerr.</span></li>
@@ -56,7 +56,7 @@ the last group can be private, and that is where they differ most.
 <td><span class="yes">Yes</span><span class="q">only after the hiding is in place</span></td>
 <td><span class="yes">Yes</span><span class="q">built-in picker needs no key</span></td>
 <td><span class="yes">Yes</span><span class="q">v1.9.3, 27 Sep 2026</span></td>
-<td class="compare__pick">each person should get a row nobody else can see</td>
+<td class="compare__pick">each person should get rows nobody else can see</td>
 </tr>
 <tr>
 <td><a href="#immaculaterr">Immaculaterr</a></td>
@@ -158,9 +158,10 @@ the last group can be private, and that is where they differ most.
 
 ### Shortlist
 
-Per-user "Picked for You" rows built from each person's own watch history, made private with Plex's
-label restrictions. Every other account's share filter gets `label!=shortlist_<user>` merged into it,
-so the row is hidden from other supported accounts. The
+Per-user rows (Picked for You, Because you watched, Watch it again, seasonal picks, a "Your requests"
+row and a shared Popular on this server row, from ten templates) built from each person's own watch
+history, made private with Plex's label restrictions. Every other account's share filter gets `label!=shortlist_<user>` merged into it,
+so each personal row is hidden from other supported accounts. The
 [server owner and some restriction profiles](plex-per-user-collections.md#two-things-to-watch-out-for)
 are exceptions. Rows are delivered unpromoted, exclusions merged, and only then promoted onto Home.
 
@@ -173,7 +174,7 @@ Plex-only, and it will stay that way: the privacy model depends on Plex's label-
 which Jellyfin and Emby don't have. Needs Plex Media Server 1.43.2.10687+ and a Plex Pass on the
 admin account. MIT.
 
-<p class="pick"><strong>Pick this if</strong> each person on your server should get their own row, and nobody else should see it.</p>
+<p class="pick"><strong>Pick this if</strong> each person on your server should get their own rows, and nobody else should see them.</p>
 
 ### Immaculaterr
 

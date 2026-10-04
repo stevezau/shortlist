@@ -12,8 +12,9 @@
 - q: Can I give each Plex user recommendations based on what they watched?
   a: >-
     Yes, that is exactly what Shortlist does. It reads each person's own Plex history, finds films and
-    shows in your library they haven't seen but are likely to want, and puts them in a "Picked for You"
-    row on that person's Plex home screen. Everyone gets a different row. Sharing filters hide it from other accounts, with exceptions for
+    shows in your library they haven't seen but are likely to want, and puts them in rows on that
+    person's Plex home screen: "Picked for You", "Because you watched", "Watch it again", seasonal picks and more.
+    Everyone gets different rows. Sharing filters hide them from other accounts, with exceptions for
     the server owner and Plex restriction profiles. It runs on a schedule you set, usually overnight.
 
 - q: Can you make a Plex collection visible to only one user?

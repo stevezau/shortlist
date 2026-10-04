@@ -20,11 +20,11 @@ in several places and pushed the proof (the two Homes) below the fold.
   <section class="home-hero">
     <div class="home-wide">
       <div class="home-hero__head">
-        <h1>A private recommendation row for every Plex user</h1>
+        <h1>Private recommendation rows for every Plex user</h1>
         <p class="home-hero__def">
           Shortlist is a free, open-source, self-hosted tool that gives each person on your Plex
-          server their own Picked for You row, built from what they watched and hidden from
-          everyone else.
+          server their own rows (Picked for You, Because you watched, seasonal picks, the titles they
+          asked for), built from what they watched and hidden from everyone else.
         </p>
       </div>
 
@@ -94,70 +94,11 @@ in several places and pushed the proof (the two Homes) below the fold.
     </div>
   </section>
 
-  <section class="section section--tint" id="privacy">
-    <div class="home-wide home-split">
-      <div>
-        <h2>How it stays private</h2>
-        <p class="section__lede">
-          Plex can&rsquo;t share a collection with one person. It can hide things by
-          <strong>label</strong>. So Shortlist labels each row, tells every other account to hide
-          that label, and only then puts the row on Home.
-        </p>
-        <a class="home-more" href="{{ '/plex-per-user-collections/' | relative_url }}">
-          How the hiding works
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
-        </a>
-      </div>
-      {%- comment -%}
-      The same drawing the FAQ uses, from one file, so the site can never describe the write order
-      two different ways.
-      {%- endcomment -%}
-      {% include privacy-order.html %}
-    </div>
-  </section>
-
-  <section class="section" id="writes">
-    <div class="home-wide reveal">
-      <h2>What it writes to your server, and how to undo it</h2>
-      <div class="home-ledger">
-        <div class="home-ledger__col">
-          <h3><svg class="home-ledger__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/></svg>Creates</h3>
-          <ul>
-            <li><strong>One Plex collection per row</strong>, labelled <code>shortlist_&lt;person&gt;</code> so it can always tell its own from yours.</li>
-            <li><strong>One hide entry</strong>, <code>label!=shortlist_&lt;person&gt;</code>, merged into every other account&rsquo;s sharing filter.</li>
-            <li><strong>Home and Recommended placement</strong> for its own rows, after the hide entries exist.</li>
-          </ul>
-        </div>
-        <div class="home-ledger__col">
-          <h3><svg class="home-ledger__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>Never touches</h3>
-          <ul>
-            <li><strong>Collections it didn&rsquo;t make.</strong> Kometa, Agregarr and the rest keep their items, names and artwork.</li>
-            <li><strong>Your own sharing-filter entries.</strong> It reads the filter, adds its line, and leaves the rest exactly as written.</li>
-            <li><strong>The server owner&rsquo;s account</strong>, which Plex can&rsquo;t restrict, and managed users&rsquo; parental-control profiles.</li>
-          </ul>
-        </div>
-        <div class="home-ledger__col home-ledger__col--undo">
-          <h3><svg class="home-ledger__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>Uninstall restores</h3>
-          <ul>
-            <li><strong>Every sharing filter</strong>, from a snapshot taken before Shortlist&rsquo;s first change to it.</li>
-            <li><strong>A preview first.</strong> The in-app uninstall shows the restores and the collection deletes, then names any account it couldn&rsquo;t restore.</li>
-            <li><strong>Run it before removing the container.</strong> Deleting the container alone leaves Plex as it is.</li>
-          </ul>
-        </div>
-      </div>
-      <p class="home-ledger__note">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-        <span>One exception to &ldquo;never touches&rdquo;: placing rows on the Recommended shelf can move other
-        shelves, keeping their order relative to each other.</span>
-      </p>
-    </div>
-  </section>
-
   <section class="section section--tint home-section--tight" id="rows">
     <div class="home-wide reveal">
       <div class="home-kinds-head">
-        <h2>Row kinds</h2>
-        <p>Each is built per person, except Popular on this server.</p>
+        <h2>Rows you can add</h2>
+        <p>Start from a template or build your own. Each is built per person, except Popular on this server.</p>
       </div>
       {%- comment -%}
       Each tile is the row as Plex titles it, from the template defaults in web/src/lib/row-templates.ts
@@ -231,7 +172,6 @@ in several places and pushed the proof (the two Homes) below the fold.
             </div>
           </div>
           <p class="home-kind__desc"><strong>Your requests.</strong> What they asked for in Overseerr, once it&rsquo;s on Plex.</p>
-          <span class="tag">dev preview</span>
         </li>
       </ul>
       <div class="home-kinds-more">
@@ -246,6 +186,66 @@ in several places and pushed the proof (the two Homes) below the fold.
       </div>
     </div>
   </section>
+
+  <section class="section" id="privacy">
+    <div class="home-wide home-split">
+      <div>
+        <h2>How it stays private</h2>
+        <p class="section__lede">
+          Plex can&rsquo;t share a collection with one person. It can hide things by
+          <strong>label</strong>. So Shortlist labels each row, tells every other account to hide
+          that label, and only then puts the row on Home.
+        </p>
+        <a class="home-more" href="{{ '/plex-per-user-collections/' | relative_url }}">
+          How the hiding works
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+        </a>
+      </div>
+      {%- comment -%}
+      The same drawing the FAQ uses, from one file, so the site can never describe the write order
+      two different ways.
+      {%- endcomment -%}
+      {% include privacy-order.html %}
+    </div>
+  </section>
+
+  <section class="section section--tint" id="writes">
+    <div class="home-wide reveal">
+      <h2>What it writes to your server, and how to undo it</h2>
+      <div class="home-ledger">
+        <div class="home-ledger__col">
+          <h3><svg class="home-ledger__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/></svg>Creates</h3>
+          <ul>
+            <li><strong>One Plex collection per row</strong>, labelled <code>shortlist_&lt;person&gt;</code> so it can always tell its own from yours.</li>
+            <li><strong>One hide entry</strong>, <code>label!=shortlist_&lt;person&gt;</code>, merged into every other account&rsquo;s sharing filter.</li>
+            <li><strong>Home and Recommended placement</strong> for its own rows, after the hide entries exist.</li>
+          </ul>
+        </div>
+        <div class="home-ledger__col">
+          <h3><svg class="home-ledger__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>Never touches</h3>
+          <ul>
+            <li><strong>Collections it didn&rsquo;t make.</strong> Kometa, Agregarr and the rest keep their items, names and artwork.</li>
+            <li><strong>Your own sharing-filter entries.</strong> It reads the filter, adds its line, and leaves the rest exactly as written.</li>
+            <li><strong>The server owner&rsquo;s account</strong>, which Plex can&rsquo;t restrict, and managed users&rsquo; parental-control profiles.</li>
+          </ul>
+        </div>
+        <div class="home-ledger__col home-ledger__col--undo">
+          <h3><svg class="home-ledger__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>Uninstall restores</h3>
+          <ul>
+            <li><strong>Every sharing filter</strong>, from a snapshot taken before Shortlist&rsquo;s first change to it.</li>
+            <li><strong>A preview first.</strong> The in-app uninstall shows the restores and the collection deletes, then names any account it couldn&rsquo;t restore.</li>
+            <li><strong>Run it before removing the container.</strong> Deleting the container alone leaves Plex as it is.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="home-ledger__note">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        <span>One exception to &ldquo;never touches&rdquo;: placing rows on the Recommended shelf can move other
+        shelves, keeping their order relative to each other.</span>
+      </p>
+    </div>
+  </section>
+
 
   {%- comment -%}
   The two questions that disqualify a reader are answered first and open, in their short form

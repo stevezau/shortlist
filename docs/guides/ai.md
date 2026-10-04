@@ -177,7 +177,7 @@ cheapest-to-priciest levers:
    (Rows → Edit). Keep AI web search only on the rows that benefit and let the rest run on the free
    TMDB and Trakt sources.
 2. **Search fewer recent watches.** The source runs one web search per person's recent watch, so
-   lowering how many recent watches it looks at (Settings → Finding titles) cuts searches. Results are
+   lowering how many recent watches it looks at (Settings → Defaults → Refresh & variety) cuts searches. Results are
    cached for 7 days and shared across users, so a popular title is searched once server-wide.
 3. **Use a small, cheap model.** A fast or mini model such as Claude Haiku, GPT-mini or Gemini Flash
    is plenty. You don't need a flagship model to read a few search results.

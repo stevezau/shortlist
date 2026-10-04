@@ -52,8 +52,7 @@ By default Plex adds new collections at the **end** of a library's _Recommended_
 tool (like **Kometa**) manages collections on the same server, Shortlist's rows can end up buried at
 the bottom.
 
-Each row chooses its own spot, per library, in the **Row editor** under **Where it sits** (the
-development preview calls the section **Plex placement**):
+Each row chooses its own spot, per library, in the **Row editor** under **Placement**, in **Position in the Recommended shelf**:
 
 - **Top of the shelf** — the default, and the one position that always works.
 - **Right after / before a collection**. Pick an existing collection and sit the row next to it. It
@@ -68,7 +67,7 @@ development preview calls the section **Plex placement**):
   that Plex adds new collections at the end of the shelf, so a new row that nothing places starts at
   the bottom.
 
-Settings → **Row placement** now holds one switch, **Let Shortlist order the Recommended shelf**.
+Settings → Defaults → **Row placement** holds one switch, **Let Shortlist order the Recommended shelf**.
 Turn it off and Shortlist leaves the order entirely alone. (It used to also hold a per-library
 default, which was a second place to set the same thing and disagreed with the engine about what its
 own "Wherever Plex puts them" option meant.)
@@ -140,7 +139,7 @@ still reorders the shelf, so the two options above still apply.
 
 ## Row posters
 
-Each row can have its own artwork on Plex. In the **Row editor** → **How it looks on Plex** (called **Appearance** in the development preview) → **Poster**, pick one of:
+Each row can have its own artwork on Plex. In the **Row editor** → **Name & look** → **Poster**, pick one of:
 
 - **Plex default** — leave Plex's own collection artwork alone (the default). Switching a row _back_
   to this after it had a custom poster reverts the artwork on Plex on save.
@@ -160,12 +159,12 @@ user. Posters are cosmetic. A poster that can't be made never blocks a row from 
 
 Each row can also set two of its Plex collection's own fields in the **Row editor**:
 
-- **Description**, under **How it looks on Plex** (**Appearance** in the development preview) — the summary Plex shows when someone opens the
+- **Description**, under **Name & look** — the summary Plex shows when someone opens the
   row. It fills in `{user}`, `{library_name}` and `{top_seed}` the same way the row's name does, so
   every person's copy can say something about them. A `{top_seed}` description for someone with
   nothing watched is left empty. The **On Plex** card beside it shows the name, description and
   poster filled in for a sample person.
-- **Sort title prefix**, under **Where and when people see it** — text put in front of the row's name to make its Plex sort title, such as
+- **Sort title prefix**, under **Placement** — text put in front of the row's name to make its Plex sort title, such as
   `!010_`. It decides where the row sorts in the library's **Collections** tab (`!` sorts before
   letters). It does not move the row on Home or the Recommended shelf; that is
   [Row placement](#row-placement-recommended-shelf). The prefix always goes in front of the row's
