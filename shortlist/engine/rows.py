@@ -3566,7 +3566,7 @@ def _build_section_picks(
         )
         # "best" is a no-op, which is what keeps the rewatch/watched-cap orderings above intact
         # unless the owner explicitly asked for a different one.
-        section_picks[section.key] = _apply_order(
+        ordered = _apply_order(
             ranked,
             spec.pick_order,
             row_slug=spec.slug,
@@ -3575,6 +3575,17 @@ def _build_section_picks(
             ratings=ratings,
             new_keys=new_keys,
         )
+        if ratings is not None:
+            # So the run page can show the number the row was sorted on, not TMDB's.
+            ordered = [
+                replace(
+                    p,
+                    order_rating=ratings.get((p.tmdb_id, p.media_type), 0.0),
+                    order_rating_source=ctx.config.rating_source,
+                )
+                for p in ordered
+            ]
+        section_picks[section.key] = ordered
         _log_row_provenance(user, spec, section, section_picks[section.key], sub, k)
     return section_picks
 

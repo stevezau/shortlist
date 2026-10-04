@@ -46,6 +46,11 @@ class PickOut(PassthroughModel):
     affinity: float | None  # 0..1, how near the top of the suggesting source's list it sat
     year: int | None = None  # release year (a show's first-air year); null on a cold-start pick
     rating: float | None = None  # TMDB vote_average 0..10 as stored at pick time; 0.0 when unrated
+    rating_source: str | None = None  # "tmdb" on runs that record it; null on older runs
+    # The score a rating-sorted row was ordered on when the owner chose another service, and its name
+    # ("imdb"). 0.0 means that service had no score; null means the row was not sorted on one.
+    order_rating: float | None = None
+    order_rating_source: str | None = None
 
 
 class RunUserOut(PassthroughModel):

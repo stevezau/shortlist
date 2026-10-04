@@ -19,6 +19,7 @@ import {
 import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { githubIssueSnippet } from "@/lib/github";
+import { RATING_LABELS, type RatingSource } from "@/lib/rating-sources";
 import { describeStage } from "@/lib/run-stages";
 import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
@@ -61,15 +62,24 @@ function CopyForGitHubButton({
   );
 }
 
-/** The score recorded for a pick when it was chosen, e.g. "TMDB 7.4".
+/** The score shown for a pick, e.g. "IMDb 7.7" or "TMDB 7.4".
  *
- *  Always TMDB: `Candidate.rating` is TMDB's `vote_average`, and that is what is stamped onto the
- *  pick. A server set to rank by IMDb/Trakt/Rotten Tomatoes fetches those through MDBList only to
- *  ORDER a rating-sorted row — the number is never written back — so labelling this with the
- *  configured source would put a name on a figure that did not come from it.
+ *  `rating` is always TMDB's `vote_average`. A row sorted on another service (IMDb/Trakt/… via
+ *  MDBList) also carries `order_rating` + `order_rating_source`: that is the number its order follows,
+ *  so it is shown instead — TMDB's figure beside an IMDb-sorted list reads as an unordered row.
+ *  Runs recorded before those fields existed carry only `rating`, which is TMDB's, so they keep the
+ *  TMDB label.
  *
- *  0 means "unrated at pick time", which is not a score and must not render as "TMDB 0.0". */
+ *  0 means "unrated", which is not a score and must not render as "TMDB 0.0". */
 function ratingLabel(pick: Pick): string {
+  if (pick.order_rating != null && pick.order_rating_source) {
+    const name =
+      RATING_LABELS[pick.order_rating_source as RatingSource] ??
+      pick.order_rating_source;
+    return pick.order_rating
+      ? `${name} ${pick.order_rating.toFixed(1)}`
+      : `${name} unrated`;
+  }
   return pick.rating ? `TMDB ${pick.rating.toFixed(1)}` : "";
 }
 

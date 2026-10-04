@@ -323,6 +323,12 @@ class Pick:
     # candidate pool already holds, so ordering by them costs no extra lookups.
     rating: float = 0.0
     year: int | None = None
+    # The score the row was actually SORTED on when the owner picked a non-TMDB rating source, and that
+    # source's name. Display only: never persisted (tonight's lookup is stamped on the delivered picks
+    # each run, carried-forward ones included) and never read by ranking, so `rating` stays TMDB's.
+    # None = the row was not sorted on another service's score.
+    order_rating: float | None = None
+    order_rating_source: str | None = None
     # The `row_recipe` this pick was built under. Compared against tonight's on the next run: a
     # mismatch means the owner changed a setting that decides row contents, so the row rebuilds
     # instead of waiting for its refresh cadence.
