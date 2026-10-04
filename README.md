@@ -22,8 +22,9 @@
 
   <p align="center">
     Shortlist is a free, open-source, self-hosted tool that gives each person on your
-    <strong>Plex</strong> server their own <strong>Picked for You</strong> row, built from what they
-    watched and hidden from everyone else.
+    <strong>Plex</strong> server their own recommendation rows (<strong>Picked for You</strong>,
+    Because you watched, seasonal picks and more), built from what they watched and hidden from
+    everyone else.
     <br />
     One Docker container. No AI key required.
     <br />
