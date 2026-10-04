@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -334,8 +335,44 @@ class Collection(Base):
     requests_window_days: Mapped[int] = mapped_column(Integer, default=90, nullable=False, server_default="90")
     # How the *arrs tag a person's requests, e.g. "req-{username}"; "" -> only `users.requested_by_tag`.
     requests_tag_pattern: Mapped[str] = mapped_column(String(128), default="", nullable=False, server_default="")
+    # The AI theme this row is built from; deleting the theme unlinks the row instead of deleting it.
+    theme_id: Mapped[int | None] = mapped_column(
+        ForeignKey("themes.id", ondelete="SET NULL", name="fk_collections_theme_id_themes"), nullable=True, default=None
+    )
+    ai_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    ai_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Theme(Base):
+    """A named, resolved set of titles (from a brief, AI-named or hand-built) that a row can draw on."""
+
+    __tablename__ = "themes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    brief: Mapped[str] = mapped_column(Text, default="", server_default="")
+    origin: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")  # ai | manual
+    media: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # [{"id": int, "name": str}] — TMDB keywords.
+    tags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    genres: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    excluded_genres: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    collections: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # [{"tmdb_id", "media", "origin", "reason", "title", "year"}]
+    picks: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # {"max_runtime", "min_year", "max_year", "min_rating", "min_votes"}; a missing or null value is no limit.
+    rules: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    content_hash: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.current_timestamp()
+    )
+    ai_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # {"named", "resolved", "in_library", "after_rules"} counts from the last build.
+    stats: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
 
 
 class CollectionAudience(Base):
