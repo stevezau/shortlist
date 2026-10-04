@@ -8,8 +8,16 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from shortlist.engine.clients.plex_pms import LibraryTitle
 from shortlist.engine.models import MediaType, RowLimits
-from shortlist.engine.themes import ThemePick, ThemeSpec, load_theme, theme_as_season, theme_content_hash
+from shortlist.engine.themes import (
+    ThemeCollection,
+    ThemePick,
+    ThemeSpec,
+    load_theme,
+    theme_as_season,
+    theme_content_hash,
+)
 
 TAG = 111
 
@@ -171,3 +179,80 @@ def test_load_theme_raises_when_tmdb_fails():
 
     with pytest.raises(RuntimeError):
         load_theme(tmdb, _Plex(), _spec(), {MediaType.MOVIE: {1: 10}})
+
+
+class _StrictPlex:
+    """Like the real reader: a collection is found only under its own section key."""
+
+    def __init__(self, section_key: str, members: list[LibraryTitle]):
+        self.section_key = section_key
+        self.members = members
+
+    def collection_members(self, section_key: str, title: str):
+        return self.members if section_key == self.section_key and title == "Mind benders" else None
+
+
+def _members() -> list[LibraryTitle]:
+    return [LibraryTitle(tmdb_id=7, media_type=MediaType.MOVIE, title="t7", year=2000)]
+
+
+def test_load_theme_reads_collection_members_under_their_section_key():
+    tmdb = _Tmdb([], items={7: _item(7)})
+    spec = _spec(tags=(), collections=(ThemeCollection("3", "Mind benders"),))
+
+    titles = load_theme(tmdb, _StrictPlex("3", _members()), spec, {MediaType.MOVIE: {7: 70}})
+
+    assert _library_ids(titles.titles) == {7}
+    assert titles.titles.missing_collections == ()
+
+
+def test_load_theme_reports_a_collection_under_the_wrong_section_key_as_missing():
+    tmdb = _Tmdb([], items={7: _item(7)})
+    spec = _spec(tags=(), collections=(ThemeCollection("9", "Mind benders"),))
+
+    titles = load_theme(tmdb, _StrictPlex("3", _members()), spec, {MediaType.MOVIE: {7: 70}})
+
+    assert _ids(titles.titles) == set()
+    assert titles.titles.missing_collections == ("Mind benders",)
+
+
+def test_theme_content_hash_covers_collection_section_key_and_title():
+    one = _spec(collections=(ThemeCollection("3", "A"),))
+
+    assert theme_content_hash(one) != theme_content_hash(_spec(collections=(ThemeCollection("4", "A"),)))
+    assert theme_content_hash(one) != theme_content_hash(_spec(collections=(ThemeCollection("3", "B"),)))
+
+
+def test_load_theme_exempts_picks_from_min_votes_but_not_from_other_rules():
+    pick = ThemePick(9, MediaType.MOVIE, "ai", None)
+    old = ThemePick(8, MediaType.MOVIE, "ai", None)
+    tmdb = _Tmdb(
+        [_item(1, votes=10)],
+        items={9: _item(9, votes=3), 8: _item(8, year=1950, votes=3)},
+    )
+    spec = _spec(picks=(pick, old), rules=RowLimits(min_year=1990), min_votes=100)
+
+    titles = load_theme(tmdb, _Plex(), spec, {MediaType.MOVIE: {1: 1, 8: 8, 9: 9}})
+
+    assert _ids(titles.titles) == {9}
+
+
+def test_load_theme_makes_no_details_calls_when_rules_are_inactive():
+    tmdb = _Tmdb([_item(1)])
+    calls: list[int] = []
+    tmdb.details = lambda tmdb_id, media_type: calls.append(tmdb_id) or {}  # type: ignore[method-assign]
+
+    titles = load_theme(tmdb, _Plex(), _spec(), {MediaType.MOVIE: {1: 1}})
+
+    assert _ids(titles.titles) == {1}
+    assert calls == []
+
+
+def test_theme_hash_ignores_genre_case_and_alias():
+    assert theme_content_hash(_spec(genres=("Science Fiction",))) == theme_content_hash(_spec(genres=("sci-fi",)))
+    assert theme_content_hash(_spec(genres=("Horror",))) == theme_content_hash(_spec(genres=("horror",)))
+
+
+def test_theme_as_season_resolves_scifi_aliases():
+    for name in ("sci-fi", "SciFi", "Science Fiction"):
+        assert theme_as_season(_spec(genres=(name,))).movie_genres == (878,)

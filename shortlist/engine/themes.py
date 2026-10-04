@@ -25,7 +25,15 @@ from shortlist.engine.seasons import (
     _read_sources,
 )
 
-__all__ = ["ThemePick", "ThemeSpec", "ThemeTitles", "load_theme", "theme_as_season", "theme_content_hash"]
+__all__ = [
+    "ThemeCollection",
+    "ThemePick",
+    "ThemeSpec",
+    "ThemeTitles",
+    "load_theme",
+    "theme_as_season",
+    "theme_content_hash",
+]
 
 # TMDB's movie genre list, which it has not changed in years. Themes name genres in words (the AI writes
 # them); `Season.movie_genres` wants ids. Shows are never genre-queried (seasons.py), so no TV list.
@@ -45,6 +53,8 @@ _MOVIE_GENRE_IDS: dict[str, int] = {
     "mystery": 9648,
     "romance": 10749,
     "science fiction": 878,
+    "sci-fi": 878,
+    "scifi": 878,
     "tv movie": 10770,
     "thriller": 53,
     "war": 10752,
@@ -63,6 +73,14 @@ class ThemePick:
 
 
 @dataclass(frozen=True)
+class ThemeCollection:
+    """A Plex collection a theme reads, by library section key and title (never ratingKey)."""
+
+    section_key: str
+    title: str
+
+
+@dataclass(frozen=True)
 class ThemeSpec:
     """Everything that defines a theme. ``genres`` and ``excluded_genres`` are TMDB genre names."""
 
@@ -73,7 +91,7 @@ class ThemeSpec:
     tags: tuple[int, ...]
     genres: tuple[str, ...]
     excluded_genres: tuple[str, ...]
-    collections: tuple[str, ...]
+    collections: tuple[ThemeCollection, ...]
     picks: tuple[ThemePick, ...]
     rules: RowLimits
     min_votes: int | None
@@ -94,15 +112,20 @@ def theme_content_hash(spec: ThemeSpec) -> str:
     """
     content = [
         sorted(spec.tags),
-        sorted(spec.genres),
-        sorted(spec.excluded_genres),
-        sorted(spec.collections),
+        sorted(_genre_key(name) for name in spec.genres),
+        sorted(_genre_key(name) for name in spec.excluded_genres),
+        sorted((ref.section_key, ref.title) for ref in spec.collections),
         sorted((pick.tmdb_id, pick.media.value) for pick in spec.picks),
         spec.rules.fingerprint(),
         spec.min_votes,
         sorted(media.value for media in spec.media),
     ]
     return hashlib.sha1(json.dumps(content).encode()).hexdigest()
+
+
+def _genre_key(name: str) -> int | str:
+    """A genre's TMDB id when the name is known, so aliases and case hash alike; else the lowered name."""
+    return _MOVIE_GENRE_IDS.get(name.strip().lower(), name.strip().lower())
 
 
 def _genre_ids(names: tuple[str, ...]) -> tuple[int, ...]:
@@ -117,11 +140,7 @@ def _genre_ids(names: tuple[str, ...]) -> tuple[int, ...]:
 
 
 def theme_as_season(spec: ThemeSpec) -> Season:
-    """The theme as a dateless `Season`, in the form `load_titles` and `load_theme` read.
-
-    A theme names collections by title alone, so each `CollectionRef` carries an empty ``section_key``; the
-    Plex reader the caller passes must resolve a title without one.
-    """
+    """The theme as a dateless `Season`, in the form `load_titles` and `load_theme` read."""
     return Season(
         slug=spec.slug,
         name=spec.name,
@@ -132,7 +151,7 @@ def theme_as_season(spec: ThemeSpec) -> Season:
         keywords=spec.tags,
         movie_genres=_genre_ids(spec.genres),
         keyword_excluded_genres=_genre_ids(spec.excluded_genres),
-        collections=tuple(CollectionRef(section_key="", title=title) for title in spec.collections),
+        collections=tuple(CollectionRef(section_key=ref.section_key, title=ref.title) for ref in spec.collections),
         picks=tuple((pick.tmdb_id, pick.media) for pick in spec.picks),
     )
 
@@ -172,9 +191,12 @@ def load_theme(
     reads = _read_sources(tmdb, plex, season, tmdb.discover_all)
     items = reads.all_titles()
 
+    picked = set(season.picks)
     candidates = [_candidate(media_type, item) for (_id, media_type), item in items.items()]
     if spec.min_votes is not None:
-        candidates = [c for c in candidates if c.vote_count >= spec.min_votes]
+        # Picks are the owner's or the AI's deliberate choice, so a vote floor never drops one (as in seasons).
+        candidates = [c for c in candidates if c.vote_count >= spec.min_votes or (c.tmdb_id, c.media_type) in picked]
+    logger.debug("theme {}: applying rules to {} titles", spec.slug, len(candidates))
     kept = apply_limits(candidates, spec.rules, tmdb)  # type: ignore[arg-type]
     allowed = {(c.tmdb_id, c.media_type) for c in kept.kept}
 
