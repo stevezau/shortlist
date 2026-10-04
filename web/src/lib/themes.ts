@@ -204,6 +204,7 @@ export function toSaveBody(
         resolved: pending.stats.resolved,
         in_library: pending.stats.in_library,
         after_rules: pending.stats.after_rules,
+        ai_kept: pending.stats.ai_kept,
       }
     : undefined;
   return {
@@ -226,24 +227,47 @@ export function toSaveBody(
   };
 }
 
+type RuleKey = keyof Theme["rules"];
+
+/** One hard limit in words, and the rule fields that go when it is removed. */
+export interface RuleChip {
+  label: string;
+  keys: RuleKey[];
+}
+
+/** A theme's hard limits, one chip each; none for a limit that is not set. The two years are one chip. */
+export function ruleChips(rules: Theme["rules"]): RuleChip[] {
+  const chips: RuleChip[] = [];
+  if (rules.max_runtime != null) chips.push({ label: `Up to ${rules.max_runtime} min`, keys: ["max_runtime"] });
+  const { min_year: from, max_year: to } = rules;
+  if (from != null && to != null) chips.push({ label: `Released ${from}–${to}`, keys: ["min_year", "max_year"] });
+  else if (from != null) chips.push({ label: `Released ${from} or later`, keys: ["min_year"] });
+  else if (to != null) chips.push({ label: `Released ${to} or earlier`, keys: ["max_year"] });
+  if (rules.min_rating != null) chips.push({ label: `Rating ${rules.min_rating}+`, keys: ["min_rating"] });
+  if (rules.min_votes != null) {
+    chips.push({ label: `At least ${rules.min_votes.toLocaleString()} votes`, keys: ["min_votes"] });
+  }
+  return chips;
+}
+
 /** A theme's hard limits in words, one short phrase each; none for a limit that is not set. */
 export function rulesSummary(rules: Theme["rules"]): string[] {
-  const parts: string[] = [];
-  if (rules.max_runtime != null) parts.push(`Up to ${rules.max_runtime} min`);
-  const { min_year: from, max_year: to } = rules;
-  if (from != null && to != null) parts.push(`Released ${from}–${to}`);
-  else if (from != null) parts.push(`Released ${from} or later`);
-  else if (to != null) parts.push(`Released ${to} or earlier`);
-  if (rules.min_rating != null) parts.push(`Rating ${rules.min_rating}+`);
-  if (rules.min_votes != null) parts.push(`At least ${rules.min_votes.toLocaleString()} votes`);
-  return parts;
+  return ruleChips(rules).map((chip) => chip.label);
+}
+
+/** The rules with one chip's fields left out, so a saved theme has no such limit. */
+export function withoutRule(rules: Theme["rules"], chip: RuleChip): Theme["rules"] {
+  return Object.fromEntries(Object.entries(rules).filter(([key]) => !chip.keys.includes(key as RuleKey)));
 }
 
 /** The counts a saved theme kept from the build that wrote it, or null when it has none (a hand edit). */
-export function savedStats(theme: Pick<Theme, "stats">): Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules"> | null {
-  const { named, resolved, in_library, after_rules } = theme.stats;
+export function savedStats(
+  theme: Pick<Theme, "stats">,
+): (Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules"> & { ai_kept?: number }) | null {
+  const { named, resolved, in_library, after_rules, ai_kept } = theme.stats;
   if (named === undefined || resolved === undefined || in_library === undefined || after_rules === undefined) {
     return null;
   }
-  return { named, resolved, in_library, after_rules };
+  // A list saved before the AI's own count existed has none, and says so rather than showing 0.
+  return { named, resolved, in_library, after_rules, ...(ai_kept === undefined ? {} : { ai_kept }) };
 }

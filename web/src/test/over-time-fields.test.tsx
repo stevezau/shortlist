@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -111,6 +111,24 @@ describe("OverTimeFields", () => {
     renderFields();
 
     expect(await screen.findByRole("checkbox", { name: "AI row (ai-twists)" })).toBeInTheDocument();
+  });
+
+  it("shows placeholders as grey chips with friendly words, never as raw braces", async () => {
+    api.listCollections.mockResolvedValue([
+      row("picked", { name: "{library_name} Picked for You" }),
+      row("because", { name: "Because you watched {top_seed}" }),
+    ]);
+    renderFields();
+
+    const picked = await screen.findByRole("checkbox", { name: /Picked for You/ });
+    const because = screen.getByRole("checkbox", { name: /Because you watched/ });
+    const pickedLabel = picked.closest("label") as HTMLElement;
+    const becauseLabel = because.closest("label") as HTMLElement;
+    expect(pickedLabel).toHaveTextContent("library name Picked for You");
+    expect(becauseLabel).toHaveTextContent("Because you watched top seed");
+    expect(within(pickedLabel).getByText("library name")).toHaveClass("bg-muted");
+    expect(within(becauseLabel).getByText("top seed")).toHaveClass("bg-muted");
+    expect(screen.queryByText(/[{}]/)).not.toBeInTheDocument();
   });
 
   it("says so when there is no other row to compare with", async () => {

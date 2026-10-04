@@ -1,3 +1,4 @@
+import { Loader2, X } from "lucide-react";
 import { useId, useState } from "react";
 
 import { DiffCard } from "@/components/rows/ai-diff-card";
@@ -13,8 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ErrorState, QueryBoundary } from "@/components/query-boundary";
 import { apiErrorMessage } from "@/lib/api";
 import {
-  missingFromServer,
-  rulesSummary,
+  ruleChips,
   savedStats,
   themeGuidance,
   useSetAiPause,
@@ -22,7 +22,9 @@ import {
   useThemeCapabilities,
   useThemePreview,
   useThemePrompts,
+  withoutRule,
   type PendingTheme,
+  type RuleChip,
 } from "@/lib/themes";
 import type { Collection, CollectionInput, Theme, ThemePreview, ThemeStats } from "@/lib/types";
 
@@ -32,9 +34,10 @@ const MAX_BRIEF = 1000;
 const SAMPLE_SIZE = 12;
 
 const PAUSED_REASON = "AI is paused for this row. Resume it below to build or change its list.";
-const SAVE_FIRST_REASON = "Save the row first, then you can change its list in words.";
 
 type Counts = Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules"> & {
+  /** The AI's own titles left in the row; absent on a list saved before it was counted. */
+  ai_kept?: number;
   truncated?: boolean;
   runtime_total?: number;
   runtime_checked?: number;
@@ -152,6 +155,7 @@ function AiHalf({
   const [change, setChange] = useState("");
   const [refinement, setRefinement] = useState<ThemePreview | null>(null);
   const [failed, setFailed] = useState<{ message: string; retry: () => void } | null>(null);
+  const [working, setWorking] = useState<"build" | "change">("build");
 
   const savedTheme = saved.data ?? null;
   const shown: Theme | null = pending?.draft ?? savedTheme;
@@ -166,6 +170,7 @@ function AiHalf({
 
   const run = async (request: { brief?: string; change?: string; current_theme_id?: number }, then: (p: ThemePreview) => void) => {
     setFailed(null);
+    setWorking(request.change !== undefined ? "change" : "build");
     try {
       const { preview, cached } = await builder.build(
         { ...request, media, guidance, ...(collection ? { collection_id: collection.id } : {}) },
@@ -191,7 +196,17 @@ function AiHalf({
     run({ change, current_theme_id: collection?.theme_id ?? undefined }, (preview) => setRefinement(preview));
 
   const buildReason = paused ? PAUSED_REASON : !guidanceReady ? "Loading the default instructions…" : null;
-  const changeReason = paused ? PAUSED_REASON : !canRefine ? SAVE_FIRST_REASON : buildReason;
+  const changeReason = paused ? PAUSED_REASON : buildReason;
+  // Changing a list in words refines the SAVED list, so there is nothing to change until the row has one.
+  const clearRule = (chip: RuleChip) => {
+    if (shown === null) return;
+    // The counts described the list with the limit on, so they are dropped rather than left to mislead.
+    onPending({
+      draft: { ...shown, rules: withoutRule(shown.rules, chip) },
+      stats: null,
+      origin: shown.origin === "manual" ? "manual" : "ai",
+    });
+  };
 
   return (
     <div className="space-y-5">
@@ -229,7 +244,7 @@ function AiHalf({
         </div>
       )}
 
-      {builder.isPending && !refinement && <LoadingList />}
+      {builder.isPending && <Working doing={working} />}
 
       {waitingForSaved && pending === null ? (
         <LoadingList />
@@ -244,6 +259,7 @@ function AiHalf({
             theme={shown}
             counts={pending ? pending.stats : savedStats(shown)}
             unsaved={pending !== null}
+            onClearRule={clearRule}
           />
         )
       )}
@@ -264,41 +280,68 @@ function AiHalf({
         />
       )}
 
-      <div className="space-y-2 border-t pt-4">
-        <Label htmlFor={changeId}>Change it</Label>
-        <Textarea
-          id={changeId}
-          rows={2}
-          maxLength={MAX_BRIEF}
-          value={change}
-          disabled={changeReason !== null}
-          onChange={(event) => setChange(event.target.value)}
-          placeholder="e.g. Less gore, and more from the last ten years"
-        />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void refine()}
-          loading={builder.isPending}
-          disabled={!change.trim() || changeReason !== null}
-        >
-          Change it
-        </Button>
-        {changeReason && <p className="text-sm text-warning">{changeReason}</p>}
-        <p className="text-sm text-muted-foreground">
-          Tell the AI what to change. Your description stays as it is, and you see what would be added and removed
-          before anything is kept.
-        </p>
-      </div>
+      {canRefine && (
+        <div className="space-y-2 border-t pt-4">
+          <Label htmlFor={changeId}>Change it</Label>
+          <Textarea
+            id={changeId}
+            rows={2}
+            maxLength={MAX_BRIEF}
+            value={change}
+            disabled={changeReason !== null}
+            onChange={(event) => setChange(event.target.value)}
+            placeholder="e.g. Less gore, and more from the last ten years"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void refine()}
+            loading={builder.isPending}
+            disabled={!change.trim() || changeReason !== null}
+          >
+            Change it
+          </Button>
+          {changeReason && <p className="text-sm text-warning">{changeReason}</p>}
+          <p className="text-sm text-muted-foreground">
+            Tell the AI what to change. Your description stays as it is, and you see what would be added and removed
+            before anything is kept.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
 
-function ListCard({ theme, counts, unsaved }: { theme: Theme; counts: Counts | null; unsaved: boolean }) {
-  const rules = rulesSummary(theme.rules);
+/** What the AI call is doing, for the minutes it can take: a long wait with no words reads as a hang. */
+function Working({ doing }: { doing: "build" | "change" }) {
+  const what = doing === "build" ? "Building the list" : "Changing the list";
+  return (
+    <div
+      role="status"
+      aria-label={what}
+      className="flex items-start gap-3 rounded-lg border border-dashed p-4 text-sm text-muted-foreground"
+    >
+      <Loader2 aria-hidden="true" className="mt-0.5 size-4 shrink-0 motion-safe:animate-spin" />
+      <p>{what}… this can take a couple of minutes. Keep this page open.</p>
+    </div>
+  );
+}
+
+function ListCard({
+  theme,
+  counts,
+  unsaved,
+  onClearRule,
+}: {
+  theme: Theme;
+  counts: Counts | null;
+  unsaved: boolean;
+  onClearRule: (chip: RuleChip) => void;
+}) {
+  const rules = ruleChips(theme.rules);
   const sample = theme.picks.slice(0, SAMPLE_SIZE);
   const more = theme.picks.length - sample.length;
-  const missing = counts ? missingFromServer(counts) : 0;
+  const tagMatches = counts?.ai_kept === undefined ? 0 : Math.max(0, counts.after_rules - counts.ai_kept);
   return (
     <section aria-label="The list" className="space-y-3 rounded-lg border bg-elevated p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -311,12 +354,19 @@ function ListCard({ theme, counts, unsaved }: { theme: Theme; counts: Counts | n
       </div>
 
       {counts && (
-        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <dl className="grid grid-cols-3 gap-3">
           <Count label="Named by the AI" value={counts.named} />
           <Count label="Found on TMDB" value={counts.resolved} />
-          <Count label="On your server" value={counts.in_library} />
-          <Count label="After your limits" value={counts.after_rules} />
+          <Count label="In the row, after your limits" value={counts.after_rules} />
         </dl>
+      )}
+      {counts?.ai_kept !== undefined && (
+        <div className="space-y-0.5 text-sm">
+          <p>
+            {`${counts.ai_kept} of the AI’s ${counts.named} ${counts.named === 1 ? "title is" : "titles are"} on your server.`}
+          </p>
+          {tagMatches > 0 && <p>{`Plus ${tagMatches} more that match its tags and genres.`}</p>}
+        </div>
       )}
       {counts?.truncated && (
         <p role="status" className="text-sm text-warning">
@@ -330,17 +380,27 @@ function ListCard({ theme, counts, unsaved }: { theme: Theme; counts: Counts | n
           rest.
         </p>
       )}
-      {missing > 0 && (
+      {counts?.ai_kept !== undefined && counts.ai_kept < counts.named && (
         <p className="text-sm text-muted-foreground">
-          {missing} {missing === 1 ? "title the AI named isn’t" : "titles the AI named aren’t"} on your server. They
-          are left out of the row; an AI row only picks from what you already have.
+          Titles the AI named that aren’t on your server, or that your limits rule out, are left out. An AI row only
+          picks from what you already have.
         </p>
       )}
       {rules.length > 0 && (
         <ul aria-label="Limits" className="flex flex-wrap gap-1.5">
           {rules.map((rule) => (
-            <li key={rule}>
-              <Badge variant="outline">{rule}</Badge>
+            <li key={rule.label}>
+              <Badge variant="outline" className="gap-1 pr-1">
+                {rule.label}
+                <button
+                  type="button"
+                  aria-label={`Remove limit: ${rule.label}`}
+                  onClick={() => onClearRule(rule)}
+                  className="rounded-full p-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <X aria-hidden="true" className="size-3" />
+                </button>
+              </Badge>
             </li>
           ))}
         </ul>

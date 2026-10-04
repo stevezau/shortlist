@@ -1,5 +1,6 @@
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 
+import { RowName } from "@/components/rows/row-name";
 import { SELECT_CLASS } from "@/components/rows/seasons/select-class";
 import { QueryBoundary } from "@/components/query-boundary";
 import { Button } from "@/components/ui/button";
@@ -156,8 +157,8 @@ export function DaysInput({
 }
 
 /** An AI row is named from its theme (`{theme_emoji} {theme}`), which means nothing until a person has one. */
-function friendlyName(row: Collection): string {
-  return usesTheme(row.name) ? `AI row (${row.slug})` : row.name;
+function friendlyName(row: Collection): ReactNode {
+  return usesTheme(row.name) ? `AI row (${row.slug})` : <RowName name={row.name} className="font-normal" />;
 }
 
 function AvoidRows({

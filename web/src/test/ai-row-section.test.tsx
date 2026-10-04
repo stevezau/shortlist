@@ -56,7 +56,7 @@ function theme(patch: Partial<Theme> = {}): Theme {
 function preview(patch: Partial<ThemePreview> = {}): ThemePreview {
   return {
     draft: theme({ id: null, ai_tokens: 0, stats: {} }),
-    stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0 },
+    stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0, ai_kept: 12 },
     diff: null,
     tokens: 321,
     ...patch,
@@ -188,7 +188,8 @@ describe("AiRowSection building", () => {
     expect(card.getByText("The Prestige (2006)")).toBeInTheDocument();
     expect(card.getByText("AI")).toBeInTheDocument();
     expect(card.getByText("You")).toBeInTheDocument();
-    expect(card.getByText(/10 titles the AI named aren.t on your server/i)).toBeInTheDocument();
+    // Was "10 titles the AI named aren't on your server" (resolved minus in_library, which counts tag matches too).
+    expect(card.getByText("12 of the AI’s 60 titles are on your server.")).toBeInTheDocument();
     expect(screen.getByText(/uses your AI provider once per theme/i)).toBeInTheDocument();
     expect(spent).toHaveBeenCalledWith(321);
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ origin: "ai", draft: expect.objectContaining({ name: "Twist endings" }) }));
@@ -196,7 +197,7 @@ describe("AiRowSection building", () => {
 
   it("says the AI's list was cut short, and how many titles were kept, only when it was", async () => {
     api.previewTheme.mockResolvedValueOnce(
-      preview({ stats: { named: 31, resolved: 20, in_library: 15, after_rules: 12, unwatched_median: null, truncated: true, runtime_total: 0, runtime_checked: 0 } }),
+      preview({ stats: { named: 31, resolved: 20, in_library: 15, after_rules: 12, unwatched_median: null, truncated: true, runtime_total: 0, runtime_checked: 0, ai_kept: 12 } }),
     );
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
     await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
@@ -210,7 +211,7 @@ describe("AiRowSection building", () => {
   it("says how many running times a preview checked, only when it checked fewer than all", async () => {
     api.previewTheme.mockResolvedValueOnce(
       preview({
-        stats: { named: 31, resolved: 20, in_library: 15, after_rules: 12, unwatched_median: null, truncated: false, runtime_total: 900, runtime_checked: 400 },
+        stats: { named: 31, resolved: 20, in_library: 15, after_rules: 12, unwatched_median: null, truncated: false, runtime_total: 900, runtime_checked: 400, ai_kept: 6 },
       }),
     );
     renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
@@ -287,7 +288,7 @@ describe("AiRowSection changing a list", () => {
         { tmdb_id: 3, media: "movie", origin: "ai", reason: "Quiet horror", title: "Hereditary", year: 2018 },
       ],
     }),
-    stats: { named: 55, resolved: 38, in_library: 31, after_rules: 22, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0 },
+    stats: { named: 55, resolved: 38, in_library: 31, after_rules: 22, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0, ai_kept: 12 },
     diff: {
       rules_changed: true,
       added: ["Hereditary"],
@@ -359,12 +360,33 @@ describe("AiRowSection changing a list", () => {
     expect(screen.queryByRole("region", { name: /what would change/i })).not.toBeInTheDocument();
   });
 
-  it("waits for the row to be saved before a list can be changed in words", async () => {
+  it("shows no Change it box for a row that is not saved yet", async () => {
     renderSection({ collection: null });
 
-    expect(await screen.findByLabelText("Change it")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Change it" })).toBeDisabled();
-    expect(screen.getByText(/save the row first/i)).toBeInTheDocument();
+    await screen.findByLabelText("Describe it");
+    expect(screen.queryByLabelText("Change it")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change it" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/save the row first/i)).not.toBeInTheDocument();
+  });
+
+  it("shows no Change it box for a saved row that has no list yet", async () => {
+    renderSection({ collection: savedRow({ theme_id: null }) });
+
+    await screen.findByLabelText("Describe it");
+    expect(screen.queryByLabelText("Change it")).not.toBeInTheDocument();
+  });
+
+  it("shows no Change it box while a list built here is waiting to be saved", async () => {
+    renderSection({ collection: savedRow(), pending: { draft: theme({ id: null }), stats: null, origin: "ai" } });
+
+    await screen.findByLabelText("Describe it");
+    expect(screen.queryByLabelText("Change it")).not.toBeInTheDocument();
+  });
+
+  it("shows the Change it box once the row is saved with a list", async () => {
+    renderSection({ collection: savedRow() });
+
+    expect(await screen.findByLabelText("Change it")).toBeEnabled();
   });
 });
 
@@ -483,5 +505,138 @@ describe("AiRowSection over time", () => {
 
     expect(screen.queryByLabelText("How much changes each time")).toBeNull();
     expect(screen.queryByRole("radio", { name: "Keep the same theme" })).toBeNull();
+  });
+});
+
+describe("AiRowSection counts", () => {
+  it("says how many of the AI's own titles are on the server, apart from the tag and genre matches", async () => {
+    renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
+    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.getByText("12 of the AI’s 60 titles are on your server.")).toBeInTheDocument();
+    expect(card.getByText("Plus 13 more that match its tags and genres.")).toBeInTheDocument();
+    // `in_library` (30) is the AI's picks AND every tag match; it must not be shown as what the AI found.
+    expect(card.queryByText("On your server")).not.toBeInTheDocument();
+    expect(card.queryByText("30")).not.toBeInTheDocument();
+  });
+
+  it("leaves out the tag line when every title in the row is the AI's", async () => {
+    api.previewTheme.mockResolvedValueOnce(
+      preview({ stats: { named: 5, resolved: 5, in_library: 4, after_rules: 4, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0, ai_kept: 4 } }),
+    );
+    renderSection();
+    await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
+
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.getByText("4 of the AI’s 5 titles are on your server.")).toBeInTheDocument();
+    expect(card.queryByText(/more that match/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a list saved before the AI's own count existed without inventing one", async () => {
+    renderSection({ collection: savedRow() });
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.getByText("Named by the AI")).toBeInTheDocument();
+    expect(card.queryByText(/of the AI.s \d+ titles/i)).not.toBeInTheDocument();
+    expect(card.queryByText("On your server")).not.toBeInTheDocument();
+  });
+
+  it("shows a saved list's own count", async () => {
+    api.getTheme.mockResolvedValue(
+      theme({ stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, ai_kept: 9 } }),
+    );
+    renderSection({ collection: savedRow() });
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.getByText("9 of the AI’s 60 titles are on your server.")).toBeInTheDocument();
+    expect(card.getByText("Plus 16 more that match its tags and genres.")).toBeInTheDocument();
+  });
+});
+
+describe("AiRowSection limits", () => {
+  const limited = () =>
+    theme({ rules: { max_runtime: 140, min_rating: 7, min_year: 1990, max_year: 2010, min_votes: 500 } });
+
+  it("clears a limit with its x, and the list saved has no such limit", async () => {
+    api.getTheme.mockResolvedValue(limited());
+    renderSection({ collection: savedRow() });
+    const limits = within(await screen.findByRole("list", { name: "Limits" }));
+
+    await userEvent.click(limits.getByRole("button", { name: "Remove limit: Rating 7+" }));
+
+    const pending = changed.mock.calls.at(-1)?.[0] as PendingTheme;
+    expect(pending.draft.rules).toEqual({ max_runtime: 140, min_year: 1990, max_year: 2010, min_votes: 500 });
+    expect(pending.origin).toBe("ai");
+    expect(limits.queryByText("Rating 7+")).not.toBeInTheDocument();
+    expect(limits.getByText("Up to 140 min")).toBeInTheDocument();
+  });
+
+  it("clears both ends of the years with one x", async () => {
+    api.getTheme.mockResolvedValue(limited());
+    renderSection({ collection: savedRow() });
+    const limits = within(await screen.findByRole("list", { name: "Limits" }));
+
+    await userEvent.click(limits.getByRole("button", { name: "Remove limit: Released 1990–2010" }));
+
+    const pending = changed.mock.calls.at(-1)?.[0] as PendingTheme;
+    expect(pending.draft.rules).toEqual({ max_runtime: 140, min_rating: 7, min_votes: 500 });
+  });
+
+  it("clears the running time and the votes floor", async () => {
+    api.getTheme.mockResolvedValue(limited());
+    renderSection({ collection: savedRow() });
+    const limits = within(await screen.findByRole("list", { name: "Limits" }));
+
+    await userEvent.click(limits.getByRole("button", { name: "Remove limit: Up to 140 min" }));
+    await userEvent.click(limits.getByRole("button", { name: "Remove limit: At least 500 votes" }));
+
+    const pending = changed.mock.calls.at(-1)?.[0] as PendingTheme;
+    expect(pending.draft.rules).toEqual({ min_rating: 7, min_year: 1990, max_year: 2010 });
+  });
+
+  it("keeps a hand-written list marked as written by hand when a limit is cleared", async () => {
+    api.getTheme.mockResolvedValue(theme({ origin: "manual", rules: { min_rating: 7 } }));
+    renderSection({ collection: savedRow() });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Remove limit: Rating 7+" }));
+
+    expect((changed.mock.calls.at(-1)?.[0] as PendingTheme).origin).toBe("manual");
+  });
+});
+
+describe("AiRowSection while it builds", () => {
+  it("says it is working and may take a couple of minutes, and disables Build the list", async () => {
+    let finish: (value: ThemePreview) => void = () => undefined;
+    api.previewTheme.mockReturnValue(new Promise<ThemePreview>((resolve) => (finish = resolve)));
+    renderSection();
+    await userEvent.type(await screen.findByLabelText("Describe it"), "twists");
+
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+
+    const status = await screen.findByRole("status", { name: /building the list/i });
+    expect(status).toHaveTextContent(/building the list/i);
+    expect(status).toHaveTextContent(/couple of minutes/i);
+    expect(screen.getByRole("button", { name: "Build the list" })).toBeDisabled();
+
+    finish(preview());
+    await screen.findByRole("region", { name: /the list/i });
+    expect(screen.queryByRole("status", { name: /building the list/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Build the list" })).toBeEnabled();
+  });
+
+  it("says it is changing the list while a change is asked for", async () => {
+    api.previewTheme.mockReturnValue(new Promise<ThemePreview>(() => undefined));
+    renderSection({ collection: savedRow() });
+    await userEvent.type(await screen.findByLabelText("Change it"), "less gore");
+
+    await userEvent.click(screen.getByRole("button", { name: "Change it" }));
+
+    expect(await screen.findByRole("status", { name: /changing the list/i })).toHaveTextContent(/couple of minutes/i);
+    expect(screen.getByRole("button", { name: "Change it" })).toBeDisabled();
   });
 });

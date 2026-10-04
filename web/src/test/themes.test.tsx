@@ -46,7 +46,7 @@ function theme(patch: Partial<Theme> = {}): Theme {
 function preview(patch: Partial<ThemePreview> = {}): ThemePreview {
   return {
     draft: theme(),
-    stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0 },
+    stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0, ai_kept: 12 },
     diff: null,
     tokens: 321,
     ...patch,
@@ -189,7 +189,7 @@ describe("toSaveBody", () => {
       draft: expect.objectContaining({ name: "Twist endings", origin: "ai", media: ["movie", "show"] }),
       tokens: 500,
       collection_id: 4,
-      stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25 },
+      stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, ai_kept: 12 },
     });
     expect(body.draft).not.toHaveProperty("content_hash");
     expect(body.draft).not.toHaveProperty("slug");
