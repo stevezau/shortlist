@@ -4528,6 +4528,12 @@
             ],
             "title": "Current Theme Id"
           },
+          "guidance": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Guidance",
+            "type": "string"
+          },
           "media": {
             "default": "both",
             "enum": [
@@ -4811,6 +4817,25 @@
           "libraries"
         ],
         "title": "ProbeResultOut",
+        "type": "object"
+      },
+      "PromptsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "guidance": {
+            "title": "Guidance",
+            "type": "string"
+          },
+          "mechanics": {
+            "title": "Mechanics",
+            "type": "string"
+          }
+        },
+        "required": [
+          "guidance",
+          "mechanics"
+        ],
+        "title": "PromptsOut",
         "type": "object"
       },
       "QualityProfileOut": {
@@ -14897,6 +14922,28 @@
           }
         },
         "summary": "Preview Theme",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
+    "/api/themes/prompts": {
+      "get": {
+        "description": "The system prompt \"Build the list\" sends: the guidance an owner may replace, and the mechanics they may not.",
+        "operationId": "prompts_api_themes_prompts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Prompts",
         "tags": [
           "themes"
         ]

@@ -20,7 +20,13 @@ from shortlist.server.db.models import Collection, Event, Theme
 from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.sse import EventBus
-from shortlist.server.services.theme_author import ThemeAuthorError, ThemeDraft, ThemeStats
+from shortlist.server.services.theme_author import (
+    BUILD_SYSTEM_GUIDANCE,
+    BUILD_SYSTEM_MECHANICS,
+    ThemeAuthorError,
+    ThemeDraft,
+    ThemeStats,
+)
 from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 from tests.integration.conftest import client  # noqa: F401  (the shared app + owner-session fixture)
@@ -283,6 +289,30 @@ class TestSave:
         by_hand = client.post("/api/themes", json={"draft": _body(name="C"), "tokens": 0, "collection_id": row["id"]})
 
         assert spent.status_code == 409 and by_hand.status_code == 201
+
+
+class TestGuidanceAndPrompts:
+    def test_the_owners_guidance_reaches_the_authoring_call(self, client: TestClient, author: _Author):
+        r = client.post(
+            "/api/themes/preview", json={"brief": "films with a twist", "guidance": "Favour films before 2000."}
+        )
+
+        assert r.status_code == 200, r.text
+        assert author.calls[0]["guidance"] == "Favour films before 2000."
+
+    def test_no_guidance_means_the_built_in_wording(self, client: TestClient, author: _Author):
+        client.post("/api/themes/preview", json={"brief": "films with a twist"})
+
+        assert author.calls[0]["guidance"] == ""
+
+    def test_the_prompts_endpoint_returns_the_default_guidance_and_the_locked_mechanics(self, client: TestClient):
+        r = client.get("/api/themes/prompts")
+
+        assert r.status_code == 200, r.text
+        assert r.json() == {
+            "guidance": BUILD_SYSTEM_GUIDANCE.strip(),
+            "mechanics": BUILD_SYSTEM_MECHANICS,
+        }
 
 
 class TestCapabilities:

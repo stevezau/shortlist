@@ -152,6 +152,27 @@ export interface paths {
         patch: operations["update_collection_api_collections__collection_id__patch"];
         trace?: never;
     };
+    "/api/collections/{collection_id}/ai-pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause Ai
+         * @description Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; it just never
+         *     spends tokens writing or refining one (409 from the theme endpoints until resumed).
+         */
+        post: operations["pause_ai_api_collections__collection_id__ai_pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/collections/{collection_id}/cleanup": {
         parameters: {
             query?: never;
@@ -2516,6 +2537,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/themes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Theme
+         * @description Save a theme. Its slug is made from its name now; its hash is worked out here.
+         */
+        post: operations["create_theme_api_themes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/themes/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Capabilities
+         * @description Whether an AI provider is set, so the editor can hide the half that needs one.
+         */
+        get: operations["capabilities_api_themes_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/themes/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Theme
+         * @description Write or refine a theme from a brief with one AI call, without saving anything.
+         *
+         *     409 while the row's AI is paused, 422 without an AI provider (neither makes a call).
+         */
+        post: operations["preview_theme_api_themes_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/themes/prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Prompts
+         * @description The system prompt "Build the list" sends: the guidance an owner may replace, and the mechanics they may not.
+         */
+        get: operations["prompts_api_themes_prompts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/themes/{theme_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Theme */
+        get: operations["get_theme_api_themes__theme_id__get"];
+        /**
+         * Update Theme
+         * @description Replace a theme's contents (a hand edit, or an AI refinement the owner kept), keeping its slug.
+         */
+        put: operations["update_theme_api_themes__theme_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users": {
         parameters: {
             query?: never;
@@ -3029,6 +3153,11 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** AiPauseRequest */
+        AiPauseRequest: {
+            /** Paused */
+            paused: boolean;
+        };
         /** ApiTokenCreatedOut */
         ApiTokenCreatedOut: {
             /** Created At */
@@ -3215,6 +3344,13 @@ export interface components {
             enabled: boolean;
             /** Updated */
             updated: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** CapabilitiesOut */
+        CapabilitiesOut: {
+            /** Ai */
+            ai: boolean;
         } & {
             [key: string]: unknown;
         };
@@ -3529,6 +3665,11 @@ export interface components {
              */
             sort_title_prefix: string;
             /**
+             * Theme Id
+             * @description The theme this AI row follows (see POST /api/themes). Null for an ordinary row.
+             */
+            theme_id?: number | null;
+            /**
              * Unstarted Only
              * @default false
              */
@@ -3542,6 +3683,16 @@ export interface components {
          */
         CollectionOut: {
             ai_instructions: components["schemas"]["AiInstructionsOut"];
+            /**
+             * Ai Paused
+             * @description Whether the row's AI is paused: it keeps its theme but spends no tokens.
+             */
+            ai_paused: boolean;
+            /**
+             * Ai Tokens
+             * @description Tokens the AI has spent writing this row's themes.
+             */
+            ai_tokens: number;
             /**
              * Audience
              * @description Everyone, or the subset named by audience_user_ids.
@@ -3743,6 +3894,11 @@ export interface components {
             sort_order: number;
             /** Sort Title Prefix */
             sort_title_prefix: string;
+            /**
+             * Theme Id
+             * @description The theme an AI row follows; null for an ordinary row.
+             */
+            theme_id: number | null;
             /** Unstarted Only */
             unstarted_only: boolean;
             /** Watched Pct */
@@ -4826,6 +4982,38 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** PreviewIn */
+        PreviewIn: {
+            /** Brief */
+            brief: string;
+            /** Collection Id */
+            collection_id?: number | null;
+            /** Current Theme Id */
+            current_theme_id?: number | null;
+            /**
+             * Guidance
+             * @default
+             */
+            guidance: string;
+            /**
+             * Media
+             * @default both
+             * @enum {string}
+             */
+            media: "movie" | "show" | "both";
+            /** Person Id */
+            person_id?: number | null;
+        };
+        /** PreviewOut */
+        PreviewOut: {
+            diff: components["schemas"]["ThemeDiffOut"] | null;
+            draft: components["schemas"]["ThemeOut"];
+            stats: components["schemas"]["ThemeStatsOut"];
+            /** Tokens */
+            tokens: number;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * PreviewTitleOut
          * @description One title from a row's latest delivery, for the Rows list's poster collage.
@@ -4921,6 +5109,15 @@ export interface components {
             owner_account_id: number;
             /** Server Name */
             server_name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** PromptsOut */
+        PromptsOut: {
+            /** Guidance */
+            guidance: string;
+            /** Mechanics */
+            mechanics: string;
         } & {
             [key: string]: unknown;
         };
@@ -5336,6 +5533,24 @@ export interface components {
             tagged_shows: number;
             /** Tags */
             tags: components["schemas"]["TagMatchOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RulesIO
+         * @description A theme's hard limits. A missing or null one is no limit.
+         */
+        RulesIO: {
+            /** Max Runtime */
+            max_runtime?: number | null;
+            /** Max Year */
+            max_year?: number | null;
+            /** Min Rating */
+            min_rating?: number | null;
+            /** Min Votes */
+            min_votes?: number | null;
+            /** Min Year */
+            min_year?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -6235,6 +6450,158 @@ export interface components {
             movies: number;
             /** Name */
             name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ThemeDiffOut */
+        ThemeDiffOut: {
+            /** Added */
+            added: string[];
+            /** Added Count */
+            added_count: number;
+            /** Removed */
+            removed: string[];
+            /** Removed Count */
+            removed_count: number;
+            /** Rules Changed */
+            rules_changed: boolean;
+            /** Unchanged */
+            unchanged: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ThemeIn
+         * @description A theme to store. Undeclared fields (a hash echoed back from a preview) are ignored, never stored.
+         */
+        ThemeIn: {
+            /**
+             * Brief
+             * @default
+             */
+            brief: string;
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
+            /** Emoji */
+            emoji?: string | null;
+            /** Excluded Genres */
+            excluded_genres?: string[];
+            /** Genres */
+            genres?: string[];
+            /** Media */
+            media: ("movie" | "show")[];
+            /** Name */
+            name: string;
+            /**
+             * Origin
+             * @default manual
+             * @enum {string}
+             */
+            origin: "ai" | "manual";
+            /** Picks */
+            picks?: components["schemas"]["ThemePickIO"][];
+            rules?: components["schemas"]["RulesIO"];
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+        };
+        /** ThemeOut */
+        ThemeOut: {
+            /** Ai Tokens */
+            ai_tokens: number;
+            /** Brief */
+            brief: string;
+            /** Collections */
+            collections: components["schemas"]["CollectionIO"][];
+            /** Content Hash */
+            content_hash: string;
+            /** Emoji */
+            emoji: string | null;
+            /** Excluded Genres */
+            excluded_genres: string[];
+            /** Genres */
+            genres: string[];
+            /** Id */
+            id: number | null;
+            /** Media */
+            media: string[];
+            /** Name */
+            name: string;
+            /** Origin */
+            origin: string;
+            /** Picks */
+            picks: components["schemas"]["ThemePickIO"][];
+            rules: components["schemas"]["RulesIO"];
+            /** Slug */
+            slug: string;
+            /** Stats */
+            stats: {
+                [key: string]: number;
+            };
+            /** Tags */
+            tags: components["schemas"]["TagIO"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ThemePickIO
+         * @description A title a theme names by TMDB id; ``origin`` says whether the AI or the owner chose it.
+         */
+        ThemePickIO: {
+            /**
+             * Media
+             * @enum {string}
+             */
+            media: "movie" | "show";
+            /**
+             * Origin
+             * @default owner
+             * @enum {string}
+             */
+            origin: "ai" | "owner";
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ThemeSaveIn
+         * @description A save: the theme, what the AI call that wrote it cost, and the row it was written for.
+         */
+        ThemeSaveIn: {
+            /** Collection Id */
+            collection_id?: number | null;
+            draft: components["schemas"]["ThemeIn"];
+            /** Stats */
+            stats?: {
+                [key: string]: number;
+            };
+            /**
+             * Tokens
+             * @default 0
+             */
+            tokens: number;
+        };
+        /** ThemeStatsOut */
+        ThemeStatsOut: {
+            /** After Rules */
+            after_rules: number;
+            /** In Library */
+            in_library: number;
+            /** Named */
+            named: number;
+            /** Resolved */
+            resolved: number;
+            /** Unwatched Median */
+            unwatched_median: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -7211,6 +7578,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CollectionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pause_ai_api_collections__collection_id__ai_pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiPauseRequest"];
             };
         };
         responses: {
@@ -10186,6 +10588,178 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionOut"];
+                };
+            };
+        };
+    };
+    create_theme_api_themes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThemeSaveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capabilities_api_themes_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilitiesOut"];
+                };
+            };
+        };
+    };
+    preview_theme_api_themes_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prompts_api_themes_prompts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptsOut"];
+                };
+            };
+        };
+    };
+    get_theme_api_themes__theme_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                theme_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_theme_api_themes__theme_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                theme_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThemeSaveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

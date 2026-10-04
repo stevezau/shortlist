@@ -28,7 +28,14 @@ from shortlist.server.db.models import Collection, Theme, User
 from shortlist.server.services.audit import add_audit
 from shortlist.server.services.context_builder import curator_kwargs
 from shortlist.server.services.library_index import library_index
-from shortlist.server.services.theme_author import ThemeAuthorError, ThemeDiff, author_theme, diff_themes
+from shortlist.server.services.theme_author import (
+    BUILD_SYSTEM_GUIDANCE,
+    BUILD_SYSTEM_MECHANICS,
+    ThemeAuthorError,
+    ThemeDiff,
+    author_theme,
+    diff_themes,
+)
 from shortlist.server.services.theme_store import pick_titles, spec_from_row, unique_slug
 from shortlist.server.settings_store import SettingsStore
 
@@ -121,6 +128,8 @@ class PreviewIn(BaseModel):
     collection_id: int | None = None
     #: The person to tailor it to (their watch history goes to the AI as titles only).
     person_id: int | None = None
+    #: The owner's wording for what makes a good theme; empty keeps Shortlist's. The locked mechanics stay.
+    guidance: str = Field(default="", max_length=2000)
 
 
 class ThemeStatsOut(PassthroughModel):
@@ -151,6 +160,11 @@ class CapabilitiesOut(PassthroughModel):
     ai: bool
 
 
+class PromptsOut(PassthroughModel):
+    guidance: str
+    mechanics: str
+
+
 @router.get("/capabilities", response_model=CapabilitiesOut)
 async def capabilities(request: Request) -> dict:
     """Whether an AI provider is set, so the editor can hide the half that needs one."""
@@ -158,6 +172,12 @@ async def capabilities(request: Request) -> dict:
     with state.sessions() as session:
         provider = _provider(SettingsStore(session, state.secrets))
     return {"ai": provider not in _NO_PROVIDERS}
+
+
+@router.get("/prompts", response_model=PromptsOut)
+async def prompts() -> dict:
+    """The system prompt "Build the list" sends: the guidance an owner may replace, and the mechanics they may not."""
+    return {"guidance": BUILD_SYSTEM_GUIDANCE.strip(), "mechanics": BUILD_SYSTEM_MECHANICS}
 
 
 @router.post("/preview", response_model=PreviewOut)
@@ -211,6 +231,7 @@ async def preview_theme(body: PreviewIn, request: Request) -> dict:
                 library_index=index,
                 profile=profile,
                 current=current,
+                guidance=body.guidance,
                 current_tag_names=tag_names,
             )
         except ThemeAuthorError as e:
