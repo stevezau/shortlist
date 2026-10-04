@@ -8,9 +8,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from shortlist.engine.web_guidance import AiInstructions
+
+if TYPE_CHECKING:
+    from shortlist.engine.themes import ThemeSpec
 
 
 class MediaType(StrEnum):
@@ -658,6 +661,10 @@ class RowSpec:
     requests_tag_pattern: str = ""
     # Owner-written instructions for AI web search on this row (#138); None = use the server's.
     ai_instructions: AiInstructions | None = None
+    # An AI row (#138): its titles are a theme's, read once per run and ranked per person in code. None on
+    # every other row.
+    theme: ThemeSpec | None = None
+    ai_row: bool = False
 
     def limits(self) -> RowLimits:
         return RowLimits(self.max_runtime, self.min_year, self.max_year, self.min_rating)

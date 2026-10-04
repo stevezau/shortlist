@@ -28,6 +28,7 @@ from shortlist.engine.history import HistorySource
 from shortlist.engine.models import EngineConfig, Pick, UserProfile, UserRunReport, WrittenDetails
 from shortlist.engine.privacy import SnapshotStore
 from shortlist.engine.seasons import SeasonTitles
+from shortlist.engine.themes import ThemeTitles
 
 if TYPE_CHECKING:
     from shortlist.engine.requests_row import RequestLedger
@@ -117,6 +118,9 @@ class EngineContext:
     # season is missing here keeps what it has — the same as a row whose every source is down.
     season_titles: dict[str, SeasonTitles] = field(default_factory=dict)
     season_failures: dict[str, str] = field(default_factory=dict)
+    # The same for an AI row's theme (#138), by theme slug: its titles tonight and the AI's reason per pick.
+    theme_titles: dict[str, ThemeTitles] = field(default_factory=dict)
+    theme_failures: dict[str, str] = field(default_factory=dict)
     # plex account id -> the slug Shortlist assigned that account, for EVERY user it knows (not just
     # tonight's). This is how "whose row is this?" is answered. It cannot be answered from a name:
     # people rename themselves, and two display names can slugify to the same string — either

@@ -16,6 +16,7 @@ from shortlist.engine.models import RowSeason
 
 if TYPE_CHECKING:
     from shortlist.engine.seasons import Catalogue, Season
+    from shortlist.engine.themes import ThemeSpec
 
 USER = "{user}"
 LIBRARY_NAME = "{library_name}"
@@ -26,6 +27,12 @@ SEASON_EMOJI = "{season_emoji}"
 #: A seasonal row's placeholders (discussion #124). Filled from the row's season by
 #: `delivery.resolve_row_template`; one still standing afterwards means there was no season to fill it with.
 SEASON_PLACEHOLDERS = (SEASON, SEASON_EMOJI)
+
+THEME = "{theme}"
+THEME_EMOJI = "{theme_emoji}"
+
+#: An AI row's placeholders (#138). Filled from the row's theme by `delivery.resolve_row_template`.
+THEME_PLACEHOLDERS = (THEME, THEME_EMOJI)
 
 
 def names_a_seed(text: str) -> bool:
@@ -38,14 +45,27 @@ def uses_season(text: str) -> bool:
     return any(placeholder in text for placeholder in SEASON_PLACEHOLDERS)
 
 
+def uses_theme(text: str) -> bool:
+    """Whether a name, description or poster line depends on the row's theme (#138)."""
+    return any(placeholder in text for placeholder in THEME_PLACEHOLDERS)
+
+
 def needs_a_run(text: str) -> bool:
     """Whether a title from this template can only be known by the run that built it.
 
-    A ``{top_seed}`` title differs per person and per night, and a seasonal collection wears whichever season
-    it was last built for. Neither can be matched by rendering the template, so their collections are
-    identified by the delivery ledger, and what the ledger recorded them as is claimed against other rows.
+    A ``{top_seed}`` title differs per person and per night, a seasonal collection wears whichever season
+    it was last built for, and a ``{theme}`` title follows the theme's current name. None can be matched by
+    rendering the template, so their collections are identified by the delivery ledger, and what the ledger
+    recorded them as is claimed against other rows.
     """
-    return names_a_seed(text) or uses_season(text)
+    return names_a_seed(text) or uses_season(text) or uses_theme(text)
+
+
+def fill_theme(text: str, theme: ThemeSpec | None) -> str:
+    """``text`` with the theme placeholders filled, or untouched when the row has no theme."""
+    if theme is None:
+        return text
+    return text.replace(THEME_EMOJI, theme.emoji or "").replace(THEME, theme.name)
 
 
 def fill_season(text: str, season: RowSeason | None) -> str:

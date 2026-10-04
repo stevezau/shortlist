@@ -26,7 +26,15 @@ from shortlist.engine.models import (
     UserProfile,
     WrittenDetails,
 )
-from shortlist.engine.placeholders import fill_season, names_a_seed, needs_a_run, season_renderings, uses_season
+from shortlist.engine.placeholders import (
+    fill_season,
+    fill_theme,
+    names_a_seed,
+    needs_a_run,
+    season_renderings,
+    uses_season,
+    uses_theme,
+)
 
 DEFAULT_ROW_NAME = "✨ Picked for You"
 
@@ -450,7 +458,7 @@ def render_row_name(
     top_seed = top_seed_of(picks)
     # A season placeholder still standing here had no season to fill it (`resolve_row_template` fills
     # them), so it is unfillable exactly as a `{top_seed}` with no seed is.
-    unfillable = (names_a_seed(template) and not top_seed) or uses_season(template)
+    unfillable = (names_a_seed(template) and not top_seed) or uses_season(template) or uses_theme(template)
     rendered = "" if unfillable else _fill(template, profile, top_seed, library_name)
     if rendered:
         return rendered
@@ -464,12 +472,12 @@ def render_row_name(
 
 def season_poster(spec: RowSpec) -> PosterSpec | None:
     """The row's poster with its season filled into the text lines; None when the row has no poster."""
-    if spec.poster is None or spec.season is None:
+    if spec.poster is None or (spec.season is None and spec.theme is None):
         return spec.poster
     return replace(
         spec.poster,
-        title=fill_season(spec.poster.title, spec.season),
-        subtitle=fill_season(spec.poster.subtitle, spec.season),
+        title=fill_theme(fill_season(spec.poster.title, spec.season), spec.theme),
+        subtitle=fill_theme(fill_season(spec.poster.subtitle, spec.season), spec.theme),
     )
 
 
@@ -550,7 +558,12 @@ def render_description(template: str, profile: UserProfile, picks: list[Pick], l
     would flatten a description typed over several lines.
     """
     top_seed = top_seed_of(picks)
-    if not template.strip() or (names_a_seed(template) and not top_seed) or uses_season(template):
+    if (
+        not template.strip()
+        or (names_a_seed(template) and not top_seed)
+        or uses_season(template)
+        or uses_theme(template)
+    ):
         return ""
     return (
         template.replace(placeholders.TOP_SEED, top_seed)
@@ -614,7 +627,9 @@ def apply_row_details(
         return written, {}
     try:
         wanted = {
-            "summary": render_description(fill_season(spec.description, spec.season), profile, picks, library_name),
+            "summary": render_description(
+                fill_theme(fill_season(spec.description, spec.season), spec.theme), profile, picks, library_name
+            ),
             "titleSort": f"{prefix}{display}" if prefix else "",
         }
         clearing = collection is not None and (
@@ -673,7 +688,7 @@ def resolve_row_template(spec: RowSpec, profile: UserProfile, config: EngineConf
     resolved the template differently, promote would look for a title delivery never created and the
     row's placement/privacy promotion would silently no-op (plex-safety: a row could stay unhidden).
     """
-    return fill_season(raw_row_template(spec, profile, config), spec.season)
+    return fill_theme(fill_season(raw_row_template(spec, profile, config), spec.season), spec.theme)
 
 
 def raw_row_template(spec: RowSpec, profile: UserProfile, config: EngineConfig) -> str:
@@ -1096,7 +1111,7 @@ def remove_row(
         # survives a title which differs per person, which is exactly what a fallback creates.
         # A seasonal name is the same case from the other side: it renders tonight's season, and the
         # collection may still wear the last one it was built for.
-        unrenderable = not display or names_a_seed(template) or uses_season(raw_template)
+        unrenderable = not display or names_a_seed(template) or uses_season(raw_template) or uses_theme(raw_template)
         if unrenderable and ledger_key is None:
             # This row has no title to match on — a `{top_seed}` template (which renders per person,
             # so no title computed here is anyone's) or one that renders blank. Per-person rows share

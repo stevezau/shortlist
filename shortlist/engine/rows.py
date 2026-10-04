@@ -59,6 +59,7 @@ from shortlist.engine.models import (
 )
 from shortlist.engine.placeholders import names_a_seed
 from shortlist.engine.requests_row import build_requests_picks
+from shortlist.engine.themes import theme_content_hash
 from shortlist.engine.web_guidance import BUILTIN, Guidance, resolve_guidance
 
 
@@ -975,6 +976,8 @@ def _shuffle_key(row_slug: str, user_slug: str, run_day: int, tmdb_id: int) -> i
 
 #: How `row_recipe` starts its season part.
 _RECIPE_SEASON = "season="
+#: How `row_recipe` starts its theme part.
+_RECIPE_THEME = "theme="
 
 
 def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
@@ -1054,6 +1057,9 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
             ),
             # Rows with a length, year or rating limit only, so no other row's recipe changes (#138).
             *((f"limits={spec.limits().fingerprint()}",) if spec.limits().active else ()),
+            # AI rows only (#138): the theme's contents, so editing them rebuilds the row while renaming it
+            # only renames it.
+            *((f"{_RECIPE_THEME}{spec.theme.slug}#{theme_content_hash(spec.theme)}",) if spec.theme else ()),
         )
     )
 
@@ -1335,6 +1341,7 @@ def _gather_pool(
     recent_count: int | None = None,
     visible: Callable[[list[int]], set[int] | None] | None = None,
     season: seasons_mod.SeasonTitles | None = None,
+    season_source: str = "season",
     guidance: Guidance | None = None,
 ) -> _Gathered:
     """The first half of ``_candidate_pool``: gather, then keep what the libraries hold and this person may see."""
@@ -1366,6 +1373,7 @@ def _gather_pool(
             if season is not None
             else None
         ),
+        season_source=season_source,
         web_guidance=guidance,
     )
     # `dropped` collects (candidate, reason) as filter_candidates works — observation only, it does
@@ -2417,8 +2425,12 @@ class RowPolicy:
         return effective_recent_count(spec, self.cfg)
 
     def season_titles(self, spec: RowSpec) -> seasons_mod.SeasonTitles | None:
-        """This seasonal row's season as read tonight; None for a row that is not seasonal, or whose list
-        could not be read (``ctx.season_failures`` says why)."""
+        """This row's season as read tonight; None for a row that is not seasonal, or whose list
+        could not be read (``ctx.season_failures`` says why). An AI row's theme is read the same way, so it
+        answers here too (``ctx.theme_failures``)."""
+        if spec.theme is not None:
+            found = self.ctx.theme_titles.get(spec.theme.slug)
+            return found.titles if found is not None else None
         return self.ctx.season_titles.get(spec.season.slug) if spec.season is not None else None
 
     def effective_sources(self, spec: RowSpec) -> tuple[str, ...]:
@@ -2525,6 +2537,9 @@ class RowPolicy:
             # Rows with different AI instructions must not share an AI web search (#138); "" otherwise,
             # which every row without instructions shares, so no pool splits on the night this ships.
             self.effective_guidance(spec).fingerprint(),
+            # An AI row's pool is its theme's titles, so two themes — or one theme's contents before and after
+            # an edit — never share a gather (#138). Nothing is added for any other row, so no key changes.
+            *((spec.theme.slug, theme_content_hash(spec.theme)) if spec.theme is not None else ()),
         )
 
     def pool_slot(self, spec: RowSpec) -> tuple:
@@ -2554,8 +2569,8 @@ class RowPolicy:
             try:
                 if gathering:
                     season = None
-                    if spec.season is not None:
-                        season = self.ctx.season_titles.get(spec.season.slug)
+                    if spec.season is not None or spec.theme is not None:
+                        season = self.season_titles(spec)
                         if season is None:
                             # The season's list could not be read tonight. Failing the pool keeps the row as
                             # it is, exactly like a row whose every source is down; its siblings still build.
@@ -2574,6 +2589,7 @@ class RowPolicy:
                         watched_exclusions=self.pool_exclusions(spec),
                         visible=self.visible,
                         season=season,
+                        season_source="theme" if spec.theme is not None else "season",
                         guidance=guidance,
                     )
             except Exception as e:
@@ -2642,8 +2658,19 @@ class NothingToBuildFrom(RuntimeError):
     owes nothing: an out-of-season row of theirs still has to come off their Home."""
 
 
+def _theme_reason_args(ctx: EngineContext, spec: RowSpec) -> dict:
+    """The keywords `picker.build_picks` takes to word an AI row's picks; empty for any other row."""
+    if spec.theme is None:
+        return {}
+    found = ctx.theme_titles.get(spec.theme.slug)
+    return {"theme_name": spec.theme.name, "theme_reasons": found.reasons if found is not None else {}}
+
+
 def _unreadable_season(ctx: EngineContext, spec: RowSpec) -> str:
-    """Why a seasonal row has nothing to build from tonight, in the words both build paths report."""
+    """Why a seasonal or AI row has nothing to build from tonight, in the words both build paths report."""
+    if spec.theme is not None:
+        why = ctx.theme_failures.get(spec.theme.slug, "it was not loaded")
+        return f"the {spec.theme.name} theme could not be read ({why})"
     why = ctx.season_failures.get(spec.season.slug, "it was not loaded")
     return f"the {spec.season.name} list could not be read ({why})"
 
@@ -2659,7 +2686,11 @@ def _cold_start(
     specs = policy.gathered_specs()
     # The rule `_warm_start` applies: a season list that could not be read is a row whose every source is
     # down, and a person whose EVERY row is down is a failed user, not a quiet cold start.
-    unreadable = [spec for spec in specs if spec.season is not None and policy.season_titles(spec) is None]
+    unreadable = [
+        spec
+        for spec in specs
+        if (spec.season is not None or spec.theme is not None) and policy.season_titles(spec) is None
+    ]
     if unreadable and len(unreadable) == len(specs):
         raise NothingToBuildFrom("; ".join(sorted(_unreadable_season(ctx, spec) for spec in unreadable)))
     # A rewatch row is still built from what they finished, however little that is.
@@ -2923,7 +2954,7 @@ def _build_section_picks(
             #     at all, reported as a green run.
             #
             # `targets` already honours `library_keys`, so taking `k` from `section` fixes both.
-            if spec.season is not None:
+            if spec.season is not None or spec.theme is not None:
                 season = policy.season_titles(spec)
                 if season is None:
                     # Warned like the warm path's dead pool: this row keeps what it has, its siblings build.
@@ -2957,7 +2988,7 @@ def _build_section_picks(
                 ]
             # A library with nothing rated falls back to the per-user pull — never for a seasonal row,
             # whose fallback would be the server's top-rated films, not its season.
-            if not cands and spec.season is None:
+            if not cands and spec.season is None and spec.theme is None:
                 cands = [p for p in base_cold if p.media_type is kind]
             cands = _within_limits(policy, spec, cands)
             # Checked on THIS library's copy: the fallback's keys come from another library, and a
@@ -3040,6 +3071,7 @@ def _build_section_picks(
             continue
         sec_idx = ctx.section_index.get(section.key, {})
         pct = policy.effective_watched_pct(spec)
+        theme_reasons = _theme_reason_args(ctx, spec)
         sub = [c for c in pool_for_row if c.media_type is kind and c.tmdb_id in sec_idx]
         # The watch this library's row is built from, for a row NAMED after one: its title falls back to
         # it when no pick carries a seed of its own, which is every pick discover and web search make.
@@ -3189,7 +3221,7 @@ def _build_section_picks(
             # a night; tomorrow's fill closes it.
             spares, reselect = ([] if genre_hold else sub), False
             if len(sec_picks) < k and sub and not genre_hold:
-                sec_picks = _pad_picks(sec_picks, sub, k)
+                sec_picks = _pad_picks(sec_picks, sub, k, **theme_reasons)
         elif prior_valid and not seed_moved:
             # Refresh night: keep the strongest ~two-thirds by RANK (match quality — `prior_valid` is
             # ordered by the persisted rank column, not by how the row was displayed), and swap the
@@ -3201,7 +3233,7 @@ def _build_section_picks(
             if _names_a_seed(spec, user, policy.cfg):
                 kept = _reseed_survivors(kept, sub, policy.seeds_for(spec))
             fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
-            new_picks = picker.build_picks(fresh_pool, k)
+            new_picks = picker.build_picks(fresh_pool, k, **theme_reasons)
             newcomers = [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
             # Take only what there is ROOM for, before ordering. Handing the whole merged list to
             # `_rank_against_pool` and truncating there let pool order — pure score — decide who
@@ -3212,7 +3244,7 @@ def _build_section_picks(
             # and stayed there — the collapsed row is what carries forward to the next one.
             sec_picks = _rank_against_pool(kept + newcomers[: max(0, k - len(kept))], sub)
             if len(sec_picks) < k:
-                sec_picks = _pad_picks(sec_picks, fresh_pool, k)
+                sec_picks = _pad_picks(sec_picks, fresh_pool, k, **theme_reasons)
             spares, reselect = fresh_pool, True
             # `_seed_moved` above asked whether the POOL still leads with the seed this row is named
             # after; the name renders from the best-matching DELIVERED pick. Re-ranking can put a
@@ -3238,9 +3270,9 @@ def _build_section_picks(
                     getattr(section, "title", section.key),
                 )
                 continue
-            sec_picks = picker.build_picks(sub, k)
+            sec_picks = picker.build_picks(sub, k, **theme_reasons)
             if len(sec_picks) < k:
-                sec_picks = _pad_picks(sec_picks, sub, k)
+                sec_picks = _pad_picks(sec_picks, sub, k, **theme_reasons)
             spares, reselect = sub, True
 
         if spec.rewatch:
@@ -4204,7 +4236,14 @@ def _log_row_provenance(
         )
 
 
-def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]:
+def _pad_picks(
+    picks: list[Pick],
+    ranked: list[Candidate],
+    k: int,
+    *,
+    theme_name: str | None = None,
+    theme_reasons: dict[tuple[MediaType, int], str] | None = None,
+) -> list[Pick]:
     """Top up a short row from the ranked pool (never invents titles).
 
     Only from candidates whose source actually vouched for them: padding is where a weak association
@@ -4218,7 +4257,12 @@ def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]
             len(ranked) - len(worth_it),
             len(ranked),
         )
-    fillers = picker.build_picks([c for c in worth_it if (c.tmdb_id, c.media_type) not in have], k - len(picks))
+    fillers = picker.build_picks(
+        [c for c in worth_it if (c.tmdb_id, c.media_type) not in have],
+        k - len(picks),
+        theme_name=theme_name,
+        theme_reasons=theme_reasons,
+    )
     out = list(picks)
     for f in fillers:
         out.append(replace(f, rank=len(out) + 1))

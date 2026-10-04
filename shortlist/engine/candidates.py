@@ -836,13 +836,15 @@ def gather_candidates(
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
     stats: GatherStats | None = None,
     season_items: dict[MediaType, list[dict]] | None = None,
+    season_source: str = "season",
     web_guidance: Guidance | None = None,
 ) -> list[Candidate]:
     """Pool candidates from every enabled source, deduped by (tmdb_id, media_type).
 
     ``season_items`` is a seasonal row's season, as the TMDB list items the server's libraries hold
     (`seasons.SeasonTitles.in_library`). When given, they join the pool as the ``season`` source whatever
-    ``sources`` says — they are what the row is made of.
+    ``sources`` says — they are what the row is made of. ``season_source`` names that source: an AI row's
+    theme (#138) is read the same way and reports as ``theme``.
 
     ``curator``/``profile`` are only needed by the ``llm_web`` source and ``trakt`` by the Trakt
     source; the TMDB sources ignore them. ``search``/``web_search_mode`` drive the ``llm_web``
@@ -1065,7 +1067,7 @@ def gather_candidates(
                 continue
             # Counted once it has titles to offer: a season with nothing here is no working source, so with
             # every other source down the pool fails loudly below instead of passing as a quiet empty.
-            attempted.add("season")
+            attempted.add(season_source)
             try:
                 genres_for(media_type)
             except Exception as e:
@@ -1095,11 +1097,16 @@ def gather_candidates(
                 # of their Halloween row, measured on a real server.
                 already = (item["id"], media_type) in measured
                 fit = None if already else genre_coherence(theirs, item.get("genre_ids") or [])
-                add(item, media_type, "season", fit)
+                add(item, media_type, season_source, fit)
                 returned.append((int(item.get("id") or 0), item.get("title") or item.get("name") or ""))
-            _record_query("season", "the season's titles in your libraries", media_type.value, returned)
-        if season_skipped and not any("season" in candidate.sources for candidate in pool.values()):
-            failures["season"] = season_skipped
+            _record_query(
+                season_source,
+                f"the {season_source}'s titles in your libraries",
+                media_type.value,
+                returned,
+            )
+        if season_skipped and not any(season_source in candidate.sources for candidate in pool.values()):
+            failures[season_source] = season_skipped
 
     # One source down is a degradation the other sources absorb. EVERY source down is not: we know
     # nothing about this person tonight, and returning an empty pool would report a cheerful "ok"

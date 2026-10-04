@@ -66,6 +66,7 @@ from shortlist.engine.privacy import (
 )
 from shortlist.engine.request_config import resolve_request_config
 from shortlist.engine.requests_row import collect_requests
+from shortlist.engine.themes import load_theme
 
 #: How many accounts of one type the filter-enforcement spot-check may try before giving up.
 _ENFORCEMENT_SPOT_CHECK_ATTEMPTS = 3
@@ -151,6 +152,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     order_work: list[tuple] = []
 
     _load_season_titles(ctx, users, library_index)
+    _load_theme_titles(ctx, users, library_index)
     _load_request_ledger(ctx, users)
 
     # Deliver every per-person and shared row UNPROMOTED — nothing is on anyone's Home yet.
@@ -444,6 +446,39 @@ def _load_season_titles(
                 season.name,
                 ", ".join(f"“{title}”" for title in titles.missing_collections),
             )
+
+
+def _load_theme_titles(
+    ctx: EngineContext, users: list[UserProfile], library_index: dict[MediaType, dict[int, int]]
+) -> None:
+    """Read, once for the whole run, every theme an AI row builds tonight (#138), as seasons are read.
+
+    A theme that cannot be read is recorded, not raised: its rows keep what they have, as a row whose
+    sources are all down does, and every other row still builds. A no-user run reads nothing.
+    """
+    if not users:
+        return
+    wanted = {spec.theme.slug: spec.theme for spec in ctx.config.rows if spec.theme and ctx.config.should_build(spec)}
+    for slug, theme in wanted.items():
+        try:
+            ctx.theme_titles[slug] = load_theme(ctx.tmdb, ctx.plex, theme, library_index)
+        except Exception as e:
+            # Redacted: it reaches the person's saved run error, and a TMDB or Plex error can carry a credential.
+            ctx.theme_failures[slug] = redact(f"{type(e).__name__}: {e}")
+            logger.warning(
+                "the {} theme could not be read ({}) — its rows keep what they have tonight",
+                theme.name,
+                type(e).__name__,
+            )
+            continue
+        titles = ctx.theme_titles[slug].titles
+        logger.info(
+            "{} theme: {} films and {} shows, {} of them in your libraries",
+            theme.name,
+            len(titles.ids[MediaType.MOVIE]),
+            len(titles.ids[MediaType.SHOW]),
+            sum(len(items) for items in titles.in_library.values()),
+        )
 
 
 def _load_request_ledger(ctx: EngineContext, users: list[UserProfile]) -> None:
