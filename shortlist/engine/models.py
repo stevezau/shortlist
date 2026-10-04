@@ -1350,7 +1350,7 @@ class EngineConfig:
     # every stored value through that same curve, so no row's cadence moved.
     #
     # It sets HOW OFTEN a row rebuilds, never how much of it turns over: a refresh keeps the strongest
-    # ~two-thirds and swaps the weakest third (`_KEEP_FRACTION`, rows.py), at every cadence including
+    # ~two-thirds and swaps the weakest third (`_KEEP_FRACTION`, above), at every cadence including
     # nightly. The old name promised "rotate the whole row daily and reach deep down the ranked list",
     # a magnitude nothing implements — and folding turnover in here would tie more variety to worse
     # picks, since the only way to swap more of a row is to reach further down the ranked list.
