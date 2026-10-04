@@ -36,6 +36,7 @@ from shortlist.engine.models import (
     EngineConfig,
     HubAnchor,
     MediaType,
+    OverTime,
     Pick,
     PosterSpec,
     RequestConfig,
@@ -67,6 +68,7 @@ from shortlist.server.db.models import (
     RequestCandidate,
     Server,
     Theme,
+    ThemeHistory,
     User,
     WatchedTitle,
     WatchSyncState,
@@ -74,6 +76,7 @@ from shortlist.server.db.models import (
     utcnow,
 )
 from shortlist.server.prefs import blocked_ids
+from shortlist.server.services.pick_history import DbPickHistory
 from shortlist.server.services.plex_reachability import explained
 from shortlist.server.services.poster_service import load_upload, make_studio
 from shortlist.server.services.season_catalogue import load_catalogue
@@ -506,6 +509,8 @@ class ContextBuilder:
                 curator=curator,
                 snapshots=DbSnapshotStore(self._sessions),
                 index_cache=DbCache(self._sessions, kind="library_index"),
+                # The factory, not a session: the engine reads it from worker threads for the whole run.
+                pick_history=DbPickHistory(self._sessions),
                 web_search_cache=DbCache(self._sessions, kind="websearch"),
                 mdblist=self._build_mdblist(store),
                 concurrency=concurrency,
@@ -600,6 +605,7 @@ class ContextBuilder:
                 history_source=ShareTokenWatchSource(plex, plextv, owner_token=plex_token),
                 curator=make_curator(""),
                 snapshots=DbSnapshotStore(self._sessions),
+                pick_history=DbPickHistory(self._sessions),
                 # The watch sync reads people this many at a time. Only `engine_run` and the watch
                 # sync consult it, and every plex-only caller of `engine_run` passes no users.
                 concurrency=int(store.get("run.concurrency") or 1),
@@ -1312,6 +1318,12 @@ class ContextBuilder:
                     seasons=list(collection.seasons or []),
                     season=season,
                     theme=self._theme_spec(session, collection),
+                    over_time=OverTime(
+                        refresh_share=collection.refresh_share,
+                        repeat_cooldown_days=collection.repeat_cooldown_days,
+                        avoid_rows=tuple(collection.avoid_rows or ()),
+                    ),
+                    person_themes=self._person_themes(session, collection, audience_by_collection),
                     requests_row=bool(collection.requests_row),
                     requests_window_days=int(
                         collection.requests_window_days if collection.requests_window_days is not None else 90
@@ -1320,6 +1332,32 @@ class ContextBuilder:
                 )
             )
         return specs
+
+    @staticmethod
+    def _person_themes(
+        session: Session, collection: Collection, audience_by_collection: dict[int, set[int]]
+    ) -> tuple[tuple[str, ThemeSpec], ...]:
+        """Each person's own current theme on an explore row (#138); empty for any other row.
+
+        Read from the DB, never from a clock: the rotation job decides when a theme changes, and a row
+        built before it runs simply builds with the theme the person still has. Someone with no current
+        theme is left out, and the engine gives them the row's own theme.
+        """
+        if collection.theme_id is None or collection.theme_mode != "explore":
+            return ()
+        query = (
+            session.query(User.slug, Theme)
+            .join(ThemeHistory, ThemeHistory.user_id == User.id)
+            .join(Theme, Theme.id == ThemeHistory.theme_id)
+            .filter(ThemeHistory.collection_id == collection.id, ThemeHistory.state == "current")
+            .order_by(User.id, ThemeHistory.started_at.desc(), ThemeHistory.id.desc())
+        )
+        if collection.audience == "subset":
+            query = query.filter(User.id.in_(audience_by_collection.get(collection.id, set())))
+        themes: dict[str, ThemeSpec] = {}
+        for slug, theme in query:
+            themes.setdefault(slug, spec_from_row(theme))
+        return tuple(themes.items())
 
     @staticmethod
     def _theme_spec(session: Session, collection: Collection) -> ThemeSpec | None:

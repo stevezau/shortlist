@@ -1036,6 +1036,7 @@ def persist_report(
             if session.query(RunUser).filter_by(run_id=run_id, user_id=user.id).first() is None:
                 _persist_user_report(session, run_id, user, user_report, report.dry_run)
         audit_sweep(session, report, dry_run=report.dry_run, run_id=run_id)
+        audit_exclusions_skipped(session, report, dry_run=report.dry_run, run_id=run_id)
         audit_filter_writes(session, report, dry_run=report.dry_run, run_id=run_id)
         audit_demotions(session, report, dry_run=report.dry_run, run_id=run_id)
         audit_orphan_deletes(session, report, dry_run=report.dry_run, run_id=run_id)
@@ -1481,6 +1482,34 @@ def audit_sweep(
         deleted=report.swept_rows,
         **origin,
     )
+
+
+def audit_exclusions_skipped(session: Session, report: RunReport, *, dry_run: bool, run_id: int | None = None) -> None:
+    """Add one `row.exclusions_skipped` event per person and row whose no-repeat or keep-out rules were set aside.
+
+    The engine does that when honouring them would leave a row with nothing new to pick (#138): the row still
+    delivers, and this says why it repeated titles it was told to avoid. Engine code cannot write events, so the
+    report carries the row slugs and this turns them into events.
+
+    Args:
+        session: An open session; the caller owns the commit.
+        report: The run's report; nothing is added when no person has any.
+        dry_run: Whether the run only previewed.
+        run_id: The persisted run.
+    """
+    for user_report in report.users:
+        for row_slug in user_report.exclusions_skipped:
+            _add_event(
+                session,
+                "row.exclusions_skipped",
+                "info",
+                run_id,
+                dry_run=dry_run,
+                user=user_report.slug,
+                row=row_slug,
+                reason="Skipping the no-repeat and keep-out rules for this person tonight: following them would "
+                "have left the row with nothing new to pick.",
+            )
 
 
 def audit_demotions(

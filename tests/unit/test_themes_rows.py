@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -705,3 +705,150 @@ class TestPersonThemes:
         assert set(ctx.theme_failures) == {"t2"}
         assert {"t0", "t1"} <= set(ctx.theme_titles) and "t2" not in ctx.theme_titles
         assert sum("per-run cap" in m for m in messages) == 1
+
+
+class TestContextBuilderWiring:
+    """The context builder hands the engine each person's own current theme, the over-time controls, and the history."""
+
+    @pytest.fixture
+    def db(self, tmp_path):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from shortlist.server.db.models import Base
+
+        engine = create_engine("sqlite://")
+        Base.metadata.create_all(engine)
+        return sessionmaker(engine)
+
+    @pytest.fixture
+    def builder(self, db, tmp_path):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.secrets import SecretBox
+        from shortlist.server.services.sse import EventBus
+
+        return ContextBuilder(db, SecretBox(tmp_path), EventBus())
+
+    @staticmethod
+    def seed(db, *, mode: str = "explore", **row_fields) -> tuple[int, dict[str, int]]:
+        from shortlist.server.db.models import Collection, Theme, User
+
+        with db() as s:
+            starter = Theme(slug="starter", name="Starter", media=["movie"], genres=["Drama"])
+            s.add(starter)
+            users = {
+                slug: User(plex_account_id=i + 1, username=slug, slug=slug, enabled=True)
+                for i, slug in enumerate(("ann", "bob"))
+            }
+            s.add_all(users.values())
+            s.flush()
+            row = Collection(slug="ai-row", name="AI row", theme_id=starter.id, theme_mode=mode, **row_fields)
+            s.add(row)
+            s.commit()
+            return row.id, {slug: u.id for slug, u in users.items()}
+
+    @staticmethod
+    def own_theme(db, row_id, user_id, name, *, state="current", genres=("Horror",)):
+        from shortlist.server.db.models import Theme, ThemeHistory
+
+        with db() as s:
+            theme = Theme(slug=name.lower(), name=name, media=["movie"], genres=list(genres))
+            s.add(theme)
+            s.flush()
+            s.add(
+                ThemeHistory(
+                    collection_id=row_id,
+                    user_id=user_id,
+                    theme_id=theme.id,
+                    theme_name=name,
+                    state=state,
+                    started_at=datetime(2026, 10, 1),
+                )
+            )
+            s.commit()
+
+    @staticmethod
+    def specs(builder, db):
+        from shortlist.server.services.season_catalogue import load_catalogue
+        from shortlist.server.settings_store import SettingsStore
+
+        with db() as session:
+            store = SettingsStore(session, builder._secrets)
+            return {s.slug: s for s in builder._build_rows(session, store, catalogue=load_catalogue(session))}
+
+    def test_each_person_gets_their_own_current_theme(self, builder, db):
+        row_id, users = self.seed(db)
+        self.own_theme(db, row_id, users["ann"], "Scary")
+        self.own_theme(db, row_id, users["bob"], "Cosy", genres=("Family",))
+
+        spec = self.specs(builder, db)["ai-row"]
+
+        assert {slug: theme.name for slug, theme in spec.person_themes} == {"ann": "Scary", "bob": "Cosy"}
+        assert spec.for_person("ann").theme.genres == ("Horror",)
+        assert spec.for_person("bob").theme.genres == ("Family",)
+
+    def test_a_person_with_no_current_theme_falls_back_to_the_rows_own(self, builder, db):
+        row_id, users = self.seed(db)
+        self.own_theme(db, row_id, users["ann"], "Scary")
+
+        spec = self.specs(builder, db)["ai-row"]
+
+        assert [slug for slug, _ in spec.person_themes] == ["ann"]
+        assert spec.for_person("bob").theme.name == "Starter"
+
+    def test_an_up_next_theme_is_not_used_until_it_is_promoted(self, builder, db):
+        from shortlist.server.services.theme_rotation import promote_next
+
+        row_id, users = self.seed(db)
+        self.own_theme(db, row_id, users["ann"], "Scary")
+        self.own_theme(db, row_id, users["ann"], "Queued", state="next")
+        before = self.specs(builder, db)["ai-row"]
+
+        with db() as s:
+            promote_next(s, row_id, users["ann"], datetime(2026, 10, 9, tzinfo=UTC))
+            s.commit()
+        after = self.specs(builder, db)["ai-row"]
+
+        assert before.for_person("ann").theme.name == "Scary"
+        assert after.for_person("ann").theme.name == "Queued"
+
+    def test_a_fixed_row_ignores_history(self, builder, db):
+        row_id, users = self.seed(db, mode="fixed")
+        self.own_theme(db, row_id, users["ann"], "Scary")
+
+        assert self.specs(builder, db)["ai-row"].person_themes == ()
+
+    def test_over_time_is_default_when_the_columns_are_null(self, builder, db):
+        self.seed(db)
+
+        assert self.specs(builder, db)["ai-row"].over_time == OverTime()
+
+    def test_over_time_carries_the_columns(self, builder, db):
+        self.seed(db, refresh_share=0.5, repeat_cooldown_days=30, avoid_rows=["quiet", "loud"])
+
+        assert self.specs(builder, db)["ai-row"].over_time == OverTime(0.5, 30, ("quiet", "loud"))
+
+    @pytest.mark.parametrize("site", ["build", "build_plex_only"])
+    def test_both_engine_contexts_carry_the_pick_history(self, builder, db, monkeypatch, site):
+        from shortlist.server.services import context_builder as cb
+        from shortlist.server.services.pick_history import DbPickHistory
+        from shortlist.server.settings_store import SettingsStore
+
+        with db() as s:
+            store = SettingsStore(s, builder._secrets)
+            store.set("plex.url", "http://plex.invalid")
+            store.set("plex.token", "tok")
+            s.commit()
+        fake = SimpleNamespace(machine_id="m", _token_for=lambda p: None)
+        monkeypatch.setattr(cb, "PlexClient", lambda *a, **k: fake)
+        monkeypatch.setattr(cb, "PlexTvClient", lambda *a, **k: fake)
+        monkeypatch.setattr(cb, "TmdbClient", lambda *a, **k: fake)
+        monkeypatch.setattr(cb, "ShareTokenWatchSource", lambda *a, **k: fake)
+        monkeypatch.setattr(cb, "make_curator", lambda *a, **k: fake)
+        monkeypatch.setattr(cb, "make_search_client", lambda get: None)
+        monkeypatch.setattr(cb, "_refuse_a_different_server", lambda session, machine_id: None)
+        monkeypatch.setattr(cb, "EngineContext", lambda **kw: SimpleNamespace(**kw))
+
+        ctx = builder.build(dry_run=True) if site == "build" else builder.build_plex_only(dry_run=True)
+
+        assert isinstance(ctx.pick_history, DbPickHistory)

@@ -582,3 +582,42 @@ class TestTheLedgerRecordsTheSeasonACollectionWasBuiltFor:
             _record_deliveries(session, "sarah", [self._entry(season="pat@2027-03-17")])
             _record_deliveries(session, "sarah", [self._entry()])
             assert session.get(Delivery, ("seasonal", "sarah", "1")).season == "pat@2027-03-17"
+
+
+class TestExclusionsSkippedAreAudited:
+    """A row that set its no-repeat / keep-out rules aside for someone (#138) says so in the change log."""
+
+    def _events(self, sessions, *, skipped: list[str], dry_run: bool = False) -> tuple[int, list]:
+        from shortlist.engine.models import RunReport
+        from shortlist.server.db.models import Event, Run, User
+        from shortlist.server.services.run_persistence import persist_report
+
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="ann", slug="ann", enabled=True))
+            run = Run(trigger="manual", status="running", dry_run=dry_run, stats={})
+            session.add(run)
+            session.commit()
+            run_id = run.id
+        report = RunReport(started_at=datetime.now(UTC), dry_run=dry_run)
+        report.users.append(UserRunReport(username="ann", slug="ann", exclusions_skipped=skipped))
+
+        persist_report(sessions, run_id, report)
+
+        with sessions() as session:
+            return run_id, session.query(Event).filter_by(scope="row.exclusions_skipped").all()
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_one_event_per_person_and_row_with_the_run_and_dry_run_flag(self, sessions, dry_run):
+        run_id, events = self._events(sessions, skipped=["quiet-nights", "loud-nights"], dry_run=dry_run)
+
+        assert [
+            (e.level, e.message["run_id"], e.message["dry_run"], e.message["user"], e.message["row"]) for e in events
+        ] == [
+            ("info", run_id, dry_run, "ann", "quiet-nights"),
+            ("info", run_id, dry_run, "ann", "loud-nights"),
+        ]
+
+    def test_nothing_is_written_when_no_row_skipped_its_rules(self, sessions):
+        _, events = self._events(sessions, skipped=[])
+
+        assert events == []
