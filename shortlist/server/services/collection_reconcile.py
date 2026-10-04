@@ -11,7 +11,8 @@ to the request.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import date
 
@@ -223,6 +224,36 @@ def title_key(template: str) -> str:
     return render_row_name(probe, _PROBE_PROFILE, [], library_name=_PROBE_LIBRARY).casefold()
 
 
+def _library_pattern(key: str) -> re.Pattern[str] | None:
+    """``key`` with its `{library_name}` standing in for any library name, or None when it has none."""
+    if _PROBE_LIBRARY not in key:
+        return None
+    return re.compile(".+".join(re.escape(part) for part in key.split(_PROBE_LIBRARY)), re.DOTALL)
+
+
+def clashing_keys(mine: Iterable[str], theirs: Iterable[str]) -> list[str]:
+    """The keys in ``mine`` that a key in ``theirs`` collides with: equal, or, when one is a `{library_name}`
+    title, equal in SOME library. "✨ {library_name} Picked for You" renders "✨ Movies Picked for You" in the
+    Movies library, so a row literally named that shares the default row's collection there (#121). Library
+    names are not known here, so any name in the placeholder's place counts: refusing a title too many is
+    recoverable, two rows on one collection is not."""
+    theirs = list(theirs)
+    clashing = []
+    for key in sorted(mine):
+        own = _library_pattern(key)
+        for other in theirs:
+            pattern = _library_pattern(other)
+            # Two `{library_name}` titles are told apart by the text around it; only a literal is matched
+            # against a pattern, or "{library_name} Picks" would swallow "✨ {library_name} Picks".
+            if key == other or (own is not None and pattern is None and own.fullmatch(other)):
+                clashing.append(key)
+                break
+            if pattern is not None and own is None and pattern.fullmatch(key):
+                clashing.append(key)
+                break
+    return clashing
+
+
 def title_keys(template: str, *, catalogue: Catalogue, theme: ThemeSpec | None = None) -> set[str]:
     """Every key ``template`` can collide on: `title_key` itself, plus, for a seasonal name, the title it
     renders to in each season. In December `{season} picks` IS "Christmas picks", so a plain row with that
@@ -372,9 +403,9 @@ def person_clashes(session, secrets, edited: RowView) -> dict[tuple[str, int], s
         for other in others:
             if other.audience is not None and user.plex_account_id not in other.audience:
                 continue
-            shared = mine.keys() & _titles_for(other, user, held, catalogue).keys()
+            shared = clashing_keys(mine.keys(), _titles_for(other, user, held, catalogue).keys())
             if shared:
-                found[(other.slug, user.id)] = mine[sorted(shared)[0]]
+                found[(other.slug, user.id)] = mine[shared[0]]
     return found
 
 
@@ -419,7 +450,7 @@ def person_title_clash(session, secrets, collection: Collection, user: User, the
             collection.media or "both", collection.library_keys or [], view.media, view.library_keys
         ):
             continue
-        if wanted & _titles_for(view, user, held, catalogue).keys():
+        if clashing_keys(wanted, _titles_for(view, user, held, catalogue).keys()):
             return other
     return None
 
@@ -521,7 +552,7 @@ def rows_titled_from(
             continue
         if not rows_can_share_a_library(media, library_keys, other.media or "both", other.library_keys or []):
             continue
-        if _title_keys(session, other, secrets, catalogue=catalogue) & wanted_keys:
+        if clashing_keys(wanted_keys, _title_keys(session, other, secrets, catalogue=catalogue)):
             clashes.append(other)
     return clashes
 

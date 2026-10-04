@@ -693,3 +693,58 @@ class TestRegenerateErrorsArePlain:
 
         assert r.status_code == 422
         assert "earliest year" in r.text
+
+
+class TestNamesThatMatchALibraryNameTemplate:
+    """The default row is titled "✨ {library_name} Picked for You", so in the Movies library its real title is
+    "✨ Movies Picked for You". A row named that literally shares its collection (#121)."""
+
+    LITERAL = "✨ Movies Picked for You"
+
+    def test_renaming_an_ai_row_onto_the_default_rows_title_in_a_library_is_refused(self, client: TestClient):
+        ann = add_people(client, "ann")[0]
+        row = ai_row(client, make_theme(client), audience="subset", audience_user_ids=[ann], library_keys=["1"])
+
+        r = patch(client, row, name_template=self.LITERAL)
+
+        assert r.status_code == 422 and "default row" in r.text
+        assert get_row(client, row["id"])["name_template"] != self.LITERAL
+
+    def test_renaming_a_plain_row_onto_it_is_refused(self, client: TestClient):
+        row = plain_row(client, "Mine")
+
+        assert patch(client, row, name=self.LITERAL, name_template=self.LITERAL).status_code == 422
+
+    def test_creating_a_row_with_that_title_is_refused(self, client: TestClient):
+        r = client.post("/api/collections", json={"name": self.LITERAL})
+
+        assert r.status_code == 422 and "default row" in r.text
+
+    def test_a_name_that_matches_no_library_title_still_renames(self, client: TestClient):
+        row = plain_row(client, "Mine")
+
+        assert patch(client, row, name="Friday Films", name_template="Friday Films").status_code == 200
+
+    def test_renaming_the_default_row_onto_another_rows_title_is_refused(self, client: TestClient):
+        from shortlist.server.db.models import DEFAULT_SLUG
+
+        plain_row(client, "Shows Night Picks")
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == DEFAULT_SLUG)
+
+        clash = patch(client, default, name="Shows Night Picks")
+        fine = patch(client, default, name="Friday {library_name} Films")
+
+        assert clash.status_code == 422 and "Shows Night Picks" in clash.text
+        assert fine.status_code == 200, fine.text
+
+    def test_renaming_the_default_row_to_a_library_template_that_matches_another_rows_title_is_refused(
+        self, client: TestClient
+    ):
+        from shortlist.server.db.models import DEFAULT_SLUG
+
+        plain_row(client, "Movies Night Picks")
+        default = next(c for c in client.get("/api/collections").json() if c["slug"] == DEFAULT_SLUG)
+
+        r = patch(client, default, name="{library_name} Night Picks")
+
+        assert r.status_code == 422 and "Movies Night Picks" in r.text
