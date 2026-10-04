@@ -64,6 +64,10 @@ EXPECTED_IDS = {
     "seasonal",
 }
 
+#: The AI templates (`AI_TEMPLATES` in row-templates.ts), kept apart so the ordinary gallery's set above
+#: stays exactly as strict. The AI row needs a theme to build, so its delivery proof builds one.
+AI_TEMPLATE_IDS = {"describe-a-row"}
+
 
 def _load_templates() -> dict[str, dict]:
     """`id -> values` straight out of the TypeScript source.
@@ -88,8 +92,8 @@ def _load_templates() -> dict[str, dict]:
         except json.JSONDecodeError as e:  # pragma: no cover - only on a shape change
             raise AssertionError(f"could not parse template {template_id!r} from {TEMPLATES_TS}: {e}") from e
 
-    assert set(out) == EXPECTED_IDS, (
-        f"parsed {sorted(out)} but expected {sorted(EXPECTED_IDS)} — the gallery changed, so these "
+    assert set(out) == EXPECTED_IDS | AI_TEMPLATE_IDS, (
+        f"parsed {sorted(out)} but expected {sorted(EXPECTED_IDS | AI_TEMPLATE_IDS)} — the gallery changed, so these "
         "proofs must be updated to match rather than left asserting a stale set"
     )
     return out
@@ -112,6 +116,9 @@ def _spec(template_id: str, **overrides) -> RowSpec:
     # placement) on the spec, never a field the engine reads.
     values.pop("season_lead_days", None)
     values.pop("season_after_days", None)
+    # Whether the row runs at all is the server's switch, not a recipe the engine reads (the AI template
+    # ships switched off until the owner has seen its list).
+    values.pop("enabled", None)
 
     unsupported = [k for k in values if not hasattr(RowSpec, k) and k not in RowSpec.__annotations__]
     assert not unsupported, f"{template_id}: the engine has no setting for {unsupported}"
@@ -128,6 +135,9 @@ def _spec(template_id: str, **overrides) -> RowSpec:
 class TestEveryTemplateSaves:
     """Layer 1: every option a template sets exists all the way through the API."""
 
+    # The AI template is not here: the API refuses its {theme} name on a row with no theme, so it cannot
+    # round-trip bare. Its create/validate path is covered by the API tests for AI rows, and its delivery
+    # by test_describe_a_row_fills_from_its_theme_with_no_curator_call below.
     @pytest.mark.parametrize("template_id", sorted(EXPECTED_IDS))
     def test_the_api_accepts_it_and_gives_it_back_unchanged(self, template_id: str, client):
         values = TEMPLATES[template_id]
@@ -598,3 +608,44 @@ class TestEveryTemplateDelivers:
         assert all(p.media_type is MediaType.SHOW for p in picks), "a movie reached a TV-only row"
         assert 30 not in delivered, "a series they had already started reached a 'to start' row"
         assert 40 in delivered
+
+    def test_describe_a_row_fills_from_its_theme_with_no_curator_call(self, engine_ctx, mock_plextv):
+        """Claims: "The AI writes the list once" and "One row each". The AI is not asked again at run
+        time: the row is picked in code from a theme's titles. Its wider behaviour (ranking, reasons,
+        failure handling) is covered in tests/unit/test_themes_rows.py."""
+        import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine.models import RowLimits
+        from shortlist.engine.themes import ThemeSpec
+
+        tag = 555
+        theme = ThemeSpec(
+            slug="twists",
+            name="Twist endings",
+            emoji="🌀",
+            media=(MediaType.MOVIE,),
+            tags=(tag,),
+            genres=(),
+            excluded_genres=(),
+            collections=(),
+            picks=(),
+            rules=RowLimits(),
+            min_votes=None,
+        )
+        spec = _spec("describe-a-row", theme=theme, ai_row=True, media="movie")
+        assert not spec.shared, "the tile says one row each"
+
+        engine_ctx.history_source.fetch.return_value = _mixed_history()
+        engine_ctx.tmdb.suggestions.return_value = _movies(10)
+        engine_ctx.tmdb.discover_all.side_effect = lambda media, params: (
+            [{"id": i, "title": f"Movie {i}", "genre_ids": [], "vote_average": 7.0} for i in (10, 20)]
+            if media is MediaType.MOVIE and params.get("with_keywords") == str(tag)
+            else []
+        )
+        engine_ctx.config.rows = [spec]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(engine_ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = {p.tmdb_id for p in _picks_by_row(report)["describe_a_row"]}
+        assert delivered == {10, 20}, f"the row must hold the theme's titles, got {delivered}"
+        engine_ctx.curator.complete.assert_not_called()
