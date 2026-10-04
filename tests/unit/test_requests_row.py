@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -497,6 +498,57 @@ class TestCollectFromTags:
             radarr=_radarr(items=[ours_for_kids, ours_asked], tags=tags),
         )
         assert [(t.tmdb_id, t.plex_account_id) for t in ledger.titles] == [(502, _person(10).plex_account_id)]
+
+
+def _after(barrier: threading.Barrier, value: object):
+    def read() -> object:
+        barrier.wait()
+        return value
+
+    return read
+
+
+class TestTheSourcesAreReadAtOnce:
+    """An Arr library is one whole-library dump its server takes seconds to build (live, 2026-10-04: 5.3s
+    to first byte for 10,211 movies, 4.1s for 4,992 series). Read one after another, the Users page's
+    Requests column waited for their sum — 13s."""
+
+    def test_overseerr_radarr_and_sonarr_reads_overlap_when_all_three_are_configured(self):
+        # Each read blocks until all three are in flight. One after another, the first waits out the
+        # timeout, the barrier breaks, and every source reads as failed.
+        barrier = threading.Barrier(3, timeout=5)
+        seerr, radarr, sonarr = _seerr(), _radarr(), _sonarr()
+        seerr.requests.side_effect = _after(barrier, REQS["results"])
+        radarr.movies.side_effect = _after(barrier, RADARR["tagged_items"])
+        sonarr.series.side_effect = _after(barrier, SONARR["tagged_items"])
+        sources = RequestSources(overseerr=SEERR, radarr=ARR, sonarr=ARR)
+
+        ledger = collect_requests(sources, _people(), seerr=seerr, radarr=radarr, sonarr=sonarr)
+
+        assert ledger.complete is True, ledger.problems
+        # Same ledger as reading them in turn: Arr tags still resolve through Overseerr's user list,
+        # and titles, problems and tag matches keep their order whichever read finished first.
+        assert ledger == collect_requests(sources, _people(), seerr=_seerr(), radarr=_radarr(), sonarr=_sonarr())
+
+    def test_a_warning_logged_in_an_arr_read_carries_the_callers_log_context(self):
+        from loguru import logger
+
+        radarr = _radarr()
+
+        def tags_that_warn():
+            logger.warning("retrying")
+            return {}
+
+        radarr.tags.side_effect = tags_that_warn
+        records = []
+        sink_id = logger.add(lambda m: records.append(m.record), level="WARNING")
+        try:
+            with logger.contextualize(shortlist_run_log=42):
+                collect_requests(RequestSources(radarr=ARR), _people(), radarr=radarr)
+        finally:
+            logger.remove(sink_id)
+
+        assert [r["extra"].get("shortlist_run_log") for r in records if r["message"] == "retrying"] == [42]
 
 
 def _title(tmdb_id, kind=MediaType.MOVIE, *, days_ago=1, person=100001, **kw):
