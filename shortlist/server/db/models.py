@@ -341,8 +341,34 @@ class Collection(Base):
     )
     ai_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
     ai_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    # Explore mode and over-time controls (#138 phase 4); every default is today's behaviour.
+    theme_mode: Mapped[str] = mapped_column(String(16), default="fixed", nullable=False, server_default="fixed")
+    explore_brief: Mapped[str] = mapped_column(String(500), default="", nullable=False, server_default="")
+    # Days a theme stays on the row; NULL = 7.
+    theme_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    refresh_share: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    repeat_cooldown_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # JSON list of collection slugs whose titles this row avoids.
+    avoid_rows: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ThemeHistory(Base):
+    """Which theme a row showed a person, and when; drives "avoid the last N" and the repeat cooldown."""
+
+    __tablename__ = "theme_history"
+    __table_args__ = (Index("ix_theme_history_target", "collection_id", "user_id", "state"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    collection_id: Mapped[int] = mapped_column(ForeignKey("collections.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    theme_id: Mapped[int | None] = mapped_column(ForeignKey("themes.id", ondelete="SET NULL"), nullable=True)
+    # Copied at write time so the history survives a deleted theme.
+    theme_name: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    state: Mapped[str] = mapped_column(String(16))  # current | next | past — a closed set the DB does not enforce
+    started_at: Mapped[datetime] = mapped_column(DateTime)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Theme(Base):
