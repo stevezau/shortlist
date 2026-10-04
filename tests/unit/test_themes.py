@@ -256,3 +256,15 @@ def test_theme_hash_ignores_genre_case_and_alias():
 def test_theme_as_season_resolves_scifi_aliases():
     for name in ("sci-fi", "SciFi", "Science Fiction"):
         assert theme_as_season(_spec(genres=(name,))).movie_genres == (878,)
+
+
+def test_theme_hash_handles_known_and_unknown_genres_in_any_order():
+    one = _spec(genres=("Horror", "Foo"), excluded_genres=("Bar", "Comedy"))
+    other = _spec(genres=("Foo", "horror"), excluded_genres=("comedy", "Bar"))
+
+    assert theme_content_hash(one) == theme_content_hash(other)
+
+
+def test_theme_hash_never_confuses_an_unknown_genre_with_a_known_one():
+    assert theme_content_hash(_spec(genres=("Horror",))) != theme_content_hash(_spec(genres=("Foo",)))
+    assert theme_content_hash(_spec(genres=("id:27",))) != theme_content_hash(_spec(genres=("Horror",)))

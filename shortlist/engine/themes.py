@@ -123,9 +123,12 @@ def theme_content_hash(spec: ThemeSpec) -> str:
     return hashlib.sha1(json.dumps(content).encode()).hexdigest()
 
 
-def _genre_key(name: str) -> int | str:
-    """A genre's TMDB id when the name is known, so aliases and case hash alike; else the lowered name."""
-    return _MOVIE_GENRE_IDS.get(name.strip().lower(), name.strip().lower())
+def _genre_key(name: str) -> str:
+    """A genre's hash key: its TMDB id when the name is known, so aliases and case hash alike, else its
+    lowered name. Always a string, and prefixed so a name can never collide with an id."""
+    lowered = name.strip().lower()
+    genre_id = _MOVIE_GENRE_IDS.get(lowered)
+    return f"id:{genre_id}" if genre_id is not None else f"name:{lowered}"
 
 
 def _genre_ids(names: tuple[str, ...]) -> tuple[int, ...]:
