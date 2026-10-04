@@ -239,3 +239,22 @@ class TestRuntimeMinutes:
     def test_nothing_usable_is_none(self):
         assert runtime_minutes({}, "movie") is None
         assert runtime_minutes({"runtime": None}, "movie") is None
+
+
+class TestPassesYearAndRating:
+    """The free half of the limits, for titles a row will never fetch details for."""
+
+    def test_judges_year_and_rating_and_keeps_what_it_cannot_judge(self):
+        from shortlist.engine.limits import passes_year_and_rating
+
+        limits = RowLimits(max_year=2000, min_rating=7.0)
+        assert passes_year_and_rating(make_candidate(1, "ok", rating=8.0, year=1999, vote_count=50), limits)
+        assert not passes_year_and_rating(make_candidate(2, "new", rating=8.0, year=2024, vote_count=50), limits)
+        assert not passes_year_and_rating(make_candidate(3, "bad", rating=5.0, year=1999, vote_count=50), limits)
+        assert passes_year_and_rating(make_candidate(4, "no year", rating=8.0, year=None, vote_count=50), limits)
+        assert passes_year_and_rating(make_candidate(5, "no votes", rating=0.0, year=1999, vote_count=0), limits)
+
+    def test_ignores_runtime(self):
+        from shortlist.engine.limits import passes_year_and_rating
+
+        assert passes_year_and_rating(make_candidate(1, "long", year=1999), RowLimits(max_runtime=60))

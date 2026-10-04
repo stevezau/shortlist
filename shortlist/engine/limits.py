@@ -14,7 +14,7 @@ from loguru import logger
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.models import Candidate, MediaType, RowLimits
 
-__all__ = ["LimitResult", "RowLimits", "apply_limits", "runtime_minutes"]
+__all__ = ["LimitResult", "RowLimits", "apply_limits", "passes_year_and_rating", "runtime_minutes"]
 
 
 _MAX_CONSECUTIVE_FAILURES = 5
@@ -126,6 +126,20 @@ def apply_limits(candidates: list[Candidate], limits: RowLimits, tmdb: TmdbClien
             result.unknown,
         )
     return result
+
+
+def passes_year_and_rating(c: Candidate, limits: RowLimits) -> bool:
+    """Whether ``c`` is inside the year and rating limits, judged only from what it already carries.
+
+    The free half of ``apply_limits``, with the same unknown-is-kept rule: no year, no rating, or a title
+    with no votes (rating 0.0, which ``apply_limits`` would look up) passes. Runtime is not judged: it
+    needs a TMDB lookup per title, and a missing title is not worth one.
+    """
+    if _outside_year(c, limits):
+        return False
+    if limits.rating_limited and limits.min_rating is not None and c.vote_count != 0 and c.rating is not None:
+        return c.rating >= limits.min_rating
+    return True
 
 
 def _outside_year(c: Candidate, limits: RowLimits) -> bool:

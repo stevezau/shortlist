@@ -8251,3 +8251,128 @@ class TestRowLimitsInThePipeline:
     def test_no_limits_still_fills_the_row_from_the_whole_pool(self, ctx, mock_plextv):
         ids = self._setup(ctx, mock_plextv)
         assert len(ids) == 4
+
+
+class TestLimitsReachRewatchAndColdStart:
+    """Rewatch titles and cold-start fillers are built outside the candidate pool, so the pool's limits never
+    saw them: a "released by 2000" Watch-it-again row could lead with a 2021 film."""
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _rewatch(self, ctx: EngineContext, mock_plextv, **spec_kw) -> list[int]:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010, 20: 2020, 30: 2030}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [{"id": 30, "title": "Fresh", "genre_ids": [], "vote_average": 7.0, "release_date": "1990-01-01"}]
+        )
+        ctx.tmdb.details.side_effect = lambda tid, mt: {"runtime": 90 if tid != 20 else 180}
+        ctx.history_source.fetch.return_value = [
+            *[make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)],
+            make_watched("Old Favourite", days_ago=6, tmdb_id=10, year=1995),
+            # Watched longest ago, so unlimited it leads the row.
+            make_watched("New Film", days_ago=7, tmdb_id=20, year=2021),
+        ]
+        ctx.config.max_seeds = 1
+        ctx.config.rows = [RowSpec(slug="again", name_template="Again", size=2, rewatch=True, **spec_kw)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+
+    def test_a_rewatch_row_without_limits_still_leads_with_the_newer_film(self, ctx, mock_plextv):
+        assert self._rewatch(ctx, mock_plextv)[0] == 20
+
+    def test_a_rewatch_row_does_not_lead_with_a_film_past_its_max_year(self, ctx, mock_plextv):
+        delivered = self._rewatch(ctx, mock_plextv, max_year=2000)
+        assert 20 not in delivered
+        assert 10 in delivered
+
+    def test_a_rewatch_row_asks_details_to_judge_the_runtime_of_its_history(self, ctx, mock_plextv):
+        delivered = self._rewatch(ctx, mock_plextv, max_runtime=120)
+        assert 20 not in delivered
+        assert 10 in delivered
+        asked = {c.args for c in ctx.tmdb.details.call_args_list}
+        assert (20, MediaType.MOVIE) in asked
+
+    def _cold(self, ctx: EngineContext, mock_plextv, **spec_kw) -> list[int]:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.delivery_sections = [movies]
+        ctx.plex.build_library_index.return_value = {}
+        years = {100: 2021, 101: 1995, 102: 1990, 103: 1985, 104: 1980, 105: 1975}
+        ctx.plex.top_rated.side_effect = lambda section, n: [
+            (tid, fake_media_item(9000 + tid, f"Top{tid}", tmdb_id=tid, year=years[tid])) for tid in list(years)[:n]
+        ]
+        ctx.tmdb.details.side_effect = lambda tid, mt: {"runtime": 180 if tid == 101 else 100}
+        ctx.history_source.fetch.return_value = []
+        ctx.config.min_history = 5
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=2, media="movie", **spec_kw)]
+        ctx.run_day = self.RUN_DAY
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+
+    def test_a_newcomer_row_without_limits_gets_the_top_rated_titles(self, ctx, mock_plextv):
+        assert self._cold(ctx, mock_plextv) == [100, 101]
+
+    def test_a_newcomer_does_not_get_a_film_past_the_max_year(self, ctx, mock_plextv):
+        delivered = self._cold(ctx, mock_plextv, max_year=2000)
+        assert len(delivered) == 2
+        assert 100 not in delivered
+
+    def test_a_newcomer_does_not_get_a_film_past_the_max_runtime(self, ctx, mock_plextv):
+        delivered = self._cold(ctx, mock_plextv, max_runtime=120)
+        assert len(delivered) == 2
+        assert 101 not in delivered
+        assert (101, MediaType.MOVIE) in {c.args for c in ctx.tmdb.details.call_args_list}
+
+
+class TestLimitsAndRequestDemand:
+    """A title a row's limits would never show must not be credited to that row's request tag."""
+
+    def _demand(self, ctx: EngineContext, mock_plextv, monkeypatch, **spec_kw):
+        from shortlist.engine.models import ArrTarget, RequestConfig, RequestReport
+
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {
+                    "id": 30,
+                    "title": "Recent",
+                    "genre_ids": [],
+                    "vote_average": 8.4,
+                    "vote_count": 800,
+                    "release_date": "2024-01-01",
+                },
+                {
+                    "id": 31,
+                    "title": "Old",
+                    "genre_ids": [],
+                    "vote_average": 8.2,
+                    "vote_count": 800,
+                    "release_date": "1999-01-01",
+                },
+            ]
+        )
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=5, media="movie", **spec_kw)]
+        ctx.config.requests = RequestConfig(
+            enabled=True,
+            radarr=ArrTarget(url="http://radarr.test", api_key="k", quality_profile_id=1, root_folder="/m"),
+        )
+        captured = {}
+
+        def spy(cfg, tmdb, demand, **kw):
+            captured["demand"] = demand
+            return RequestReport()
+
+        monkeypatch.setattr(pipeline_mod.requests_mod, "request_missing", spy)
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return {row.slug: set(row.demand) for row in captured.get("demand", [])}.get("picked", set())
+
+    def test_a_row_with_no_limits_credits_every_missing_title(self, ctx, mock_plextv, monkeypatch):
+        assert self._demand(ctx, mock_plextv, monkeypatch) == {(30, MediaType.MOVIE), (31, MediaType.MOVIE)}
+
+    def test_a_row_with_a_max_year_credits_only_the_missing_titles_it_could_show(self, ctx, mock_plextv, monkeypatch):
+        assert self._demand(ctx, mock_plextv, monkeypatch, max_year=2000) == {(31, MediaType.MOVIE)}

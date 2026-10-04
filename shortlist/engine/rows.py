@@ -523,6 +523,7 @@ def _rewatch_candidates(
     taste: set[tuple[int, MediaType]],
     limit: int,
     season: seasons_mod.SeasonTitles | None = None,
+    limits: RowLimits | None = None,
 ) -> tuple[list[Candidate], dict[tuple[int, MediaType], str]]:
     """What a rewatch row is made of: this library's finished titles, best first, plus each one's reason.
 
@@ -536,6 +537,10 @@ def _rewatch_candidates(
     Out: titles finished inside the row's cooldown (``cooling``), titles they rated low, their excluded
     genres, and anything this library does not hold. Sorted BEFORE the genre check and stopped at
     ``limit``, because that check costs a TMDB call per title and a row only ever uses a few.
+
+    The row's ``limits`` (#138) apply here too, because these titles never pass through the candidate pool
+    that applies them to everything else. They are judged in batches as ``out`` fills, so a title outside
+    them makes room for the next one down rather than leaving the row short.
 
     Each candidate is its own seed, for two reasons. It is a title they watched, so "Because you watched
     {top_seed}" stays true on a rewatch row — a seedless pick renders no name for that template, which
@@ -563,23 +568,34 @@ def _rewatch_candidates(
 
     out: list[Candidate] = []
     reasons: dict[tuple[int, MediaType], str] = {}
+    limited = limits is not None and limits.active
+    unjudged: list[Candidate] = []
     for _order, (tid, media), f in eligible:
         if len(out) >= limit:
             break
         if _in_excluded_genre(policy, tid, kind):
             continue
-        out.append(
-            Candidate(
-                tmdb_id=tid,
-                title=f.title,
-                media_type=media,
-                year=f.year,
-                rating_key=sec_idx[tid],
-                seeds=[Seed(tmdb_id=tid, title=f.title, media_type=media)],
-                sources={"history"},
-            )
+        candidate = Candidate(
+            tmdb_id=tid,
+            title=f.title,
+            media_type=media,
+            year=f.year,
+            rating_key=sec_idx[tid],
+            seeds=[Seed(tmdb_id=tid, title=f.title, media_type=media)],
+            sources={"history"},
         )
         reasons[(tid, media)] = _rewatch_reason(f, (tid, media) in taste)
+        if not limited:
+            out.append(candidate)
+            continue
+        unjudged.append(candidate)
+        if len(out) + len(unjudged) >= limit:
+            out.extend(limits_mod.apply_limits(unjudged, limits, policy.ctx.tmdb).kept)
+            unjudged = []
+    if unjudged:
+        out.extend(limits_mod.apply_limits(unjudged, limits, policy.ctx.tmdb).kept)
+    if limited:
+        reasons = {(c.tmdb_id, c.media_type): reasons[(c.tmdb_id, c.media_type)] for c in out}
     return out, reasons
 
 
@@ -1997,6 +2013,9 @@ class RowPolicy:
     # cold-start history.
     watched_movies: set[int] = field(default_factory=set)
     watched_shows: dict[int, tuple[int, int | None]] = field(default_factory=dict)
+    # (tmdb_id, media_type) -> release year, as Plex reported it for a cold-start filler. Only read by a
+    # row's year limit; see `_cold_start_picks`.
+    cold_years: dict[tuple[int, MediaType], int] = field(default_factory=dict)
     # The FINISHED (tmdb_id, media_type) titles derived from that breakdown: read by `pools_for` (a
     # 0% row hard-excludes them) and by the per-row watched cap (>0). Left empty on the cold path,
     # which builds no pool and applies no cap.
@@ -2504,7 +2523,7 @@ def _cold_start(
     # A rewatch row is still built from what they finished, however little that is.
     policy.mark_finished_titles()
     # Enough picks for the LARGEST row this user is in; each row then takes its own k.
-    base_cold = _cold_start_picks(ctx, user, policy.cfg, k=max(spec.size for spec in specs))
+    base_cold = _cold_start_picks(ctx, user, policy.cfg, k=max(spec.size for spec in specs), years=policy.cold_years)
     report.status = "cold_start"
     # File the trace even though no TMDB/Trakt search ran: their (thin) watches as the first stage —
     # NO seeds, because nothing was searched from them (the point of cold start) — and a synthetic
@@ -2620,7 +2639,13 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         row_seen = first_seen.setdefault(spec.slug, {})
         row_tags = title_tags.setdefault(spec.slug, {})
         row_why = title_why.setdefault(spec.slug, {})
-        for c in requests_mod.collect_missing(pools[0], policy.library_index):
+        limits = spec.limits()
+        missing = requests_mod.collect_missing(pools[0], policy.library_index)
+        if limits.active:
+            # A title the row's limits would never show is not this row's to ask for. Year and rating only:
+            # runtime needs a TMDB lookup per title, and a missing title is not worth one.
+            missing = [c for c in missing if limits_mod.passes_year_and_rating(c, limits)]
+        for c in missing:
             key = (c.tmdb_id, c.media_type)
             row_seen.setdefault(key, c)
             tags = row_tags.setdefault(key, set())
@@ -2665,6 +2690,31 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
                     wanter=user.username,
                     why=title_why[slug][key],
                 )
+
+
+def _plex_year(item: object) -> int | None:
+    year = getattr(item, "year", None)
+    return year if isinstance(year, int) else None
+
+
+def _within_limits(policy: RowPolicy, spec: RowSpec, picks: list[Pick]) -> list[Pick]:
+    """The cold-start ``picks`` that sit inside the row's limits (#138). Picks built outside the candidate
+    pool never met them there. Unchanged, and no TMDB call, when the row has none."""
+    limits = spec.limits()
+    if not limits.active or not picks:
+        return picks
+    candidates = [
+        Candidate(
+            tmdb_id=p.tmdb_id,
+            title=p.title,
+            media_type=p.media_type,
+            year=policy.cold_years.get((p.tmdb_id, p.media_type)),
+            rating_key=p.rating_key,
+        )
+        for p in picks
+    ]
+    kept = {(c.tmdb_id, c.media_type) for c in limits_mod.apply_limits(candidates, limits, policy.ctx.tmdb).kept}
+    return [p for p in picks if (p.tmdb_id, p.media_type) in kept]
 
 
 def _season_cold_picks(season: seasons_mod.SeasonTitles, kind: MediaType, sec_idx: dict[int, int]) -> list[Pick]:
@@ -2744,6 +2794,13 @@ def _build_section_picks(
                     continue
                 cands = _season_cold_picks(season, kind, ctx.section_index.get(section.key, {}))
             else:
+                # Three times the row when this person's restrictions can be checked, so the titles
+                # they cannot see (#115) are replaced rather than leaving the row short. The same when the
+                # row has limits: they thin the list the same way.
+                top = ctx.plex.top_rated(section, k * 3 if policy.can_check_visibility or spec.limits().active else k)
+                for tmdb_id, item in top:
+                    if (year := _plex_year(item)) is not None:
+                        policy.cold_years[(tmdb_id, kind)] = year
                 cands = [
                     Pick(
                         tmdb_id=tmdb_id,
@@ -2754,16 +2811,13 @@ def _build_section_picks(
                         media_type=kind,
                         sources=["cold_start"],  # no history to work from — say so rather than imply a match
                     )
-                    # Three times the row when this person's restrictions can be checked, so the titles
-                    # they cannot see (#115) are replaced rather than leaving the row short.
-                    for i, (tmdb_id, item) in enumerate(
-                        ctx.plex.top_rated(section, k * 3 if policy.can_check_visibility else k)
-                    )
+                    for i, (tmdb_id, item) in enumerate(top)
                 ]
             # A library with nothing rated falls back to the per-user pull — never for a seasonal row,
             # whose fallback would be the server's top-rated films, not its season.
             if not cands and spec.season is None:
                 cands = [p for p in base_cold if p.media_type is kind]
+            cands = _within_limits(policy, spec, cands)
             # Checked on THIS library's copy: the fallback's keys come from another library, and a
             # person not shared that one would read every title as hidden.
             cold_copy = ctx.section_index.get(section.key, {})
@@ -2778,7 +2832,15 @@ def _build_section_picks(
                 # so what they did finish leads and the popular titles only fill what's left.
                 cold_idx = ctx.section_index.get(section.key, {})
                 history, reasons = _rewatch_candidates(
-                    policy, finished, cooling, kind, cold_idx, taste=set(), limit=k, season=policy.season_titles(spec)
+                    policy,
+                    finished,
+                    cooling,
+                    kind,
+                    cold_idx,
+                    taste=set(),
+                    limit=k,
+                    season=policy.season_titles(spec),
+                    limits=spec.limits(),
                 )
                 library_cooling = sum(1 for tid, media in cooling if media is kind and tid in cold_idx)
                 led = [
@@ -2858,6 +2920,7 @@ def _build_section_picks(
                 taste=taste or set(),
                 limit=_REWATCH_SPARES_PER_SLOT * k,
                 season=policy.season_titles(spec),
+                limits=spec.limits(),
             )
             history_keys = {(c.tmdb_id, c.media_type) for c in history}
             sub = [*history, *(c for c in sub if (c.tmdb_id, c.media_type) not in history_keys)]
@@ -4020,13 +4083,22 @@ def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]
     return out
 
 
-def _cold_start_picks(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, k: int = 0) -> list[Pick]:
+def _cold_start_picks(
+    ctx: EngineContext,
+    user: UserProfile,
+    cfg: EngineConfig,
+    k: int = 0,
+    years: dict[tuple[int, MediaType], int] | None = None,
+) -> list[Pick]:
     """ "Popular on <server>" fallback for a user with thin history: top-rated titles.
 
     Splits the picks across ``sections_by_type()`` — one representative library per media type, not
     every library on the server — so a movies-only cold start doesn't hand delivery a pick list with
     no shows in it, leaving a TV watcher with a row of films they never asked for on a thin-history
     night (a Tautulli outage is enough).
+
+    ``years`` collects each pick's release year as Plex reports it, for a row's year limit: a ``Pick`` carries
+    none here, and giving it one would change how a row ordered by year sorts these.
     """
     sections = ctx.plex.sections_by_type()
     if not sections:
@@ -4041,6 +4113,8 @@ def _cold_start_picks(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, 
         if wanted <= 0:
             break
         for tmdb_id, item in ctx.plex.top_rated(section, wanted):
+            if years is not None and (year := _plex_year(item)) is not None:
+                years[(tmdb_id, kind)] = year
             picks.append(
                 Pick(
                     tmdb_id=tmdb_id,
