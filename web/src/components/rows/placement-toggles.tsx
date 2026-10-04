@@ -182,7 +182,7 @@ export function PlacementToggles({
             Just me
           </p>
           {owner && (
-            <p className="text-[11px] font-normal normal-case text-muted-foreground/70">
+            <p className="text-sm font-normal normal-case text-muted-foreground/70">
               {owner}
             </p>
           )}
@@ -192,7 +192,7 @@ export function PlacementToggles({
             Everyone else
           </p>
           {users.length > 0 && (
-            <p className="text-[11px] font-normal normal-case text-muted-foreground/70">
+            <p className="text-sm font-normal normal-case text-muted-foreground/70">
               {others === 1 ? "1 other person" : `${others} other people`}
             </p>
           )}

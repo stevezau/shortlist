@@ -33,8 +33,9 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
       )}
       <span
         className={cn(
-          "w-32 shrink-0 truncate",
-          server ? "text-muted-foreground/50" : "font-medium",
+          "max-w-32 shrink-0 truncate sm:w-32",
+          // The dash only keeps the desktop column aligned; on a phone it was a lone line.
+          server ? "hidden text-muted-foreground/50 sm:block" : "font-medium",
         )}
       >
         {/* A server-wide phase has no person; an em-dash keeps the column aligned without
@@ -43,7 +44,7 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
       </span>
       <span
         className={cn(
-          "min-w-0 w-full break-words sm:w-auto",
+          "min-w-0 flex-1 basis-40 break-words",
           entry.stage === "error"
             ? "text-destructive-text"
             : entry.level === "warning"

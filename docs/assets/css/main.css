@@ -2900,3 +2900,90 @@ hr {
 .preview-gallery figure { margin: 0; }
 .preview-gallery img { width: 100%; border: 1px solid var(--border); border-radius: 0.75rem; }
 .preview-gallery figcaption { color: var(--muted); margin-top: 0.5rem; }
+
+/* Reference tables, wide screens: the Default column keeps room for a short value, and short code in
+   it stays whole (marked `code-whole` by site.js; `overflow-wrap: anywhere` above would split `{library_name}` one letter a line). */
+@media (min-width: 641px) {
+  .prose .table-scroll td:nth-child(2) {
+    min-width: 9rem;
+  }
+
+  .prose .table-scroll td:nth-child(2) code.code-whole {
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+}
+
+/* Reference tables, phones: a scrolling table leaves the Notes column a sliver, so each row stacks
+   into a block and each cell is labelled with its column header (data-label, set in site.js). The
+   header row stays for screen readers. */
+@media (max-width: 640px) {
+  .prose .table-scroll table,
+  .prose .table--compact table {
+    min-width: 0;
+  }
+
+  .prose .table-scroll thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .prose .table-scroll tbody,
+  .prose .table-scroll tr,
+  .prose .table-scroll td,
+  .prose .table--compact tbody,
+  .prose .table--compact tr,
+  .prose .table--compact td {
+    display: block;
+    width: auto;
+  }
+
+  .prose .table-scroll tbody tr,
+  .prose .table--compact tbody tr {
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .prose .table-scroll tbody tr:last-child,
+  .prose .table--compact tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .prose .table-scroll td,
+  .prose .table--compact td {
+    border-bottom: 0;
+    padding: 0.4rem 1rem;
+    overflow-wrap: anywhere;
+  }
+
+  .prose .table-scroll td::before,
+  .prose .table--compact td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .prose .table-scroll td:not([data-label])::before,
+  .prose .table--compact td:not([data-label])::before {
+    content: none;
+  }
+
+  .prose .table-scroll td:first-child,
+  .prose .table--compact td:first-child {
+    font-weight: 650;
+    color: var(--text);
+  }
+
+  .prose .table-scroll td:nth-child(2) {
+    min-width: 0;
+  }
+}

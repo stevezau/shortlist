@@ -119,7 +119,7 @@ export function RowContentsFields({
   const unstarted = shown.has("unstarted_only") && (
     <div
       data-setting="unstarted_only"
-      className="flex items-start justify-between gap-4 rounded-md border p-3"
+      className="flex items-start justify-between gap-4 border-t pt-4"
     >
       <div className="space-y-1">
         <Label htmlFor="row-unstarted">

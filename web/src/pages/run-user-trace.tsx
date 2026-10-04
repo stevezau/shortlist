@@ -998,16 +998,12 @@ function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
 
 /** One numbered stage in the vertical flow. Its `id` anchors the rail's scroll-spy + jump links. */
 function FlowStep({ step }: { step: FlowStepDef }) {
-  const Icon = step.icon;
   return (
     <section
       id={step.id}
       className="scroll-mt-6 rounded-xl border bg-card p-5 shadow-sm motion-safe:transition-shadow target:ring-2 target:ring-primary/40 data-[navigation-highlight=true]:ring-2 data-[navigation-highlight=true]:ring-primary/50 hover:shadow-md"
     >
       <div className="mb-4 flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-elevated text-muted-foreground ring-1 ring-inset ring-border-strong">
-          <Icon className="h-4 w-4" aria-hidden={true} />
-        </span>
         <div className="min-w-0 flex-1 space-y-1">
           <h2 tabIndex={-1} className="flex items-center gap-2 rounded-sm text-base font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {step.title}
@@ -1024,7 +1020,7 @@ function FlowStep({ step }: { step: FlowStepDef }) {
           )}
         </div>
       </div>
-      <div className="sm:pl-12">{step.body}</div>
+      <div>{step.body}</div>
     </section>
   );
 }
@@ -1769,7 +1765,7 @@ function WebSourceCard({
                       {s.cached && (
                         <Badge
                           variant="secondary"
-                          className="ml-2 whitespace-nowrap align-middle text-[10px]"
+                          className="ml-2 whitespace-nowrap align-middle text-xs"
                         >
                           reused an earlier search
                         </Badge>
@@ -1856,11 +1852,11 @@ function WebSourceCard({
                 : "See the exact prompt the AI was given"}
             </summary>
             {web.rag_system && (
-              <pre className="mt-3 whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
+              <pre className="mt-3 whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-xs leading-relaxed">
                 {web.rag_system}
               </pre>
             )}
-            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
+            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-xs leading-relaxed">
               {web.rag_user}
             </pre>
           </details>

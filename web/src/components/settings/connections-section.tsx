@@ -1,9 +1,8 @@
-import { Compass, Film, Globe, Inbox, Tv, Webhook } from "lucide-react";
+import { Compass, Film, Globe, Inbox, Server, Tv, Webhook } from "lucide-react";
 import type { ReactNode } from "react";
 
 import {
   MdblistGlyph,
-  PlexGlyph,
   TautulliGlyph,
   TmdbGlyph,
 } from "@/components/brand-glyphs";
@@ -302,7 +301,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           purpose="Where Shortlist reads watch history, and where it builds each person’s row."
           settings={settings}
           summary={summaries.plex}
-          glyph={<PlexGlyph />}
+          glyph={<Server aria-hidden className="text-muted-foreground" />}
           fields={[
             {
               key: "plex.url",

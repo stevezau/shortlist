@@ -111,12 +111,10 @@ export function UserDetailBody({ user }: { user: User }) {
       {tab === "settings" && (
         <div className="grid items-start gap-5 lg:grid-cols-2">
           <div className="min-w-0 space-y-5">
-            <section aria-labelledby="user-name-heading" className="space-y-3">
-              <h2 id="user-name-heading" className="text-lg font-semibold">Nickname</h2>
+            <section className="space-y-3">
               <UserNickname user={user} />
             </section>
-            <section aria-labelledby="user-requests-heading" className="space-y-3">
-              <h2 id="user-requests-heading" className="text-lg font-semibold">Request tags</h2>
+            <section className="space-y-3">
               <UserRequestTag user={user} />
               <UserRequestedByTag user={user} />
             </section>

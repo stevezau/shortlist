@@ -924,6 +924,49 @@ class TestSettingsApi:
         assert body["quality_profiles"] == [{"id": 1, "name": "HD-1080p"}]
         assert body["root_folders"] == [{"id": 2, "path": "/movies"}]
 
+    def test_arr_options_say_plainly_when_the_arr_does_not_answer(self, client: TestClient, monkeypatch):
+        """The card shows this text as is: no class name, no secret, and the address to check."""
+        from shortlist.engine.clients.arr import ArrError
+
+        client.put(
+            "/api/settings",
+            json={
+                "values": {
+                    "requests.radarr.url": "http://user:pw@radarr.lan:7878/some/path?apikey=S3cr3tK3y",
+                    "requests.radarr.apikey": "S3cr3tK3y",
+                }
+            },
+        )
+
+        def down(service, target):
+            raise ArrError("Radarr unreachable (ConnectError)")
+
+        monkeypatch.setattr("shortlist.engine.clients.arr.make_arr_client", down)
+
+        response = client.get("/api/settings/arr/radarr/options")
+
+        assert response.status_code == 502
+        detail = response.json()["detail"]
+        assert detail == "Radarr didn't answer at http://radarr.lan:7878. Check the address and that it's running."
+        assert "Error" not in detail and "S3cr3tK3y" not in detail and "pw" not in detail
+
+    def test_arr_options_pass_a_rejected_key_through_in_plain_words(self, client: TestClient, monkeypatch):
+        from shortlist.engine.clients.arr import ArrError
+
+        client.put(
+            "/api/settings",
+            json={"values": {"requests.radarr.url": "http://radarr", "requests.radarr.apikey": "k"}},
+        )
+
+        def rejected(service, target):
+            raise ArrError("Radarr rejected the API key")
+
+        monkeypatch.setattr("shortlist.engine.clients.arr.make_arr_client", rejected)
+
+        detail = client.get("/api/settings/arr/radarr/options").json()["detail"]
+
+        assert detail == "Radarr rejected the API key"
+
     def test_arr_options_are_409_before_the_arr_is_connected(self, client: TestClient):
         assert client.get("/api/settings/arr/sonarr/options").status_code == 409
 
