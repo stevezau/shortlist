@@ -56,8 +56,8 @@ label-restriction behaviour in PMS 1.43.2 (May 2026).
   AI key.
 - Seasonal rows: built-in holidays plus custom dates, hidden between seasons.
 - Cold start: people with little watch history get a "Popular on <server>" row.
-- Plex limits that shape the UI and copy: the owner's Home shows every user's row (owner cannot be
-  restricted); no per-user row position control; rows update in place; a TV library write can take ~16s per
+- Plex limits that shape the UI and copy: the owner can see every user's row in the library's Collections tab (the owner cannot
+  be restricted), though none lands on the owner's own Home; no per-user row position control; rows update in place; a TV library write can take ~16s per
   collection, so a run is long by design.
 - Every state change is audited (structured events) and must be answerable from the UI.
 - Settings live in the DB; the UI is the configuration surface.

@@ -1,19 +1,29 @@
 # Contributing to Shortlist
 
-Thanks for considering it! Shortlist is a small, safety-critical codebase — it modifies other
+Thanks for considering it. Shortlist is a small, safety-critical codebase — it modifies other
 people's Plex views — so the bar for write-path changes is deliberately high.
 
 ## Dev setup
 
 ```bash
-pip install -e ".[dev]"          # backend
-pnpm -C web install               # frontend
-pytest                            # unit + integration (no network, ever)
-pnpm -C web test && pnpm -C web build
+# Backend (the lock first, so you get the versions the image ships)
+pip install -r requirements.lock && pip install -e ".[dev]"
+pytest                            # unit + integration, parallel (no network, ever)
+pytest tests/unit/test_foo.py     # while editing: just the file you're working on
+pytest -m e2e                     # Playwright against an in-process app + fake Plex
 ruff check . --fix && ruff format .
-SHORTLIST_CONFIG=./devconfig uvicorn --factory shortlist.server.main:create_app --reload --port 5959
-pnpm -C web dev                   # Vite on :5173, proxies /api to :5959
+
+# Frontend
+pnpm -C web install
+pnpm -C web dev                   # Vite on :5173, proxies /api to :5959 (or SHORTLIST_API_PROXY)
+pnpm -C web test && pnpm -C web build
+
+# Run the app against a throwaway config in safe mode, on port 5960
+bash scripts/devrun.sh
 ```
+
+Run the whole suite once, when the work has settled, rather than after every edit. If you change
+`pyproject.toml` dependencies, regenerate `requirements.lock` (the command is in `.claude/CLAUDE.md`).
 
 ## The rules that matter
 
@@ -30,13 +40,13 @@ pnpm -C web dev                   # Vite on :5173, proxies /api to :5959
 
 ## Branches & releases
 
-- **`dev`** is the default branch — all work lands here (open PRs against `dev`). Every push to
+- **`dev`** is the default branch. All work lands here, so open PRs against `dev`. Every push to
   `dev` runs the full CI suite and, once it's green, publishes the **`ghcr.io/stevezau/shortlist:dev`**
   image. That's the bleeding-edge build.
 - **`master`** is the stable branch. It moves only by promoting `dev` → `master` via PR when cutting
   a release. Pushing to `master` builds nothing on its own.
 - **Releases** are cut by pushing a semver tag (`vX.Y.Z`, or `vX.Y.Z-beta.N` for pre-releases). CI
-  builds **`:latest`** + **`:X.Y.Z`** from the tag. Bump `shortlist/__init__.py` first, then tag.
+  builds **`:latest`** + **`:X.Y.Z`** from the tag. The release commit bumps `shortlist/__init__.py` (and the OpenAPI snapshot) first.
 - **Publish gate:** the image is only pushed after lint, tests (Python 3.12), the web build, and the
   Playwright e2e suite all pass in the same run — a red suite never ships an image.
 
@@ -44,5 +54,6 @@ Image tags: `:dev` (latest dev build) · `:latest` (latest stable release) · `:
 
 ## Reporting bugs
 
-Use the issue templates. For anything privacy-related (a user saw a row that wasn't
+Use the issue templates, or the **Have an issue?** page in the app, which opens a pre-filled bug
+report with a secrets-free diagnostic. For anything privacy-related (a user saw a row that wasn't
 theirs), please mark it clearly — those get fixed first, always.

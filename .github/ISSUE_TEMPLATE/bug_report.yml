@@ -12,7 +12,8 @@ body:
     id: version
     attributes:
       label: Shortlist version
-      placeholder: e.g. 1.0.0 (Settings → About, or image tag)
+      description: Shown at the bottom of the app's sidebar, or use your image tag.
+      placeholder: e.g. 1.9.3, or dev abc1234
     validations:
       required: true
   - type: input
@@ -28,6 +29,12 @@ body:
       label: What happened, and what did you expect?
     validations:
       required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: In Shortlist, open Have an issue? and copy the full report. It is secrets-free.
+      render: text
   - type: textarea
     id: logs
     attributes:
