@@ -72,17 +72,15 @@ label-restriction behaviour in PMS 1.43.2 (May 2026).
 restricted) · **share filter / restriction** (Plex's hide-by-label mechanism) · **snapshot** (a person's
 pre-Shortlist filter state, restored on uninstall) · **dry run** (a run that logs would-be writes).
 
-### Undecided
+### Decided
 
-- **Goal of this design update** (asked 2026-10-03, not answered): whether the problem is a generic look, UX
-  clarity, cross-page inconsistency, or the first-run wizard. Settle this before any redesign-scale work; a
-  scoped refinement does not need it.
+- **Scope of the 2026-10 design update** (owner, 2026-10-03): the whole audit, under direction A "amber,
+  tightened" for the app and "show the row" for the website. Built and shipped on `dev` 2026-10-03/04.
 
 ## Brand Commitments
 
 - Name: **Shortlist**. Fixed.
-- Current mark: a rounded amber square (Plex gold, `#e5a00d`) with a centred sparkle; hand-drawn service
-  glyphs for Plex, Claude etc. in `web/src/components/brand-glyphs.tsx`.
+- Service glyphs (Plex, Claude etc.) are hand-drawn in `web/src/components/brand-glyphs.tsx`.
 - **The mark is decided (owner, 2026-10-03):** the Plex-gold rounded square with two drawn sparkles, flat
   (no gradient, no glow). The same drawing is the app's rail mark, the browser-tab icon and the website logo.
 

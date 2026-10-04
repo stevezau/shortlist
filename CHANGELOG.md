@@ -20,6 +20,17 @@ All notable changes to this project are documented here. This project follows
 
 ### Changed
 
+- **A run reports "OK with warnings" when an account can see other people's rows.** A run used to read
+  plain OK while a Plex restriction profile kept someone's sharing filter from hiding the rest; the run
+  page and the dashboard now name those accounts, and a run that could not measure privacy says so.
+- **Activity has a "Changes on Plex" tab** listing every write Shortlist made to your server, newest first.
+- **The dashboard leads with last run, next run, privacy and the Plex connection**, and a run's page opens
+  on its rows, each with what happened for every person.
+- **Laptop-width and phone layouts are tidier.** The Users table switches to cards below 1280px instead of
+  wrapping every cell, run logs read one line per entry on a phone, the uninstall preview groups repeated
+  rows, and the website's reference tables stack into readable cards on a phone.
+- **On-switches are neutral, and amber is kept for each screen's one main button.** Settings text is
+  full size, and no section draws a box inside a box.
 - **Picking a template is a page of its own.** The template picker shows each row kind with what it
   holds and who it is for, instead of a drop-down.
 - **The web interface has one consistent layout** across every page, with navigation that works on a
@@ -33,6 +44,16 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
+- **A dry run, or a run cancelled before someone's turn, no longer empties their user page.** The page
+  showed "No picks in this row yet" for everyone after one cancelled test run, while Plex still held
+  their rows; it now shows the last titles actually built.
+- **The Users page's Requests column, and the nightly run's request read, are faster.** Radarr, Sonarr and
+  Overseerr are now read at the same time instead of one after another; on a large library that took
+  the wait from 12–25 seconds to about 8.
+- **A Radarr, Sonarr or Overseerr that doesn't answer is explained in plain words** ("Radarr didn't answer
+  at http://host:7878. Check the address and that it's running.") instead of a Python error name.
+- **A cancelled run says it was cancelled**, instead of "nothing was due" or that it predates the run page.
+- **The Users page's last column says "Last run"**, not "Last built": it counts dry and cancelled runs too.
 - **A row run that starts late still runs.** It used to be skipped if it started more than 30 seconds
   late. Any other scheduled job that is skipped for starting late now shows a bell alert, "A scheduled
   job didn't run", and is recorded in the change log.

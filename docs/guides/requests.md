@@ -429,6 +429,11 @@ one tag to them. Overseerr's tags are still read alongside either. Titles Shortl
 carrying its own request tag, or filed by the **Request as** account in Overseerr — never count as
 anyone's request.
 
+**Titles Shortlist requests for you.** That exclusion needs a **Request as** user. Left at its
+default, Shortlist files its Overseerr requests as the API key's own account, usually yours, so the titles
+it requests automatically count as that account's requests and appear in its own Your requests row.
+Choose a dedicated Overseerr user under **Request as** to keep them apart.
+
 **Which requests show up.** **Show titles that landed in the last** (default 90 days) drops older
 arrivals, so a request they've lost interest in doesn't sit there for good; 0 keeps every title until
 they've watched it. Beyond that the row uses the same **Libraries**, **Row size** and schedule
