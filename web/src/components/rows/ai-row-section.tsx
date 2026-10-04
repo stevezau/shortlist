@@ -1,5 +1,5 @@
 import { Loader2, X } from "lucide-react";
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { DiffCard } from "@/components/rows/ai-diff-card";
 import { AiHandEdit } from "@/components/rows/ai-hand-edit";
@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ErrorState, QueryBoundary } from "@/components/query-boundary";
 import { apiErrorMessage } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
 import {
   ruleChips,
@@ -63,7 +64,10 @@ export function AiRowSection({
   onPending,
   onSpent,
   onChange,
+  focusBrief = false,
 }: {
+  /** Bring the brief box into view and focus it: a new row started from the Describe a row template. */
+  focusBrief?: boolean;
   input: CollectionInput;
   /** The saved row; null while a new row is being added. */
   collection: Collection | null;
@@ -102,6 +106,7 @@ export function AiRowSection({
               pending={pending}
               onPending={onPending}
               onSpent={onSpent}
+              focusBrief={focusBrief}
             />
           ) : waitingForSaved ? (
             <LoadingList />
@@ -164,7 +169,9 @@ function AiHalf({
   pending,
   onPending,
   onSpent,
+  focusBrief,
 }: {
+  focusBrief: boolean;
   input: CollectionInput;
   collection: Collection | null;
   saved: ReturnType<typeof useTheme>;
@@ -175,6 +182,14 @@ function AiHalf({
 }) {
   const briefId = useId();
   const briefHintId = useId();
+  const briefRef = useRef<HTMLTextAreaElement>(null);
+  // The brief is the one thing a new AI row needs, and it sits below Name & look and Who gets it.
+  useEffect(() => {
+    if (!focusBrief) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    briefRef.current?.scrollIntoView?.({ behavior: reduce ? "auto" : "smooth", block: "center" });
+    briefRef.current?.focus({ preventScroll: true });
+  }, [focusBrief]);
   const builder = useThemePreview();
   const prompts = useThemePrompts();
   const [typed, setTyped] = useState<string | null>(null);
@@ -244,6 +259,7 @@ function AiHalf({
         <Label htmlFor={briefId}>What should this row be?</Label>
         <Textarea
           id={briefId}
+          ref={briefRef}
           rows={3}
           maxLength={MAX_BRIEF}
           value={brief}
@@ -305,6 +321,9 @@ function AiHalf({
             />
           </ListCard>
         )
+      )}
+      {shown && input.theme_mode === "explore" && (
+        <p className="text-sm text-muted-foreground">This list is used until each person’s own list is ready.</p>
       )}
       {saved.isError && (
         <ErrorState error={saved.error} onRetry={() => void saved.refetch()} />
@@ -428,10 +447,10 @@ function ListCard({
         </p>
       )}
       {counts && (
-        <dl className="grid grid-cols-3 gap-3">
+        <dl className={cn("grid gap-3", counts.ai_kept === undefined ? "grid-cols-2" : "grid-cols-3")}>
           <Count label="Named by the AI" value={counts.named} />
           <Count label="Found on TMDB" value={counts.resolved} />
-          <Count label="In the row, after your limits" value={counts.after_rules} />
+          {counts.ai_kept !== undefined && <Count label="On your server" value={counts.ai_kept} />}
         </dl>
       )}
       {counts?.ai_kept !== undefined && (

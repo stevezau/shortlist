@@ -331,6 +331,8 @@ export const AI_TEMPLATES: RowTemplate[] = [
       build: "per_person",
       enabled: true,
       size: 15,
+      // The AI's own order and picks matter more than release date; the global default would sort it newest-first.
+      recency: 0,
     },
   },
 ];

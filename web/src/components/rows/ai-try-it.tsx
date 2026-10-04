@@ -139,10 +139,21 @@ function Result({ run, person }: { run: RunDetail; person: User }) {
       </div>
     );
   }
+  // Each library's picks rank from 1, so one flat list would repeat every number with nothing to tell them apart.
+  const libraries = (result.breakdown ?? []).filter((slice) => slice.picks.length > 0);
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <p className="text-sm font-medium">What {name} would get</p>
-      <PickList picks={result.picks} collapseAfter={10} />
+      {libraries.length === 0 ? (
+        <PickList picks={result.picks} collapseAfter={10} />
+      ) : (
+        libraries.map((slice) => (
+          <section key={slice.library_key} role="group" aria-label={slice.library_title} className="space-y-1.5">
+            <h4 className="text-xs font-medium text-muted-foreground">{slice.library_title}</h4>
+            <PickList picks={slice.picks} collapseAfter={10} />
+          </section>
+        ))
+      )}
     </div>
   );
 }

@@ -148,10 +148,13 @@ export function LibraryPicker({
                   );
                 })}
               </div>
-              <p className="text-sm text-muted-foreground">
-                One collection per ticked library. Tick them all and the row
-                covers anything you add to Plex later.
-              </p>
+              {/* Every library ticked is stored as []; the editor says what that means, so say it once. */}
+              {libraryKeys.length > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  One collection per ticked library. Tick them all and the row
+                  covers anything you add to Plex later.
+                </p>
+              )}
             </>
           );
         })()

@@ -868,6 +868,7 @@ export function RowEditor({
                     onPending={setPendingTheme}
                     onSpent={(tokens) => setTokensSpent((total) => total + tokens)}
                     onChange={set}
+                    focusBrief={template?.id === "describe-a-row" && !collection}
                   />
                 </div>
               </>

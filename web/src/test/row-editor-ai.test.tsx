@@ -127,6 +127,40 @@ beforeEach(() => {
 describe("a new AI row", () => {
   const template = findRowTemplate("describe-a-row");
 
+  it("scrolls the brief into view and focuses it, without smooth scrolling when motion is reduced", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const matchMedia = vi.fn().mockReturnValue({ matches: true });
+    vi.stubGlobal("matchMedia", matchMedia);
+    window.matchMedia = matchMedia;
+    renderEditor({ collection: null, template });
+
+    const brief = await screen.findByLabelText("What should this row be?");
+
+    await waitFor(() => expect(brief).toHaveFocus());
+    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: "auto" }));
+    vi.unstubAllGlobals();
+  });
+
+  it("scrolls smoothly when motion is not reduced", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: false });
+    renderEditor({ collection: null, template });
+
+    await screen.findByLabelText("What should this row be?");
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" })));
+  });
+
+  it("leaves focus alone when a saved row is opened", async () => {
+    renderEditor({ collection: aiRow() });
+
+    const brief = await screen.findByLabelText("What should this row be?");
+
+    expect(brief).not.toHaveFocus();
+  });
+
   it("is a fixed AI row type with Try it in its sidebar and no AI prompts entry, and does not say it starts off", async () => {
     renderEditor({ collection: null, template });
 
@@ -225,7 +259,7 @@ describe("a saved AI row", () => {
     renderEditor({ collection: aiRow() });
     await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
     await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Use the new list" }));
     expect(await screen.findByText(/1 unsaved change/)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));

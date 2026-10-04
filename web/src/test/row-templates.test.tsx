@@ -444,15 +444,16 @@ describe("RowTemplateGallery", () => {
     }
   });
 
-  it("keeps the selected template when filters hide its tile", async () => {
+  it("selects the first visible template when filters hide the selected one", async () => {
     const user = userEvent.setup();
     const onPick = renderGallery();
     await user.click(templateButton("Watch it again"));
     await user.click(screen.getByRole("button", { name: "Discover" }));
     expect(screen.queryByRole("button", { name: /^Watch it again/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Watch it again" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Watch it again" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Use template/i }));
-    expect(onPick).toHaveBeenCalledExactlyOnceWith(findRowTemplate("seen-it-already"));
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(onPick.mock.calls[0]?.[0]).not.toBe(findRowTemplate("seen-it-already"));
   });
 
   it.each(["Cancel", "Close"])("closes with %s without choosing a template", async (label) => {

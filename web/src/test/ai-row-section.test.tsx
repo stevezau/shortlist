@@ -383,14 +383,14 @@ describe("AiRowSection changing a list", () => {
     expect(spent).toHaveBeenCalledWith(150);
   });
 
-  it("Keep puts the new list in the editor, to be saved with the row", async () => {
+  it("Use the new list puts the new list in the editor, to be saved with the row", async () => {
     api.previewTheme.mockResolvedValue(refined);
     renderSection({ collection: savedRow() });
     await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
     await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
     await screen.findByRole("region", { name: /what would change/i });
 
-    await userEvent.click(screen.getByRole("button", { name: "Keep" }));
+    await userEvent.click(screen.getByRole("button", { name: "Use the new list" }));
 
     expect(changed).toHaveBeenCalledWith(
       expect.objectContaining({ origin: "ai", draft: expect.objectContaining({ picks: refined.draft.picks }) }),
@@ -398,14 +398,14 @@ describe("AiRowSection changing a list", () => {
     expect(screen.queryByRole("region", { name: /what would change/i })).not.toBeInTheDocument();
   });
 
-  it("Discard leaves the list as it was", async () => {
+  it("Keep the current list leaves the list as it was", async () => {
     api.previewTheme.mockResolvedValue(refined);
     renderSection({ collection: savedRow() });
     await userEvent.type(await screen.findByLabelText("Adjust the list"), "less gore");
     await userEvent.click(screen.getByRole("button", { name: "Adjust the list" }));
     await screen.findByRole("region", { name: /what would change/i });
 
-    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await userEvent.click(screen.getByRole("button", { name: "Keep the current list" }));
 
     expect(changed).not.toHaveBeenCalled();
     expect(screen.queryByRole("region", { name: /what would change/i })).not.toBeInTheDocument();
@@ -654,6 +654,31 @@ describe("AiRowSection counts", () => {
     expect(card.getByText("Named by the AI")).toBeInTheDocument();
     expect(card.queryByText(/of the AI.s \d+ titles/i)).not.toBeInTheDocument();
     expect(card.queryByText("On your server")).not.toBeInTheDocument();
+  });
+
+  it("headlines the AI's own titles on the server, not every tag and genre match", async () => {
+    api.getTheme.mockResolvedValue(
+      theme({ stats: { named: 59, resolved: 57, in_library: 40, after_rules: 3610, ai_kept: 38 } }),
+    );
+    renderSection({ collection: savedRow() });
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.getByText("On your server").nextSibling).toHaveTextContent("38");
+    expect(card.queryByText("3610")).not.toBeInTheDocument();
+    expect(card.queryByText("In the row, after your limits")).not.toBeInTheDocument();
+  });
+
+  it("says the list is used until each person's own is ready when themes explore", async () => {
+    renderSection({ collection: savedRow(), input: { ...blankInput(), theme_mode: "explore" } });
+
+    expect(await screen.findByText("This list is used until each person’s own list is ready.")).toBeInTheDocument();
+  });
+
+  it("doesn't say that when the list stays the same", async () => {
+    renderSection({ collection: savedRow(), input: { ...blankInput(), theme_mode: "fixed" } });
+
+    await screen.findByRole("region", { name: /the list/i });
+    expect(screen.queryByText(/until each person’s own list is ready/)).not.toBeInTheDocument();
   });
 
   it("shows a saved list's own count", async () => {

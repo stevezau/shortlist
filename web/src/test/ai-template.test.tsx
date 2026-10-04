@@ -60,6 +60,10 @@ describe("the Describe a row template", () => {
     expect(template?.highlights.join(" ")).not.toMatch(/off until/i);
   });
 
+  it("turns release-date weighting off explicitly rather than inheriting the global default", () => {
+    expect(template?.values.recency).toBe(0);
+  });
+
   it("sets only fields the row input has", () => {
     const allowed = new Set(Object.keys(blankInput()));
     for (const key of Object.keys(template?.values ?? {})) expect(allowed).toContain(key);
@@ -94,6 +98,15 @@ describe("the gallery's AI filter", () => {
 
     expect(screen.getByRole("button", { name: /^Describe a row.+/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Picked for You.+/ })).not.toBeInTheDocument();
+  });
+
+  it("selects the first visible template when the filter hides the selected one", async () => {
+    const onPick = renderGallery();
+
+    await userEvent.click(screen.getByRole("button", { name: "AI" }));
+    await userEvent.click(screen.getByRole("button", { name: /Use template/i }));
+
+    expect(onPick).toHaveBeenCalledExactlyOnceWith(findRowTemplate("describe-a-row"));
   });
 
   it("hides it under the other chips", async () => {

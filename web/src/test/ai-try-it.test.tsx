@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
@@ -133,6 +133,32 @@ describe("AiTryIt", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Try it/ }));
 
     expect(await screen.findByRole("status", { name: /running/i })).toBeInTheDocument();
+  });
+
+  it("groups the picks by library with a heading each, ranks restarting in every group", async () => {
+    const pick = (rank: number, title: string) => ({
+      rank, title, reason: "why", rating_key: 0, sources: ["theme"], affinity: 1, seed_title: null,
+    });
+    const slice = (library_title: string, picks: ReturnType<typeof pick>[]) => ({
+      row_slug: "twists", row_title: "Twists", library_key: library_title, library_title,
+      added: [], removed: [], kept: [], deleted: [], created: false, picks,
+    });
+    api.getRun.mockResolvedValue(
+      runResult({
+        breakdown: [
+          slice("Movies", [pick(1, "Se7en"), pick(2, "The Prestige")]),
+          slice("TV Shows", [pick(1, "Dark")]),
+        ],
+      }),
+    );
+    renderIt();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Try it/ }));
+
+    const movies = await screen.findByRole("group", { name: "Movies" });
+    expect(within(movies).getByText("The Prestige")).toBeInTheDocument();
+    expect(within(movies).queryByText("Dark")).toBeNull();
+    expect(within(screen.getByRole("group", { name: "TV Shows" })).getByText("Dark")).toBeInTheDocument();
   });
 
   it("says why nothing was picked, and what to do about it", async () => {

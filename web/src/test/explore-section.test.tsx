@@ -161,15 +161,15 @@ describe("ExploreSection", () => {
   it("asks for a save before a new row has any rotation to show", () => {
     renderSection(null, { ...blankInput(), theme_mode: "explore" });
 
-    expect(screen.getByText(/Save the row to see each person’s themes/)).toBeInTheDocument();
+    expect(screen.getByText(/Save the row to see each person’s lists/)).toBeInTheDocument();
     expect(api.getThemeRotation).not.toHaveBeenCalled();
   });
 
-  it("says the daily job picks the first theme", () => {
+  it("says the first list is written overnight", () => {
     renderSection(null, { ...blankInput(), theme_mode: "explore" });
 
     expect(
-      screen.getByText(/The first one is picked by the daily theme job once this row is on\./),
+      screen.getByText(/Each person’s first list is written overnight\./),
     ).toBeInTheDocument();
   });
 

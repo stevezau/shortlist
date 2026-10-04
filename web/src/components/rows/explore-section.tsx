@@ -114,7 +114,7 @@ export function ExploreSection({
             <Rotation collection={collection} input={input} />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Save the row to see each person’s themes. The first one is picked by the daily theme job once this row is on.
+              Save the row to see each person’s lists. Each person’s first list is written overnight.
             </p>
           )}
         </div>

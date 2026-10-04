@@ -109,6 +109,21 @@ describe("LibraryPicker — an empty selection means every library OF THE ROW'S 
     ).not.toBeChecked();
   });
 
+  it("leaves the explanation to the editor when every library is ticked", async () => {
+    getLibraries.mockResolvedValue(BOTH_TYPES);
+    renderPicker([], "both");
+
+    await screen.findByRole("checkbox", { name: /Movies/ });
+    expect(screen.queryByText(/One collection per ticked library/)).toBeNull();
+  });
+
+  it("explains one collection per library when only some are ticked", async () => {
+    getLibraries.mockResolvedValue(BOTH_TYPES);
+    renderPicker(["1"], "movie");
+
+    expect(await screen.findByText(/One collection per ticked library/)).toBeInTheDocument();
+  });
+
   it("still ticks everything for a row that covers both", async () => {
     getLibraries.mockResolvedValue(BOTH_TYPES);
     renderPicker([], "both");

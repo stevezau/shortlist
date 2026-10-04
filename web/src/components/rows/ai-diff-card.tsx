@@ -8,8 +8,8 @@ export function DiffCard({
   diff,
   onKeep,
   onDiscard,
-  keepLabel = "Keep",
-  note = "Keep puts the new list in this editor. It is saved with the row when you press Save changes.",
+  keepLabel = "Use the new list",
+  note = "Use the new list puts it in this editor. It is saved with the row when you press Save changes.",
 }: {
   preview: ThemePreview;
   diff: ThemeDiff;
@@ -38,7 +38,7 @@ export function DiffCard({
           {keepLabel}
         </Button>
         <Button type="button" variant="ghost" onClick={onDiscard}>
-          Discard
+          Keep the current list
         </Button>
       </div>
       <p className="text-sm text-muted-foreground">{note}</p>
