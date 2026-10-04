@@ -2831,6 +2831,12 @@ async def regenerate_up_next(collection_id: int, body: RegenerateRequest, reques
                 )
             except ThemeAuthorError as e:
                 raise HTTPException(status_code=422, detail=str(e)) from None
+            except LookupError:
+                raise HTTPException(status_code=422, detail="That person is no longer on the server.") from None
+            except RuntimeError:
+                raise HTTPException(
+                    status_code=502, detail="Shortlist couldn't read their watch history. Check the Plex connection."
+                ) from None
             except theme_store.RowPaused:
                 raise HTTPException(status_code=409, detail=_PAUSED) from None
             except theme_store.TitleClash as e:

@@ -396,3 +396,35 @@ class TestRegenerate:
             assert [h.theme_name for h in session.query(ThemeHistory).filter_by(user_id=ann)] == ["Queued"]
             assert session.query(Theme).filter(Theme.name == "Fresh take").count() == 0
             assert session.query(Event).filter(Event.scope == "theme.build").count() == 1  # the setup theme only
+
+
+class TestRegenerateErrorsArePlain:
+    @pytest.mark.parametrize(("error", "status"), [(RuntimeError("no plex"), 502), (LookupError("gone"), 422)])
+    def test_a_history_read_failure_is_a_plain_error_not_a_500(
+        self, client, explore, author, monkeypatch, error, status
+    ):
+        def boom(session, user_id):
+            raise error
+
+        monkeypatch.setattr(client.app.state.run_service, "profile_with_history", boom)
+
+        r = client.post(f"/api/collections/{explore['row']['id']}/up-next/regenerate", json={"user_id": explore["ann"]})
+
+        assert r.status_code == status
+        assert "no plex" not in r.text and "gone" not in r.text
+
+    def test_an_unusable_theme_is_a_422(self, client, explore, author, monkeypatch):
+        from dataclasses import replace
+
+        good = author.__call__
+
+        def backwards(**kw):
+            draft = good(**kw)
+            return replace(draft, spec=replace(draft.spec, rules=RowLimits(min_year=2020, max_year=1990)))
+
+        monkeypatch.setattr(theme_rotation, "author_theme", backwards)
+
+        r = client.post(f"/api/collections/{explore['row']['id']}/up-next/regenerate", json={"user_id": explore["ann"]})
+
+        assert r.status_code == 422
+        assert "earliest year" in r.text

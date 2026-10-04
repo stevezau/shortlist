@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from shortlist.engine.models import MediaType, RowLimits, UserProfile
 from shortlist.engine.themes import ThemeSpec
@@ -72,7 +73,8 @@ def _library_index(monkeypatch):
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
+    # One shared connection: the overlap test runs a second pass on another thread against the same database.
+    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return sessionmaker(engine)
 
@@ -460,3 +462,93 @@ class TestHelpers:
         from shortlist.server.services.theme_author import BUILD_SYSTEM_GUIDANCE
 
         assert theme_guidance(AiInstructions(mode="add", text="More")) == f"{BUILD_SYSTEM_GUIDANCE.strip()} More"
+
+
+class TestConcurrentPasses:
+    def test_two_overlapping_passes_leave_one_current_and_one_ai_call(self, sessions):
+        import threading
+        import time
+
+        row_id, (uid,) = seed(sessions)
+        author = FakeAuthor()
+        second: list = []
+        inner = author.__call__
+
+        def overlapping(**kwargs):
+            # The second pass starts after this AI call began and before the first commits.
+            t = threading.Thread(target=lambda: second.append(rotate(sessions, author)))
+            t.start()
+            time.sleep(0.3)
+            overlapping.thread = t
+            return inner(**kwargs)
+
+        first = rotate(sessions, overlapping)
+        overlapping.thread.join(10)
+
+        assert [o.action for o in first] == ["authored_current"]
+        assert [o.action for o in second[0]] == ["kept"]
+        assert len(author.calls) == 1
+        assert history_of(sessions, row_id, uid) == [("current", "Theme 1")]
+
+    def test_every_stale_current_row_is_retired_not_just_the_newest(self, sessions):
+        row_id, (uid,) = seed(sessions, theme_days=7)
+        for days in (20, 12):
+            add_history(sessions, row_id, uid, "current", started=NAIVE_NOW - timedelta(days=days), name=f"Dup{days}")
+
+        rotate(sessions, FakeAuthor())
+
+        states = sorted(state for state, _ in history_of(sessions, row_id, uid))
+        assert states == ["current", "past", "past"]
+
+    def test_promoting_retires_every_current_row(self, sessions):
+        row_id, (uid,) = seed(sessions)
+        for days in (20, 12):
+            add_history(sessions, row_id, uid, "current", started=NAIVE_NOW - timedelta(days=days), name=f"Dup{days}")
+        add_history(sessions, row_id, uid, "next", started=NAIVE_NOW, name="Queued")
+
+        with sessions() as s:
+            theme_rotation.promote_next(s, row_id, uid, NOW)
+            s.commit()
+
+        assert sorted(state for state, _ in history_of(sessions, row_id, uid)) == ["current", "past", "past"]
+
+
+class TestSpendSurvivesAFailedSave:
+    def test_tokens_are_charged_when_the_save_fails_after_the_ai_call(self, sessions, monkeypatch):
+        from shortlist.server.services import theme_store
+
+        row_id, (uid,) = seed(sessions)
+        add_history(sessions, row_id, uid, "current", started=NAIVE_NOW - timedelta(days=9), name="Cosy")
+
+        def clash(*a, **k):
+            raise theme_store.TitleClash("That title is taken.")
+
+        monkeypatch.setattr(theme_rotation, "save_theme", clash)
+
+        outcomes = rotate(sessions, FakeAuthor(tokens=60))
+
+        assert [o.action for o in outcomes] == ["failed"]
+        assert history_of(sessions, row_id, uid) == [("current", "Cosy")]
+        with sessions() as s:
+            assert s.get(Collection, row_id).ai_tokens == 60
+        [event] = events(sessions, "error")
+        assert event.message["detail"] == "That title is taken."
+
+    def test_an_unusable_theme_is_refused_like_the_themes_api_does(self, sessions, monkeypatch):
+        row_id, (uid,) = seed(sessions)
+        author = FakeAuthor(tokens=30)
+        good = author.__call__
+
+        def backwards_years(**kw):
+            draft = good(**kw)
+            spec = draft.spec
+            from dataclasses import replace
+
+            return replace(draft, spec=replace(spec, rules=RowLimits(min_year=2020, max_year=1990)))
+
+        outcomes = rotate(sessions, backwards_years)
+
+        assert [o.action for o in outcomes] == ["failed"]
+        assert history_of(sessions, row_id, uid) == []
+        with sessions() as s:
+            assert s.get(Collection, row_id).ai_tokens == 30

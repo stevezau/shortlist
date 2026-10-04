@@ -12,18 +12,21 @@ next pass tries again. Every target is its own transaction, so a failure rolls b
 from __future__ import annotations
 
 import dataclasses
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+from fastapi import HTTPException
 from loguru import logger
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserProfile
 from shortlist.engine.web_guidance import AiInstructions
-from shortlist.server.api.themes import ThemeIn, ThemeSaveIn, _spec_view, _TagNames
+from shortlist.server.api.themes import ThemeIn, ThemeSaveIn, _refuse_unusable, _spec_view, _TagNames
 from shortlist.server.db.models import Collection, CollectionAudience, Theme, ThemeHistory, User
 from shortlist.server.services.audit import add_audit
 from shortlist.server.services.library_index import library_index
@@ -46,6 +49,18 @@ class RotationOutcome:
     action: Action
 
 
+_TARGET_LOCKS: dict[tuple[int, int], threading.Lock] = {}
+_TARGET_LOCKS_GUARD = threading.Lock()
+
+
+def _target_lock(collection_id: int, user_id: int) -> threading.Lock:
+    """One lock per (row, person). The kind reads only, so the job queue may run two passes at once; both would
+    see "no current theme", both would call the AI, and both would insert one. The second now waits, then reads
+    what the first committed and finds nothing to do."""
+    with _TARGET_LOCKS_GUARD:
+        return _TARGET_LOCKS.setdefault((collection_id, user_id), threading.Lock())
+
+
 def rotate_themes(
     sessions: Callable[[], Session],
     *,
@@ -63,8 +78,9 @@ def rotate_themes(
     targets = _targets(sessions)
     outcomes: list[RotationOutcome] = []
     for collection_id, user_id in targets:
+        spent: list[int] = []
         try:
-            with sessions() as session:
+            with _target_lock(collection_id, user_id), sessions() as session:
                 action = _rotate_one(
                     session,
                     collection_id,
@@ -78,11 +94,12 @@ def rotate_themes(
                     tmdb=tmdb,
                     plex=plex,
                     profile_for=profile_for,
+                    spent=spent,
                 )
                 session.commit()
         except Exception as e:
             action = "failed"
-            _log_failure(sessions, collection_id, user_id, e)
+            _log_failure(sessions, collection_id, user_id, e, tokens=sum(spent))
         outcomes.append(RotationOutcome(collection_id, user_id, action))
     return outcomes
 
@@ -155,8 +172,7 @@ def promote_next(session: Session, collection_id: int, user_id: int, now: dateti
     upcoming = rows["next"]
     if upcoming is None or upcoming.theme_id is None:
         raise ValueError("there is no up-next theme to promote")
-    if rows["current"] is not None:
-        rows["current"].state = "past"
+    _retire_all_current(session, collection_id, user_id)
     days = _theme_days(session.get(Collection, collection_id))
     upcoming.state = "current"
     upcoming.started_at = _naive_utc(now)
@@ -194,11 +210,14 @@ def author_for_person(
     tmdb,
     plex,
     profile_for: Callable[[Session, int], UserProfile],
+    spent: list[int] | None = None,
 ) -> Theme:
     """Write a new theme for one person on one row and save it through the theme store (tokens charged to the row).
 
     The caller owns the commit. Raises `ThemeAuthorError` or `ThemeStoreError` and leaves nothing half-saved.
     ``unavailable`` is why authoring cannot happen at all (no provider, no TMDB key); it is raised as the error.
+    ``spent`` receives the tokens the AI call cost the moment it returns, so a caller can still charge them when
+    the save that follows fails and rolls back.
     """
     if unavailable:
         raise ThemeAuthorError(unavailable)
@@ -221,12 +240,33 @@ def author_for_person(
         profile=profile_for(session, user_id),
         guidance=theme_guidance(AiInstructions.from_stored(collection.prompt)),
     )
-    body = _save_in(collection, draft, names.seen)
+    if spent is not None:
+        spent.append(draft.tokens)
+    try:
+        body = _save_in(collection, draft, names.seen)
+        _refuse_unusable(body.draft)
+    except HTTPException as e:
+        raise ThemeAuthorError(str(e.detail)) from None
+    except ValidationError:
+        raise ThemeAuthorError("The AI's theme could not be saved. Try again.") from None
     return save_theme(session, secrets, body)
 
 
 def _rotate_one(
-    session, collection_id, user_id, now, *, sessions, secrets, unavailable, author, curator, tmdb, plex, profile_for
+    session,
+    collection_id,
+    user_id,
+    now,
+    *,
+    sessions,
+    secrets,
+    unavailable,
+    author,
+    curator,
+    tmdb,
+    plex,
+    profile_for,
+    spent,
 ) -> Action:
     collection = session.get(Collection, collection_id)
     rows = _history(session, collection_id, user_id)
@@ -240,6 +280,7 @@ def _rotate_one(
         "tmdb": tmdb,
         "plex": plex,
         "profile_for": profile_for,
+        "spent": spent,
     }
     days = _theme_days(collection)
     has_next = upcoming is not None and upcoming.theme_id is not None
@@ -342,10 +383,20 @@ def _history(session: Session, collection_id: int, user_id: int) -> dict[str, Th
 
 
 def _retire_current_and_stale_next(session: Session, collection_id: int, user_id: int) -> None:
-    rows = _history(session, collection_id, user_id)
-    if rows["current"] is not None:
-        rows["current"].state = "past"
+    _retire_all_current(session, collection_id, user_id)
     _drop_stale_next(session, collection_id, user_id)
+
+
+def _retire_all_current(session: Session, collection_id: int, user_id: int) -> None:
+    """Every `current` row, not just the newest, so a duplicate left by an earlier race heals."""
+    for row in session.scalars(
+        select(ThemeHistory).where(
+            ThemeHistory.collection_id == collection_id,
+            ThemeHistory.user_id == user_id,
+            ThemeHistory.state == "current",
+        )
+    ):
+        row.state = "past"
 
 
 def _drop_stale_next(session: Session, collection_id: int, user_id: int) -> None:
@@ -392,13 +443,18 @@ def _targets(sessions) -> list[tuple[int, int]]:
         return [(c.id, u.id) for c in rows for u in audience_users(session, c)]
 
 
-def _log_failure(sessions, collection_id: int, user_id: int, error: Exception) -> None:
+def _log_failure(sessions, collection_id: int, user_id: int, error: Exception, *, tokens: int = 0) -> None:
     # A ThemeAuthorError is plain English by contract; anything else is its class name only, since an SDK's
     # message can carry a fragment of a key.
     detail = str(error) if isinstance(error, ThemeAuthorError | ThemeStoreError) else type(error).__name__
     logger.warning("theme rotation: collection {} user {} kept its theme ({})", collection_id, user_id, detail)
     try:
         with sessions() as session:
+            if tokens:
+                # The AI call happened, so its cost stands even though the save rolled back.
+                collection = session.get(Collection, collection_id)
+                if collection is not None:
+                    collection.ai_tokens = (collection.ai_tokens or 0) + tokens
             add_audit(
                 session,
                 "theme.rotate",
@@ -407,6 +463,7 @@ def _log_failure(sessions, collection_id: int, user_id: int, error: Exception) -
                 user_id=user_id,
                 action="failed",
                 detail=detail,
+                tokens=tokens,
             )
             session.commit()
     except Exception:
