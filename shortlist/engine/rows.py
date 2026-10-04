@@ -40,6 +40,7 @@ from shortlist.engine.delivery import (
     target_sections,
 )
 from shortlist.engine.history import RatingsPolicy, derive_seeds, ratings_policy
+from shortlist.engine.models import _KEEP_FRACTION as _KEEP_FRACTION
 from shortlist.engine.models import (
     SHARED_SLUG_PREFIX,
     Candidate,
