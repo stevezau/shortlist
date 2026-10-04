@@ -8376,3 +8376,89 @@ class TestLimitsAndRequestDemand:
 
     def test_a_row_with_a_max_year_credits_only_the_missing_titles_it_could_show(self, ctx, mock_plextv, monkeypatch):
         assert self._demand(ctx, mock_plextv, monkeypatch, max_year=2000) == {(31, MediaType.MOVIE)}
+
+
+class TestRowsDifferingOnlyByLimitsShareOneGather:
+    """Native AI web search has no cache, so a limited row that gathered on its own cost an extra search."""
+
+    def _run(self, ctx: EngineContext, mock_plextv, rows: list[RowSpec]) -> dict[str, list[int]]:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": 8.0,
+                "release_date": f"{1970 + (i - 10) * 6}-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.reset_mock()
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = rows
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        out: dict[str, list[int]] = {}
+        for pick in report.users[0].picks:
+            out.setdefault(pick.collection_slug, []).append(pick.tmdb_id)
+        return {slug: sorted(ids) for slug, ids in out.items()}
+
+    @staticmethod
+    def _row(slug: str, **kw) -> RowSpec:
+        return RowSpec(slug=slug, name_template=slug, size=10, media="movie", **kw)
+
+    def test_a_limited_row_and_an_unlimited_one_gather_once(self, ctx, mock_plextv):
+        self._run(ctx, mock_plextv, [self._row("all")])
+        alone = ctx.tmdb.suggestions.call_count
+
+        picks = self._run(ctx, mock_plextv, [self._row("all"), self._row("old", max_year=2000)])
+
+        assert ctx.tmdb.suggestions.call_count == alone
+        assert len(picks["all"]) == 10
+        assert picks["old"] == [10, 11, 12, 13, 14, 15]
+
+    def test_rows_with_different_limits_share_one_gather_and_get_different_pools(self, ctx, mock_plextv):
+        self._run(ctx, mock_plextv, [self._row("all")])
+        alone = ctx.tmdb.suggestions.call_count
+
+        picks = self._run(ctx, mock_plextv, [self._row("old", max_year=2000), self._row("older", max_year=1985)])
+
+        assert ctx.tmdb.suggestions.call_count == alone
+        assert picks["old"] == [10, 11, 12, 13, 14, 15]
+        assert picks["older"] == [10, 11, 12]
+
+    def test_the_limited_pool_is_labelled_and_the_log_names_the_person_and_row(self, ctx, mock_plextv):
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{message}")
+        try:
+            self._run(ctx, mock_plextv, [self._row("all"), self._row("old", max_year=2000)])
+        finally:
+            logger.remove(sink)
+
+        assert any(line.startswith("sarah/old: limits: kept=6 dropped=4 unknown=0") for line in lines)
+
+    def test_the_limited_pool_label_says_limits(self, ctx, mock_plextv):
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010}
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 10, "title": "T", "genre_ids": [], "vote_average": 8.0, "release_date": "1970-01-01"}]
+        )
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [self._row("all"), self._row("old", max_year=2000)]
+        ctx.config.min_history = 1
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        labels = [c["label"] for c in report.users[0].pool_costs]
+        assert labels == ["movie · tmdb_similar", "movie · tmdb_similar · limits"]

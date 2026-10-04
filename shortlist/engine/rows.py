@@ -7,6 +7,7 @@ only builds and delivers collections, always UNPROMOTED.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import time
 import zlib
@@ -1291,7 +1292,34 @@ def _visible_candidates(
     return kept, hidden
 
 
-def _candidate_pool(
+@dataclass
+class _Gathered:
+    """A pool's expensive half: what the sources returned, narrowed to what this person can be offered.
+
+    Shared by every row whose ``RowPolicy.pool_key`` matches, limits or not — a limit only ever removes
+    titles from ``in_library``, so a limited row can start from a sibling's gather instead of paying for its
+    own (an AI web search has no cache of its own).
+    """
+
+    pool: list[Candidate]
+    in_library: list[Candidate]
+    dropped: list[tuple[Candidate, str]]
+    stats: candidates_mod.GatherStats
+    # The trace as the gather left it. Ranking stamps each title's fate onto the trace, so every ranking
+    # after the first starts from this copy rather than from the first one's stamps.
+    trace_at_gather: dict = field(default_factory=dict)
+    paid: bool = False
+
+    def stats_for_ranking(self) -> candidates_mod.GatherStats:
+        """The stats the next ranking of this gather writes to: the real ones the first time, which carry the
+        AI cost, and a free copy every time after, so a shared gather is billed once."""
+        if not self.paid:
+            self.paid = True
+            return self.stats
+        return candidates_mod.GatherStats(trace=copy.deepcopy(self.trace_at_gather))
+
+
+def _gather_pool(
     ctx: EngineContext,
     seeds: list,
     library_index: dict[MediaType, dict[int, int]],
@@ -1302,29 +1330,11 @@ def _candidate_pool(
     media: str = "both",
     watched_exclusions: set[tuple[int, MediaType]] | None = None,
     recent_count: int | None = None,
-    recency: float = 0.0,
     visible: Callable[[list[int]], set[int] | None] | None = None,
     season: seasons_mod.SeasonTitles | None = None,
     guidance: Guidance | None = None,
-    limits: RowLimits | None = None,
-) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
-    """Gather TMDB candidates for ``seeds`` and intersect them with the library.
-
-    Returns ``((pool, in_library, ranked), gather_stats)`` — the 3-tuple of candidate lists, plus the
-    AI token/Exa spend the gather incurred (for per-run cost accounting):
-
-    * ``pool`` — every pooled candidate (used for request-demand bookkeeping before narrowing).
-    * ``in_library`` — the ones the delivery libraries actually hold and this user may still see.
-    * ``ranked`` — the pre-ranked candidates the curator chooses from.
-
-    ``media`` narrows the pool BEFORE the pre-rank truncation. Filtering after it meant a
-    movie-heavy watcher's shows-only row could lose every show to the 40-candidate cut and deliver
-    nothing — a dead row on a green run. Identity is (tmdb_id, media_type), never the bare id — movie
-    1399 and TV 1399 are different titles.
-
-    (No staleness partition anymore: rows now carry their prior picks forward on non-refresh nights,
-    so there's nothing to "hold back" — see ``_reusable_prior`` / ``_is_refresh_night``.)
-    """
+) -> _Gathered:
+    """The first half of ``_candidate_pool``: gather, then keep what the libraries hold and this person may see."""
     # The titles this person has already watched (per the row's policy), not just the ~30 seeds — a
     # recommendation you've finished is the exact thing the row shouldn't surface. Falls back to the
     # seed set when the row has no exclusion rule (see `RowPolicy.pool_exclusions` for the None sentinel).
@@ -1379,9 +1389,34 @@ def _candidate_pool(
     if visible is not None and in_library:
         in_library, hidden = _visible_candidates(ctx, in_library, visible)
         dropped.extend((c, "hidden_by_their_restrictions") for c in hidden)
+    return _Gathered(
+        pool=pool,
+        in_library=in_library,
+        dropped=dropped,
+        stats=gather_stats,
+        trace_at_gather=copy.deepcopy(gather_stats.trace),
+    )
+
+
+def _rank_pool(
+    ctx: EngineContext,
+    gathered: _Gathered,
+    seeds: list,
+    *,
+    media: str,
+    recency: float,
+    limits: RowLimits | None,
+    gather_stats: candidates_mod.GatherStats,
+    who: str,
+) -> tuple[Pool, candidates_mod.GatherStats]:
+    """The second half of ``_candidate_pool``: the row's limits, then the pre-rank cut. ``who`` names the
+    person and row in the log."""
+    pool, in_library, dropped = gathered.pool, gathered.in_library, list(gathered.dropped)
     if limits is not None and limits.active:
         limited = limits_mod.apply_limits(in_library, limits, ctx.tmdb)
-        logger.info("limits: kept={} dropped={} unknown={}", len(limited.kept), limited.dropped, limited.unknown)
+        logger.info(
+            "{}: limits: kept={} dropped={} unknown={}", who, len(limited.kept), limited.dropped, limited.unknown
+        )
         dropped.extend((c, "outside_row_limits") for c in limited.dropped_candidates)
         in_library = limited.kept
     # Measure genre avoidance BEFORE the cut, so the dial can rescue or demote a title across the
@@ -1437,6 +1472,66 @@ def _candidate_pool(
         year_now=_run_year(ctx.run_day),
     )
     return (pool, in_library, ranked), gather_stats
+
+
+def _candidate_pool(
+    ctx: EngineContext,
+    seeds: list,
+    library_index: dict[MediaType, dict[int, int]],
+    *,
+    excluded_genres: set[str],
+    profile=None,
+    sources: list[str] | None = None,
+    media: str = "both",
+    watched_exclusions: set[tuple[int, MediaType]] | None = None,
+    recent_count: int | None = None,
+    recency: float = 0.0,
+    visible: Callable[[list[int]], set[int] | None] | None = None,
+    season: seasons_mod.SeasonTitles | None = None,
+    guidance: Guidance | None = None,
+    limits: RowLimits | None = None,
+) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
+    """Gather TMDB candidates for ``seeds`` and intersect them with the library.
+
+    Returns ``((pool, in_library, ranked), gather_stats)`` — the 3-tuple of candidate lists, plus the
+    AI token/Exa spend the gather incurred (for per-run cost accounting):
+
+    * ``pool`` — every pooled candidate (used for request-demand bookkeeping before narrowing).
+    * ``in_library`` — the ones the delivery libraries actually hold and this user may still see.
+    * ``ranked`` — the pre-ranked candidates the curator chooses from.
+
+    ``media`` narrows the pool BEFORE the pre-rank truncation. Filtering after it meant a
+    movie-heavy watcher's shows-only row could lose every show to the 40-candidate cut and deliver
+    nothing — a dead row on a green run. Identity is (tmdb_id, media_type), never the bare id — movie
+    1399 and TV 1399 are different titles.
+
+    (No staleness partition anymore: rows now carry their prior picks forward on non-refresh nights,
+    so there's nothing to "hold back" — see ``_reusable_prior`` / ``_is_refresh_night``.)
+    """
+    gathered = _gather_pool(
+        ctx,
+        seeds,
+        library_index,
+        excluded_genres=excluded_genres,
+        profile=profile,
+        sources=sources,
+        media=media,
+        watched_exclusions=watched_exclusions,
+        recent_count=recent_count,
+        visible=visible,
+        season=season,
+        guidance=guidance,
+    )
+    return _rank_pool(
+        ctx,
+        gathered,
+        seeds,
+        media=media,
+        recency=recency,
+        limits=limits,
+        gather_stats=gathered.stats_for_ranking(),
+        who="candidate pool",
+    )
 
 
 def _add_step_tokens(report: UserRunReport, step: str, n: int) -> None:
@@ -2025,6 +2120,9 @@ class RowPolicy:
     # sources (the common case — every row inheriting the global set) reuse one pool; a row that
     # picks its own sources gets its own. Keyed by `pool_key`, memoised across the user.
     pool_cache: dict[tuple, Pool] = field(default_factory=dict)
+    # pool_key -> that pool's gather, before any row's limits. A limited row ranks its own cut of it
+    # (`pool_cache` is keyed by `pool_slot`), so the expensive part is paid once per `pool_key`.
+    gathers: dict[tuple, _Gathered] = field(default_factory=dict)
     # pool_key -> that pool's `report.pool_costs` entry, so a later row hitting the SAME cached pool
     # (never re-gathered) can still append its slug to `entry["rows"]` — the only way a cache hit
     # attributes its row to the cost it shared rather than paid for.
@@ -2259,7 +2357,7 @@ class RowPolicy:
         be added here too**, or two rows that disagree about it will collide on one memoised cut and
         the second row will silently get the first row's ranking.
         """
-        key = (self.pool_key(spec), recency)
+        key = (self.pool_slot(spec), recency)
         if key not in self.recency_cuts:
             kinds = [MediaType.MOVIE, MediaType.SHOW] if spec.media == "both" else [MediaType(spec.media)]
             year_now = _run_year(self.ctx.run_day)
@@ -2417,9 +2515,15 @@ class RowPolicy:
             # Rows with different AI instructions must not share an AI web search (#138); "" otherwise,
             # which every row without instructions shares, so no pool splits on the night this ships.
             self.effective_guidance(spec).fingerprint(),
-            # Limits shape the pool itself, so rows with different limits cannot share one (#138).
-            spec.limits().fingerprint(),
         )
+
+    def pool_slot(self, spec: RowSpec) -> tuple:
+        """Which ranked pool this row reads: its gather (``pool_key``) plus its limits (#138).
+
+        Limits are not in ``pool_key``: they only remove titles from what the gather found, so rows that
+        differ only in them share one gather and each ranks its own cut of it.
+        """
+        return (self.pool_key(spec), spec.limits().fingerprint())
 
     def pools_for(self, spec: RowSpec) -> Pool | None:
         """This row's pool, or None when every source it uses is down.
@@ -2428,40 +2532,58 @@ class RowPolicy:
         must not take the person's other rows down with it — those rows have working sources and a
         row they can still fill.
         """
-        key = self.pool_key(spec)
-        if key in self.pool_failures:
+        gather_key = self.pool_key(spec)
+        key = self.pool_slot(spec)
+        if gather_key in self.pool_failures or key in self.pool_failures:
             return None
         if key not in self.pool_cache:
             gather_started = time.monotonic()
             guidance = self.effective_guidance(spec)
+            limits = spec.limits()
+            gathering = gather_key not in self.gathers
             try:
-                season = None
-                if spec.season is not None:
-                    season = self.ctx.season_titles.get(spec.season.slug)
-                    if season is None:
-                        # The season's list could not be read tonight. Failing the pool keeps the row as
-                        # it is, exactly like a row whose every source is down; its siblings still build.
-                        raise RuntimeError(_unreadable_season(self.ctx, spec))
-                self.pool_cache[key], gather_stats = _candidate_pool(
+                if gathering:
+                    season = None
+                    if spec.season is not None:
+                        season = self.ctx.season_titles.get(spec.season.slug)
+                        if season is None:
+                            # The season's list could not be read tonight. Failing the pool keeps the row as
+                            # it is, exactly like a row whose every source is down; its siblings still build.
+                            raise RuntimeError(_unreadable_season(self.ctx, spec))
+                    self.gathers[gather_key] = _gather_pool(
+                        self.ctx,
+                        self.seeds_for(spec),
+                        row_library_index(self.ctx, spec, self.library_index),
+                        excluded_genres=self.user.excluded_genres,
+                        profile=self.user,
+                        sources=list(gather_key[0]),
+                        recent_count=self.effective_recent_count(spec),
+                        media=spec.media,
+                        # See `pool_exclusions` for the full rules (0% vs >0, rewatch, unstarted-only) and
+                        # for what the None sentinel means here.
+                        watched_exclusions=self.pool_exclusions(spec),
+                        visible=self.visible,
+                        season=season,
+                        guidance=guidance,
+                    )
+            except Exception as e:
+                self.pool_failures[gather_key] = f"{type(e).__name__}: {e}"
+                logger.warning("{}: row '{}' has no working candidate source ({})", self.user.username, spec.slug, e)
+                return None
+            gathered = self.gathers[gather_key]
+            try:
+                self.pool_cache[key], gather_stats = _rank_pool(
                     self.ctx,
+                    gathered,
                     self.seeds_for(spec),
-                    row_library_index(self.ctx, spec, self.library_index),
-                    excluded_genres=self.user.excluded_genres,
-                    profile=self.user,
-                    sources=list(key[0]),
-                    recent_count=self.effective_recent_count(spec),
                     media=spec.media,
-                    # See `pool_exclusions` for the full rules (0% vs >0, rewatch, unstarted-only) and
-                    # for what the None sentinel means here.
-                    watched_exclusions=self.pool_exclusions(spec),
                     # The SERVER's value, deliberately: this pool is shared between rows (`pool_key`
                     # does not split on recency, so the gather is paid for once), and a row that
                     # overrides it re-cuts the cached `in_library` in `cut_at_recency`.
                     recency=self.cfg.recency,
-                    visible=self.visible,
-                    season=season,
-                    guidance=guidance,
-                    limits=spec.limits(),
+                    limits=limits,
+                    gather_stats=gathered.stats_for_ranking(),
+                    who=f"{self.user.username}/{spec.slug}",
                 )
             except Exception as e:
                 self.pool_failures[key] = f"{type(e).__name__}: {e}"
@@ -2476,11 +2598,13 @@ class RowPolicy:
             # screen until that page grows a per-row axis. The media prefix must stay first —
             # `poolCoversMedia` splits on " · " to decide which library a gather belongs to.
             seed_n = len(self.seeds_for(spec))
-            pool_label = f"{spec.media} · {', '.join(key[0])}"
+            pool_label = f"{spec.media} · {', '.join(gather_key[0])}"
             if any(len(self.seeds_for(other)) != seed_n for other in self.gathered_specs()):
                 pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
             if not guidance.is_builtin:
                 pool_label += " · own AI instructions"
+            if limits.active:
+                pool_label += " · limits"
             _record_gather(
                 self.report,
                 gather_stats,
