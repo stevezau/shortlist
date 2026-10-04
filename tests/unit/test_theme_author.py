@@ -377,7 +377,7 @@ class TestFailures:
 
 
 class TestRefineKeeps:
-    def test_refine_keeps_owner_picks_and_collections_and_shows_tags(self):
+    def test_refine_keeps_owner_picks_and_collections(self):
         from shortlist.engine.themes import ThemeCollection
 
         collection = ThemeCollection("1", "My Favourites")
@@ -399,6 +399,83 @@ class TestRefineKeeps:
 
         assert draft.spec.collections == (collection,)
         assert {(p.tmdb_id, p.origin) for p in draft.spec.picks} == {(1, "ai"), (4, "owner")}
-        assert "777" in curator.calls[0][1]
+        assert "777" not in curator.calls[0][1]
         diff = diff_themes(current, draft.spec)
         assert "4" not in diff.added and "4" not in diff.removed
+
+
+class TestRound2:
+    @staticmethod
+    def _current(**overrides) -> ThemeSpec:
+        fields = {
+            "slug": "t",
+            "name": "T",
+            "emoji": None,
+            "media": (MediaType.MOVIE,),
+            "tags": (777,),
+            "genres": (),
+            "excluded_genres": (),
+            "collections": (),
+            "picks": (ThemePick(4, MediaType.MOVIE, "owner", None), ThemePick(2, MediaType.MOVIE, "ai", None)),
+            "rules": RowLimits(),
+            "min_votes": None,
+        }
+        return ThemeSpec(**{**fields, **overrides})
+
+    def test_current_tag_names_are_shown_and_ids_never(self):
+        _, curator = _run(_answer(tags=[]), current=self._current(), current_tag_names=["horror", "slasher"])
+
+        user = curator.calls[0][1]
+        assert '"tags": ["horror", "slasher"]' in user
+        assert "777" not in user
+
+    def test_refine_without_tag_names_omits_the_tags_line(self):
+        _, curator = _run(_answer(), current=self._current())
+
+        assert '"tags"' not in curator.calls[0][1]
+
+    def test_refine_drops_a_tag_the_ai_omits(self):
+        draft, _ = _run(_answer(tags=["twist ending"]), current=self._current(), current_tag_names=["horror"])
+
+        assert draft.spec.tags == (901,)
+        assert 777 not in draft.spec.tags
+
+    def test_search_cap_holds_across_both_media(self):
+        tmdb = _CountingTmdb()
+        titles = [{"title": f"Film {n}", "year": 2000} for n in range(5000)]
+
+        author_theme(
+            brief=BRIEF,
+            media=(MediaType.MOVIE, MediaType.SHOW),
+            curator=_Curator(_answer(titles=titles, tags=["twist ending"])),
+            tmdb=tmdb,
+            plex=_Plex(),
+            library_index={MediaType.MOVIE: {}, MediaType.SHOW: {}},
+        )
+
+        assert tmdb.searches == 60
+
+    def test_refine_resolving_nothing_new_keeps_owner_picks_without_raising(self):
+        draft, _ = _run(_answer(titles=[{"title": "Invented"}], tags=[], genres=[]), current=self._current())
+
+        assert [(p.tmdb_id, p.origin) for p in draft.spec.picks] == [(4, "owner")]
+
+    def test_refine_resolving_nothing_new_keeps_a_collection_without_raising(self):
+        from shortlist.engine.themes import ThemeCollection
+
+        current = self._current(picks=(), collections=(ThemeCollection("1", "Mine"),))
+
+        draft, _ = _run(_answer(titles=[], tags=[], genres=[]), current=current)
+
+        assert draft.spec.collections == current.collections
+
+    def test_diff_lists_owner_pick_title_as_unchanged(self):
+        current = self._current()
+        titles = {(MediaType.MOVIE, 4): "Short Cut", (MediaType.MOVIE, 2): "Se7en"}
+
+        draft, _ = _run(_answer(titles=[{"title": "Memento"}]), current=current)
+        diff = diff_themes(current, draft.spec, draft.titles | titles)
+
+        assert diff.unchanged == ["Short Cut"]
+        assert diff.added == ["Memento"]
+        assert diff.removed == ["Se7en"]

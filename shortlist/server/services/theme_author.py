@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -89,6 +90,7 @@ class ThemeDiff:
     rules_changed: bool
     added: list[str]
     removed: list[str]
+    unchanged: list[str]
     added_count: int
     removed_count: int
 
@@ -104,6 +106,7 @@ def author_theme(
     profile: UserProfile | None = None,
     current: ThemeSpec | None = None,
     guidance: str = "",
+    current_tag_names: Sequence[str] = (),
 ) -> ThemeDraft:
     """Write a theme from ``brief``, or refine ``current`` by it.
 
@@ -118,7 +121,7 @@ def author_theme(
         raise ThemeAuthorError("Writing a theme needs an AI provider. Add one in Settings, then try again.")
     system = (guidance.strip() or BUILD_SYSTEM_GUIDANCE.strip()) + " " + BUILD_SYSTEM_MECHANICS
     brief = brief.strip()[:_MAX_BRIEF]
-    user = _user_message(brief, medias, profile, current, tmdb)
+    user = _user_message(brief, medias, profile, current, current_tag_names, tmdb)
     try:
         raw = curator.complete(system, user)
     except Exception as exc:
@@ -135,12 +138,13 @@ def author_theme(
     picks, titles, named = _resolve_titles(proposal, medias, tmdb)
     tags = _resolve_tags(proposal, tmdb)
     genres = tuple(g for g in _strings(proposal.get("genres")) if g.strip().lower() in _MOVIE_GENRE_IDS)[:_MAX_GENRES]
-    if not picks and not tags and not genres:
+    name = _clean(str(proposal.get("name") or ""))[:_MAX_NAME].strip() or _clean(brief)[:40] or "Themed row"
+    kept = [p for p in current.picks if p.origin != "ai" and (p.media, p.tmdb_id) not in titles] if current else []
+    kept_collections = current.collections if current else ()
+    if not (picks or tags or genres or kept or kept_collections):
         raise ThemeAuthorError(
             "The AI didn't suggest anything Shortlist could find. Try describing the row differently."
         )
-    name = _clean(str(proposal.get("name") or ""))[:_MAX_NAME].strip() or _clean(brief)[:40] or "Themed row"
-    kept = [p for p in current.picks if p.origin != "ai" and (p.media, p.tmdb_id) not in titles] if current else []
     spec = ThemeSpec(
         slug=current.slug if current else (slugify(name) or "theme"),
         name=current.name if current else name,
@@ -149,7 +153,7 @@ def author_theme(
         tags=tags,
         genres=genres,
         excluded_genres=current.excluded_genres if current else (),
-        collections=current.collections if current else (),
+        collections=kept_collections,
         picks=tuple(picks) + tuple(kept),
         rules=_rules(proposal.get("rules")),
         min_votes=current.min_votes if current else None,
@@ -187,10 +191,12 @@ def diff_themes(old: ThemeSpec, new: ThemeSpec, titles: dict[tuple[MediaType, in
 
     added = sorted(label(k) for k in after - before)
     removed = sorted(label(k) for k in before - after)
+    unchanged = sorted(label(k) for k in before & after)
     return ThemeDiff(
         rules_changed=old.rules.fingerprint() != new.rules.fingerprint(),
         added=added,
         removed=removed,
+        unchanged=unchanged,
         added_count=len(added),
         removed_count=len(removed),
     )
@@ -201,6 +207,7 @@ def _user_message(
     medias: tuple[MediaType, ...],
     profile: UserProfile | None,
     current: ThemeSpec | None,
+    current_tag_names: Sequence[str],
     tmdb: TmdbClient,
 ) -> str:
     parts = [
@@ -208,22 +215,26 @@ def _user_message(
         "Media: " + " and ".join("movies" if m is MediaType.MOVIE else "shows" for m in medias),
     ]
     if current is not None:
-        parts.append("Current theme (refine it by the brief, keeping what still fits):\n" + _describe(current, tmdb))
+        parts.append(
+            "Current theme (refine it by the brief, keeping what still fits):\n"
+            + _describe(current, current_tag_names, tmdb)
+        )
     if profile is not None and profile.history:
         parts.append("Tailor it to this person's taste.\n" + taste_summary(profile, 20))
     return "\n\n".join(parts)
 
 
-def _describe(spec: ThemeSpec, tmdb: TmdbClient) -> str:
+def _describe(spec: ThemeSpec, tag_names: Sequence[str], tmdb: TmdbClient) -> str:
     titles = []
     for pick in spec.picks:
         item = tmdb.list_item(pick.tmdb_id, pick.media)
         if item:
             titles.append(str(item.get("title") or item.get("name") or ""))
     rules = {k: v for k, v in vars(spec.rules).items() if v is not None}
-    return json.dumps(
-        {"name": spec.name, "tag_ids": list(spec.tags), "genres": list(spec.genres), "rules": rules, "titles": titles}
-    )
+    described: dict[str, object] = {"name": spec.name, "genres": list(spec.genres), "rules": rules, "titles": titles}
+    if tag_names:
+        described["tags"] = list(tag_names)
+    return json.dumps(described)
 
 
 def _parse(raw: str) -> dict:
@@ -287,10 +298,14 @@ def _resolve_titles(
     picks: list[ThemePick] = []
     titles: dict[tuple[MediaType, int], str] = {}
     seen: set[tuple[MediaType, int]] = set()
+    searches = 0
     for entry in entries:
         year = _number(entry.get("year"), int)
         title = entry["title"].strip()[:_MAX_PHRASE]
         for media in medias:
+            if searches >= _MAX_TITLES:
+                break
+            searches += 1
             try:
                 hit = tmdb.search(title, media, year=year)
                 key = (media, int(hit["id"])) if hit else None
