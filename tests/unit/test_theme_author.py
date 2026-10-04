@@ -874,3 +874,36 @@ class TestAThemeCoversOnlyTheKindsItNamed:
         )
 
         assert draft.spec.media == self.BOTH
+
+
+class TestResolvedTitleIsTheOneAsked:
+    def _resolve(self, hit, title="The Italian Job", year=None):
+        class _One(_Tmdb):
+            def search(self, t, media, *, year=None):
+                return hit
+
+        answer = _answer(titles=[{"media": "movie", "title": title, "year": year}])
+        draft, _ = _run(answer, _One())
+        return [p.tmdb_id for p in draft.spec.picks]
+
+    def test_a_different_title_is_rejected_when_the_hit_is_a_docuseries(self):
+        hit = {"id": 1, "name": "Italian Job - The Serie A Story 93/94", "first_air_date": "2020-01-01"}
+        assert self._resolve(hit) == []
+
+    def test_exact_match_after_normalising_is_accepted(self):
+        assert self._resolve({"id": 1, "title": "Italian Job!"}) == [1]
+
+    def test_a_close_containing_title_is_accepted(self):
+        assert self._resolve({"id": 1, "title": "The Italian Job 2"}) == [1]
+
+    def test_a_year_five_off_is_rejected(self):
+        hit = {"id": 1, "title": "The Italian Job", "release_date": "2003-05-30"}
+        assert self._resolve(hit, year=1969) == []
+
+    def test_a_year_one_off_is_accepted(self):
+        hit = {"id": 1, "title": "The Italian Job", "release_date": "1969-05-30"}
+        assert self._resolve(hit, year=1970) == [1]
+
+    def test_a_missing_year_on_either_side_does_not_block(self):
+        assert self._resolve({"id": 1, "title": "The Italian Job"}, year=1969) == [1]
+        assert self._resolve({"id": 1, "title": "The Italian Job", "release_date": "2003-05-30"}) == [1]

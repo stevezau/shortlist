@@ -529,7 +529,7 @@ def _resolve_titles(
         title = entry["title"].strip()[:_MAX_PHRASE]
         try:
             hit = tmdb.search(title, media, year=year)
-            key = (media, int(hit["id"])) if hit else None
+            key = (media, int(hit["id"])) if hit and _is_same_title(title, year, hit) else None
         except Exception:
             logger.warning("theme author: TMDB search failed for a title")
             failed_kinds.add(media)
@@ -541,6 +541,33 @@ def _resolve_titles(
         picks.append(ThemePick(tmdb_id=key[1], media=media, origin="ai", reason=reason or None))
         titles[key] = str(hit.get("title") or hit.get("name") or title)
     return picks, titles, len(entries), failed_kinds
+
+
+_ARTICLES = frozenset({"the", "a", "an"})
+
+
+def _normalise_title(title: str) -> str:
+    words = re.sub(r"[^\w\s]", "", title.casefold()).split()
+    return " ".join(w for w in words if w not in _ARTICLES)
+
+
+def _is_same_title(asked: str, year: int | None, hit: dict) -> bool:
+    """Whether a TMDB hit is the title the AI named, not just the closest thing TMDB had.
+
+    ``TmdbClient.search`` returns its best-ranked result even when nothing resembles the query (it never
+    filters), so "The Italian Job" resolved to a docuseries. Titles must match once normalised, or one
+    must contain the other with a small length gap; a year, when both sides have one, may differ by 1.
+    """
+    want = _normalise_title(asked)
+    got = _normalise_title(str(hit.get("title") or hit.get("name") or ""))
+    if not want or not got:
+        return False
+    if want != got:
+        shorter, longer = sorted((want, got), key=len)
+        if shorter not in longer or (len(longer) - len(shorter)) > 0.3 * len(longer):
+            return False
+    date = str(hit.get("release_date") or hit.get("first_air_date") or "")
+    return not (year is not None and date[:4].isdigit() and abs(int(date[:4]) - year) > 1)
 
 
 def _resolve_tags(proposal: dict, tmdb: TmdbClient) -> tuple[int, ...]:
