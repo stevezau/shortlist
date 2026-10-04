@@ -324,6 +324,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/collections/{collection_id}/theme-rotation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Theme Rotation
+         * @description Where each person's Explore rotation stands: their current theme, the one queued next, and what came before.
+         */
+        get: operations["get_theme_rotation_api_collections__collection_id__theme_rotation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/collections/{collection_id}/up-next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Up Next
+         * @description Point a person's "Up next" at a saved theme, replacing any theme already queued. Changes no Plex state.
+         */
+        put: operations["set_up_next_api_collections__collection_id__up_next_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/collections/{collection_id}/up-next/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate Up Next
+         * @description Write a new "Up next" theme for one person now, with one AI call, replacing any theme queued.
+         *
+         *     409 while the row's AI is paused, 422 without an AI provider or when the row isn't set to Explore.
+         */
+        post: operations["regenerate_up_next_api_collections__collection_id__up_next_regenerate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -3434,6 +3496,11 @@ export interface components {
             /** Audience User Ids */
             audience_user_ids?: number[];
             /**
+             * Avoid Rows
+             * @description Slugs of other per-person rows whose titles this row keeps out; null is none.
+             */
+            avoid_rows?: string[] | null;
+            /**
              * Build
              * @description Who the row is built for: one per person, or one shared row.
              * @default per_person
@@ -3469,6 +3536,12 @@ export interface components {
              * @default true
              */
             enabled: boolean;
+            /**
+             * Explore Brief
+             * @description What kind of themes Explore should look for; blank lets the AI choose.
+             * @default
+             */
+            explore_brief: string;
             /**
              * Fallback Name
              * @default
@@ -3544,6 +3617,16 @@ export interface components {
             recent_count?: number | null;
             /** Refresh Days */
             refresh_days?: number | null;
+            /**
+             * Refresh Share
+             * @description The share of picks swapped on a refresh night; null keeps two thirds.
+             */
+            refresh_share?: number | null;
+            /**
+             * Repeat Cooldown Days
+             * @description Don't pick a title again within this many days; null is off.
+             */
+            repeat_cooldown_days?: number | null;
             /** Req Auto Min Demand */
             req_auto_min_demand?: number | null;
             /** Req Auto Min Rating */
@@ -3665,10 +3748,22 @@ export interface components {
              */
             sort_title_prefix: string;
             /**
+             * Theme Days
+             * @description How many days a theme lasts in Explore; null is 7.
+             */
+            theme_days?: number | null;
+            /**
              * Theme Id
              * @description The theme this AI row follows (see POST /api/themes). Null for an ordinary row.
              */
             theme_id?: number | null;
+            /**
+             * Theme Mode
+             * @description fixed keeps one theme; explore picks a new one for each person on a schedule.
+             * @default fixed
+             * @enum {string}
+             */
+            theme_mode: "fixed" | "explore";
             /**
              * Unstarted Only
              * @default false
@@ -3702,6 +3797,11 @@ export interface components {
             /** Audience User Ids */
             audience_user_ids: number[];
             /**
+             * Avoid Rows
+             * @description Slugs of rows whose titles this row keeps out; null is none.
+             */
+            avoid_rows: string[] | null;
+            /**
              * Build
              * @description Who the row is built for: one per person, or one shared row.
              * @enum {string}
@@ -3721,6 +3821,11 @@ export interface components {
             dry_run?: boolean | null;
             /** Enabled */
             enabled: boolean;
+            /**
+             * Explore Brief
+             * @description What Explore is asked to look for; blank lets the AI choose.
+             */
+            explore_brief: string;
             /** Fallback Name */
             fallback_name: string;
             /** Hub Anchor */
@@ -3790,6 +3895,16 @@ export interface components {
             recent_count: number | null;
             /** Refresh Days */
             refresh_days: number | null;
+            /**
+             * Refresh Share
+             * @description Share of picks swapped on a refresh night; null keeps two thirds.
+             */
+            refresh_share: number | null;
+            /**
+             * Repeat Cooldown Days
+             * @description No repeats within this many days; null is off.
+             */
+            repeat_cooldown_days: number | null;
             /** Req Auto Min Demand */
             req_auto_min_demand: number | null;
             /** Req Auto Min Rating */
@@ -3895,10 +4010,21 @@ export interface components {
             /** Sort Title Prefix */
             sort_title_prefix: string;
             /**
+             * Theme Days
+             * @description Days a theme lasts in Explore; null is 7.
+             */
+            theme_days: number | null;
+            /**
              * Theme Id
              * @description The theme an AI row follows; null for an ordinary row.
              */
             theme_id: number | null;
+            /**
+             * Theme Mode
+             * @description Whether an AI row keeps one theme or explores.
+             * @enum {string}
+             */
+            theme_mode: "fixed" | "explore";
             /** Unstarted Only */
             unstarted_only: boolean;
             /** Watched Pct */
@@ -5167,6 +5293,11 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** RegenerateRequest */
+        RegenerateRequest: {
+            /** User Id */
+            user_id: number;
+        };
         /**
          * RejectedOut
          * @description How many rows the action actually touched — not how many ids were sent. Each of the four
@@ -5358,6 +5489,33 @@ export interface components {
             id: number;
             /** Path */
             path: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RotationTargetOut */
+        RotationTargetOut: {
+            current: components["schemas"]["ThemeRefOut"] | null;
+            /**
+             * History
+             * @description Their earlier themes on this row, newest first.
+             */
+            history: components["schemas"]["ThemeRefOut"][];
+            /** Name */
+            name: string;
+            /** @description The theme queued to start when the current one ends. */
+            next: components["schemas"]["ThemeRefOut"] | null;
+            /**
+             * Next Due At
+             * @description When the current theme ends and the next one starts.
+             */
+            next_due_at: string | null;
+            /**
+             * Started At
+             * @description When the current theme started.
+             */
+            started_at: string | null;
+            /** User Id */
+            user_id: number;
         } & {
             [key: string]: unknown;
         };
@@ -6591,6 +6749,44 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * ThemeRefOut
+         * @description A theme as one person's rotation holds it: which one, when it started, and when it hands over.
+         */
+        ThemeRefOut: {
+            /** Due At */
+            due_at: string | null;
+            /** Emoji */
+            emoji: string | null;
+            /** Name */
+            name: string;
+            /** Started At */
+            started_at: string;
+            /**
+             * Theme Id
+             * @description The stored theme; null once it has been deleted.
+             */
+            theme_id: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ThemeRotationOut */
+        ThemeRotationOut: {
+            /**
+             * Days
+             * @description How many days a theme lasts.
+             */
+            days: number;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "fixed" | "explore";
+            /** Targets */
+            targets: components["schemas"]["RotationTargetOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ThemeSaveIn
          * @description A save: the theme, what the AI call that wrote it cost, and the row it was written for.
          */
@@ -6858,6 +7054,13 @@ export interface components {
             user: string;
         } & {
             [key: string]: unknown;
+        };
+        /** UpNextRequest */
+        UpNextRequest: {
+            /** Theme Id */
+            theme_id: number;
+            /** User Id */
+            user_id: number;
         };
         /**
          * UsedByOut
@@ -7877,6 +8080,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_theme_rotation_api_collections__collection_id__theme_rotation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeRotationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_up_next_api_collections__collection_id__up_next_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpNextRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeRefOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    regenerate_up_next_api_collections__collection_id__up_next_regenerate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeRefOut"];
                 };
             };
             /** @description Validation Error */

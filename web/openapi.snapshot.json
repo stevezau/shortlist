@@ -723,6 +723,21 @@
             "title": "Audience User Ids",
             "type": "array"
           },
+          "avoid_rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slugs of other per-person rows whose titles this row keeps out; null is none.",
+            "title": "Avoid Rows"
+          },
           "build": {
             "default": "per_person",
             "description": "Who the row is built for: one per person, or one shared row.",
@@ -778,6 +793,13 @@
             "default": true,
             "title": "Enabled",
             "type": "boolean"
+          },
+          "explore_brief": {
+            "default": "",
+            "description": "What kind of themes Explore should look for; blank lets the AI choose.",
+            "maxLength": 500,
+            "title": "Explore Brief",
+            "type": "string"
           },
           "fallback_name": {
             "default": "",
@@ -989,6 +1011,34 @@
               }
             ],
             "title": "Refresh Days"
+          },
+          "refresh_share": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The share of picks swapped on a refresh night; null keeps two thirds.",
+            "title": "Refresh Share"
+          },
+          "repeat_cooldown_days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Don't pick a title again within this many days; null is off.",
+            "title": "Repeat Cooldown Days"
           },
           "req_auto_min_demand": {
             "anyOf": [
@@ -1327,6 +1377,20 @@
             "title": "Sort Title Prefix",
             "type": "string"
           },
+          "theme_days": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many days a theme lasts in Explore; null is 7.",
+            "title": "Theme Days"
+          },
           "theme_id": {
             "anyOf": [
               {
@@ -1338,6 +1402,16 @@
             ],
             "description": "The theme this AI row follows (see POST /api/themes). Null for an ordinary row.",
             "title": "Theme Id"
+          },
+          "theme_mode": {
+            "default": "fixed",
+            "description": "fixed keeps one theme; explore picks a new one for each person on a schedule.",
+            "enum": [
+              "fixed",
+              "explore"
+            ],
+            "title": "Theme Mode",
+            "type": "string"
           },
           "unstarted_only": {
             "default": false,
@@ -1397,6 +1471,21 @@
             "title": "Audience User Ids",
             "type": "array"
           },
+          "avoid_rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slugs of rows whose titles this row keeps out; null is none.",
+            "title": "Avoid Rows"
+          },
           "build": {
             "description": "Who the row is built for: one per person, or one shared row.",
             "enum": [
@@ -1448,6 +1537,11 @@
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
+          },
+          "explore_brief": {
+            "description": "What Explore is asked to look for; blank lets the AI choose.",
+            "title": "Explore Brief",
+            "type": "string"
           },
           "fallback_name": {
             "title": "Fallback Name",
@@ -1676,6 +1770,30 @@
               }
             ],
             "title": "Refresh Days"
+          },
+          "refresh_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Share of picks swapped on a refresh night; null keeps two thirds.",
+            "title": "Refresh Share"
+          },
+          "repeat_cooldown_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "No repeats within this many days; null is off.",
+            "title": "Repeat Cooldown Days"
           },
           "req_auto_min_demand": {
             "anyOf": [
@@ -1987,6 +2105,18 @@
             "title": "Sort Title Prefix",
             "type": "string"
           },
+          "theme_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Days a theme lasts in Explore; null is 7.",
+            "title": "Theme Days"
+          },
           "theme_id": {
             "anyOf": [
               {
@@ -1998,6 +2128,15 @@
             ],
             "description": "The theme an AI row follows; null for an ordinary row.",
             "title": "Theme Id"
+          },
+          "theme_mode": {
+            "description": "Whether an AI row keeps one theme or explores.",
+            "enum": [
+              "fixed",
+              "explore"
+            ],
+            "title": "Theme Mode",
+            "type": "string"
           },
           "unstarted_only": {
             "title": "Unstarted Only",
@@ -2087,7 +2226,13 @@
           "ai_instructions",
           "theme_id",
           "ai_paused",
-          "ai_tokens"
+          "ai_tokens",
+          "theme_mode",
+          "explore_brief",
+          "theme_days",
+          "refresh_share",
+          "repeat_cooldown_days",
+          "avoid_rows"
         ],
         "title": "CollectionOut",
         "type": "object"
@@ -4951,6 +5096,20 @@
         "title": "RecentWatchOut",
         "type": "object"
       },
+      "RegenerateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "RegenerateRequest",
+        "type": "object"
+      },
       "RejectedOut": {
         "additionalProperties": true,
         "description": "How many rows the action actually touched \u2014 not how many ids were sent. Each of the four\ninbox actions skips the statuses it does not own, so the count is the only honest receipt.\n\n``extra=\"allow\"`` is on every response model here (and every nested one): a strict model would\nsilently DROP any key the handler returns but the model has not declared, so a field missed\nhere would vanish from the payload rather than fail loudly.",
@@ -5372,6 +5531,83 @@
           "path"
         ],
         "title": "RootFolderOut",
+        "type": "object"
+      },
+      "RotationTargetOut": {
+        "additionalProperties": true,
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeRefOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history": {
+            "description": "Their earlier themes on this row, newest first.",
+            "items": {
+              "$ref": "#/components/schemas/ThemeRefOut"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeRefOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The theme queued to start when the current one ends."
+          },
+          "next_due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the current theme ends and the next one starts.",
+            "title": "Next Due At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the current theme started.",
+            "title": "Started At"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "current",
+          "next",
+          "started_at",
+          "next_due_at",
+          "history"
+        ],
+        "title": "RotationTargetOut",
         "type": "object"
       },
       "RowDeletePreviewOut": {
@@ -8510,6 +8746,95 @@
         "title": "ThemePickIO",
         "type": "object"
       },
+      "ThemeRefOut": {
+        "additionalProperties": true,
+        "description": "A theme as one person's rotation holds it: which one, when it started, and when it hands over.",
+        "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "emoji": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emoji"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "theme_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The stored theme; null once it has been deleted.",
+            "title": "Theme Id"
+          }
+        },
+        "required": [
+          "theme_id",
+          "name",
+          "emoji",
+          "started_at",
+          "due_at"
+        ],
+        "title": "ThemeRefOut",
+        "type": "object"
+      },
+      "ThemeRotationOut": {
+        "additionalProperties": true,
+        "properties": {
+          "days": {
+            "description": "How many days a theme lasts.",
+            "title": "Days",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "fixed",
+              "explore"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/RotationTargetOut"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode",
+          "days",
+          "targets"
+        ],
+        "title": "ThemeRotationOut",
+        "type": "object"
+      },
       "ThemeSaveIn": {
         "description": "A save: the theme, what the AI call that wrote it cost, and the row it was written for.",
         "properties": {
@@ -9107,6 +9432,25 @@
           "reason"
         ],
         "title": "UninstallUnreachableOut",
+        "type": "object"
+      },
+      "UpNextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "theme_id": {
+            "title": "Theme Id",
+            "type": "integer"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "theme_id"
+        ],
+        "title": "UpNextRequest",
         "type": "object"
       },
       "UsedByOut": {
@@ -11142,6 +11486,155 @@
           }
         },
         "summary": "Rename Collection Stream",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/theme-rotation": {
+      "get": {
+        "description": "Where each person's Explore rotation stands: their current theme, the one queued next, and what came before.",
+        "operationId": "get_theme_rotation_api_collections__collection_id__theme_rotation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeRotationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Theme Rotation",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/up-next": {
+      "put": {
+        "description": "Point a person's \"Up next\" at a saved theme, replacing any theme already queued. Changes no Plex state.",
+        "operationId": "set_up_next_api_collections__collection_id__up_next_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpNextRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeRefOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Up Next",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/up-next/regenerate": {
+      "post": {
+        "description": "Write a new \"Up next\" theme for one person now, with one AI call, replacing any theme queued.\n\n409 while the row's AI is paused, 422 without an AI provider or when the row isn't set to Explore.",
+        "operationId": "regenerate_up_next_api_collections__collection_id__up_next_regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeRefOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Up Next",
         "tags": [
           "collections"
         ]

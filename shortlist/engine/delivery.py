@@ -770,7 +770,8 @@ def titles_other_rows_build(
         # whichever season it was last built for. Claiming more only ever removes less.
         # A themed row's name follows its theme, which is known without picks: fill it, or its title
         # renders empty and the row claims nothing.
-        raw = fill_theme(raw_row_template(other, profile, config), other.theme)
+        # ...from THIS person's theme: an explore row wears a different one for each person.
+        raw = fill_theme(raw_row_template(other, profile, config), other.for_person(profile.slug).theme)
         templates = season_renderings(raw, config.season_catalogue()) if uses_season(raw) else [raw]
         for section in target_sections(sections, other):
             for template in templates:

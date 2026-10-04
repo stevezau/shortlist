@@ -87,6 +87,47 @@ def rotate_themes(
     return outcomes
 
 
+@dataclass(frozen=True)
+class AuthoringTools:
+    """What authoring a theme needs. ``unavailable`` says why it cannot happen, with the HTTP status a route uses."""
+
+    curator: object | None = None
+    tmdb: object | None = None
+    plex: object | None = None
+    unavailable: str = ""
+    status: int = 503
+
+
+def authoring_tools(state) -> AuthoringTools:
+    """The AI provider, TMDB client and Plex reader the way the themes API builds them. Connects to Plex."""
+    from shortlist.engine.curator import make_curator
+    from shortlist.server.services.context_builder import curator_kwargs
+    from shortlist.server.settings_store import SettingsStore
+
+    with state.sessions() as session:
+        store = SettingsStore(session, state.secrets)
+        provider = str(store.get("curator.provider") or "").strip().lower()
+        if provider in ("", "none", "null"):
+            return AuthoringTools(
+                unavailable="Writing a theme needs an AI provider. Add one in Settings, then try again.", status=422
+            )
+        try:
+            curator = make_curator(provider, **curator_kwargs(store.get))
+        except Exception as e:
+            # Class name only: an SDK's message can carry a fragment of the key.
+            logger.warning("theme authoring: could not set up the AI provider ({})", type(e).__name__)
+            return AuthoringTools(
+                unavailable="The AI provider isn't set up properly. Check it in Settings.", status=422
+            )
+    tmdb = state.run_service.build_tmdb_only()
+    if tmdb is None:
+        return AuthoringTools(unavailable="Add a TMDB API key in Settings first.")
+    plex = state.run_service.build_plex_reader()
+    if plex is None:
+        return AuthoringTools(unavailable="Plex isn't connected yet.")
+    return AuthoringTools(curator=curator, tmdb=tmdb, plex=plex)
+
+
 def audience_users(session: Session, collection: Collection) -> list[User]:
     """The people a per-person row builds for: enabled, still on the server, and in the subset if it has one."""
     query = select(User).where(User.enabled.is_(True), User.departed_at.is_(None), User.removed_at.is_(None))
@@ -208,7 +249,7 @@ def _rotate_one(
         if has_next or not _due_to_author_next(current, days, now):
             return "kept"
         return _author(session, collection, user_id, "next", now, current, **deps)
-    if has_current and has_next:
+    if has_next:
         promote_next(session, collection_id, user_id, now)
         add_audit(
             session,
@@ -244,9 +285,21 @@ def _author(session, collection, user_id, state: str, now, current, **deps) -> A
         _retire_current_and_stale_next(session, collection.id, user_id)
         session.add(_history_row(collection.id, user_id, theme, "current", now, now + timedelta(days=days)))
         return "authored_current"
-    _drop_stale_next(session, collection.id, user_id)
-    session.add(_history_row(collection.id, user_id, theme, "next", now, current.started_at + timedelta(days=days)))
+    queue_next(session, collection, user_id, theme, now)
     return "authored_next"
+
+
+def queue_next(session: Session, collection: Collection, user_id: int, theme: Theme, now: datetime) -> ThemeHistory:
+    """Make ``theme`` the person's up-next theme, replacing any they had. It starts when the current one ends."""
+    moment = _naive_utc(now)
+    session.query(ThemeHistory).filter(
+        ThemeHistory.collection_id == collection.id, ThemeHistory.user_id == user_id, ThemeHistory.state == "next"
+    ).delete()
+    current = _history(session, collection.id, user_id)["current"]
+    starts = current.started_at + timedelta(days=_theme_days(collection)) if current is not None else moment
+    row = _history_row(collection.id, user_id, theme, "next", moment, starts)
+    session.add(row)
+    return row
 
 
 def _due_to_promote(current: ThemeHistory, days: int, now: datetime) -> bool:
@@ -298,7 +351,7 @@ def _retire_current_and_stale_next(session: Session, collection_id: int, user_id
 def _drop_stale_next(session: Session, collection_id: int, user_id: int) -> None:
     """A `next` whose theme was deleted points at nothing; it is replaced, not kept."""
     stale = _history(session, collection_id, user_id)["next"]
-    if stale is not None:
+    if stale is not None and stale.theme_id is None:
         session.delete(stale)
 
 

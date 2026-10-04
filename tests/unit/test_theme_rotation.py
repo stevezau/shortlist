@@ -362,6 +362,37 @@ class TestRotate:
         assert [o.user_id for o in outcomes] == [b]
 
 
+class TestQueuedNext:
+    def test_a_queued_next_with_no_current_becomes_current_without_the_ai(self, sessions):
+        row_id, (uid,) = seed(sessions)
+        add_history(sessions, row_id, uid, "next", started=NAIVE_NOW - timedelta(days=1), name="Queued")
+        author = FakeAuthor()
+
+        outcomes = rotate(sessions, author)
+
+        assert [o.action for o in outcomes] == ["promoted"]
+        assert author.calls == []
+        assert history_of(sessions, row_id, uid) == [("current", "Queued")]
+
+    def test_queueing_replaces_any_existing_next_and_starts_when_the_current_ends(self, sessions):
+        row_id, (uid,) = seed(sessions, theme_days=7)
+        started = NAIVE_NOW - timedelta(days=2)
+        add_history(sessions, row_id, uid, "current", started=started, name="Cosy")
+        add_history(sessions, row_id, uid, "next", started=started, name="Old queue")
+
+        with sessions() as s:
+            theme = Theme(slug="fresh", name="Fresh", media=["movie"], genres=["Drama"])
+            s.add(theme)
+            s.flush()
+            theme_rotation.queue_next(s, s.get(Collection, row_id), uid, theme, NOW)
+            s.commit()
+
+        assert history_of(sessions, row_id, uid) == [("current", "Cosy"), ("next", "Fresh")]
+        with sessions() as s:
+            queued = s.scalars(select(ThemeHistory).where(ThemeHistory.state == "next")).one()
+            assert queued.due_at == started + timedelta(days=7)
+
+
 class TestUnavailable:
     def test_no_provider_fails_each_target_that_needed_a_theme_and_changes_nothing(self, sessions):
         row_id, (needy, kept) = seed(sessions, people=2, theme_days=7)

@@ -852,3 +852,21 @@ class TestContextBuilderWiring:
         ctx = builder.build(dry_run=True) if site == "build" else builder.build_plex_only(dry_run=True)
 
         assert isinstance(ctx.pick_history, DbPickHistory)
+
+
+class TestSiblingTitleClaims:
+    """An explore row wears a different title for each person, so the title it claims is that person's (#121, #138)."""
+
+    def test_a_sibling_claims_the_title_of_the_persons_own_theme(self):
+        from shortlist.engine.delivery import titles_other_rows_build
+
+        section = SimpleNamespace(key="1", title="Movies", type="movie")
+        mine = theme_spec(slug="mine", name="Cosy nights", emoji="")
+        yours = theme_spec(slug="yours", name="Scary nights", emoji="")
+        explore = theme_row(mine, name_template="{theme}", person_themes=(("ann", yours),))
+
+        ann = titles_other_rows_build([section], make_profile("ann", slug="ann"), EngineConfig(), [explore], slug="x")
+        bob = titles_other_rows_build([section], make_profile("bob", slug="bob"), EngineConfig(), [explore], slug="x")
+
+        assert ann == {("1", "Scary nights")}
+        assert bob == {("1", "Cosy nights")}

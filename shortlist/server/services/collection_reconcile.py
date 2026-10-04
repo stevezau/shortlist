@@ -140,6 +140,11 @@ def _other_rows(session, secrets, slug: str) -> _OtherRows:
             media=other.media,
             library_keys=[str(k) for k in (other.library_keys or [])],
             fallback_name=other.fallback_name or "",
+            # An AI row's title is filled from its theme, and on an explore row from each person's OWN current
+            # theme (#138): claimed from the row's base theme alone, the title a person's collection really
+            # wears is unclaimed and a removal elsewhere can take it (#121).
+            theme=ContextBuilder._theme_spec(session, other),
+            person_themes=ContextBuilder._person_themes(session, other, audience_by_collection),
         )
         for other in session.query(Collection).filter_by(enabled=True, build="per_person")
         if other.slug != slug

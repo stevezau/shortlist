@@ -1551,6 +1551,71 @@ class TestASeasonalSiblingClaimsEverySeasonsTitle:
         plex.delete_owned_collection.assert_not_called()
 
 
+class TestAnExploreSiblingClaimsEachPersonsOwnThemeTitle:
+    """An explore row (#138) titles each person's collection from THAT person's current theme, not the row's own.
+    Claimed from the row's base theme, the title a person's collection actually wears is unclaimed, and removing
+    a plain row that shares it takes the explore row's collection (the #121 class)."""
+
+    MARK = row_marker(100)
+
+    def _rows(self, sessions):
+        from datetime import datetime
+
+        from shortlist.server.db.models import Theme, ThemeHistory
+
+        user_id = _add_user(sessions, slug="sarah", account_id=100)
+        with sessions() as session:
+            starter = Theme(slug="starter", name="Starter", emoji="", media=["movie"], genres=["Drama"])
+            scary = Theme(slug="scary", name="Scary nights", emoji="", media=["movie"], genres=["Horror"])
+            session.add_all([starter, scary])
+            session.flush()
+            session.add(Collection(slug="plain", name="Scary nights", media="movie"))
+            ai = Collection(
+                slug="ai", name="{theme}", media="movie", theme_id=starter.id, theme_mode="explore", enabled=True
+            )
+            session.add(ai)
+            session.flush()
+            session.add(
+                ThemeHistory(
+                    collection_id=ai.id,
+                    user_id=user_id,
+                    theme_id=scary.id,
+                    theme_name="Scary nights",
+                    state="current",
+                    started_at=datetime(2026, 10, 1),
+                )
+            )
+            session.commit()
+
+    def _plex(self, worn: MagicMock) -> MagicMock:
+        movies = _section("Movies", key="1")
+        movies.type = "movie"
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda sec, label: [worn] if label == "shortlist_sarah" else []
+        return plex
+
+    def test_the_claim_is_the_title_the_persons_own_theme_gives(self, sessions):
+        self._rows(sessions)
+        with sessions() as session:
+            other_rows = rec._other_rows(session, None, "plain")
+            sarah = next(u for u in rec._users_data(session) if u["slug"] == "sarah")
+        ctx = SimpleNamespace(plex=self._plex(_collection("anything")))
+
+        claimed = rec._claimed_titles(ctx, sarah, other_rows)
+
+        assert ("1", "Scary nights") in claimed
+        assert ("1", "Starter") not in claimed, "the row's own theme is not what she wears"
+
+    def test_removing_a_plain_row_leaves_the_explore_rows_collection_alone(self, sessions):
+        self._rows(sessions)
+        plex = self._plex(_collection("Scary nights" + self.MARK))
+
+        rec._reconcile_row_removal(_state(sessions, plex), slug="plain", build="per_person", dry_run=False, removed=[])
+
+        plex.delete_owned_collection.assert_not_called()
+
+
 class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
     """Issue #121: a Movies-only row and a TV-only row of one person may share a title. Every
     on-demand reconcile below used to match that title in EVERY library, so deleting, switching off,

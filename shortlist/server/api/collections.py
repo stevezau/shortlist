@@ -6,8 +6,8 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import replace
-from datetime import UTC, datetime
-from typing import Annotated
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -65,6 +65,7 @@ from shortlist.server.db.models import (
     RunSharedRow,
     SharedRowWatch,
     Theme,
+    ThemeHistory,
     User,
 )
 from shortlist.server.scheduler import crontab_trigger, rebuild_schedule
@@ -346,6 +347,32 @@ class CollectionIn(StrictRequestModel):
         default=None, description="The theme this AI row follows (see POST /api/themes). Null for an ordinary row."
     )
 
+    # Explore (#138): an AI row that gives each person a new theme every ``theme_days`` days. These and the
+    # three controls below exist only on an AI row; every default is today's behaviour.
+    theme_mode: Literal["fixed", "explore"] = Field(
+        default="fixed", description="fixed keeps one theme; explore picks a new one for each person on a schedule."
+    )
+    explore_brief: str = Field(
+        default="", max_length=500, description="What kind of themes Explore should look for; blank lets the AI choose."
+    )
+    theme_days: int | None = Field(
+        default=None, ge=1, le=90, description="How many days a theme lasts in Explore; null is 7."
+    )
+    refresh_share: float | None = Field(
+        default=None, gt=0, le=1, description="The share of picks swapped on a refresh night; null keeps two thirds."
+    )
+    repeat_cooldown_days: int | None = Field(
+        default=None, ge=1, le=365, description="Don't pick a title again within this many days; null is off."
+    )
+    avoid_rows: list[str] | None = Field(
+        default=None, description="Slugs of other per-person rows whose titles this row keeps out; null is none."
+    )
+
+    @field_validator("avoid_rows")
+    @classmethod
+    def _check_avoid_rows(cls, slugs: list[str] | None) -> list[str] | None:
+        return list(dict.fromkeys(slugs)) if slugs else None
+
     @field_validator("show_days")
     @classmethod
     def _check_show_days(cls, days: list[int]) -> list[int]:
@@ -547,6 +574,12 @@ class CollectionOut(PassthroughModel):
     theme_id: int | None = Field(description="The theme an AI row follows; null for an ordinary row.")
     ai_paused: bool = Field(description="Whether the row's AI is paused: it keeps its theme but spends no tokens.")
     ai_tokens: int = Field(description="Tokens the AI has spent writing this row's themes.")
+    theme_mode: Literal["fixed", "explore"] = Field(description="Whether an AI row keeps one theme or explores.")
+    explore_brief: str = Field(description="What Explore is asked to look for; blank lets the AI choose.")
+    theme_days: int | None = Field(description="Days a theme lasts in Explore; null is 7.")
+    refresh_share: float | None = Field(description="Share of picks swapped on a refresh night; null keeps two thirds.")
+    repeat_cooldown_days: int | None = Field(description="No repeats within this many days; null is off.")
+    avoid_rows: list[str] | None = Field(description="Slugs of rows whose titles this row keeps out; null is none.")
     # The three keys below exist ONLY on a dry-run PATCH, where the row comes back unchanged and the
     # preview rides alongside it. Optional-with-None is a deliberate exception to `_closed_set_out`'s
     # "declare responses required so a dropped field fails loudly": these are genuinely absent on a
@@ -1133,6 +1166,12 @@ def _serialize(
         "theme_id": collection.theme_id,
         "ai_paused": bool(collection.ai_paused),
         "ai_tokens": collection.ai_tokens or 0,
+        "theme_mode": collection.theme_mode or "fixed",
+        "explore_brief": collection.explore_brief or "",
+        "theme_days": collection.theme_days,
+        "refresh_share": collection.refresh_share,
+        "repeat_cooldown_days": collection.repeat_cooldown_days,
+        "avoid_rows": list(collection.avoid_rows) if collection.avoid_rows else None,
     }
 
 
@@ -1173,6 +1212,45 @@ def _validate_theme(
     if requests_row:
         raise HTTPException(status_code=422, detail="An AI row can't also be a requests row")
     return theme
+
+
+_EXPLORE_COLUMNS = ("theme_mode", "explore_brief", "theme_days", "refresh_share", "repeat_cooldown_days", "avoid_rows")
+_EXPLORE_DEFAULTS = {
+    "theme_mode": "fixed",
+    "explore_brief": "",
+    "theme_days": None,
+    "refresh_share": None,
+    "repeat_cooldown_days": None,
+    "avoid_rows": None,
+}
+
+
+def _validate_explore(
+    session: Session, values: dict, *, theme_id: int | None, own_slug: str, only: set[str] | None = None
+) -> None:
+    """422 for Explore settings or over-time controls a row cannot use (#138).
+
+    ``values`` is the merged row. They exist only on an AI row, so each needs a theme; ``only`` limits the
+    "needs a theme" check to the fields a PATCH actually sent. ``avoid_rows`` must name other, existing
+    per-person rows.
+    """
+    if theme_id is None:
+        stray = [c for c in (only if only is not None else _EXPLORE_COLUMNS) if values[c] != _EXPLORE_DEFAULTS[c]]
+        if stray:
+            raise HTTPException(
+                status_code=422,
+                detail="Explore and the over-time controls only apply to an AI row. Give the row a theme.",
+            )
+    for slug in values["avoid_rows"] or []:
+        if slug == own_slug:
+            raise HTTPException(status_code=422, detail=f"A row can't keep out its own titles (“{slug}”).")
+        other = session.query(Collection).filter(Collection.slug == slug).first()
+        if other is None:
+            raise HTTPException(status_code=422, detail=f"There is no row “{slug}” to keep out.")
+        if other.build != "per_person":
+            raise HTTPException(
+                status_code=422, detail=f"“{slug}” is a shared row. Only per-person rows can be kept out."
+            )
 
 
 def _unattributed_theme_tokens(session: Session, theme: Theme | None, *, exclude_id: int | None) -> int:
@@ -1401,6 +1479,12 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             rewatch=body.rewatch,
             requests_row=body.requests_row,
         )
+        _validate_explore(
+            session,
+            {c: getattr(body, c) for c in _EXPLORE_COLUMNS},
+            theme_id=None if theme is None else theme.id,
+            own_slug="",
+        )
         # The template this row will actually be titled from, not the bare name — a POST may set both. An AI
         # row's `{theme}` is filled from its theme by the check itself.
         template = body.name_template or body.name
@@ -1424,6 +1508,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             # An AI row starts disabled whatever was asked: nothing is built, or spent, until the owner has seen it.
             enabled=body.enabled and theme is None,
             theme_id=None if theme is None else theme.id,
+            **{column: getattr(body, column) for column in _EXPLORE_COLUMNS},
             schedule=body.schedule.strip(),
             size=body.size,
             media=body.media,
@@ -1550,6 +1635,7 @@ _PATCHABLE_COLUMNS = (
     "pin_top",
     "library_keys",
     "theme_id",
+    *_EXPLORE_COLUMNS,
 )
 
 
@@ -1673,6 +1759,10 @@ def _apply_patch(
             if column == "name_template" and is_default:
                 continue
             setattr(collection, column, getattr(body, column))
+    if "theme_id" in sent and body.theme_id is None:
+        # Without a theme the row is no longer an AI row, and these exist only on one.
+        for column, default in _EXPLORE_DEFAULTS.items():
+            setattr(collection, column, default)
     if "schedule" in sent:
         collection.schedule = body.schedule.strip()  # a whitespace-only cron means "no schedule"
     if "poster" in sent:
@@ -1764,6 +1854,16 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         # The theme the row will follow once this lands: it fills `{theme}` in every title check below.
         stored_theme = session.get(Theme, merged_theme_id) if merged_theme_id is not None else None
         merged_spec = None if stored_theme is None else spec_from_row(stored_theme)
+        if sent & (set(_EXPLORE_COLUMNS) | {"theme_id"}):
+            # Judged on the merged row. Clearing the theme resets these (`_apply_patch`), so only what the
+            # request itself sent counts against a row that has none.
+            _validate_explore(
+                session,
+                {c: getattr(body, c) if c in sent else getattr(collection, c) for c in _EXPLORE_COLUMNS},
+                theme_id=merged_theme_id,
+                own_slug=collection.slug,
+                only=sent & set(_EXPLORE_COLUMNS),
+            )
         if is_default:
             # The default row is everyone's everyday row and its title is the global template, which every
             # person's row renders: it follows no season, so it can neither take one nor wear its name.
@@ -2557,6 +2657,189 @@ async def pause_ai(collection_id: int, body: AiPauseRequest, request: Request) -
             )
         session.commit()
         return _serialize(session, collection, catalogue=load_catalogue(session))
+
+
+class ThemeRefOut(PassthroughModel):
+    """A theme as one person's rotation holds it: which one, when it started, and when it hands over."""
+
+    theme_id: int | None = Field(description="The stored theme; null once it has been deleted.")
+    name: str
+    emoji: str | None
+    started_at: str
+    due_at: str | None
+
+
+class RotationTargetOut(PassthroughModel):
+    user_id: int
+    name: str
+    current: ThemeRefOut | None
+    next: ThemeRefOut | None = Field(description="The theme queued to start when the current one ends.")
+    started_at: str | None = Field(description="When the current theme started.")
+    next_due_at: str | None = Field(description="When the current theme ends and the next one starts.")
+    history: list[ThemeRefOut] = Field(description="Their earlier themes on this row, newest first.")
+
+
+class ThemeRotationOut(PassthroughModel):
+    mode: Literal["fixed", "explore"]
+    days: int = Field(description="How many days a theme lasts.")
+    targets: list[RotationTargetOut]
+
+
+class UpNextRequest(StrictRequestModel):
+    user_id: int
+    theme_id: int
+
+
+class RegenerateRequest(StrictRequestModel):
+    user_id: int
+
+
+_HISTORY_SHOWN = 6
+
+
+def _ai_row(session, collection_id: int) -> Collection:
+    """The row, or 404 when it is not an AI row: only those have a theme to rotate."""
+    collection = _require_collection(session, collection_id)
+    if collection.theme_id is None:
+        raise HTTPException(status_code=404, detail="That row isn't an AI row.")
+    return collection
+
+
+def _theme_ref(row, themes: dict[int, Theme]) -> dict:
+    theme = themes.get(row.theme_id) if row.theme_id is not None else None
+    return {
+        "theme_id": row.theme_id,
+        "name": theme.name if theme is not None else row.theme_name,
+        "emoji": theme.emoji if theme is not None else None,
+        "started_at": row.started_at.isoformat(),
+        "due_at": None if row.due_at is None else row.due_at.isoformat(),
+    }
+
+
+def _person_name(user: User) -> str:
+    return user.nickname or user.friendly_name or user.username
+
+
+def _audience_person(session, collection: Collection, user_id: int) -> User:
+    from shortlist.server.services.theme_rotation import audience_users
+
+    person = next((u for u in audience_users(session, collection) if u.id == user_id), None)
+    if person is None:
+        raise HTTPException(status_code=404, detail="That person isn't in this row's audience.")
+    return person
+
+
+@router.get("/{collection_id}/theme-rotation", response_model=ThemeRotationOut)
+async def get_theme_rotation(collection_id: int, request: Request) -> dict:
+    """Where each person's Explore rotation stands: their current theme, the one queued next, and what came before."""
+    from shortlist.server.services.theme_rotation import DEFAULT_THEME_DAYS, audience_users
+
+    with request.app.state.sessions() as session:
+        collection = _ai_row(session, collection_id)
+        days = collection.theme_days or DEFAULT_THEME_DAYS
+        targets = []
+        for person in audience_users(session, collection):
+            rows = (
+                session.query(ThemeHistory)
+                .filter(ThemeHistory.collection_id == collection.id, ThemeHistory.user_id == person.id)
+                .order_by(ThemeHistory.started_at.desc(), ThemeHistory.id.desc())
+                .all()
+            )
+            themes = {
+                t.id: t for t in session.query(Theme).filter(Theme.id.in_([r.theme_id for r in rows if r.theme_id]))
+            }
+            current = next((r for r in rows if r.state == "current"), None)
+            upcoming = next((r for r in rows if r.state == "next"), None)
+            targets.append(
+                {
+                    "user_id": person.id,
+                    "name": _person_name(person),
+                    "current": None if current is None else _theme_ref(current, themes),
+                    "next": None if upcoming is None else _theme_ref(upcoming, themes),
+                    "started_at": None if current is None else current.started_at.isoformat(),
+                    "next_due_at": None if current is None else (current.started_at + timedelta(days=days)).isoformat(),
+                    "history": [_theme_ref(r, themes) for r in rows if r.state == "past"][:_HISTORY_SHOWN],
+                }
+            )
+        return {"mode": collection.theme_mode or "fixed", "days": days, "targets": targets}
+
+
+@router.put("/{collection_id}/up-next", response_model=ThemeRefOut)
+async def set_up_next(collection_id: int, body: UpNextRequest, request: Request) -> dict:
+    """Point a person's "Up next" at a saved theme, replacing any theme already queued. Changes no Plex state."""
+    from shortlist.server.services.theme_rotation import queue_next
+
+    with request.app.state.sessions() as session:
+        collection = _ai_row(session, collection_id)
+        if collection.theme_mode != "explore":
+            raise HTTPException(status_code=422, detail="Turn on Explore for this row first.")
+        person = _audience_person(session, collection, body.user_id)
+        theme = session.get(Theme, body.theme_id)
+        if theme is None:
+            raise HTTPException(status_code=404, detail="theme not found")
+        queued = queue_next(session, collection, person.id, theme, datetime.now(UTC))
+        add_audit(
+            session,
+            "collection.up_next",
+            "info",
+            slug=collection.slug,
+            user=person.slug,
+            theme=theme.slug,
+        )
+        session.commit()
+        return _theme_ref(queued, {theme.id: theme})
+
+
+@router.post("/{collection_id}/up-next/regenerate", response_model=ThemeRefOut)
+async def regenerate_up_next(collection_id: int, body: RegenerateRequest, request: Request) -> dict:
+    """Write a new "Up next" theme for one person now, with one AI call, replacing any theme queued.
+
+    409 while the row's AI is paused, 422 without an AI provider or when the row isn't set to Explore.
+    """
+    from shortlist.server.api.seasons import _off_loop
+    from shortlist.server.api.themes import _PAUSED
+    from shortlist.server.services import theme_rotation, theme_store
+    from shortlist.server.services.theme_author import ThemeAuthorError
+
+    state = request.app.state
+    with state.sessions() as session:
+        collection = _ai_row(session, collection_id)
+        if collection.theme_mode != "explore":
+            raise HTTPException(status_code=422, detail="Turn on Explore for this row first.")
+        if collection.ai_paused:
+            raise HTTPException(status_code=409, detail=_PAUSED)
+        _audience_person(session, collection, body.user_id)
+
+    def write() -> dict:
+        tools = theme_rotation.authoring_tools(state)
+        if tools.unavailable:
+            raise HTTPException(status_code=tools.status, detail=tools.unavailable)
+        with state.sessions() as session:
+            collection = session.get(Collection, collection_id)
+            try:
+                theme = theme_rotation.author_for_person(
+                    session,
+                    sessions=state.sessions,
+                    secrets=state.secrets,
+                    collection=collection,
+                    user_id=body.user_id,
+                    author=theme_rotation.author_theme,
+                    curator=tools.curator,
+                    tmdb=tools.tmdb,
+                    plex=tools.plex,
+                    profile_for=state.run_service.profile_with_history,
+                )
+            except ThemeAuthorError as e:
+                raise HTTPException(status_code=422, detail=str(e)) from None
+            except theme_store.RowPaused:
+                raise HTTPException(status_code=409, detail=_PAUSED) from None
+            except theme_store.TitleClash as e:
+                raise HTTPException(status_code=422, detail=str(e)) from None
+            queued = theme_rotation.queue_next(session, collection, body.user_id, theme, datetime.now(UTC))
+            session.commit()
+            return _theme_ref(queued, {theme.id: theme})
+
+    return await _off_loop(write, "theme authoring")
 
 
 @router.post("/{collection_id}/poster/upload", response_model=PosterUploadOut)
