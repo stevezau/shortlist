@@ -1350,6 +1350,8 @@ class ContextBuilder:
             .join(ThemeHistory, ThemeHistory.user_id == User.id)
             .join(Theme, Theme.id == ThemeHistory.theme_id)
             .filter(ThemeHistory.collection_id == collection.id, ThemeHistory.state == "current")
+            # Someone the run no longer builds for must not cost it a TMDB read of their theme.
+            .filter(User.enabled.is_(True), User.departed_at.is_(None), User.removed_at.is_(None))
             .order_by(User.id, ThemeHistory.started_at.desc(), ThemeHistory.id.desc())
         )
         if collection.audience == "subset":

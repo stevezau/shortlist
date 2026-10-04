@@ -451,6 +451,55 @@ def _load_season_titles(
 _MAX_PERSON_THEMES = 100  # distinct person themes read from TMDB in one run
 
 
+def _someone_uses_row_theme(spec: RowSpec, users: list[UserProfile]) -> bool:
+    """Whether anyone in this run is built from the row's own theme: an explore row gives each person their own
+    and falls back to its theme only for someone without one, so a row whose whole run has one is not read."""
+    if not spec.person_themes:
+        return True
+    own = {slug for slug, _ in spec.person_themes}
+    return any(u.slug not in own and (spec.audience is None or u.plex_account_id in spec.audience) for u in users)
+
+
+def _scope_person_themes(ctx: EngineContext, users: list[UserProfile], wanted: dict[str, ThemeSpec]) -> None:
+    """Trim every row's per-person themes to the people in THIS run, and to the per-run cap.
+
+    A scoped run reads only its own people's themes. Over the cap, a person's theme is dropped from the row for
+    this run, so they build from the row's own theme (read here too): a row that cannot read a theme must not
+    freeze that person, and ordering by roster would freeze the same people every night.
+    """
+    in_run = {u.slug for u in users}
+    read: set[str] = set()
+    for index, spec in enumerate(ctx.config.rows):
+        if not spec.person_themes or not ctx.config.should_build(spec):
+            continue
+        kept: list[tuple[str, ThemeSpec]] = []
+        for user_slug, person_theme in spec.person_themes:
+            if user_slug not in in_run:
+                continue
+            if person_theme.slug not in wanted and person_theme.slug not in read:
+                if len(read) >= _MAX_PERSON_THEMES:
+                    logger.warning(
+                        "person theme {} not read: over the per-run cap of {}; they build from the row's theme",
+                        person_theme.name,
+                        _MAX_PERSON_THEMES,
+                    )
+                    if spec.theme:
+                        wanted[spec.theme.slug] = spec.theme
+                    continue
+                read.add(person_theme.slug)
+            kept.append((user_slug, person_theme))
+        ctx.config.rows[index] = replace(spec, person_themes=tuple(kept))
+
+
+def _person_themes_to_read(ctx: EngineContext) -> dict[str, ThemeSpec]:
+    return {
+        person_theme.slug: person_theme
+        for spec in ctx.config.rows
+        if ctx.config.should_build(spec)
+        for _, person_theme in spec.person_themes
+    }
+
+
 def _load_theme_titles(
     ctx: EngineContext, users: list[UserProfile], library_index: dict[MediaType, dict[int, int]]
 ) -> None:
@@ -462,25 +511,11 @@ def _load_theme_titles(
     if not users:
         return
     wanted: dict[str, ThemeSpec] = {}
-    person_only: dict[str, ThemeSpec] = {}
     for spec in ctx.config.rows:
-        if not ctx.config.should_build(spec):
-            continue
-        if spec.theme:
+        if ctx.config.should_build(spec) and spec.theme and _someone_uses_row_theme(spec, users):
             wanted[spec.theme.slug] = spec.theme
-        for _, person_theme in spec.person_themes:
-            person_only.setdefault(person_theme.slug, person_theme)
-    # Row-level themes always load; only the per-person ones count against the cap.
-    loaded_person_themes = 0
-    for slug, theme in person_only.items():
-        if slug in wanted:
-            continue
-        if loaded_person_themes >= _MAX_PERSON_THEMES:
-            ctx.theme_failures[slug] = "too many themes to read in one run"
-            logger.warning("person theme {} not read: over the per-run cap of {}", theme.name, _MAX_PERSON_THEMES)
-            continue
-        wanted[slug] = theme
-        loaded_person_themes += 1
+    _scope_person_themes(ctx, users, wanted)
+    wanted.update(_person_themes_to_read(ctx))
     for slug, theme in wanted.items():
         try:
             ctx.theme_titles[slug] = load_theme(ctx.tmdb, ctx.plex, theme, library_index)
@@ -1651,7 +1686,8 @@ def promote_user_rows(
     # spec, which is what every other phase builds from (_build_indexes, delivery). Reading the raw
     # list here meant an unmanaged-rows config had an EMPTY map, so every title lookup missed and every
     # collection fell to the no-spec fallback — placement silently ignored.
-    effective_rows = ctx.config.per_person_rows()
+    # As this person sees them: an explore row's title follows THEIR theme, as delivery rendered it.
+    effective_rows = [spec.for_person(user.slug) for spec in ctx.config.per_person_rows()]
     spec_by_slug = {spec.slug: spec for spec in effective_rows}
     # Keyed (section key, title), never title alone: two of one person's rows may share a title when they
     # build in different libraries (issue #121), and a title-only map handed one of them both collections.

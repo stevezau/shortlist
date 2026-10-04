@@ -67,6 +67,7 @@ from shortlist.server.db.models import (
     Theme,
     ThemeHistory,
     User,
+    iso_utc,
 )
 from shortlist.server.scheduler import crontab_trigger, rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
@@ -1171,8 +1172,22 @@ def _serialize(
         "theme_days": collection.theme_days,
         "refresh_share": collection.refresh_share,
         "repeat_cooldown_days": collection.repeat_cooldown_days,
-        "avoid_rows": list(collection.avoid_rows) if collection.avoid_rows else None,
+        "avoid_rows": _live_avoid_rows(session, collection),
     }
+
+
+def _live_avoid_rows(session: Session, collection: Collection) -> list[str] | None:
+    """The rows this row keeps out that still exist and are per-person. A row the owner deleted, or made
+    shared, since it was listed is dropped: it has no checkbox, and sending it back would be refused."""
+    if not collection.avoid_rows:
+        return None
+    live = {
+        slug
+        for (slug,) in session.query(Collection.slug).filter(
+            Collection.slug.in_(collection.avoid_rows), Collection.build == "per_person"
+        )
+    }
+    return [slug for slug in collection.avoid_rows if slug in live] or None
 
 
 def _reject_season_name_without_seasons(template: str, seasons: list[str], *, row_has_theme: bool = False) -> None:
@@ -1226,13 +1241,20 @@ _EXPLORE_DEFAULTS = {
 
 
 def _validate_explore(
-    session: Session, values: dict, *, theme_id: int | None, own_slug: str, only: set[str] | None = None
+    session: Session,
+    values: dict,
+    *,
+    theme_id: int | None,
+    own_slug: str,
+    only: set[str] | None = None,
+    already_avoided: tuple[str, ...] = (),
 ) -> None:
     """422 for Explore settings or over-time controls a row cannot use (#138).
 
     ``values`` is the merged row. They exist only on an AI row, so each needs a theme; ``only`` limits the
     "needs a theme" check to the fields a PATCH actually sent. ``avoid_rows`` must name other, existing
-    per-person rows.
+    per-person rows, but only a slug the request newly ADDS is checked: ``already_avoided`` are the row's stored
+    ones, which a row deleted since then must not make unsavable.
     """
     if theme_id is None:
         stray = [c for c in (only if only is not None else _EXPLORE_COLUMNS) if values[c] != _EXPLORE_DEFAULTS[c]]
@@ -1242,6 +1264,8 @@ def _validate_explore(
                 detail="Explore and the over-time controls only apply to an AI row. Give the row a theme.",
             )
     for slug in values["avoid_rows"] or []:
+        if slug in already_avoided:
+            continue
         if slug == own_slug:
             raise HTTPException(status_code=422, detail=f"A row can't keep out its own titles (“{slug}”).")
         other = session.query(Collection).filter(Collection.slug == slug).first()
@@ -1863,6 +1887,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 theme_id=merged_theme_id,
                 own_slug=collection.slug,
                 only=sent & set(_EXPLORE_COLUMNS),
+                already_avoided=tuple(collection.avoid_rows or ()),
             )
         if is_default:
             # The default row is everyone's everyday row and its title is the global template, which every
@@ -2711,8 +2736,8 @@ def _theme_ref(row, themes: dict[int, Theme]) -> dict:
         "theme_id": row.theme_id,
         "name": theme.name if theme is not None else row.theme_name,
         "emoji": theme.emoji if theme is not None else None,
-        "started_at": row.started_at.isoformat(),
-        "due_at": None if row.due_at is None else row.due_at.isoformat(),
+        "started_at": iso_utc(row.started_at),
+        "due_at": iso_utc(row.due_at),
     }
 
 
@@ -2756,8 +2781,8 @@ async def get_theme_rotation(collection_id: int, request: Request) -> dict:
                     "name": _person_name(person),
                     "current": None if current is None else _theme_ref(current, themes),
                     "next": None if upcoming is None else _theme_ref(upcoming, themes),
-                    "started_at": None if current is None else current.started_at.isoformat(),
-                    "next_due_at": None if current is None else (current.started_at + timedelta(days=days)).isoformat(),
+                    "started_at": None if current is None else iso_utc(current.started_at),
+                    "next_due_at": None if current is None else iso_utc(current.started_at + timedelta(days=days)),
                     "history": [_theme_ref(r, themes) for r in rows if r.state == "past"][:_HISTORY_SHOWN],
                 }
             )
@@ -2767,33 +2792,38 @@ async def get_theme_rotation(collection_id: int, request: Request) -> dict:
 @router.put("/{collection_id}/up-next", response_model=ThemeRefOut)
 async def set_up_next(collection_id: int, body: UpNextRequest, request: Request) -> dict:
     """Point a person's "Up next" at a saved theme, replacing any theme already queued. Changes no Plex state."""
-    from shortlist.server.services.theme_rotation import queue_next
+    from shortlist.server.api.seasons import _off_loop
+    from shortlist.server.services.theme_rotation import _target_lock, queue_next
     from shortlist.server.services.theme_store import TitleClash
 
-    with request.app.state.sessions() as session:
-        collection = _ai_row(session, collection_id)
-        if collection.theme_mode != "explore":
-            raise HTTPException(status_code=422, detail="Turn on Explore for this row first.")
-        person = _audience_person(session, collection, body.user_id)
-        theme = session.get(Theme, body.theme_id)
-        if theme is None:
-            raise HTTPException(status_code=404, detail="theme not found")
-        try:
-            queued = queue_next(
-                session, collection, person.id, theme, datetime.now(UTC), secrets=request.app.state.secrets
+    state = request.app.state
+
+    def write() -> dict:
+        # Under the person's rotation lock: a nightly pass may be mid-write for the same person.
+        with _target_lock(collection_id, body.user_id), state.sessions() as session:
+            collection = _ai_row(session, collection_id)
+            if collection.theme_mode != "explore":
+                raise HTTPException(status_code=422, detail="Turn on Explore for this row first.")
+            person = _audience_person(session, collection, body.user_id)
+            theme = session.get(Theme, body.theme_id)
+            if theme is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            try:
+                queued = queue_next(session, collection, person.id, theme, datetime.now(UTC), secrets=state.secrets)
+            except TitleClash as e:
+                raise HTTPException(status_code=422, detail=str(e)) from None
+            add_audit(
+                session,
+                "collection.up_next",
+                "info",
+                slug=collection.slug,
+                user=person.slug,
+                theme=theme.slug,
             )
-        except TitleClash as e:
-            raise HTTPException(status_code=422, detail=str(e)) from None
-        add_audit(
-            session,
-            "collection.up_next",
-            "info",
-            slug=collection.slug,
-            user=person.slug,
-            theme=theme.slug,
-        )
-        session.commit()
-        return _theme_ref(queued, {theme.id: theme})
+            session.commit()
+            return _theme_ref(queued, {theme.id: theme})
+
+    return await _off_loop(write, "up-next")
 
 
 @router.post("/{collection_id}/up-next/regenerate", response_model=ThemeRefOut)
@@ -2803,7 +2833,7 @@ async def regenerate_up_next(collection_id: int, body: RegenerateRequest, reques
     409 while the row's AI is paused, 422 without an AI provider or when the row isn't set to Explore.
     """
     from shortlist.server.api.seasons import _off_loop
-    from shortlist.server.api.themes import _PAUSED
+    from shortlist.server.api.themes import _PAUSED, _PREVIEW_MAX_DETAILS
     from shortlist.server.services import theme_rotation, theme_store
     from shortlist.server.services.theme_author import ThemeAuthorError
 
@@ -2820,38 +2850,52 @@ async def regenerate_up_next(collection_id: int, body: RegenerateRequest, reques
         tools = theme_rotation.authoring_tools(state)
         if tools.unavailable:
             raise HTTPException(status_code=tools.status, detail=tools.unavailable)
-        with state.sessions() as session:
-            collection = session.get(Collection, collection_id)
-            try:
-                theme = theme_rotation.author_for_person(
-                    session,
-                    sessions=state.sessions,
-                    secrets=state.secrets,
-                    collection=collection,
-                    user_id=body.user_id,
-                    author=theme_rotation.author_theme,
-                    curator=tools.curator,
-                    tmdb=tools.tmdb,
-                    plex=tools.plex,
-                    profile_for=state.run_service.profile_with_history,
+        spent: list[int] = []
+        try:
+            with theme_rotation._target_lock(collection_id, body.user_id), state.sessions() as session:
+                collection = session.get(Collection, collection_id)
+                try:
+                    theme = theme_rotation.author_for_person(
+                        session,
+                        sessions=state.sessions,
+                        secrets=state.secrets,
+                        collection=collection,
+                        user_id=body.user_id,
+                        author=theme_rotation.author_theme,
+                        curator=tools.curator,
+                        tmdb=tools.tmdb,
+                        plex=tools.plex,
+                        profile_for=state.run_service.profile_with_history,
+                        spent=spent,
+                        max_details=_PREVIEW_MAX_DETAILS,
+                    )
+                except ThemeAuthorError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from None
+                except LookupError:
+                    raise HTTPException(status_code=422, detail="That person is no longer on the server.") from None
+                except RuntimeError:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Shortlist couldn't read their watch history. Check the Plex connection.",
+                    ) from None
+                except theme_store.RowPaused:
+                    raise HTTPException(status_code=409, detail=_PAUSED) from None
+                except theme_store.TitleClash as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from None
+                queued = theme_rotation.queue_next(
+                    session, collection, body.user_id, theme, datetime.now(UTC), checked=True
                 )
-            except ThemeAuthorError as e:
-                raise HTTPException(status_code=422, detail=str(e)) from None
-            except LookupError:
-                raise HTTPException(status_code=422, detail="That person is no longer on the server.") from None
-            except RuntimeError:
-                raise HTTPException(
-                    status_code=502, detail="Shortlist couldn't read their watch history. Check the Plex connection."
-                ) from None
-            except theme_store.RowPaused:
-                raise HTTPException(status_code=409, detail=_PAUSED) from None
-            except theme_store.TitleClash as e:
-                raise HTTPException(status_code=422, detail=str(e)) from None
-            queued = theme_rotation.queue_next(
-                session, collection, body.user_id, theme, datetime.now(UTC), checked=True
-            )
-            session.commit()
-            return _theme_ref(queued, {theme.id: theme})
+                session.commit()
+                return _theme_ref(queued, {theme.id: theme})
+        except Exception:
+            # The AI call ran, so its cost stands even though the save rolled back.
+            if spent:
+                with state.sessions() as session:
+                    row = session.get(Collection, collection_id)
+                    if row is not None:
+                        theme_store.add_row_tokens(session, row, sum(spent))
+                        session.commit()
+            raise
 
     return await _off_loop(write, "theme authoring")
 

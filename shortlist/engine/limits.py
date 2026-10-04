@@ -73,7 +73,8 @@ class _DetailsFetcher:
 
     def get(self, c: Candidate) -> dict | None:
         if self.open:
-            self.skipped += 1
+            with self._lock:
+                self.skipped += 1
             return None
         try:
             details = self._tmdb.details(c.tmdb_id, c.media_type)

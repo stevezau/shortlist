@@ -1801,6 +1801,25 @@ def _in_audience(user: UserProfile, spec: RowSpec) -> bool:
     return spec.audience is None or user.plex_account_id in spec.audience
 
 
+def _kept_and_fresh(
+    policy: RowPolicy,
+    spec: RowSpec,
+    user: UserProfile,
+    prior_valid: list[Pick],
+    prior_ids: set,
+    sub: list[Candidate],
+    keep_n: int,
+) -> tuple[list[Pick], list[Candidate]]:
+    """A refresh night's split: the strongest ``keep_n`` of last night's picks, and the candidates not already
+    in the row that may replace the rest."""
+    kept = prior_valid[:keep_n]
+    if _names_a_seed(spec, user, policy.cfg):
+        kept = _reseed_survivors(kept, sub, policy.seeds_for(spec))
+    fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
+    fresh_pool = _without_excluded(policy, spec, fresh_pool, spare={(p.media_type, p.tmdb_id) for p in kept})
+    return kept, fresh_pool
+
+
 def _rows_as_seen_by(cfg: EngineConfig, user: UserProfile) -> list[RowSpec]:
     """Every per-person row with this person's own theme, so a sibling row claims the title it really wears (#121)."""
     return [spec.for_person(user.slug) for spec in cfg.per_person_rows()]
@@ -3325,11 +3344,13 @@ def _build_section_picks(
             keep_n = min(len(prior_valid), round(spec.over_time.keep_fraction() * k))
             if spec.over_time.refresh_share is not None and spec.over_time.keep_fraction() < 1 and k > 1:
                 keep_n = min(keep_n, k - 1)  # a share above zero always swaps at least one pick
-            kept = prior_valid[:keep_n]
-            if _names_a_seed(spec, user, policy.cfg):
-                kept = _reseed_survivors(kept, sub, policy.seeds_for(spec))
-            fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
-            fresh_pool = _without_excluded(policy, spec, fresh_pool, spare={(p.media_type, p.tmdb_id) for p in kept})
+
+            kept, fresh_pool = _kept_and_fresh(policy, spec, user, prior_valid, prior_ids, sub, keep_n)
+            if spec.over_time.refresh_share is not None and keep_n < min(len(prior_valid), k - len(fresh_pool)):
+                # A high share on a small pool: the new titles cannot fill the room the swap makes, so keep as
+                # many of last night's as the row needs rather than deliver it short. Only with the share set.
+                keep_n = min(len(prior_valid), k - len(fresh_pool))
+                kept, fresh_pool = _kept_and_fresh(policy, spec, user, prior_valid, prior_ids, sub, keep_n)
             new_picks = picker.build_picks(fresh_pool, k, **theme_reasons)
             newcomers = [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
             # Take only what there is ROOM for, before ordering. Handing the whole merged list to

@@ -62,6 +62,26 @@ class TestSaveTheme:
         assert row.ai_tokens == 50
         assert saved.ai_tokens == 40
 
+    def test_a_concurrent_charge_is_not_lost_to_a_stale_read(self, tmp_path):
+        engine = create_engine(f"sqlite:///{tmp_path / 'tokens.db'}")
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        with sessions() as setup:
+            row = add_row(setup, ai_tokens=10)
+            setup.commit()
+            row_id = row.id
+        with sessions() as slow, sessions() as other:
+            stale = slow.get(Collection, row_id)  # read before the other charge lands
+            assert stale.ai_tokens == 10
+            theme_store.add_row_tokens(other, other.get(Collection, row_id), 5)
+            other.commit()
+
+            theme_store.add_row_tokens(slow, stale, 40)
+            slow.commit()
+
+        with sessions() as check:
+            assert check.get(Collection, row_id).ai_tokens == 55
+
     def test_slug_collision_gets_a_unique_slug(self, session):
         first = theme_store.save_theme(session, SECRETS, body())
         second = theme_store.save_theme(session, SECRETS, body())

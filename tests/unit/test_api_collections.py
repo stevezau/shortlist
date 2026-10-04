@@ -192,6 +192,29 @@ class TestValidation:
 
         assert r.status_code == 422 and shared["slug"] in r.text
 
+    def test_a_deleted_avoided_row_leaves_the_list_and_never_blocks_a_save(self, client: TestClient):
+        quiet = plain_row(client, "Quiet")
+        row = ai_row(client, make_theme(client), avoid_rows=[quiet["slug"]])
+        assert client.delete(f"/api/collections/{quiet['id']}").status_code < 300
+
+        shown = get_row(client, row["id"])
+        saved = patch(client, row, avoid_rows=[quiet["slug"]], theme_days=9)
+
+        assert shown["avoid_rows"] is None
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["theme_days"] == 9 and saved.json()["avoid_rows"] is None
+
+    def test_a_row_made_shared_leaves_the_list_but_a_new_unknown_slug_is_still_refused(self, client: TestClient):
+        quiet = plain_row(client, "Quiet")
+        row = ai_row(client, make_theme(client), avoid_rows=[quiet["slug"]])
+        patch(client, quiet, build="shared")
+
+        shown = get_row(client, row["id"])
+        refused = patch(client, row, avoid_rows=[quiet["slug"], "ghost"])
+
+        assert shown["avoid_rows"] is None
+        assert refused.status_code == 422 and "ghost" in refused.text
+
     def test_duplicate_avoid_slugs_are_stored_once(self, client: TestClient):
         quiet = plain_row(client, "Quiet")
 
@@ -229,6 +252,32 @@ class TestTheRotationView:
         assert by_user[ann]["name"] == "Ann"
         assert by_user[ann]["next_due_at"] is not None
         assert by_user[bob]["current"] is None and by_user[bob]["next"] is None and by_user[bob]["history"] == []
+
+    def test_every_date_carries_a_utc_offset_so_the_browser_does_not_read_it_as_local(
+        self, client: TestClient, explore
+    ):
+        row, ann = explore["row"], explore["ann"]
+        history(client, row["id"], ann, "current", "Cosy", days_ago=2)
+        history(client, row["id"], ann, "next", "Queued")
+        with client.app.state.sessions() as session:
+            for entry in session.query(ThemeHistory).all():
+                entry.due_at = entry.started_at + timedelta(days=7)
+            session.commit()
+
+        target = next(
+            t
+            for t in client.get(f"/api/collections/{row['id']}/theme-rotation").json()["targets"]
+            if t["user_id"] == ann
+        )
+
+        stamps = [
+            target["started_at"],
+            target["next_due_at"],
+            target["current"]["started_at"],
+            target["current"]["due_at"],
+            target["next"]["started_at"],
+        ]
+        assert all(stamp.endswith("+00:00") for stamp in stamps), stamps
 
     def test_a_subset_row_lists_only_its_audience(self, client: TestClient):
         ann, _ = add_people(client, "ann", "bob")
@@ -303,6 +352,38 @@ class TestUpNext:
             assert [h.theme_name for h in session.query(ThemeHistory).filter_by(user_id=bob)] == ["Bob queue"]
 
 
+class TestWritesTakeThePersonsRotationLock:
+    @pytest.fixture
+    def locked(self, monkeypatch) -> list[tuple[int, int]]:
+        taken: list[tuple[int, int]] = []
+        real = theme_rotation._target_lock
+
+        def recording(collection_id: int, user_id: int):
+            taken.append((collection_id, user_id))
+            return real(collection_id, user_id)
+
+        monkeypatch.setattr(theme_rotation, "_target_lock", recording)
+        return taken
+
+    def test_up_next_put_holds_the_lock(self, client: TestClient, explore, locked):
+        row, ann = explore["row"], explore["ann"]
+
+        r = client.put(
+            f"/api/collections/{row['id']}/up-next", json={"user_id": ann, "theme_id": make_theme(client, "Fresh")}
+        )
+
+        assert r.status_code == 200, r.text
+        assert locked == [(row["id"], ann)]
+
+    def test_regenerate_holds_the_lock(self, client: TestClient, explore, author, locked):
+        row, ann = explore["row"], explore["ann"]
+
+        r = client.post(f"/api/collections/{row['id']}/up-next/regenerate", json={"user_id": ann})
+
+        assert r.status_code == 200, r.text
+        assert locked == [(row["id"], ann)]
+
+
 class _Author:
     def __init__(self, error: Exception | None = None) -> None:
         self.calls: list[dict] = []
@@ -353,6 +434,39 @@ def author(client: TestClient, monkeypatch) -> _Author:
 
 
 class TestRegenerate:
+    def test_a_title_clash_after_the_ai_call_still_charges_its_tokens(self, client: TestClient, author):
+        ann, _ = add_people(client, "ann", "bob")
+        row = ai_row(client, make_theme(client), name="Explore", name_template="{theme}", theme_mode="explore")
+        plain_row(client, "Fresh take")
+
+        r = client.post(f"/api/collections/{row['id']}/up-next/regenerate", json={"user_id": ann})
+
+        assert r.status_code == 422 and "Fresh take" in r.text
+        assert get_row(client, row["id"])["ai_tokens"] == 88
+        with client.app.state.sessions() as session:
+            assert session.query(ThemeHistory).filter_by(state="next").count() == 0
+        assert author.calls[0]["max_details"] > 0
+
+    def test_a_row_paused_during_the_ai_call_still_charges_its_tokens(
+        self, client: TestClient, explore, author, monkeypatch
+    ):
+        row, ann = explore["row"], explore["ann"]
+        write = author.__call__
+
+        def pause_then_answer(**kwargs):
+            draft = write(**kwargs)
+            with client.app.state.sessions() as session:
+                session.get(Collection, row["id"]).ai_paused = True
+                session.commit()
+            return draft
+
+        monkeypatch.setattr(theme_rotation, "author_theme", pause_then_answer)
+
+        r = client.post(f"/api/collections/{row['id']}/up-next/regenerate", json={"user_id": ann})
+
+        assert r.status_code == 409
+        assert get_row(client, row["id"])["ai_tokens"] == 88
+
     def test_it_authors_a_new_next_with_the_recent_names_in_the_brief(self, client: TestClient, explore, author):
         row, ann = explore["row"], explore["ann"]
         history(client, row["id"], ann, "current", "Cosy", days_ago=2)

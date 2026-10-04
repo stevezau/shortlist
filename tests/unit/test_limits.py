@@ -258,3 +258,19 @@ class TestPassesYearAndRating:
         from shortlist.engine.limits import passes_year_and_rating
 
         assert passes_year_and_rating(make_candidate(1, "long", year=1999), RowLimits(max_runtime=60))
+
+
+class TestSkippedCountUnderThreads:
+    def test_every_skipped_lookup_is_counted_when_threads_race(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        from shortlist.engine.limits import _MAX_CONSECUTIVE_FAILURES, _DetailsFetcher
+
+        fetcher = _DetailsFetcher(MagicMock())
+        fetcher._streak = _MAX_CONSECUTIVE_FAILURES  # the breaker is open: every get is skipped
+        candidate = make_candidate(1, "1")
+
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            list(pool.map(lambda _: fetcher.get(candidate), range(4000)))
+
+        assert fetcher.skipped == 4000

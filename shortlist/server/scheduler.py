@@ -74,8 +74,9 @@ DEFAULT_CRONS: dict[str, str] = {
     # 06:15 — last of the night, after every other schedule has finished writing runs and events, so
     # the retention pass trims a settled database rather than one still being appended to.
     "maintenance.prune_cron": "15 6 * * *",
-    # Once a day. Rows have their own crons and rotation reads the DB, never the clock, so when this
-    # fires is not load-bearing: a row that builds before it simply builds with the theme it already has.
+    # Once a day. Rows have their own crons and read the theme the DB holds, so when this fires is not
+    # load-bearing for a row's build: one that builds before it simply uses the theme it already has. The job
+    # itself judges "due" on the calendar day (UTC), so firing any time on the day gives the same answer.
     "themes.rotate_cron": "30 1 * * *",
 }
 

@@ -1,8 +1,9 @@
 """What rows showed on earlier real runs (#138), read from the `picks` ledger for the engine's `PickHistory`.
 
-Only real runs count: a dry run writes no `PickRow`, a pick with no run is not from a run at all, and the
-join on `Run.dry_run` keeps both out even if that ever changes. A kept pick is restamped by every refresh
-night, so "first shown" is the EARLIEST sighting, never the latest.
+Only real runs count: a dry run writes no `PickRow`, and the filter on `Run.dry_run` keeps one out even if that
+ever changes. A pick with NO run still counts: only real runs write a `PickRow`, and pruning an old run sets its
+picks' `run_id` to NULL, so dropping them would end a no-repeat window at the run retention. A kept pick is
+restamped by every refresh night, so "first shown" is the EARLIEST sighting, never the latest.
 """
 
 from __future__ import annotations
@@ -49,9 +50,9 @@ class DbPickHistory:
 def _real_picks(user_slug: str, row_slug: str):
     return (
         select(PickRow)
-        .join(Run, Run.id == PickRow.run_id)
+        .outerjoin(Run, Run.id == PickRow.run_id)
         .join(User, User.id == PickRow.user_id)
-        .where(User.slug == user_slug, PickRow.collection_slug == row_slug, Run.dry_run.is_(False))
+        .where(User.slug == user_slug, PickRow.collection_slug == row_slug, Run.dry_run.is_not(True))
     )
 
 

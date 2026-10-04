@@ -43,7 +43,16 @@ def add_run(session, days_ago: int, *, dry_run: bool = False) -> Run:
     return run
 
 
-def add_pick(session, user: User, run: Run | None, tmdb_id: int, *, row: str = "ai-row", media: str = "movie"):
+def add_pick(
+    session,
+    user: User,
+    run: Run | None,
+    tmdb_id: int,
+    *,
+    row: str = "ai-row",
+    media: str = "movie",
+    days_ago: int = 0,
+):
     session.add(
         PickRow(
             run_id=None if run is None else run.id,
@@ -53,7 +62,7 @@ def add_pick(session, user: User, run: Run | None, tmdb_id: int, *, row: str = "
             rating_key=tmdb_id,
             rank=1,
             collection_slug=row,
-            created_at=NOW if run is None else run.started_at,
+            created_at=NOW - timedelta(days=days_ago) if run is None else run.started_at,
         )
     )
     session.commit()
@@ -77,11 +86,14 @@ class TestFirstShownSince:
         assert history.first_shown_since("alex", "ai-row", TODAY - timedelta(days=30)) == set()
         assert history.latest("alex", "ai-row") == set()
 
-    def test_pick_without_a_run_never_counts(self, session, alex):
-        add_pick(session, alex, None, 10)
+    def test_a_pick_whose_run_was_pruned_still_blocks_a_long_cooldown(self, session, alex):
+        # Run pruning sets `run_id` to NULL on real picks it keeps; the window must not end at run retention.
+        add_pick(session, alex, None, 10, days_ago=100)
+        add_pick(session, alex, add_run(session, 100, dry_run=True), 20, days_ago=100)
 
         history = DbPickHistory(factory_of(session))
 
+        assert history.first_shown_since("alex", "ai-row", TODAY - timedelta(days=120)) == {key(10)}
         assert history.first_shown_since("alex", "ai-row", TODAY - timedelta(days=30)) == set()
         assert history.latest("alex", "ai-row") == set()
 

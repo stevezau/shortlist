@@ -521,6 +521,9 @@ class TestHandlers:
             # A kind no button can start has to say what DOES start it, or its card reads as broken.
             assert entry.manual or entry.trigger, entry.kind
 
+    def test_the_theme_job_is_called_what_the_docs_and_the_web_call_it(self):
+        assert jobs.BY_KIND["themes.rotate"].label == "Pick new row themes"
+
     def test_scheduled_kinds_point_at_a_real_scheduler_job_id(self):
         """`schedule_job_id` is how a card finds its next run. The ids are string literals here
         (importing scheduler would be circular), so this is what catches them drifting apart."""

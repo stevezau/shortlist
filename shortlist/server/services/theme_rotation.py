@@ -86,14 +86,21 @@ def rotate_themes(
     secrets=None,
     unavailable: str = "",
     author=author_theme,
-    curator,
-    tmdb,
-    plex,
+    curator=None,
+    tmdb=None,
+    plex=None,
+    tools: Callable[[], AuthoringTools] | None = None,
     profile_for: Callable[[Session, int], UserProfile],
 ) -> list[RotationOutcome]:
-    """Run one pass over every enabled explore row and each person in its audience."""
+    """Run one pass over every enabled explore row and each person in its audience.
+
+    ``tools`` builds the AI provider, TMDB client and Plex reader the first time a person actually needs a theme
+    written (it overrides ``curator``/``tmdb``/``plex``/``unavailable``). A pass that only promotes, or finds
+    nothing to do, never connects to anything.
+    """
     moment = _naive_utc(now)
-    targets = _targets(sessions)
+    targets = rotation_targets(sessions)
+    tools = _once(tools) if tools is not None else None
     outcomes: list[RotationOutcome] = []
     for collection_id, user_id in targets:
         spent: list[int] = []
@@ -111,6 +118,7 @@ def rotate_themes(
                     curator=curator,
                     tmdb=tmdb,
                     plex=plex,
+                    tools=tools,
                     profile_for=profile_for,
                     spent=spent,
                 )
@@ -120,6 +128,25 @@ def rotate_themes(
             _log_failure(sessions, collection_id, user_id, e, tokens=sum(spent))
         outcomes.append(RotationOutcome(collection_id, user_id, action))
     return outcomes
+
+
+def _once[T](build: Callable[[], T]) -> Callable[[], T]:
+    """``build`` called at most once, its failure remembered too: a Plex that is down is tried once a pass, not
+    once a person."""
+    box: list = []
+
+    def get() -> T:
+        if not box:
+            try:
+                box.append((build(), None))
+            except Exception as e:
+                box.append((None, e))
+        value, error = box[0]
+        if error is not None:
+            raise error
+        return value
+
+    return get
 
 
 @dataclass(frozen=True)
@@ -295,6 +322,7 @@ def author_for_person(
     plex,
     profile_for: Callable[[Session, int], UserProfile],
     spent: list[int] | None = None,
+    max_details: int | None = None,
 ) -> Theme:
     """Write a new theme for one person on one row and save it through the theme store (tokens charged to the row).
 
@@ -323,6 +351,7 @@ def author_for_person(
         library_index=index,
         profile=profile_for(session, user_id),
         guidance=theme_guidance(AiInstructions.from_stored(collection.prompt)),
+        max_details=max_details,
     )
     if spent is not None:
         spent.append(draft.tokens)
@@ -351,6 +380,7 @@ def _rotate_one(
     curator,
     tmdb,
     plex,
+    tools,
     profile_for,
     spent,
 ) -> Action:
@@ -365,6 +395,7 @@ def _rotate_one(
         "curator": curator,
         "tmdb": tmdb,
         "plex": plex,
+        "tools": tools,
         "profile_for": profile_for,
         "spent": spent,
     }
@@ -410,6 +441,10 @@ def _author(session, collection, user_id, state: str, now, current, **deps) -> A
             detail="AI is paused for this row, so its theme was not changed.",
         )
         return "skipped_paused"
+    tools = deps.pop("tools")
+    if tools is not None:
+        built = tools()
+        deps.update(unavailable=built.unavailable, curator=built.curator, tmdb=built.tmdb, plex=built.plex)
     try:
         theme = author_for_person(session, collection=collection, user_id=user_id, **deps)
     except RowPaused:
@@ -543,7 +578,7 @@ def _save_in(collection: Collection, draft: ThemeDraft, tag_names: dict[int, str
     )
 
 
-def _targets(sessions) -> list[tuple[int, int]]:
+def rotation_targets(sessions) -> list[tuple[int, int]]:
     with sessions() as session:
         rows = session.scalars(
             select(Collection).where(

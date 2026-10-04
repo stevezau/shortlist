@@ -594,6 +594,24 @@ class TestSpendSurvivesAFailedSave:
 
         assert "Noir Nights" in author.calls[0]["brief"]
 
+    def test_a_row_paused_during_the_ai_call_still_charges_its_tokens(self, sessions):
+        row_id, (uid,) = seed(sessions)
+        write = FakeAuthor(tokens=45)
+
+        def pause_then_answer(**kwargs):
+            draft = write(**kwargs)
+            with sessions() as s:
+                s.get(Collection, row_id).ai_paused = True
+                s.commit()
+            return draft
+
+        outcomes = rotate(sessions, pause_then_answer)
+
+        assert [o.action for o in outcomes] == ["skipped_paused"]
+        assert history_of(sessions, row_id, uid) == []
+        with sessions() as s:
+            assert s.get(Collection, row_id).ai_tokens == 45
+
     def test_an_unusable_theme_is_refused_like_the_themes_api_does(self, sessions, monkeypatch):
         row_id, (uid,) = seed(sessions)
         author = FakeAuthor(tokens=30)
@@ -612,3 +630,141 @@ class TestSpendSurvivesAFailedSave:
         assert history_of(sessions, row_id, uid) == []
         with sessions() as s:
             assert s.get(Collection, row_id).ai_tokens == 30
+
+
+class _Tools:
+    """Counts how often authoring tools are built; any call is a connection a quiet night must not make."""
+
+    def __init__(self) -> None:
+        self.built = 0
+
+    def __call__(self) -> theme_rotation.AuthoringTools:
+        self.built += 1
+        return theme_rotation.AuthoringTools(curator="curator", tmdb=_Tmdb(), plex="plex")
+
+
+class TestToolsAreBuiltOnlyWhenNeeded:
+    def _rotate(self, sessions, tools, author):
+        return rotate_themes(sessions, now=NOW, secrets=object(), author=author, tools=tools, profile_for=profile_for)
+
+    def test_the_job_builds_nothing_when_no_row_explores(self, sessions):
+        from types import SimpleNamespace
+
+        from shortlist.server.services import jobs
+
+        calls: list[str] = []
+
+        class RunService:
+            def build_tmdb_only(self):
+                calls.append("tmdb")
+
+            def build_plex_reader(self):
+                calls.append("plex")
+                raise ConnectionError("PMS unreachable")
+
+        state = SimpleNamespace(sessions=sessions, secrets=None, run_service=RunService())
+
+        result = jobs._HANDLERS["themes.rotate"](state, {})
+
+        assert result == {"targets": 0}
+        assert calls == []
+
+    def test_a_pass_that_only_keeps_or_promotes_never_builds_the_tools(self, sessions):
+        row_id, (ann, bob) = seed(sessions, people=2, theme_days=7)
+        add_history(sessions, row_id, ann, "current", started=NAIVE_NOW - timedelta(days=2), name="Cosy")
+        started = NAIVE_NOW - timedelta(days=8)
+        add_history(sessions, row_id, bob, "current", started=started, name="Old")
+        add_history(sessions, row_id, bob, "next", started=started, name="Queued")
+        tools = _Tools()
+
+        outcomes = self._rotate(sessions, tools, FakeAuthor())
+
+        assert sorted(o.action for o in outcomes) == ["kept", "promoted"]
+        assert tools.built == 0
+
+    def test_two_people_needing_themes_build_the_tools_once(self, sessions):
+        seed(sessions, people=2)
+        tools = _Tools()
+
+        outcomes = self._rotate(sessions, tools, FakeAuthor())
+
+        assert [o.action for o in outcomes] == ["authored_current", "authored_current"]
+        assert tools.built == 1
+
+    def test_a_paused_row_never_builds_the_tools(self, sessions):
+        seed(sessions, ai_paused=True)
+        tools = _Tools()
+
+        outcomes = self._rotate(sessions, tools, FakeAuthor())
+
+        assert [o.action for o in outcomes] == ["skipped_paused"]
+        assert tools.built == 0
+
+
+class TestDueIsJudgedOnTheDay:
+    def _promoted(self, sessions, started: datetime, now: datetime = NOW) -> str:
+        row_id, (uid,) = seed(sessions, theme_days=7)
+        add_history(sessions, row_id, uid, "current", started=started, name="Week1")
+        add_history(sessions, row_id, uid, "next", started=started, name="Week2")
+        return rotate(sessions, FakeAuthor(), now)[0].action
+
+    def test_yesterdays_pass_starting_a_moment_later_still_promotes_on_day_seven(self, sessions):
+        started = NAIVE_NOW - timedelta(days=7) + timedelta(seconds=0.4)
+
+        assert self._promoted(sessions, started) == "promoted"
+
+    def test_six_days_in_keeps_the_theme(self, sessions):
+        started = NAIVE_NOW - timedelta(days=6) + timedelta(seconds=0.4)
+
+        assert self._promoted(sessions, started) == "kept"
+
+    def test_a_pass_an_hour_short_of_seven_days_across_a_clock_change_still_promotes(self, sessions):
+        started = NAIVE_NOW - timedelta(days=7) + timedelta(hours=1)
+
+        assert self._promoted(sessions, started) == "promoted"
+
+    def test_the_next_theme_is_authored_on_the_lead_day_even_if_the_last_pass_ran_later(self, sessions):
+        row_id, (uid,) = seed(sessions, theme_days=7)
+        add_history(
+            sessions,
+            row_id,
+            uid,
+            "current",
+            started=NAIVE_NOW - timedelta(days=7 - NEXT_LEAD_DAYS) + timedelta(seconds=0.4),
+            name="Week1",
+        )
+
+        assert rotate(sessions, FakeAuthor())[0].action == "authored_next"
+
+
+class TestWhoRotates:
+    def test_a_person_who_muted_the_row_is_not_given_a_theme(self, sessions):
+        from shortlist.server.db.models import CollectionUserOverride
+
+        row_id, (ann, bob) = seed(sessions, people=2)
+        with sessions() as s:
+            s.add(CollectionUserOverride(collection_id=row_id, user_id=bob, muted=True))
+            s.commit()
+        author = FakeAuthor()
+
+        outcomes = rotate(sessions, author)
+
+        assert [(o.user_id, o.action) for o in outcomes] == [(ann, "authored_current")]
+        assert len(author.calls) == 1
+
+    def test_a_row_switched_off_mid_pass_is_left_alone(self, sessions):
+        row_id, (_, bob) = seed(sessions, people=2)
+
+        def switch_off_after_first(**kwargs):
+            draft = first(**kwargs)
+            with sessions() as s:
+                s.get(Collection, row_id).theme_mode = "fixed"
+                s.commit()
+            return draft
+
+        first = FakeAuthor()
+
+        outcomes = rotate(sessions, switch_off_after_first)
+
+        assert [o.action for o in outcomes] == ["authored_current", "kept"]
+        assert history_of(sessions, row_id, bob) == []

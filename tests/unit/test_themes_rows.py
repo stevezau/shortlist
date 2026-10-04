@@ -663,6 +663,24 @@ class TestOverTimeControls:
 
         assert len(set(_ids(report, "sarah")) - set(prior_ids)) == swapped
 
+    def test_a_high_share_on_a_small_pool_still_fills_the_row(self, ctx):
+        # 21 titles in the theme, a row of 15 of them: only 6 are new, so an 80% swap cannot be met in full.
+        theme = list(range(41, 62))
+        ctx.plex.build_library_index.return_value = {900: 999, **{t: 1000 + t for t in theme}}
+        ctx.tmdb.discover_all.side_effect = lambda media_type, params: (
+            [{"id": t, "title": f"Film {t}", "genre_ids": [28], "vote_average": 9.0 - (t - 41) * 0.1} for t in theme]
+            if media_type is MediaType.MOVIE and params.get("with_keywords") == str(TAG)
+            else []
+        )
+        prior_ids = theme[:15]
+        ctx.previous_picks = {("sarah", "ai-twists", "1"): _prior(prior_ids)}
+        ctx.config.rows = [theme_row(size=15, refresh_days=1, over_time=OverTime(refresh_share=0.8))]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        ids = _ids(report, "sarah")
+        assert len(ids) == 15
+
     def test_avoid_rows_drops_titles_from_the_named_row(self, big_ctx):
         big_ctx.config.rows = [
             theme_row(slug="ai-a", size=5),
@@ -709,6 +727,32 @@ class TestSiblingTitlesUsePersonThemes:
         pipeline_mod.run(ctx, [sarah])
 
         assert ctx.plex.delete_owned_collection.call_args_list == []
+
+
+class TestPromotionFindsAnExploreRowByThePersonsTitle:
+    def test_a_collection_wearing_the_persons_own_theme_title_is_matched_to_its_row(self, ctx):
+        """Base theme "Mystery", sarah's own "Twist endings": the fallback title map must render HER title."""
+        ctx.plex.sections.return_value = ctx.plex.sections_by_type.return_value.values()
+        collection = SimpleNamespace(
+            title="Twist endings" + row_marker(100), ratingKey=5151, key="/library/metadata/5151", labels=[]
+        )
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: (
+            [collection] if label.lower() == "shortlist_sarah" else []
+        )
+        twists = theme_spec(slug="twists", name="Twist endings", emoji=None)
+        mystery = theme_spec(slug="mystery", name="Mystery", emoji=None)
+        ctx.config.rows = [theme_row(mystery, name_template="{theme}", person_themes=(("sarah", twists),))]
+
+        pipeline_mod.promote_user_rows(
+            ctx,
+            make_profile("sarah", account_id=100),
+            {},
+            skip_unmatched=True,
+            only_row="ai-twists",
+            built_for={},
+        )
+
+        ctx.plex.promote.assert_called_once()
 
 
 class TestPersonThemes:
@@ -773,21 +817,42 @@ class TestPersonThemes:
         assert _picks(report, "sarah", "ai-twists") == []
         assert {p.tmdb_id for p in _picks(report, "mike", "ai-twists")} == {30, 31}
 
-    def test_person_themes_beyond_the_cap_keep_prior_picks(self, ctx, monkeypatch):
-        monkeypatch.setattr(pipeline_mod, "_MAX_PERSON_THEMES", 2)
-        themes = [theme_spec(slug=f"t{i}", tags=(601,)) for i in range(3)]
-        self._themes_by_tag(ctx, {"601": [20, 30]})
-        ctx.config.rows = [theme_row(person_themes=tuple(zip(("sarah", "mike", "zed"), themes, strict=True)))]
+    def test_people_over_the_cap_build_from_the_rows_own_theme_not_a_frozen_row(self, ctx, monkeypatch):
+        monkeypatch.setattr(pipeline_mod, "_MAX_PERSON_THEMES", 1)
+        self._themes_by_tag(ctx, {"601": [20, 30], "602": [31]})
+        sarah_theme, mike_theme = theme_spec(slug="t0", tags=(601,)), theme_spec(slug="t1", tags=(602,))
+        base = theme_spec(slug="base", tags=(601,))
+        ctx.config.rows = [theme_row(base, person_themes=(("sarah", sarah_theme), ("mike", mike_theme)))]
         messages: list[str] = []
         sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
         try:
-            pipeline_mod.run(ctx, _people())
+            report = pipeline_mod.run(ctx, _people())
         finally:
             logger.remove(sink)
 
-        assert set(ctx.theme_failures) == {"t2"}
-        assert {"t0", "t1"} <= set(ctx.theme_titles) and "t2" not in ctx.theme_titles
+        assert ctx.theme_failures == {}
+        assert {"t0", "base"} <= set(ctx.theme_titles) and "t1" not in ctx.theme_titles
+        assert {p.tmdb_id for p in _picks(report, "sarah", "ai-twists")} == {20, 30}
+        assert {p.tmdb_id for p in _picks(report, "mike", "ai-twists")} == {20, 30}
         assert sum("per-run cap" in m for m in messages) == 1
+
+    def test_a_scoped_run_reads_only_its_own_peoples_themes(self, ctx):
+        self._themes_by_tag(ctx, {"601": [20, 30], "602": [31]})
+        mine, yours = theme_spec(slug="a", tags=(601,)), theme_spec(slug="b", tags=(602,))
+        ctx.config.rows = [theme_row(person_themes=(("sarah", mine), ("mike", yours)))]
+        with patch.object(pipeline_mod, "load_theme", wraps=load_theme) as loaded:
+            pipeline_mod.run(ctx, _people()[:1])
+
+        assert [call.args[2].slug for call in loaded.call_args_list] == ["a"]
+
+    def test_the_rows_own_theme_is_read_when_someone_in_the_run_has_no_theme_of_their_own(self, ctx):
+        self._themes_by_tag(ctx, {"601": [20, 30]})
+        mine = theme_spec(slug="a", tags=(601,))
+        ctx.config.rows = [theme_row(theme_spec(slug="base", tags=(601,)), person_themes=(("sarah", mine),))]
+        with patch.object(pipeline_mod, "load_theme", wraps=load_theme) as loaded:
+            pipeline_mod.run(ctx, _people())
+
+        assert sorted(call.args[2].slug for call in loaded.call_args_list) == ["a", "base"]
 
 
 class TestContextBuilderWiring:
@@ -878,6 +943,21 @@ class TestContextBuilderWiring:
 
         assert [slug for slug, _ in spec.person_themes] == ["ann"]
         assert spec.for_person("bob").theme.name == "Starter"
+
+    @pytest.mark.parametrize("field", ["enabled", "departed_at", "removed_at"])
+    def test_a_person_the_run_no_longer_builds_for_has_no_theme_loaded(self, builder, db, field):
+        from shortlist.server.db.models import User
+
+        row_id, users = self.seed(db)
+        self.own_theme(db, row_id, users["ann"], "Scary")
+        self.own_theme(db, row_id, users["bob"], "Cosy", genres=("Family",))
+        with db() as s:
+            setattr(s.get(User, users["bob"]), field, False if field == "enabled" else datetime(2026, 10, 2))
+            s.commit()
+
+        spec = self.specs(builder, db)["ai-row"]
+
+        assert [slug for slug, _ in spec.person_themes] == ["ann"]
 
     def test_an_up_next_theme_is_not_used_until_it_is_promoted(self, builder, db):
         from shortlist.server.services.theme_rotation import promote_next

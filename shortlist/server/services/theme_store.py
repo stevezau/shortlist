@@ -223,7 +223,8 @@ def charge_tokens(session: Session, body: ThemeSaveIn) -> Collection | None:
     """The row a save's tokens are charged to; `RowPaused` when it is paused and the save spent any."""
     if body.collection_id is None:
         return None
-    collection = session.get(Collection, body.collection_id)
+    # populate_existing: the AI call that came before this can take a minute, and the owner may have paused since.
+    collection = session.get(Collection, body.collection_id, populate_existing=True)
     if collection is None:
         raise LookupError("collection not found")
     if collection.ai_paused and body.tokens > 0:

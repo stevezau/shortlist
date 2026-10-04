@@ -296,7 +296,7 @@ CATALOG: tuple[JobKind, ...] = (
     ),
     JobKind(
         kind="themes.rotate",
-        label="Change explore rows' themes",
+        label="Pick new row themes",
         description=(
             "For every AI row set to Explore, gives each person a new theme when their current one has "
             "run its course, and writes the following theme a day early so you can look at it and change "
@@ -1388,17 +1388,17 @@ def _themes_rotate(state, payload: dict) -> dict:
     Authoring needs an AI provider, a TMDB key and a connected Plex. Without one, no theme changes: every
     person who needed one keeps theirs and gets an event saying why, and the next pass tries again.
     """
-    from shortlist.server.services.theme_rotation import authoring_tools, rotate_themes
+    from shortlist.server.services.theme_rotation import authoring_tools, rotate_themes, rotation_targets
 
-    tools = authoring_tools(state)
+    # Nothing to do means nothing is built: an install with an AI provider but no Explore row must not connect
+    # to Plex every night, or ring the bell when Plex is down.
+    if not rotation_targets(state.sessions):
+        return {"targets": 0}
     outcomes = rotate_themes(
         state.sessions,
         now=datetime.now(UTC),
         secrets=state.secrets,
-        unavailable=tools.unavailable,
-        curator=tools.curator,
-        tmdb=tools.tmdb,
-        plex=tools.plex,
+        tools=lambda: authoring_tools(state),
         profile_for=state.run_service.profile_with_history,
     )
     counts: dict[str, int] = {}
