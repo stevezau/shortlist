@@ -208,6 +208,28 @@ describe("AiRowSection building", () => {
     expect(card.getByText(/the AI.s list was cut short; 31 titles kept/i)).toBeInTheDocument();
   });
 
+  it("says a row covering both kinds stays out of the TV libraries when the AI named only films", async () => {
+    api.previewTheme.mockResolvedValueOnce(preview());
+    renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "both" } });
+    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.getByText(/films only — the AI named no TV series/i)).toBeInTheDocument();
+  });
+
+  it("says nothing about kinds when the row covers one kind or the AI named both", async () => {
+    api.previewTheme.mockResolvedValueOnce(preview());
+    renderSection({ collection: savedRow({ theme_id: null }), input: { ...blankInput(), media: "movie" } });
+    await userEvent.type(await screen.findByLabelText("Describe it"), "films with a twist ending");
+
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+
+    const card = within(await screen.findByRole("region", { name: /the list/i }));
+    expect(card.queryByText(/only — the AI named no/i)).not.toBeInTheDocument();
+  });
+
   it("says how many running times a preview checked, only when it checked fewer than all", async () => {
     api.previewTheme.mockResolvedValueOnce(
       preview({

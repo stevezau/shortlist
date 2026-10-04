@@ -791,3 +791,68 @@ class TestRuntimeCheckCounts:
         draft, _ = _author(_answer(rules={"max_runtime": 600}))
 
         assert (draft.stats.runtime_total, draft.stats.runtime_checked) == (2, 2)
+
+
+class TestAThemeCoversOnlyTheKindsItNamed:
+    """A both-media row must not fill a library with tag filler when the AI named nothing for it."""
+
+    BOTH = (MediaType.MOVIE, MediaType.SHOW)
+    MOVIE = (("title", "Memento"), ("media", "movie"))
+    SHOW = (("title", "Severance"), ("media", "show"))
+
+    @staticmethod
+    def _both(titles: list, *, tags: list | None = None, current: ThemeSpec | None = None):
+        return author_theme(
+            brief=BRIEF,
+            media=TestAThemeCoversOnlyTheKindsItNamed.BOTH,
+            curator=_Curator(_answer(titles=titles, tags=[] if tags is None else tags)),
+            tmdb=_KindTmdb(),
+            plex=_Plex(),
+            library_index={MediaType.MOVIE: {1: 11}, MediaType.SHOW: {51: 61}},
+            current=current,
+        )
+
+    def test_only_movies_named_covers_movies_only(self):
+        draft = self._both([dict(self.MOVIE)], tags=["twist ending"])
+
+        assert draft.spec.media == (MediaType.MOVIE,)
+
+    def test_only_shows_named_covers_shows_only(self):
+        draft = self._both([dict(self.SHOW)], tags=["twist ending"])
+
+        assert draft.spec.media == (MediaType.SHOW,)
+
+    def test_both_kinds_named_covers_both(self):
+        draft = self._both([dict(self.MOVIE), dict(self.SHOW)])
+
+        assert draft.spec.media == self.BOTH
+
+    def test_no_titles_named_keeps_the_requested_media(self):
+        draft = self._both([], tags=["twist ending"])
+
+        assert draft.spec.media == self.BOTH
+
+    def test_a_kept_owner_show_keeps_shows_covered_when_the_ai_names_only_movies(self):
+        current = ThemeSpec(
+            slug="t",
+            name="T",
+            emoji=None,
+            media=self.BOTH,
+            tags=(),
+            genres=(),
+            excluded_genres=(),
+            collections=(),
+            picks=(ThemePick(51, MediaType.SHOW, "owner", None),),
+            rules=RowLimits(),
+            min_votes=None,
+        )
+
+        draft = self._both([dict(self.MOVIE)], current=current)
+
+        assert draft.spec.media == self.BOTH
+
+    def test_the_preview_counts_only_the_covered_kind(self):
+        draft = self._both([dict(self.MOVIE)], tags=["twist ending"])
+
+        assert draft.stats.ai_kept == 1
+        assert draft.stats.in_library == 1

@@ -259,6 +259,7 @@ function AiHalf({
             theme={shown}
             counts={pending ? pending.stats : savedStats(shown)}
             unsaved={pending !== null}
+            rowCoversBoth={input.media === "both"}
             onClearRule={clearRule}
           />
         )
@@ -331,17 +332,20 @@ function ListCard({
   theme,
   counts,
   unsaved,
+  rowCoversBoth,
   onClearRule,
 }: {
   theme: Theme;
   counts: Counts | null;
   unsaved: boolean;
+  rowCoversBoth: boolean;
   onClearRule: (chip: RuleChip) => void;
 }) {
   const rules = ruleChips(theme.rules);
   const sample = theme.picks.slice(0, SAMPLE_SIZE);
   const more = theme.picks.length - sample.length;
   const tagMatches = counts?.ai_kept === undefined ? 0 : Math.max(0, counts.after_rules - counts.ai_kept);
+  const only = rowCoversBoth && theme.media.length === 1 ? theme.media[0] : null;
   return (
     <section aria-label="The list" className="space-y-3 rounded-lg border bg-elevated p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -353,6 +357,13 @@ function ListCard({
         {theme.origin === "manual" && <Badge variant="secondary">Written by hand</Badge>}
       </div>
 
+      {only && (
+        <p className="text-sm text-muted-foreground">
+          {only === "movie"
+            ? "Films only — the AI named no TV series, so this row stays out of your TV libraries."
+            : "TV series only — the AI named no films, so this row stays out of your movie libraries."}
+        </p>
+      )}
       {counts && (
         <dl className="grid grid-cols-3 gap-3">
           <Count label="Named by the AI" value={counts.named} />

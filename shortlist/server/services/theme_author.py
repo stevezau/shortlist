@@ -185,11 +185,14 @@ def author_theme(
         raise ThemeAuthorError(
             "The AI didn't suggest anything Shortlist could find. Try describing the row differently."
         )
+    # A kind the AI named nothing for stays out: tag and genre matches alone would fill that library with filler.
+    named_kinds = {p.media for p in picks} | {p.media for p in kept}
+    covered = tuple(m for m in medias if m in named_kinds) or medias
     spec = ThemeSpec(
         slug=current.slug if current else (slugify(name) or "theme"),
         name=current.name if current else name,
         emoji=_emoji(proposal.get("emoji")) or (current.emoji if current else None),
-        media=medias,
+        media=covered,
         tags=tags,
         genres=genres,
         excluded_genres=current.excluded_genres if current else (),
