@@ -1033,3 +1033,64 @@ class TestSiblingTitleClaims:
 
         assert ann == {("1", "Scary nights")}
         assert bob == {("1", "Cosy nights")}
+
+
+class TestAnAiRowLeavesLibrariesItsThemeDropped:
+    """A theme covers only the kinds the AI named; the row's old collection in a dropped kind must go, not freeze."""
+
+    @pytest.fixture
+    def both(self, ctx):
+        tv = MagicMock(type="show", key="2", title="TV Shows")
+        tv.collections.return_value = []
+        movies = ctx.plex.sections.return_value[0]
+        ctx.plex.sections.return_value = [movies, tv]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: tv}
+        return ctx
+
+    @staticmethod
+    def _run(ctx, spec: RowSpec, *, tv_ledger: bool = True, dry_run: bool = False):
+        ctx.config.rows = [spec]
+        ctx.config.dry_run = dry_run
+        if tv_ledger:
+            ctx.delivered_keys[("sarah", spec.slug, "2")] = 555
+        with patch("shortlist.engine.rows.remove_row", return_value=["2"]) as removal:
+            report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return report, removal
+
+    def test_a_dropped_kind_with_a_delivery_is_removed_and_the_rest_delivered(self, both):
+        report, removal = self._run(both, theme_row(media="both"))
+
+        sarah_calls = [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "2"]
+        assert len(sarah_calls) == 1
+        call = sarah_calls[0]
+        assert [s.key for s in call.kwargs["sections"]] == ["2"]
+        assert call.kwargs["delivered_keys"] == {"2": 555}
+        person = next(u for u in report.users if u.username == "sarah")
+        assert {"row_slug": "ai-twists", "library_key": "2"} in person.removed_deliveries
+        assert {p.section_key for p in _picks(report, "sarah", "ai-twists")} == {"1"}
+
+    def test_a_dropped_kind_with_no_delivery_is_left_alone(self, both):
+        _, removal = self._run(both, theme_row(media="both"), tv_ledger=False)
+
+        assert not [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "2"]
+
+    def test_a_dry_run_passes_dry_run_through_to_the_removal(self, both):
+        _, removal = self._run(both, theme_row(media="both"), dry_run=True)
+
+        calls = [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "2"]
+        assert len(calls) == 1
+        assert calls[0].kwargs["dry_run"] is True
+
+    def test_a_theme_covering_both_kinds_removes_nothing(self, both):
+        spec = theme_row(theme_spec(media=(MediaType.MOVIE, MediaType.SHOW)), media="both")
+
+        _, removal = self._run(both, spec)
+
+        assert not [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "2"]
+
+    def test_a_row_without_a_theme_is_untouched(self, both):
+        spec = RowSpec(slug="plain", name_template="Plain", size=5, media="both")
+
+        _, removal = self._run(both, spec)
+
+        assert not [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "2"]

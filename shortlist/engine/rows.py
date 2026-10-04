@@ -2023,6 +2023,52 @@ def _ledger_keys(ctx: EngineContext, user: UserProfile, spec: RowSpec) -> dict[s
     }
 
 
+def _leave_uncovered_libraries(
+    ctx: EngineContext,
+    user: UserProfile,
+    cfg: EngineConfig,
+    spec: RowSpec,
+    targets: list,
+    report: UserRunReport,
+) -> list:
+    """The libraries an AI row still builds in, after removing its copy from those its theme dropped.
+
+    A theme covers only the kinds of title the AI named, so a row that once filled a TV library can lose
+    it. Delivery skips a library with no picks, which would leave the old collection frozen with stale
+    titles; the guarded ``remove_row`` takes it out, and only where the delivery ledger says this row
+    wrote one.
+    """
+    covered = [s for s in targets if section_kind(s) in spec.theme.media]
+    uncovered = [s for s in targets if s not in covered]
+    ledger = _ledger_keys(ctx, user, spec)
+    for section in uncovered:
+        if str(section.key) not in ledger:
+            continue
+        logger.info(
+            "{}: AI row '{}' left '{}' — its theme no longer covers {}",
+            user.slug,
+            spec.slug,
+            getattr(section, "title", "") or section.key,
+            section_kind(section).value,
+        )
+        diff = report.diff if report.diff is not None else CollectionDiff()
+        report.diff = diff
+        with ctx.write_lock:
+            removed_in = remove_row(
+                ctx.plex,
+                user,
+                cfg,
+                spec,
+                dry_run=cfg.dry_run,
+                diff=diff,
+                sections=[section],
+                delivered_keys=ledger,
+                other_rows=_rows_as_seen_by(cfg, user),
+            )
+        _forget(report, spec, removed_in)
+    return covered
+
+
 def _drop_cold_skipped_rows(
     ctx: EngineContext,
     user: UserProfile,
@@ -3816,6 +3862,8 @@ def _run_user(
             override = user.row_overrides.get(spec.slug)
             k = (override.size if override and override.size else None) or spec.size or cfg.row_size
             targets = target_sections(ctx.delivery_sections, spec)
+            if spec.theme is not None:
+                targets = _leave_uncovered_libraries(ctx, user, cfg, spec, targets, user_report)
             if spec.requests_row:
                 ledger = ctx.request_ledger
                 if ledger is None:
