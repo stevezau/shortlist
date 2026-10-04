@@ -768,3 +768,58 @@ class TestWhoRotates:
 
         assert [o.action for o in outcomes] == ["authored_current", "kept"]
         assert history_of(sessions, row_id, bob) == []
+
+
+class TestQueuedThemesAndPromotionClashes:
+    def test_a_queued_next_that_now_clashes_is_discarded_and_replaced_by_the_next_pass(self, sessions):
+        row_id, (uid,) = seed(sessions, name_template="{theme}", build="per_person", theme_days=7)
+        started = NAIVE_NOW - timedelta(days=8)
+        add_history(sessions, row_id, uid, "current", started=started, name="Old")
+        add_history(sessions, row_id, uid, "next", started=started, name="Taken")
+        with sessions() as s:
+            s.add(
+                Collection(
+                    slug="sib", name="Taken", media="movie", library_keys=["1"], enabled=True, build="per_person"
+                )
+            )
+            s.commit()
+
+        first = rotate(sessions, FakeAuthor())
+
+        assert [o.action for o in first] == ["failed"]
+        assert history_of(sessions, row_id, uid) == [("current", "Old")]
+        [event] = events(sessions, "error")
+        assert event.message["action"] == "discarded" and event.message["clash"] == "Taken"
+        author = FakeAuthor()
+        author._n = itertools.count(2)
+
+        second = rotate(sessions, author)
+
+        assert [o.action for o in second] == ["authored_current"]
+        assert "Taken" in author.calls[0]["brief"]
+
+    def test_two_explore_rows_cannot_queue_one_theme_name_for_one_person(self, sessions):
+        row_id, (uid,) = seed(sessions, name_template="{theme}", build="per_person")
+        with sessions() as s:
+            other = Collection(
+                slug="other-ai",
+                name="Other",
+                name_template="{theme}",
+                media="movie",
+                library_keys=["1"],
+                enabled=True,
+                build="per_person",
+                theme_mode="explore",
+                theme_id=s.query(Theme).one().id,
+            )
+            s.add(other)
+            s.commit()
+            other_id = other.id
+        add_history(sessions, other_id, uid, "next", started=NAIVE_NOW, name="Theme 1")
+        author = FakeAuthor()
+
+        outcomes = rotate(sessions, author)
+
+        assert "failed" in [o.action for o in outcomes]
+        assert history_of(sessions, row_id, uid) == []
+        assert "Theme 1" in events(sessions, "error")[0].message["clash"]

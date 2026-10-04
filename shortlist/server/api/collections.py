@@ -1362,6 +1362,71 @@ def _reject_duplicate_name(
     )
 
 
+#: PATCH fields that can move a row's title for a person, or the libraries and people it shares with another row.
+_TITLE_MOVING_FIELDS = {
+    "name",
+    "name_template",
+    "media",
+    "library_keys",
+    "audience",
+    "audience_user_ids",
+    "theme_mode",
+    "theme_id",
+}
+
+
+def _reject_new_person_title_clash(
+    session,
+    secrets,
+    collection: Collection,
+    body: CollectionIn,
+    sent: set[str],
+    *,
+    media: str,
+    library_keys: list[str],
+    theme: ThemeSpec | None,
+) -> None:
+    """422 when this edit would give one person two rows of one title in a library both build in.
+
+    An explore row wears each person's own theme, which the server-wide title check never sees (#121). So the
+    edit is judged per person: the clashes that exist now against those that would exist after it. Only a clash
+    the edit ADDS is refused, so a row that already clashes stays editable for anything unrelated.
+    """
+    account_by_user, audience_by_collection = context_builder.ContextBuilder._audience_maps(session)
+    audience_sent = bool(sent & {"audience", "audience_user_ids"})
+    if audience_sent:
+        subset = (body.audience if "audience" in sent else collection.audience) == "subset"
+        members = _audience_after_set(body)
+        accounts = frozenset(account_by_user[uid] for uid in members if uid in account_by_user) if subset else None
+    else:
+        accounts = reconcile._frozenset_or_none(
+            context_builder.ContextBuilder._subset_audience(collection, account_by_user, audience_by_collection)
+        )
+    theme_mode = body.theme_mode if "theme_mode" in sent else collection.theme_mode
+    after = reconcile.RowView(
+        slug=collection.slug,
+        name=collection.name,
+        template=_merged_template(collection, body, sent),
+        media=media or "both",
+        library_keys=tuple(str(k) for k in library_keys),
+        audience=accounts,
+        base_theme=theme,
+        explore=theme_mode == "explore",
+        row_id=collection.id,
+    )
+    clash = reconcile.new_person_clash(session, secrets, collection, after)
+    if clash is None:
+        return
+    other, person, title = clash
+    who = person.nickname or person.friendly_name or person.username
+    raise HTTPException(
+        status_code=422,
+        detail=f"{title!r} would be the title of this row for {who}"
+        f" and of the row {other.name!r} ({other.slug}) too, in a library both build in — two rows with the same "
+        "title in one library become a single collection on Plex, so pick a different name, theme or library.",
+    )
+
+
 def _unique_slug(session, base: str) -> str:
     """A slug no row has now AND no history still names.
 
@@ -2029,6 +2094,17 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     library_keys=merged_keys,
                     theme=merged_spec,
                 )
+        if sent & _TITLE_MOVING_FIELDS and not is_default:
+            _reject_new_person_title_clash(
+                session,
+                state.secrets,
+                collection,
+                body,
+                sent,
+                media=merged_media,
+                library_keys=merged_keys,
+                theme=merged_spec,
+            )
         # The default row has no per-collection name: its title IS the global `row.name_template`
         # (Settings → Defaults), which delivery renders per library. So a rename of it writes that
         # global setting — NOT this column — because a per-collection template would win over each

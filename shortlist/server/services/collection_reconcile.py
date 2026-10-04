@@ -285,12 +285,115 @@ def _person_theme_specs(session, collection: Collection) -> list[ThemeSpec]:
     return [spec_from_row(theme) for theme in {t.id: t for t in themes}.values()]
 
 
+@dataclass(frozen=True)
+class RowView:
+    """What decides a row's title for one person, as the row is now or as an edit would leave it."""
+
+    slug: str
+    name: str
+    template: str
+    media: str
+    library_keys: tuple[str, ...]
+    #: Plex account ids the row builds for; None is everyone.
+    audience: frozenset[int] | None
+    base_theme: ThemeSpec | None
+    explore: bool
+    row_id: int | None
+
+
+def _row_view(session, collection: Collection, secrets, account_by_user, audience_by_collection) -> RowView:
+    return RowView(
+        slug=collection.slug,
+        name=collection.name,
+        template=row_template(session, collection.slug, secrets),
+        media=collection.media or "both",
+        library_keys=tuple(str(k) for k in collection.library_keys or []),
+        audience=_frozenset_or_none(
+            ContextBuilder._subset_audience(collection, account_by_user, audience_by_collection)
+        ),
+        base_theme=_theme_of(session, collection),
+        explore=collection.theme_mode == "explore",
+        row_id=collection.id,
+    )
+
+
+def _frozenset_or_none(accounts) -> frozenset[int] | None:
+    return None if accounts is None else frozenset(accounts)
+
+
+def _held_themes(session) -> dict[tuple[int, int], list[ThemeSpec]]:
+    """{(row id, user id) -> the themes that person holds on that row as current or queued next}."""
+    held: dict[tuple[int, int], list[ThemeSpec]] = {}
+    query = session.query(ThemeHistory, Theme).join(Theme, Theme.id == ThemeHistory.theme_id)
+    for entry, theme in query.filter(ThemeHistory.state.in_(("current", "next"))):
+        held.setdefault((entry.collection_id, entry.user_id), []).append(spec_from_row(theme))
+    return held
+
+
+def _titles_for(view: RowView, user: User, held, catalogue: Catalogue) -> dict[str, str]:
+    """{title key -> the title as shown} the row wears for this person: with each theme they hold on it when it
+    explores (none held means the row's own theme), else with the row's theme."""
+    themes: list[ThemeSpec | None] = list(held.get((view.row_id, user.id), [])) if view.explore else []
+    themes = themes or [view.base_theme]
+    titles: dict[str, str] = {}
+    for theme in themes:
+        shown = fill_theme(view.template, theme) if theme is not None else view.template
+        for key in title_keys(view.template, catalogue=catalogue, theme=theme):
+            titles.setdefault(key, shown)
+    return titles
+
+
+def person_clashes(session, secrets, edited: RowView) -> dict[tuple[str, int], str]:
+    """{(other row slug, user id) -> the title} where ``edited`` and that other row would wear one title for
+    that person in a library both build in. The edit is judged by comparing this before and after, so only
+    a clash the edit ADDS is refused and a row that already clashes stays editable."""
+    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    others = [
+        _row_view(session, c, secrets, account_by_user, audience_by_collection)
+        for c in session.query(Collection).filter_by(enabled=True, build="per_person")
+        if c.slug != edited.slug
+    ]
+    others = [o for o in others if rows_can_share_a_library(edited.media, edited.library_keys, o.media, o.library_keys)]
+    if not others:
+        return {}
+    catalogue = load_catalogue(session)
+    held = _held_themes(session)
+    found: dict[tuple[str, int], str] = {}
+    users = session.query(User).filter(User.enabled.is_(True), User.departed_at.is_(None), User.removed_at.is_(None))
+    for user in users:
+        if edited.audience is not None and user.plex_account_id not in edited.audience:
+            continue
+        mine = _titles_for(edited, user, held, catalogue)
+        for other in others:
+            if other.audience is not None and user.plex_account_id not in other.audience:
+                continue
+            shared = mine.keys() & _titles_for(other, user, held, catalogue).keys()
+            if shared:
+                found[(other.slug, user.id)] = mine[sorted(shared)[0]]
+    return found
+
+
+def new_person_clash(session, secrets, collection: Collection, after: RowView) -> tuple[Collection, User, str] | None:
+    """The first clash for one person that saving ``collection`` as ``after`` would add, or None."""
+    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    before = _row_view(session, collection, secrets, account_by_user, audience_by_collection)
+    existing = person_clashes(session, secrets, before)
+    for (slug, user_id), title in person_clashes(session, secrets, after).items():
+        if (slug, user_id) not in existing:
+            return (
+                session.query(Collection).filter_by(slug=slug).one(),
+                session.get(User, user_id),
+                title,
+            )
+    return None
+
+
 def person_title_clash(session, secrets, collection: Collection, user: User, theme: ThemeSpec) -> Collection | None:
     """Another row of THIS person's that already wears the title ``theme`` would give ``collection``, or None.
 
     An explore row is titled from each person's own theme, so no row follows a person's theme as its base and
     `rows_titled_from` cannot see it (#121 again). The check is that person's: another row counts only if it
-    builds for them, in a library the two could share, as THEY see it (their own current theme on an explore row).
+    builds for them, in a library the two could share, under any theme they hold on it, current or queued next.
     """
     template = collection.name_template or collection.name
     if not uses_theme(template):
@@ -299,19 +402,20 @@ def person_title_clash(session, secrets, collection: Collection, user: User, the
     wanted = title_keys(template, catalogue=catalogue, theme=theme)
     if not wanted:
         return None
-    others = _other_rows(session, secrets, collection.slug)
-    for spec in others.specs:
-        if spec.audience is not None and user.plex_account_id not in spec.audience:
+    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    held = _held_themes(session)
+    for other in session.query(Collection).filter_by(enabled=True, build="per_person"):
+        if other.slug == collection.slug:
+            continue
+        view = _row_view(session, other, secrets, account_by_user, audience_by_collection)
+        if view.audience is not None and user.plex_account_id not in view.audience:
             continue
         if not rows_can_share_a_library(
-            collection.media or "both", collection.library_keys or [], spec.media, spec.library_keys
+            collection.media or "both", collection.library_keys or [], view.media, view.library_keys
         ):
             continue
-        seen = spec.for_person(user.slug)
-        keys = title_keys(spec.name_template or others.global_template, catalogue=catalogue, theme=seen.theme)
-        keys |= {title_key(spec.fallback_name)}
-        if (keys - {""}) & wanted:
-            return session.query(Collection).filter_by(slug=spec.slug).first()
+        if wanted & _titles_for(view, user, held, catalogue).keys():
+            return other
     return None
 
 

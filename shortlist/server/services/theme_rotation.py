@@ -282,7 +282,7 @@ def _clash_names(session: Session, collection_id: int, user_id: int) -> list[str
 
 
 def _sibling_theme_names(session: Session, collection: Collection, user_id: int) -> list[str]:
-    """The themes this person's OTHER AI rows wear now, so two of their rows are not given one theme name."""
+    """The themes this person's OTHER AI rows wear now or have queued, so two rows are not given one theme name."""
     names: list[str] = []
     others = session.scalars(
         select(Collection).where(
@@ -298,7 +298,7 @@ def _sibling_theme_names(session: Session, collection: Collection, user_id: int)
                 select(ThemeHistory.theme_name).where(
                     ThemeHistory.collection_id == other.id,
                     ThemeHistory.user_id == user_id,
-                    ThemeHistory.state == "current",
+                    ThemeHistory.state.in_(("current", "next")),
                 )
             )
         else:
@@ -410,7 +410,23 @@ def _rotate_one(
     if has_next:
         if upcoming_theme := session.get(Theme, upcoming.theme_id):
             # Another of their rows may have taken this title since it was queued.
-            reject_person_title_clash(session, secrets, collection, user_id, upcoming_theme)
+            try:
+                reject_person_title_clash(session, secrets, collection, user_id, upcoming_theme)
+            except TitleClash as clash:
+                # Discarded, not kept to fail every night: they keep the current theme, the name goes on the
+                # avoid line, and the next pass writes a replacement.
+                session.delete(upcoming)
+                add_audit(
+                    session,
+                    "theme.rotate",
+                    "error",
+                    collection_id=collection_id,
+                    user_id=user_id,
+                    action="discarded",
+                    detail=str(clash),
+                    clash=clash.theme_name,
+                )
+                return "failed"
         promote_next(session, collection_id, user_id, now)
         add_audit(
             session,

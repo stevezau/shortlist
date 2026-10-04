@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from shortlist.engine.models import MediaType, RowLimits
 from shortlist.engine.themes import ThemeSpec
-from shortlist.server.db.models import Collection, Event, Theme, ThemeHistory, User
+from shortlist.server.db.models import Collection, CollectionAudience, Event, Theme, ThemeHistory, User
 from shortlist.server.services import theme_rotation
 from shortlist.server.services.theme_author import ThemeAuthorError, ThemeDraft, ThemeStats
 from shortlist.server.settings_store import SettingsStore
@@ -350,6 +350,80 @@ class TestUpNext:
 
         with client.app.state.sessions() as session:
             assert [h.theme_name for h in session.query(ThemeHistory).filter_by(user_id=bob)] == ["Bob queue"]
+
+
+class TestExploreRowEditsCheckEachPersonsThemeTitles:
+    """An explore row's title follows each person's own theme (#121 class): an edit that moves or merges titles is
+    judged per person, and only a clash the edit adds is refused."""
+
+    @pytest.fixture
+    def setup(self, client: TestClient) -> dict:
+        ann, bob = add_people(client, "ann", "bob")
+        explore_row = ai_row(
+            client,
+            make_theme(client),
+            name="Explore",
+            name_template="Explore: {theme}",
+            theme_mode="explore",
+            library_keys=["1"],
+        )
+        with client.app.state.sessions() as session:
+            session.get(Collection, explore_row["id"]).enabled = True  # switching an AI row on needs a provider
+            session.commit()
+        history(client, explore_row["id"], ann, "current", "Cosy Nights", theme_id=make_theme(client, "Cosy Nights"))
+        return {"row": explore_row, "ann": ann, "bob": bob}
+
+    def test_renaming_the_explore_row_onto_a_siblings_title_is_refused(self, client: TestClient, setup):
+        plain_row(client, "Cosy Nights", library_keys=["1"])
+
+        r = patch(client, setup["row"], name_template="{theme}")
+
+        assert r.status_code == 422, r.text
+        assert "Cosy Nights" in r.text and "ann" in r.text.lower()
+
+    def test_switching_back_to_explore_is_refused_when_a_held_theme_now_clashes(self, client: TestClient, setup):
+        row = setup["row"]
+        assert patch(client, row, name_template="{theme}", theme_mode="fixed").status_code == 200
+        plain_row(client, "Cosy Nights", library_keys=["1"])
+
+        r = patch(client, row, theme_mode="explore")
+
+        assert r.status_code == 422 and "Cosy Nights" in r.text
+
+    def test_moving_the_explore_row_into_a_siblings_library_is_refused(self, client: TestClient, setup):
+        row = setup["row"]
+        patch(client, row, name_template="{theme}", theme_mode="fixed")
+        plain_row(client, "Cosy Nights", library_keys=["2"])
+        patch(client, row, theme_mode="explore")
+
+        r = patch(client, row, library_keys=["2"])
+
+        assert r.status_code == 422 and "Cosy Nights" in r.text
+
+    def test_adding_a_person_to_a_siblings_audience_is_refused(self, client: TestClient, setup):
+        row, ann, bob = setup["row"], setup["ann"], setup["bob"]
+        patch(client, row, name_template="{theme}", theme_mode="fixed")
+        sibling = plain_row(client, "Cosy Nights", library_keys=["1"], audience="subset", audience_user_ids=[bob])
+        assert patch(client, row, theme_mode="explore").status_code == 200
+
+        r = patch(client, sibling, audience="subset", audience_user_ids=[bob, ann])
+
+        assert r.status_code == 422 and "Cosy Nights" in r.text
+
+    def test_a_save_that_moves_nothing_still_works_on_a_row_that_already_clashes(self, client: TestClient, setup):
+        row, ann, bob = setup["row"], setup["ann"], setup["bob"]
+        patch(client, row, name_template="{theme}", theme_mode="fixed")
+        sibling = plain_row(client, "Cosy Nights", library_keys=["1"], audience="subset", audience_user_ids=[bob])
+        patch(client, row, theme_mode="explore")
+        with client.app.state.sessions() as session:
+            session.add(CollectionAudience(collection_id=sibling["id"], user_id=ann))
+            session.commit()
+
+        unchanged = patch(client, row, name_template="{theme}", size=7)
+        sibling_unchanged = patch(client, sibling, audience="subset", audience_user_ids=[bob, ann])
+
+        assert unchanged.status_code == 200, unchanged.text
+        assert sibling_unchanged.status_code == 200, sibling_unchanged.text
 
 
 class TestWritesTakeThePersonsRotationLock:
