@@ -8566,6 +8566,11 @@
             "title": "Resolved",
             "type": "integer"
           },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
           "unwatched_median": {
             "anyOf": [
               {

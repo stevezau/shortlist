@@ -185,14 +185,19 @@ class OpenAICurator:
         a blank model against the local server's ``/models`` list."""
         return self._model
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         """Plain completion (no tools) — the external-search ``llm_web`` path (see base.complete)."""
         import openai
 
+        kwargs: dict = {}
+        if max_tokens is not None:
+            # `max_completion_tokens`, not `max_tokens`: the gpt-5 and o-series reject the latter (see ping).
+            kwargs["max_completion_tokens"] = max_tokens
         try:
             r = self._client.chat.completions.create(
                 model=self._send_model(),
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                **kwargs,
             )
         except openai.OpenAIError as e:
             logger.warning("complete (openai): {}", e)

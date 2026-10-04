@@ -140,6 +140,7 @@ class ThemeStatsOut(PassthroughModel):
     in_library: int
     after_rules: int
     unwatched_median: int | None
+    truncated: bool = False
 
 
 class ThemeDiffOut(PassthroughModel):

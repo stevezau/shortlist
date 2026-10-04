@@ -12,7 +12,7 @@ class NullCurator:
     last_tokens = 0  # no LLM call, so callers can read this uniformly without a getattr fallback
     last_output_tokens = 0
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         """No model to call.
 
         Returns "" so the SearXNG and native paths degrade to nothing, which is correct for both:

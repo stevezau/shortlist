@@ -6618,6 +6618,11 @@ export interface components {
             named: number;
             /** Resolved */
             resolved: number;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
             /** Unwatched Median */
             unwatched_median: number | null;
         } & {
