@@ -137,6 +137,14 @@ describe("a new AI row", () => {
     expect(screen.getByText(/starts switched off/i)).toBeInTheDocument();
   });
 
+  it("has no request settings, because an AI row only picks from what the server has", async () => {
+    renderEditor({ collection: null, template });
+    await screen.findByText(/Row type: AI row/);
+
+    expect(screen.queryByRole("link", { name: "Requests" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Requests" })).not.toBeInTheDocument();
+  });
+
   it("can't be added until its list is built", async () => {
     renderEditor({ collection: null, template });
 
@@ -193,7 +201,20 @@ describe("a saved AI row", () => {
   const refined = {
     ...PREVIEW,
     stats: { named: 50, resolved: 35, in_library: 30, after_rules: 20, unwatched_median: null },
-    diff: { rules_changed: false, added: ["Hereditary"], removed: [], unchanged: ["Se7en"], added_count: 1, removed_count: 0 },
+    diff: {
+      rules_changed: false,
+      added: ["Hereditary"],
+      removed: [],
+      unchanged: ["Se7en"],
+      added_count: 1,
+      removed_count: 0,
+      tags_added: [],
+      tags_removed: [],
+      genres_added: [],
+      genres_removed: [],
+      before_count: 1,
+      after_count: 2,
+    },
     tokens: 150,
   };
 
@@ -267,5 +288,6 @@ describe("an ordinary row", () => {
     expect(screen.queryByRole("link", { name: "Try it" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "AI prompts" })).not.toBeInTheDocument();
     expect(api.getThemeCapabilities).not.toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Requests" })).toBeInTheDocument();
   });
 });

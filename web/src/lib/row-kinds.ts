@@ -583,7 +583,8 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
 
 /**
  * What an AI row shows beside the settings every row has. Its titles come from its theme, so there are
- * no sources, watch counts or seasons to choose, and its limits are the theme's own rules.
+ * no sources, watch counts or seasons to choose, and its limits are the theme's own rules. It is library-only:
+ * a title the server lacks is left out, never requested, so there are no request settings either.
  */
 export function aiRowSettings(): ReadonlySet<RowSettingKey> {
   return new Set<RowSettingKey>([
@@ -592,7 +593,6 @@ export function aiRowSettings(): ReadonlySet<RowSettingKey> {
     "recency",
     "refresh_days",
     "idle_hold_days",
-    "requests",
   ]);
 }
 

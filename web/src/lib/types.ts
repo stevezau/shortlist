@@ -169,7 +169,7 @@ export type Theme = Schemas["ThemeOut"];
 export type ThemePick = Schemas["ThemePickIO"];
 export type ThemeRules = Schemas["RulesIO"];
 /** POST /api/themes/preview body: only the brief is required. */
-export type ThemePreviewInput = Partial<Schemas["PreviewIn"]> & { brief: string };
+export type ThemePreviewInput = Partial<Schemas["PreviewIn"]>;
 /** What one AI call wrote: the draft, how it fared, what it spent, and (when refining) what it changed. */
 export type ThemePreview = Schemas["PreviewOut"];
 export type ThemeStats = Schemas["ThemeStatsOut"];

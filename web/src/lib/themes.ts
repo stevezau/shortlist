@@ -55,11 +55,11 @@ export function useTheme(id: number | null) {
 /** Everything that decides what a preview says, in one string: the same request is the same answer. */
 function previewKey(input: ThemePreviewInput, salt: string): string {
   return JSON.stringify([
-    input.brief.trim(),
+    (input.brief ?? "").trim(),
+    (input.change ?? "").trim(),
     input.media ?? "both",
     input.current_theme_id ?? null,
     input.collection_id ?? null,
-    input.person_id ?? null,
     (input.guidance ?? "").trim(),
     salt,
   ]);
@@ -86,7 +86,11 @@ export function useThemePreview() {
       const key = previewKey(input, salt);
       const known = answers.current.get(key);
       if (known) return { preview: known, cached: true };
-      const preview = await api.previewTheme({ ...input, brief: input.brief.trim() });
+      const preview = await api.previewTheme({
+        ...input,
+        ...(input.brief !== undefined ? { brief: input.brief.trim() } : {}),
+        ...(input.change !== undefined ? { change: input.change.trim() } : {}),
+      });
       answers.current.set(key, preview);
       return { preview, cached: false };
     },

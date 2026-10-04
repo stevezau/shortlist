@@ -16,7 +16,8 @@ All notable changes to this project are documented here. This project follows
   taste. The editor has **Build the list**, **Change it** (shows a diff before you save), **Try it** (a
   practice run for one person that writes nothing to Plex, and works on a switched-off row), **AI
   prompts** (your guidance, plus the locked mechanics), usage per row, and **Pause AI for this row**.
-  New AI rows start switched off. Per-person rows only. With no AI provider you can still hand-edit the
+  New AI rows start switched off. Per-person rows only, and library-only: a title your server lacks is
+  never requested. With no AI provider you can still hand-edit the
   tags, genres and limits. See [An AI row](https://shortlistapp.dev/guides/ai/#an-ai-row). (#138)
 - **AI instructions: tell AI web search what to look for**, server-wide in Settings → Defaults → Title
   sources and per row under What goes in. A row can use the default, add to it, or write its own.

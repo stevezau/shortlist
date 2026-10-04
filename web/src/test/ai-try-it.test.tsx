@@ -156,13 +156,16 @@ describe("AiTryIt", () => {
     expect(await screen.findByText("Se7en")).toBeInTheDocument();
   });
 
-  it("shows the person's own error when the run failed for them", async () => {
+  it("says plainly that it couldn't be tried, and never prints the raw run error", async () => {
     api.getRun.mockResolvedValue(runResult({ picks: [], status: "error", error: "Plex didn't answer in time" }));
     renderIt();
 
     await userEvent.click(screen.getByRole("button", { name: /^Try it/ }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Plex didn.t answer in time/i);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/couldn.t be tried/i);
+    expect(alert).toHaveTextContent(/nothing was written to plex/i);
+    expect(alert).not.toHaveTextContent(/answer in time/i);
   });
 
   it("holds Try it back while there are unsaved changes, since it runs the saved row", () => {

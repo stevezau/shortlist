@@ -7,7 +7,6 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SELECT_CLASS } from "@/components/rows/seasons/select-class";
 import { useRun, useStartRun } from "@/lib/queries";
-import { friendlyError } from "@/lib/run-format";
 import type { Collection, RunDetail, User } from "@/lib/types";
 
 function personName(user: User): string {
@@ -122,8 +121,10 @@ function Result({ run, person }: { run: RunDetail; person: User }) {
   if (result.error) {
     return (
       <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
-        <p>It couldn’t be tried for {name}. {friendlyError(result.error)}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{result.error}</p>
+        <p>
+          It couldn’t be tried for {name}. Nothing was written to Plex. Try again in a moment; if it keeps failing,
+          the Runs page shows what happened.
+        </p>
       </div>
     );
   }

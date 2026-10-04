@@ -256,6 +256,12 @@ describe("AiRowSection changing a list", () => {
       unchanged: ["The Prestige"],
       added_count: 1,
       removed_count: 1,
+      tags_added: ["slasher"],
+      tags_removed: ["gore"],
+      genres_added: ["Horror"],
+      genres_removed: ["Comedy"],
+      before_count: 2,
+      after_count: 3,
     },
     tokens: 150,
   });
@@ -269,11 +275,18 @@ describe("AiRowSection changing a list", () => {
 
     const diff = within(await screen.findByRole("region", { name: /what would change/i }));
     expect(api.previewTheme).toHaveBeenCalledWith(
-      expect.objectContaining({ brief: "less gore", current_theme_id: 5, collection_id: 9 }),
+      expect.objectContaining({ change: "less gore", current_theme_id: 5, collection_id: 9 }),
     );
+    // The description stays the row's: only the change is sent, never the typed words as a new brief.
+    expect(api.previewTheme.mock.calls[0]![0]).not.toHaveProperty("brief");
     expect(diff.getByText("Hereditary")).toBeInTheDocument();
     expect(diff.getByText("Se7en")).toBeInTheDocument();
     expect(diff.getByText(/limits changed/i)).toBeInTheDocument();
+    expect(diff.getByText("slasher")).toBeInTheDocument();
+    expect(diff.getByText("gore")).toBeInTheDocument();
+    expect(diff.getByText("Horror")).toBeInTheDocument();
+    expect(diff.getByText("Comedy")).toBeInTheDocument();
+    expect(diff.getByText(/2 before, 3 after/i)).toBeInTheDocument();
     expect(diff.getByText(/1 stays/i)).toBeInTheDocument();
     expect(diff.getByText(/22 titles/i)).toBeInTheDocument();
     expect(spent).toHaveBeenCalledWith(150);

@@ -100,7 +100,7 @@ describe("useThemePreview", () => {
   it.each([
     ["a different brief", { brief: "heists" }],
     ["different guidance", { brief: "films with a twist", guidance: "Only the 90s." }],
-    ["another person", { brief: "films with a twist", person_id: 3 }],
+    ["a different change", { change: "less gore", current_theme_id: 9 }],
     ["a refinement of a stored theme", { brief: "films with a twist", current_theme_id: 9 }],
   ])("asks again for %s", async (_label, other) => {
     const { result } = renderHook(() => useThemePreview(), { wrapper });
@@ -117,7 +117,7 @@ describe("useThemePreview", () => {
 
   it("asks again once the stored theme has changed, even for the same refinement", async () => {
     const { result } = renderHook(() => useThemePreview(), { wrapper });
-    const refine = { brief: "less gore", current_theme_id: 9 };
+    const refine = { change: "less gore", current_theme_id: 9 };
 
     await act(async () => {
       await result.current.build(refine, "hash-1");

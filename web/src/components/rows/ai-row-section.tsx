@@ -145,7 +145,7 @@ function AiHalf({
   const canRefine = collection?.theme_id != null && pending === null;
   const media = input.media;
 
-  const run = async (request: { brief: string; current_theme_id?: number }, then: (p: ThemePreview) => void) => {
+  const run = async (request: { brief?: string; change?: string; current_theme_id?: number }, then: (p: ThemePreview) => void) => {
     setFailed(null);
     try {
       const { preview, cached } = await builder.build(
@@ -169,7 +169,7 @@ function AiHalf({
     });
 
   const refine = () =>
-    run({ brief: change, current_theme_id: collection?.theme_id ?? undefined }, (preview) => setRefinement(preview));
+    run({ change, current_theme_id: collection?.theme_id ?? undefined }, (preview) => setRefinement(preview));
 
   const buildReason = paused ? PAUSED_REASON : !guidanceReady ? "Loading the default instructions…" : null;
   const changeReason = paused ? PAUSED_REASON : !canRefine ? SAVE_FIRST_REASON : buildReason;
@@ -267,7 +267,8 @@ function AiHalf({
         </Button>
         {changeReason && <p className="text-sm text-warning">{changeReason}</p>}
         <p className="text-sm text-muted-foreground">
-          Tell the AI what to change. You see what would be added and removed before anything is kept.
+          Tell the AI what to change. Your description stays as it is, and you see what would be added and removed
+          before anything is kept.
         </p>
       </div>
     </div>
@@ -301,7 +302,7 @@ function ListCard({ theme, counts, unsaved }: { theme: Theme; counts: Counts | n
       {missing > 0 && (
         <p className="text-sm text-muted-foreground">
           {missing} {missing === 1 ? "title the AI named isn’t" : "titles the AI named aren’t"} on your server. They
-          are left out of the row, and can be requested if requests are on.
+          are left out of the row; an AI row only picks from what you already have.
         </p>
       )}
       {rules.length > 0 && (
@@ -365,11 +366,16 @@ function DiffCard({
     <section aria-label="What would change" className="space-y-3 rounded-lg border border-border-strong bg-elevated p-4">
       <h3 className="text-sm font-semibold">What would change</h3>
       {diff.rules_changed && <p className="text-sm">The limits changed (length, year or rating).</p>}
-      <TitleList label={`Added (${diff.added_count})`} titles={diff.added} />
-      <TitleList label={`Removed (${diff.removed_count})`} titles={diff.removed} />
+      <TitleList label={`Titles added (${diff.added_count})`} titles={diff.added} />
+      <TitleList label={`Titles removed (${diff.removed_count})`} titles={diff.removed} />
+      <TitleList label={`Tags added (${diff.tags_added.length})`} titles={diff.tags_added} />
+      <TitleList label={`Tags removed (${diff.tags_removed.length})`} titles={diff.tags_removed} />
+      <TitleList label={`Genres added (${diff.genres_added.length})`} titles={diff.genres_added} />
+      <TitleList label={`Genres removed (${diff.genres_removed.length})`} titles={diff.genres_removed} />
       <p className="text-sm text-muted-foreground">
-        {diff.unchanged.length} {diff.unchanged.length === 1 ? "stays" : "stay"} the same. The new list has{" "}
-        {preview.stats.after_rules} titles after limits.
+        Named titles: {diff.before_count} before, {diff.after_count} after. {diff.unchanged.length}{" "}
+        {diff.unchanged.length === 1 ? "stays" : "stay"} the same. The new list has {preview.stats.after_rules}{" "}
+        titles on your server after limits.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button type="button" variant="outline" onClick={onKeep}>

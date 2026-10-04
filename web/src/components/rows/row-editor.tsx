@@ -627,8 +627,8 @@ export function RowEditor({
     { id: "schedule", label: "Schedule" },
     { id: "placement", label: "Placement" },
     // A Your requests row never searches, so it has nothing to ask for and nothing to set here, and
-    // an empty section would only be somewhere to be wrong.
-    ...(input.requests_row ? [] : [{ id: "requests", label: "Requests" }]),
+    // an empty section would only be somewhere to be wrong. An AI row is library-only and never asks either.
+    ...(input.requests_row || aiRow ? [] : [{ id: "requests", label: "Requests" }]),
     // A row being created has nothing on Plex to remove yet.
     ...(collection ? [{ id: "danger-zone", label: "Danger zone" }] : []),
   ];
@@ -1212,7 +1212,7 @@ export function RowEditor({
             </div>
           </EditorSection>
 
-          {!input.requests_row && (
+          {!input.requests_row && !aiRow && (
             <EditorSection
               id="requests"
               title="Requests"

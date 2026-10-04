@@ -135,8 +135,9 @@ and it does so once, not every night.
 3. Click **Build the list**. The AI proposes a theme: a name, rules, TMDB tags and genres, and about 60
    named titles with a one-line reason each.
 4. Read the result. Shortlist shows how many titles it found on TMDB, how many are in your library,
-   and how many survive the row's limits. Click **Change it** to refine the brief; you see a diff of
-   what was added and removed before you save.
+   and how many survive the row's limits. Click **Change it** and say what to change; your own
+   description stays as you wrote it, and you see what was added and removed (titles, tags and genres)
+   before you keep anything. Tags and genres you added by hand stay unless the AI says to drop them.
 5. Click **Try it** and choose a person. It runs the row for them without writing anything to Plex.
    You can try a row that is switched off.
 6. Save, then switch the row on. **New AI rows start switched off**, so nothing reaches anyone's
@@ -144,7 +145,9 @@ and it does so once, not every night.
 
 **Every night after that uses no AI.** Each person's row is filled from the saved theme (its tags,
 genres and named titles), kept to titles in your library they have not watched, and ranked by their
-own taste. Two people get different rows from the same theme.
+own taste. Two people get different rows from the same theme. An AI row only ever picks from what you
+already have: a title the AI named that your server lacks is left out and never requested, so the row
+has no request settings.
 
 **Controls in the editor:**
 

@@ -313,6 +313,19 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
     def genres() -> dict:
         return {"genres": [{"id": 1, "name": "Drama"}]}
 
+    @app.get("/search/movie")
+    @app.get("/search/tv")
+    def search_title(request: Request, query: str = "") -> dict:
+        """A title search over the fake library, by a piece of its name (`TmdbClient.search`)."""
+        kind = "movie" if request.url.path.endswith("/movie") else "tv"
+        needle = query.strip().casefold()
+        found = [
+            _listed(kind, item.tmdb_id, item.title, item.year)
+            for item in by_id[kind].values()
+            if needle and needle in item.title.casefold()
+        ]
+        return {"page": 1, "results": found, "total_pages": 1, "total_results": len(found)}
+
     @app.get("/search/keyword")
     def search_keyword(query: str = "") -> dict:
         found = [

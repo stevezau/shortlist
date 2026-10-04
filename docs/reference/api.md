@@ -250,11 +250,17 @@ GET /api/themes/capabilities -> {ai: bool}
      Whether an AI provider is set. The AI row editor hides the half that needs one when it is false.
 GET /api/themes/prompts -> {guidance, mechanics}
      What the AI is told when it writes a theme: the editable guidance and the locked mechanics.
-POST /api/themes/preview {brief, media: "movie"|"show"|"both", current_theme_id?, collection_id?, person_id?, guidance?}
+POST /api/themes/preview {brief?, change?, media: "movie"|"show"|"both", current_theme_id?, collection_id?, guidance?}
      -> {draft, stats: {named, resolved, in_library, after_rules, unwatched_median}, diff, tokens}
-     Asks the AI to write (or, with `current_theme_id`, refine) a theme and checks every title against TMDB,
-     the library and the limits. Saves nothing. `diff` is null for a new theme. A paused row is refused
-     with 409. `guidance` is up to 2000 characters; empty keeps Shortlist's.
+     Asks the AI to write a theme from `brief` (required), or, with `current_theme_id`, to refine it by
+     `change` (required). A refinement keeps the stored description: it goes to the AI as context and comes
+     back unchanged in `draft.brief`. The AI names each title as a movie or a show, and only that kind is
+     looked up; a title with no kind is left out. Every title is checked against TMDB and the library, and
+     the limits apply to the titles your libraries hold (an AI row never requests a missing one). A
+     refinement keeps the theme's tags and genres, hand-added ones included, unless the AI says to drop
+     them. `diff` is null for a new theme, and lists added and removed titles, tags and genres with
+     before and after title counts. Saves nothing. A paused row is refused with 409. `guidance` is up to
+     4000 characters; empty keeps Shortlist's.
 POST /api/themes {draft, tokens?, collection_id?, stats?} -> theme · PUT /api/themes/{id} (same body) · GET /api/themes/{id}
      Stores a theme (`name`, `emoji`, `brief`, `origin: "ai"|"manual"`, `media`, `tags`, `genres`,
      `excluded_genres`, `collections`, `picks` up to 200, `rules`). `tokens` is what the AI call cost and is
