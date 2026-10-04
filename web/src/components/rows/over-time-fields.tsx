@@ -7,8 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { usesTheme } from "@/lib/placeholders";
 import { useCollections } from "@/lib/queries";
-import type { CollectionInput } from "@/lib/types";
+import type { Collection, CollectionInput } from "@/lib/types";
 
 /** What each choice means; null is the usual third, and what a row stores until someone changes it. */
 const SHARE_OPTIONS: { label: string; value: number | null }[] = [
@@ -128,6 +129,12 @@ export function DaysInput({
   onCommit: (days: number) => void;
 }) {
   const [text, setText] = useState(String(value));
+  // The value can change from outside (Discard puts the saved one back); typing that already says it is left be.
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    if (text === "" || Number(text) !== value) setText(String(value));
+  }
   return (
     <Input
       id={id}
@@ -146,6 +153,11 @@ export function DaysInput({
       onBlur={() => setText(String(value))}
     />
   );
+}
+
+/** An AI row is named from its theme (`{theme_emoji} {theme}`), which means nothing until a person has one. */
+function friendlyName(row: Collection): string {
+  return usesTheme(row.name) ? `AI row (${row.slug})` : row.name;
 }
 
 function AvoidRows({
@@ -198,7 +210,7 @@ function AvoidRows({
                         onChange={() => toggle(row.slug)}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-primary focus-visible:outline-none"
                       />
-                      {row.name}
+                      {friendlyName(row)}
                     </label>
                   </li>
                 ))}

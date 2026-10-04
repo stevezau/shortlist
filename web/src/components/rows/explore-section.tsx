@@ -114,7 +114,7 @@ export function ExploreSection({
             <Rotation collection={collection} input={input} />
           ) : (
             <p className="text-sm text-muted-foreground">
-              Save the row to see each person’s themes. The first one is picked when it next runs.
+              Save the row to see each person’s themes. The first one is picked by the daily theme job once this row is on.
             </p>
           )}
         </div>
@@ -172,10 +172,13 @@ function PersonCard({
   return (
     <section aria-label={target.name} className="space-y-3 rounded-lg border bg-elevated p-4">
       <h4 className="text-sm font-semibold">{target.name}</h4>
-      {target.current && <p className="text-sm text-muted-foreground">Now: {label(target.current)}</p>}
+      <p className="text-sm text-muted-foreground">
+        {target.current ? `Now: ${label(target.current)}` : "No theme yet"}
+      </p>
       {next ? (
         <p className="text-sm">
-          Up next: {label(next)} — starts {formatDate(target.next_due_at, { dateOnly: true })}
+          Up next: {label(next)}
+          {target.next_due_at && ` — starts ${formatDate(target.next_due_at, { dateOnly: true })}`}
         </p>
       ) : (
         <p className="text-sm text-muted-foreground">

@@ -313,8 +313,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
  * The AI templates. Kept apart from `ROW_TEMPLATES`, which is the six kinds' own: an AI row is not a
  * kind a row can be switched to, and its name uses the theme placeholders that no other template may.
  *
- * "AI Picks" (a row that explores new themes over time) is not here: it needs the explore mode of a
- * later phase, and a tile that promised it would deliver this fixed-theme row instead.
+ * Exploring new themes over time is a switch on the AI row ("Themes over time"), not a template of its own.
  */
 export const AI_TEMPLATES: RowTemplate[] = [
   {

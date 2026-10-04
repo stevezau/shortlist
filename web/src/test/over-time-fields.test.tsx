@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { OverTimeFields } from "@/components/rows/over-time-fields";
+import { DaysInput, OverTimeFields } from "@/components/rows/over-time-fields";
 import type * as ApiModule from "@/lib/api";
 import { blankInput } from "@/lib/collections";
 import type { Collection, CollectionInput } from "@/lib/types";
@@ -106,6 +106,13 @@ describe("OverTimeFields", () => {
     expect(changes).toHaveBeenLastCalledWith({ avoid_rows: null });
   });
 
+  it("names an AI row by its slug, not by its theme placeholders", async () => {
+    api.listCollections.mockResolvedValue([row("ai-twists", { name: "{theme_emoji} {theme}" })]);
+    renderFields();
+
+    expect(await screen.findByRole("checkbox", { name: "AI row (ai-twists)" })).toBeInTheDocument();
+  });
+
   it("says so when there is no other row to compare with", async () => {
     api.listCollections.mockResolvedValue([row("mine")]);
     renderFields();
@@ -119,5 +126,41 @@ describe("OverTimeFields", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Read them again" }));
     await waitFor(() => expect(screen.getByRole("checkbox", { name: "Row a" })).toBeInTheDocument());
+  });
+});
+
+describe("DaysInput", () => {
+  function Outside() {
+    const [value, setValue] = useState(7);
+    return (
+      <>
+        <DaysInput id="days" label="Days" value={value} min={1} max={90} onCommit={setValue} />
+        <button type="button" onClick={() => setValue(30)}>
+          Discard
+        </button>
+      </>
+    );
+  }
+
+  it("shows the value again when it is changed from outside", async () => {
+    render(<Outside />);
+    const days = screen.getByLabelText("Days");
+    await userEvent.clear(days);
+    await userEvent.type(days, "12");
+
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(days).toHaveValue(30);
+  });
+
+  it("keeps what is being typed", async () => {
+    render(<Outside />);
+    const days = screen.getByLabelText("Days");
+
+    await userEvent.clear(days);
+    expect(days).toHaveValue(null);
+    await userEvent.type(days, "45");
+
+    expect(days).toHaveValue(45);
   });
 });

@@ -165,6 +165,24 @@ describe("ExploreSection", () => {
     expect(api.getThemeRotation).not.toHaveBeenCalled();
   });
 
+  it("says the daily job picks the first theme", () => {
+    renderSection(null, { ...blankInput(), theme_mode: "explore" });
+
+    expect(
+      screen.getByText(/The first one is picked by the daily theme job once this row is on\./),
+    ).toBeInTheDocument();
+  });
+
+  it("says a person has no theme yet instead of a start date of nothing", async () => {
+    api.getThemeRotation.mockResolvedValue(rotation({ current: null, started_at: null, next_due_at: null }));
+    renderSection(savedRow(), { ...blankInput(), theme_mode: "explore" });
+
+    const card = await screen.findByRole("region", { name: "Sarah" });
+    expect(within(card).getByText("No theme yet")).toBeInTheDocument();
+    expect(within(card).getByText("Up next: Slow-burn mysteries")).toBeInTheDocument();
+    expect(card.textContent).not.toContain("starts —");
+  });
+
   it("shows a skeleton while the rotation loads", () => {
     api.getThemeRotation.mockReturnValue(new Promise(() => {}));
     renderSection(savedRow(), { ...blankInput(), theme_mode: "explore" });
