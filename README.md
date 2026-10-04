@@ -69,7 +69,7 @@ to the wrong person, not even briefly.
 from TMDB and Trakt. Gaps can be handed to **Radarr/Sonarr** or **Overseerr/Jellyseerr**. Kometa's
 collections are left completely alone.
 
-**Honest limits:**
+**Requirements and limits:**
 
 - Plex only. The privacy model relies on Plex's label-based share filters, so there is nothing to
   port to Jellyfin or Emby.
