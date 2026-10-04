@@ -364,6 +364,7 @@ class TestRestoreChecksIntegrity:
     @staticmethod
     def _db(path: Path, marker: str) -> None:
         with closing(sqlite3.connect(path)) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS alembic_version (version_num TEXT)")
             conn.execute("CREATE TABLE t (v TEXT)")
             conn.execute("INSERT INTO t VALUES (?)", (marker,))
             conn.commit()
@@ -406,3 +407,40 @@ class TestRestoreChecksIntegrity:
 
         assert backup_mod.restore_backup(tmp_path, "shortlist_20260901_000000.db") is True
         assert self._marker(tmp_path / "shortlist.db") == "old"
+
+    def test_an_empty_backup_is_refused(self, tmp_path: Path):
+        self._db(tmp_path / "shortlist.db", "live")
+        backups = tmp_path / backup_mod.BACKUP_SUBDIR
+        backups.mkdir()
+        empty = backups / "shortlist_20260902_000000.db"
+        empty.write_bytes(b"")
+
+        assert backup_mod.restore_backup(tmp_path, empty.name) is False
+        assert self._marker(tmp_path / "shortlist.db") == "live"
+        assert not (tmp_path / backup_mod.RESTORE_STAGING).exists()
+
+    def test_a_database_without_an_alembic_version_table_is_refused(self, tmp_path: Path):
+        self._db(tmp_path / "shortlist.db", "live")
+        backups = tmp_path / backup_mod.BACKUP_SUBDIR
+        backups.mkdir()
+        foreign = backups / "shortlist_20260902_000000.db"
+        with closing(sqlite3.connect(foreign)) as conn:
+            conn.execute("CREATE TABLE t (v TEXT)")
+            conn.commit()
+
+        assert backup_mod.restore_backup(tmp_path, foreign.name) is False
+        assert self._marker(tmp_path / "shortlist.db") == "live"
+
+    def test_the_sidecars_the_read_only_open_leaves_are_removed(self, tmp_path: Path):
+        staged = tmp_path / "staged.db"
+        self._db(staged, "old")
+        with closing(sqlite3.connect(staged)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+        # What a read-only open of a WAL-mode file can leave behind.
+        (tmp_path / "staged.db-wal").write_bytes(b"")
+        (tmp_path / "staged.db-shm").write_bytes(b"")
+
+        assert backup_mod._passes_integrity_check(staged) is True
+
+        assert not (tmp_path / "staged.db-wal").exists()
+        assert not (tmp_path / "staged.db-shm").exists()

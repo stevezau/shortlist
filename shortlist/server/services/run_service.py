@@ -448,8 +448,9 @@ class RunService:
                 # writes `Run.stats`, which the save below also writes, so it must stay out of the
                 # way (a lost update) — and a flag set on a finished run is stale anyway.
                 self._settling.add(run_id)
-                # Off the loop: the save, crediting and alert measured 4.4s+ on a 46-user run. Reconcile
-                # commits per person, so loop-side writers are never starved of SQLite's write lock.
+                # Off the loop: the save, crediting and alert measured 4.4s+ on a 46-user run. Only the
+                # reconcile commits per person; `persist_report` is one transaction, so loop-side writers
+                # can wait on SQLite's write lock for its duration.
                 await loop.run_in_executor(
                     None,
                     functools.partial(self._persist_report, run_id, report, status="aborted" if aborted else None),

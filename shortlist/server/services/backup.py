@@ -167,16 +167,31 @@ def list_backups(config_dir: Path) -> list[dict]:
 
 
 def _passes_integrity_check(path: Path) -> bool:
-    """True when SQLite opens `path` and `PRAGMA integrity_check` answers exactly 'ok'."""
+    """True when `path` is a non-empty SQLite file with an `alembic_version` table that answers
+    `PRAGMA integrity_check` with exactly 'ok'.
+
+    An empty file passes SQLite's own check, and so would a database from some other program; neither
+    is a Shortlist backup worth replacing the live database with. The read-only open of a WAL-mode file
+    can leave `-wal`/`-shm` sidecars beside it, which would otherwise be picked up by the real database
+    when the staged file is moved into place, so they are removed.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return False
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
             rows = conn.execute("PRAGMA integrity_check").fetchall()
+            has_version = (
+                conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='alembic_version'").fetchone()
+                is not None
+            )
         finally:
             conn.close()
+            for suffix in ("-wal", "-shm"):
+                Path(f"{path}{suffix}").unlink(missing_ok=True)
     except sqlite3.Error:
         return False
-    return rows == [("ok",)]
+    return rows == [("ok",)] and has_version
 
 
 def restore_backup(config_dir: Path, backup_name: str, *, max_keep: int = DEFAULT_MAX_BACKUPS) -> bool:

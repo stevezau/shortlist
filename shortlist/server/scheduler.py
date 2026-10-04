@@ -189,6 +189,8 @@ def _make_job(app, cron: str, collection_ids: list[int]):
         nonlocal last_slot
         # On the autumn clock change the repeated hour makes a cron slot inside it come round twice: same
         # wall-clock minute, an hour apart. The second firing would queue a full duplicate run behind the first.
+        # Accepted: this keys on the actual fire minute, so an hourly cron's legitimately repeated-hour fire
+        # is dropped once a year too.
         slot = _local_now().replace(tzinfo=None, second=0, microsecond=0)
         if slot == last_slot:
             logger.info("scheduled run skipped: cron '{}' already fired for {} (repeated hour)", cron, slot)

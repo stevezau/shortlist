@@ -256,8 +256,9 @@ class TestRowSourcesSetupCheck:
     @pytest.mark.parametrize(
         "row_param,expected",
         [
-            # No row_id: today's behaviour, only the typed pattern is in play.
-            pytest.param(None, ("req-mike", False, "mike"), id="no-row-id-previews-the-typed-pattern-alone"),
+            # No row_id: nothing is being edited, so every enabled row's saved pattern joins the typed one.
+            pytest.param(None, ("req-mike", True, ""), id="no-row-id-adds-every-enabled-rows-pattern"),
+            pytest.param("no-id-disabled", ("req-mike", False, "mike"), id="no-row-id-ignores-a-disabled-rows-pattern"),
             # With row_id: the OTHER enabled requests rows' patterns join, as in a run.
             pytest.param("first", ("req-mike", True, ""), id="row-id-adds-the-other-enabled-rows-patterns"),
             # A disabled row's pattern is not in a run, so it is not in the preview.
@@ -286,14 +287,14 @@ class TestRowSourcesSetupCheck:
                         build="per_person",
                         requests_row=True,
                         requests_tag_pattern="req-{name}",
-                        enabled=row_param != "disabled",
+                        enabled=row_param not in ("disabled", "no-id-disabled"),
                     ),
                 ]
             )
             session.commit()
             first = session.query(Collection).filter_by(slug="a").one().id
         params: dict[str, object] = {"pattern": "req-{username}"}
-        if row_param is not None:
+        if row_param in ("first", "disabled"):
             params["row_id"] = first
         with respx.mock:
             respx.get("http://radarr/api/v3/tag").mock(

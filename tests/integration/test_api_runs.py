@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from shortlist.server.db.models import User
+from shortlist.server.services.report_cache import invalidate_report_cache
 
 pytestmark = pytest.mark.integration
 
@@ -60,7 +61,21 @@ RUN_SHARED_ROW_KEYS = (RUN_USER_KEYS - {"username", "display_name", "slug", "row
     "collection_slug",
     "row_title",
 }
-PICK_KEYS = {"rank", "title", "reason", "rating_key", "seed_title", "sources", "affinity", "year", "rating"}
+PICK_KEYS = {
+    "rank",
+    "title",
+    "reason",
+    "rating_key",
+    "seed_title",
+    "sources",
+    "affinity",
+    "year",
+    "rating",
+    # The score the row was sorted on and its source, so a "Highest rated" row reads in order.
+    "rating_source",
+    "order_rating",
+    "order_rating_source",
+}
 TRACE_KEYS = {"username", "display_name", "status", "error", "reason", "trace", "breakdown", "requests"}
 TRACE_REQUEST_KEYS = {"status", "detail", "arr_slug", "excluded"}
 RUN_LOG_KEYS = {"seq", "ts", "run_id", "user", "stage", "counts", "reason", "level"}
@@ -946,7 +961,9 @@ class TestRunsApi:
                 ]
             )
             session.commit()
-            return uid
+        # Seeding bypasses the hooks that drop the report cache, so a report read earlier would be served stale.
+        invalidate_report_cache()
+        return uid
 
     def test_report_payload_carries_every_key_the_dashboard_reads(self, client: TestClient):
         """The report is the largest shape this API returns and the dashboard reads nearly all of it,

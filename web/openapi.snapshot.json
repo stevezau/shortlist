@@ -4187,6 +4187,28 @@
             ],
             "title": "Affinity"
           },
+          "order_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Rating"
+          },
+          "order_rating_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Rating Source"
+          },
           "rank": {
             "title": "Rank",
             "type": "integer"
@@ -4206,6 +4228,17 @@
             "default": 0,
             "title": "Rating Key",
             "type": "integer"
+          },
+          "rating_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating Source"
           },
           "reason": {
             "title": "Reason",
@@ -12482,7 +12515,7 @@
             }
           },
           {
-            "description": "The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them.",
+            "description": "The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them. Omitted, every enabled requests row's saved pattern joins the typed one.",
             "in": "query",
             "name": "row_id",
             "required": false,
@@ -12495,7 +12528,7 @@
                   "type": "null"
                 }
               ],
-              "description": "The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them.",
+              "description": "The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them. Omitted, every enabled requests row's saved pattern joins the typed one.",
               "title": "Row Id"
             }
           }

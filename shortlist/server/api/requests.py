@@ -472,7 +472,8 @@ async def get_row_sources(
         int | None,
         Query(
             description="The requests row being edited. Its pattern is the typed one; every OTHER enabled "
-            "requests row's pattern joins it, because a run judges a tag against all of them."
+            "requests row's pattern joins it, because a run judges a tag against all of them. Omitted, "
+            "every enabled requests row's saved pattern joins the typed one."
         ),
     ] = None,
 ) -> dict:
@@ -489,12 +490,11 @@ async def get_row_sources(
 
         sources, profiles, db_ids = svc.build_request_sources_only()
         patterns = {pattern} if pattern else set()
-        if row_id is not None:
-            with request.app.state.sessions() as session:
-                others = session.query(Collection.requests_tag_pattern).filter(
-                    Collection.requests_row, Collection.enabled, Collection.id != row_id
-                )
-                patterns |= {p.strip() for (p,) in others if p and p.strip()}
+        with request.app.state.sessions() as session:
+            saved = session.query(Collection.requests_tag_pattern).filter(Collection.requests_row, Collection.enabled)
+            # Without a row_id nothing is being edited, so every enabled row's pattern counts, as in a run.
+            others = saved if row_id is None else saved.filter(Collection.id != row_id)
+            patterns |= {p.strip() for (p,) in others if p and p.strip()}
         if sources is None:
             ledger = RequestLedger(titles=[], complete=True)
         else:

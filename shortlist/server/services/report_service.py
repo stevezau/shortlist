@@ -35,7 +35,7 @@ from shortlist.server.db.models import (
     WatchSession,
     iso_utc,
 )
-from shortlist.server.services.report_cache import get_cached_report, store_report
+from shortlist.server.services.report_cache import current_generation, get_cached_report, store_report
 from shortlist.server.services.run_service import HIT_WINDOW_DAYS
 from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
@@ -982,15 +982,20 @@ def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, 
 def cached_effectiveness(session: Session, window: str, *, next_watch_sync: str | None = None) -> dict:
     """:func:`effectiveness`, served from the short-lived cache when a fresh result exists.
 
-    `next_watch_sync` comes from the scheduler and is merged onto a copy per request, never cached.
+    `next_watch_sync` comes from the scheduler, and the live-listener status from the settings table;
+    both are merged onto a copy per request, never cached.
     """
     if window not in WINDOWS:
         window = DEFAULT_WINDOW
     report = get_cached_report(window)
     if report is None:
+        generation = current_generation()
         report = effectiveness(session, window)
-        store_report(window, report)
+        store_report(window, report, generation)
+    store = SettingsStore(session)
     report["watch_sync"]["next"] = next_watch_sync
+    report["watch_sync"]["live_since"] = store.get(STREAM_CONNECTED_KEY)
+    report["watch_sync"]["live_down_since"] = store.get(STREAM_DOWN_SINCE_KEY)
     return report
 
 

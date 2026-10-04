@@ -4898,6 +4898,10 @@ export interface components {
         PickOut: {
             /** Affinity */
             affinity: number | null;
+            /** Order Rating */
+            order_rating?: number | null;
+            /** Order Rating Source */
+            order_rating_source?: string | null;
             /** Rank */
             rank: number;
             /** Rating */
@@ -4907,6 +4911,8 @@ export interface components {
              * @default 0
              */
             rating_key: number;
+            /** Rating Source */
+            rating_source?: string | null;
             /** Reason */
             reason: string;
             /** Seed Title */
@@ -8740,7 +8746,7 @@ export interface operations {
             query?: {
                 /** @description An own-tag pattern to preview, e.g. req-{username} */
                 pattern?: string;
-                /** @description The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them. */
+                /** @description The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them. Omitted, every enabled requests row's saved pattern joins the typed one. */
                 row_id?: number | null;
             };
             header?: never;

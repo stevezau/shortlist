@@ -1377,10 +1377,12 @@ def _watch_reconcile(state, payload: dict) -> dict:
     and the nightly sync reaches the same conclusion later from the same records. Waiting instead
     would mean an 88-minute run silently swallowing every partial watch made during it.
     """
+    from shortlist.server.services.report_cache import invalidate_report_cache
     from shortlist.server.services.run_persistence import reconcile_from_events
 
     changed = reconcile_from_events(state.sessions)
     if changed:
+        invalidate_report_cache()
         state.bus.publish("sync.finished", {"kind": "credited", "ok": True, "count": changed})
     return {"users_credited": changed}
 

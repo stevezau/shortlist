@@ -5483,6 +5483,56 @@ class TestRatingSource:
         fallback = _apply_order(picks, "rating", row_slug="r", user_slug="u", run_day=5, ratings=None)
         assert [p.tmdb_id for p in fallback] == [1, 2], "the fallback is one consistent TMDB scale"
 
+    def _picks(self, report):
+        return next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+
+    def test_the_breakdown_carries_the_score_the_row_was_sorted_on(self, ctx: EngineContext, mock_plextv):
+        """The run page renders the breakdown. A row sorted on IMDb but showing TMDB scores looks
+        unordered, so each pick carries the sorted-on score and its source beside the TMDB one."""
+        from tests.unit.test_requests import FakeMdbList
+
+        ratings: dict[int, tuple[float, int] | None] = {tid: (float(tid) / 2, 5000) for tid in range(10, 20)}
+        ratings[12] = None
+        self._rating_ctx(ctx, "imdb", FakeMdbList(ratings))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        picks = self._picks(pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]))
+
+        for p in picks:
+            assert p["order_rating_source"] == "imdb"
+            assert p["order_rating"] == (0.0 if p["tmdb_id"] == 12 else p["tmdb_id"] / 2)
+            assert p["rating_source"] == "tmdb"
+            assert p["rating"] == 9.5 - (p["tmdb_id"] - 10) * 0.5, "rating stays TMDB's"
+
+    def test_a_tmdb_sorted_row_has_no_order_score_but_names_its_rating_source(self, ctx: EngineContext, mock_plextv):
+        from tests.unit.test_requests import FakeMdbList
+
+        self._rating_ctx(ctx, "tmdb", FakeMdbList({}))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        picks = self._picks(pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]))
+
+        assert picks
+        for p in picks:
+            assert p["order_rating"] is None
+            assert p["order_rating_source"] is None
+            assert p["rating_source"] == "tmdb"
+
+    def test_a_spent_quota_leaves_no_order_score_on_the_picks(self, ctx: EngineContext, mock_plextv):
+        from tests.unit.test_requests import FakeMdbList
+
+        mdblist = FakeMdbList({tid: (float(tid), 5000) for tid in range(10, 20)}, rate_limit_after=2)
+        self._rating_ctx(ctx, "imdb", mdblist)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        picks = self._picks(pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]))
+
+        assert picks
+        for p in picks:
+            assert p["order_rating"] is None
+            assert p["order_rating_source"] is None
+            assert p["rating_source"] == "tmdb"
+
     def test_a_spent_quota_stops_being_retried_for_the_rest_of_the_run(self, ctx: EngineContext, mock_plextv):
         """Without a latch, every rating-ordered row for every user re-attempts after the first 429 —
         and each attempt is retried three times honouring Retry-After (up to 60s). On a 40-user server

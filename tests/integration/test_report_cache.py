@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from shortlist.server.api import report as report_api
 from shortlist.server.db.models import PickRow, Run, User
-from shortlist.server.services import report_cache, report_service
+from shortlist.server.services import jobs, report_cache, report_service, run_persistence
+from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY, STREAM_DOWN_SINCE_KEY
+from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration
 
@@ -108,3 +111,63 @@ class TestReportCache:
         client.get("/api/report")
 
         assert computes == ["30", "30"]
+
+    def test_clearing_run_history_invalidates(self, client: TestClient, computes: list[str]):
+        client.get("/api/report")
+
+        assert client.delete("/api/runs").status_code == 200
+        client.get("/api/report")
+
+        assert computes == ["30", "30"]
+
+    def test_live_listener_status_is_read_per_request_while_the_rest_stays_cached(
+        self, client: TestClient, computes: list[str]
+    ):
+        def live() -> tuple[str | None, str | None]:
+            watch_sync = client.get("/api/report").json()["watch_sync"]
+            return watch_sync["live_since"], watch_sync["live_down_since"]
+
+        assert live() == (None, None)
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session)
+            store.set(STREAM_CONNECTED_KEY, "2026-10-05T01:00:00Z")
+            store.set(STREAM_DOWN_SINCE_KEY, "2026-10-05T02:00:00Z")
+            session.commit()
+
+        assert live() == ("2026-10-05T01:00:00Z", "2026-10-05T02:00:00Z")
+        assert computes == ["30"], "the report itself was served from the cache"
+
+    def test_a_store_after_an_interleaved_invalidate_is_discarded(self):
+        generation = report_cache.current_generation()
+        report_cache.invalidate_report_cache()
+
+        report_cache.store_report("30", {"stale": True}, generation)
+
+        assert report_cache.get_cached_report("30") is None
+
+    def test_a_store_with_the_current_generation_is_kept(self):
+        report_cache.store_report("30", {"fresh": True}, report_cache.current_generation())
+
+        assert report_cache.get_cached_report("30") == {"fresh": True}
+
+
+class TestReconcileInvalidates:
+    def test_a_credit_drops_the_cache_before_the_sse_goes_out(self, monkeypatch):
+        monkeypatch.setattr(run_persistence, "reconcile_from_events", lambda _sessions: 2)
+        report_cache.store_report("30", {"x": 1})
+        seen: list[dict | None] = []
+        bus = MagicMock()
+        bus.publish.side_effect = lambda *_a: seen.append(report_cache.get_cached_report("30"))
+
+        jobs._watch_reconcile(SimpleNamespace(sessions=None, bus=bus), {})
+
+        assert seen == [None], "a listener refetching on the event must not be served the stale report"
+        assert bus.publish.call_args.args == ("sync.finished", {"kind": "credited", "ok": True, "count": 2})
+
+    def test_nothing_credited_keeps_the_cache(self, monkeypatch):
+        monkeypatch.setattr(run_persistence, "reconcile_from_events", lambda _sessions: 0)
+        report_cache.store_report("30", {"x": 1})
+
+        jobs._watch_reconcile(SimpleNamespace(sessions=None, bus=MagicMock()), {})
+
+        assert report_cache.get_cached_report("30") == {"x": 1}

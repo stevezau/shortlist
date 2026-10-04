@@ -989,6 +989,11 @@ def deliver_rows(
                         # any good?" is the first thing asked of a row that looks wrong.
                         "year": p.year,
                         "rating": p.rating,
+                        # `rating` is always TMDB's. `order_rating` is what a row sorted on another
+                        # service (IMDb via MDBList) was ordered by — shown instead, so the order reads.
+                        "rating_source": "tmdb",
+                        "order_rating": p.order_rating,
+                        "order_rating_source": p.order_rating_source,
                     }
                     for p in this_section
                 ],

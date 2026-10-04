@@ -319,22 +319,28 @@ def _first_title_array(text: str) -> tuple[list | None, json.JSONDecodeError | N
 
     Slicing first-``[`` to last-``]`` breaks on prose after the array that has its own brackets, so
     decode from each ``[`` instead. A fenced block is tried first, since that is where a model puts
-    the answer; prose like ``[see above]`` is not valid JSON and is skipped. Also returns the decode
-    error of the first ``[`` in the whole reply (``pos`` is relative to ``text``), for the warning log.
+    the answer; prose like ``[see above]`` is not valid JSON and is skipped.
+
+    An array of non-objects (a citation ``[1]``) wins only when no object-shaped array (``[{``) failed
+    to decode anywhere in the reply: a malformed title array must surface its decode error so the
+    caller's salvage and warning run, not be masked by a stray ``[1]``. The error is the first one
+    in the whole reply (``pos`` is relative to ``text``).
     """
     decoder = json.JSONDecoder()
     fenced = [m.group(1) for m in _FENCE.finditer(text)]
     first_any: list | None = None
     first_error: json.JSONDecodeError | None = None
-    first_error: json.JSONDecodeError | None = None
+    object_error: json.JSONDecodeError | None = None
     for chunk in [*fenced, text]:
         pos = chunk.find("[")
         while pos != -1:
             try:
                 value, end = decoder.raw_decode(chunk, pos)
             except json.JSONDecodeError as exc:
-                if chunk is text and first_error is None:
-                    first_error = exc
+                if chunk is text:
+                    first_error = first_error or exc
+                    if object_error is None and chunk[pos + 1 :].lstrip().startswith("{"):
+                        object_error = exc
                 pos = chunk.find("[", pos + 1)
                 continue
             if isinstance(value, list):
@@ -343,6 +349,8 @@ def _first_title_array(text: str) -> tuple[list | None, json.JSONDecodeError | N
                 if first_any is None:
                     first_any = value
             pos = chunk.find("[", end)
+    if object_error is not None:
+        return None, object_error
     return first_any, (None if first_any is not None else first_error)
 
 
@@ -354,6 +362,34 @@ def parse_web_titles(text: str, limit: int) -> list[dict]:
     unparseable yields an empty list (the source then simply contributes nothing).
     """
     return try_parse_web_titles(text, limit) or []
+
+
+_FLAT_OBJECT = re.compile(r"\{[^{}]*\}")
+_BARE_NULL_AFTER_COMMA = re.compile(r",\s*null\s*(?=[,}])")
+_BARE_NULL_AFTER_BRACE = re.compile(r"\{\s*null\s*,")
+
+
+def _salvage_entries(decoded: str) -> tuple[list[dict], int]:
+    """Decode every flat ``{...}`` object in a reply the whole-array decode rejected.
+
+    Entries have no nested braces, so one malformed entry (or a reply cut off mid-entry) costs only
+    itself. The one malformation seen in production (runs 76 and 103) is a bare ``null`` written in
+    place of a key, ``{"title": "You", null, "media": "show"}``; it is dropped, and no year is invented.
+
+    Returns:
+        The decoded dicts and how many ``{...}`` objects were found, so the caller can report drops.
+    """
+    found = _FLAT_OBJECT.findall(decoded)
+    entries: list[dict] = []
+    for chunk in found:
+        repaired = _BARE_NULL_AFTER_BRACE.sub("{", _BARE_NULL_AFTER_COMMA.sub("", chunk))
+        try:
+            entry = json.loads(repaired)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries, len(found)
 
 
 def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
@@ -376,6 +412,9 @@ def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
     # be an object). Unwrap it, so the same parser serves the schema'd and the chatty replies.
     if isinstance(data, dict):
         data = data.get("titles")
+    salvaged: tuple[list[dict], int] = ([], 0)
+    if not isinstance(data, list) and decode_error is not None:
+        salvaged = _salvage_entries(decoded)
     if not isinstance(data, list):
         # SHOW THE REPLY. Without it this line says only that something went wrong, and the seed's
         # candidates are gone with no way to tell a refusal ("I can't help with that") from a
@@ -396,15 +435,29 @@ def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
             )
         else:
             diagnosis = f"; no decode error; last 200 chars {preview[-200:]!r}"
-        logger.warning(
-            "llm_web: could not parse a title list from the model reply ({} chars, parsed as {}): {!r}{}{}",
-            len(preview),
-            type(data).__name__,
-            preview[:400],
-            "…" if len(preview) > 400 else "",
-            diagnosis,
-        )
-        return None
+        if salvaged[0]:
+            entries, found = salvaged
+            logger.warning(
+                "llm_web: salvaged {} of {} entries from a malformed model reply (dropped {}) ({} chars): {!r}{}{}",
+                len(entries),
+                found,
+                found - len(entries),
+                len(preview),
+                preview[:400],
+                "…" if len(preview) > 400 else "",
+                diagnosis,
+            )
+            data = entries
+        else:
+            logger.warning(
+                "llm_web: could not parse a title list from the model reply ({} chars, parsed as {}): {!r}{}{}",
+                len(preview),
+                type(data).__name__,
+                preview[:400],
+                "…" if len(preview) > 400 else "",
+                diagnosis,
+            )
+            return None
     out: list[dict] = []
     for item in data:
         if not isinstance(item, dict):

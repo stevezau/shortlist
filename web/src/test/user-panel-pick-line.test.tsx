@@ -73,6 +73,62 @@ describe("run report pick line", () => {
     expect(screen.getByText(/TMDB 8\.2/)).toBeInTheDocument();
   });
 
+  it("shows the score the row was sorted on, named, instead of TMDB's", () => {
+    render(
+      <UserPanel
+        run={RUN}
+        result={result([
+          {
+            ...BASE,
+            year: 1999,
+            rating: 7.4,
+            rating_source: "tmdb",
+            order_rating: 7.7,
+            order_rating_source: "imdb",
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByText(/IMDb 7\.7/)).toBeInTheDocument();
+    expect(screen.queryByText(/TMDB 7\.4/)).not.toBeInTheDocument();
+  });
+
+  it("says unrated when the chosen service had no score for the title", () => {
+    render(
+      <UserPanel
+        run={RUN}
+        result={result([
+          {
+            ...BASE,
+            rating: 7.4,
+            rating_source: "tmdb",
+            order_rating: 0,
+            order_rating_source: "imdb",
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByText(/IMDb unrated/)).toBeInTheDocument();
+  });
+
+  it("labels the TMDB score when the run recorded its source", () => {
+    render(
+      <UserPanel
+        run={RUN}
+        result={result([
+          {
+            ...BASE,
+            rating: 7.4,
+            rating_source: "tmdb",
+            order_rating: null,
+            order_rating_source: null,
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByText(/TMDB 7\.4/)).toBeInTheDocument();
+  });
+
   it("keeps the provenance line alongside the score", () => {
     render(
       <UserPanel

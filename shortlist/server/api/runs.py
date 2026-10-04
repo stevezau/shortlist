@@ -21,6 +21,7 @@ from shortlist.server.api.schemas_runs import (
 )
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import PickRow, RequestCandidate, Run, RunSharedRow, RunUser, iso_utc
+from shortlist.server.services.report_cache import invalidate_report_cache
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(require_owner)])
 
@@ -153,6 +154,7 @@ async def clear_runs(request: Request) -> dict:
         session.query(RunSharedRow).delete(synchronize_session=False)
         session.query(Run).delete(synchronize_session=False)
         session.commit()
+    invalidate_report_cache()
     return {"deleted": deleted}
 
 
