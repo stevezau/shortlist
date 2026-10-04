@@ -301,6 +301,8 @@ export function fateLabel(fate: TraceFate): string {
       return "hidden by their Plex restrictions";
     case "not_in_season":
       return "not a film for the season";
+    case "outside_row_limits":
+      return "Outside this row's limits";
     case "not_returned":
       return "found by another source";
     default:

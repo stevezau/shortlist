@@ -296,6 +296,7 @@ describe("plain-English trace helpers", () => {
       "hidden by their Plex restrictions",
     );
     expect(fateLabel("not_in_season")).toBe("not a film for the season");
+    expect(fateLabel("outside_row_limits")).toBe("Outside this row's limits");
   });
 
   it("requestResultLabel says what became of each request, and nothing for an unknown result", () => {

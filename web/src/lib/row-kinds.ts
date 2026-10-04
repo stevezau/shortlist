@@ -7,6 +7,7 @@ import {
   type RowKindChoice,
 } from "@/lib/row-kind-meta";
 import { findRowTemplate } from "@/lib/row-templates";
+import { withoutWebSearchWhenSeasonal } from "@/lib/seasonal-sources";
 import type { CollectionInput, RowSources } from "@/lib/types";
 
 /**
@@ -565,8 +566,7 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
 /** The sources the engine gathers from for this row (`rows.effective_row_sources`). */
 function rowSources(input: CollectionInput, ctx: Pick<RowKindContext, "globalSources">): readonly string[] {
   const sources = input.candidate_sources.length > 0 ? input.candidate_sources : ctx.globalSources;
-  // Web search asks about one watched title at a time, which is not seasonal, so a seasonal row drops it.
-  return input.seasons.length > 0 ? sources.filter((source) => source !== "llm_web") : sources;
+  return withoutWebSearchWhenSeasonal(sources, input.seasons);
 }
 
 /**

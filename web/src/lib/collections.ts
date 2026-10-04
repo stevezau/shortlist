@@ -5,6 +5,7 @@ import {
 } from "@/lib/constants";
 import { effectiveSources } from "@/components/rows/row-sources-field";
 import { placementLabel } from "@/lib/placement";
+import { withoutWebSearchWhenSeasonal } from "@/lib/seasonal-sources";
 import { showDaysSummary } from "@/lib/show-days";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
 import type {
@@ -354,7 +355,10 @@ export function rowOverrides(
   // Before settings load the global set is unknown, so a row with no sources of its own keeps the badge.
   const usesAiWebSearch =
     collection.candidate_sources.length > 0 || settings
-      ? effectiveSources(collection.candidate_sources, settings).includes("llm_web")
+      ? withoutWebSearchWhenSeasonal(
+          effectiveSources(collection.candidate_sources, settings),
+          collection.seasons ?? [],
+        ).includes("llm_web")
       : true;
   if (usesAiWebSearch && collection.ai_instructions?.mode === "add") {
     parts.push("AI instructions: adds to the default");

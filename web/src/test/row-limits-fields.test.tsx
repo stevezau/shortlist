@@ -76,4 +76,25 @@ describe("RowLimitsFields", () => {
     render(<Harness start={{ min_year: 2010, max_year: 1990 }} patches={[]} />);
     expect(screen.getByRole("alert")).toHaveTextContent(/can.t be later than/i);
   });
+
+  it.each([
+    ["Longest it can run (minutes)", "700", { max_runtime: 600 }],
+    ["Longest it can run (minutes)", "0", { max_runtime: 1 }],
+    ["Longest it can run (minutes)", "95.5", { max_runtime: 96 }],
+    ["Released from year", "95", { min_year: 1870 }],
+    ["Released up to year", "2500", { max_year: 2100 }],
+    ["Released up to year", "1999.4", { max_year: 1999 }],
+    ["Lowest rating (out of 10)", "11", { min_rating: 10 }],
+    ["Lowest rating (out of 10)", "-2", { min_rating: 0 }],
+    ["Lowest rating (out of 10)", "7.54", { min_rating: 7.5 }],
+  ])("clamps %s typed as %s on commit", async (label, typed, expected) => {
+    const patches: Partial<CollectionInput>[] = [];
+    render(<Harness patches={patches} />);
+
+    await userEvent.type(screen.getByLabelText(label), typed);
+    await userEvent.tab();
+
+    expect(patches).toEqual([expected]);
+    expect(screen.getByLabelText(label)).toHaveValue(Object.values(expected)[0]);
+  });
 });

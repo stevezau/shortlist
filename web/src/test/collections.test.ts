@@ -155,6 +155,17 @@ describe("rowOverrides", () => {
     expect(parts).toContain("Needs setup: AI web search"); // the dead one is flagged, never claimed
   });
 
+  it("drops the AI instructions badge on a seasonal row, which never uses web search", () => {
+    const own = { ai_instructions: { mode: "own", text: "Keep it cosy" } } as const;
+    const seasonal = rowOverrides(
+      collection({ candidate_sources: ["trakt", "llm_web"], seasons: ["halloween"], ...own }),
+      LIBRARIES,
+    );
+    expect(seasonal).not.toContain("AI instructions: own");
+    const plain = rowOverrides(collection({ candidate_sources: ["trakt", "llm_web"], ...own }), LIBRARIES);
+    expect(plain).toContain("AI instructions: own");
+  });
+
   it("badges a row's own AI instructions, but not one on the default", () => {
     expect(
       rowOverrides(collection({ ai_instructions: { mode: "add", text: "x" } }), LIBRARIES),

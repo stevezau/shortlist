@@ -4,6 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { CollectionInput } from "@/lib/types";
 
+/** Round (to a whole number, or one decimal) and clamp into the API's range. */
+function clamp(n: number, min: number, max: number, whole: boolean): number {
+  const rounded = whole ? Math.round(n) : Math.round(n * 10) / 10;
+  return Math.max(min, Math.min(max, rounded));
+}
+
 /** One optional number. Buffers what is typed and commits on blur/Enter, so a save never fires
  *  mid-type; blank commits null, which the API reads as "no limit". */
 function LimitInput({
@@ -14,6 +20,7 @@ function LimitInput({
   min,
   max,
   step,
+  whole = true,
   className = "w-28",
 }: {
   id?: string;
@@ -23,6 +30,8 @@ function LimitInput({
   min: number;
   max: number;
   step?: number;
+  /** Whole numbers only; false allows one decimal. */
+  whole?: boolean;
   className?: string;
 }) {
   const [text, setText] = useState(value === null ? "" : String(value));
@@ -36,7 +45,9 @@ function LimitInput({
 
   const commit = () => {
     const parsed = text.trim() === "" ? null : Number(text);
-    const next = parsed !== null && Number.isNaN(parsed) ? null : parsed;
+    const next =
+      parsed === null || Number.isNaN(parsed) ? null : clamp(parsed, min, max, whole);
+    setText(next === null ? "" : String(next));
     if (next !== value) onChange(next);
   };
 
@@ -100,7 +111,7 @@ export function RowLimitsFields({
           max={600}
         />
         <p className="text-sm text-muted-foreground">
-          Leaves out films longer than this. Blank means no limit.
+          Leaves out films longer than this, and shows whose episodes run longer. Blank means no limit.
         </p>
       </div>
       <div className="space-y-1.5" role="group" aria-labelledby={yearsId}>
@@ -123,7 +134,7 @@ export function RowLimitsFields({
           />
         </div>
         {yearsBackwards ? (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-destructive-text">
             The first year can&rsquo;t be later than the last year.
           </p>
         ) : (
@@ -142,6 +153,7 @@ export function RowLimitsFields({
           min={0}
           max={10}
           step={0.1}
+          whole={false}
         />
         <p className="text-sm text-muted-foreground">
           Leaves out titles rated below this. Blank means no limit.
