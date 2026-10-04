@@ -19,7 +19,7 @@ All notable changes to this project are documented here. This project follows
   read from and whether Overseerr's Tag Requests is on. (#127)
 - **Length, year and rating limits on a row.** Under What goes in, a row can leave out titles longer
   than a set number of minutes, released outside a range of years, or rated below a minimum. All are off
-  by default, and a title TMDB has no data for is kept. See
+  by default, and a title TMDB has no data for (or that TMDB failed to answer for) is kept. They also apply to Watch it again rows and the popular-on-this-server fallback. See
   [Length, year and rating limits](https://shortlistapp.dev/guides/rows/what-goes-in/#length-year-and-rating-limits). (#138)
 
 ### Changed
