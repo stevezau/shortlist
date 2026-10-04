@@ -673,8 +673,8 @@ def _row_themes(session: Session, collection: Collection) -> dict[int, list[int]
     return themes
 
 
-def _shows_filler(session: Session, slug: str, user_id: int, theme: Theme) -> bool:
-    """Whether the person's latest real run of the row carried a title the AI did not name for this theme."""
+def _unnamed_shown(session: Session, slug: str, user_id: int, theme: Theme) -> set[tuple[int, str]]:
+    """The titles in the person's latest real run of the row that are none of the theme's picks (any origin)."""
     latest = (
         select(func.max(PickRow.run_id))
         .join(Run, Run.id == PickRow.run_id)
@@ -686,8 +686,39 @@ def _shows_filler(session: Session, slug: str, user_id: int, theme: Theme) -> bo
             PickRow.user_id == user_id, PickRow.collection_slug == slug, PickRow.run_id == latest
         )
     ).all()
-    named = {(int(p["tmdb_id"]), p["media"]) for p in theme.picks or [] if p.get("origin") == "ai"}
-    return any((tmdb_id, media) not in named for tmdb_id, media in shown)
+    named = {(int(p["tmdb_id"]), p["media"]) for p in theme.picks or []}
+    return {(tmdb_id, media) for tmdb_id, media in shown if (tmdb_id, media) not in named}
+
+
+def _collection_members(theme: Theme, tools: Callable[[], AuthoringTools]) -> set[tuple[int, str]] | None:
+    """The titles in the theme's Plex collections, or None when any cannot be read tonight."""
+    members: set[tuple[int, str]] = set()
+    try:
+        plex = tools().plex
+        for ref in theme.collections or []:
+            found = plex.collection_members(ref["section_key"], ref["title"])
+            if found is None:
+                return None
+            members |= {(int(t.tmdb_id), t.media_type.value) for t in found}
+    except Exception as e:
+        logger.warning("theme top-up: theme {} collections unreadable ({})", theme.id, type(e).__name__)
+        return None
+    return members
+
+
+def _is_low(session: Session, slug: str, people: list[int], theme: Theme, tools: Callable[[], AuthoringTools]) -> bool:
+    """Whether someone's row shows a title that came only from the theme's tags and genres.
+
+    A pick (the owner's or the AI's) and a member of one of the theme's collections is a named title, not filler.
+    A collection that cannot be read tonight means "not low": no AI call is spent on a guess.
+    """
+    unnamed = [u for u in (_unnamed_shown(session, slug, user_id, theme) for user_id in people) if u]
+    if not unnamed:
+        return False
+    if not theme.collections:
+        return True
+    members = _collection_members(theme, tools)
+    return members is not None and any(titles - members for titles in unnamed)
 
 
 def top_up_themes(
@@ -720,7 +751,7 @@ def top_up_themes(
                 for theme_id, people in _row_themes(session, collection).items()
                 if (theme := session.get(Theme, theme_id)) is not None
                 and theme.topped_up_at is None
-                and any(_shows_filler(session, collection.slug, user_id, theme) for user_id in people)
+                and _is_low(session, collection.slug, people, theme, tools)
             ]
         for theme_id in low:
             if dry_run:

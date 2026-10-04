@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -59,8 +60,23 @@ class _Tmdb:
         return []
 
 
-def _tools(unavailable: str = "") -> AuthoringTools:
-    return AuthoringTools(curator="curator", tmdb=_Tmdb(), plex="plex", unavailable=unavailable)
+class _Plex:
+    """Reads Plex collections: ``members`` is {title -> tmdb ids of movies}; ``error`` makes every read raise."""
+
+    def __init__(self, members: dict[str, list[int]] | None = None, error: bool = False) -> None:
+        self.members = members or {}
+        self.error = error
+
+    def collection_members(self, section_key, title):
+        if self.error:
+            raise ConnectionError("PMS down")
+        if title not in self.members:
+            return None
+        return [SimpleNamespace(tmdb_id=i, media_type=MediaType.MOVIE) for i in self.members[title]]
+
+
+def _tools(unavailable: str = "", plex=None) -> AuthoringTools:
+    return AuthoringTools(curator="curator", tmdb=_Tmdb(), plex=plex or _Plex(), unavailable=unavailable)
 
 
 @pytest.fixture(autouse=True)
@@ -263,6 +279,61 @@ class TestAThemeIsToppedUpOnce:
         top_up(sessions, _Author(new=[1, 2, 3]))
 
         assert [p["tmdb_id"] for p in stored(sessions, theme_id).picks] == [1, 2, 3]
+
+
+class TestOnlyTagAndGenreMatchesCountAsRunningOut:
+    @staticmethod
+    def _theme_with(sessions, theme_id: int, **fields) -> None:
+        with sessions() as s:
+            theme = s.get(Theme, theme_id)
+            for key, value in fields.items():
+                setattr(theme, key, value)
+            s.commit()
+
+    def test_an_owner_added_pick_in_the_row_is_not_filler(self, sessions):
+        _, theme_id, (uid,) = seed(sessions)
+        self._theme_with(
+            sessions,
+            theme_id,
+            picks=[{"tmdb_id": 9, "media": "movie", "origin": "owner", "reason": None, "title": "Mine", "year": 1}],
+        )
+        ran(sessions, uid, [9])
+        author = _Author()
+
+        assert top_up(sessions, author) == 0
+        assert author.calls == []
+
+    def test_a_collection_member_in_the_row_is_not_filler(self, sessions):
+        _, theme_id, (uid,) = seed(sessions)
+        collection = {"section_key": "1", "section_title": "Movies", "title": "Favourites"}
+        self._theme_with(sessions, theme_id, collections=[collection])
+        ran(sessions, uid, [1, 77])
+        author = _Author()
+
+        assert top_up(sessions, author, tools=lambda: _tools(plex=_Plex({"Favourites": [77]}))) == 0
+        assert author.calls == []
+
+    def test_a_title_outside_picks_and_collections_is_filler(self, sessions):
+        _, theme_id, (uid,) = seed(sessions)
+        collection = {"section_key": "1", "section_title": "Movies", "title": "Favourites"}
+        self._theme_with(sessions, theme_id, collections=[collection])
+        ran(sessions, uid, [1, 77, 500])
+        author = _Author()
+
+        assert top_up(sessions, author, tools=lambda: _tools(plex=_Plex({"Favourites": [77]}))) == 1
+        assert len(author.calls) == 1
+
+    @pytest.mark.parametrize("plex", [_Plex(error=True), _Plex({})], ids=["raises", "collection-missing"])
+    def test_an_unreadable_collection_is_not_low_and_spends_nothing(self, sessions, plex):
+        _, theme_id, (uid,) = seed(sessions)
+        collection = {"section_key": "1", "section_title": "Movies", "title": "Favourites"}
+        self._theme_with(sessions, theme_id, collections=[collection])
+        ran(sessions, uid, [1, 500])
+        author = _Author()
+
+        assert top_up(sessions, author, tools=lambda: _tools(plex=plex)) == 0
+        assert author.calls == []
+        assert stored(sessions, theme_id).topped_up_at is None
 
 
 class TestExploreTopsUpOnlyTheThemeThatRanLow:
