@@ -8,6 +8,16 @@ All notable changes to this project are documented here. This project follows
 
 ### Added
 
+- **An AI row: describe a row in plain words.** In **Add a row**, pick the AI filter and the **Describe a
+  row** template, write what you want ("slow-burn heist films", "cosy mysteries for a rainy Sunday"),
+  and the AI builds a theme once: a name, rules, TMDB tags and genres, and about 60 named titles with a
+  one-line reason each. Shortlist checks every title against TMDB, your library and the row's limits.
+  After that, every run fills the row for each person from that theme with no AI, ranked by their own
+  taste. The editor has **Build the list**, **Change it** (shows a diff before you save), **Try it** (a
+  practice run for one person that writes nothing to Plex, and works on a switched-off row), **AI
+  prompts** (your guidance, plus the locked mechanics), usage per row, and **Pause AI for this row**.
+  New AI rows start switched off. Per-person rows only. With no AI provider you can still hand-edit the
+  tags, genres and limits. See [An AI row](https://shortlistapp.dev/guides/ai/#an-ai-row). (#138)
 - **AI instructions: tell AI web search what to look for**, server-wide in Settings → Defaults → Title
   sources and per row under What goes in. A row can use the default, add to it, or write its own.
   See [AI instructions](https://shortlistapp.dev/guides/rows/what-goes-in/#ai-instructions).

@@ -246,6 +246,23 @@ GET  /api/collections/{id}/effectiveness -> {delivered, watched, finished, first
      one library with it — refused with 422, naming that row. Rows whose `media` types never meet, or whose `library_keys` are both set with no key
      in common, may share a title; an empty `library_keys` counts as every library of its type, including ones added later. PATCH re-checks when
      `media`, `library_keys` or `build` change, and refuses only a clash the row did not already have.
+GET /api/themes/capabilities -> {ai: bool}
+     Whether an AI provider is set. The AI row editor hides the half that needs one when it is false.
+GET /api/themes/prompts -> {guidance, mechanics}
+     What the AI is told when it writes a theme: the editable guidance and the locked mechanics.
+POST /api/themes/preview {brief, media: "movie"|"show"|"both", current_theme_id?, collection_id?, person_id?, guidance?}
+     -> {draft, stats: {named, resolved, in_library, after_rules, unwatched_median}, diff, tokens}
+     Asks the AI to write (or, with `current_theme_id`, refine) a theme and checks every title against TMDB,
+     the library and the limits. Saves nothing. `diff` is null for a new theme. A paused row is refused
+     with 409. `guidance` is up to 2000 characters; empty keeps Shortlist's.
+POST /api/themes {draft, tokens?, collection_id?, stats?} -> theme · PUT /api/themes/{id} (same body) · GET /api/themes/{id}
+     Stores a theme (`name`, `emoji`, `brief`, `origin: "ai"|"manual"`, `media`, `tags`, `genres`,
+     `excluded_genres`, `collections`, `picks` up to 200, `rules`). `tokens` is what the AI call cost and is
+     added to the theme's and the row's running totals; 0 for a hand edit.
+POST /api/collections/{id}/ai-pause {paused: bool} -> row
+     Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; the theme
+     endpoints answer 409 until resumed. 422 for a row that is not an AI row.
+Row fields: `theme_id` (the AI row's stored theme, null for other rows), `ai_paused`, `ai_tokens` (tokens spent on this row).
 POST /api/collections/{id}/cleanup {dry_run?} (remove this row's Plex collections for everyone; dry-run previews)
 POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/collections/{id}/poster/image (serve/remove uploaded artwork) · POST /api/collections/{id}/poster/preview {title,subtitle,style} -> generated sample image
 ```

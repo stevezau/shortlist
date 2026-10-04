@@ -10,7 +10,7 @@ nav_order: 5
 **AI is off by default.** The provider is set to "None" out of the box and the AI web-search source
 is off, so Shortlist works fully with no AI at all.
 
-AI has exactly one job: the **AI web-search source**, which finds acclaimed "what to watch next"
+AI has two jobs: the **AI web-search source** and, if you create one, an [AI row](#an-ai-row) (written once, not nightly). For ordinary rows it has one job, the **AI web-search source**, which finds acclaimed "what to watch next"
 titles that the TMDB lists miss. Everything else is done in code, with no AI and no per-token cost.
 That includes gathering candidates, ranking them, and writing the "why" under each pick.
 
@@ -122,6 +122,40 @@ least one engine answers. If none do, **Test** reports which engines failed rath
 
 It is entirely optional. Leave it empty and everything still works. You are just limited to your
 provider's own search, or to no web search at all.
+
+### An AI row
+
+An **AI row** is a row you describe in your own words. It is the one place AI writes a list for you,
+and it does so once, not every night.
+
+**To make one:**
+
+1. In **Add a row**, choose the AI filter, then the **Describe a row** template.
+2. Write what you want, for example "slow-burn heist films". Pick movies, shows or both.
+3. Click **Build the list**. The AI proposes a theme: a name, rules, TMDB tags and genres, and about 60
+   named titles with a one-line reason each.
+4. Read the result. Shortlist shows how many titles it found on TMDB, how many are in your library,
+   and how many survive the row's limits. Click **Change it** to refine the brief; you see a diff of
+   what was added and removed before you save.
+5. Click **Try it** and choose a person. It runs the row for them without writing anything to Plex.
+   You can try a row that is switched off.
+6. Save, then switch the row on. **New AI rows start switched off**, so nothing reaches anyone's
+   shelf until you say so.
+
+**Every night after that uses no AI.** Each person's row is filled from the saved theme (its tags,
+genres and named titles), kept to titles in your library they have not watched, and ranked by their
+own taste. Two people get different rows from the same theme.
+
+**Controls in the editor:**
+
+- **AI prompts** shows what the AI is told. You can edit the guidance. The mechanics that keep the
+  answer machine-readable are locked.
+- **Usage** shows the tokens each row has spent building and changing its theme.
+- **Pause AI for this row** stops the row spending tokens. It keeps its theme and keeps filling from
+  it every night. Resume it when you want to edit the theme again.
+
+**Needs an AI provider** (Settings → Connections). With none, the AI half of the editor is hidden and
+you can still edit the tags, genres and limits by hand. AI rows are per-person rows only.
 
 ### If you don't want to use AI
 

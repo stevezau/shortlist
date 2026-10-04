@@ -115,6 +115,9 @@ but nobody pictured here watched anything.</sub>
   [Exa](https://exa.ai) key, or your own [SearXNG](https://docs.searxng.org).
   [How it works](https://shortlistapp.dev/guides/ai/#the-source-that-uses-ai)
 - 💬 **Every pick explains itself**: "Because you watched X", with the reason written in code.
+- ✨ **Describe a row in plain words.** An AI row turns "slow-burn heist films" into a themed row: the AI
+  writes the theme once, you check it and try it on one person first, and every night after that fills
+  each person's row from it with no AI. [How it works](https://shortlistapp.dev/guides/ai/#an-ai-row)
 - 📚 **Whole shows, not episodes.** A 20-episode binge counts as one show, so one series can't drown
   out everything else.
 
