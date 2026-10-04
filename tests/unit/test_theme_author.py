@@ -129,6 +129,43 @@ class TestAuthorTheme:
         assert draft.tokens == 321
         assert draft.ai_reasons == {(MediaType.MOVIE, 1): "Told backwards.", (MediaType.MOVIE, 2): "That box."}
 
+    def test_author_theme_counts_the_ais_own_titles_apart_from_tag_matches(self):
+        titles = [
+            {"media": "movie", "title": "Memento", "year": 2000},
+            {"media": "movie", "title": "The Prestige", "year": 2006},
+        ]
+
+        class _TagTmdb(_Tmdb):
+            def discover_all(self, media, params):
+                # The tag read lists Short Cut and Se7en, both on the server, besides the AI's own titles.
+                return [self.list_item(4, media), self.list_item(2, media)] if "with_keywords" in params else []
+
+        index = {MediaType.MOVIE: {1: 11, 2: 12, 4: 14}, MediaType.SHOW: {}}
+        draft = author_theme(
+            brief=BRIEF,
+            media=MediaType.MOVIE,
+            curator=_Curator(_answer(titles=titles)),
+            tmdb=_TagTmdb(),
+            plex=_Plex(),
+            library_index=index,
+        )
+
+        # The Prestige (3) is not on the server; Memento is. Two more titles on the server match the tag.
+        assert (draft.stats.named, draft.stats.resolved) == (2, 2)
+        assert draft.stats.in_library == 3
+        assert draft.stats.after_rules == 3
+        assert draft.stats.ai_kept == 1
+
+    def test_author_theme_does_not_count_an_ai_title_the_rules_drop_as_kept(self):
+        titles = [
+            {"media": "movie", "title": "Memento", "year": 2000},
+            {"media": "movie", "title": "Short Cut", "year": 2010},
+        ]
+
+        draft, _ = _author(_answer(titles=titles, rules={"max_runtime": 100}))
+
+        assert (draft.stats.resolved, draft.stats.after_rules, draft.stats.ai_kept) == (2, 1, 1)
+
     def test_author_theme_tolerates_prose_around_the_json(self):
         draft, _ = _author("Sure! Here you go:\n" + _answer() + "\nEnjoy.")
 

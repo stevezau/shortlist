@@ -92,6 +92,9 @@ class ThemeStats:
     #: preview bounded its lookups; the nightly run checks the rest.
     runtime_total: int = 0
     runtime_checked: int = 0
+    #: How many of the AI's own titles are in the row after the rules: on the server and not limited out.
+    #: ``in_library`` also counts every tag and genre match, so it says nothing about what the AI found.
+    ai_kept: int = 0
 
 
 @dataclass(frozen=True)
@@ -200,6 +203,7 @@ def author_theme(
     held = loaded.held
     # Rules come from TMDB, so a pick the rules drop must not be offered as the AI's reason for a row.
     kept_reasons = {(p.media, p.tmdb_id): p.reason for p in picks if (p.media, p.tmdb_id) in loaded.reasons}
+    ai_kept = sum(1 for p in picks if p.tmdb_id in loaded.titles.ids[p.media])
     stats = ThemeStats(
         named=named,
         resolved=len(picks),
@@ -209,6 +213,7 @@ def author_theme(
         truncated=truncated,
         runtime_total=loaded.runtime_total,
         runtime_checked=loaded.runtime_checked,
+        ai_kept=ai_kept,
     )
     logger.info("theme authored: {} named, {} resolved, {} after rules", named, len(picks), after_rules)
     return ThemeDraft(

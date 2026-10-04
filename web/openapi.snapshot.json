@@ -8879,6 +8879,11 @@
             "title": "After Rules",
             "type": "integer"
           },
+          "ai_kept": {
+            "default": 0,
+            "title": "Ai Kept",
+            "type": "integer"
+          },
           "in_library": {
             "title": "In Library",
             "type": "integer"

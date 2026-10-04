@@ -35,7 +35,7 @@ __all__ = [
     "write_theme",
 ]
 
-_STATS_KEYS = ("named", "resolved", "in_library", "after_rules")
+_STATS_KEYS = ("named", "resolved", "in_library", "after_rules", "ai_kept")
 
 
 class ThemeStoreError(Exception):

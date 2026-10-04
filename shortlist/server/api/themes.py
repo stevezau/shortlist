@@ -44,7 +44,7 @@ _NO_PROVIDERS = ("", "none", "null")
 _MAX_GUIDANCE = 4000
 #: Running-time lookups a preview makes before it stops and leaves the rest to the nightly run.
 _PREVIEW_MAX_DETAILS = 400
-_STATS_KEYS = ("named", "resolved", "in_library", "after_rules")
+_STATS_KEYS = ("named", "resolved", "in_library", "after_rules", "ai_kept")
 
 
 class RulesIO(PassthroughModel):
@@ -142,6 +142,7 @@ class ThemeStatsOut(PassthroughModel):
     truncated: bool = False
     runtime_total: int = 0
     runtime_checked: int = 0
+    ai_kept: int = 0
 
 
 class ThemeDiffOut(PassthroughModel):

@@ -6808,6 +6808,11 @@ export interface components {
         ThemeStatsOut: {
             /** After Rules */
             after_rules: number;
+            /**
+             * Ai Kept
+             * @default 0
+             */
+            ai_kept: number;
             /** In Library */
             in_library: number;
             /** Named */
