@@ -2117,6 +2117,18 @@
             "description": "Days a theme lasts in Explore; null is 7.",
             "title": "Theme Days"
           },
+          "theme_emoji": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The fixed theme's emoji; null when it has none, or for Explore.",
+            "title": "Theme Emoji"
+          },
           "theme_id": {
             "anyOf": [
               {
@@ -2137,6 +2149,18 @@
             ],
             "title": "Theme Mode",
             "type": "string"
+          },
+          "theme_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The fixed theme's name; null for an ordinary row or an Explore row.",
+            "title": "Theme Name"
           },
           "unstarted_only": {
             "title": "Unstarted Only",
@@ -2225,6 +2249,8 @@
           "poster",
           "ai_instructions",
           "theme_id",
+          "theme_name",
+          "theme_emoji",
           "ai_paused",
           "ai_tokens",
           "theme_mode",

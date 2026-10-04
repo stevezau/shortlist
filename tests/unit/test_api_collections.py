@@ -748,3 +748,20 @@ class TestNamesThatMatchALibraryNameTemplate:
         r = patch(client, default, name="{library_name} Night Picks")
 
         assert r.status_code == 422 and "Movies Night Picks" in r.text
+
+
+class TestTheRowCarriesItsFixedThemesName:
+    def test_a_fixed_ai_row_names_its_theme(self, client: TestClient):
+        row = ai_row(client, make_theme(client))
+
+        assert (row["theme_name"], row["theme_emoji"]) == ("Twist endings", None)
+
+    def test_an_explore_row_has_no_single_theme_to_name(self, client: TestClient):
+        row = ai_row(client, make_theme(client), **CONTROLS)
+
+        assert (row["theme_name"], row["theme_emoji"]) == (None, None)
+
+    def test_an_ordinary_row_has_none(self, client: TestClient):
+        row = plain_row(client)
+
+        assert (row["theme_name"], row["theme_emoji"]) == (None, None)

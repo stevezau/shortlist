@@ -27,6 +27,8 @@ COLLECTION_KEYS = {
     "ai_paused",
     "ai_tokens",
     "theme_id",
+    "theme_name",
+    "theme_emoji",
     "theme_mode",
     "explore_brief",
     "theme_days",

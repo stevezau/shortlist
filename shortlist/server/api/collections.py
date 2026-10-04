@@ -573,6 +573,8 @@ class CollectionOut(PassthroughModel):
     poster: PosterOut
     ai_instructions: AiInstructionsOut
     theme_id: int | None = Field(description="The theme an AI row follows; null for an ordinary row.")
+    theme_name: str | None = Field(description="The fixed theme's name; null for an ordinary row or an Explore row.")
+    theme_emoji: str | None = Field(description="The fixed theme's emoji; null when it has none, or for Explore.")
     ai_paused: bool = Field(description="Whether the row's AI is paused: it keeps its theme but spends no tokens.")
     ai_tokens: int = Field(description="Tokens the AI has spent writing this row's themes.")
     theme_mode: Literal["fixed", "explore"] = Field(description="Whether an AI row keeps one theme or explores.")
@@ -1069,6 +1071,12 @@ def _serialize(
         row.user_id for row in session.query(CollectionAudience).filter_by(collection_id=collection.id).all()
     ]
     name = row_display_name(session, collection)
+    # An Explore row wears a different theme each period, so only a fixed row has one name to show.
+    fixed_theme = (
+        session.get(Theme, collection.theme_id)
+        if collection.theme_id is not None and (collection.theme_mode or "fixed") == "fixed"
+        else None
+    )
     # The most recent run that delivered picks for THIS row — so the Rows UI can link straight to what
     # happened (the run detail groups its results by row). None until the row has ever built.
     last_run_id = session.query(func.max(PickRow.run_id)).filter(PickRow.collection_slug == collection.slug).scalar()
@@ -1165,6 +1173,8 @@ def _serialize(
         "poster": _poster_view(session, collection),
         "ai_instructions": _ai_instructions_view(collection.prompt),
         "theme_id": collection.theme_id,
+        "theme_name": None if fixed_theme is None else fixed_theme.name,
+        "theme_emoji": None if fixed_theme is None else fixed_theme.emoji or None,
         "ai_paused": bool(collection.ai_paused),
         "ai_tokens": collection.ai_tokens or 0,
         "theme_mode": collection.theme_mode or "fixed",

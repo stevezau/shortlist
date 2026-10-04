@@ -90,6 +90,44 @@ describe("RowCard", () => {
     updateCollection.mockClear();
   });
 
+  it("names a fixed AI row for its theme and marks it AI", async () => {
+    renderCard(
+      collection({
+        name: "{theme_emoji} {theme}",
+        name_template: "{theme_emoji} {theme}",
+        theme_id: 5,
+        theme_name: "Heist films",
+        theme_emoji: "🕶️",
+      }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "🕶️ Heist films" })).toBeInTheDocument();
+    expect(screen.getByText("AI")).toBeInTheDocument();
+    expect(screen.queryByText("theme emoji")).not.toBeInTheDocument();
+  });
+
+  it("drops the emoji slot cleanly when the theme has none", async () => {
+    renderCard(
+      collection({ name: "{theme_emoji} {theme}", theme_id: 5, theme_name: "Heist films", theme_emoji: null }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "Heist films" })).toBeInTheDocument();
+  });
+
+  it("keeps the placeholder chips on an Explore row, which has no one theme, but still says AI", async () => {
+    renderCard(collection({ name: "{theme_emoji} {theme}", theme_id: 5, theme_name: null, theme_emoji: null }));
+
+    expect(await screen.findByText("theme")).toBeInTheDocument();
+    expect(screen.getByText("AI")).toBeInTheDocument();
+  });
+
+  it("does not mark an ordinary row AI", async () => {
+    renderCard(collection());
+
+    await screen.findByRole("heading", { name: "Hidden Gems" });
+    expect(screen.queryByText("AI")).not.toBeInTheDocument();
+  });
+
   it("runs just this row, and lands on the run it started", async () => {
     // `collection_ids` has always been part of POST /api/runs; the only way to reach it was the
     // "Run selected rows…" dialog on the Runs page, where you re-picked the row you were looking at.

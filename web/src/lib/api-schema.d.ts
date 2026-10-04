@@ -4015,6 +4015,11 @@ export interface components {
              */
             theme_days: number | null;
             /**
+             * Theme Emoji
+             * @description The fixed theme's emoji; null when it has none, or for Explore.
+             */
+            theme_emoji: string | null;
+            /**
              * Theme Id
              * @description The theme an AI row follows; null for an ordinary row.
              */
@@ -4025,6 +4030,11 @@ export interface components {
              * @enum {string}
              */
             theme_mode: "fixed" | "explore";
+            /**
+             * Theme Name
+             * @description The fixed theme's name; null for an ordinary row or an Explore row.
+             */
+            theme_name: string | null;
             /** Unstarted Only */
             unstarted_only: boolean;
             /** Watched Pct */

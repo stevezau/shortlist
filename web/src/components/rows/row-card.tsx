@@ -1,8 +1,9 @@
-import { PLACEHOLDER_SPLIT } from "@/lib/placeholders";
+import { PLACEHOLDER_SPLIT, THEME, THEME_EMOJI } from "@/lib/placeholders";
 import {
   Image as ImageIcon,
   ListChecks,
   Pencil,
+  Sparkles,
   TextCursorInput,
   Trash2,
   UserCheck,
@@ -32,6 +33,16 @@ import { cn } from "@/lib/utils";
  *  since hiding a typo like "{Library_Name}" as a chip would dress up braces Plex will print. */
 export function hasRowNameToken(name: string): boolean {
   return PLACEHOLDER_SPLIT.test(name);
+}
+
+/** An AI row's name with its fixed theme filled in; any other row's name as it is. */
+function cardName(collection: Collection): string {
+  if (!collection.theme_name) return collection.name;
+  return collection.name
+    .replaceAll(THEME_EMOJI, collection.theme_emoji ?? "")
+    .replaceAll(THEME, collection.theme_name)
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -142,7 +153,7 @@ export function RowCard({
                 to={`/rows/${collection.id}`}
                 className="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <RowName name={collection.name} className="" />
+                <RowName name={cardName(collection)} className="" />
               </Link>
             </h2>
             <Badge>
@@ -153,6 +164,12 @@ export function RowCard({
               )}
               {collection.build === "shared" ? "Shared" : "Per person"}
             </Badge>
+            {collection.theme_id !== null && collection.theme_id !== undefined && (
+              <Badge>
+                <Sparkles className="size-3" aria-hidden="true" />
+                AI
+              </Badge>
+            )}
             {isDefault && <Badge variant="outline">default</Badge>}
             {/* A seasonal row says which season it is in, or when it comes back — "my row vanished"
                 is the support question a season or a day schedule creates, answered with the date.
