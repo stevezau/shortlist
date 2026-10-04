@@ -26,6 +26,9 @@ All notable changes to this project are documented here. This project follows
   new **Pick new row themes** job (setting `themes.rotate_cron`, daily by default) does the switching. One
   AI call per person per change. Every AI row starts on **Keep the same theme**, so nothing changes on
   upgrade.
+- **An AI row only covers the kinds of title its AI named (#138).** A films-only list no longer fills your
+  TV libraries with genre filler on a row that covers both. If a change or an Explore theme drops a kind,
+  the row's existing collection in those libraries is removed on its next run.
 - **Over-time controls on AI rows (#138).** **How much changes each time** (a fifth, a third by default,
   half, or almost everything), **Don't repeat a title for N days** (off by default), and **Keep out titles
   already in** other per-person rows. See [Explore](https://shortlistapp.dev/guides/ai/#explore-a-new-theme-every-few-days).

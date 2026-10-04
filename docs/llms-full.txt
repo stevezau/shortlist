@@ -2173,6 +2173,10 @@ own taste. Two people get different rows from the same theme. An AI row only eve
 already have: a title the AI named that your server lacks is left out and never requested, so the row
 has no request settings.
 
+**An AI row only fills the kinds of title its AI named.** If the list is films only, the row stays out of
+your TV libraries even when the row covers both. If **Change it**, or an Explore theme, drops a kind, the
+row's existing collection in those libraries is removed on its next run.
+
 **Controls in the editor:**
 
 - **AI prompts** shows what the AI is told. You can edit the guidance. The mechanics that keep the
