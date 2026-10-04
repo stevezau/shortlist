@@ -593,8 +593,8 @@ export function RowEditor({
     setInput(back);
     setKindBaseline(baselineOf(back));
     lastPersonalFill.current = null;
+    // Tokens stay counted: a discarded list was still paid for, and the next theme save charges it.
     setPendingTheme(null);
-    setTokensSpent(0);
     setPendingKind(null);
     setPendingRename(null);
     setDraftVersion((version) => version + 1);

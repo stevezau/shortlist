@@ -239,6 +239,26 @@ describe("a saved AI row", () => {
   });
 });
 
+describe("tokens spent on a list that was discarded", () => {
+  it("are still charged by the next theme save", async () => {
+    api.previewTheme.mockResolvedValueOnce({ ...PREVIEW, tokens: 100 }).mockResolvedValueOnce({ ...PREVIEW, tokens: 50 });
+    renderEditor({ collection: aiRow() });
+    await userEvent.type(await screen.findByLabelText("Describe it"), " one");
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await screen.findByText("Not saved yet");
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(screen.queryByText("Not saved yet")).not.toBeInTheDocument());
+
+    await userEvent.type(screen.getByLabelText("Describe it"), " two");
+    await userEvent.click(screen.getByRole("button", { name: "Build the list" }));
+    await screen.findByText("Not saved yet");
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(api.updateTheme).toHaveBeenCalled());
+    expect(api.updateTheme).toHaveBeenCalledWith(5, expect.objectContaining({ tokens: 150 }));
+  });
+});
+
 describe("an ordinary row", () => {
   it("has no AI sections and never asks about AI", async () => {
     renderEditor({ collection: aiRow({ theme_id: null, name: "Hidden Gems", name_template: "" }) });

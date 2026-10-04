@@ -1153,6 +1153,21 @@ def _validate_theme(session: Session, theme_id: int | None, *, build: str, seaso
     return theme
 
 
+def _unattributed_theme_tokens(session: Session, theme: Theme | None, *, exclude_id: int | None) -> int:
+    """The tokens a theme cost that no row has been charged for yet: all of them while no other row follows it.
+
+    A new row's list is saved before the row exists, so those tokens had no row to land on. Computed, not
+    stored: a theme another row already follows has had its tokens counted by that row, and counting them
+    again would double them.
+    """
+    if theme is None or not theme.ai_tokens:
+        return 0
+    others = session.query(Collection.id).filter(Collection.theme_id == theme.id)
+    if exclude_id is not None:
+        others = others.filter(Collection.id != exclude_id)
+    return 0 if others.first() else int(theme.ai_tokens)
+
+
 def _reject_duplicate_name(
     session,
     secrets,
@@ -1426,6 +1441,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             sort_title_prefix=body.sort_title_prefix,
             **{column: getattr(body, column) for column in _REQUEST_COLUMNS},
         )
+        collection.ai_tokens = _unattributed_theme_tokens(session, theme, exclude_id=None)
         session.add(collection)
         session.flush()
         _set_audience(session, collection, body)
@@ -1834,6 +1850,10 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     library_keys=merged_keys,
                     theme=merged_spec,
                 )
+        if theme is not None and "theme_id" in sent and theme.id != collection.theme_id:
+            collection.ai_tokens = (collection.ai_tokens or 0) + _unattributed_theme_tokens(
+                session, theme, exclude_id=collection.id
+            )
         # A theme newly set gives a `{theme}` row a title it never wore, as a ticked season does.
         if theme is not None and "theme_id" in sent and theme.id != collection.theme_id and not is_default:
             themed_template = _merged_template(collection, body, sent)

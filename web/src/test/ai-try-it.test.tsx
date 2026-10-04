@@ -105,6 +105,17 @@ describe("AiTryIt", () => {
     expect(screen.getByText(/nothing is written to plex/i)).toBeInTheDocument();
   });
 
+  it("runs a switched-off row, since a new AI row starts off and Try it is how it is looked over", async () => {
+    renderIt({ collection: { ...row, enabled: false } as Collection });
+
+    await userEvent.click(screen.getByRole("button", { name: /^Try it/ }));
+
+    expect(await screen.findByText("Se7en")).toBeInTheDocument();
+    expect(api.startRun).toHaveBeenCalledWith({ dry_run: true, user_ids: [3], collection_ids: [9] });
+    expect(screen.getByRole("button", { name: /^Try it/ })).toBeEnabled();
+    expect(screen.getByText(/nothing is written to plex/i)).toBeInTheDocument();
+  });
+
   it("runs it for the person picked, not the first", async () => {
     renderIt();
     await userEvent.selectOptions(screen.getByLabelText("Try it for"), "Mike");

@@ -1082,13 +1082,23 @@ class ContextBuilder:
         }
 
     @staticmethod
-    def _build_only_slugs(session: Session, collection_ids: list[int] | None) -> frozenset[str] | None:
+    def _build_only_slugs(
+        session: Session, collection_ids: list[int] | None, *, dry_run: bool = False
+    ) -> frozenset[str] | None:
         """The row slugs a scoped (per-row scheduled) run rebuilds; None = a full run builds every row.
-        Intersected with ``enabled=True`` so a stale schedule for a since-disabled row rebuilds nothing."""
+        Intersected with ``enabled=True`` so a stale schedule for a since-disabled row rebuilds nothing.
+        A DRY run is the exception: a row it names is tried even while switched off (`_dry_run_rows`)."""
         if collection_ids is None:
             return None
-        rows = session.query(Collection).filter(Collection.id.in_(collection_ids), Collection.enabled).all()
+        enabled = Collection.enabled | Collection.id.in_(collection_ids) if dry_run else Collection.enabled
+        rows = session.query(Collection).filter(Collection.id.in_(collection_ids), enabled).all()
         return frozenset(row.slug for row in rows)
+
+    @staticmethod
+    def _dry_run_rows(collection_ids: list[int] | None, dry_run: bool) -> frozenset[int]:
+        """The switched-off rows a run may build anyway: those a DRY run names (an AI row's "Try it" before it goes
+        live). A real run never builds a disabled row, and an unscoped run names none."""
+        return frozenset(collection_ids) if dry_run and collection_ids else frozenset()
 
     def _engine_config(
         self,
@@ -1150,7 +1160,9 @@ class ContextBuilder:
             dislike_threshold=(_dislike_threshold(store) if store.get("recommendations.use_plex_ratings") else None),
             hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
             dry_run=dry_run,
-            rows=self._build_rows(session, store, catalogue=catalogue),
+            rows=self._build_rows(
+                session, store, catalogue=catalogue, include_ids=self._dry_run_rows(collection_ids, dry_run)
+            ),
             # The server owns the row list: an empty one means every row is DISABLED, not
             # 'unconfigured' — so nothing new is delivered, rather than the legacy default row
             # being resurrected behind a Rows page that shows it switched off.
@@ -1158,16 +1170,23 @@ class ContextBuilder:
             # ...and a row switched off has its already-built collection removed from its owner's
             # Home on this run, so "off" means gone, not merely "not refreshed". Runs stay full
             # here even when scoped: retiring a DISABLED row on any run is always correct.
-            retired_rows=self._retired_rows(session, store),
+            retired_rows=self._retired_rows(session, store, keep_ids=self._dry_run_rows(collection_ids, dry_run)),
             # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
             # delivery only — classification/sync/sweep/promotion above still see the full list.
-            build_only=self._build_only_slugs(session, collection_ids),
+            build_only=self._build_only_slugs(session, collection_ids, dry_run=dry_run),
             requests=self._build_requests(store),
             request_sources=self._build_request_sources(store),
             seasons=catalogue,
         )
 
-    def _build_rows(self, session: Session, store: SettingsStore, *, catalogue: seasons_mod.Catalogue) -> list[RowSpec]:
+    def _build_rows(
+        self,
+        session: Session,
+        store: SettingsStore,
+        *,
+        catalogue: seasons_mod.Catalogue,
+        include_ids: frozenset[int] = frozenset(),
+    ) -> list[RowSpec]:
         """Build the engine's row specs from the enabled collections.
 
         The default 'picked' row keeps an empty name_template here, so the per-user row-name on the
@@ -1177,12 +1196,18 @@ class ContextBuilder:
         Always ALL enabled rows — never scoped. A per-row scheduled run limits which rows actually
         rebuild via ``EngineConfig.build_only``, not by hiding rows from this list, so privacy
         classification, the share-filter sync, the sweep, and promotion all still see every row.
+
+        ``include_ids`` are switched-off rows built anyway, for a dry run that names them; a dry run writes
+        nothing, so nothing reaches Plex for a row the owner has not switched on.
         """
         account_by_user, audience_by_collection = self._audience_maps(session)
 
         specs: list[RowSpec] = []
         collections = (
-            session.query(Collection).filter_by(enabled=True).order_by(Collection.sort_order, Collection.id).all()
+            session.query(Collection)
+            .filter(Collection.enabled | Collection.id.in_(include_ids))
+            .order_by(Collection.sort_order, Collection.id)
+            .all()
         )
         # ONE clock read for the whole context, not one per row: built a millisecond either side of
         # midnight, two rows would otherwise disagree about what day it is.
@@ -1320,7 +1345,9 @@ class ContextBuilder:
         """
         return cls._parse_hub_anchors(collection.hub_anchor or {})
 
-    def _retired_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
+    def _retired_rows(
+        self, session: Session, store: SettingsStore, *, keep_ids: frozenset[int] = frozenset()
+    ) -> list[RowSpec]:
         """Per-person rows that are DISABLED, and every enabled SHARED row's per-person copies — all to be removed.
 
         Only enough of each spec to find and delete the collection (its rendered title, media and
@@ -1349,6 +1376,8 @@ class ContextBuilder:
         retired: list[RowSpec] = []
         disabled = session.query(Collection).filter_by(enabled=False, build="per_person").all()
         for collection in disabled:
+            if collection.id in keep_ids:  # a dry run is building this row, not retiring it
+                continue
             is_default = collection.slug == DEFAULT_SLUG
             # The template this row's title actually renders from — the global one for the default
             # row, its own for a custom row. Skip any that RENDERS to the default title with no picks:

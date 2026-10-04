@@ -250,7 +250,11 @@ class RunService:
             # starts. A queued run is a real thing an operator sits watching — it had no scope
             # recorded yet, so its page had nothing to show and said so. `collection_ids` is the
             # scope a "run selected rows" press chose; without it, every enabled row.
-            wanted = session.query(Collection).filter(Collection.enabled)
+            # A DRY run also builds a switched-off row it names (an AI row's "Try it" before going live).
+            named_dry = bool(dry_run and collection_ids)
+            wanted = session.query(Collection).filter(
+                Collection.enabled | Collection.id.in_(collection_ids) if named_dry else Collection.enabled
+            )
             if collection_ids:
                 wanted = wanted.filter(Collection.id.in_(collection_ids))
             run = Run(

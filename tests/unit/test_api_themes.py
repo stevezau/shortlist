@@ -441,6 +441,100 @@ class TestAiRows:
         assert next(s for s in specs if s.slug == "picked").theme is None
 
 
+class TestTokensReachTheRowThatFollowsTheTheme:
+    """A new row's list is saved before the row exists, so its tokens are charged to the row when it is made."""
+
+    def _usage(self, client: TestClient, row_id: int) -> int:
+        return next(r for r in client.get("/api/collections").json() if r["id"] == row_id)["ai_tokens"]
+
+    def test_a_new_row_starts_with_what_its_theme_cost(self, client: TestClient):
+        theme = _save(client, tokens=321)
+
+        row = _ai_row(client, theme["id"])
+
+        assert row["ai_tokens"] == 321
+        assert self._usage(client, row["id"]) == 321
+
+    def test_a_second_row_on_the_same_theme_is_not_charged_again(self, client: TestClient):
+        theme = _save(client, tokens=321)
+        _ai_row(client, theme["id"])
+
+        second = _ai_row(client, theme["id"], name="Twist endings again")
+
+        assert second["ai_tokens"] == 0
+
+    def test_a_row_moved_onto_a_theme_no_row_follows_is_charged_for_it_once(self, client: TestClient):
+        first = _ai_row(client, _save(client)["id"])
+        other = _save(client, tokens=250, name="Heists")
+
+        moved = client.patch(f"/api/collections/{first['id']}", json={"name": first["name"], "theme_id": other["id"]})
+
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["ai_tokens"] == 250
+        again = client.patch(f"/api/collections/{first['id']}", json={"name": first["name"], "theme_id": other["id"]})
+        assert again.json()["ai_tokens"] == 250
+
+    def test_a_theme_saved_for_a_row_is_not_counted_twice_when_the_row_is_made_after(self, client: TestClient):
+        row = _ai_row(client, _save(client)["id"])
+        _save(client, tokens=300, collection_id=row["id"], name="Second")
+
+        assert self._usage(client, row["id"]) == 300
+
+
+class TestTryItOnASwitchedOffRow:
+    """A new AI row is made disabled, so its "Try it" has to reach it: a DRY run that names it builds it."""
+
+    def _config(self, client: TestClient, row_id: int, *, dry_run: bool, collection_ids: list[int] | None):
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            return builder._engine_config(
+                session,
+                SettingsStore(session, client.app.state.secrets),
+                dry_run=dry_run,
+                collection_ids=collection_ids,
+            )
+
+    def _disabled_row(self, client: TestClient) -> dict:
+        row = _ai_row(client, _save(client)["id"])
+        assert row["enabled"] is False
+        return row
+
+    def test_a_dry_run_that_names_the_row_builds_it_and_does_not_retire_it(self, client: TestClient):
+        row = self._disabled_row(client)
+
+        config = self._config(client, row["id"], dry_run=True, collection_ids=[row["id"]])
+
+        assert row["slug"] in [spec.slug for spec in config.rows]
+        assert config.build_only == frozenset({row["slug"]})
+        assert row["slug"] not in [spec.slug for spec in config.retired_rows]
+        assert config.dry_run is True
+
+    def test_a_real_run_that_names_the_same_row_still_skips_it_and_retires_it(self, client: TestClient):
+        row = self._disabled_row(client)
+
+        config = self._config(client, row["id"], dry_run=False, collection_ids=[row["id"]])
+
+        assert row["slug"] not in [spec.slug for spec in config.rows]
+        assert config.build_only == frozenset()
+        assert row["slug"] in [spec.slug for spec in config.retired_rows]
+
+    def test_an_unscoped_dry_run_skips_a_switched_off_row(self, client: TestClient):
+        row = self._disabled_row(client)
+
+        config = self._config(client, row["id"], dry_run=True, collection_ids=None)
+
+        assert row["slug"] not in [spec.slug for spec in config.rows]
+        assert config.build_only is None
+        assert row["slug"] in [spec.slug for spec in config.retired_rows]
+
+    def test_a_dry_run_naming_another_row_leaves_this_one_out(self, client: TestClient):
+        row = self._disabled_row(client)
+
+        config = self._config(client, row["id"], dry_run=True, collection_ids=[999])
+
+        assert row["slug"] not in [spec.slug for spec in config.rows]
+
+
 class TestThemeTitleClashes:
     """The generic title check fills `{theme}` from each row's own theme, as it fills `{season}`."""
 
