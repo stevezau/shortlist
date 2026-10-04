@@ -75,7 +75,8 @@ def effective_row_sources(spec: RowSpec, default_sources: list[str]) -> tuple[st
     sources list — remove it there to control the per-person Exa/LLM cost.
     """
     sources = spec.candidate_sources or default_sources
-    if spec.seasons:
+    if spec.seasons or spec.theme is not None:
+        # An AI row (#138) is filled from its theme in code, so it never pays for a web search either.
         # Not on a seasonal row (discussion #124). Web search asks "what to watch if you liked X" per
         # watched title, which is not seasonal, so nearly everything it proposed — and was paid for —
         # would be filtered out of the season. The row editor says so beside the sources.
@@ -2890,7 +2891,14 @@ def _within_limits(policy: RowPolicy, spec: RowSpec, picks: list[Pick]) -> list[
     return [p for p in picks if (p.tmdb_id, p.media_type) in kept]
 
 
-def _season_cold_picks(season: seasons_mod.SeasonTitles, kind: MediaType, sec_idx: dict[int, int]) -> list[Pick]:
+def _season_cold_picks(
+    season: seasons_mod.SeasonTitles,
+    kind: MediaType,
+    sec_idx: dict[int, int],
+    *,
+    theme_name: str | None = None,
+    theme_reasons: dict[tuple[MediaType, int], str] | None = None,
+) -> list[Pick]:
     """A seasonal row's fill for someone with too little history: the season's titles in this library, best
     rated first. The server's top-rated films are almost never Christmas films."""
     held = [item for item in season.in_library.get(kind, []) if int(item["id"]) in sec_idx]
@@ -2901,9 +2909,14 @@ def _season_cold_picks(season: seasons_mod.SeasonTitles, kind: MediaType, sec_id
             rating_key=sec_idx[int(item["id"])],
             title=item.get("title") or item.get("name") or "",
             rank=i + 1,
-            reason="Well rated for the season",
+            # No watch to name: an AI row's cold pick is worded like its seedless one.
+            reason=(
+                picker.theme_reason(None, theme_name, (theme_reasons or {}).get((kind, int(item["id"]))))
+                if theme_name
+                else "Well rated for the season"
+            ),
             media_type=kind,
-            sources=["season"],
+            sources=["theme" if theme_name else "season"],
         )
         for i, item in enumerate(held)
     ]
@@ -2965,7 +2978,9 @@ def _build_section_picks(
                         _unreadable_season(ctx, spec),
                     )
                     continue
-                cands = _season_cold_picks(season, kind, ctx.section_index.get(section.key, {}))
+                cands = _season_cold_picks(
+                    season, kind, ctx.section_index.get(section.key, {}), **_theme_reason_args(ctx, spec)
+                )
             else:
                 # Three times the row when this person's restrictions can be checked, so the titles
                 # they cannot see (#115) are replaced rather than leaving the row short. The same when the
@@ -3972,10 +3987,17 @@ def _shared_row(
 ) -> UserProfile | None:
     """Build and deliver the shared row's picks (the body ``_run_shared`` guards).
 
+    A row with a theme is per-person only (#138): it is skipped here, never built as an ordinary shared row.
+
     A title only qualifies once at least ``spec.min_watchers`` distinct people in the audience have
     watched it, so no single person's viewing can reach a public row. Reasons are aggregate-framed —
     never "because you watched X", since there is no single "you".
     """
+    if spec.theme is not None:
+        logger.warning("shared row '{}' has a theme, which only a per-person row can follow; skipped", spec.slug)
+        user_report.status = "skipped"
+        user_report.reason = "An AI row can't be shared: it is built per person. Make it a per-person row."
+        return None
     cfg = ctx.config
     audience = [u for u in users if spec.audience is None or u.plex_account_id in spec.audience]
     if not audience:

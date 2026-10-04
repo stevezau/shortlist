@@ -80,13 +80,13 @@ def sanitise_ai_reason(text: str) -> str:
     return " ".join(_MARKDOWN.sub("", text).split())
 
 
-def theme_reason(candidate: Candidate, theme_name: str, ai_reason: str | None) -> str:
+def theme_reason(candidate: Candidate | None, theme_name: str, ai_reason: str | None) -> str:
     """Why a theme pick is here: the theme it fits and, when it has one, the AI's line before the hook.
 
     ``{ai_reason} · {personal hook}``, cut to 160 characters. The hook is what makes it theirs, so it is
     the AI sentence that gives way.
     """
-    seed = candidate.top_seed
+    seed = candidate.top_seed if candidate else None
     hook = (
         f"Fits {theme_name} \u2014 like {seed.title}, which you watched"
         if seed

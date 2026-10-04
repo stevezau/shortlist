@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.context import EngineContext
-from shortlist.engine.models import EngineConfig, MediaType, RowLimits, RowSpec
+from shortlist.engine.delivery import row_marker
+from shortlist.engine.models import EngineConfig, MediaType, Pick, RowLimits, RowSpec
 from shortlist.engine.picker import sanitise_ai_reason
 from shortlist.engine.placeholders import needs_a_run, uses_theme
-from shortlist.engine.rows import RowPolicy, _rating_key_resolver, row_recipe
+from shortlist.engine.rows import RowPolicy, _rating_key_resolver, effective_row_sources, row_recipe
 from shortlist.engine.themes import ThemePick, ThemeSpec, load_theme, theme_content_hash
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -176,10 +178,15 @@ class TestTheRow:
         assert ids.index(20) < ids.index(30)
 
     def test_theme_row_fills_with_no_curator_calls(self, ctx):
+        """Web search is in the server's sources, and still never runs for an AI row."""
+        ctx.config.candidate_sources = ["tmdb_similar", "llm_web"]
+        ctx.search = MagicMock()
         ctx.config.rows = [theme_row()]
         pipeline_mod.run(ctx, _people())
 
         ctx.curator.complete.assert_not_called()
+        assert ctx.search.mock_calls == []
+        assert effective_row_sources(theme_row(), ["tmdb_similar", "llm_web"]) == ("tmdb_similar",)
 
     def test_the_theme_is_read_once_for_the_whole_run(self, ctx):
         ctx.config.rows = [theme_row()]
@@ -193,6 +200,13 @@ class TestTheRow:
         assert set(loaded.call_args.args[3][MediaType.MOVIE]) == {900, 10, 20, 30, 31}
 
     def test_theme_row_keeps_current_picks_when_theme_load_raises(self, ctx):
+        prior = [
+            Pick(tmdb_id=t, rating_key=1000 + t, title=f"T{t}", rank=i + 1, reason="kept", media_type=MediaType.MOVIE)
+            for i, t in enumerate([20, 30])
+        ]
+        ctx.previous_picks = {("sarah", "ai-twists", "1"): prior}
+        row = SimpleNamespace(title="Twist endings" + row_marker(100), ratingKey=5151, labels=[])
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: [row] if label == "shortlist_sarah" else []
         ctx.config.rows = [theme_row(), RowSpec(slug="plain", name_template="Plain picks", size=5, media="movie")]
         with patch.object(pipeline_mod, "load_theme", side_effect=RuntimeError("TMDB 503")):
             report = pipeline_mod.run(ctx, _people())
@@ -200,6 +214,8 @@ class TestTheRow:
         assert _picks(report, "sarah", "ai-twists") == []
         assert _picks(report, "sarah", "plain") != []
         assert next(u for u in report.users if u.username == "sarah").status == "ok"
+        assert ctx.previous_picks[("sarah", "ai-twists", "1")] == prior
+        ctx.plex.delete_owned_collection.assert_not_called()
 
     def test_seedless_pick_says_it_fits_the_theme_in_genres_they_watch(self, ctx):
         ctx.config.rows = [theme_row()]
@@ -232,6 +248,29 @@ class TestTheRow:
         assert len(elf.reason) == 160 and elf.reason.endswith("…")
 
 
+class TestColdStart:
+    def test_cold_start_pick_carries_the_theme_wording_and_ai_reason(self, ctx):
+        theme = theme_spec(picks=(ThemePick(30, MediaType.MOVIE, "ai", "A festive turn"),))
+        ctx.history_source.fetch.return_value = [make_watched("One Film", days_ago=1, rating_key=999)]
+        ctx.config.rows = [theme_row(theme)]
+        report = pipeline_mod.run(ctx, _people())
+
+        by_id = {p.tmdb_id: p for p in _picks(report, "sarah", "ai-twists")}
+        assert by_id[30].reason == "A festive turn \u00b7 Fits Twist endings, in genres you watch"
+        assert by_id[20].reason == "Fits Twist endings, in genres you watch"
+        assert by_id[20].sources == ["theme"]
+
+
+class TestASharedRowWithATheme:
+    def test_it_is_skipped_with_a_warning_never_built_as_an_ordinary_shared_row(self, ctx):
+        ctx.config.rows = [theme_row(shared=True, min_watchers=1, slug="ai-shared")]
+        report = pipeline_mod.run(ctx, _people())
+
+        shared = next(u for u in report.users if u.username == "Shared \u00b7 ai-shared")
+        assert shared.status == "skipped" and "per person" in (shared.reason or "")
+        assert shared.picks == []
+
+
 class TestAiReasonText:
     def test_markdown_braces_and_newlines_are_stripped(self):
         assert sanitise_ai_reason("**Bold** `code` # head\n\n[link](x) {top_seed}") == "Bold code head link(x) top_seed"
@@ -246,10 +285,4 @@ class TestTheName:
         report = pipeline_mod.run(ctx, _people())
 
         sarah = next(u for u in report.users if u.username == "sarah")
-        assert {title for (_library, title) in sarah.placement_titles} == {"\U0001f300 Twist endings" + _marker()}
-
-
-def _marker() -> str:
-    from shortlist.engine.delivery import row_marker
-
-    return row_marker(100)
+        assert {title for (_library, title) in sarah.placement_titles} == {"\U0001f300 Twist endings" + row_marker(100)}
