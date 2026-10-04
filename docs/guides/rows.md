@@ -25,6 +25,13 @@ and _More TV to watch_. **Rows → Add a row** opens the compact gallery, with s
 preview of the selected template. Each tile describes what it changes; every field remains editable
 afterwards. **Use template** opens the editor; **Start from scratch** opens an empty row directly.
 _Your requests_ is for titles someone requested that are now ready on Plex.
+
+<figure class="shot">
+  <img src="{{ '/images/templates.webp' | relative_url }}" width="1440" height="860" loading="lazy"
+       alt="The Add a row dialog: ten template tiles, a search box and category tabs, with the selected template's preview and settings on the right.">
+  <figcaption><strong>Rows → Add a row</strong>: ten templates, each with a preview before you commit.</figcaption>
+</figure>
+
 In the editor, **Per person / Shared** stays visible above **Row type**, whichever template you
 start from. The template selects a starting choice; you can change it before saving.
 

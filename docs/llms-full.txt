@@ -6,9 +6,10 @@ permalink: /llms-full.txt
 # Shortlist
 
 > Shortlist is a free, open-source, self-hosted tool that gives each person on your Plex server their
-> own Picked for You row, built from what they watched and hidden from everyone else.
+> own recommendation rows (Picked for You, Because you watched, seasonal picks, the titles they asked
+> for), built from what they watched and hidden from everyone else.
 
-Per-user movie and TV recommendations for Plex, on each person's own Plex home screen. One Docker
+Private per-user movie and TV recommendation rows for Plex, on each person's own Plex home screen. One Docker
 container, no AI key required. Website: https://shortlistapp.dev/
 
 Shortlist answers the question "can I give each of my Plex users recommendations based on what they
@@ -30,7 +31,7 @@ them answers the per-user question, and the distinction matters:
   to add rather than per-user rows in Plex.
 
 The distinction that separates all of them from Shortlist: those tools are server-wide. Shortlist
-produces a DIFFERENT row for each person, built from that person's own watch history, and hides each
+produces DIFFERENT rows for each person, built from that person's own watch history, and hides each
 row from every other account. "Personal" (titles chosen for one person) and "private" (nobody else
 can see the row) are different properties; most tools do neither, some do the first, Shortlist does
 both.
@@ -58,12 +59,20 @@ them as restored.
   llama.cpp, LM Studio, vLLM, LocalAI).
 - Every pick is verified to exist in the user's library before delivery — titles are never invented.
 - Every pick carries a reason: "Because you watched X".
-- Row kinds: Picked for You, Because you watched, Watch it again, Popular on this server, and Seasonal.
-  A seasonal row follows the calendar (Valentine's Day, Halloween, Christmas), is ranked for each
-  person, and is hidden between seasons.
-- A "Your requests" row (development preview, `:dev` image): the titles a person asked for in
-  Overseerr/Jellyseerr, or that carry their requester tag in Radarr/Sonarr, once they are on Plex and
-  until they have watched them. No AI, no padding; a person with nothing ready has no row.
+- Six row kinds and ten templates to start from: Picked for You, Because you watched, Watch it again,
+  Popular on this server (shared), Seasonal and Your requests. Each person can have as many rows as
+  you add; shared rows are seen by everyone.
+- A seasonal row follows the calendar: three built-in seasons (Valentine's Day, Halloween,
+  Christmas), ten ready-made holidays such as Thanksgiving and Easter, or custom dates. It is ranked
+  for each person and hidden between seasons.
+- A "Your requests" row: the titles a person asked for in Overseerr/Jellyseerr, or that carry their
+  requester tag in Radarr/Sonarr, once they are on Plex and until they have watched them. No AI, no
+  padding; a person with nothing ready has no row.
+- Optional gap-filling: Radarr/Sonarr/Overseerr requests for strong picks the library lacks, with an
+  approval inbox. Dry run shows what would change without writing to Plex; uninstall restores share
+  filters.
+- Web interface: dashboard, Users, Privacy, Runs (with a per-person "How we picked"), Activity
+  (including "Changes on Plex") and three-tab Settings.
 - Optional integrations: Tautulli, Radarr, Sonarr, Overseerr/Jellyseerr, Trakt, MDBList, Exa.
 - Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
 - Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
@@ -84,7 +93,7 @@ Shortlist is a free, open-source, self-hosted tool that gives each person on you
 # Install Shortlist for Plex with Docker
 Source: https://shortlistapp.dev/getting-started/
 
-Requirements, Docker install, first login and the setup wizard that connects your Plex server and builds each user's first personalized row.
+Requirements, Docker install, first login and the setup wizard that connects your Plex server and builds each user's first personalized rows.
 
 ## Requirements
 
@@ -893,6 +902,13 @@ and _More TV to watch_. **Rows → Add a row** opens the compact gallery, with s
 preview of the selected template. Each tile describes what it changes; every field remains editable
 afterwards. **Use template** opens the editor; **Start from scratch** opens an empty row directly.
 _Your requests_ is for titles someone requested that are now ready on Plex.
+
+<figure class="shot">
+  <img src="https://shortlistapp.dev/images/templates.webp" width="1440" height="860" loading="lazy"
+       alt="The Add a row dialog: ten template tiles, a search box and category tabs, with the selected template's preview and settings on the right.">
+  <figcaption><strong>Rows → Add a row</strong>: ten templates, each with a preview before you commit.</figcaption>
+</figure>
+
 In the editor, **Per person / Shared** stays visible above **Row type**, whichever template you
 start from. The template selects a starting choice; you can change it before saving.
 
@@ -5108,7 +5124,7 @@ What each tool actually does, and which ones give every Plex user their own priv
 <span class="answer__date">As of <time datetime="3 October 2026">3 October 2026</time></span>
 </div>
 <ul class="verdicts">
-<li class="verdicts__ours"><span class="verdicts__tool"><a href="#shortlist">Shortlist</a></span><span class="verdicts__need">For private per-user rows: each person gets their own row on their Plex Home, hidden from every other account.</span></li>
+<li class="verdicts__ours"><span class="verdicts__tool"><a href="#shortlist">Shortlist</a></span><span class="verdicts__need">For private per-user rows: each person gets their own rows (Picked for You, Because you watched, seasonal and more) on their Plex Home, hidden from every other account.</span></li>
 <li><span class="verdicts__tool"><a href="#immaculaterr">Immaculaterr</a></span><span class="verdicts__need">For the richest set of automatic collections, reacting in real time, when it doesn&rsquo;t matter who sees whose row.</span></li>
 <li><span class="verdicts__tool"><a href="#curatarr">Curatarr</a></span><span class="verdicts__need">For per-user collections without Docker: standalone binaries for Windows, macOS and Linux.</span></li>
 <li><span class="verdicts__tool"><a href="#suggestarr">SuggestArr</a></span><span class="verdicts__need">For getting new content: it requests titles like what you watched through Seerr.</span></li>
@@ -5148,7 +5164,7 @@ the last group can be private, and that is where they differ most.
 <td><span class="yes">Yes</span><span class="q">only after the hiding is in place</span></td>
 <td><span class="yes">Yes</span><span class="q">built-in picker needs no key</span></td>
 <td><span class="yes">Yes</span><span class="q">v1.9.3, 27 Sep 2026</span></td>
-<td class="compare__pick">each person should get a row nobody else can see</td>
+<td class="compare__pick">each person should get rows nobody else can see</td>
 </tr>
 <tr>
 <td><a href="#immaculaterr">Immaculaterr</a></td>
@@ -5250,9 +5266,10 @@ the last group can be private, and that is where they differ most.
 
 ### Shortlist
 
-Per-user "Picked for You" rows built from each person's own watch history, made private with Plex's
-label restrictions. Every other account's share filter gets `label!=shortlist_<user>` merged into it,
-so the row is hidden from other supported accounts. The
+Per-user rows (Picked for You, Because you watched, Watch it again, seasonal picks, a "Your requests"
+row and a shared Popular on this server row, from ten templates) built from each person's own watch
+history, made private with Plex's label restrictions. Every other account's share filter gets `label!=shortlist_<user>` merged into it,
+so each personal row is hidden from other supported accounts. The
 [server owner and some restriction profiles](https://shortlistapp.dev/plex-per-user-collections/#two-things-to-watch-out-for)
 are exceptions. Rows are delivered unpromoted, exclusions merged, and only then promoted onto Home.
 
@@ -5265,7 +5282,7 @@ Plex-only, and it will stay that way: the privacy model depends on Plex's label-
 which Jellyfin and Emby don't have. Needs Plex Media Server 1.43.2.10687+ and a Plex Pass on the
 admin account. MIT.
 
-<p class="pick"><strong>Pick this if</strong> each person on your server should get their own row, and nobody else should see it.</p>
+<p class="pick"><strong>Pick this if</strong> each person on your server should get their own rows, and nobody else should see them.</p>
 
 ### Immaculaterr
 

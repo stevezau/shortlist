@@ -57,10 +57,11 @@ built today carry none.</sub>
 Everyone on a Plex server has the same blank-screen problem: a huge library and no idea what to put
 on. Plex's own recommendation rows are identical for every account and ignore what _you've_ watched.
 
-**Shortlist gives every user their own row.** For each person it reads their own Plex watch history,
+**Shortlist gives every user their own rows.** For each person it reads their own Plex watch history,
 picks titles from your library they haven't seen but probably want to, explains each one, and puts
-them on that person's Plex Home as a **"Picked for You"** row. It rebuilds on a schedule you choose,
-and each row is visible only to its owner.
+them on that person's Plex Home as rows: **"Picked for You"**, "Because you watched", "Watch it
+again", seasonal picks and more. Rows rebuild on a schedule you choose, and each personal row is
+visible only to its owner.
 
 **Rows are hidden before they are shown.** Each row is labelled, every other account's Plex share
 filter is told to hide that label, and only then is the row promoted to Home. A row is never visible
@@ -90,9 +91,9 @@ is private.
 
 ## What it looks like
 
-| Set up your Plex server once                                        | Add as many rows as you like           |
-| ------------------------------------------------------------------- | -------------------------------------- |
-| ![The setup wizard connecting Plex](docs/images/wizard-connect.webp) | ![The rows page](docs/images/rows.webp) |
+| Start each row from a template                                        | Add as many rows as you like           |
+| --------------------------------------------------------------------- | -------------------------------------- |
+| ![The Add a row template gallery](docs/images/templates.webp) | ![The rows page](docs/images/rows.webp) |
 
 | Every pick, and _why_ it was picked                    | Watch every run, step by step                    |
 | ------------------------------------------------------ | ------------------------------------------------ |
@@ -105,8 +106,8 @@ but nobody pictured here watched anything.</sub>
 
 **Personalized discovery**
 
-- 👤 **A private row for every user**, built from _their_ watch history and visible only to them. The
-  owner gets a row too, so it's worth running on a one-person server.
+- 👤 **Private rows for every user**, built from _their_ watch history and visible only to them. The
+  owner gets rows too, so it's worth running on a one-person server.
 - 🧠 **Picks that exist, with no AI key needed.** Every pick is a title verified to be in your library,
   never invented. Ranking and the reasons are written in code. An optional AI provider (Claude, GPT,
   Gemini, or a local server such as Ollama, llama.cpp, LM Studio, vLLM or LocalAI) powers one extra
@@ -123,9 +124,10 @@ but nobody pictured here watched anything.</sub>
 
 **Make it yours**
 
-- 🎞️ **Multiple rows per person, plus shared rows**: a personal row, a "New this week" everyone sees,
-  per-library rows. Each has its own sources, size, libraries, cadence and audience, and starts from
-  a template rather than a blank form.
+- 🎞️ **Six row kinds, ten templates.** Picked for You, Because you watched, Watch it again, Popular on
+  this server (shared), Seasonal and Your requests. Start each row from a template (Fresh finds, From
+  the vault, Movie night and More TV to watch are the others) rather than a blank form. Every row has
+  its own sources, size, libraries, cadence and audience, and you can add as many as you like.
 - 🗓️ **A rebuild cadence you control**: nightly, weekly, monthly or never, so nobody opens Plex to a
   completely reshuffled row every day.
 - 🎃 **Seasonal rows**: one row that follows the calendar: Halloween, Christmas, Valentine's Day plus ten
@@ -154,8 +156,8 @@ but nobody pictured here watched anything.</sub>
   your server exactly as Shortlist found it.
 - 📊 **Know if it's working.** A dashboard tracks what was delivered against what people actually
   watched, per user and per row, and separates a title they **started** from one they **finished**.
-- 🖥️ **A clear dashboard.** Dashboard, Users and Activity pages, a row editor with a jump list, and
-  three-tab Settings. See [the interface guide](https://shortlistapp.dev/guides/interface/).
+- 🖥️ **A clear dashboard.** Dashboard, Users, Privacy, Runs (with a per-person "How we picked") and Activity pages, including
+  "Changes on Plex", a row editor with a jump list, and three-tab Settings. See [the interface guide](https://shortlistapp.dev/guides/interface/).
 - 🧪 **Safe mode.** Set `SHORTLIST_DRY_RUN=1` to try it against your real server without writing a
   single change.
 - 📦 **Homelab-native**: one container, a `/config` volume, a multi-arch image on GHCR, a healthcheck

@@ -6,9 +6,10 @@ permalink: /llms.txt
 # Shortlist
 
 > Shortlist is a free, open-source, self-hosted tool that gives each person on your Plex server their
-> own Picked for You row, built from what they watched and hidden from everyone else.
+> own recommendation rows (Picked for You, Because you watched, seasonal picks, the titles they asked
+> for), built from what they watched and hidden from everyone else.
 
-Per-user movie and TV recommendations for Plex, on each person's own Plex home screen. One Docker
+Private per-user movie and TV recommendation rows for Plex, on each person's own Plex home screen. One Docker
 container, no AI key required. Website: https://shortlistapp.dev/
 
 Shortlist answers the question "can I give each of my Plex users recommendations based on what they
@@ -30,7 +31,7 @@ them answers the per-user question, and the distinction matters:
   to add rather than per-user rows in Plex.
 
 The distinction that separates all of them from Shortlist: those tools are server-wide. Shortlist
-produces a DIFFERENT row for each person, built from that person's own watch history, and hides each
+produces DIFFERENT rows for each person, built from that person's own watch history, and hides each
 row from every other account. "Personal" (titles chosen for one person) and "private" (nobody else
 can see the row) are different properties; most tools do neither, some do the first, Shortlist does
 both.
@@ -58,12 +59,20 @@ them as restored.
   llama.cpp, LM Studio, vLLM, LocalAI).
 - Every pick is verified to exist in the user's library before delivery — titles are never invented.
 - Every pick carries a reason: "Because you watched X".
-- Row kinds: Picked for You, Because you watched, Watch it again, Popular on this server, and Seasonal.
-  A seasonal row follows the calendar (Valentine's Day, Halloween, Christmas), is ranked for each
-  person, and is hidden between seasons.
-- A "Your requests" row (development preview, `:dev` image): the titles a person asked for in
-  Overseerr/Jellyseerr, or that carry their requester tag in Radarr/Sonarr, once they are on Plex and
-  until they have watched them. No AI, no padding; a person with nothing ready has no row.
+- Six row kinds and ten templates to start from: Picked for You, Because you watched, Watch it again,
+  Popular on this server (shared), Seasonal and Your requests. Each person can have as many rows as
+  you add; shared rows are seen by everyone.
+- A seasonal row follows the calendar: three built-in seasons (Valentine's Day, Halloween,
+  Christmas), ten ready-made holidays such as Thanksgiving and Easter, or custom dates. It is ranked
+  for each person and hidden between seasons.
+- A "Your requests" row: the titles a person asked for in Overseerr/Jellyseerr, or that carry their
+  requester tag in Radarr/Sonarr, once they are on Plex and until they have watched them. No AI, no
+  padding; a person with nothing ready has no row.
+- Optional gap-filling: Radarr/Sonarr/Overseerr requests for strong picks the library lacks, with an
+  approval inbox. Dry run shows what would change without writing to Plex; uninstall restores share
+  filters.
+- Web interface: dashboard, Users, Privacy, Runs (with a per-person "How we picked"), Activity
+  (including "Changes on Plex") and three-tab Settings.
 - Optional integrations: Tautulli, Radarr, Sonarr, Overseerr/Jellyseerr, Trakt, MDBList, Exa.
 - Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
 - Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
@@ -79,9 +88,9 @@ Every page below, concatenated into one file, is at [llms-full.txt]({{ '/llms-fu
 - [Guides]({{ '/guides' | absolute_url }}): index of the guide pages
 - [A tour of the web interface]({{ '/guides/interface' | absolute_url }}): every page and every dashboard number
 - [People and sharing]({{ '/guides/people-and-sharing' | absolute_url }}): the Users page, turning people on, off and paused, per-person settings, leaving one account's sharing alone, people who leave, accounts Plex restricts
-- [Rows and templates]({{ '/guides/rows' | absolute_url }}): templates, row kinds, editing a row, naming
+- [Rows and templates]({{ '/guides/rows' | absolute_url }}): ten templates, six row kinds, editing a row, naming
 - [How a row is filled]({{ '/guides/rows/what-goes-in' | absolute_url }}): Because you watched and Watch it again rows, people with too little history, the order titles appear in
-- [Seasonal rows]({{ '/guides/rows/seasonal' | absolute_url }}): Halloween, Christmas and Valentine's Day rows, hidden between seasons
+- [Seasonal rows]({{ '/guides/rows/seasonal' | absolute_url }}): three built-in seasons, ten ready-made holidays and custom dates, hidden between seasons
 - [Where a row shows]({{ '/guides/rows/placement' | absolute_url }}): Home and the Recommended shelf, placement next to other collections, posters, descriptions and sort titles
 - [Choosing what goes in a row]({{ '/guides/picks' | absolute_url }}): candidate sources, refresh cadence, per-row and per-person overrides
 - [Schedules]({{ '/guides/schedules' | absolute_url }}): per-row schedules, custom cron, the background jobs

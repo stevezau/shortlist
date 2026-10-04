@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <CommunityApplications>
   <Profile>
-    **Shortlist** gives every user on your Plex server their own recommendations — a private,
-    personalized *"Picked for You"* row built from that user's own watch history, visible only to
-    them and never to anyone else.
+    **Shortlist** gives every user on your Plex server their own recommendation rows —
+    private, personalized rows ("Picked for You", "Because you watched", seasonal picks and more)
+    built from that user's own watch history, visible only to them and never to anyone else.
 
     It runs as a single Docker container with a web UI and a ~10-minute setup wizard. Optional AI
     curation (Claude / OpenAI / Gemini / local Ollama) picks the titles and explains each one with a
@@ -12,8 +12,8 @@
 
     Requires Plex Media Server 1.43.2.10687+, Plex Pass on the admin account, and a free TMDB key.
 
-    *Shortlist is currently in public beta* — please report any issues on GitHub, they get fixed
-    quickly. Support: https://github.com/stevezau/shortlist/issues
+    Found a problem? Report it on GitHub and it gets fixed quickly:
+    https://github.com/stevezau/shortlist/issues
   </Profile>
   <Icon>https://raw.githubusercontent.com/stevezau/shortlist/master/unraid-templates/shortlist-icon.png</Icon>
   <WebPage>https://github.com/stevezau/shortlist</WebPage>

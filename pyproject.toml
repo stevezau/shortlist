@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "shortlist"
-description = "A private, AI-curated 'Picked for You' row for every user on your Plex server"
+description = "Private recommendation rows for every user on your Plex server, with optional AI"
 readme = "README.md"
 license = "MIT"
 # A genuine floor (3.12 syntax/stdlib is used), NOT a support claim: the shipped

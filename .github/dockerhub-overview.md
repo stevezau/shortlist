@@ -1,7 +1,8 @@
 # Shortlist
 
 Shortlist is a free, open-source, self-hosted tool that gives each person on your Plex server their
-own Picked for You row, built from what they watched and hidden from everyone else. One Docker
+own recommendation rows (Picked for You, Because you watched, seasonal picks, the titles they asked
+for), built from what they watched and hidden from everyone else. One Docker
 container, no AI key required.
 
 [Website](https://shortlistapp.dev/) ·
@@ -18,10 +19,10 @@ Everyone on your Plex server sees the same recommendation rows. Plex's Recommend
 come from the library, not from the person looking at it — so the friend who has watched every
 sci-fi film you own and the one who only watches comedies get an identical home screen.
 
-Shortlist gives **each user their own row**, built from **their own** watch history, containing only
+Shortlist gives **each user their own rows**, built from **their own** watch history, containing only
 titles that are **already in your library** and that they haven't seen.
 
-And it's private: each person sees only their own row, nobody else's.
+And it's private: each person sees only their own rows, nobody else's.
 
 ## How the privacy works
 
@@ -83,19 +84,21 @@ Multi-arch: `linux/amd64` and `linux/arm64`.
 
 ## What you get
 
-- **A private row for every user**, built from their watch history. One container serves your whole
+- **Private rows for every user**, built from their watch history. One container serves your whole
   server, including you, so it's just as useful on a one-person server.
 - **No AI key required.** The built-in picker runs entirely in code. An optional LLM (Claude, GPT,
   Gemini, or a local model via Ollama, llama.cpp, LM Studio, vLLM or LocalAI) adds one extra source,
   a live web search for current titles TMDB and Trakt miss.
 - **No hallucinated picks.** Every title is verified to exist in your library before it's delivered.
 - **Every pick explains itself** — "Because you watched _Arrival_".
-- **Multiple rows per person, plus shared rows**, each with its own sources, size, libraries,
-  refresh cadence and audience.
-- **Seasonal rows** — one row that follows the calendar: Halloween films and horror in October,
-  Christmas films in December, romance for Valentine's, ranked for each person and hidden between
-  seasons.
-- **Radarr/Sonarr or Overseerr requests (optional)** when a strong pick isn't in your library yet.
+- **Six row kinds, ten templates**: Picked for You, Because you watched, Watch it again, Popular on
+  this server (shared), Seasonal and Your requests. Add as many rows as you like, each with its own
+  sources, size, libraries, refresh cadence and audience.
+- **Seasonal rows** — a row that follows the calendar: Halloween, Christmas and Valentine's Day,
+  ten ready-made holidays such as Thanksgiving and Easter, or your own dates. Ranked for each person
+  and hidden between seasons.
+- **Radarr/Sonarr or Overseerr requests (optional)** when a strong pick isn't in your library yet,
+  with an approval inbox.
 - **A "Your requests" row** — what each person asked for in Overseerr, or tagged with
   their name in Radarr/Sonarr, once it's on Plex and until they've watched it. No AI; a person with
   nothing ready simply has no row.
