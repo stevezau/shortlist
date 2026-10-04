@@ -17,7 +17,7 @@ from shortlist.engine.models import EngineConfig, MediaType, OverTime, Pick, Row
 from shortlist.engine.picker import sanitise_ai_reason
 from shortlist.engine.placeholders import needs_a_run, uses_theme
 from shortlist.engine.rows import RowPolicy, _rating_key_resolver, _rows_as_seen_by, effective_row_sources, row_recipe
-from shortlist.engine.themes import ThemePick, ThemeSpec, load_theme, theme_content_hash
+from shortlist.engine.themes import ThemeCollection, ThemePick, ThemeSpec, load_theme, theme_content_hash
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 TAG = 555
@@ -658,7 +658,9 @@ class TestOverTimeControls:
         assert history.calls
         user_slug, row_slug, since = history.calls[0]
         assert (user_slug, row_slug) == ("sarah", "ai-twists")
-        assert (date.today() - since).days == 14
+        # The engine counts days on the UTC date (rows.py, `today=`), so the test must too: a local
+        # date.today() is a day ahead in Sydney every morning and failed only there, never in CI.
+        assert (datetime.now(UTC).date() - since).days == 14
 
     @pytest.mark.parametrize(
         ("share", "size", "swapped"),
@@ -1189,3 +1191,42 @@ class TestAnAiRowLeavesLibrariesHoldingNoneOfItsTitles:
         _, removal = self._run(with_sports, spec)
 
         assert not self._sports_calls(removal)
+
+
+class TestAnUnvouchedReadNeverRemovesAnAiRow:
+    @pytest.fixture
+    def with_sports(self, ctx):
+        sports = MagicMock(type="movie", key="3", title="Sports")
+        sports.collections.return_value = []
+        ctx.plex.sections.return_value = [ctx.plex.sections.return_value[0], sports]
+        return ctx
+
+    @staticmethod
+    def _run(ctx, spec: RowSpec):
+        ctx.config.rows = [spec]
+        ctx.delivered_keys[("sarah", spec.slug, "3")] = 777
+        with patch("shortlist.engine.rows.remove_row", return_value=["3"]) as removal:
+            pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return [c for c in removal.call_args_list if c.kwargs["sections"][0].key == "3"]
+
+    def test_an_empty_library_index_reads_as_holding_the_titles(self, with_sports):
+        everything = {900: 999, 10: 1010, 20: 1020, 30: 1030, 31: 1031}
+        with_sports.plex.build_library_index.side_effect = lambda section, **kw: (
+            {} if section.key == "3" else everything
+        )
+        spec = theme_row(theme_spec(picks=(ThemePick(20, MediaType.MOVIE, "ai", None),)))
+
+        assert not self._run(with_sports, spec)
+
+    def test_a_collection_missing_tonight_makes_the_theme_judge_by_kind_only(self, with_sports):
+        everything = {900: 999, 10: 1010, 20: 1020, 30: 1030, 31: 1031}
+        with_sports.plex.build_library_index.side_effect = lambda section, **kw: (
+            {10: 2010, 30: 2030} if section.key == "3" else everything
+        )
+        with_sports.plex.collection_members.return_value = None
+        theme = theme_spec(
+            picks=(ThemePick(20, MediaType.MOVIE, "ai", None),),
+            collections=(ThemeCollection(section_key="1", title="Heist"),),
+        )
+
+        assert not self._run(with_sports, theme_row(theme))

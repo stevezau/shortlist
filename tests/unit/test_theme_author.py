@@ -47,6 +47,10 @@ class _Tmdb:
         found = CATALOGUE.get(title)
         return {"id": found[0], "title": title} if found else None
 
+    def search_all(self, title, media):
+        hit = self.search(title, media)
+        return [hit] if hit else []
+
     def search_keywords(self, query, limit=10):
         return [{"id": 900, "name": "other"}, {"id": 901, "name": "twist ending"}] if query == "twist ending" else []
 
@@ -303,7 +307,7 @@ def _run(answer: str, tmdb=None, **kwargs):
     curator = kwargs.pop("curator", None) or _Curator(answer)
     draft = author_theme(
         brief=kwargs.pop("brief", BRIEF),
-        media=MediaType.MOVIE,
+        media=kwargs.pop("media", MediaType.MOVIE),
         curator=curator,
         tmdb=tmdb or _Tmdb(),
         plex=_Plex(),
@@ -877,18 +881,20 @@ class TestAThemeCoversOnlyTheKindsItNamed:
 
 
 class TestResolvedTitleIsTheOneAsked:
-    def _resolve(self, hit, title="The Italian Job", year=None):
-        class _One(_Tmdb):
-            def search(self, t, media, *, year=None):
-                return hit
+    def _resolve(self, hits, title="The Italian Job", year=None):
+        hits = hits if isinstance(hits, list) else [hits]
+
+        class _Many(_Tmdb):
+            def search_all(self, t, media):
+                return hits
 
         answer = _answer(titles=[{"media": "movie", "title": title, "year": year}])
-        draft, _ = _run(answer, _One())
+        draft, _ = _run(answer, _Many())
         return [p.tmdb_id for p in draft.spec.picks]
 
     def test_a_different_title_is_rejected_when_the_hit_is_a_docuseries(self):
-        hit = {"id": 1, "name": "Italian Job - The Serie A Story 93/94", "first_air_date": "2020-01-01"}
-        assert self._resolve(hit) == []
+        hit = {"id": 7, "name": "Italian Job - The Serie A Story 93/94", "first_air_date": "2020-01-01"}
+        assert self._resolve(hit, year=1969) == []
 
     def test_exact_match_after_normalising_is_accepted(self):
         assert self._resolve({"id": 1, "title": "Italian Job!"}) == [1]
@@ -907,3 +913,37 @@ class TestResolvedTitleIsTheOneAsked:
     def test_a_missing_year_on_either_side_does_not_block(self):
         assert self._resolve({"id": 1, "title": "The Italian Job"}, year=1969) == [1]
         assert self._resolve({"id": 1, "title": "The Italian Job", "release_date": "2003-05-30"}) == [1]
+
+    @pytest.mark.parametrize(
+        ("asked", "found"),
+        [
+            ("Amelie", "Amélie"),
+            ("Fast and Furious", "Fast & Furious"),
+            ("Rogue One", "Rogue One: A Star Wars Story"),
+            ("Kill Bill", "Kill Bill: Vol. 1"),
+            ("Ocean's 11", "Ocean's Eleven"),
+        ],
+    )
+    def test_real_variants_of_a_title_are_accepted(self, asked, found):
+        assert self._resolve({"id": 1, "title": found}, title=asked) == [1]
+
+    def test_the_original_title_counts(self):
+        hit = {"id": 1, "title": "Spirited Away", "original_title": "Sen to Chihiro no kamikakushi"}
+        assert self._resolve(hit, title="Sen to Chihiro no kamikakushi") == [1]
+
+    def test_a_good_match_below_a_bad_top_hit_is_found(self):
+        hits = [{"id": 2, "name": "Italian Job - The Serie A Story", "first_air_date": "2020-01-01"}]
+        hits.append({"id": 1, "title": "The Italian Job", "release_date": "1969-06-01"})
+        assert self._resolve(hits, year=1969) == [1]
+
+    def test_a_kind_the_ai_named_stays_covered_when_every_title_is_rejected(self):
+        class _Nothing(_Tmdb):
+            def search_all(self, t, media):
+                return [{"id": 1, "name": "Unrelated", "first_air_date": "2001-01-01"}]
+
+        titles = [{"media": "show", "title": f"Show {n}", "year": 2010} for n in range(3)]
+        titles.append({"media": "movie", "title": "Memento", "year": 2000})
+        answer = _answer(titles=titles)
+        draft, _ = _run(answer, _Nothing(), media=(MediaType.MOVIE, MediaType.SHOW))
+
+        assert set(draft.spec.media) == {MediaType.MOVIE, MediaType.SHOW}

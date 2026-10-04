@@ -162,15 +162,24 @@ class TmdbClient:
             The best match, or None when the search returned nothing at all.
         """
         query = (title or "").strip()
-        if not query:
-            return None
-        kind = "movie" if media_type is MediaType.MOVIE else "tv"
-        results = self._get(f"/search/{kind}", params={"query": query}).get("results", [])
+        results = self.search_all(query, media_type)
         if not results:
             return None
         # `max` keeps the first of equal scores, so a tie falls back to TMDB's own popularity order —
         # which is what this function used to return outright.
         return max(results, key=lambda r: _match_score(r, query, year))
+
+    def search_all(self, title: str, media_type: MediaType) -> list[dict]:
+        """Every result TMDB gives for a free-text title, in its own popularity order; empty for a blank title.
+
+        For a caller that must check a hit really is the title it asked for: ``search`` returns its best-ranked
+        result even when nothing resembles the query, and the right one may not be first.
+        """
+        query = (title or "").strip()
+        if not query:
+            return []
+        kind = "movie" if media_type is MediaType.MOVIE else "tv"
+        return self._get(f"/search/{kind}", params={"query": query}).get("results", [])
 
     def genre_names(self, media_type: MediaType) -> dict[int, str]:
         kind = "movie" if media_type is MediaType.MOVIE else "tv"

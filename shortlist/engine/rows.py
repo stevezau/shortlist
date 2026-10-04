@@ -2024,13 +2024,21 @@ def _ledger_keys(ctx: EngineContext, user: UserProfile, spec: RowSpec) -> dict[s
 
 
 def _own_titles_tonight(ctx: EngineContext, spec: RowSpec) -> frozenset[tuple[MediaType, int]]:
-    """The theme's own titles as loaded tonight; empty when it names none or could not be read."""
+    """The theme's own titles as loaded tonight; empty when it names none, could not be read, or lost a collection.
+
+    Empty means "judge by kind only": a collection missing tonight (Kometa churn) drops its members from the
+    list, and a read we cannot vouch for never authorises a delete.
+    """
     found = ctx.theme_titles.get(spec.theme.slug)
-    return found.own if found is not None else frozenset()
+    return found.own if found is not None and found.own_complete else frozenset()
 
 
 def _holds_any(ctx: EngineContext, section, titles: frozenset[tuple[MediaType, int]]) -> bool:
     index = ctx.section_index.get(section.key, {})
+    # An empty index (an unmounted share, a library whose agent lost its ids) is a read we cannot vouch for.
+    # Known gap, accepted: a library whose only own title is deleted or re-matched flips to "holds none".
+    if not index:
+        return True
     kind = section_kind(section)
     return any(media == kind and tmdb_id in index for media, tmdb_id in titles)
 

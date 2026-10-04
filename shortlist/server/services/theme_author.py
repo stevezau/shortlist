@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -186,7 +187,7 @@ def author_theme(
         unreadable.tokens, unreadable.answered = tokens, True
         raise
 
-    picks, titles, named, failed_kinds = _resolve_titles(proposal, medias, tmdb)
+    picks, titles, named, asked_kinds = _resolve_titles(proposal, medias, tmdb)
     tags = _resolve_tags(proposal, tmdb)
     genres = tuple(g for g in _strings(proposal.get("genres")) if g.strip().lower() in _MOVIE_GENRE_IDS)[:_MAX_GENRES]
     if current is not None:
@@ -201,8 +202,9 @@ def author_theme(
         nothing.tokens, nothing.answered = tokens, True
         raise nothing
     # A kind the AI named nothing for stays out: tag and genre matches alone would fill that library with filler.
-    # A kind whose search errored may still have been named: only a kind the AI truly left out is dropped.
-    named_kinds = {p.media for p in picks} | {p.media for p in kept} | failed_kinds
+    # A kind it NAMED stays in even when matching rejected or failed every title: only a kind the AI truly left
+    # out is dropped, and a library holding none of the theme's own titles is skipped later instead.
+    named_kinds = {p.media for p in picks} | {p.media for p in kept} | asked_kinds
     covered = tuple(m for m in medias if m in named_kinds) or medias
     spec = ThemeSpec(
         slug=current.slug if current else (slugify(name) or "theme"),
@@ -507,7 +509,7 @@ def _rules(value: object) -> RowLimits:
 def _resolve_titles(
     proposal: dict, medias: tuple[MediaType, ...], tmdb: TmdbClient
 ) -> tuple[list[ThemePick], dict[tuple[MediaType, int], str], int, set[MediaType]]:
-    """Resolve the AI's titles. The last item is the kinds whose TMDB search ERRORED, as opposed to finding nothing."""
+    """Resolve the AI's titles. The last item is every kind the AI named a title for, found or not."""
     raw = proposal.get("titles")
     entries = [
         e for e in (raw if isinstance(raw, list) else []) if isinstance(e, dict) and isinstance(e.get("title"), str)
@@ -516,6 +518,7 @@ def _resolve_titles(
     picks: list[ThemePick] = []
     titles: dict[tuple[MediaType, int], str] = {}
     seen: set[tuple[MediaType, int]] = set()
+    asked_kinds: set[MediaType] = set()
     failed_kinds: set[MediaType] = set()
     searches = 0
     for entry in entries:
@@ -525,11 +528,12 @@ def _resolve_titles(
         if media is None or media not in medias or searches >= _MAX_TITLES:
             continue
         searches += 1
+        asked_kinds.add(media)
         year = _number(entry.get("year"), int)
         title = entry["title"].strip()[:_MAX_PHRASE]
         try:
-            hit = tmdb.search(title, media, year=year)
-            key = (media, int(hit["id"])) if hit and _is_same_title(title, year, hit) else None
+            hit = _best_match(tmdb.search_all(title, media), title, year)
+            key = (media, int(hit["id"])) if hit else None
         except Exception:
             logger.warning("theme author: TMDB search failed for a title")
             failed_kinds.add(media)
@@ -540,34 +544,73 @@ def _resolve_titles(
         reason = _clean(str(entry.get("reason") or ""))[:_MAX_REASON].strip()
         picks.append(ThemePick(tmdb_id=key[1], media=media, origin="ai", reason=reason or None))
         titles[key] = str(hit.get("title") or hit.get("name") or title)
-    return picks, titles, len(entries), failed_kinds
+    return picks, titles, len(entries), asked_kinds | failed_kinds
 
 
 _ARTICLES = frozenset({"the", "a", "an"})
+_NUMBER_WORDS = {
+    word: str(number)
+    for number, word in enumerate(
+        (
+            *("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"),
+            *("eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen"),
+            *("nineteen", "twenty"),
+        )
+    )
+}
+_SUBTITLE = re.compile(r"\s*:\s*|\s+-\s+")
 
 
-def _normalise_title(title: str) -> str:
-    words = re.sub(r"[^\w\s]", "", title.casefold()).split()
-    return " ".join(w for w in words if w not in _ARTICLES)
+def _fold(title: str) -> str:
+    """A title as comparable words: no accents, case, punctuation or articles; "&" is "and"; numbers are digits."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", title) if not unicodedata.combining(c))
+    plain = re.sub(r"['\u2019]", "", plain.casefold().replace("&", " and "))
+    words = re.sub(r"[^\w\s]", " ", plain).split()
+    return " ".join(_NUMBER_WORDS.get(w, w) for w in words if w not in _ARTICLES)
 
 
-def _is_same_title(asked: str, year: int | None, hit: dict) -> bool:
-    """Whether a TMDB hit is the title the AI named, not just the closest thing TMDB had.
+def _main_title(title: str) -> str:
+    return _fold(_SUBTITLE.split(title, maxsplit=1)[0])
 
-    ``TmdbClient.search`` returns its best-ranked result even when nothing resembles the query (it never
-    filters), so "The Italian Job" resolved to a docuseries. Titles must match once normalised, or one
-    must contain the other with a small length gap; a year, when both sides have one, may differ by 1.
-    """
-    want = _normalise_title(asked)
-    got = _normalise_title(str(hit.get("title") or hit.get("name") or ""))
+
+def _title_closeness(asked: str, name: str) -> int:
+    """How well one title name matches the asked one: 3 the same, 2 one contains the other with a small length
+    gap, 1 the same before a subtitle ("Rogue One" / "Rogue One: A Star Wars Story"), 0 not the same."""
+    want, got = _fold(asked), _fold(name)
     if not want or not got:
-        return False
-    if want != got:
-        shorter, longer = sorted((want, got), key=len)
-        if shorter not in longer or (len(longer) - len(shorter)) > 0.3 * len(longer):
-            return False
+        return 0
+    if want == got:
+        return 3
+    shorter, longer = sorted((want, got), key=len)
+    if shorter in longer and (len(longer) - len(shorter)) <= 0.3 * len(longer):
+        return 2
+    main = _main_title(asked)
+    return 1 if main and main == _main_title(name) else 0
+
+
+def _match_rank(asked: str, year: int | None, hit: dict) -> tuple[int, int] | None:
+    """How well a TMDB hit is the title the AI named, or None when it is not that title.
+
+    ``TmdbClient.search`` ranks by year but never filters, so its top result can be anything ("The Italian Job"
+    resolved to a docuseries). Titles must match (any of the hit's names, so an original-language title counts);
+    a year, when both sides have one, may differ by 1. Better is lower, for ``min``.
+    """
+    closeness = max(
+        _title_closeness(asked, str(hit.get(field) or ""))
+        for field in ("title", "name", "original_title", "original_name")
+    )
+    if closeness == 0:
+        return None
     date = str(hit.get("release_date") or hit.get("first_air_date") or "")
-    return not (year is not None and date[:4].isdigit() and abs(int(date[:4]) - year) > 1)
+    gap = abs(int(date[:4]) - year) if year is not None and date[:4].isdigit() else 0
+    if gap > 1:
+        return None
+    return (-closeness, gap)
+
+
+def _best_match(results: list[dict], asked: str, year: int | None) -> dict | None:
+    ranked = [(rank, i, hit) for i, hit in enumerate(results) if (rank := _match_rank(asked, year, hit)) is not None]
+    return min(ranked, key=lambda r: (r[0], r[1]))[2] if ranked else None
 
 
 def _resolve_tags(proposal: dict, tmdb: TmdbClient) -> tuple[int, ...]:

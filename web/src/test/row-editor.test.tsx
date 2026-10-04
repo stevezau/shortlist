@@ -127,6 +127,8 @@ function row(patch: Partial<Collection> = {}): Collection {
     poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
     ai_instructions: { mode: "default", text: "" },
     theme_id: null,
+    theme_name: null,
+    theme_emoji: null,
     ai_paused: false,
     ai_tokens: 0,
     theme_mode: "fixed",
