@@ -6815,6 +6815,16 @@ export interface components {
             /** Resolved */
             resolved: number;
             /**
+             * Runtime Checked
+             * @default 0
+             */
+            runtime_checked: number;
+            /**
+             * Runtime Total
+             * @default 0
+             */
+            runtime_total: number;
+            /**
              * Truncated
              * @default false
              */

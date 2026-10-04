@@ -7,6 +7,8 @@ hiccuped.
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -14,10 +16,19 @@ from loguru import logger
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.models import Candidate, MediaType, RowLimits
 
-__all__ = ["LimitResult", "RowLimits", "apply_limits", "passes_year_and_rating", "runtime_minutes"]
+__all__ = [
+    "LimitResult",
+    "RowLimits",
+    "apply_limits",
+    "apply_runtime_limit",
+    "passes_year_and_rating",
+    "runtime_minutes",
+]
 
 
 _MAX_CONSECUTIVE_FAILURES = 5
+#: Details lookups in flight at once for a pool of titles; the TMDB client's own retry/backoff still applies.
+DETAILS_WORKERS = 8
 
 
 @dataclass
@@ -54,6 +65,7 @@ class _DetailsFetcher:
         self._streak = 0
         self.failures = 0
         self.skipped = 0
+        self._lock = threading.Lock()  # `apply_runtime_limit` calls `get` from several threads
 
     @property
     def open(self) -> bool:
@@ -66,11 +78,13 @@ class _DetailsFetcher:
         try:
             details = self._tmdb.details(c.tmdb_id, c.media_type)
         except Exception:
-            self._streak += 1
-            self.failures += 1
+            with self._lock:
+                self._streak += 1
+                self.failures += 1
             logger.debug("limits: details failed for {} {}", c.media_type, c.tmdb_id)
             return None
-        self._streak = 0
+        with self._lock:
+            self._streak = 0
         return details
 
 
@@ -117,6 +131,37 @@ def apply_limits(candidates: list[Candidate], limits: RowLimits, tmdb: TmdbClien
             result.dropped_candidates.append(c)
             continue
         result.unknown += unknown
+        result.kept.append(c)
+    if fetcher.failures:
+        logger.warning(
+            "limits: {} TMDB details lookups failed{}; {} titles kept as unknown",
+            fetcher.failures,
+            f", then stopped asking after {_MAX_CONSECUTIVE_FAILURES} in a row" if fetcher.open else "",
+            result.unknown,
+        )
+    return result
+
+
+def apply_runtime_limit(
+    candidates: list[Candidate], max_runtime: int, tmdb: TmdbClient, *, workers: int = DETAILS_WORKERS
+) -> LimitResult:
+    """Drop candidates longer than ``max_runtime`` minutes, looking titles up ``workers`` at a time.
+
+    The same rule as ``apply_limits``' runtime check, for a pool of hundreds: results keep ``candidates``'
+    order whatever order the lookups finish in, and the circuit breaker is shared, so after repeated
+    failures the remaining titles are kept as unknown without being asked for.
+    """
+    fetcher = _DetailsFetcher(tmdb)
+    with ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="runtime-check") as pool:
+        fetched = list(pool.map(fetcher.get, candidates))
+    result = LimitResult(kept=[])
+    for c, details in zip(candidates, fetched, strict=True):
+        minutes = runtime_minutes(details, c.media_type) if details is not None else None
+        if minutes is not None and minutes > max_runtime:
+            result.dropped += 1
+            result.dropped_candidates.append(c)
+            continue
+        result.unknown += minutes is None
         result.kept.append(c)
     if fetcher.failures:
         logger.warning(

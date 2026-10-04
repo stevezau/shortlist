@@ -46,7 +46,7 @@ function theme(patch: Partial<Theme> = {}): Theme {
 function preview(patch: Partial<ThemePreview> = {}): ThemePreview {
   return {
     draft: theme(),
-    stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, unwatched_median: null, truncated: false },
+    stats: { named: 60, resolved: 40, in_library: 30, after_rules: 25, unwatched_median: null, truncated: false, runtime_total: 0, runtime_checked: 0 },
     diff: null,
     tokens: 321,
     ...patch,

@@ -742,3 +742,15 @@ class TestCarryOverTrimsCarriedItemsFirst:
 
         assert len(draft.spec.genres) == 10
         assert draft.spec.genres[-1] == "Thriller"
+
+
+class TestRuntimeCheckCounts:
+    def test_a_bounded_preview_reports_how_many_running_times_it_checked(self):
+        draft, _ = _author(_answer(rules={"max_runtime": 600}), max_details=1)
+
+        assert (draft.stats.runtime_total, draft.stats.runtime_checked) == (2, 1)
+
+    def test_an_unbounded_run_checks_them_all(self):
+        draft, _ = _author(_answer(rules={"max_runtime": 600}))
+
+        assert (draft.stats.runtime_total, draft.stats.runtime_checked) == (2, 2)

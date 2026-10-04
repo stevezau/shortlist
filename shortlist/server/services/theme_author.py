@@ -88,6 +88,10 @@ class ThemeStats:
     unwatched_median: int | None
     #: The AI's reply was cut off at the token cap and only the titles before the cut were kept.
     truncated: bool = False
+    #: Titles that needed a running-time check, and how many got one. Fewer checked than total means a
+    #: preview bounded its lookups; the nightly run checks the rest.
+    runtime_total: int = 0
+    runtime_checked: int = 0
 
 
 @dataclass(frozen=True)
@@ -130,6 +134,7 @@ def author_theme(
     guidance: str = "",
     current_tag_names: Mapping[int, str] | None = None,
     change: str = "",
+    max_details: int | None = None,
 ) -> ThemeDraft:
     """Write a theme from ``brief``, or refine ``current`` by ``change``.
 
@@ -190,7 +195,7 @@ def author_theme(
         rules=_rules(proposal.get("rules")),
         min_votes=current.min_votes if current else None,
     )
-    loaded = load_theme(tmdb, plex, spec, library_index)
+    loaded = load_theme(tmdb, plex, spec, library_index, max_details=max_details)
     after_rules = sum(len(found) for found in loaded.titles.ids.values())
     held = loaded.held
     # Rules come from TMDB, so a pick the rules drop must not be offered as the AI's reason for a row.
@@ -202,6 +207,8 @@ def author_theme(
         after_rules=after_rules,
         unwatched_median=None,
         truncated=truncated,
+        runtime_total=loaded.runtime_total,
+        runtime_checked=loaded.runtime_checked,
     )
     logger.info("theme authored: {} named, {} resolved, {} after rules", named, len(picks), after_rules)
     return ThemeDraft(

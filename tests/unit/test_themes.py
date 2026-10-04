@@ -292,3 +292,78 @@ def test_load_theme_leaves_out_a_kind_the_theme_does_not_cover():
     titles = load_theme(tmdb, _Plex(), spec, {MediaType.MOVIE: {1: 10}, MediaType.SHOW: {}})
 
     assert _ids(titles.titles) == set() and titles.held == 0
+
+
+def _counting(tmdb: _Tmdb, fail: bool = False) -> list[int]:
+    calls: list[int] = []
+    original = tmdb.details
+
+    def details(tmdb_id: int, media: MediaType) -> dict:
+        calls.append(tmdb_id)
+        if fail:
+            raise RuntimeError("tmdb down")
+        return original(tmdb_id, media)
+
+    tmdb.details = details  # type: ignore[method-assign]
+    return calls
+
+
+class TestRuntimeLookups:
+    def test_cheap_rules_run_before_any_details_call(self):
+        tmdb = _Tmdb([_item(1, year=1980), _item(2, year=2005)], details={2: {"runtime": 90}})
+        calls = _counting(tmdb)
+        spec = _spec(rules=RowLimits(max_runtime=100, min_year=2000))
+
+        titles = load_theme(tmdb, _Plex(), spec, {MediaType.MOVIE: {1: 10, 2: 20}})
+
+        assert calls == [2], "a title failing min_year was asked for its running time"
+        assert _ids(titles.titles) == {2}
+
+    def test_concurrent_lookups_give_the_same_titles_in_the_same_order(self):
+        ids = list(range(1, 41))
+        tagged = [_item(i) for i in ids]
+        details = {i: {"runtime": 90 if i % 3 else 150} for i in ids}
+        tmdb = _Tmdb(tagged, details=details)
+        calls = _counting(tmdb)
+        spec = _spec(rules=RowLimits(max_runtime=100))
+
+        titles = load_theme(tmdb, _Plex(), spec, {MediaType.MOVIE: {i: i for i in ids}})
+
+        assert sorted(calls) == ids
+        assert [int(item["id"]) for item in titles.titles.in_library[MediaType.MOVIE]] == [i for i in ids if i % 3]
+
+    def test_max_details_checks_the_named_titles_then_the_most_voted(self):
+        tagged = [_item(i, votes=i * 10) for i in range(1, 11)]
+        # 1 is named but has the fewest votes; every title is 200 minutes long.
+        tmdb = _Tmdb(tagged, details={i: {"runtime": 200} for i in range(1, 11)})
+        calls = _counting(tmdb)
+        spec = _spec(rules=RowLimits(max_runtime=100), picks=(ThemePick(1, MediaType.MOVIE, "ai", None),))
+
+        titles = load_theme(tmdb, _Plex(), spec, {MediaType.MOVIE: {i: i for i in range(1, 11)}}, max_details=3)
+
+        assert sorted(calls) == [1, 9, 10]
+        assert (titles.runtime_checked, titles.runtime_total) == (3, 10)
+        assert _ids(titles.titles) == {2, 3, 4, 5, 6, 7, 8}, "the unchecked titles are kept, the checked long ones go"
+
+    def test_without_max_details_every_survivor_is_checked(self):
+        tmdb = _Tmdb([_item(i) for i in range(1, 11)], details={i: {"runtime": 90} for i in range(1, 11)})
+        calls = _counting(tmdb)
+
+        titles = load_theme(
+            tmdb, _Plex(), _spec(rules=RowLimits(max_runtime=100)), {MediaType.MOVIE: {i: i for i in range(1, 11)}}
+        )
+
+        assert sorted(calls) == list(range(1, 11))
+        assert (titles.runtime_checked, titles.runtime_total) == (10, 10)
+
+    def test_the_breaker_stops_asking_after_repeated_failures_and_keeps_every_title(self):
+        ids = list(range(1, 61))
+        tmdb = _Tmdb([_item(i) for i in ids])
+        calls = _counting(tmdb, fail=True)
+
+        titles = load_theme(
+            tmdb, _Plex(), _spec(rules=RowLimits(max_runtime=100)), {MediaType.MOVIE: {i: i for i in ids}}
+        )
+
+        assert len(calls) < 20, "the breaker never opened"
+        assert _ids(titles.titles) == set(ids)

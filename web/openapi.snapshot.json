@@ -8891,6 +8891,16 @@
             "title": "Resolved",
             "type": "integer"
           },
+          "runtime_checked": {
+            "default": 0,
+            "title": "Runtime Checked",
+            "type": "integer"
+          },
+          "runtime_total": {
+            "default": 0,
+            "title": "Runtime Total",
+            "type": "integer"
+          },
           "truncated": {
             "default": false,
             "title": "Truncated",

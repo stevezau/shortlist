@@ -34,7 +34,11 @@ const SAMPLE_SIZE = 12;
 const PAUSED_REASON = "AI is paused for this row. Resume it below to build or change its list.";
 const SAVE_FIRST_REASON = "Save the row first, then you can change its list in words.";
 
-type Counts = Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules"> & { truncated?: boolean };
+type Counts = Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules"> & {
+  truncated?: boolean;
+  runtime_total?: number;
+  runtime_checked?: number;
+};
 
 /**
  * An AI row's list (#138), in What goes in: describe it, build it with one AI call, change it in words, and
@@ -318,6 +322,12 @@ function ListCard({ theme, counts, unsaved }: { theme: Theme; counts: Counts | n
         <p role="status" className="text-sm text-warning">
           The AI’s list was cut short; {counts.named} {counts.named === 1 ? "title" : "titles"} kept. Build again for a
           fuller list.
+        </p>
+      )}
+      {counts?.runtime_total != null && counts.runtime_checked != null && counts.runtime_checked < counts.runtime_total && (
+        <p className="text-sm text-muted-foreground">
+          Checked running time for {counts.runtime_checked} of {counts.runtime_total} titles; the nightly run checks the
+          rest.
         </p>
       )}
       {missing > 0 && (

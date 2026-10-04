@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from loguru import logger
 
 from shortlist.engine.clients.tmdb import TmdbClient
-from shortlist.engine.limits import apply_limits
+from shortlist.engine.limits import apply_limits, apply_runtime_limit
 from shortlist.engine.models import Candidate, MediaType, RowLimits
 from shortlist.engine.seasons import (
     CollectionRef,
@@ -105,6 +105,10 @@ class ThemeTitles:
     reasons: dict[tuple[MediaType, int], str]
     #: How many of the theme's titles the libraries hold, before its rules are applied.
     held: int = 0
+    #: How many titles passed the cheap rules and so needed a running-time check, and how many got one. They
+    #: differ only when ``load_theme`` was given ``max_details``; the rest were kept as "runtime unknown".
+    runtime_total: int = 0
+    runtime_checked: int = 0
 
 
 def theme_content_hash(spec: ThemeSpec) -> str:
@@ -182,6 +186,7 @@ def load_theme(
     plex: _CollectionReader,
     spec: ThemeSpec,
     library_index: dict[MediaType, dict[int, int]],
+    max_details: int | None = None,
 ) -> ThemeTitles:
     """Read a theme's titles through the season path and keep the ones the libraries hold, inside its rules.
 
@@ -190,6 +195,11 @@ def load_theme(
     title TMDB lists. ``ids`` is therefore the allowed titles that are on the server, and ``in_library``
     carries their items. ``held`` counts the server's titles before the rules, for the preview's counts.
     A pick TMDB no longer has is skipped, and so is a title of a kind the theme does not cover.
+
+    The rules that need only list data (year, rating, votes, kind) run first, so the running-time check sees
+    just the survivors, and it looks titles up several at a time. ``max_details`` bounds those lookups for a
+    caller that cannot wait (the preview): the theme's named titles are checked first, then the most voted,
+    and the rest are kept as "runtime unknown" — the nightly run, which passes none, checks them all.
 
     Raises:
         Exception: Whatever TMDB or Plex raised, so callers keep tonight's row rather than rebuild from half
@@ -210,8 +220,20 @@ def load_theme(
         candidates = [c for c in candidates if c.vote_count >= spec.min_votes or (c.tmdb_id, c.media_type) in picked]
     held = len(items)
     logger.debug("theme {}: applying rules to {} titles on the server", spec.slug, len(candidates))
-    kept = apply_limits(candidates, spec.rules, tmdb)  # type: ignore[arg-type]
-    allowed = {(c.tmdb_id, c.media_type) for c in kept.kept}
+    cheap = apply_limits(candidates, replace(spec.rules, max_runtime=None), tmdb)  # type: ignore[arg-type]
+    survivors = cheap.kept
+    runtime_total = runtime_checked = 0
+    if spec.rules.max_runtime is not None:
+        runtime_total = runtime_checked = len(survivors)
+        to_check = survivors
+        if max_details is not None and len(survivors) > max_details:
+            by_priority = sorted(survivors, key=lambda c: ((c.tmdb_id, c.media_type) not in picked, -c.vote_count))
+            to_check = by_priority[: max(0, max_details)]
+            runtime_checked = len(to_check)
+        checked = apply_runtime_limit(to_check, spec.rules.max_runtime, tmdb)  # type: ignore[arg-type]
+        too_long = {(c.tmdb_id, c.media_type) for c in checked.dropped_candidates}
+        survivors = [c for c in survivors if (c.tmdb_id, c.media_type) not in too_long]
+    allowed = {(c.tmdb_id, c.media_type) for c in survivors}
 
     ids: dict[MediaType, set[int]] = {MediaType.MOVIE: set(), MediaType.SHOW: set()}
     in_library: dict[MediaType, list[dict]] = {MediaType.MOVIE: [], MediaType.SHOW: []}
@@ -231,4 +253,6 @@ def load_theme(
         in_library=in_library,
         missing_collections=tuple(ref.title for ref, found in reads.collections if found is None),
     )
-    return ThemeTitles(titles=titles, reasons=reasons, held=held)
+    return ThemeTitles(
+        titles=titles, reasons=reasons, held=held, runtime_total=runtime_total, runtime_checked=runtime_checked
+    )

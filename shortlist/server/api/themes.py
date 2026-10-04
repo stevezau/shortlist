@@ -42,6 +42,8 @@ _NO_TMDB = "Add a TMDB API key in Settings first."
 _PAUSED = "AI is paused for this row. Resume it from the row's menu to write or refine its theme."
 _NO_PROVIDERS = ("", "none", "null")
 _MAX_GUIDANCE = 4000
+#: Running-time lookups a preview makes before it stops and leaves the rest to the nightly run.
+_PREVIEW_MAX_DETAILS = 400
 _STATS_KEYS = ("named", "resolved", "in_library", "after_rules")
 
 
@@ -138,6 +140,8 @@ class ThemeStatsOut(PassthroughModel):
     after_rules: int
     unwatched_median: int | None
     truncated: bool = False
+    runtime_total: int = 0
+    runtime_checked: int = 0
 
 
 class ThemeDiffOut(PassthroughModel):
@@ -238,6 +242,7 @@ async def preview_theme(body: PreviewIn, request: Request) -> dict:
                 current=current,
                 guidance=body.guidance,
                 current_tag_names=known_tags,
+                max_details=_PREVIEW_MAX_DETAILS,
             )
         except ThemeAuthorError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
