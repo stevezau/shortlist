@@ -19,6 +19,16 @@ All notable changes to this project are documented here. This project follows
   New AI rows start switched off. Per-person rows only, and library-only: a title your server lacks is
   never requested. With no AI provider you can still hand-edit the
   tags, genres and limits. See [An AI row](https://shortlistapp.dev/guides/ai/#an-ai-row). (#138)
+- **Explore: an AI row that picks a new theme every few days (#138).** In an AI row's editor, choose
+  **Pick a new theme every few days** and each person gets their own theme, chosen from what they watch (or
+  from a brief you write), for 7 days by default. The next theme is written a day early and shown as **Up
+  next**, where you can **Change it** or **Pick another**; the last six are listed as **Recent themes**. A
+  new **Pick new row themes** job (setting `themes.rotate_cron`, daily by default) does the switching. One
+  AI call per person per change. Every AI row starts on **Keep the same theme**, so nothing changes on
+  upgrade.
+- **Over-time controls on AI rows (#138).** **How much changes each time** (a fifth, a third by default,
+  half, or almost everything), **Don't repeat a title for N days** (off by default), and **Keep out titles
+  already in** other per-person rows. See [Explore](https://shortlistapp.dev/guides/ai/#explore-a-new-theme-every-few-days).
 - **AI instructions: tell AI web search what to look for**, server-wide in Settings → Defaults → Title
   sources and per row under What goes in. A row can use the default, add to it, or write its own.
   See [AI instructions](https://shortlistapp.dev/guides/rows/what-goes-in/#ai-instructions).

@@ -122,6 +122,9 @@ but nobody pictured here watched anything.</sub>
 - ✨ **Describe a row in plain words.** An AI row turns "slow-burn heist films" into a themed row: the AI
   writes the theme once, you check it and try it on one person first, and every night after that fills
   each person's row from it with no AI. [How it works](https://shortlistapp.dev/guides/ai/#an-ai-row)
+- 🔭 **Explore: a new theme every few days.** Switch an AI row to Explore and each person gets their own
+  fresh theme on a schedule, written a day early so you can change it. Over-time controls swap more or
+  less each night, stop titles coming back for a while, and keep a row out of titles in your other rows.
 - 📚 **Whole shows, not episodes.** A 20-episode binge counts as one show, so one series can't drown
   out everything else.
 

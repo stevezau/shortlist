@@ -269,6 +269,19 @@ POST /api/collections/{id}/ai-pause {paused: bool} -> row
      Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; the theme
      endpoints answer 409 until resumed. 422 for a row that is not an AI row.
 Row fields: `theme_id` (the AI row's stored theme, null for other rows), `ai_paused`, `ai_tokens` (tokens spent on this row).
+     Explore and over-time fields, AI rows only (422 on any other row; clearing `theme_id` resets them):
+     `theme_mode` (`"fixed"` default, or `"explore"`), `explore_brief` (up to 500 characters, default `""`),
+     `theme_days` (1-90 or null for 7), `refresh_share` (share of picks swapped on a refresh, above 0 and up to 1;
+     null keeps two thirds, so swaps a third), `repeat_cooldown_days` (1-365; null is off), `avoid_rows` (slugs of
+     other per-person rows to keep out; null is none).
+GET /api/collections/{id}/theme-rotation -> {mode, days, targets: [{user_id, name, current, next, started_at, next_due_at, history}]}
+     Where each person's Explore rotation stands. `current` and `next` are `{theme_id, name, emoji, started_at, due_at}`
+     or null; `history` is their last six earlier themes, newest first. 404 for a row that is not an AI row.
+PUT /api/collections/{id}/up-next {user_id, theme_id} -> theme ref
+     Points a person's Up next at a saved theme, replacing any queued. Changes nothing on Plex. 422 unless the row is on Explore.
+POST /api/collections/{id}/up-next/regenerate {user_id} -> theme ref
+     Writes a new Up next theme for one person now, with one AI call. 409 while the row's AI is paused, 422 without
+     an AI provider or when the row is not on Explore.
 POST /api/collections/{id}/cleanup {dry_run?} (remove this row's Plex collections for everyone; dry-run previews)
 POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/collections/{id}/poster/image (serve/remove uploaded artwork) · POST /api/collections/{id}/poster/preview {title,subtitle,style} -> generated sample image
 ```

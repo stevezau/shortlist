@@ -2184,6 +2184,50 @@ has no request settings.
 **Needs an AI provider** (Settings → Connections). With none, the AI half of the editor is hidden and
 you can still edit the tags, genres and limits by hand. AI rows are per-person rows only.
 
+### Explore: a new theme every few days
+
+By default an AI row keeps the one theme you built. Switch it to **Pick a new theme every few days** (Row →
+**What goes in**, under the list) and each person's row gets a fresh theme on a schedule instead.
+
+- **Per person.** Every person gets their own theme, chosen from what they watch. AI rows are never shared
+  rows, so two people on the same row can be on different themes.
+- **Days each theme lasts.** 7 unless you change it (1 to 90).
+- **What kind of themes?** Optional. Leave it blank and the AI chooses from each person's watching; write
+  "cosy mysteries" and every theme leans that way.
+- **Cost.** One call to your AI provider per person per change, counted against the row's usage. Nothing
+  else in a night uses AI.
+- **Up next.** The next theme is written a day before it starts, so you can look at it. On each person's
+  card, **Change it** lets you say what to change (you see what would be added and removed before it is
+  saved) and **Pick another** asks the AI for a different one. Both need AI not to be paused. Neither
+  touches Plex: the row picks up the new theme the next time it builds.
+- **Recent themes.** The last six themes for each person are listed, and Shortlist won't pick those again
+  soon.
+
+A background job, **Pick new row themes**, does the switching and writing. It runs once a day by default;
+change or switch off its schedule on the **Jobs** page (setting `themes.rotate_cron`). If the AI is
+paused or unreachable, the person keeps their current theme and the problem shows in the change log.
+
+Nothing changes when you upgrade: every AI row starts on **Keep the same theme**.
+
+### How a row changes over time
+
+These controls are on AI rows only. Each starts at today's behaviour.
+
+- **How much changes each time.** On each refresh, how much of the row is swapped for new titles: *A
+  little (about a fifth)*, *A third (usual)*, *Half*, or *Almost everything*. Default: a third.
+- **Don't repeat a title for N days.** Off by default. When on (1 to 365 days, 30 to start), a title that
+  has been in the person's row stays out for that long. The days count from the first time the title was
+  shown, not the last. It never removes a title the row is keeping tonight; it only stops it coming back
+  as a new pick.
+- **Keep out titles already in.** Tick other per-person rows to keep their titles out of this one for the
+  same person. None by default. It depends on build order: a row built earlier in the same run is kept out
+  exactly; a row built later is kept out by what it showed on its previous run.
+
+**My row stopped changing.** The controls can use up the pool: a long no-repeat period or several keep-out
+rows can leave too few titles. When that would leave the row with nothing new to pick, Shortlist ignores
+the controls for that night, keeps the row as it is and says so in the run. Shorten the days, untick a
+row, or widen the theme's limits.
+
 ### If you don't want to use AI
 
 Leave the AI provider on **None** in Settings → Connections, which is the default, and the AI
@@ -3213,6 +3257,7 @@ Cron expressions for the background jobs. Empty means the default shown.
 | `rows.visibility_cron` | `""` (daily 00:00)                 | cron for applying each row's day schedule (`collections.show_days`) and seasons (`collections.seasons`). Midnight, not 03:30 with the runs: a Monday row would otherwise stay on people's Home until 03:30 on Tuesday, and a row that rebuilds weekly for days. Costs nothing at all — one query, no clients built — on a server where no row narrows its days and no seasonal row has opened or closed a season in the last seven nights; where one has, the pass is a share-filter merge plus the ~5ms visibility flips, idempotent rather than tracked in state                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `sync.check_cron` | `""` (daily 05:45)                 | cron for the drift check — after the rows build (03:30) and the 05:30 privacy pass, so it checks the state those left behind. The ONE schedule that can be switched off entirely: it writes corrections to Plex, so choosing **Off** in its frequency picker (Jobs → Check and fix rows on Plex) stores an empty value the scheduler reads as an explicit "off" rather than "inherit the default" (every other blank cron means "use the built-in default"). Because of that, its picker is driven by the EFFECTIVE cron from `GET /api/schedule`, not by the raw setting. The two are indistinguishable in `GET /api/settings`, which folds the blank default in. The way back is the **Built-in (05:45)** chip in the same picker, which saves `null` — that deletes the stored value, so the job inherits the built-in cron again rather than pinning a copy of it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `maintenance.prune_cron` | `""` (daily 06:15)                 | cron for the retention prune. It applies `runs.retention` and `events.retention` and drops expired cache rows. Last of the night, after every other schedule has finished writing, so it trims a settled database. The prune is also queued after every run; this schedule is the FLOOR under that, for a server whose rows have no cron (or one paused from the Danger Zone) and so has no runs to queue it. Local database housekeeping. Nothing on Plex changes. Blank = built-in default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `themes.rotate_cron` | `""` (daily 01:30) | cron for **Pick new row themes**: for every AI row set to Explore, moves each person to their next theme when the current one has run its course, and writes the following theme a day early. Asks your AI provider only when a theme is needed. Changes nothing on Plex; a row picks up its new theme the next time it builds. Like `sync.check_cron`, it can be switched off entirely (Jobs → Pick new row themes → **Off**), which stores an empty value; **Built-in** deletes the stored value so the default applies again |
 
 ### System
 
@@ -3832,6 +3877,19 @@ POST /api/collections/{id}/ai-pause {paused: bool} -> row
      Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; the theme
      endpoints answer 409 until resumed. 422 for a row that is not an AI row.
 Row fields: `theme_id` (the AI row's stored theme, null for other rows), `ai_paused`, `ai_tokens` (tokens spent on this row).
+     Explore and over-time fields, AI rows only (422 on any other row; clearing `theme_id` resets them):
+     `theme_mode` (`"fixed"` default, or `"explore"`), `explore_brief` (up to 500 characters, default `""`),
+     `theme_days` (1-90 or null for 7), `refresh_share` (share of picks swapped on a refresh, above 0 and up to 1;
+     null keeps two thirds, so swaps a third), `repeat_cooldown_days` (1-365; null is off), `avoid_rows` (slugs of
+     other per-person rows to keep out; null is none).
+GET /api/collections/{id}/theme-rotation -> {mode, days, targets: [{user_id, name, current, next, started_at, next_due_at, history}]}
+     Where each person's Explore rotation stands. `current` and `next` are `{theme_id, name, emoji, started_at, due_at}`
+     or null; `history` is their last six earlier themes, newest first. 404 for a row that is not an AI row.
+PUT /api/collections/{id}/up-next {user_id, theme_id} -> theme ref
+     Points a person's Up next at a saved theme, replacing any queued. Changes nothing on Plex. 422 unless the row is on Explore.
+POST /api/collections/{id}/up-next/regenerate {user_id} -> theme ref
+     Writes a new Up next theme for one person now, with one AI call. 409 while the row's AI is paused, 422 without
+     an AI provider or when the row is not on Explore.
 POST /api/collections/{id}/cleanup {dry_run?} (remove this row's Plex collections for everyone; dry-run previews)
 POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/collections/{id}/poster/image (serve/remove uploaded artwork) · POST /api/collections/{id}/poster/preview {title,subtitle,style} -> generated sample image
 ```

@@ -160,6 +160,50 @@ has no request settings.
 **Needs an AI provider** (Settings → Connections). With none, the AI half of the editor is hidden and
 you can still edit the tags, genres and limits by hand. AI rows are per-person rows only.
 
+### Explore: a new theme every few days
+
+By default an AI row keeps the one theme you built. Switch it to **Pick a new theme every few days** (Row →
+**What goes in**, under the list) and each person's row gets a fresh theme on a schedule instead.
+
+- **Per person.** Every person gets their own theme, chosen from what they watch. AI rows are never shared
+  rows, so two people on the same row can be on different themes.
+- **Days each theme lasts.** 7 unless you change it (1 to 90).
+- **What kind of themes?** Optional. Leave it blank and the AI chooses from each person's watching; write
+  "cosy mysteries" and every theme leans that way.
+- **Cost.** One call to your AI provider per person per change, counted against the row's usage. Nothing
+  else in a night uses AI.
+- **Up next.** The next theme is written a day before it starts, so you can look at it. On each person's
+  card, **Change it** lets you say what to change (you see what would be added and removed before it is
+  saved) and **Pick another** asks the AI for a different one. Both need AI not to be paused. Neither
+  touches Plex: the row picks up the new theme the next time it builds.
+- **Recent themes.** The last six themes for each person are listed, and Shortlist won't pick those again
+  soon.
+
+A background job, **Pick new row themes**, does the switching and writing. It runs once a day by default;
+change or switch off its schedule on the **Jobs** page (setting `themes.rotate_cron`). If the AI is
+paused or unreachable, the person keeps their current theme and the problem shows in the change log.
+
+Nothing changes when you upgrade: every AI row starts on **Keep the same theme**.
+
+### How a row changes over time
+
+These controls are on AI rows only. Each starts at today's behaviour.
+
+- **How much changes each time.** On each refresh, how much of the row is swapped for new titles: *A
+  little (about a fifth)*, *A third (usual)*, *Half*, or *Almost everything*. Default: a third.
+- **Don't repeat a title for N days.** Off by default. When on (1 to 365 days, 30 to start), a title that
+  has been in the person's row stays out for that long. The days count from the first time the title was
+  shown, not the last. It never removes a title the row is keeping tonight; it only stops it coming back
+  as a new pick.
+- **Keep out titles already in.** Tick other per-person rows to keep their titles out of this one for the
+  same person. None by default. It depends on build order: a row built earlier in the same run is kept out
+  exactly; a row built later is kept out by what it showed on its previous run.
+
+**My row stopped changing.** The controls can use up the pool: a long no-repeat period or several keep-out
+rows can leave too few titles. When that would leave the row with nothing new to pick, Shortlist ignores
+the controls for that night, keeps the row as it is and says so in the run. Shorten the days, untick a
+row, or widen the theme's limits.
+
 ### If you don't want to use AI
 
 Leave the AI provider on **None** in Settings → Connections, which is the default, and the AI

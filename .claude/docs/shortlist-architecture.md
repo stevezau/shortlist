@@ -122,6 +122,12 @@ collections           id · slug · name · build(per_person|shared) · audience
                       · placement / placement_friends (both|home|library|off) · pin_top BOOL · hub_anchor JSON
                       · poster JSON · candidate_sources JSON · watched_pct · refresh_days · recency · recent_count · max_seeds · pick_order
                       · description · sort_title_prefix  ("" = leave that Plex field alone; issue #120)
+                      · theme_id · ai_paused · ai_tokens   (AI rows, #138)
+                      · theme_mode(fixed|explore) · explore_brief · theme_days · refresh_share
+                        · repeat_cooldown_days · avoid_rows JSON   (Explore and over-time controls; AI rows only)
+theme_history         id · collection_id FK · user_id FK · theme_id FK(SET NULL) · theme_name · state(current|next|past)
+                      · started_at · due_at   ← which theme a row showed a person and which is queued; drives
+                        Up next, Recent themes and the no-repeat window. Written by the `themes.rotate` job.
 collection_audience   collection_id FK · user_id FK          (a `subset` row's members)
 collection_user_overrides  collection_id FK · user_id FK · muted BOOL · row_size · history_depth
 poster_assets         id · collection_id FK · kind(upload|preview) · bytes · created_at
@@ -137,6 +143,9 @@ jobs                  id · kind · payload JSON · status(queued|running|done|f
                       · detail · error · result JSON · created_at · started_at · finished_at
                       ← the durable queue for maintenance that must not be lost. APScheduler is only
                         the trigger; this table is what survives a restart. See §5 of that doc.
+                      Job kinds include `themes.rotate` (schedule setting `themes.rotate_cron`, daily by default;
+                        moves each Explore person to their next theme and writes the following one a day early;
+                        changes nothing on Plex).
 runs                  id · trigger(schedule|manual|wizard) · started_at(QUEUED at) · began_at(engine start; NULL = never ran) · finished_at · status · dry_run BOOL · stats JSON
 run_users             run_id FK · user_id FK · status · error · reason · duration_ms · llm_tokens · exa_searches
 #                                                    ^ counts EVERY external web search (Exa or SearXNG);
