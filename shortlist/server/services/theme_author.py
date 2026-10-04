@@ -8,6 +8,7 @@ the engine's genre list, and the rules are applied by ``load_theme`` from TMDB's
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -259,11 +260,24 @@ def _carry_over(
     dropped_tags = {p.lower() for p in _strings(proposal.get("drop_tags"))[:_MAX_TAGS]}
     dropped_genres = {p.lower() for p in _strings(proposal.get("drop_genres"))[:_MAX_GENRES]}
     gone_tags = {tag_id for tag_id, name in tag_names.items() if name.strip().lower() in dropped_tags}
-    merged_tags = [t for t in dict.fromkeys((*current.tags, *tags)) if t not in gone_tags]
-    merged_genres = list(
-        {g.strip().lower(): g for g in (*current.genres, *genres) if g.strip().lower() not in dropped_genres}.values()
+    added_tags = [t for t in dict.fromkeys(tags) if t not in gone_tags]
+    carried_tags = [t for t in dict.fromkeys(current.tags) if t not in gone_tags and t not in added_tags]
+    added_genres = {g.strip().lower(): g for g in genres if g.strip().lower() not in dropped_genres}
+    carried_genres = {
+        g.strip().lower(): g
+        for g in current.genres
+        if g.strip().lower() not in dropped_genres and g.strip().lower() not in added_genres
+    }
+    return (
+        _cap_carried_first(carried_tags, added_tags, _MAX_TOTAL_TAGS),
+        _cap_carried_first(list(carried_genres.values()), list(added_genres.values()), _MAX_GENRES),
     )
-    return tuple(merged_tags[:_MAX_TOTAL_TAGS]), tuple(merged_genres[:_MAX_GENRES])
+
+
+def _cap_carried_first[T](carried: list[T], added: list[T], cap: int) -> tuple[T, ...]:
+    """Carried-over items then the AI's additions, trimmed from the carried items so no addition is lost."""
+    added = added[:cap]
+    return (*carried[: cap - len(added)], *added)
 
 
 def _user_message(
@@ -342,7 +356,13 @@ def _emoji(value: object) -> str | None:
 def _number(value: object, kind: type) -> int | float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return kind(value)
+    # json.loads accepts Infinity and NaN, and int(float("inf")) raises OverflowError.
+    if not math.isfinite(value):
+        return None
+    try:
+        return kind(value)
+    except (OverflowError, ValueError):
+        return None
 
 
 def _bounded(value: int | float | None, low: float, high: float) -> int | float | None:

@@ -656,3 +656,38 @@ class TestTheAisLimitsAreBounded:
 
     def test_the_prompt_states_the_rating_scale(self):
         assert "0 to 10" in BUILD_SYSTEM_MECHANICS
+
+
+class TestNonFiniteNumbersFromTheAi:
+    def test_infinity_nan_and_overflow_are_ignored_and_the_draft_builds(self):
+        raw = (
+            _answer()
+            .replace(
+                '"rules": {"max_runtime": null}',
+                '"rules": {"max_runtime": Infinity, "min_rating": NaN, "min_year": 1e999, "max_year": -Infinity}',
+            )
+            .replace('"year": 2000', '"year": Infinity')
+        )
+
+        draft, _ = _run(raw)
+
+        assert draft.spec.rules == RowLimits()
+        assert draft.spec.picks
+
+
+class TestCarryOverTrimsCarriedItemsFirst:
+    def test_ai_additions_survive_when_the_union_exceeds_the_cap(self):
+        current = TestRound2._current(tags=tuple(range(1000, 1020)), genres=("Comedy",))
+        draft, _ = _run(_answer(tags=["twist ending"], genres=["Thriller"]), current=current)
+
+        assert len(draft.spec.tags) == 20
+        assert draft.spec.tags[-1] == 901
+        assert draft.spec.tags[:19] == tuple(range(1000, 1019))
+
+    def test_genre_additions_survive_the_genre_cap(self):
+        carried = ("Horror", "Comedy", "Drama", "Western", "Romance", "Mystery", "Family", "Music", "War", "Crime")
+        current = TestRound2._current(genres=carried)
+        draft, _ = _run(_answer(tags=[], genres=["Thriller"]), current=current)
+
+        assert len(draft.spec.genres) == 10
+        assert draft.spec.genres[-1] == "Thriller"
