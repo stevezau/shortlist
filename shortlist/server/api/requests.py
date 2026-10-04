@@ -8,6 +8,8 @@ worker thread (the Arr/TMDB clients are sync) and respects ``dry_run``.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -343,20 +345,45 @@ async def get_arr_status(request: Request) -> dict:
         shows_by_tmdb: dict[int, str] = {}
         radarr_reach: ArrReach = "off"
         sonarr_reach: ArrReach = "off"
-        if cfg.radarr:
-            radarr_reach = "ok"
+
+        # Each read is a whole-library dump that takes seconds, and the two apps are independent
+        # servers, so both start now: the wait is the slower read, not the sum. Results are applied
+        # in the old order (Radarr, then Sonarr), and a failure is caught inside its own thread.
+        def _guarded(read):
             try:
-                movies = RadarrClient(cfg.radarr).status_by_tmdb()
+                return read(), None
             except Exception as e:
-                radarr_reach = "unreachable"
-                logger.warning("request status: Radarr lookup failed ({})", e)
-        if cfg.sonarr:
-            sonarr_reach = "ok"
-            try:
-                shows_by_tvdb, shows_by_tmdb = SonarrClient(cfg.sonarr).status_by_ids()
-            except Exception as e:
-                sonarr_reach = "unreachable"
-                logger.warning("request status: Sonarr lookup failed ({})", e)
+                return None, e
+
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="requests-status") as pool:
+            # Each submit runs in a copy of this thread's context, or loguru's `contextualize` keys
+            # are lost on the pool threads.
+            radarr_read = (
+                pool.submit(contextvars.copy_context().run, _guarded, lambda: RadarrClient(cfg.radarr).status_by_tmdb())
+                if cfg.radarr
+                else None
+            )
+            sonarr_read = (
+                pool.submit(contextvars.copy_context().run, _guarded, lambda: SonarrClient(cfg.sonarr).status_by_ids())
+                if cfg.sonarr
+                else None
+            )
+            if radarr_read:
+                radarr_reach = "ok"
+                result, error = radarr_read.result()
+                if error is not None:
+                    radarr_reach = "unreachable"
+                    logger.warning("request status: Radarr lookup failed ({})", error)
+                else:
+                    movies = result
+            if sonarr_read:
+                sonarr_reach = "ok"
+                result, error = sonarr_read.result()
+                if error is not None:
+                    sonarr_reach = "unreachable"
+                    logger.warning("request status: Sonarr lookup failed ({})", error)
+                else:
+                    shows_by_tvdb, shows_by_tmdb = result
 
         statuses: dict[int, str | None] = {}
         for row in rows:

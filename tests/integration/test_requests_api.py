@@ -350,6 +350,46 @@ class TestArrStatusEndpoint:
         assert body["statuses"]["1"] == "downloaded"
         assert body["statuses"]["2"] is None
 
+    def test_radarr_and_sonarr_are_read_at_the_same_time(self, client: TestClient, monkeypatch):
+        """Each Arr read is a whole-library dump that takes seconds, so the page must wait for the
+        slower one, not the sum. Each fake read blocks on a two-party barrier: serial reads time out."""
+        import threading
+
+        meet = threading.Barrier(2, timeout=5)
+
+        class Radarr:
+            def status_by_tmdb(self):
+                meet.wait()
+                return {10: "downloaded"}
+
+        class Sonarr:
+            def status_by_ids(self):
+                meet.wait()
+                return {}, {20: "downloading"}
+
+        cfg = RequestConfig(enabled=True, radarr=_RADARR, sonarr=_SONARR)
+        self._patch(monkeypatch, client, cfg, radarr=Radarr(), sonarr=Sonarr())
+
+        body = client.get("/api/requests/status").json()
+        assert (body["radarr"], body["sonarr"]) == ("ok", "ok")
+        assert body["statuses"]["1"] == "downloaded"
+        assert body["statuses"]["2"] == "downloading"
+
+    def test_a_failing_arr_still_reports_unreachable_beside_the_other_when_read_together(
+        self, client: TestClient, monkeypatch
+    ):
+        class Broken:
+            def status_by_tmdb(self):
+                raise RuntimeError("radarr down")
+
+        cfg = RequestConfig(enabled=True, radarr=_RADARR, sonarr=_SONARR)
+        self._patch(monkeypatch, client, cfg, radarr=Broken(), sonarr=FakeSonarrStatus({}, {20: "downloading"}))
+
+        body = client.get("/api/requests/status").json()
+        assert (body["radarr"], body["sonarr"]) == ("unreachable", "ok")
+        assert body["statuses"]["1"] is None
+        assert body["statuses"]["2"] == "downloading"
+
     def test_an_unreachable_arr_is_reported_not_silently_blank(self, client: TestClient, monkeypatch):
         """The blank a down Sonarr leaves behind is indistinguishable from "Sonarr tracks none of
         these" — so the inbox showed no badges for ever with nothing anywhere saying why."""
