@@ -59,7 +59,7 @@ from shortlist.engine.models import (
     WrittenDetails,
 )
 from shortlist.engine.over_time import apply_exclusions, excluded_titles
-from shortlist.engine.placeholders import names_a_seed
+from shortlist.engine.placeholders import fill_season, fill_theme, names_a_seed
 from shortlist.engine.requests_row import build_requests_picks
 from shortlist.engine.themes import theme_content_hash
 from shortlist.engine.web_guidance import BUILTIN, Guidance, resolve_guidance
@@ -2681,6 +2681,11 @@ class NothingToBuildFrom(RuntimeError):
     owes nothing: an out-of-season row of theirs still has to come off their Home."""
 
 
+def _row_log_name(spec: RowSpec) -> str:
+    """The row's name as the run log shows it: its template with the season or theme filled in."""
+    return fill_theme(fill_season(spec.name_template, spec.season), spec.theme) or spec.slug
+
+
 def _named_titles(spec: RowSpec) -> frozenset[tuple[MediaType, int]]:
     """The titles an AI row's theme names (the AI's or the owner's picks): they lead the row. Empty otherwise."""
     return frozenset((pick.media, pick.tmdb_id) for pick in spec.theme.picks) if spec.theme is not None else frozenset()
@@ -3839,7 +3844,7 @@ def _run_user(
                     recency = policy.effective_recency(spec)
                     if recency != ctx.config.recency:
                         pool_for_row = policy.cut_at_recency(spec, in_library, recency)
-                    row_label = spec.name_template or spec.slug
+                    row_label = _row_log_name(spec)
                     _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
                 section_picks = _build_section_picks(
                     policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
@@ -3922,7 +3927,7 @@ def _run_user(
                     "{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug
                 )
                 break
-            _emit(ctx, user.slug, "delivering", {"row": spec.name_template or spec.slug, "picks": len(picks)})
+            _emit(ctx, user.slug, "delivering", {"row": _row_log_name(spec), "picks": len(picks)})
             if not _deliver_row(
                 policy,
                 spec,

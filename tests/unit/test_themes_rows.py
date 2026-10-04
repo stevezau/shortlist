@@ -287,6 +287,18 @@ class TestTheRow:
         assert len(elf.reason) == 160 and elf.reason.endswith("…")
 
 
+class TestTheRunLogNamesTheRow:
+    def test_curating_and_delivering_lines_show_the_rendered_theme_name(self, ctx):
+        emitted: list[tuple[str, dict]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: emitted.append((stage, counts))
+        ctx.config.rows = [theme_row()]
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        shown = [c["row"] for stage, c in emitted if stage in ("curating", "delivering") and "row" in c]
+        assert len(shown) >= 3, "curating, the picks line and the write line"
+        assert set(shown) == {"🌀 Twist endings"}
+
+
 class TestColdStart:
     def test_cold_start_pick_carries_the_theme_wording_and_ai_reason(self, ctx):
         theme = theme_spec(picks=(ThemePick(30, MediaType.MOVIE, "ai", "A festive turn"),))
