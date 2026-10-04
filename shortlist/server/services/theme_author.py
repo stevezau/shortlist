@@ -50,6 +50,12 @@ BUILD_SYSTEM_MECHANICS = (
 )
 
 _MAX_REASON = 160
+_MAX_TITLES = 60
+_MAX_TAGS = 10
+_MAX_GENRES = 10
+_MAX_NAME = 60
+_MAX_PHRASE = 120
+_MAX_BRIEF = 1000
 _MARKUP = re.compile(r"[*_`#\[\]{}<>|~\\]")
 
 
@@ -74,7 +80,7 @@ class ThemeDraft:
     brief: str
     stats: ThemeStats
     tokens: int
-    ai_reasons: dict[str, str]
+    ai_reasons: dict[tuple[MediaType, int], str]
     titles: dict[tuple[MediaType, int], str] = field(default_factory=dict)
 
 
@@ -111,8 +117,16 @@ def author_theme(
     if getattr(curator, "name", "") == "none" or getattr(curator, "can_complete", True) is False:
         raise ThemeAuthorError("Writing a theme needs an AI provider. Add one in Settings, then try again.")
     system = (guidance.strip() or BUILD_SYSTEM_GUIDANCE.strip()) + " " + BUILD_SYSTEM_MECHANICS
+    brief = brief.strip()[:_MAX_BRIEF]
     user = _user_message(brief, medias, profile, current, tmdb)
-    raw = curator.complete(system, user)
+    try:
+        raw = curator.complete(system, user)
+    except Exception as exc:
+        # Class name only: an SDK's message can carry a fragment of the key.
+        logger.warning("theme author: AI call failed ({})", type(exc).__name__)
+        raise ThemeAuthorError(
+            "The AI provider didn't respond. Check the provider in Settings and try again."
+        ) from None
     tokens = int(getattr(curator, "last_tokens", 0) or 0)
     if not (raw or "").strip():
         raise ThemeAuthorError("The AI did not answer. Try again in a moment.")
@@ -120,8 +134,13 @@ def author_theme(
 
     picks, titles, named = _resolve_titles(proposal, medias, tmdb)
     tags = _resolve_tags(proposal, tmdb)
-    genres = tuple(g for g in _strings(proposal.get("genres")) if g.strip().lower() in _MOVIE_GENRE_IDS)
-    name = _clean(str(proposal.get("name") or "")) or _clean(brief)[:40] or "Themed row"
+    genres = tuple(g for g in _strings(proposal.get("genres")) if g.strip().lower() in _MOVIE_GENRE_IDS)[:_MAX_GENRES]
+    if not picks and not tags and not genres:
+        raise ThemeAuthorError(
+            "The AI didn't suggest anything Shortlist could find. Try describing the row differently."
+        )
+    name = _clean(str(proposal.get("name") or ""))[:_MAX_NAME].strip() or _clean(brief)[:40] or "Themed row"
+    kept = [p for p in current.picks if p.origin != "ai" and (p.media, p.tmdb_id) not in titles] if current else []
     spec = ThemeSpec(
         slug=current.slug if current else (slugify(name) or "theme"),
         name=current.name if current else name,
@@ -130,8 +149,8 @@ def author_theme(
         tags=tags,
         genres=genres,
         excluded_genres=current.excluded_genres if current else (),
-        collections=(),
-        picks=tuple(picks),
+        collections=current.collections if current else (),
+        picks=tuple(picks) + tuple(kept),
         rules=_rules(proposal.get("rules")),
         min_votes=current.min_votes if current else None,
     )
@@ -139,7 +158,7 @@ def author_theme(
     after_rules = sum(len(found) for found in loaded.titles.ids.values())
     held = sum(len(found) for found in loaded.titles.in_library.values())
     # Rules come from TMDB, so a pick the rules drop must not be offered as the AI's reason for a row.
-    kept_reasons = {pick.tmdb_id: pick.reason for pick in picks if (pick.media, pick.tmdb_id) in loaded.reasons}
+    kept_reasons = {(p.media, p.tmdb_id): p.reason for p in picks if (p.media, p.tmdb_id) in loaded.reasons}
     stats = ThemeStats(
         named=named, resolved=len(picks), in_library=held, after_rules=after_rules, unwatched_median=None
     )
@@ -149,7 +168,7 @@ def author_theme(
         brief=brief,
         stats=stats,
         tokens=tokens,
-        ai_reasons={str(tmdb_id): reason for tmdb_id, reason in kept_reasons.items() if reason},
+        ai_reasons={key: reason for key, reason in kept_reasons.items() if reason},
         titles=titles,
     )
 
@@ -185,7 +204,7 @@ def _user_message(
     tmdb: TmdbClient,
 ) -> str:
     parts = [
-        f"Brief: {brief.strip()}",
+        f"Brief: <brief>{brief}</brief>",
         "Media: " + " and ".join("movies" if m is MediaType.MOVIE else "shows" for m in medias),
     ]
     if current is not None:
@@ -202,7 +221,9 @@ def _describe(spec: ThemeSpec, tmdb: TmdbClient) -> str:
         if item:
             titles.append(str(item.get("title") or item.get("name") or ""))
     rules = {k: v for k, v in vars(spec.rules).items() if v is not None}
-    return json.dumps({"name": spec.name, "genres": list(spec.genres), "rules": rules, "titles": titles})
+    return json.dumps(
+        {"name": spec.name, "tag_ids": list(spec.tags), "genres": list(spec.genres), "rules": rules, "titles": titles}
+    )
 
 
 def _parse(raw: str) -> dict:
@@ -226,7 +247,9 @@ def _parse(raw: str) -> dict:
 
 
 def _strings(value: object) -> list[str]:
-    return [v for v in value if isinstance(v, str) and v.strip()] if isinstance(value, list) else []
+    if not isinstance(value, list):
+        return []
+    return [v.strip()[:_MAX_PHRASE] for v in value if isinstance(v, str) and v.strip()]
 
 
 def _clean(text: str) -> str:
@@ -256,22 +279,26 @@ def _rules(value: object) -> RowLimits:
 def _resolve_titles(
     proposal: dict, medias: tuple[MediaType, ...], tmdb: TmdbClient
 ) -> tuple[list[ThemePick], dict[tuple[MediaType, int], str], int]:
-    entries = [e for e in proposal.get("titles") or [] if isinstance(e, dict) and str(e.get("title") or "").strip()]
+    raw = proposal.get("titles")
+    entries = [
+        e for e in (raw if isinstance(raw, list) else []) if isinstance(e, dict) and isinstance(e.get("title"), str)
+    ]
+    entries = [e for e in entries if e["title"].strip()][:_MAX_TITLES]
     picks: list[ThemePick] = []
     titles: dict[tuple[MediaType, int], str] = {}
     seen: set[tuple[MediaType, int]] = set()
     for entry in entries:
         year = _number(entry.get("year"), int)
-        title = str(entry["title"]).strip()
+        title = entry["title"].strip()[:_MAX_PHRASE]
         for media in medias:
             try:
                 hit = tmdb.search(title, media, year=year)
+                key = (media, int(hit["id"])) if hit else None
             except Exception:
                 logger.warning("theme author: TMDB search failed for a title")
-                hit = None
-            if not hit or (media, int(hit["id"])) in seen:
                 continue
-            key = (media, int(hit["id"]))
+            if key is None or key in seen:
+                continue
             seen.add(key)
             reason = _clean(str(entry.get("reason") or ""))[:_MAX_REASON].strip()
             picks.append(ThemePick(tmdb_id=key[1], media=media, origin="ai", reason=reason or None))
@@ -282,7 +309,7 @@ def _resolve_titles(
 
 def _resolve_tags(proposal: dict, tmdb: TmdbClient) -> tuple[int, ...]:
     ids: list[int] = []
-    for phrase in _strings(proposal.get("tags")):
+    for phrase in _strings(proposal.get("tags"))[:_MAX_TAGS]:
         try:
             found = tmdb.search_keywords(phrase, limit=5)
         except Exception:
