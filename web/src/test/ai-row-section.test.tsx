@@ -196,7 +196,7 @@ describe("AiRowSection building", () => {
     });
     const card = within(screen.getByRole("region", { name: /the list/i }));
     expect(card.getByText("60")).toBeInTheDocument(); // named
-    expect(card.getByText("25")).toBeInTheDocument(); // after limits
+    expect(card.getByText("On your server").nextSibling).toHaveTextContent("12"); // ai_kept
     expect(card.getByText("Se7en (1995)")).toBeInTheDocument();
     expect(card.getByText("The Prestige (2006)")).toBeInTheDocument();
     expect(card.getByText("AI")).toBeInTheDocument();
@@ -628,8 +628,10 @@ describe("AiRowSection counts", () => {
     const card = within(await screen.findByRole("region", { name: /the list/i }));
     expect(card.getByText("12 of the AI’s 60 titles are on your server.")).toBeInTheDocument();
     expect(card.getByText("Plus 13 more that match its tags and genres.")).toBeInTheDocument();
-    // `in_library` (30) is the AI's picks AND every tag match; it must not be shown as what the AI found.
-    expect(card.queryByText("On your server")).not.toBeInTheDocument();
+    // The third headline stat is the AI's own titles (ai_kept), not after_rules (25) or in_library (30),
+    // which both include every tag and genre match.
+    expect(card.getByText("On your server").nextSibling).toHaveTextContent("12");
+    expect(card.queryByText("25")).not.toBeInTheDocument();
     expect(card.queryByText("30")).not.toBeInTheDocument();
   });
 
