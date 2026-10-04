@@ -129,6 +129,8 @@ class PreviewIn(BaseModel):
     media: Literal["movie", "show", "both"] = "both"
     #: A stored theme to refine by ``change``; omitted writes a new one from ``brief``.
     current_theme_id: int | None = None
+    #: An unsaved list to refine by ``change``, for a row that has not been saved yet. ``current_theme_id`` wins.
+    current_draft: ThemeIn | None = None
     #: The AI row this is for: its libraries scope the counts, and a paused row is refused.
     collection_id: int | None = None
     #: The owner's wording for what makes a good theme; empty keeps Shortlist's. The locked mechanics stay.
@@ -216,8 +218,11 @@ async def preview_theme(body: PreviewIn, request: Request) -> dict:
                 status_code=422, detail="The AI provider isn't set up properly. Check it in Settings."
             ) from None
         current, old_titles, known_tags, brief = None, {}, {}, body.brief
-        if body.current_theme_id is not None:
-            stored = _stored(session, body.current_theme_id)
+        if body.current_theme_id is not None or body.current_draft is not None:
+            if body.current_theme_id is not None:
+                stored = _stored(session, body.current_theme_id)
+            else:
+                stored = _unsaved_row(session, body.current_draft)
             current, old_titles = spec_from_row(stored), pick_titles(stored)
             known_tags = {int(t["id"]): t["name"] for t in stored.tags}
             # The stored description stays the row's description: what the owner types here is the change.
@@ -317,6 +322,13 @@ def _stored(session: Session, theme_id: int) -> Theme:
     row = session.get(Theme, theme_id)
     if row is None:
         raise HTTPException(status_code=404, detail="theme not found")
+    return row
+
+
+def _unsaved_row(session: Session, draft: ThemeIn) -> Theme:
+    """A draft as the stored row it would become, never added to the session, so it is read like a saved theme."""
+    row = Theme(slug=theme_store.unique_slug(session, draft.name))
+    theme_store.write_theme(row, ThemeSaveIn(draft=draft))
     return row
 
 

@@ -4668,6 +4668,16 @@
             ],
             "title": "Collection Id"
           },
+          "current_draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "current_theme_id": {
             "anyOf": [
               {

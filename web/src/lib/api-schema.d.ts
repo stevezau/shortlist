@@ -5122,6 +5122,7 @@ export interface components {
             change: string;
             /** Collection Id */
             collection_id?: number | null;
+            current_draft?: components["schemas"]["ThemeIn"] | null;
             /** Current Theme Id */
             current_theme_id?: number | null;
             /**

@@ -181,6 +181,53 @@ class TestPreview:
         diff = r.json()["diff"]
         assert diff["removed"] == ["Se7en"] and diff["unchanged"] == ["The Prestige"] and diff["added"] == []
 
+    def test_a_refinement_of_an_unsaved_draft_diffs_against_that_draft(self, client: TestClient, author: _Author):
+        author.draft = _draft(
+            _spec(picks=(ThemePick(tmdb_id=2, media=MediaType.MOVIE, origin="ai", reason=None),)),
+        )
+
+        r = client.post(
+            "/api/themes/preview",
+            json={"change": "darker", "media": "movie", "current_draft": _body()},
+        )
+
+        assert r.status_code == 200, r.text
+        call = author.calls[0]
+        assert [p.tmdb_id for p in call["current"].picks] == [1, 2]
+        assert call["current_tag_names"] == {111: "twist ending"}
+        assert (call["brief"], call["change"]) == ("films with a twist", "darker")
+        diff = r.json()["diff"]
+        assert diff["removed"] == ["Se7en"] and diff["unchanged"] == ["The Prestige"] and diff["added"] == []
+        assert _themes(client) == []
+
+    def test_the_saved_theme_wins_when_an_id_and_a_draft_are_both_sent(self, client: TestClient, author: _Author):
+        saved = _save(client)
+        other = _body(name="Something else", brief="another brief", picks=[_body()["picks"][1]])
+
+        r = client.post(
+            "/api/themes/preview",
+            json={"change": "darker", "media": "movie", "current_theme_id": saved["id"], "current_draft": other},
+        )
+
+        assert r.status_code == 200, r.text
+        call = author.calls[0]
+        assert call["current"].slug == saved["slug"]
+        assert [p.tmdb_id for p in call["current"].picks] == [1, 2]
+        assert call["brief"] == "films with a twist"
+
+    def test_a_refinement_of_an_unsaved_draft_with_nothing_to_change_is_refused(
+        self, client: TestClient, author: _Author
+    ):
+        r = client.post("/api/themes/preview", json={"media": "movie", "current_draft": _body()})
+
+        assert r.status_code == 422 and author.calls == []
+
+    def test_neither_an_id_nor_a_draft_writes_a_new_list_from_the_brief(self, client: TestClient, author: _Author):
+        r = client.post("/api/themes/preview", json={"brief": "films with a twist", "media": "movie"})
+
+        assert r.status_code == 200 and r.json()["diff"] is None
+        assert author.calls[0]["current"] is None
+
     def test_a_refinement_with_nothing_to_change_is_refused_before_the_ai_is_called(
         self, client: TestClient, author: _Author
     ):
