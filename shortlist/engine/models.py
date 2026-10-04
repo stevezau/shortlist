@@ -664,7 +664,6 @@ class RowSpec:
     # An AI row (#138): its titles are a theme's, read once per run and ranked per person in code. None on
     # every other row.
     theme: ThemeSpec | None = None
-    ai_row: bool = False
 
     def limits(self) -> RowLimits:
         return RowLimits(self.max_runtime, self.min_year, self.max_year, self.min_rating)

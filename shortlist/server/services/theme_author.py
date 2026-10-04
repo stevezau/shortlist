@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -44,10 +44,14 @@ BUILD_SYSTEM_MECHANICS = (
     "Respond with ONLY one JSON object, no prose and no markdown, shaped exactly like "
     '{"name": str, "emoji": str, "rules": {"max_runtime": int or null, "min_year": int or null, '
     '"max_year": int or null, "min_rating": number or null}, "tags": [str], "genres": [str], '
-    '"titles": [{"title": str, "year": int, "reason": str}]}. '
+    '"drop_tags": [str], "drop_genres": [str], '
+    '"titles": [{"title": str, "year": int, "media": "movie" or "show", "reason": str}]}. '
     "Give about 60 titles. Real, released titles only, spelled exactly as released, each with its release "
-    "year; never invent a title. Each reason is at most 12 words. Set a rule only when the brief asks for "
-    "that limit, otherwise null. tags are short TMDB keyword phrases; genres are TMDB genre names."
+    'year and whether it is a "movie" or a "show"; never invent a title. Each reason is at most 12 words. '
+    "Set a rule only when the brief asks for that limit, otherwise null. min_rating is on TMDB's 0 to 10 "
+    "scale (7.5 is a good film, never 75). max_runtime is in minutes. tags are short TMDB keyword phrases; "
+    "genres are TMDB genre names. drop_tags and drop_genres are for changing an existing theme only: list "
+    "the names from the current theme that no longer fit, otherwise leave them empty."
 )
 
 _MAX_REASON = 160
@@ -57,6 +61,10 @@ _MAX_GENRES = 10
 _MAX_NAME = 60
 _MAX_PHRASE = 120
 _MAX_BRIEF = 1000
+_MAX_TOTAL_TAGS = 20
+_MAX_RUNTIME = 600
+_MIN_YEAR, _MAX_YEAR = 1850, 2200
+_MEDIA_NAMES = {"movie": MediaType.MOVIE, "show": MediaType.SHOW}
 _MARKUP = re.compile(r"[*_`#\[\]{}<>|~\\]")
 
 
@@ -93,6 +101,13 @@ class ThemeDiff:
     unchanged: list[str]
     added_count: int
     removed_count: int
+    tags_added: list[str] = field(default_factory=list)
+    tags_removed: list[str] = field(default_factory=list)
+    genres_added: list[str] = field(default_factory=list)
+    genres_removed: list[str] = field(default_factory=list)
+    #: How many titles the theme names before and after the change.
+    before_count: int = 0
+    after_count: int = 0
 
 
 def author_theme(
@@ -106,9 +121,15 @@ def author_theme(
     profile: UserProfile | None = None,
     current: ThemeSpec | None = None,
     guidance: str = "",
-    current_tag_names: Sequence[str] = (),
+    current_tag_names: Mapping[int, str] | None = None,
+    change: str = "",
 ) -> ThemeDraft:
-    """Write a theme from ``brief``, or refine ``current`` by it.
+    """Write a theme from ``brief``, or refine ``current`` by ``change``.
+
+    A refinement keeps ``brief`` (the owner's original description) as context and sends ``change`` as the
+    extra instruction, so the stored description is never overwritten by what the owner asked to change.
+    The tags and genres ``current`` has, hand-added ones included, carry over; only names the AI lists as
+    ``drop_tags`` / ``drop_genres`` leave.
 
     ``profile`` is the person a personal theme is for; None means a shared theme, which sends no watch
     history. Only titles and years go to the model, never an account name.
@@ -121,7 +142,9 @@ def author_theme(
         raise ThemeAuthorError("Writing a theme needs an AI provider. Add one in Settings, then try again.")
     system = (guidance.strip() or BUILD_SYSTEM_GUIDANCE.strip()) + " " + BUILD_SYSTEM_MECHANICS
     brief = brief.strip()[:_MAX_BRIEF]
-    user = _user_message(brief, medias, profile, current, current_tag_names, tmdb)
+    change = change.strip()[:_MAX_BRIEF] if current is not None else ""
+    tag_names = dict(current_tag_names or {})
+    user = _user_message(brief, change, medias, profile, current, tag_names, tmdb)
     try:
         raw = curator.complete(system, user)
     except Exception as exc:
@@ -138,6 +161,8 @@ def author_theme(
     picks, titles, named = _resolve_titles(proposal, medias, tmdb)
     tags = _resolve_tags(proposal, tmdb)
     genres = tuple(g for g in _strings(proposal.get("genres")) if g.strip().lower() in _MOVIE_GENRE_IDS)[:_MAX_GENRES]
+    if current is not None:
+        tags, genres = _carry_over(proposal, current, tags, genres, tag_names)
     name = _clean(str(proposal.get("name") or ""))[:_MAX_NAME].strip() or _clean(brief)[:40] or "Themed row"
     kept = [p for p in current.picks if p.origin != "ai" and (p.media, p.tmdb_id) not in titles] if current else []
     kept_collections = current.collections if current else ()
@@ -160,7 +185,7 @@ def author_theme(
     )
     loaded = load_theme(tmdb, plex, spec, library_index)
     after_rules = sum(len(found) for found in loaded.titles.ids.values())
-    held = sum(len(found) for found in loaded.titles.in_library.values())
+    held = loaded.held
     # Rules come from TMDB, so a pick the rules drop must not be offered as the AI's reason for a row.
     kept_reasons = {(p.media, p.tmdb_id): p.reason for p in picks if (p.media, p.tmdb_id) in loaded.reasons}
     stats = ThemeStats(
@@ -177,21 +202,32 @@ def author_theme(
     )
 
 
-def diff_themes(old: ThemeSpec, new: ThemeSpec, titles: dict[tuple[MediaType, int], str] | None = None) -> ThemeDiff:
-    """What a refinement changed: whether the rules moved, and which picks came or went.
+def diff_themes(
+    old: ThemeSpec,
+    new: ThemeSpec,
+    titles: dict[tuple[MediaType, int], str] | None = None,
+    tag_names: Mapping[int, str] | None = None,
+) -> ThemeDiff:
+    """What a refinement changed: whether the rules moved, and which picks, tags and genres came or went.
 
-    ``titles`` names picks by (media, id); a pick it does not know is listed by its id.
+    ``titles`` names picks by (media, id) and ``tag_names`` tags by id; one it does not know is listed by its id.
     """
     names = titles or {}
+    tag_label = tag_names or {}
     before = {(p.media, p.tmdb_id) for p in old.picks}
     after = {(p.media, p.tmdb_id) for p in new.picks}
 
     def label(key: tuple[MediaType, int]) -> str:
         return names.get(key) or str(key[1])
 
+    def tag(tag_id: int) -> str:
+        return tag_label.get(tag_id) or str(tag_id)
+
     added = sorted(label(k) for k in after - before)
     removed = sorted(label(k) for k in before - after)
     unchanged = sorted(label(k) for k in before & after)
+    genres_before = {g.strip().lower(): g for g in old.genres}
+    genres_after = {g.strip().lower(): g for g in new.genres}
     return ThemeDiff(
         rules_changed=old.rules.fingerprint() != new.rules.fingerprint(),
         added=added,
@@ -199,24 +235,55 @@ def diff_themes(old: ThemeSpec, new: ThemeSpec, titles: dict[tuple[MediaType, in
         unchanged=unchanged,
         added_count=len(added),
         removed_count=len(removed),
+        tags_added=sorted(tag(t) for t in set(new.tags) - set(old.tags)),
+        tags_removed=sorted(tag(t) for t in set(old.tags) - set(new.tags)),
+        genres_added=sorted(genres_after[g] for g in genres_after.keys() - genres_before.keys()),
+        genres_removed=sorted(genres_before[g] for g in genres_before.keys() - genres_after.keys()),
+        before_count=len(before),
+        after_count=len(after),
     )
+
+
+def _carry_over(
+    proposal: dict,
+    current: ThemeSpec,
+    tags: tuple[int, ...],
+    genres: tuple[str, ...],
+    tag_names: Mapping[int, str],
+) -> tuple[tuple[int, ...], tuple[str, ...]]:
+    """A refinement's tags and genres: what the theme has, plus the AI's, minus what the AI says to drop.
+
+    The AI is only asked for what to ADD, so a tag or genre it did not repeat — or one the owner added by
+    hand — would otherwise vanish on Keep, silently changing which titles the row can draw on.
+    """
+    dropped_tags = {p.lower() for p in _strings(proposal.get("drop_tags"))[:_MAX_TAGS]}
+    dropped_genres = {p.lower() for p in _strings(proposal.get("drop_genres"))[:_MAX_GENRES]}
+    gone_tags = {tag_id for tag_id, name in tag_names.items() if name.strip().lower() in dropped_tags}
+    merged_tags = [t for t in dict.fromkeys((*current.tags, *tags)) if t not in gone_tags]
+    merged_genres = list(
+        {g.strip().lower(): g for g in (*current.genres, *genres) if g.strip().lower() not in dropped_genres}.values()
+    )
+    return tuple(merged_tags[:_MAX_TOTAL_TAGS]), tuple(merged_genres[:_MAX_GENRES])
 
 
 def _user_message(
     brief: str,
+    change: str,
     medias: tuple[MediaType, ...],
     profile: UserProfile | None,
     current: ThemeSpec | None,
-    current_tag_names: Sequence[str],
+    current_tag_names: Mapping[int, str],
     tmdb: TmdbClient,
 ) -> str:
-    parts = [
-        f"Brief: <brief>{brief}</brief>",
-        "Media: " + " and ".join("movies" if m is MediaType.MOVIE else "shows" for m in medias),
-    ]
+    parts = []
+    if brief:
+        parts.append(f"Brief: <brief>{brief}</brief>")
+    if current is not None and change:
+        parts.append(f"Change to make: <change>{change}</change>")
+    parts.append("Media: " + " and ".join("movies" if m is MediaType.MOVIE else "shows" for m in medias))
     if current is not None:
         parts.append(
-            "Current theme (refine it by the brief, keeping what still fits):\n"
+            "Current theme (change it as asked, keeping what still fits):\n"
             + _describe(current, current_tag_names, tmdb)
         )
     if profile is not None and profile.history:
@@ -224,7 +291,7 @@ def _user_message(
     return "\n\n".join(parts)
 
 
-def _describe(spec: ThemeSpec, tag_names: Sequence[str], tmdb: TmdbClient) -> str:
+def _describe(spec: ThemeSpec, tag_names: Mapping[int, str], tmdb: TmdbClient) -> str:
     titles = []
     for pick in spec.picks:
         item = tmdb.list_item(pick.tmdb_id, pick.media)
@@ -232,8 +299,9 @@ def _describe(spec: ThemeSpec, tag_names: Sequence[str], tmdb: TmdbClient) -> st
             titles.append(str(item.get("title") or item.get("name") or ""))
     rules = {k: v for k, v in vars(spec.rules).items() if v is not None}
     described: dict[str, object] = {"name": spec.name, "genres": list(spec.genres), "rules": rules, "titles": titles}
-    if tag_names:
-        described["tags"] = list(tag_names)
+    tags = [tag_names[t] for t in spec.tags if t in tag_names]
+    if tags:
+        described["tags"] = tags
     return json.dumps(described)
 
 
@@ -277,13 +345,28 @@ def _number(value: object, kind: type) -> int | float | None:
     return kind(value)
 
 
+def _bounded(value: int | float | None, low: float, high: float) -> int | float | None:
+    """``value``, or None when it is outside what the editor and the API accept."""
+    return value if value is not None and low <= value <= high else None
+
+
 def _rules(value: object) -> RowLimits:
+    """The AI's limits, with every out-of-range answer dropped rather than stored.
+
+    A model can write ``min_rating: 75`` for TMDB's 0-10 scale, or years the wrong way round. None of it is
+    trusted: the API's own bounds refuse such a theme on save and would fail the preview that returned it.
+    """
     raw = value if isinstance(value, dict) else {}
+    runtime = _number(raw.get("max_runtime"), int)
+    min_year = _bounded(_number(raw.get("min_year"), int), _MIN_YEAR, _MAX_YEAR)
+    max_year = _bounded(_number(raw.get("max_year"), int), _MIN_YEAR, _MAX_YEAR)
+    if min_year is not None and max_year is not None and min_year > max_year:
+        min_year = max_year = None
     return RowLimits(
-        max_runtime=_number(raw.get("max_runtime"), int),
-        min_year=_number(raw.get("min_year"), int),
-        max_year=_number(raw.get("max_year"), int),
-        min_rating=_number(raw.get("min_rating"), float),
+        max_runtime=None if runtime is None or runtime <= 0 else min(runtime, _MAX_RUNTIME),
+        min_year=min_year,
+        max_year=max_year,
+        min_rating=_bounded(_number(raw.get("min_rating"), float), 0, 10),
     )
 
 
@@ -300,25 +383,26 @@ def _resolve_titles(
     seen: set[tuple[MediaType, int]] = set()
     searches = 0
     for entry in entries:
+        # The AI says which kind each title is: searching both would resolve "Severance" to the 2006 film.
+        # An entry that doesn't say, or says something else, is left unresolved rather than guessed.
+        media = _MEDIA_NAMES.get(str(entry.get("media") or "").strip().lower())
+        if media is None or media not in medias or searches >= _MAX_TITLES:
+            continue
+        searches += 1
         year = _number(entry.get("year"), int)
         title = entry["title"].strip()[:_MAX_PHRASE]
-        for media in medias:
-            if searches >= _MAX_TITLES:
-                break
-            searches += 1
-            try:
-                hit = tmdb.search(title, media, year=year)
-                key = (media, int(hit["id"])) if hit else None
-            except Exception:
-                logger.warning("theme author: TMDB search failed for a title")
-                continue
-            if key is None or key in seen:
-                continue
-            seen.add(key)
-            reason = _clean(str(entry.get("reason") or ""))[:_MAX_REASON].strip()
-            picks.append(ThemePick(tmdb_id=key[1], media=media, origin="ai", reason=reason or None))
-            titles[key] = str(hit.get("title") or hit.get("name") or title)
-            break
+        try:
+            hit = tmdb.search(title, media, year=year)
+            key = (media, int(hit["id"])) if hit else None
+        except Exception:
+            logger.warning("theme author: TMDB search failed for a title")
+            continue
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        reason = _clean(str(entry.get("reason") or ""))[:_MAX_REASON].strip()
+        picks.append(ThemePick(tmdb_id=key[1], media=media, origin="ai", reason=reason or None))
+        titles[key] = str(hit.get("title") or hit.get("name") or title)
     return picks, titles, len(entries)
 
 

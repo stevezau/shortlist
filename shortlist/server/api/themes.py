@@ -8,7 +8,6 @@ request. Keys never leave the settings store: no response, event or error carrie
 from __future__ import annotations
 
 import dataclasses
-from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,14 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from shortlist.engine.curator import make_curator
-from shortlist.engine.models import MediaType, RowLimits, UserProfile, UserType, WatchedItem
+from shortlist.engine.models import MediaType, RowLimits
 from shortlist.engine.placeholders import uses_theme
 from shortlist.engine.themes import _MOVIE_GENRE_IDS, ThemeSpec, theme_content_hash
 from shortlist.server.api import collections as collections_api
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.seasons import CollectionIO, TagIO, _off_loop, _plex
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import Collection, Theme, User
+from shortlist.server.db.models import Collection, Theme
 from shortlist.server.services.audit import add_audit
 from shortlist.server.services.context_builder import curator_kwargs
 from shortlist.server.services.library_index import library_index
@@ -45,6 +44,7 @@ _NO_AI = "Writing a theme needs an AI provider. Add one in Settings, then try ag
 _NO_TMDB = "Add a TMDB API key in Settings first."
 _PAUSED = "AI is paused for this row. Resume it from the row's menu to write or refine its theme."
 _NO_PROVIDERS = ("", "none", "null")
+_MAX_GUIDANCE = 4000
 _STATS_KEYS = ("named", "resolved", "in_library", "after_rules")
 
 
@@ -120,16 +120,18 @@ class ThemeOut(PassthroughModel):
 class PreviewIn(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    brief: str = Field(min_length=1, max_length=1000)
+    #: What the row is about. Required for a new theme; a refinement uses the stored theme's own and ignores this.
+    brief: str = Field(default="", max_length=1000)
+    #: What to change, for a refinement (``current_theme_id`` set). The stored brief is kept as it was.
+    change: str = Field(default="", max_length=1000)
     media: Literal["movie", "show", "both"] = "both"
-    #: A stored theme to refine by the brief; omitted writes a new one.
+    #: A stored theme to refine by ``change``; omitted writes a new one from ``brief``.
     current_theme_id: int | None = None
     #: The AI row this is for: its libraries scope the counts, and a paused row is refused.
     collection_id: int | None = None
-    #: The person to tailor it to (their watch history goes to the AI as titles only).
-    person_id: int | None = None
     #: The owner's wording for what makes a good theme; empty keeps Shortlist's. The locked mechanics stay.
-    guidance: str = Field(default="", max_length=2000)
+    #: Roomy enough for the owner's own 2,000 characters on top of Shortlist's default wording.
+    guidance: str = Field(default="", max_length=_MAX_GUIDANCE)
 
 
 class ThemeStatsOut(PassthroughModel):
@@ -147,6 +149,12 @@ class ThemeDiffOut(PassthroughModel):
     unchanged: list[str]
     added_count: int
     removed_count: int
+    tags_added: list[str]
+    tags_removed: list[str]
+    genres_added: list[str]
+    genres_removed: list[str]
+    before_count: int
+    after_count: int
 
 
 class PreviewOut(PassthroughModel):
@@ -201,17 +209,17 @@ async def preview_theme(body: PreviewIn, request: Request) -> dict:
             raise HTTPException(
                 status_code=422, detail="The AI provider isn't set up properly. Check it in Settings."
             ) from None
-        current, tag_names, old_titles, known_tags = None, [], {}, {}
+        current, old_titles, known_tags, brief = None, {}, {}, body.brief
         if body.current_theme_id is not None:
             stored = _stored(session, body.current_theme_id)
             current, old_titles = spec_from_row(stored), pick_titles(stored)
-            tag_names = [t["name"] for t in stored.tags]
             known_tags = {int(t["id"]): t["name"] for t in stored.tags}
-        person = session.get(User, body.person_id) if body.person_id is not None else None
-        if body.person_id is not None and person is None:
-            raise HTTPException(status_code=404, detail="person not found")
-        person_ref = None if person is None else (person.id, person.username, person.plex_account_id, person.slug)
-        person_type = None if person is None else UserType(person.user_type)
+            # The stored description stays the row's description: what the owner types here is the change.
+            brief = stored.brief or ""
+            if not body.change.strip():
+                raise HTTPException(status_code=422, detail="Say what to change about the list.")
+        elif not body.brief.strip():
+            raise HTTPException(status_code=422, detail="Describe the row first.")
     tmdb = state.run_service.build_tmdb_only()
     if tmdb is None:
         raise HTTPException(status_code=503, detail=_NO_TMDB)
@@ -220,19 +228,18 @@ async def preview_theme(body: PreviewIn, request: Request) -> dict:
         plex = _plex(state)
         index = library_index(plex, state.sessions, media=body.media, library_keys=library_keys)
         names = _TagNames(tmdb)
-        profile = _profile(state, person_ref, person_type)
         try:
             draft = author_theme(
-                brief=body.brief,
+                brief=brief,
+                change=body.change,
                 media=medias,
                 curator=curator,
                 tmdb=names,
                 plex=plex,
                 library_index=index,
-                profile=profile,
                 current=current,
                 guidance=body.guidance,
-                current_tag_names=tag_names,
+                current_tag_names=known_tags,
             )
         except ThemeAuthorError as e:
             raise HTTPException(status_code=422, detail=str(e)) from None
@@ -240,11 +247,10 @@ async def preview_theme(body: PreviewIn, request: Request) -> dict:
 
     draft, seen = await _off_loop(write, "theme authoring")
     titles = {**old_titles, **draft.titles}
-    diff = diff_themes(current, draft.spec, titles) if current is not None else None
+    tag_names = {**known_tags, **seen}
+    diff = diff_themes(current, draft.spec, titles, tag_names) if current is not None else None
     return {
-        "draft": _spec_view(
-            draft.spec, brief=draft.brief, origin="ai", titles=titles, tag_names={**known_tags, **seen}
-        ),
+        "draft": _spec_view(draft.spec, brief=draft.brief, origin="ai", titles=titles, tag_names=tag_names),
         "stats": dataclasses.asdict(draft.stats),
         "diff": None if diff is None else dataclasses.asdict(diff),
         "tokens": draft.tokens,
@@ -285,7 +291,12 @@ async def update_theme(theme_id: int, body: ThemeSaveIn, request: Request) -> di
         row.ai_tokens = (row.ai_tokens or 0) + body.tokens
         if collection is not None:
             collection.ai_tokens += body.tokens
-        _audit(session, row, body, diff=diff_themes(before, after, {**titles, **pick_titles(row)}))
+        _audit(
+            session,
+            row,
+            body,
+            diff=diff_themes(before, after, {**titles, **pick_titles(row)}, {t["id"]: t["name"] for t in row.tags}),
+        )
         session.commit()
         return _row_view(row)
 
@@ -371,6 +382,7 @@ def _write(row: Theme, body: ThemeSaveIn) -> None:
     """Set every content column from the request and the hash from those columns — never from the request."""
     draft = body.draft
     row.name = draft.name
+    row.origin = draft.origin
     row.emoji = draft.emoji or None
     row.brief = draft.brief
     row.media = list(dict.fromkeys(draft.media))
@@ -507,30 +519,3 @@ def _spec_view(
         "ai_tokens": 0,
         "stats": {},
     }
-
-
-def _profile(state, person: tuple | None, user_type: UserType | None) -> UserProfile | None:
-    """The person a theme is tailored to, with their recent watches, or None for a theme with no one in mind.
-
-    A history that cannot be read leaves the profile empty: the theme is then written without taste.
-    """
-    if person is None or user_type is None:
-        return None
-    user_id, username, account_id, slug = person
-    profile = UserProfile(username=username, plex_account_id=account_id, user_type=user_type, slug=slug)
-    try:
-        watched = state.run_service.user_history(user_id, limit=20) or []
-    except Exception as e:
-        logger.warning("theme preview: could not read the watch history ({})", type(e).__name__)
-        return profile
-    profile.history = [
-        WatchedItem(
-            title=w["title"],
-            media_type=MediaType(w["media_type"]),
-            watched_at=datetime.fromisoformat(w["watched_at"]),
-            tmdb_id=w.get("tmdb_id"),
-            year=w.get("year"),
-        )
-        for w in watched
-    ]
-    return profile

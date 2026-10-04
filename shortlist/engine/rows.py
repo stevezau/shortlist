@@ -2806,6 +2806,9 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
     title_tags: dict[str, dict[tuple[int, MediaType], set[str]]] = {}
     title_why: dict[str, dict[tuple[int, MediaType], list[RequestWhy]]] = {}
     for spec in policy.gathered_specs():
+        if spec.theme is not None:
+            # An AI row (#138) is library-only: titles it names that the server lacks are never requested.
+            continue
         pools = policy.pools_for(spec)
         if pools is None:
             continue

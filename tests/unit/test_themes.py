@@ -161,16 +161,17 @@ def test_load_theme_applies_year_rating_votes_rules():
     assert _library_ids(titles.titles) == {4}
 
 
-def test_load_theme_keeps_ai_pick_only_if_in_library_for_in_library_set_but_keeps_id_in_ids():
+def test_load_theme_leaves_out_a_pick_the_libraries_do_not_hold():
     pick = ThemePick(9, MediaType.MOVIE, "ai", "Fits the brief")
     tmdb = _Tmdb([_item(1)], items={9: _item(9)})
     spec = _spec(picks=(pick,))
 
     titles = load_theme(tmdb, _Plex(), spec, {MediaType.MOVIE: {1: 10}})
 
-    assert _ids(titles.titles) == {1, 9}
+    assert _ids(titles.titles) == {1}
     assert _library_ids(titles.titles) == {1}
-    assert titles.reasons == {(MediaType.MOVIE, 9): "Fits the brief"}
+    assert titles.reasons == {}
+    assert titles.held == 1
 
 
 def test_load_theme_raises_when_tmdb_fails():
@@ -268,3 +269,26 @@ def test_theme_hash_handles_known_and_unknown_genres_in_any_order():
 def test_theme_hash_never_confuses_an_unknown_genre_with_a_known_one():
     assert theme_content_hash(_spec(genres=("Horror",))) != theme_content_hash(_spec(genres=("Foo",)))
     assert theme_content_hash(_spec(genres=("id:27",))) != theme_content_hash(_spec(genres=("Horror",)))
+
+
+def test_load_theme_applies_rules_only_to_titles_the_libraries_hold():
+    """A runtime limit costs one details() call per title ON THE SERVER, never one per title TMDB lists."""
+    tmdb = _Tmdb([_item(1), _item(2), _item(3), _item(4)])
+    calls: list[int] = []
+    original = tmdb.details
+    tmdb.details = lambda tmdb_id, media: calls.append(tmdb_id) or original(tmdb_id, media)
+    spec = _spec(rules=RowLimits(max_runtime=100))
+
+    titles = load_theme(tmdb, _Plex(), spec, {MediaType.MOVIE: {1: 10, 2: 20}})
+
+    assert sorted(calls) == [1, 2]
+    assert titles.held == 2
+
+
+def test_load_theme_leaves_out_a_kind_the_theme_does_not_cover():
+    tmdb = _Tmdb([_item(1)])
+    spec = _spec(media=(MediaType.SHOW,))
+
+    titles = load_theme(tmdb, _Plex(), spec, {MediaType.MOVIE: {1: 10}, MediaType.SHOW: {}})
+
+    assert _ids(titles.titles) == set() and titles.held == 0

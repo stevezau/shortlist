@@ -6,6 +6,7 @@ The AI call, TMDB and Plex are faked at the module boundary; nothing touches the
 # ruff: noqa: F811 -- a test requests the imported `client` fixture by name, which reads as a redefinition
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 
 import pytest
@@ -156,7 +157,7 @@ class TestPreview:
         assert call["brief"] == "films with a twist"
         assert call["media"] == (MediaType.MOVIE,)
         assert call["current"] is None and tuple(call["current_tag_names"]) == ()
-        assert call["profile"] is None
+        assert "profile" not in call, "no one's watch history reaches a theme everybody sees"
 
     def test_a_refinement_sends_the_stored_theme_and_its_tag_names_and_diffs_by_title(
         self, client: TestClient, author: _Author
@@ -168,16 +169,61 @@ class TestPreview:
 
         r = client.post(
             "/api/themes/preview",
-            json={"brief": "darker", "media": "movie", "current_theme_id": saved["id"]},
+            json={"change": "darker", "media": "movie", "current_theme_id": saved["id"]},
         )
 
         assert r.status_code == 200, r.text
         call = author.calls[0]
         assert call["current"].slug == saved["slug"]
         assert [p.tmdb_id for p in call["current"].picks] == [1, 2]
-        assert list(call["current_tag_names"]) == ["twist ending"]
+        assert call["current_tag_names"] == {111: "twist ending"}
+        assert (call["brief"], call["change"]) == ("films with a twist", "darker")
         diff = r.json()["diff"]
         assert diff["removed"] == ["Se7en"] and diff["unchanged"] == ["The Prestige"] and diff["added"] == []
+
+    def test_a_refinement_with_nothing_to_change_is_refused_before_the_ai_is_called(
+        self, client: TestClient, author: _Author
+    ):
+        saved = _save(client)
+
+        r = client.post("/api/themes/preview", json={"media": "movie", "current_theme_id": saved["id"]})
+
+        assert r.status_code == 422 and author.calls == []
+
+    def test_a_new_theme_without_a_brief_is_refused_before_the_ai_is_called(self, client: TestClient, author: _Author):
+        r = client.post("/api/themes/preview", json={"media": "movie"})
+
+        assert r.status_code == 422 and author.calls == []
+
+    def test_the_preview_cannot_be_tailored_to_a_person(self, client: TestClient, author: _Author):
+        r = client.post("/api/themes/preview", json={"brief": "x", "person_id": 1})
+
+        assert r.status_code == 200 and "profile" not in author.calls[0]
+        assert "person_id" not in themes_api.PreviewIn.model_fields
+
+    def test_a_refinement_keeps_the_stored_description_and_returns_it(self, client: TestClient, author: _Author):
+        saved = _save(client, brief="films with a twist")
+        author.draft = dataclasses.replace(_draft(), brief="films with a twist")
+
+        r = client.post(
+            "/api/themes/preview", json={"change": "darker", "media": "movie", "current_theme_id": saved["id"]}
+        )
+
+        assert r.status_code == 200, r.text
+        assert r.json()["draft"]["brief"] == "films with a twist"
+
+    def test_the_diff_names_tags_and_genres_and_counts_titles(self, client: TestClient, author: _Author):
+        saved = _save(client)
+        author.draft = _draft(_spec(tags=(111, 222), genres=("horror",)))
+
+        r = client.post(
+            "/api/themes/preview", json={"change": "scarier", "media": "movie", "current_theme_id": saved["id"]}
+        )
+
+        diff = r.json()["diff"]
+        assert diff["tags_added"] == ["222"] and diff["tags_removed"] == []
+        assert diff["genres_added"] == ["horror"] and diff["genres_removed"] == ["thriller"]
+        assert (diff["before_count"], diff["after_count"]) == (2, 2)
 
     def test_media_both_asks_for_both_kinds(self, client: TestClient, author: _Author):
         client.post("/api/themes/preview", json={"brief": "x", "media": "both"})
@@ -251,6 +297,19 @@ class TestSave:
         assert got["picks"][1]["origin"] == "owner" and got["tags"] == [{"id": 111, "name": "twist ending"}]
         assert client.get("/api/themes/9999").status_code == 404
 
+    def test_a_hand_edit_marks_the_theme_manual_and_an_ai_rebuild_marks_it_ai(self, client: TestClient):
+        saved = _save(client, origin="ai")
+        assert saved["origin"] == "ai"
+
+        by_hand = client.put(
+            f"/api/themes/{saved['id']}", json={"draft": _body(origin="manual", name="Mine"), "tokens": 0}
+        ).json()
+        rebuilt = client.put(
+            f"/api/themes/{saved['id']}", json={"draft": _body(origin="ai", name="Mine"), "tokens": 5}
+        ).json()
+
+        assert (by_hand["origin"], rebuilt["origin"]) == ("manual", "ai")
+
     def test_a_theme_that_selects_nothing_is_refused(self, client: TestClient):
         r = client.post("/api/themes", json={"draft": _body(tags=[], genres=[], picks=[]), "tokens": 0})
 
@@ -299,6 +358,14 @@ class TestGuidanceAndPrompts:
 
         assert r.status_code == 200, r.text
         assert author.calls[0]["guidance"] == "Favour films before 2000."
+
+    def test_the_guidance_cap_fits_the_owners_text_on_top_of_the_default(self, client: TestClient, author: _Author):
+        at_cap = client.post("/api/themes/preview", json={"brief": "x", "guidance": "g" * 4000})
+        over = client.post("/api/themes/preview", json={"brief": "x", "guidance": "g" * 4001})
+
+        assert at_cap.status_code == 200, at_cap.text
+        assert over.status_code == 422
+        assert len(BUILD_SYSTEM_GUIDANCE) + 2000 < 4000
 
     def test_no_guidance_means_the_built_in_wording(self, client: TestClient, author: _Author):
         client.post("/api/themes/preview", json={"brief": "films with a twist"})
@@ -375,6 +442,17 @@ class TestAiRows:
         )
 
         assert r.status_code == 422 and "season" in r.json()["detail"].lower()
+
+    @pytest.mark.parametrize("flag", ["requests_row", "rewatch"])
+    def test_an_ai_row_that_is_also_a_requests_or_rewatch_row_is_refused(self, client: TestClient, flag: str):
+        theme = _save(client)
+        refused = client.post("/api/collections", json={"name": "S", "theme_id": theme["id"], flag: True})
+        ai = _ai_row(client, theme["id"], name="Plain AI")
+        plain = client.post("/api/collections", json={"name": "Plain", flag: True, "media": "movie"}).json()
+        patched_ai = client.patch(f"/api/collections/{ai['id']}", json={"name": "Plain AI", flag: True})
+        patched_plain = client.patch(f"/api/collections/{plain['id']}", json={"name": "Plain", "theme_id": theme["id"]})
+
+        assert [r.status_code for r in (refused, patched_ai, patched_plain)] == [422, 422, 422]
 
     def test_the_theme_placeholder_is_refused_on_a_row_with_no_theme(self, client: TestClient):
         r = client.post("/api/collections", json={"name": "Picks", "name_template": "{theme_emoji} {theme} picks"})

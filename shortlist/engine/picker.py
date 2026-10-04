@@ -90,7 +90,9 @@ def theme_reason(candidate: Candidate | None, theme_name: str, ai_reason: str | 
     hook = (
         f"Fits {theme_name} \u2014 like {seed.title}, which you watched"
         if seed
-        else f"Fits {theme_name}, in genres you watch"
+        # No genre claim, as for a season: a theme title is admitted on theme fit and may share no genre with
+        # anything they watched.
+        else f"Fits {theme_name}"
     )
     line = sanitise_ai_reason(ai_reason) if ai_reason else ""
     if not line:

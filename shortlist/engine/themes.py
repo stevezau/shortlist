@@ -103,6 +103,8 @@ class ThemeTitles:
 
     titles: SeasonTitles
     reasons: dict[tuple[MediaType, int], str]
+    #: How many of the theme's titles the libraries hold, before its rules are applied.
+    held: int = 0
 
 
 def theme_content_hash(spec: ThemeSpec) -> str:
@@ -181,10 +183,13 @@ def load_theme(
     spec: ThemeSpec,
     library_index: dict[MediaType, dict[int, int]],
 ) -> ThemeTitles:
-    """Read a theme's titles through the season path and keep only those inside its rules.
+    """Read a theme's titles through the season path and keep the ones the libraries hold, inside its rules.
 
-    Rules apply to every title, so ``ids`` is exactly what the theme allows; ``in_library`` is the part of
-    that the libraries hold. A pick TMDB no longer has is skipped.
+    An AI row is library-only (nothing is ever requested), so the rules run on the titles the libraries
+    hold and no others: a runtime limit costs one TMDB details call per title ON THE SERVER, not one per
+    title TMDB lists. ``ids`` is therefore the allowed titles that are on the server, and ``in_library``
+    carries their items. ``held`` counts the server's titles before the rules, for the preview's counts.
+    A pick TMDB no longer has is skipped, and so is a title of a kind the theme does not cover.
 
     Raises:
         Exception: Whatever TMDB or Plex raised, so callers keep tonight's row rather than rebuild from half
@@ -192,14 +197,19 @@ def load_theme(
     """
     season = theme_as_season(spec)
     reads = _read_sources(tmdb, plex, season, tmdb.discover_all)
-    items = reads.all_titles()
+    items = {
+        (tmdb_id, media_type): item
+        for (tmdb_id, media_type), item in reads.all_titles().items()
+        if media_type in spec.media and tmdb_id in library_index.get(media_type, {})
+    }
 
     picked = set(season.picks)
     candidates = [_candidate(media_type, item) for (_id, media_type), item in items.items()]
     if spec.min_votes is not None:
         # Picks are the owner's or the AI's deliberate choice, so a vote floor never drops one (as in seasons).
         candidates = [c for c in candidates if c.vote_count >= spec.min_votes or (c.tmdb_id, c.media_type) in picked]
-    logger.debug("theme {}: applying rules to {} titles", spec.slug, len(candidates))
+    held = len(items)
+    logger.debug("theme {}: applying rules to {} titles on the server", spec.slug, len(candidates))
     kept = apply_limits(candidates, spec.rules, tmdb)  # type: ignore[arg-type]
     allowed = {(c.tmdb_id, c.media_type) for c in kept.kept}
 
@@ -209,8 +219,7 @@ def load_theme(
         if (tmdb_id, media_type) not in allowed:
             continue
         ids[media_type].add(tmdb_id)
-        if tmdb_id in library_index.get(media_type, {}):
-            in_library[media_type].append(item)
+        in_library[media_type].append(item)
 
     reasons = {
         (pick.media, pick.tmdb_id): pick.reason
@@ -222,4 +231,4 @@ def load_theme(
         in_library=in_library,
         missing_collections=tuple(ref.title for ref, found in reads.collections if found is None),
     )
-    return ThemeTitles(titles=titles, reasons=reasons)
+    return ThemeTitles(titles=titles, reasons=reasons, held=held)

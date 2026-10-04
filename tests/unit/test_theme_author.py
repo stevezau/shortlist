@@ -73,8 +73,8 @@ def _answer(**overrides) -> str:
         "tags": ["twist ending", "nothing matches this"],
         "genres": ["Thriller", "Not A Genre"],
         "titles": [
-            {"title": "Memento", "year": 2000, "reason": "Told backwards."},
-            {"title": "Se7en", "year": 1995, "reason": "That box."},
+            {"media": "movie", "title": "Memento", "year": 2000, "reason": "Told backwards."},
+            {"media": "movie", "title": "Se7en", "year": 1995, "reason": "That box."},
         ],
     }
     return json.dumps({**body, **overrides})
@@ -82,7 +82,7 @@ def _answer(**overrides) -> str:
 
 def _author(answer: str, **kwargs):
     curator = kwargs.pop("curator", None) or _Curator(answer)
-    index = {MediaType.MOVIE: {1: 11, 2: 12}, MediaType.SHOW: {}}
+    index = {MediaType.MOVIE: {1: 11, 2: 12, 4: 14}, MediaType.SHOW: {}}
     draft = author_theme(
         brief=kwargs.pop("brief", BRIEF),
         media=MediaType.MOVIE,
@@ -134,7 +134,10 @@ class TestAuthorTheme:
         assert len(draft.spec.picks) == 2
 
     def test_author_theme_drops_unresolvable_titles_and_counts_them(self):
-        titles = [{"title": "Memento", "year": 2000}, {"title": "Invented Film", "year": 2001}]
+        titles = [
+            {"media": "movie", "title": "Memento", "year": 2000},
+            {"media": "movie", "title": "Invented Film", "year": 2001},
+        ]
 
         draft, _ = _author(_answer(titles=titles))
 
@@ -142,7 +145,10 @@ class TestAuthorTheme:
         assert (draft.stats.named, draft.stats.resolved) == (2, 1)
 
     def test_author_theme_enforces_runtime_rule_from_tmdb_not_from_ai(self):
-        titles = [{"title": "Memento", "year": 2000}, {"title": "Short Cut", "year": 2010}]
+        titles = [
+            {"media": "movie", "title": "Memento", "year": 2000},
+            {"media": "movie", "title": "Short Cut", "year": 2010},
+        ]
 
         draft, _ = _author(_answer(titles=titles, rules={"max_runtime": 100}))
 
@@ -152,7 +158,7 @@ class TestAuthorTheme:
 
     def test_author_theme_sanitises_and_truncates_reason(self):
         reason = "**Bold** {brace}\nline [link](x) " + "word " * 80
-        titles = [{"title": "Memento", "year": 2000, "reason": reason}]
+        titles = [{"media": "movie", "title": "Memento", "year": 2000, "reason": reason}]
 
         draft, _ = _author(_answer(titles=titles))
 
@@ -225,7 +231,10 @@ class TestRefine:
             rules=RowLimits(),
             min_votes=None,
         )
-        titles = [{"title": "Memento", "year": 2000}, {"title": "The Prestige", "year": 2006}]
+        titles = [
+            {"media": "movie", "title": "Memento", "year": 2000},
+            {"media": "movie", "title": "The Prestige", "year": 2006},
+        ]
 
         draft, curator = _author(_answer(titles=titles, rules={"min_year": 1999}), current=current, brief="newer")
 
@@ -269,7 +278,7 @@ def _run(answer: str, tmdb=None, **kwargs):
 class TestCaps:
     def test_titles_are_capped_so_tmdb_is_searched_at_most_sixty_times(self):
         tmdb = _CountingTmdb()
-        titles = [{"title": f"Film {n}", "year": 2000} for n in range(5000)]
+        titles = [{"media": "movie", "title": f"Film {n}", "year": 2000} for n in range(5000)]
 
         _run(_answer(titles=titles, tags=["twist ending"]), tmdb)
 
@@ -307,7 +316,13 @@ class TestCaps:
                 seen.append(query)
                 return []
 
-        _run(_answer(titles=[{"title": "T" * 900}, {"title": "Memento"}], tags=["g" * 900]), _Spy())
+        _run(
+            _answer(
+                titles=[{"media": "movie", "title": "T" * 900}, {"media": "movie", "title": "Memento"}],
+                tags=["g" * 900],
+            ),
+            _Spy(),
+        )
 
         assert len(seen) == 3 and all(len(s) <= 120 for s in seen)
 
@@ -341,7 +356,7 @@ class TestFailures:
 
     def test_nothing_resolved_raises_plain_error(self):
         with pytest.raises(ThemeAuthorError, match="didn't suggest anything"):
-            _run(_answer(titles=[{"title": "Invented"}], tags=[], genres=[]))
+            _run(_answer(titles=[{"media": "movie", "title": "Invented"}], tags=[], genres=[]))
 
     def test_wrong_shape_json_is_tolerated(self):
         draft, _ = _run(_answer(titles="Memento", rules=[1, 2], genres=["Thriller"]))
@@ -349,7 +364,7 @@ class TestFailures:
         assert draft.spec.picks == () and draft.spec.rules == RowLimits()
 
     def test_non_string_title_and_year_are_skipped(self):
-        titles = [{"title": 5, "year": "x"}, {"title": "Memento", "year": "nineteen"}, "Se7en", None]
+        titles = [{"title": 5, "year": "x"}, {"media": "movie", "title": "Memento", "year": "nineteen"}, "Se7en", None]
 
         draft, _ = _run(_answer(titles=titles))
 
@@ -395,7 +410,7 @@ class TestRefineKeeps:
             min_votes=None,
         )
 
-        draft, curator = _run(_answer(titles=[{"title": "Memento"}]), current=current)
+        draft, curator = _run(_answer(titles=[{"media": "movie", "title": "Memento"}]), current=current)
 
         assert draft.spec.collections == (collection,)
         assert {(p.tmdb_id, p.origin) for p in draft.spec.picks} == {(1, "ai"), (4, "owner")}
@@ -423,7 +438,9 @@ class TestRound2:
         return ThemeSpec(**{**fields, **overrides})
 
     def test_current_tag_names_are_shown_and_ids_never(self):
-        _, curator = _run(_answer(tags=[]), current=self._current(), current_tag_names=["horror", "slasher"])
+        _, curator = _run(
+            _answer(tags=[]), current=self._current(tags=(777, 778)), current_tag_names={777: "horror", 778: "slasher"}
+        )
 
         user = curator.calls[0][1]
         assert '"tags": ["horror", "slasher"]' in user
@@ -434,15 +451,14 @@ class TestRound2:
 
         assert '"tags"' not in curator.calls[0][1]
 
-    def test_refine_drops_a_tag_the_ai_omits(self):
-        draft, _ = _run(_answer(tags=["twist ending"]), current=self._current(), current_tag_names=["horror"])
+    def test_refine_keeps_a_tag_the_ai_omits(self):
+        draft, _ = _run(_answer(tags=["twist ending"]), current=self._current(), current_tag_names={777: "horror"})
 
-        assert draft.spec.tags == (901,)
-        assert 777 not in draft.spec.tags
+        assert draft.spec.tags == (777, 901)
 
     def test_search_cap_holds_across_both_media(self):
         tmdb = _CountingTmdb()
-        titles = [{"title": f"Film {n}", "year": 2000} for n in range(5000)]
+        titles = [{"media": "movie", "title": f"Film {n}", "year": 2000} for n in range(5000)]
 
         author_theme(
             brief=BRIEF,
@@ -456,7 +472,9 @@ class TestRound2:
         assert tmdb.searches == 60
 
     def test_refine_resolving_nothing_new_keeps_owner_picks_without_raising(self):
-        draft, _ = _run(_answer(titles=[{"title": "Invented"}], tags=[], genres=[]), current=self._current())
+        draft, _ = _run(
+            _answer(titles=[{"media": "movie", "title": "Invented"}], tags=[], genres=[]), current=self._current()
+        )
 
         assert [(p.tmdb_id, p.origin) for p in draft.spec.picks] == [(4, "owner")]
 
@@ -473,9 +491,168 @@ class TestRound2:
         current = self._current()
         titles = {(MediaType.MOVIE, 4): "Short Cut", (MediaType.MOVIE, 2): "Se7en"}
 
-        draft, _ = _run(_answer(titles=[{"title": "Memento"}]), current=current)
+        draft, _ = _run(_answer(titles=[{"media": "movie", "title": "Memento"}]), current=current)
         diff = diff_themes(current, draft.spec, draft.titles | titles)
 
         assert diff.unchanged == ["Short Cut"]
         assert diff.added == ["Memento"]
         assert diff.removed == ["Se7en"]
+
+
+class _KindTmdb(_Tmdb):
+    """Both kinds exist under one title, as "Severance" does: a 2006 film and a 2022 show."""
+
+    def __init__(self):
+        super().__init__()
+        self.searched: list[tuple[str, MediaType]] = []
+
+    def search(self, title, media, *, year=None):
+        self.searched.append((title, media))
+        if title == "Severance":
+            return {"id": 50 if media is MediaType.MOVIE else 51, "title": title}
+        return super().search(title, media, year=year)
+
+    def list_item(self, tmdb_id, media):
+        if tmdb_id in (50, 51):
+            return {"id": tmdb_id, "title": "Severance", "release_date": "2022-02-18", "vote_count": 999}
+        return super().list_item(tmdb_id, media)
+
+
+class TestEachTitleSaysWhatKindItIs:
+    @staticmethod
+    def _both(titles: list, tmdb: _Tmdb):
+        return author_theme(
+            brief=BRIEF,
+            media=(MediaType.MOVIE, MediaType.SHOW),
+            curator=_Curator(_answer(titles=titles, tags=[])),
+            tmdb=tmdb,
+            plex=_Plex(),
+            library_index={MediaType.MOVIE: {}, MediaType.SHOW: {}},
+        )
+
+    def test_a_show_is_looked_up_only_among_shows(self):
+        tmdb = _KindTmdb()
+
+        draft = self._both([{"title": "Severance", "year": 2022, "media": "show"}], tmdb)
+
+        assert [(p.tmdb_id, p.media) for p in draft.spec.picks] == [(51, MediaType.SHOW)]
+        assert tmdb.searched == [("Severance", MediaType.SHOW)]
+
+    def test_a_title_with_no_kind_or_a_bad_one_is_skipped_and_counted_as_unresolved(self):
+        titles = [
+            {"title": "Severance", "year": 2022},
+            {"title": "Memento", "year": 2000, "media": "film"},
+            {"title": "Se7en", "year": 1995, "media": "movie"},
+        ]
+        tmdb = _KindTmdb()
+
+        draft = self._both(titles, tmdb)
+
+        assert [p.tmdb_id for p in draft.spec.picks] == [2]
+        assert (draft.stats.named, draft.stats.resolved) == (3, 1)
+        assert tmdb.searched == [("Se7en", MediaType.MOVIE)]
+
+    def test_a_kind_the_row_does_not_cover_is_skipped(self):
+        tmdb = _KindTmdb()
+
+        draft, _ = _run(
+            _answer(titles=[{"title": "Severance", "media": "show"}, {"title": "Memento", "media": "movie"}]), tmdb
+        )
+
+        assert [p.tmdb_id for p in draft.spec.picks] == [1]
+        assert tmdb.searched == [("Memento", MediaType.MOVIE)]
+
+
+class TestAChangeKeepsTheDescription:
+    def test_the_brief_is_context_and_the_change_is_the_instruction(self):
+        current = TestRound2._current()
+
+        draft, curator = _run(_answer(), current=current, brief="films with a twist", change="less gore")
+
+        user = curator.calls[0][1]
+        assert "<brief>films with a twist</brief>" in user and "<change>less gore</change>" in user
+        assert draft.brief == "films with a twist"
+
+    def test_a_change_is_ignored_for_a_new_theme(self):
+        _, curator = _run(_answer(), change="less gore")
+
+        assert "less gore" not in curator.calls[0][1]
+
+
+class TestARefinementKeepsWhatItHas:
+    @staticmethod
+    def _current(**overrides) -> ThemeSpec:
+        return TestRound2._current(tags=(777, 778), genres=("Horror", "Comedy"), **overrides)
+
+    def test_tags_and_genres_the_ai_does_not_repeat_carry_over_including_hand_added_ones(self):
+        draft, _ = _run(
+            _answer(tags=["twist ending"], genres=["Thriller"]),
+            current=self._current(),
+            current_tag_names={777: "horror", 778: "slasher"},
+        )
+
+        assert draft.spec.tags == (777, 778, 901)
+        assert draft.spec.genres == ("Horror", "Comedy", "Thriller")
+
+    def test_only_what_the_ai_names_in_drop_lists_leaves(self):
+        draft, _ = _run(
+            _answer(tags=[], genres=[], drop_tags=["Slasher", "never had this"], drop_genres=["comedy"]),
+            current=self._current(),
+            current_tag_names={777: "horror", 778: "slasher"},
+        )
+
+        assert draft.spec.tags == (777,)
+        assert draft.spec.genres == ("Horror",)
+
+    def test_drop_lists_are_capped_and_ignored_outside_a_refinement(self):
+        draft, _ = _run(_answer(tags=["twist ending"], drop_tags=["twist ending"], drop_genres=["thriller"]))
+
+        assert draft.spec.tags == (901,) and draft.spec.genres == ("Thriller",)
+
+    def test_the_diff_reports_tag_and_genre_changes_and_title_counts(self):
+        current = self._current()
+        names = {777: "horror", 778: "slasher", 901: "twist ending"}
+        draft, _ = _run(
+            _answer(tags=["twist ending"], genres=["Thriller"], drop_tags=["slasher"], drop_genres=["comedy"]),
+            current=current,
+            current_tag_names=names,
+        )
+
+        diff = diff_themes(current, draft.spec, draft.titles, names)
+
+        assert diff.tags_added == ["twist ending"] and diff.tags_removed == ["slasher"]
+        assert diff.genres_added == ["Thriller"] and diff.genres_removed == ["Comedy"]
+        assert (diff.before_count, diff.after_count) == (2, 3)
+
+
+class TestTheAisLimitsAreBounded:
+    @pytest.mark.parametrize(
+        ("rules", "expected"),
+        [
+            ({"min_rating": 80}, RowLimits()),
+            ({"min_rating": -1}, RowLimits()),
+            ({"min_rating": 7.5}, RowLimits(min_rating=7.5)),
+            ({"min_year": 2020, "max_year": 1990}, RowLimits()),
+            ({"min_year": 1990, "max_year": 2020}, RowLimits(min_year=1990, max_year=2020)),
+            ({"min_year": 3, "max_year": 99999}, RowLimits()),
+            ({"max_runtime": 0}, RowLimits()),
+            ({"max_runtime": -90}, RowLimits()),
+            ({"max_runtime": 100000}, RowLimits(max_runtime=600)),
+        ],
+    )
+    def test_out_of_range_values_are_dropped_or_capped(self, rules, expected):
+        draft, _ = _run(_answer(rules=rules))
+
+        assert draft.spec.rules == expected
+
+    def test_the_preview_view_of_such_an_answer_is_a_valid_response(self):
+        """A rating of 80 once failed the response model AFTER the tokens were spent: a 500 on a paid call."""
+        from shortlist.server.api import themes as themes_api
+
+        draft, _ = _run(_answer(rules={"min_rating": 80, "min_year": 2020, "max_year": 1990, "max_runtime": 90}))
+
+        view = themes_api._spec_view(draft.spec, brief="x", origin="ai", titles=draft.titles, tag_names={})
+        themes_api.ThemeOut(**view)
+
+    def test_the_prompt_states_the_rating_scale(self):
+        assert "0 to 10" in BUILD_SYSTEM_MECHANICS

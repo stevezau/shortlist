@@ -44,7 +44,6 @@ def theme_row(theme: ThemeSpec | None = None, **overrides) -> RowSpec:
         "size": 5,
         "media": "movie",
         "theme": theme or theme_spec(),
-        "ai_row": True,
     }
     return RowSpec(**{**values, **overrides})
 
@@ -222,7 +221,7 @@ class TestTheRow:
         report = pipeline_mod.run(ctx, _people())
 
         elf = next(p for p in _picks(report, "sarah", "ai-twists") if p.tmdb_id == 30)
-        assert elf.reason == "Fits Twist endings, in genres you watch"
+        assert elf.reason == "Fits Twist endings"
 
     def test_seeded_pick_names_the_watch(self, ctx):
         ctx.config.rows = [theme_row()]
@@ -237,7 +236,7 @@ class TestTheRow:
         report = pipeline_mod.run(ctx, _people())
 
         elf = next(p for p in _picks(report, "sarah", "ai-twists") if p.tmdb_id == 30)
-        assert elf.reason == "A holiday twist at the end · Fits Twist endings, in genres you watch"
+        assert elf.reason == "A holiday twist at the end · Fits Twist endings"
 
     def test_theme_pick_reason_truncates_long_ai_reason(self, ctx):
         theme = theme_spec(picks=(ThemePick(30, MediaType.MOVIE, "ai", "word " * 100),))
@@ -256,8 +255,8 @@ class TestColdStart:
         report = pipeline_mod.run(ctx, _people())
 
         by_id = {p.tmdb_id: p for p in _picks(report, "sarah", "ai-twists")}
-        assert by_id[30].reason == "A festive turn \u00b7 Fits Twist endings, in genres you watch"
-        assert by_id[20].reason == "Fits Twist endings, in genres you watch"
+        assert by_id[30].reason == "A festive turn \u00b7 Fits Twist endings"
+        assert by_id[20].reason == "Fits Twist endings"
         assert by_id[20].sources == ["theme"]
 
 
@@ -309,6 +308,32 @@ class TestTheName:
 
         sarah = next(u for u in report.users if u.username == "sarah")
         assert {title for (_library, title) in sarah.placement_titles} == {"\U0001f300 Twist endings" + row_marker(100)}
+
+
+class TestAnAiRowNeverRequests:
+    def test_an_ai_row_with_a_title_the_server_lacks_produces_no_request_demand(self, ctx, monkeypatch):
+        from shortlist.engine.models import ArrTarget, RequestConfig, RequestReport
+
+        ctx.tmdb.suggestions.return_value = [
+            ({"id": 77, "title": "Not On This Server", "genre_ids": [28], "vote_average": 8.0}, 1.0),
+            ({"id": 20, "title": "Die Hard 2", "genre_ids": [28], "vote_average": 7.0}, 1.0),
+        ]
+        ctx.config.requests = RequestConfig(
+            enabled=True,
+            radarr=ArrTarget(url="http://radarr.test", api_key="k", quality_profile_id=1, root_folder="/m"),
+        )
+        ctx.config.rows = [theme_row(theme_spec(picks=(ThemePick(77, MediaType.MOVIE, "ai", "Named, not owned"),)))]
+        captured: dict = {}
+
+        def spy(cfg, tmdb, demand, *, dry_run, already_handled=None, **kw):
+            captured["demand"] = demand
+            return RequestReport()
+
+        monkeypatch.setattr(pipeline_mod.requests_mod, "request_missing", spy)
+
+        pipeline_mod.run(ctx, _people())
+
+        assert [row for row in captured.get("demand", []) if row.demand] == []
 
 
 class TestOtherRowsClaimAThemedTitle:

@@ -631,7 +631,7 @@ class TestEveryTemplateDelivers:
             rules=RowLimits(),
             min_votes=None,
         )
-        spec = _spec("describe-a-row", theme=theme, ai_row=True, media="movie")
+        spec = _spec("describe-a-row", theme=theme, media="movie")
         assert not spec.shared, "the tile says one row each"
 
         engine_ctx.history_source.fetch.return_value = _mixed_history()

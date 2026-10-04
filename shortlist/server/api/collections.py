@@ -708,10 +708,18 @@ def _validate(body: CollectionIn) -> None:
     pattern = body.requests_tag_pattern.strip()
     if pattern and "{username}" not in pattern and "{name}" not in pattern:
         raise HTTPException(status_code=422, detail="Tag pattern needs {username} or {name} in it")
-    _validate_requests_row(requests_row=body.requests_row, build=body.build, rewatch=body.rewatch, seasons=body.seasons)
+    _validate_requests_row(
+        requests_row=body.requests_row,
+        build=body.build,
+        rewatch=body.rewatch,
+        seasons=body.seasons,
+        has_theme=body.theme_id is not None,
+    )
 
 
-def _validate_requests_row(*, requests_row: bool, build: str, rewatch: bool, seasons: list[str]) -> None:
+def _validate_requests_row(
+    *, requests_row: bool, build: str, rewatch: bool, seasons: list[str], has_theme: bool = False
+) -> None:
     """The shapes a "Your requests" row cannot take. A person's requests are theirs alone, so the row is
     always per-person; it holds titles they have NOT seen, so it cannot lead with finished ones; and a
     request lands when it lands, so no season decides whether the row shows.
@@ -730,6 +738,8 @@ def _validate_requests_row(*, requests_row: bool, build: str, rewatch: bool, sea
             status_code=422,
             detail="A requests row can't be seasonal — it shows what they asked for whenever it lands",
         )
+    if has_theme:
+        raise HTTPException(status_code=422, detail="A requests row can't also be an AI row")
 
 
 def _validate_anchor_rows(session: Session, body: CollectionIn, editing_slug: str) -> None:
@@ -1133,7 +1143,15 @@ def _reject_season_name_without_seasons(template: str, seasons: list[str], *, ro
         raise HTTPException(status_code=422, detail=why)
 
 
-def _validate_theme(session: Session, theme_id: int | None, *, build: str, seasons: list[str]) -> Theme | None:
+def _validate_theme(
+    session: Session,
+    theme_id: int | None,
+    *,
+    build: str,
+    seasons: list[str],
+    rewatch: bool = False,
+    requests_row: bool = False,
+) -> Theme | None:
     """The theme an AI row follows, or None for an ordinary row; 422 for a row a theme cannot drive.
 
     Keyword-only on what the row will be, like `_validate_requests_row`: a PATCH judges the MERGED row.
@@ -1150,6 +1168,10 @@ def _validate_theme(session: Session, theme_id: int | None, *, build: str, seaso
         raise HTTPException(
             status_code=422, detail="An AI row can't also follow seasons — a theme has no calendar of its own."
         )
+    if rewatch:
+        raise HTTPException(status_code=422, detail="An AI row can't also be a rewatch row")
+    if requests_row:
+        raise HTTPException(status_code=422, detail="An AI row can't also be a requests row")
     return theme
 
 
@@ -1371,7 +1393,14 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     with request.app.state.sessions() as session:
         catalogue = load_catalogue(session)
         body.seasons = _known_seasons(body.seasons, catalogue=catalogue)
-        theme = _validate_theme(session, body.theme_id, build=body.build, seasons=body.seasons)
+        theme = _validate_theme(
+            session,
+            body.theme_id,
+            build=body.build,
+            seasons=body.seasons,
+            rewatch=body.rewatch,
+            requests_row=body.requests_row,
+        )
         # The template this row will actually be titled from, not the bare name — a POST may set both. An AI
         # row's `{theme}` is filled from its theme by the check itself.
         template = body.name_template or body.name
@@ -1723,12 +1752,14 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             raise HTTPException(
                 status_code=422, detail="The default row can't be an AI row — add a new row from the AI template."
             )
-        if sent & {"theme_id", "build", "seasons"}:
+        if sent & {"theme_id", "build", "seasons", "rewatch", "requests_row"}:
             theme = _validate_theme(
                 session,
                 merged_theme_id,
                 build=body.build if "build" in sent else collection.build,
                 seasons=merged_seasons,
+                rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
+                requests_row=body.requests_row if "requests_row" in sent else bool(collection.requests_row),
             )
         # The theme the row will follow once this lands: it fills `{theme}` in every title check below.
         stored_theme = session.get(Theme, merged_theme_id) if merged_theme_id is not None else None
@@ -1915,6 +1946,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             build=body.build if "build" in sent else collection.build,
             rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
             seasons=body.seasons if "seasons" in sent else list(collection.seasons or []),
+            has_theme=merged_theme_id is not None,
         )
         # Hoisted above the writes: `_set_audience` raises this from inside the apply half, which on a
         # default-row rename meant answering 422 after `SettingsStore.set` had already committed.

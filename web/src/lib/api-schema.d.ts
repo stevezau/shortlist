@@ -4984,8 +4984,16 @@ export interface components {
         };
         /** PreviewIn */
         PreviewIn: {
-            /** Brief */
+            /**
+             * Brief
+             * @default
+             */
             brief: string;
+            /**
+             * Change
+             * @default
+             */
+            change: string;
             /** Collection Id */
             collection_id?: number | null;
             /** Current Theme Id */
@@ -5001,8 +5009,6 @@ export interface components {
              * @enum {string}
              */
             media: "movie" | "show" | "both";
-            /** Person Id */
-            person_id?: number | null;
         };
         /** PreviewOut */
         PreviewOut: {
@@ -6459,12 +6465,24 @@ export interface components {
             added: string[];
             /** Added Count */
             added_count: number;
+            /** After Count */
+            after_count: number;
+            /** Before Count */
+            before_count: number;
+            /** Genres Added */
+            genres_added: string[];
+            /** Genres Removed */
+            genres_removed: string[];
             /** Removed */
             removed: string[];
             /** Removed Count */
             removed_count: number;
             /** Rules Changed */
             rules_changed: boolean;
+            /** Tags Added */
+            tags_added: string[];
+            /** Tags Removed */
+            tags_removed: string[];
             /** Unchanged */
             unchanged: string[];
         } & {

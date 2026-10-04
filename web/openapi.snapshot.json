@@ -4501,9 +4501,15 @@
       "PreviewIn": {
         "properties": {
           "brief": {
+            "default": "",
             "maxLength": 1000,
-            "minLength": 1,
             "title": "Brief",
+            "type": "string"
+          },
+          "change": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Change",
             "type": "string"
           },
           "collection_id": {
@@ -4530,7 +4536,7 @@
           },
           "guidance": {
             "default": "",
-            "maxLength": 2000,
+            "maxLength": 4000,
             "title": "Guidance",
             "type": "string"
           },
@@ -4543,22 +4549,8 @@
             ],
             "title": "Media",
             "type": "string"
-          },
-          "person_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Person Id"
           }
         },
-        "required": [
-          "brief"
-        ],
         "title": "PreviewIn",
         "type": "object"
       },
@@ -8158,6 +8150,28 @@
             "title": "Added Count",
             "type": "integer"
           },
+          "after_count": {
+            "title": "After Count",
+            "type": "integer"
+          },
+          "before_count": {
+            "title": "Before Count",
+            "type": "integer"
+          },
+          "genres_added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres Added",
+            "type": "array"
+          },
+          "genres_removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres Removed",
+            "type": "array"
+          },
           "removed": {
             "items": {
               "type": "string"
@@ -8173,6 +8187,20 @@
             "title": "Rules Changed",
             "type": "boolean"
           },
+          "tags_added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags Added",
+            "type": "array"
+          },
+          "tags_removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags Removed",
+            "type": "array"
+          },
           "unchanged": {
             "items": {
               "type": "string"
@@ -8187,7 +8215,13 @@
           "removed",
           "unchanged",
           "added_count",
-          "removed_count"
+          "removed_count",
+          "tags_added",
+          "tags_removed",
+          "genres_added",
+          "genres_removed",
+          "before_count",
+          "after_count"
         ],
         "title": "ThemeDiffOut",
         "type": "object"
