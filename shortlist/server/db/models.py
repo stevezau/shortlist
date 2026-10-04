@@ -399,6 +399,8 @@ class Theme(Base):
     ai_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # {"named", "resolved", "in_library", "after_rules"} counts from the last build.
     stats: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    # When the one extra AI call that extends this theme's list was made; NULL until then.
+    topped_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CollectionAudience(Base):
