@@ -51,7 +51,7 @@ All notable changes to this project are documented here. This project follows
 - **A dry run, or a run cancelled before someone's turn, no longer empties their user page.** The page
   showed "No picks in this row yet" for everyone after one cancelled test run, while Plex still held
   their rows; it now shows the last titles actually built.
-- **The Users page's Requests column, and the nightly run's request read, are faster.** Radarr, Sonarr and
+- **The Users page's Requests column, the Requests page, and the nightly run's request read are faster.** Radarr, Sonarr and
   Overseerr are now read at the same time instead of one after another; on a large library that took
   the wait from 12–25 seconds to about 8.
 - **A Radarr, Sonarr or Overseerr that doesn't answer is explained in plain words** ("Radarr didn't answer

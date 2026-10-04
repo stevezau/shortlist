@@ -77,17 +77,17 @@ services:
 | -------- | ----------------------------------------------------- |
 | `latest` | The current stable release                            |
 | `X.Y.Z`  | A specific release, pinned                            |
-| `dev`    | Every green push to `dev` — newest code, less settled |
+| `dev`    | Every green push to `dev`: newest code, less settled  |
 
 Multi-arch: `linux/amd64` and `linux/arm64`.
 
 ## What you get
 
 - **A private row for every user**, built from their watch history. One container serves your whole
-  server — including you, so it's just as useful on a one-person server.
+  server, including you, so it's just as useful on a one-person server.
 - **No AI key required.** The built-in picker runs entirely in code. An optional LLM (Claude, GPT,
-  Gemini, or a local model via Ollama, llama.cpp, LM Studio, vLLM or LocalAI) adds a ranking and
-  explanation pass.
+  Gemini, or a local model via Ollama, llama.cpp, LM Studio, vLLM or LocalAI) adds one extra source,
+  a live web search for current titles TMDB and Trakt miss.
 - **No hallucinated picks.** Every title is verified to exist in your library before it's delivered.
 - **Every pick explains itself** — "Because you watched _Arrival_".
 - **Multiple rows per person, plus shared rows**, each with its own sources, size, libraries,
@@ -96,11 +96,11 @@ Multi-arch: `linux/amd64` and `linux/arm64`.
   Christmas films in December, romance for Valentine's, ranked for each person and hidden between
   seasons.
 - **Radarr/Sonarr or Overseerr requests (optional)** when a strong pick isn't in your library yet.
-- **A "Your requests" row** (`dev` tag) — what each person asked for in Overseerr, or tagged with
+- **A "Your requests" row** (`dev` tag only, not yet in stable) — what each person asked for in Overseerr, or tagged with
   their name in Radarr/Sonarr, once it's on Plex and until they've watched it. No AI; a person with
   nothing ready simply has no row.
-- **Kometa-friendly** — never touches a collection it didn't create.
-- **Provable uninstall** — share filters are snapshotted before the first change and restored
+- **Kometa-friendly**: never touches a collection it didn't create.
+- **Provable uninstall**: share filters are snapshotted before the first change and restored
   exactly.
 
 ## Configuration
@@ -113,7 +113,7 @@ Full list: [Reference](https://shortlistapp.dev/reference/).
 
 ## Requirements
 
-- Plex Media Server **1.43.2.10687+** with a **Plex Pass** on the admin account
+- Plex Media Server **1.43.2.10687 or newer**, with a **Plex Pass** on the admin account
 - A free [TMDB](https://www.themoviedb.org/) API key
 - A volume mounted at `/config`
 
