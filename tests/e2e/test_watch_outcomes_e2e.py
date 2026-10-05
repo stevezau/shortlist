@@ -165,53 +165,64 @@ class TestTheRealSyncStampsTheRightColumn:
             time.sleep(0.2)
         raise AssertionError("the sync job never finished")
 
-    def _pick(self, app: ShortlistApp, uid: int, tmdb_id: int, media_type: str, title: str) -> None:
-        """One pick delivered by a real run, two days ago.
+    def _pick(self, app: ShortlistApp, uid: int, tmdb_id: int, media_type: str, title: str, *, rating_key: int) -> None:
+        """Declare one title in the same confirmed delivery from two days ago.
 
-        The `run_id` is not decoration: the reconcile only credits a title that is in a LIVE row, and
-        a row's live contents are the picks from the newest run that delivered it. A pick with no run
-        belongs to no delivery, so it reads as a title the row has already dropped.
+        The independent delivery record establishes membership; the run is only diagnostic history.
+        Reusing one run and collection key per library keeps every seeded title in that delivery.
         """
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
-            delivered = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
-            # The newest run is REUSED across calls, not one run per pick: a later run delivering the
-            # same row is precisely what makes an earlier pick stale, so a run each would leave every
-            # pick but the last one out of the live row.
-            row = con.execute("SELECT id FROM runs ORDER BY id DESC LIMIT 1").fetchone()
-            run_id = (
-                row[0]
-                if row
-                else con.execute(
-                    "INSERT INTO runs (trigger, started_at, finished_at, status, dry_run, stats) "
-                    "VALUES ('schedule', ?, ?, 'ok', 0, '{}')",
-                    (delivered, delivered),
-                ).lastrowid
-            )
-            # The delivery-ledger entry a real run writes alongside the picks. Liveness means the
-            # collection is still ON PLEX, and this is the only record of that — without it the row
-            # reads as one Plex no longer has and nothing is creditable.
-            con.execute(
-                "INSERT OR REPLACE INTO deliveries (collection_slug, user_slug, library_key, rating_key, title, "
-                "updated_at) VALUES ('picked', 'sarah', ?, ?, 'Picked for You', ?)",
-                ("2" if media_type == "show" else "1", 900 + tmdb_id % 100, delivered),
-            )
-            con.execute(
-                "INSERT INTO picks (run_id, user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
-                "section_key, library, title, reason, sources, affinity, created_at, watched_at, finished_at) "
-                "VALUES (?,?,?,?,?,1,'picked',?,?,?,'','tmdb',1.0,?,NULL,NULL)",
-                (
-                    run_id,
-                    uid,
-                    tmdb_id,
-                    media_type,
-                    tmdb_id,
-                    "2" if media_type == "show" else "1",
-                    "TV Shows" if media_type == "show" else "Movies",
-                    title,
-                    delivered,
-                ),
-            )
-            con.commit()
+        from sqlalchemy.orm import Session
+
+        from shortlist.server.db.models import Delivery, PickRow, Run, User
+        from shortlist.server.db.session import make_engine
+        from shortlist.server.services.watch_events import RowMembership
+        from tests.watch_fixtures import personal_delivery
+
+        delivered = datetime.now(UTC) - timedelta(days=2)
+        library = "2" if media_type == "show" else "1"
+        engine = make_engine(app.config_dir)
+        try:
+            with Session(engine) as session:
+                user = session.get(User, uid)
+                run = session.query(Run).order_by(Run.id.desc()).first()
+                if run is None:
+                    run = Run(trigger="schedule", started_at=delivered, finished_at=delivered, status="ok")
+                    session.add(run)
+                    session.flush()
+                if session.get(Delivery, ("picked", user.slug, library)) is None:
+                    session.add(
+                        Delivery(
+                            collection_slug="picked",
+                            user_slug=user.slug,
+                            library_key=library,
+                            rating_key=900 + int(library),
+                            title="Picked for You",
+                            updated_at=delivered,
+                        )
+                    )
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=tmdb_id,
+                        media_type=media_type,
+                        rating_key=rating_key,
+                        rank=1,
+                        collection_slug="picked",
+                        section_key=library,
+                        library="TV Shows" if media_type == "show" else "Movies",
+                        title=title,
+                        sources="tmdb",
+                        created_at=delivered,
+                    )
+                )
+                personal_delivery(session, run.id, user_id=uid, library=library)
+                assert RowMembership(session).visible_rows(user, {(tmdb_id, media_type)}, datetime.now(UTC)) == [
+                    "picked"
+                ]
+                session.commit()
+        finally:
+            engine.dispose()
 
     def _stamps(self, app: ShortlistApp, title: str) -> tuple:
         with sqlite3.connect(app.config_dir / "shortlist.db") as con:
@@ -232,8 +243,8 @@ class TestTheRealSyncStampsTheRightColumn:
 
         with sqlite3.connect(app.config_dir / "shortlist.db") as con:
             uid = con.execute("SELECT id FROM users WHERE username = 'sarah'").fetchone()[0]
-        self._pick(app, uid, 7001, "show", "Seen out")
-        self._pick(app, uid, 7002, "show", "Two episodes in")
+        self._pick(app, uid, 7001, "show", "Seen out", rating_key=301)
+        self._pick(app, uid, 7002, "show", "Two episodes in", rating_key=302)
 
         self._sync(app)
 
@@ -252,7 +263,7 @@ class TestTheRealSyncStampsTheRightColumn:
 
         with sqlite3.connect(app.config_dir / "shortlist.db") as con:
             uid = con.execute("SELECT id FROM users WHERE username = 'sarah'").fetchone()[0]
-        self._pick(app, uid, 9001, "movie", "A film")
+        self._pick(app, uid, 9001, "movie", "A film", rating_key=101)
 
         self._sync(app)
 
