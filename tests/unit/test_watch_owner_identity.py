@@ -16,9 +16,22 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from shortlist.engine.clients.plex_pms import PlexClient
-from shortlist.server.db.models import Base, Collection, Delivery, RowDeliverySnapshot, Server, User, WatchSession
-from shortlist.server.services.watch_events import RowMembership, shared_credits
+from shortlist.server.db.models import (
+    Base,
+    Collection,
+    Delivery,
+    PickRow,
+    RowDeliverySnapshot,
+    Server,
+    SharedRowWatch,
+    User,
+    WatchEvent,
+    WatchSession,
+)
+from shortlist.server.services.run_persistence import reconcile_from_events
+from shortlist.server.services.watch_events import RowMembership, event_credits, ingest_play_history, shared_credits
 from shortlist.server.services.watch_stream import WatchStream
+from shortlist.server.settings_store import SettingsStore
 
 OWNER_SESSION = """<MediaContainer size="1">
 <Video ratingKey="100" sessionKey="42" type="movie" duration="3000000" viewOffset="0">
@@ -146,3 +159,210 @@ def test_listener_refuses_unproven_owner_but_still_resolves_other_users(
     other = OWNER_SESSION.replace('<User id="1"', '<User id="501"')
     with patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=MagicMock(text=other)):
         assert stream._read_active_sessions(ctx)["42"]["account_id"] == 501
+
+
+HISTORY_WHEN = datetime(2026, 10, 1, 12, tzinfo=UTC)
+
+
+def _history_xml(*, account=1, when=HISTORY_WHEN, key="owner-completion", copies=1):
+    history_key = f' historyKey="{key}"' if key else ""
+    row = (
+        f'<Video accountID="{account}" ratingKey="100" type="movie" viewedAt="{int(when.timestamp())}"{history_key} />'
+    )
+    return f'<MediaContainer size="{copies}">{row * copies}</MediaContainer>'
+
+
+def _history_rows(sessions, *, personal=True):
+    """Delivered personal/shared identity, with run logs already absent."""
+    delivered = HISTORY_WHEN - timedelta(days=1)
+    with sessions() as session:
+        session.add_all(
+            [
+                Server(machine_id="linked-machine", url="http://pms:32400", token_enc="unused", owner_account_id=99),
+                User(id=7, plex_account_id=99, username="owner", slug="owner", enabled=personal),
+                Collection(slug="shared", name="Shared", build="shared", enabled=True),
+                Delivery(collection_slug="shared", user_slug="shared_shared", library_key="1", rating_key=700),
+                RowDeliverySnapshot(
+                    source_key="shared-history-delivery",
+                    collection_slug="shared",
+                    user_slug="shared_shared",
+                    library_key="1",
+                    shared=True,
+                    rating_key=700,
+                    delivered_at=delivered,
+                    ended_at=HISTORY_WHEN + timedelta(hours=1),
+                    audience=[99],
+                    muted=[],
+                    picks=[{"tmdb_id": 10, "rating_key": 100, "media_type": "movie"}],
+                ),
+            ]
+        )
+        if personal:
+            session.add_all(
+                [
+                    Collection(slug="personal", name="Personal", enabled=True),
+                    Delivery(collection_slug="personal", user_slug="owner", library_key="1", rating_key=701),
+                    PickRow(
+                        id=1,
+                        user_id=7,
+                        collection_slug="personal",
+                        section_key="1",
+                        tmdb_id=10,
+                        media_type="movie",
+                        rating_key=100,
+                        rank=1,
+                        created_at=delivered,
+                    ),
+                    RowDeliverySnapshot(
+                        source_key="personal-history-delivery",
+                        collection_slug="personal",
+                        user_id=7,
+                        user_slug="owner",
+                        library_key="1",
+                        shared=False,
+                        rating_key=701,
+                        delivered_at=delivered,
+                        ended_at=HISTORY_WHEN + timedelta(hours=1),
+                        picks=[{"pick_id": 1, "tmdb_id": 10, "rating_key": 100, "media_type": "movie"}],
+                    ),
+                ]
+            )
+        session.commit()
+
+
+@pytest.mark.parametrize("personal", [True, False])
+def test_history_parser_ingest_and_credit_use_verified_owner_without_run_logs(sessions, plex, personal):
+    _history_rows(sessions, personal=personal)
+    with patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=MagicMock(text=_history_xml())):
+        # Keep the server's raw parser evidence distinct from the verified ingestion boundary.
+        assert plex.play_history()[0].plex_account_id == 1
+        with sessions() as session:
+            assert ingest_play_history(session, plex, SettingsStore(session)) == 1
+            session.commit()
+
+    with sessions() as session:
+        event = session.query(WatchEvent).one()
+        assert event.plex_account_id == 99
+        assert event.viewed_at.replace(tzinfo=UTC) == HISTORY_WHEN
+        membership = RowMembership(session)
+        assert shared_credits(session, membership) == {(7, "shared", 10, "movie"): HISTORY_WHEN}
+        assert bool(event_credits(session, membership)) is personal
+
+    assert reconcile_from_events(sessions) == 1
+    with sessions() as session:
+        assert session.query(SharedRowWatch).one().watched_at.replace(tzinfo=UTC) == HISTORY_WHEN
+        if personal:
+            assert session.get(PickRow, 1).watched_at.replace(tzinfo=UTC) == HISTORY_WHEN
+
+
+@pytest.mark.parametrize("when", [HISTORY_WHEN - timedelta(days=1, seconds=1), HISTORY_WHEN + timedelta(hours=1)])
+def test_normalized_history_keeps_original_event_time_and_respects_delivery_interval(sessions, plex, when):
+    _history_rows(sessions)
+    with (
+        patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=MagicMock(text=_history_xml(when=when))),
+        sessions() as session,
+    ):
+        assert ingest_play_history(session, plex, SettingsStore(session)) == 1
+        session.commit()
+    with sessions() as session:
+        event = session.query(WatchEvent).one()
+        assert event.plex_account_id == 99
+        assert event.viewed_at.replace(tzinfo=UTC) == when
+        assert not event_credits(session, RowMembership(session))
+        assert not shared_credits(session, RowMembership(session))
+
+
+@pytest.mark.parametrize(
+    ("stored_machine", "actual_machine", "owner"),
+    [
+        (None, "linked-machine", 99),
+        ("another", "linked-machine", 99),
+        ("linked-machine", "", 99),
+        ("linked-machine", None, 99),
+        ("linked-machine", "linked-machine", None),
+        ("linked-machine", "linked-machine", 0),
+        ("linked-machine", "linked-machine", -9),
+    ],
+)
+def test_history_unproven_owner_stays_unresolved_and_other_account_is_preserved(
+    sessions, plex, stored_machine, actual_machine, owner
+):
+    _history_rows(sessions, personal=False)
+    with sessions() as session:
+        server = session.query(Server).one()
+        if stored_machine is None:
+            session.delete(server)
+        else:
+            server.machine_id, server.owner_account_id = stored_machine, owner
+        session.commit()
+    plex._server.machineIdentifier = actual_machine
+    xml = _history_xml().replace(
+        "</MediaContainer>",
+        '<Video accountID="501" ratingKey="100" type="movie" '
+        f'viewedAt="{int(HISTORY_WHEN.timestamp())}" historyKey="other" /></MediaContainer>',
+    )
+    with (
+        patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=MagicMock(text=xml)),
+        sessions() as session,
+    ):
+        assert ingest_play_history(session, plex, SettingsStore(session)) == 2
+        session.commit()
+    with sessions() as session:
+        assert {e.plex_account_id for e in session.query(WatchEvent)} == {1, 501}
+        assert not shared_credits(session, RowMembership(session))
+
+
+@pytest.mark.parametrize("key", ["owner-completion", None])
+def test_existing_unresolved_history_is_never_rewritten_or_duplicated(sessions, plex, key):
+    _history_rows(sessions)
+    with sessions() as session:
+        session.add(
+            WatchEvent(
+                plex_account_id=1,
+                rating_key=100,
+                media_type="movie",
+                viewed_at=HISTORY_WHEN,
+                source="history",
+                history_key=key,
+            )
+        )
+        session.commit()
+    with (
+        patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=MagicMock(text=_history_xml(key=key))),
+        sessions() as session,
+    ):
+        assert ingest_play_history(session, plex, SettingsStore(session)) == 0
+        session.commit()
+    with sessions() as session:
+        assert session.query(WatchEvent).one().plex_account_id == 1
+        assert not shared_credits(session, RowMembership(session))
+
+
+@pytest.mark.parametrize("key", ["owner-completion", None])
+def test_normalized_history_duplicates_and_overlapping_reads_are_idempotent(sessions, plex, key):
+    _history_rows(sessions)
+    with patch(
+        "shortlist.engine.clients.plex_pms.http_retry.get", return_value=MagicMock(text=_history_xml(key=key, copies=2))
+    ):
+        for expected in [1, 0]:
+            with sessions() as session:
+                assert ingest_play_history(session, plex, SettingsStore(session)) == expected
+                session.commit()
+    with sessions() as session:
+        assert session.query(WatchEvent).one().plex_account_id == 99
+
+
+@pytest.mark.parametrize("account", [2, 99, 501])
+def test_verified_history_owner_never_replaces_other_account_ids(sessions, plex, account):
+    _history_rows(sessions)
+    with (
+        patch(
+            "shortlist.engine.clients.plex_pms.http_retry.get",
+            return_value=MagicMock(text=_history_xml(account=account)),
+        ),
+        sessions() as session,
+    ):
+        assert ingest_play_history(session, plex, SettingsStore(session)) == 1
+        session.commit()
+    with sessions() as session:
+        assert session.query(WatchEvent).one().plex_account_id == account

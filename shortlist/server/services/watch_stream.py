@@ -43,8 +43,9 @@ import websockets
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
-from shortlist.server.db.models import Job, Server, Setting, WatchSession
+from shortlist.server.db.models import Job, Setting, WatchSession
 from shortlist.server.services import jobs
+from shortlist.server.services.watch_identity import verified_owner_account_id
 from shortlist.server.settings_store import SettingsStore
 
 #: How long a session may go unheard-from before we call it over. Comfortably above the ~10s cadence
@@ -590,16 +591,8 @@ class WatchStream:
 
     def _read_active_sessions(self, ctx) -> dict[str, dict]:
         """Resolve the PMS-local owner only against the linked, authenticated server identity."""
-        machine_id = ctx.plex.machine_id
-        owner_account_id = None
-        if isinstance(machine_id, str) and machine_id:
-            with self._sessions() as session:
-                server = session.query(Server).filter(Server.machine_id == machine_id).one_or_none()
-                if server is not None:
-                    # Setup verified ownership through plex.tv. `machine_id` above comes from the
-                    # authenticated PMS response, not this database record. Personal-row settings
-                    # do not change who owns the server or whether their shared-row plays count.
-                    owner_account_id = server.owner_account_id
+        with self._sessions() as session:
+            owner_account_id = verified_owner_account_id(session, ctx.plex)
         return ctx.plex.active_sessions(owner_account_id=owner_account_id)
 
     async def _housekeep(self, ctx) -> None:
