@@ -2735,7 +2735,6 @@
         "type": "object"
       },
       "DynamicClientRegistrationIn": {
-        "additionalProperties": false,
         "description": "RFC 7591 subset for public authorization-code clients.",
         "properties": {
           "client_name": {

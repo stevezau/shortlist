@@ -133,7 +133,8 @@ class LocalCredentialIn(BaseModel):
 class DynamicClientRegistrationIn(BaseModel):
     """RFC 7591 subset for public authorization-code clients."""
 
-    model_config = ConfigDict(extra="forbid")
+    # RFC 7591 §2 requires servers to ignore unrecognized client metadata.
+    model_config = ConfigDict(extra="ignore")
 
     client_name: str = Field(min_length=1, max_length=255)
     redirect_uris: list[Annotated[str, Field(min_length=1, max_length=2048)]] = Field(min_length=1, max_length=10)

@@ -1,11 +1,15 @@
 """Real ASGI lifespan and legacy MCP wire contracts with no external service calls."""
 
+import base64
+import hashlib
 from contextlib import contextmanager
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi.testclient import TestClient
 
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantPreset
+from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Server
 from shortlist.server.main import create_app
 
@@ -248,6 +252,123 @@ def _tool_call(client, name, request=None, *, expected_error=False):
     body = response.json()["result"]
     assert bool(body.get("isError")) is expected_error, (name, body)
     return body if expected_error else body["structuredContent"]
+
+
+def test_dynamic_registration_requires_explicit_consent_before_narrow_oauth_mcp_access(tmp_path, monkeypatch):
+    requested_scopes = {Capability.INSTANCE_READ.value, Capability.CATALOG_READ.value, Capability.CONFIG_READ.value}
+    redirect_uri = "http://127.0.0.1:49152/callback"
+    code_verifier = "v" * 64
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).rstrip(b"=").decode()
+    monkeypatch.setenv("SHORTLIST_MCP_URL", "http://localhost/mcp")
+    monkeypatch.delenv("APP_BASE_PATH", raising=False)
+    app = create_app(config_dir=tmp_path)
+
+    with TestClient(app, base_url="http://localhost") as client:
+        with app.state.sessions() as session:
+            session.add(
+                Server(
+                    machine_id="dcr-integration-test",
+                    url="http://unreachable.invalid",
+                    token_enc="not-a-token",
+                    owner_account_id=42,
+                )
+            )
+            session.commit()
+        repository = app.state.assistant_auth.repository
+        registration = client.post(
+            "/assistant/oauth/register",
+            json={
+                "client_name": "Codex",
+                "redirect_uris": [redirect_uri],
+                "scope": " ".join(sorted(requested_scopes)),
+                "application_type": "native",
+            },
+        )
+        assert registration.status_code == 201, registration.json()
+        registered = registration.json()
+        assert set(registered).isdisjoint({"scope", "application_type"})
+        assert repository.list_grant_summaries(42) == []
+
+        client.cookies.set(
+            SESSION_COOKIE,
+            session_serializer(app.state.session_secret).dumps({"account_id": 42, "username": "owner"}),
+        )
+        owner_headers = {CSRF_HEADER: "1"}
+        authorization = client.post(
+            "/assistant/oauth/authorize",
+            headers=owner_headers,
+            json={
+                "client_id": registered["client_id"],
+                "redirect_uri": redirect_uri,
+                "resource": app.state.assistant_auth.oauth.resource,
+                "scope": " ".join(sorted(requested_scopes)),
+                "state": "test-state",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        assert authorization.status_code == 200, authorization.json()
+        flow = authorization.json()
+        grant = client.post(
+            "/assistant/grants",
+            headers=owner_headers,
+            json={
+                "client_id": registered["client_id"],
+                "name": "Synthetic Codex read grant",
+                "preset": "inspect",
+                "capabilities": sorted(requested_scopes),
+                "constraints": {},
+            },
+        )
+        assert grant.status_code == 201, grant.json()
+        approved = client.post(
+            "/assistant/oauth/consent",
+            headers=owner_headers,
+            json={
+                "flow_id": flow["flow_id"],
+                "csrf_token": flow["csrf_token"],
+                "approved": True,
+                "grant_id": grant.json()["id"],
+            },
+        )
+        assert approved.status_code == 200, approved.json()
+        code = parse_qs(urlsplit(approved.json()["redirect_to"]).query)["code"][0]
+        token = client.post(
+            "/assistant/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": registered["client_id"],
+                "redirect_uri": redirect_uri,
+                "resource": app.state.assistant_auth.oauth.resource,
+                "code_verifier": code_verifier,
+            },
+        )
+        assert token.status_code == 200, token.json()
+        assert set(token.json()["scope"].split()) == requested_scopes
+
+        client.headers.update(
+            {
+                "Authorization": f"Bearer {token.json()['access_token']}",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": "2025-06-18",
+            }
+        )
+        initialized = _rpc(
+            client,
+            "/mcp",
+            "initialize",
+            {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "Codex", "version": "0.160"}},
+        )
+        assert initialized.status_code == 200, initialized.text
+        assert _tool_call(client, "shortlist_get_instance", None)["data"]
+        denied = _tool_call(
+            client,
+            "shortlist_plan_configuration",
+            {"values": {"row.name_template": "Synthetic denied change"}},
+            expected_error=True,
+        )
+        assert "missing_permission" in str(denied)
 
 
 @pytest.mark.parametrize("broad", [False, True])
