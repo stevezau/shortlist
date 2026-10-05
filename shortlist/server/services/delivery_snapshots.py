@@ -47,6 +47,29 @@ def close_snapshots(
         row.ended_at = max(utc(row.delivered_at), when)
 
 
+def record_delivery_boundaries(session: Session, user: User, boundaries: list[dict]) -> None:
+    """Close only this person's older intervals; a boundary alone proves no current membership."""
+    for entry in boundaries:
+        slug, library = entry.get("row_slug"), entry.get("library_key")
+        if not slug or not library or not isinstance(entry.get("rating_key"), int) or entry["rating_key"] <= 0:
+            continue
+        try:
+            when = utc(datetime.fromisoformat(entry["delivered_at"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        older = session.query(RowDeliverySnapshot).filter(
+            RowDeliverySnapshot.user_id == user.id,
+            RowDeliverySnapshot.user_slug == user.slug,
+            RowDeliverySnapshot.shared.is_(False),
+            RowDeliverySnapshot.collection_slug == slug,
+            RowDeliverySnapshot.library_key == str(library),
+            RowDeliverySnapshot.delivered_at < when,
+        )
+        for row in older:
+            if row.ended_at is None or utc(row.ended_at) > when:
+                row.ended_at = when
+
+
 def record_snapshots(
     session: Session,
     run_id: int,

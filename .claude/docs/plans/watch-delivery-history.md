@@ -39,4 +39,14 @@ Keep the delivered membership used by watch attribution independent of deletable
 - Release branch starts at official dev commit `d7b9a57a1067a532cd0c6e43d03f610ca32ca666`.
 - Only watch-owned files and named hunks were transplanted; unrelated assistant schema, jobs, API and provider changes were excluded. The original checkout is unchanged.
 - Regenerated the OpenAPI snapshot/types, documentation corpus and migration fingerprint in the isolated tree.
-- Final release-tree tests and deployment preflight are pending. The prior development-tree results above are not claimed as release-tree proof.
+- The isolated release passed 6,777 backend tests (2 skipped, 95.76% coverage), 3,112 frontend tests, 234 focused delivery/migration tests and 4 Runs browser checks; static checks and the production build passed.
+- Official CI found two additional browser fixtures still seeding only run-linked recommendations. A test-only correction passed all 11 watch-outcomes browser tests; runtime files were unchanged. Final commit `fb062850d7e2b514f694217297c0fe1da0c35393` passed every official CI gate, including Website, and published the verified official image.
+- Deployment verification matched the running source files and served web assets to that official release. Existing delivery records survive the migration-free correction below; no additional refresh is required by its installation.
+
+## Retry confirmation correction
+
+A sibling-library failure can retry an already delivered library. Retain its first confirmation only within that person's current row-retry chain, after an explicit unchanged-membership reread and exact collection, typed title, audience and mute equality. Changed or uncertain attempts get a new confirmation time.
+
+Keep the earliest confirmed boundary separately from the replaceable run breakdown. Persistence closes only older personal snapshots for the exact stored user ID, slug, row and library; boundary-only evidence never creates membership or edits the delivery ledger. Replaying it preserves snapshots beginning at that boundary or later. A genuinely changed or uncertain intermediate state remains uncredited.
+
+Three real delivery-path regressions failed before implementation: unchanged retry lost a new title's earlier eligibility; changed retry and exhausted retry kept an old title eligible too long. Implemented the chain-local confirmation cache and separate report boundaries without a schema change. The affected engine and persistence suites passed 741 tests. After two review corrections, all 32 snapshot tests passed, including changed/rebuilt/uncertain state, terminal failure, cancellation, skipped and unattempted libraries, exact owner scoping, and report replay. Final independent review found no issues. Full backend verification is pending before another publication.
