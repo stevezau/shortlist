@@ -1593,6 +1593,7 @@ class ContextBuilder:
             max_year=int(store.get("requests.max_year")),
             max_per_run=int(store.get("requests.max_per_run")),
             auto_send=bool(store.get("requests.auto_send")),
+            exclude_music_nonfiction=bool(store.get("requests.exclude_music_nonfiction")),
             auto_min_demand=int(store.get("requests.auto_min_demand")),
             auto_min_rating=float(store.get("requests.auto_min_rating")),
             auto_user_tag=bool(store.get("requests.auto_user_tag")),

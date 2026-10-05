@@ -73,6 +73,7 @@ DEFAULTS: dict[str, Any] = {
     "requests.max_per_run": 5,  # hard cap on titles auto-requested per run, total
     # Hybrid tier: titles clearing these higher bars auto-send; the rest queue for manual approval.
     "requests.auto_send": True,  # False = fully manual (every qualifying title waits for approval)
+    "requests.exclude_music_nonfiction": False,
     "requests.auto_min_demand": 3,  # auto-send only titles wanted by at least this many people
     "requests.auto_min_rating": 8.0,  # ...and rated at least this high on the chosen source
     "requests.tag": "shortlist",  # tag applied to every title Shortlist adds ("" = no tag)

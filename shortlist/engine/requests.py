@@ -41,6 +41,7 @@ from shortlist.engine.models import (
     SeerrTarget,
 )
 from shortlist.engine.request_alloc import allocate
+from shortlist.engine.request_content import CONTENT_REASON_PREFIX, music_nonfiction_reason
 
 # When gating on a non-TMDB source, only so many candidates are rated on MDBList per run, so a large
 # missing pool can't blow the daily cap (each title's whole rating set is cached, so re-runs mostly
@@ -197,6 +198,7 @@ def accumulate(
 # real failure must outlive a mere threshold note. Reword a reason below and this moves with it —
 # restating the strings in the classifier is what would let them drift apart silently.
 QUEUE_REASON_PREFIXES = (
+    CONTENT_REASON_PREFIX,
     "auto-send is off",
     "this row's own limit",
     "on an Arr exclusion list",
@@ -548,6 +550,17 @@ def request_missing(
         report.considered_by_row[slug] = len(survivors)
         cfg_by_row[slug] = cfg
         _enrich(tmdb, survivors)
+        if cfg.exclude_music_nonfiction:
+            allowed = []
+            for title in survivors:
+                reason = music_nonfiction_reason(tmdb, title)
+                if reason:
+                    title.detail = reason
+                    blocked[reason] += 1
+                    report.queued.append(title)
+                else:
+                    allowed.append(title)
+            survivors = allowed
         # Both routes end at Sonarr for a show: the *seerr passes it on by TVDB id, and deletes it when
         # it has none (see `_request_one_seerr`).
         no_tvdb = _shows_without_tvdb(tmdb, survivors) if cfg.target == "overseerr" or cfg.sonarr else set()
@@ -805,6 +818,11 @@ def _send_claims(
     outcomes: list[RequestOutcome] = []
     for slug, title in claims:
         cfg = cfg_by_row[slug]
+        if cfg.exclude_music_nonfiction:
+            reason = music_nonfiction_reason(tmdb, title)
+            if reason:
+                outcomes.append(RequestOutcome(title.tmdb_id, title.title, title.media_type, "error", reason))
+                continue
         if cfg.target == "overseerr":
             # On the ROUTE, not on the target: a chosen-but-unconnected Overseerr must not fall
             # through to the Arr branch below and be explained in that branch's words.

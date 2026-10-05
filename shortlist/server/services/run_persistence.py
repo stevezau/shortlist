@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.delivery import FREED_NAME_HELPER_KEY
 from shortlist.engine.models import SHARED_SLUG_PREFIX, RunReport
+from shortlist.engine.request_content import CONTENT_REASON_PREFIX
 from shortlist.engine.requests import QUEUE_REASON_PREFIXES
 from shortlist.server.db.models import (
     Collection,
@@ -183,7 +184,11 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     # `m.detail or row.detail` would overwrite yesterday's REAL failure ("Sonarr returned HTTP 503")
     # with today's threshold note — erasing the only record that Sonarr was broken. A failure detail
     # is the more important fact, so it survives until a send actually succeeds.
-    if m.detail and (not _is_failure_detail(row.detail) or _is_failure_detail(m.detail)):
+    # A content restriction prevents even manual approval, so the current restriction takes
+    # precedence over an old downloader failure. Ordinary threshold notes still preserve failures.
+    if m.detail and (
+        m.detail.startswith(CONTENT_REASON_PREFIX) or not _is_failure_detail(row.detail) or _is_failure_detail(m.detail)
+    ):
         row.detail = m.detail
     row.excluded = m.excluded  # refresh the exclusion flag each run (a removed exclusion clears it)
 

@@ -248,6 +248,20 @@ class TmdbClient:
         data = self.details(tmdb_id, media_type)
         return [g["id"] for g in data.get("genres", []) if isinstance(g, dict) and "id" in g]
 
+    def keyword_ids_for(self, tmdb_id: int) -> set[int]:
+        """A movie's structured keyword ids, cached like the other TMDB lookups.
+
+        A missing/malformed payload is unknown, distinct from a successful empty keyword list.
+        Content restrictions must not treat a 404's empty dict as evidence that a movie is allowed.
+        """
+        data = self._get(f"/movie/{tmdb_id}/keywords")
+        keywords = data.get("keywords")
+        if not isinstance(keywords, list) or any(
+            not isinstance(k, dict) or type(k.get("id")) is not int for k in keywords
+        ):
+            raise ValueError("TMDB movie keywords unavailable")
+        return {k["id"] for k in keywords}
+
     def collection_members(self, collection_id: int) -> set[int]:
         """Every movie tmdb_id in a TMDB collection (a "franchise"), from ONE cached call.
 

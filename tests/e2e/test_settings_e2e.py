@@ -41,6 +41,24 @@ def test_requests_shortcut_reveals_connections_and_preserves_the_request_form(pa
     assert app.api("GET", "/api/settings").json()["requests.enabled"] is True
 
 
+def test_movie_content_filter_survives_reload_without_disabling_auto_send(page: Page, app: ShortlistApp):
+    app.api("PUT", "/api/settings", json={"values": {"requests.enabled": True, "requests.auto_send": True}})
+    _open_settings(page, "requests")
+    toggle = page.get_by_role("switch", name="Skip concerts and music documentaries")
+    expect(toggle).not_to_be_checked()
+    toggle.click()
+    for _ in range(24):
+        stored = app.api("GET", "/api/settings").json()
+        if stored.get("requests.exclude_music_nonfiction") is True:
+            break
+        page.wait_for_timeout(250)
+    assert stored["requests.exclude_music_nonfiction"] is True
+    assert stored["requests.enabled"] is True
+    assert stored["requests.auto_send"] is True
+    page.reload()
+    expect(page.get_by_role("switch", name="Skip concerts and music documentaries")).to_be_checked()
+
+
 class TestConnectionCards:
     def test_every_test_button_reports_the_real_state_of_its_connection(self, page: Page, app: ShortlistApp):
         """All four services, each hitting its real client — not one happy-path card.

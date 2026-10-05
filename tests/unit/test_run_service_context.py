@@ -627,6 +627,13 @@ class TestBuildRequests:
         store = self._store(sessions, tmp_path, {})
         assert ContextBuilder._build_requests(store) is None
 
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_movie_content_policy_reaches_the_engine(self, sessions, tmp_path, enabled):
+        store = self._store(
+            sessions, tmp_path, {"requests.enabled": True, "requests.exclude_music_nonfiction": enabled}
+        )
+        assert ContextBuilder._build_requests(store).exclude_music_nonfiction is enabled
+
     _SEERR: ClassVar[dict[str, object]] = {
         "requests.enabled": True,
         "requests.target": "overseerr",

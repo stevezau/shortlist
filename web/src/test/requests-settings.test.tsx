@@ -83,6 +83,18 @@ function renderPanel(settings: Settings = {}) {
 }
 
 describe("RequestsSettings", () => {
+  it("opts into the movie content filter while preserving automatic requests", async () => {
+    renderPanel({ "requests.enabled": true, "requests.auto_send": true });
+    const toggle = screen.getByRole("switch", { name: "Skip concerts and music documentaries" });
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    await waitFor(() => expect(putSettings).toHaveBeenCalledWith(expect.objectContaining({
+      "requests.exclude_music_nonfiction": true,
+      "requests.enabled": true,
+      "requests.auto_send": true,
+    })));
+  });
+
   beforeEach(() => {
     putSettings.mockClear();
     // Reset per test: one describe below points this at a rejection, and a leaked failure would

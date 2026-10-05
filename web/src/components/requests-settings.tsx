@@ -79,6 +79,7 @@ interface RequestsForm {
   maxYear: number;
   maxPerRun: number;
   autoSend: boolean;
+  excludeMusicNonfiction: boolean;
   autoMinDemand: number;
   autoMinRating: number;
   tag: string;
@@ -151,6 +152,7 @@ function readForm(settings: Settings): RequestsForm {
     maxYear: settingNumber(settings, "requests.max_year", 0),
     maxPerRun: settingNumber(settings, "requests.max_per_run", 5),
     autoSend: settingBool(settings, "requests.auto_send", true),
+    excludeMusicNonfiction: settingBool(settings, "requests.exclude_music_nonfiction", false),
     autoMinDemand: settingNumber(settings, "requests.auto_min_demand", 3),
     autoMinRating: settingNumber(settings, "requests.auto_min_rating", 8),
     tag: settingString(settings, "requests.tag", "shortlist"),
@@ -632,6 +634,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.max_year": form.maxYear,
       "requests.max_per_run": form.maxPerRun,
       "requests.auto_send": form.autoSend,
+      "requests.exclude_music_nonfiction": form.excludeMusicNonfiction,
       "requests.auto_min_demand": form.autoMinDemand,
       "requests.auto_min_rating": form.autoMinRating,
       "requests.tag": form.tag.trim(),
@@ -809,6 +812,23 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 </div>
               </>
             )}
+
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Skip concerts and music documentaries</p>
+                <p className="text-sm text-muted-foreground">
+                  Holds movie requests identified by TMDB as music documentaries or live music
+                  performances, including titles already waiting in the inbox. Fictional musicals
+                  and other documentaries remain eligible. Missing metadata holds that movie for
+                  a later retry. Existing downloads and TV requests are unchanged.
+                </p>
+              </div>
+              <Switch
+                checked={form.excludeMusicNonfiction}
+                onCheckedChange={(excludeMusicNonfiction) => set({ excludeMusicNonfiction })}
+                aria-label="Skip concerts and music documentaries"
+              />
+            </div>
 
             {/* Deliberately BEFORE Guardrails. Read the other way round, "Minimum rating 7" looked
                 like the bar for requesting at all, and the owner only met the second, higher bar two

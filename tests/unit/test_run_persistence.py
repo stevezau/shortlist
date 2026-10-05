@@ -74,6 +74,25 @@ class TestARealFailureOutlivesAThresholdReason:
         assert _is_failure_detail("") is False
         assert _is_failure_detail(None) is False
 
+    @pytest.mark.parametrize(
+        ("new_detail", "expected"),
+        [
+            ("music content filter: music documentary", "music content filter: music documentary"),
+            ("max_per_run (3) already filled", "Radarr returned HTTP 503"),
+        ],
+    )
+    def test_current_content_restriction_is_visible_over_a_previous_send_error(self, new_detail, expected):
+        from shortlist.engine.models import MediaType, MissingTitle
+        from shortlist.server.db.models import RequestCandidate
+        from shortlist.server.services.run_persistence import _refresh_pending
+
+        row = RequestCandidate(
+            tmdb_id=100, media_type="movie", title="Neutral title", detail="Radarr returned HTTP 503"
+        )
+        title = MissingTitle(100, "Neutral title", MediaType.MOVIE, 2020, 8.0, 500, detail=new_detail)
+        _refresh_pending(row, title)
+        assert row.detail == expected
+
 
 class TestTheShelfEventsANightlyRunEmits:
     """`_emit_hub_ordering_events` — the RUN path, which `jobs._audit_hub_orderings` mirrors for the

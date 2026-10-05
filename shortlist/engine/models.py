@@ -1025,6 +1025,9 @@ class RequestConfig:
     # taster ("firstSeason") or a catch-up-from-here ("none", added unmonitored) is often what was meant.
     sonarr_monitor: str = "all"
 
+    # Global, opt-in movie restriction, also enforced when approving an existing inbox entry.
+    exclude_music_nonfiction: bool = False
+
     def __post_init__(self) -> None:
         if self.max_per_row is None:
             self.max_per_row = self.max_per_run

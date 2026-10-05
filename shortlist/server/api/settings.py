@@ -330,6 +330,7 @@ VALIDATORS = {
     "requests.enabled": _is_bool,
     "requests.target": _one_of(*REQUEST_TARGETS),
     "requests.auto_send": _is_bool,
+    "requests.exclude_music_nonfiction": _is_bool,
     "candidates.sources": _known_sources,
     "llm_web.search_provider": _one_of("native", "exa", "searxng"),
     "llm_web.instructions": _text_at_most(MAX_INSTRUCTIONS_CHARS),

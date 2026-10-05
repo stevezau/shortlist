@@ -19,6 +19,16 @@ class TestSettingsValidation:
     """PUT /api/settings validated the KEY but never the VALUE, so any non-UI client could push a
     value the engine then choked on — or, worse, one that quietly disabled a safety rule."""
 
+    def test_music_content_filter_is_opt_in_and_accepts_only_booleans(self, client: TestClient):
+        key = "requests.exclude_music_nonfiction"
+        assert client.get("/api/settings").json()[key] is False
+        for value in (True, False):
+            response = client.put("/api/settings", json={"values": {key: value}})
+            assert response.status_code == 200, response.text
+            assert client.get("/api/settings").json()[key] is value
+        for value in ("true", 1, None):
+            assert client.put("/api/settings", json={"values": {key: value}}).status_code == 422
+
     def test_the_plextv_throttle_floor_accepts_zero_and_rejects_out_of_range(self, client: TestClient):
         # `plextv.throttle_s` is now the FLOOR (min seconds) between plex.tv writes: 0 = as fast as
         # plex.tv accepts, safe because the client backs off adaptively on a 429 (rule 6). So 0 is

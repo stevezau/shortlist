@@ -3,7 +3,7 @@ title: "Requests: Radarr and Sonarr"
 description: Let Shortlist ask Radarr or Sonarr for titles your people want that the library doesn't have yet, with an approval inbox and guardrails.
 heading: Requests (Radarr and Sonarr)
 nav_order: 6
-updated: 2026-10-03
+updated: 2026-10-05
 ---
 
 ## Reviewing the inbox
@@ -253,6 +253,25 @@ Why a run can rate so much less than it wanted to: it rates titles **most-wanted
 them **on their score**. On a large library the most-wanted _missing_ titles are often the ones
 nobody thought worth adding, so the top of the list can be the worst-rated part of it, and the titles
 that would pass sit further down. A bigger budget reaches them.
+
+## Skipping concerts and music documentaries
+
+Under **Settings → Defaults → Requests**, turn on **Skip concerts and music documentaries**
+if you want movie requests to avoid this content. It is off by default and applies to both
+automatic requests and approval of titles already waiting in the inbox, on either request route.
+Held movies show the reason in the inbox and do not use an automatic request slot.
+
+The check uses TMDB genres and structured keywords: Music + Documentary; Documentary with a music
+documentary or concert-film keyword; or Music with a concert/live-performance keyword and no fiction
+genre. Music alone and Documentary alone are allowed. Fictional musicals with a fiction genre remain
+eligible, even if they have a concert keyword. The Music + Documentary combination still counts as
+nonfiction when other genres are also present.
+
+If the required metadata is unavailable, that movie waits for a later retry; other eligible requests
+continue. TMDB tagging can be incomplete or wrong, so this is a metadata-based restriction rather
+than a guarantee about every movie's content. Disable the option to approve an exception. It does
+not change TV requests or titles already added to the downloader, and it leaves other request
+settings, including automatic sending, in effect.
 
 ## Too many subtitles
 

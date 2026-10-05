@@ -151,6 +151,8 @@ but nobody pictured here watched anything.</sub>
   **Radarr/Sonarr** for it, or file a request in **Overseerr/Jellyseerr**. Off by default and
   cautious: the strongest few auto-send each night, and the rest wait in a **Requests** inbox for
   one-click approval.
+- 🎵 **Optional concert and music-documentary filter.** Keep fictional musicals and other
+  documentaries eligible while holding music nonfiction identified by TMDB, including inbox approvals.
 - 📬 **A "Your requests" row.** What each person asked for in Overseerr (or tagged with their name in
   Radarr/Sonarr), once it's on Plex and until they've watched it. Private per person, newest first,
   no AI. A person with nothing ready simply has no row.
