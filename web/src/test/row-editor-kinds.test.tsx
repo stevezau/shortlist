@@ -25,10 +25,14 @@ import {
 import { findRowTemplate, ROW_TEMPLATES, type RowTemplate } from "@/lib/row-templates";
 import type { Collection, CollectionInput } from "@/lib/types";
 import { BYW_NAME, CTX, FIXTURES, named, row } from "@/test/row-kind-fixtures";
-import { BUILTINS, CATALOGUE } from "@/test/season-fixtures";
+import { BUILTINS, CATALOGUE, THANKSGIVING, THANKSGIVING_US, preview } from "@/test/season-fixtures";
 
 // Mutable so a test can serve the owner's own seasons beside the built-ins.
-const catalogueData = vi.hoisted(() => ({ current: [] as unknown[] }));
+const catalogueData = vi.hoisted(() => ({
+  current: [] as unknown[],
+  load: null as (() => Promise<unknown[]>) | null,
+}));
+const seasonCalls = vi.hoisted(() => ({ presets: [] as unknown[], create: vi.fn() }));
 
 const { updateCollection, createCollection, settingsData, librariesData, rowSources } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
@@ -69,8 +73,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getSettings: () => Promise.resolve(settingsData.current),
       getLibraries: () => Promise.resolve(librariesData.current),
       getLibraryCollections: () => Promise.resolve([]),
-      getSeasons: () => Promise.resolve(catalogueData.current),
-      getSeasonPresets: () => Promise.resolve([]),
+      getSeasons: () => catalogueData.load?.() ?? Promise.resolve(catalogueData.current),
+      getSeasonPresets: () => Promise.resolve(seasonCalls.presets),
+      createSeason: (body: unknown) => seasonCalls.create(body),
+      previewSeason: () => Promise.resolve(preview()),
       getImageProvider: () => Promise.resolve({ capable: false, provider: "", reason: "" }),
       getRequestRowSources: () => Promise.resolve(rowSources),
       startRun: () => Promise.resolve({ run_id: 1 }),
@@ -138,6 +144,133 @@ beforeEach(() => {
   settingsData.current = {};
   librariesData.current = [];
   catalogueData.current = BUILTINS;
+  catalogueData.load = null;
+  seasonCalls.presets = [];
+  seasonCalls.create.mockReset();
+});
+
+describe("pending ready-made season saves", () => {
+  async function beginAdd(collection: Collection | null = null, beforeAdd?: () => Promise<void>) {
+    let finish!: (season: typeof THANKSGIVING) => void;
+    let fail!: (error: Error) => void;
+    seasonCalls.presets = [THANKSGIVING_US];
+    seasonCalls.create.mockReturnValue(new Promise<typeof THANKSGIVING>((resolve, reject) => {
+      finish = resolve;
+      fail = reject;
+    }));
+    const callbacks = renderEditor(collection, collection ? null : findRowTemplate("seasonal")!);
+    await beforeAdd?.();
+    await userEvent.click(await screen.findByRole("button", { name: "Add Thanksgiving (US)" }));
+    expect(seasonCalls.create).toHaveBeenCalledWith({
+      name: "Thanksgiving", emoji: "🦃", preset: "thanksgiving_us",
+      rule: { kind: "nth", month: 11, day: 1, nth: 4, weekday: 3, offset: 0 },
+      lead_days: 14, after_days: 0, tags: [{ id: 4543, name: "thanksgiving" }],
+      genre: null, excluded_genres: [], collections: [], picks: [],
+    });
+    const completeCreate = () => {
+      catalogueData.current = CATALOGUE;
+      seasonCalls.presets = [];
+      finish(THANKSGIVING);
+    };
+    return {
+      ...callbacks, completeCreate,
+      fail: async () => {
+        fail(new ApiError(503, "Season service unavailable."));
+        await screen.findByText(/Season service unavailable/);
+      },
+      finish: async () => {
+        completeCreate();
+        await waitFor(() => expect(document.querySelector('li[data-season="thanksgiving"] input')).toBeChecked());
+      },
+    };
+  }
+
+  it("waits for a pending preset Add before saving the row with its new season", async () => {
+    const pending = await beginAdd();
+    await save();
+    const bodySentTooEarly = createCollection.mock.calls[0]?.[0];
+    const closedTooEarly = pending.onClose.mock.calls.length;
+    await pending.finish();
+
+    expect(bodySentTooEarly).toBeUndefined();
+    expect(closedTooEarly).toBe(0);
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith(expect.objectContaining({
+      seasons: ["valentines", "halloween", "thanksgiving", "christmas"],
+    })));
+  });
+
+  it("waits for a pending preset Add before leaving a new row", async () => {
+    const pending = await beginAdd();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const closedTooEarly = pending.onClose.mock.calls.length;
+    await pending.finish();
+
+    expect(closedTooEarly).toBe(0);
+    expect(createCollection).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(pending.onClose).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a saved row's draft intact while a preset Add is pending", async () => {
+    const pending = await beginAdd(
+      row({ ...named("{season} picks"), build: "shared", seasons: ["christmas"] }),
+      () => userEvent.type(screen.getByLabelText("Description"), "Unfinished draft"),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    const descriptionAfterDiscard = (screen.getByLabelText("Description") as HTMLTextAreaElement).value;
+    await pending.finish();
+
+    expect(descriptionAfterDiscard).toBe("Unfinished draft");
+    expect(updateCollection).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByLabelText("Description")).toHaveValue("");
+  });
+
+  it("keeps row saving blocked until the added season's catalogue refetch finishes", async () => {
+    const pending = await beginAdd();
+    let finishRefresh!: (seasons: unknown[]) => void;
+    catalogueData.load = vi.fn(() => new Promise<unknown[]>((resolve) => { finishRefresh = resolve; }));
+    pending.completeCreate();
+    await waitFor(() => expect(catalogueData.load).toHaveBeenCalledWith());
+    await save();
+    const bodySentTooEarly = createCollection.mock.calls[0]?.[0];
+    finishRefresh(CATALOGUE);
+    await waitFor(() => expect(document.querySelector('li[data-season="thanksgiving"] input')).toBeChecked());
+
+    expect(bodySentTooEarly).toBeUndefined();
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith(expect.objectContaining({
+      seasons: ["valentines", "halloween", "thanksgiving", "christmas"],
+    })));
+  });
+
+  it("lets a failed preset Add unlock row editing and save without the failed season", async () => {
+    const pending = await beginAdd();
+    await pending.fail();
+    expect(screen.getByRole("button", { name: "Add row" })).toBeEnabled();
+    await userEvent.type(screen.getByLabelText("Description"), "Still editable");
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith(expect.objectContaining({
+      description: "Still editable", seasons: ["valentines", "halloween", "christmas"],
+    })));
+  });
+
+  it("keeps the row's kind and sharing mode intact while a preset Add is pending", async () => {
+    const pending = await beginAdd();
+    await userEvent.click(kindRadio("Popular on this server"));
+    const seasonalBeforeComplete = (kindRadio("Seasonal") as HTMLInputElement).checked;
+    await userEvent.click(buildRadio("Per person"));
+    const sharedBeforeComplete = (buildRadio("Shared") as HTMLInputElement).checked;
+    await pending.finish();
+
+    expect(seasonalBeforeComplete).toBe(true);
+    expect(sharedBeforeComplete).toBe(true);
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith(expect.objectContaining({
+      build: "shared", seasons: ["valentines", "halloween", "thanksgiving", "christmas"],
+    })));
+  });
 });
 
 describe("explicit Per person / Shared choice", () => {

@@ -8,9 +8,9 @@ import { SeasonYearStrip } from "@/components/rows/seasons/season-year-strip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { queryKeys, useSeasons } from "@/lib/queries";
+import { queryKeys, useCreateSeason, useSeasons } from "@/lib/queries";
 import { usesSeason } from "@/lib/placeholders";
-import { MAX_AFTER_DAYS, MAX_LEAD_DAYS, clampDays } from "@/lib/season-draft";
+import { MAX_AFTER_DAYS, MAX_LEAD_DAYS, clampDays, draftFrom, seasonBody } from "@/lib/season-draft";
 import { titleNoun, type SeasonRow } from "@/lib/season-verdict";
 import { isNightly, seasonStatusLine } from "@/lib/seasons";
 import type { Season, SeasonStatus } from "@/lib/types";
@@ -28,8 +28,8 @@ type SeasonsValue = {
  * December — and is hidden between seasons, keeping its collection so it comes straight back. Where it
  * is TODAY comes from the server (`status`), on the clock Plex follows.
  *
- * Every season on the server is listed to tick. Below the list, ready-made seasons and Create your own
- * open the season editor; a season saved there is kept for the whole server and ticked here. The row's
+ * Every season on the server is listed to tick. Ready-made seasons can be added with their defaults
+ * or customised in the editor; either saves for the whole server and ticks it here. The row's
  * own timing applies to the built-ins only: a season of the owner's carries its own (#137 D8).
  *
  * Only rendered for a Seasonal row: the editor's kind picker is what makes a row seasonal or not
@@ -61,10 +61,12 @@ export function RowSeasonsField({
   savedRow: { id: number; seasons: readonly string[] } | null;
 }) {
   const catalogue = useSeasons();
+  const create = useCreateSeason();
   const queryClient = useQueryClient();
   const [editor, setEditor] = useState<SeasonEditorTarget | null>(null);
   const [keptLast, setKeptLast] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
+  const addedDirectly = useRef<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   // What had focus when the editor opened, and where focus goes when it closes: a saved season's
@@ -86,6 +88,17 @@ export function RowSeasonsField({
     // Never down to none: that would make it a row that follows nothing. `allGone` says what to do.
     if (kept.length > 0 && kept.length < value.seasons.length) onChange({ seasons: kept });
   }, [catalogue.isSuccess, catalogue.data, value.seasons, onChange]);
+
+  useEffect(() => {
+    if (!addedDirectly.current) return;
+    const checkbox = [...(root.current?.querySelectorAll<HTMLElement>("[data-season]") ?? [])]
+      .find((item) => item.dataset.season === addedDirectly.current)
+      ?.querySelector<HTMLInputElement>("input[type=checkbox]");
+    if (checkbox) {
+      checkbox.focus();
+      addedDirectly.current = null;
+    }
+  }, [saved, catalogue.data]);
 
   /** The row's seasons in calendar order — the server's catalogue order — and only ones it has. */
   const ordered = (chosen: readonly string[], catalogueNow: readonly Season[] = seasons) =>
@@ -183,7 +196,7 @@ export function RowSeasonsField({
           </Button>
         </div>
       ) : (
-        <fieldset>
+        <fieldset disabled={create.isPending}>
           <legend className="sr-only">Seasons</legend>
           <ul className="space-y-2">
             {seasons.map((season) => (
@@ -221,7 +234,12 @@ export function RowSeasonsField({
         <SeasonPresets
           defaultOpen={ticked.every((season) => season.builtin)}
           row={row}
-          onAdd={(preset) => openEditor({ kind: "preset", preset })}
+          onAdd={async (preset) => {
+            const season = await create.mutateAsync(seasonBody(draftFrom(preset), preset.key));
+            addedDirectly.current = season.slug;
+            onSaved(season.slug);
+          }}
+          onCustomise={(preset) => openEditor({ kind: "preset", preset })}
           onCreate={() => openEditor({ kind: "create" })}
         />
       )}

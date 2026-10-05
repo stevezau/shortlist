@@ -4119,7 +4119,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "fixed" | "nth" | "easter";
+            kind: "fixed" | "nth" | "easter" | "month";
             /**
              * Month
              * @default 1
@@ -5085,7 +5085,7 @@ export interface components {
         };
         /**
          * PresetOut
-         * @description A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``.
+         * @description A ready-made season's save fields plus catalogue metadata. ``preset`` is ``key``.
          */
         PresetOut: {
             /**
@@ -5093,8 +5093,19 @@ export interface components {
              * @default 0
              */
             after_days: number;
+            /**
+             * Category
+             * @default holidays
+             * @enum {string}
+             */
+            category: "holidays" | "film_days" | "spotlights";
             /** Collections */
             collections?: components["schemas"]["CollectionIO"][];
+            /**
+             * Description
+             * @default
+             */
+            description: string;
             /** Emoji */
             emoji: string;
             /** Excluded Genres */
@@ -6173,6 +6184,8 @@ export interface components {
         SeasonDateOut: {
             /** Next Date */
             next_date: string | null;
+            /** Next Windows */
+            next_windows?: components["schemas"]["shortlist__server__api__seasons__SeasonWindowOut"][];
             /** Rule Error */
             rule_error: string | null;
         } & {
@@ -6236,6 +6249,8 @@ export interface components {
             name: string;
             /** Next Dates */
             next_dates: string[];
+            /** Next Windows */
+            next_windows?: components["schemas"]["shortlist__server__api__seasons__SeasonWindowOut"][];
             /** Picks */
             picks?: components["schemas"]["PickIO"][];
             /** Preset */
@@ -6320,26 +6335,8 @@ export interface components {
          * @description Where a seasonal row is in its calendar today, judged on the SERVER's clock.
          */
         SeasonStatusOut: {
-            next: components["schemas"]["SeasonWindowOut"] | null;
-            showing: components["schemas"]["SeasonWindowOut"] | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * SeasonWindowOut
-         * @description One season's run for a row: which season, and the first and last days the row shows it.
-         */
-        SeasonWindowOut: {
-            /** Emoji */
-            emoji: string;
-            /** Ends */
-            ends: string;
-            /** Name */
-            name: string;
-            /** Slug */
-            slug: string;
-            /** Starts */
-            starts: string;
+            next: components["schemas"]["shortlist__server__api__collections__SeasonWindowOut"] | null;
+            showing: components["schemas"]["shortlist__server__api__collections__SeasonWindowOut"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -7597,6 +7594,36 @@ export interface components {
             completed: boolean;
             /** Step */
             step: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SeasonWindowOut
+         * @description One season's run for a row: which season, and the first and last days the row shows it.
+         */
+        shortlist__server__api__collections__SeasonWindowOut: {
+            /** Emoji */
+            emoji: string;
+            /** Ends */
+            ends: string;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            /** Starts */
+            starts: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SeasonWindowOut
+         * @description Inclusive calendar dates for a month-long season.
+         */
+        shortlist__server__api__seasons__SeasonWindowOut: {
+            /** End */
+            end: string;
+            /** Start */
+            start: string;
         } & {
             [key: string]: unknown;
         };

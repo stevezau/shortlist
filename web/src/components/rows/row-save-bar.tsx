@@ -16,6 +16,7 @@ export function RowSaveBar({
   isNew,
   saving,
   saveDisabled,
+  busyMessage,
   onSave,
   onDiscard,
   onCancel,
@@ -24,6 +25,8 @@ export function RowSaveBar({
   isNew: boolean;
   saving: boolean;
   saveDisabled: boolean;
+  /** A nested save must finish before the row can be saved or its draft discarded. */
+  busyMessage?: string;
   onSave: () => void;
   /** Put the form back to the saved row. */
   onDiscard: () => void;
@@ -42,7 +45,7 @@ export function RowSaveBar({
         className="w-full min-w-0 truncate text-sm text-muted-foreground sm:mr-auto sm:w-auto sm:flex-1"
         title={summary || undefined}
       >
-        {changes.length > 0 ? (
+        {busyMessage ? busyMessage : changes.length > 0 ? (
           <>
             <span aria-hidden="true" className="mr-2 inline-block size-1.5 rounded-full bg-warning align-middle" />
             <b className="font-semibold text-foreground">
@@ -58,15 +61,15 @@ export function RowSaveBar({
         )}
       </p>
       {isNew ? (
-        <Button variant="ghost" onClick={onCancel}>
+        <Button variant="ghost" onClick={onCancel} disabled={Boolean(busyMessage)}>
           Cancel
         </Button>
       ) : (
-        <Button variant="ghost" onClick={onDiscard} disabled={changes.length === 0}>
+        <Button variant="ghost" onClick={onDiscard} disabled={changes.length === 0 || Boolean(busyMessage)}>
           Discard
         </Button>
       )}
-      <Button onClick={onSave} loading={saving} disabled={saveDisabled}>
+      <Button onClick={onSave} loading={saving} disabled={saveDisabled || Boolean(busyMessage)}>
         {isNew ? "Add row" : "Save changes"}
       </Button>
     </div>

@@ -1375,7 +1375,8 @@ keeps the selected seasons and their timing.
 
 ## The seasons
 
-Three seasons are built in, ten more ready-made holidays can be added, and you can make your own.
+Three seasons are built in. Add more from the ready-made catalogue of holidays, film days and monthly
+spotlights, or make your own.
 Tick the ones this row follows. Each row ticks its own, so one seasonal row can follow Halloween and another Christmas.
 
 <div class="table-scroll table--compact">
@@ -1395,20 +1396,30 @@ Tick the ones this row follows. Each row ticks its own, so one seasonal row can 
 
 **Built-in seasons show from N days before and stay N days after** (0–90 days before, default 30;
 0–30 days after, default 0) set each built-in season's window. They give the dates in the table above.
-When two windows overlap, the season coming up next wins. Weekdays under **Placement** narrow a
-season further. Your own seasons carry their own timing.
+When windows overlap, the season coming up next wins. Full-month seasons use the month's last day
+for this comparison; a dated occasion wins a tie with a full-month season. An earlier occasion can
+temporarily take over a monthly spotlight. Weekdays under **Placement** narrow a season further.
+Your own seasons carry their own timing.
 
-### Your own seasons and ready-made holidays
+### Your own seasons and ready-made choices
 
 The year strip under the season list draws every ticked season's window and says where two overlap.
 
-**Adding a ready-made season.** Open **Add more seasons** and press **Add** on a card. The editor opens
-filled in, so you can check it, rename it or change the films before saving. Saving ticks it in the
-row you are editing. Ready-made seasons are New Year's Eve, 4th of July, Thanksgiving (US),
-Thanksgiving (Canada), St Patrick's Day, Easter, Mother's Day (US, CA, AU, NZ), Mothering Sunday (UK,
-IE), Father's Day (US, UK, CA, IE) and Father's Day (AU, NZ). A card shows its region, but the
-season's name does not, because the name appears in Plex row titles. Season names must be unique, so
-to add both regional versions of a holiday, rename one first. A season name is also refused when it
+**Adding a ready-made season.** Open **Add more seasons**. Search by name or description, or browse
+**Holidays**, **Film days** and **Spotlights**. Each choice explains its theme and dates, counts matches
+in this row's libraries, and shows up to three matching titles when available. The first six choices
+are shown initially; **Show all** reveals the rest.
+
+Press **Add** to save the season with its supplied dates and sources and tick it in the row you are
+editing. **Save the row** to keep that selection. The season is available to every Seasonal row on
+the server as soon as it is added. Use **Customise** to open the editor first if you want to rename it,
+change its dates or adjust its sources. If an Add fails, its message stays beside the choice with a
+way to retry. A film-only choice cannot be added directly to a TV-only row; use **Customise** to add
+sources that reach shows.
+
+Regional holidays include Thanksgiving, Mother's Day and Father's Day. A choice shows its region,
+but the season's name does not, because the name appears in Plex row titles. Season names must be unique,
+so use **Customise** to rename one when adding both regional versions. A season name is also refused when it
 would give a row named after its season (`{season} picks`) the title another row already has in a
 library they share, because the two rows would then be one collection on Plex.
 
@@ -1417,10 +1428,12 @@ library they share, because the two rows would then be one collection on Plex.
 - a fixed day, such as 17 March;
 - the nth or last weekday of a month, such as the 4th Thursday of November;
 - a day counted from Easter, up to 63 days either side.
+- a **Full month**, from its first day through its last, including 29 February in leap years.
 
-29 February is refused, because the season would skip three years in four. Under **Shows from N days
+29 February is refused as a fixed day, because the season would skip three years in four. Under **Shows from N days
 before / stays N days after** (default 7 before, 0 after) set its window. The editor shows the next
-date and the window it gives.
+date and the window it gives. Full-month seasons have no days-before or days-after controls: their
+window is exactly the selected calendar month.
 
 **Where its films come from.** A season's films are the union of four sources. Add at least one:
 
@@ -1445,7 +1458,10 @@ the row's libraries. It sets the count against the row's size. A season shows on
 - **People's rows will be much alike**: a per-person row has fewer than 100 films to draw from,
   so everyone's row would be nearly the same. The hint directs you to **Shared** in the row editor,
   which uses the season's most-watched titles. This never shows for a shared row.
-- **Enough films for this row.**
+- **Enough matches before row filters.**
+
+These counts describe source matches, before the row's remaining filters. A shared row's minimum
+watcher count, watched-title rules and other row filters can still make the delivered row shorter.
 
 **When a season finds nothing.** A season can find nothing for a row in one of its libraries: a thin
 season everyone has already watched, a TV library no tag reaches, or a Kometa collection that does
@@ -3800,14 +3816,19 @@ GET  /api/picks/{rating_key}/poster -> image bytes
      `rating_key` and only one of the four construction sites carries a `poster_path`, so the PMS is the
      only source that covers all of them — no new column, no migration, no backfill gap. Owner-gated,
      and it refuses any thumb path that is not on this server.
-GET  /api/seasons -> [{slug, name, emoji, description, builtin, rule, rule_label, next_dates, lead_days, after_days, preset, tags, genre, excluded_genres, collections, picks, used_by}]
+GET  /api/seasons -> [{slug, name, emoji, description, builtin, rule, rule_label, next_dates, next_windows, lead_days, after_days, preset, tags, genre, excluded_genres, collections, picks, used_by}]
      Every season in calendar order (owner only; replaces the old `GET /api/collections/seasons`). `rule` is
-     `{kind: fixed|nth|easter, month, day, nth, weekday, offset}`; `rule_label` is it in words ("4th Thursday of
+     `{kind: fixed|nth|easter|month, month, day, nth, weekday, offset}`; `rule_label` is it in words ("4th Thursday of
      November") and `next_dates` the next two dates it falls on. Built-ins have empty sources and null
      `lead_days`/`after_days` (they follow the row's). `used_by` lists the rows that tick the season.
-GET  /api/seasons/presets -> [{key, label, preset, name, emoji, rule, lead_days, after_days, tags, genre, excluded_genres, collections, picks, note}]
-     The ready-made seasons not yet added. `label` carries the region ("Thanksgiving (US)"); `name` does not.
+     For `month`, `next_dates` anchors each showing on its last day and `next_windows` gives the two exact
+     `{start, end}` calendar-month spans, including leap days. Other rules return `next_windows: []`.
+GET  /api/seasons/presets -> [{key, label, category, description, preset, name, emoji, rule, lead_days, after_days, tags, genre, excluded_genres, collections, picks, note}]
+     The ready-made seasons not yet added. `category` is `holidays`, `film_days` or `spotlights`;
+     `description` explains the theme. `label` carries the region ("Thanksgiving (US)"); `name` does not.
 POST /api/seasons (a season body: `name`, `emoji`, `rule`, `lead_days`, `after_days`, `tags`, `genre`, `excluded_genres`, `collections`, `picks`, optional `preset`) -> 201 season
+     A `month` rule shows for the whole selected month; its stored `lead_days` and `after_days` are zero.
+     Creating a preset saves the season for the server; updating a row's `seasons` is a separate request.
 PUT  /api/seasons/{slug} -> season · DELETE /api/seasons/{slug} -> 204
      Refused with 422 and a plain-English `detail`: a bad date rule (29 Feb included), no tag, collection
      or film, a name another season already has (case-insensitive, built-ins included), or a name and emoji
@@ -3821,10 +3842,12 @@ POST /api/seasons/preview (a draft season body, plus the row's `media` — `movi
      source, plus up to 10 titles. `movies`/`shows` split `total` by type, and are null for a type the row
      builds in no library of. An invalid rule returns 200 with `rule_error` set. 503 without a TMDB
      key or before Plex is connected; 502 when either fails.
-POST /api/seasons/next-date (a date rule: `kind` `fixed`|`nth`|`easter`, `month`, `day`, `nth` — 1–4, or -1 for the last, `weekday` — Monday=0, `offset`) -> {next_date, rule_error}
+     Counts precede row filters and shared-row watcher thresholds; they do not promise a full delivered row.
+POST /api/seasons/next-date (a date rule: `kind` `fixed`|`nth`|`easter`|`month`, `month`, `day`, `nth` — 1–4, or -1 for the last, `weekday` — Monday=0, `offset`) -> {next_date, next_windows, rule_error}
      When the rule next falls, as an ISO date on the server's clock. Worked out from the rule alone — no
      Plex or TMDB call — so it still answers when a preview can't. An invalid rule returns 200 with
-     `next_date` null and `rule_error` set. Owner only.
+     `next_date` null and `rule_error` set. For `month`, `next_date` is the month's last day and
+     `next_windows` supplies the next two complete `{start, end}` spans; other rules return `[]`. Owner only.
 GET  /api/seasons/tmdb-tags?q= · GET /api/seasons/plex-collections?q= · GET /api/seasons/library-search?q=
      Search TMDB keywords, the PMS's collections (read only; each with its library's `media_type`), and the
      libraries' titles. A `q` under 2 characters returns `[]` without asking anyone.

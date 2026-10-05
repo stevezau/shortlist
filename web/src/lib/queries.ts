@@ -81,6 +81,7 @@ export const queryKeys = {
   schedule: ["schedule"] as const,
   libraries: ["libraries"] as const,
   seasons: ["seasons"] as const,
+  seasonCreate: ["season-create"] as const,
   seasonPresets: ["season-presets"] as const,
   seasonPreview: (draft: SeasonPreviewInput) => ["season-preview", draft] as const,
   seasonNextDate: (rule: DateRule) => ["season-next-date", rule] as const,
@@ -679,6 +680,7 @@ function useInvalidateSeasons() {
 export function useCreateSeason() {
   const invalidate = useInvalidateSeasons();
   return useMutation({
+    mutationKey: queryKeys.seasonCreate,
     mutationFn: (body: SeasonInput) => api.createSeason(body),
     onSuccess: invalidate,
   });

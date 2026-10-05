@@ -141,6 +141,8 @@ export function SeasonYearStrip({
                 {`${first.name} and ${second.name} overlap on ${spanLabel(span)}: the nearer date wins.`}{" "}
               </span>
             ))}
+        {overlaps.length > 0 && seasons.some((season) => season.rule.kind === "month") &&
+          "When dates tie, a dated occasion takes priority over a full-month season. "}
         Between seasons the row is hidden and keeps its place. Seasons change at midnight on the server.
       </p>
     </div>

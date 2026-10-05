@@ -179,14 +179,19 @@ GET  /api/picks/{rating_key}/poster -> image bytes
      `rating_key` and only one of the four construction sites carries a `poster_path`, so the PMS is the
      only source that covers all of them — no new column, no migration, no backfill gap. Owner-gated,
      and it refuses any thumb path that is not on this server.
-GET  /api/seasons -> [{slug, name, emoji, description, builtin, rule, rule_label, next_dates, lead_days, after_days, preset, tags, genre, excluded_genres, collections, picks, used_by}]
+GET  /api/seasons -> [{slug, name, emoji, description, builtin, rule, rule_label, next_dates, next_windows, lead_days, after_days, preset, tags, genre, excluded_genres, collections, picks, used_by}]
      Every season in calendar order (owner only; replaces the old `GET /api/collections/seasons`). `rule` is
-     `{kind: fixed|nth|easter, month, day, nth, weekday, offset}`; `rule_label` is it in words ("4th Thursday of
+     `{kind: fixed|nth|easter|month, month, day, nth, weekday, offset}`; `rule_label` is it in words ("4th Thursday of
      November") and `next_dates` the next two dates it falls on. Built-ins have empty sources and null
      `lead_days`/`after_days` (they follow the row's). `used_by` lists the rows that tick the season.
-GET  /api/seasons/presets -> [{key, label, preset, name, emoji, rule, lead_days, after_days, tags, genre, excluded_genres, collections, picks, note}]
-     The ready-made seasons not yet added. `label` carries the region ("Thanksgiving (US)"); `name` does not.
+     For `month`, `next_dates` anchors each showing on its last day and `next_windows` gives the two exact
+     `{start, end}` calendar-month spans, including leap days. Other rules return `next_windows: []`.
+GET  /api/seasons/presets -> [{key, label, category, description, preset, name, emoji, rule, lead_days, after_days, tags, genre, excluded_genres, collections, picks, note}]
+     The ready-made seasons not yet added. `category` is `holidays`, `film_days` or `spotlights`;
+     `description` explains the theme. `label` carries the region ("Thanksgiving (US)"); `name` does not.
 POST /api/seasons (a season body: `name`, `emoji`, `rule`, `lead_days`, `after_days`, `tags`, `genre`, `excluded_genres`, `collections`, `picks`, optional `preset`) -> 201 season
+     A `month` rule shows for the whole selected month; its stored `lead_days` and `after_days` are zero.
+     Creating a preset saves the season for the server; updating a row's `seasons` is a separate request.
 PUT  /api/seasons/{slug} -> season · DELETE /api/seasons/{slug} -> 204
      Refused with 422 and a plain-English `detail`: a bad date rule (29 Feb included), no tag, collection
      or film, a name another season already has (case-insensitive, built-ins included), or a name and emoji
@@ -200,10 +205,12 @@ POST /api/seasons/preview (a draft season body, plus the row's `media` — `movi
      source, plus up to 10 titles. `movies`/`shows` split `total` by type, and are null for a type the row
      builds in no library of. An invalid rule returns 200 with `rule_error` set. 503 without a TMDB
      key or before Plex is connected; 502 when either fails.
-POST /api/seasons/next-date (a date rule: `kind` `fixed`|`nth`|`easter`, `month`, `day`, `nth` — 1–4, or -1 for the last, `weekday` — Monday=0, `offset`) -> {next_date, rule_error}
+     Counts precede row filters and shared-row watcher thresholds; they do not promise a full delivered row.
+POST /api/seasons/next-date (a date rule: `kind` `fixed`|`nth`|`easter`|`month`, `month`, `day`, `nth` — 1–4, or -1 for the last, `weekday` — Monday=0, `offset`) -> {next_date, next_windows, rule_error}
      When the rule next falls, as an ISO date on the server's clock. Worked out from the rule alone — no
      Plex or TMDB call — so it still answers when a preview can't. An invalid rule returns 200 with
-     `next_date` null and `rule_error` set. Owner only.
+     `next_date` null and `rule_error` set. For `month`, `next_date` is the month's last day and
+     `next_windows` supplies the next two complete `{start, end}` spans; other rules return `[]`. Owner only.
 GET  /api/seasons/tmdb-tags?q= · GET /api/seasons/plex-collections?q= · GET /api/seasons/library-search?q=
      Search TMDB keywords, the PMS's collections (read only; each with its library's `media_type`), and the
      libraries' titles. A `q` under 2 characters returns `[]` without asking anyone.

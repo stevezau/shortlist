@@ -2,7 +2,7 @@
 title: Seasonal rows
 description: "A seasonal row follows the calendar: Halloween films and horror in October, Christmas films in December, romance before Valentine's Day. Between seasons it is hidden from every Plex screen, and it comes back by itself when its next season opens."
 heading: Seasonal rows
-updated: 2026-10-04
+updated: 2026-10-05
 ---
 
 <figure class="shot">
@@ -37,7 +37,8 @@ keeps the selected seasons and their timing.
 
 ## The seasons
 
-Three seasons are built in, ten more ready-made holidays can be added, and you can make your own.
+Three seasons are built in. Add more from the ready-made catalogue of holidays, film days and monthly
+spotlights, or make your own.
 Tick the ones this row follows. Each row ticks its own, so one seasonal row can follow Halloween and another Christmas.
 
 <div class="table-scroll table--compact">
@@ -57,20 +58,30 @@ Tick the ones this row follows. Each row ticks its own, so one seasonal row can 
 
 **Built-in seasons show from N days before and stay N days after** (0–90 days before, default 30;
 0–30 days after, default 0) set each built-in season's window. They give the dates in the table above.
-When two windows overlap, the season coming up next wins. Weekdays under **Placement** narrow a
-season further. Your own seasons carry their own timing.
+When windows overlap, the season coming up next wins. Full-month seasons use the month's last day
+for this comparison; a dated occasion wins a tie with a full-month season. An earlier occasion can
+temporarily take over a monthly spotlight. Weekdays under **Placement** narrow a season further.
+Your own seasons carry their own timing.
 
-### Your own seasons and ready-made holidays
+### Your own seasons and ready-made choices
 
 The year strip under the season list draws every ticked season's window and says where two overlap.
 
-**Adding a ready-made season.** Open **Add more seasons** and press **Add** on a card. The editor opens
-filled in, so you can check it, rename it or change the films before saving. Saving ticks it in the
-row you are editing. Ready-made seasons are New Year's Eve, 4th of July, Thanksgiving (US),
-Thanksgiving (Canada), St Patrick's Day, Easter, Mother's Day (US, CA, AU, NZ), Mothering Sunday (UK,
-IE), Father's Day (US, UK, CA, IE) and Father's Day (AU, NZ). A card shows its region, but the
-season's name does not, because the name appears in Plex row titles. Season names must be unique, so
-to add both regional versions of a holiday, rename one first. A season name is also refused when it
+**Adding a ready-made season.** Open **Add more seasons**. Search by name or description, or browse
+**Holidays**, **Film days** and **Spotlights**. Each choice explains its theme and dates, counts matches
+in this row's libraries, and shows up to three matching titles when available. The first six choices
+are shown initially; **Show all** reveals the rest.
+
+Press **Add** to save the season with its supplied dates and sources and tick it in the row you are
+editing. **Save the row** to keep that selection. The season is available to every Seasonal row on
+the server as soon as it is added. Use **Customise** to open the editor first if you want to rename it,
+change its dates or adjust its sources. If an Add fails, its message stays beside the choice with a
+way to retry. A film-only choice cannot be added directly to a TV-only row; use **Customise** to add
+sources that reach shows.
+
+Regional holidays include Thanksgiving, Mother's Day and Father's Day. A choice shows its region,
+but the season's name does not, because the name appears in Plex row titles. Season names must be unique,
+so use **Customise** to rename one when adding both regional versions. A season name is also refused when it
 would give a row named after its season (`{season} picks`) the title another row already has in a
 library they share, because the two rows would then be one collection on Plex.
 
@@ -79,10 +90,12 @@ library they share, because the two rows would then be one collection on Plex.
 - a fixed day, such as 17 March;
 - the nth or last weekday of a month, such as the 4th Thursday of November;
 - a day counted from Easter, up to 63 days either side.
+- a **Full month**, from its first day through its last, including 29 February in leap years.
 
-29 February is refused, because the season would skip three years in four. Under **Shows from N days
+29 February is refused as a fixed day, because the season would skip three years in four. Under **Shows from N days
 before / stays N days after** (default 7 before, 0 after) set its window. The editor shows the next
-date and the window it gives.
+date and the window it gives. Full-month seasons have no days-before or days-after controls: their
+window is exactly the selected calendar month.
 
 **Where its films come from.** A season's films are the union of four sources. Add at least one:
 
@@ -107,7 +120,10 @@ the row's libraries. It sets the count against the row's size. A season shows on
 - **People's rows will be much alike**: a per-person row has fewer than 100 films to draw from,
   so everyone's row would be nearly the same. The hint directs you to **Shared** in the row editor,
   which uses the season's most-watched titles. This never shows for a shared row.
-- **Enough films for this row.**
+- **Enough matches before row filters.**
+
+These counts describe source matches, before the row's remaining filters. A shared row's minimum
+watcher count, watched-title rules and other row filters can still make the delivered row shorter.
 
 **When a season finds nothing.** A season can find nothing for a row in one of its libraries: a thin
 season everyone has already watched, a TV library no tag reaches, or a Kometa collection that does

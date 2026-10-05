@@ -67,7 +67,7 @@ _NO_PLEX = "Plex isn't connected yet — finish setup first."
 class DateRuleIO(PassthroughModel):
     """When a season falls: see `seasons.DateRule`. ``weekday`` is Monday=0; ``nth`` is 1-4, or -1 for the last."""
 
-    kind: Literal["fixed", "nth", "easter"]
+    kind: Literal["fixed", "nth", "easter", "month"]
     month: int = 1
     day: int = 1
     nth: int = 1
@@ -133,6 +133,13 @@ class UsedByOut(PassthroughModel):
     name: str
 
 
+class SeasonWindowOut(PassthroughModel):
+    """Inclusive calendar dates for a month-long season."""
+
+    start: str
+    end: str
+
+
 class SeasonOut(SeasonSourcesIO):
     """A season a row can follow. A built-in's sources live in code and are not listed."""
 
@@ -146,6 +153,8 @@ class SeasonOut(SeasonSourcesIO):
     rule_label: str
     #: ISO dates: the season's next two days on or after today, on the server's clock.
     next_dates: list[str]
+    #: Exact month windows; empty for day rules, whose timing comes from the season or its row.
+    next_windows: list[SeasonWindowOut] = Field(default_factory=list)
     #: None for a built-in, which follows its row's "Built-in seasons show from…" timing.
     lead_days: int | None
     after_days: int | None
@@ -154,7 +163,7 @@ class SeasonOut(SeasonSourcesIO):
 
 
 class PresetOut(SeasonIn):
-    """A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``."""
+    """A ready-made season's save fields plus catalogue metadata. ``preset`` is ``key``."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -164,6 +173,8 @@ class PresetOut(SeasonIn):
     label: str
     #: What to add when TMDB's tags fall short, e.g. "TMDB tags very few films as Father's Day — add a…".
     note: str
+    category: Literal["holidays", "film_days", "spotlights"] = "holidays"
+    description: str = ""
 
 
 class SeasonPreviewIn(SeasonSourcesIO):
@@ -183,6 +194,7 @@ class SeasonDateOut(PassthroughModel):
 
     next_date: str | None
     rule_error: str | None
+    next_windows: list[SeasonWindowOut] = Field(default_factory=list)
 
 
 class CollectionCountOut(PassthroughModel):
@@ -416,7 +428,11 @@ async def next_date(body: DateRuleIO) -> dict:
         return {"next_date": None, "rule_error": str(e)}
     today = context_builder.local_now().date()
     season = Season(slug="draft", name="Draft", emoji="", rule=rule, description="")
-    return {"next_date": seasons_mod.next_anchors(season, today, 1)[0].isoformat(), "rule_error": None}
+    return {
+        "next_date": seasons_mod.next_anchors(season, today, 1)[0].isoformat(),
+        "rule_error": None,
+        "next_windows": _month_windows(season, today),
+    }
 
 
 @router.get("/tmdb-tags", response_model=list[TagOut])
@@ -512,8 +528,8 @@ def _columns(body: SeasonIn, rule: DateRule) -> dict:
         "nth": rule.nth,
         "weekday": rule.weekday,
         "easter_offset": rule.offset,
-        "lead_days": body.lead_days,
-        "after_days": body.after_days,
+        "lead_days": 0 if rule.kind == "month" else body.lead_days,
+        "after_days": 0 if rule.kind == "month" else body.after_days,
         "tags": [{"id": t.id, "name": t.name} for t in _unique(body.tags, lambda t: t.id)],
         "genre": body.genre,
         "excluded_genres": list(dict.fromkeys(body.excluded_genres)),
@@ -540,7 +556,11 @@ def _calendar(row: SeasonDef) -> tuple[DateRule, int, int]:
     """Everything that decides which days a season's rows are shown on. Normalised, so a field the rule's kind
     ignores never reads as a move."""
     rule = DateRule(row.rule_kind, row.month, row.day, row.nth, row.weekday, row.easter_offset)
-    return rule.normalised(), row.lead_days, row.after_days
+    return (
+        rule.normalised(),
+        0 if rule.kind == "month" else row.lead_days,
+        0 if rule.kind == "month" else row.after_days,
+    )
 
 
 def _draft(body: SeasonPreviewIn) -> Season:
@@ -678,6 +698,16 @@ def _reject_row_title_clashes(session: Session, state: State, season: Season) ->
     )
 
 
+def _month_windows(season: Season, today: date) -> list[dict[str, str]]:
+    """Keep leap-year and month-boundary arithmetic on the server, alongside the run's calendar."""
+    if season.rule.kind != "month":
+        return []
+    return [
+        {"start": anchor.replace(day=1).isoformat(), "end": anchor.isoformat()}
+        for anchor in seasons_mod.next_anchors(season, today)
+    ]
+
+
 def _season_view(season: Season, stored: SeasonDef | None, used_by: dict[str, list[dict]], today: date) -> dict:
     """A `SeasonOut`. ``stored`` is the custom season's row, for its sources; None for a built-in."""
     view = {
@@ -690,6 +720,7 @@ def _season_view(season: Season, stored: SeasonDef | None, used_by: dict[str, li
         # Safe: every season in the catalogue has a rule that validated (`season_from_row`).
         "rule_label": season.rule.label(),
         "next_dates": [day.isoformat() for day in seasons_mod.next_anchors(season, today)],
+        "next_windows": _month_windows(season, today),
         "lead_days": season.lead_days,
         "after_days": season.after_days,
         "preset": None,
@@ -718,6 +749,8 @@ def _preset_view(preset: Preset) -> dict:
         "key": preset.key,
         "label": preset.label,
         "note": preset.note,
+        "category": preset.category,
+        "description": preset.description,
         "preset": preset.key,
         "name": season.name,
         "emoji": season.emoji,
@@ -728,7 +761,10 @@ def _preset_view(preset: Preset) -> dict:
         "genre": season.movie_genres[0] if season.movie_genres else None,
         "excluded_genres": list(season.keyword_excluded_genres),
         "collections": [],
-        "picks": [],
+        "picks": [
+            {"tmdb_id": pick.tmdb_id, "media_type": "movie", "title": pick.title, "year": pick.year}
+            for pick in preset.picks
+        ],
     }
 
 

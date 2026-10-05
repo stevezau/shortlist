@@ -26,8 +26,8 @@ describe("seasonVerdict", () => {
     );
   });
 
-  it("says when there are enough", () => {
-    expect(seasonVerdict({ total: 40 }, films(15, false)).text).toBe("Enough films for this row");
+  it("says the match count is before the row's filters", () => {
+    expect(seasonVerdict({ total: 40 }, films(15, false)).text).toBe("Enough matches before row filters");
   });
 
   it.each([
@@ -58,7 +58,7 @@ describe("seasonVerdict", () => {
     });
 
     it("is enough when each half is", () => {
-      expect(seasonVerdict({ total: 40, movies: 25, shows: 15 }, both(15)).text).toBe("Enough titles for this row");
+      expect(seasonVerdict({ total: 40, movies: 25, shows: 15 }, both(15)).text).toBe("Enough matches before row filters");
     });
 
     it("ignores a type it builds in no library of", () => {
@@ -84,7 +84,7 @@ describe("verdictInBrief", () => {
   it.each([
     [10, true, "Too few for this row"],
     [40, true, "People's rows will be much alike"],
-    [150, true, "Enough for this row"],
+    [150, true, "Enough before row filters"],
   ] as const)("a count of %i reads “%s”", (total, perPerson, brief) => {
     expect(verdictInBrief(seasonVerdict({ total }, films(15, perPerson)))).toBe(brief);
   });

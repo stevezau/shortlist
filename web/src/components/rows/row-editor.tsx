@@ -1,3 +1,4 @@
+import { useIsMutating, useQueryClient } from "@tanstack/react-query";
 import { ListChecks, Lock } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
@@ -47,6 +48,7 @@ import { blankInput, hasUnsavedChanges, OVER_TIME_DEFAULTS, toInput } from "@/li
 import { describeCron } from "@/lib/cron";
 import { settingString } from "@/lib/format";
 import {
+  queryKeys,
   useCollectionEffectiveness,
   useLibraries,
   usePrivacyStatus,
@@ -243,6 +245,10 @@ export function RowEditor({
    *  the screen only streams the rename from the title the collections still carry. */
   onRename?: (proposedName: string, saved?: { oldTemplate: string }) => void;
 }) {
+  const queryClient = useQueryClient();
+  // The new season must reach the draft before this row can save or discard it.
+  const addingSeason = useIsMutating({ mutationKey: queryKeys.seasonCreate }) > 0;
+  const seasonPending = () => queryClient.isMutating({ mutationKey: queryKeys.seasonCreate }) > 0;
   const save = useSaveCollection();
   const saveSettings = useSaveSettings();
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
@@ -500,6 +506,7 @@ export function RowEditor({
   const effectiveCadence = input.refresh_days ?? refreshDaysGlobalValue(settings.data);
 
   const submit = () => {
+    if (seasonPending()) return;
     // Keep 'Top', 'off', and real anchors — a row slug or a collection title. Drop a half-set library
     // (mode chosen, nothing picked yet) so it falls back to the default rather than being POSTed as an
     // empty anchor, which the API rejects. Also drop the empty twin of whichever kind was chosen: the
@@ -589,6 +596,7 @@ export function RowEditor({
   // Back to the row as saved, the way the page first opened it. The on/off switch's change is part
   // of the saved row by now, so it survives.
   const discard = () => {
+    if (seasonPending()) return;
     const back = savedRow ? toInput(savedRow) : input;
     setInput(back);
     setKindBaseline(baselineOf(back));
@@ -678,13 +686,13 @@ export function RowEditor({
       {savedRow && (
         <RowLiveStrip
           collection={savedRow}
-          enableDisabled={save.isPending}
+          enableDisabled={save.isPending || addingSeason}
           onEnableSaving={setEnableSaving}
           onEnableSaved={(enabled) => {
             setSavedEnabled(enabled);
             setInput((prev) => ({ ...prev, enabled }));
           }}
-          renameDisabled={enableSaving || pendingRename !== null}
+          renameDisabled={enableSaving || pendingRename !== null || addingSeason}
           onRename={openRename}
           unsaved={changes.length > 0}
           history={effectiveness.data}
@@ -703,7 +711,7 @@ export function RowEditor({
 
         {/* `min-w-0`: a grid item's default `min-width: auto` resolves to its min-content width,
             and the widest unbreakable thing inside once pushed a 320px page 60px sideways. */}
-        <div className="mt-6 min-w-0 space-y-10 lg:mt-0">
+        <fieldset disabled={addingSeason} aria-label="Row settings" className="mt-6 min-w-0 space-y-10 lg:mt-0">
           <EditorSection
             id="name-and-look"
             title="Name & look"
@@ -1255,17 +1263,18 @@ export function RowEditor({
               {aiBlocked}
             </p>
           )}
-        </div>
+        </fieldset>
       </div>
 
       <RowSaveBar
         changes={changes}
         isNew={!collection}
         saving={save.isPending || saveTheme.isPending}
+        busyMessage={addingSeason ? "Adding season… wait before saving this row." : undefined}
         saveDisabled={!input.name.trim() || pendingProblem !== null || enableSaving || aiBlocked !== null}
         onSave={submit}
         onDiscard={discard}
-        onCancel={onClose}
+        onCancel={() => { if (!seasonPending()) onClose(); }}
       />
 
       <RowRenameDialog

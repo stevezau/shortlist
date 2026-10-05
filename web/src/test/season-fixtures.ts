@@ -95,6 +95,8 @@ export const CATALOGUE: Season[] = [VALENTINES, HALLOWEEN, THANKSGIVING, CHRISTM
 export const THANKSGIVING_US: SeasonPreset = {
   key: "thanksgiving_us",
   label: "Thanksgiving (US)",
+  category: "holidays",
+  description: "Thanksgiving gatherings and family dinners.",
   note: "",
   preset: "thanksgiving_us",
   name: "Thanksgiving",
@@ -112,6 +114,8 @@ export const THANKSGIVING_US: SeasonPreset = {
 export const FATHERS_DAY_AU: SeasonPreset = {
   key: "fathers_day_au",
   label: "Father's Day (AU, NZ)",
+  category: "holidays",
+  description: "Stories about fathers and their families.",
   note: "TMDB tags very few films as Father's Day — add a collection or your own picks.",
   preset: "fathers_day_au",
   name: "Father's Day",
@@ -124,6 +128,54 @@ export const FATHERS_DAY_AU: SeasonPreset = {
   excluded_genres: [],
   collections: [],
   picks: [],
+};
+
+export const STAR_WARS_DAY: SeasonPreset = {
+  ...THANKSGIVING_US,
+  key: "star_wars_day",
+  preset: "star_wars_day",
+  label: "Star Wars Day",
+  name: "Star Wars Day",
+  category: "film_days",
+  description: "Space adventures for May the Fourth.",
+  rule: fixedRule(5, 4),
+  lead_days: 0,
+  after_days: 0,
+  tags: [],
+  genre: 878,
+};
+
+export const ANIMATION_MONTH: SeasonPreset = {
+  ...THANKSGIVING_US,
+  key: "animation_month",
+  preset: "animation_month",
+  label: "Animation month",
+  name: "Animation month",
+  category: "spotlights",
+  description: "Animated stories for every generation.",
+  rule: { ...fixedRule(2, 1), kind: "month" },
+  lead_days: 0,
+  after_days: 0,
+  tags: [],
+  genre: 16,
+};
+
+export const FEBRUARY_SPOTLIGHT: Season = {
+  ...THANKSGIVING,
+  slug: "animation-month",
+  name: "Animation month",
+  rule: ANIMATION_MONTH.rule,
+  rule_label: "All of February",
+  next_dates: ["2027-02-28", "2028-02-29"],
+  next_windows: [
+    { start: "2027-02-01", end: "2027-02-28" },
+    { start: "2028-02-01", end: "2028-02-29" },
+  ],
+  lead_days: 0,
+  after_days: 0,
+  preset: "animation_month",
+  tags: [],
+  genre: 16,
 };
 
 export function preview(patch: Partial<SeasonPreview> = {}): SeasonPreview {

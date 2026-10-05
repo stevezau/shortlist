@@ -11,10 +11,12 @@ import type { SeasonRow } from "@/lib/season-verdict";
 import { seasonDate } from "@/lib/seasons";
 
 import {
+  ANIMATION_MONTH,
   CATALOGUE,
   CHRISTMAS,
   FATHERS_DAY_AU,
   HALLOWEEN,
+  STAR_WARS_DAY,
   THANKSGIVING,
   THANKSGIVING_US,
   VALENTINES,
@@ -181,18 +183,145 @@ describe("RowSeasonsField", () => {
     expect(screen.queryByLabelText(/and stay/)).toBeNull();
   });
 
-  it("offers ready-made seasons with their dates and counts, and Add opens the editor filled in", async () => {
+  it("offers descriptions, dates, counts and up to three library samples, with optional Customise", async () => {
+    mocks.previewSeason.mockResolvedValue(preview({ total: 26, from_tags: 26, sample: ["Free Birds", "The Ice Storm", "Home for the Holidays", "Fourth film"] }));
     renderField(ON);
     const presets = await screen.findByRole("list", { name: "Ready-made seasons" });
     const card = (await within(presets).findByText("Thanksgiving (US)")).closest("li") as HTMLElement;
     expect(within(card).getByText(/4th Thursday of November/)).toBeInTheDocument();
     expect(await within(card).findByText("26 films in your libraries")).toBeInTheDocument();
+    expect(within(card).getByText(THANKSGIVING_US.description)).toBeInTheDocument();
+    for (const title of ["Free Birds", "The Ice Storm", "Home for the Holidays"]) {
+      expect(card).toHaveTextContent(title);
+    }
+    expect(card).not.toHaveTextContent("Fourth film");
     expect(mocks.previewSeason).toHaveBeenCalledWith(expect.objectContaining({ media: "movie", library_keys: [] }));
     expect(within(presets).getByText("TMDB tags very few films as Father's Day — add a collection or your own picks.")).toBeInTheDocument();
 
-    await userEvent.click(within(card).getByRole("button", { name: "Add Thanksgiving (US)" }));
+    await userEvent.click(within(card).getByRole("button", { name: "Customise Thanksgiving (US)" }));
     const dialog = await screen.findByRole("dialog", { name: "Add Thanksgiving (US)" });
     expect(within(dialog).getByLabelText("Season name")).toHaveValue("Thanksgiving");
+    expect(mocks.createSeason).not.toHaveBeenCalled();
+  });
+
+  it("searches ready-made names and descriptions and filters every category", async () => {
+    mocks.getSeasonPresets.mockResolvedValue([THANKSGIVING_US, STAR_WARS_DAY, ANIMATION_MONTH]);
+    renderField(ON);
+    const presets = await screen.findByRole("list", { name: "Ready-made seasons" });
+    const search = screen.getByRole("searchbox", { name: "Find a season" });
+    await userEvent.type(search, "generation");
+    expect(within(presets).getByText("Animation month")).toBeInTheDocument();
+    expect(within(presets).queryByText("Star Wars Day")).toBeNull();
+    await userEvent.clear(search);
+    await userEvent.type(search, "star wars");
+    expect(within(presets).getByText("Star Wars Day")).toBeInTheDocument();
+    expect(within(presets).queryByText("Animation month")).toBeNull();
+    await userEvent.clear(search);
+
+    for (const [category, title] of [["Holidays", "Thanksgiving (US)"], ["Film days", "Star Wars Day"], ["Spotlights", "Animation month"]] as const) {
+      await userEvent.click(screen.getByRole("button", { name: category }));
+      expect(within(presets).getByText(title)).toBeInTheDocument();
+      expect(within(presets).getAllByRole("listitem")).toHaveLength(1);
+    }
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+    expect(within(presets).getAllByRole("listitem")).toHaveLength(3);
+    await userEvent.type(search, "no matching season");
+    expect(screen.getByText(/no seasons match/i)).toBeInTheDocument();
+  });
+
+  it("adds the preset unchanged without an editor, and reminds the owner to save the row", async () => {
+    mocks.getSeasons.mockResolvedValue([VALENTINES, HALLOWEEN, CHRISTMAS]);
+    mocks.createSeason.mockImplementation(() => {
+      mocks.getSeasons.mockResolvedValue(CATALOGUE);
+      return Promise.resolve(THANKSGIVING);
+    });
+    const onChange = renderField(ON);
+    await userEvent.click(await screen.findByRole("button", { name: "Add Thanksgiving (US)" }));
+    await waitFor(() => expect(mocks.createSeason).toHaveBeenCalledTimes(1));
+    expect(mocks.createSeason).toHaveBeenCalledWith({
+      name: THANKSGIVING_US.name,
+      emoji: THANKSGIVING_US.emoji,
+      preset: THANKSGIVING_US.key,
+      rule: THANKSGIVING_US.rule,
+      lead_days: THANKSGIVING_US.lead_days,
+      after_days: THANKSGIVING_US.after_days,
+      tags: THANKSGIVING_US.tags,
+      genre: THANKSGIVING_US.genre,
+      excluded_genres: THANKSGIVING_US.excluded_genres,
+      collections: THANKSGIVING_US.collections,
+      picks: THANKSGIVING_US.picks,
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ seasons: ["halloween", "thanksgiving", "christmas"] }));
+    expect(screen.getByText(/save (this |the )?row/i)).toHaveAttribute("role", "status");
+  });
+
+  it("starts with six presets and searches the whole catalogue before expanding it", async () => {
+    mocks.getSeasonPresets.mockResolvedValue(Array.from({ length: 8 }, (_, index) => ({
+      ...THANKSGIVING_US,
+      key: `season_${index}`,
+      label: `Ready-made ${index}`,
+      description: `Description ${index}`,
+    })));
+    renderField(ON);
+    const presets = await screen.findByRole("list", { name: "Ready-made seasons" });
+    expect(within(presets).getAllByRole("listitem")).toHaveLength(6);
+    await userEvent.type(screen.getByRole("searchbox", { name: "Find a season" }), "Ready-made 7");
+    expect(within(presets).getByText("Ready-made 7")).toBeInTheDocument();
+    await userEvent.clear(screen.getByRole("searchbox", { name: "Find a season" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show all 8 seasons" }));
+    expect(within(presets).getAllByRole("listitem")).toHaveLength(8);
+  });
+
+  it("explains a film-only preset on a TV row and leaves Customise available", async () => {
+    mocks.getSeasonPresets.mockResolvedValue([{
+      ...STAR_WARS_DAY,
+      genre: null,
+      picks: [{ tmdb_id: 11, media_type: "movie", title: "Star Wars", year: 1977 }],
+    }]);
+    renderField(ON, { row: { size: 15, perPerson: false, media: "show", libraryKeys: ["2"] } });
+    const presets = await screen.findByRole("list", { name: "Ready-made seasons" });
+    expect(within(presets).getByRole("button", { name: "Add Star Wars Day" })).toBeDisabled();
+    expect(within(presets).getByText(/Films only/)).toBeInTheDocument();
+    expect(within(presets).getByRole("button", { name: "Customise Star Wars Day" })).toBeEnabled();
+    expect(mocks.createSeason).not.toHaveBeenCalled();
+  });
+
+  it("blocks duplicate creates while Add is pending", async () => {
+    mocks.createSeason.mockReturnValue(new Promise(() => {}));
+    renderField(ON);
+    const add = await screen.findByRole("button", { name: "Add Thanksgiving (US)" });
+    await userEvent.dblClick(add);
+    expect(mocks.createSeason).toHaveBeenCalledTimes(1);
+    expect(add).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add Father's Day (AU, NZ)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Customise Thanksgiving (US)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create your own" })).toBeDisabled();
+  });
+
+  it("keeps a failed Add beside the preset and retries it without ticking the row early", async () => {
+    mocks.createSeason.mockRejectedValueOnce(new ApiError(503, "Shortlist is temporarily unavailable."));
+    const onChange = renderField(ON);
+    const add = await screen.findByRole("button", { name: "Add Thanksgiving (US)" });
+    const card = add.closest("li") as HTMLElement;
+    await userEvent.click(add);
+    expect(await within(card).findByText(/Shortlist is temporarily unavailable/)).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+    mocks.createSeason.mockResolvedValue(THANKSGIVING);
+    await userEvent.click(within(card).getByRole("button", { name: /Retry/ }));
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ seasons: ["halloween", "thanksgiving", "christmas"] }));
+    expect(mocks.createSeason).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers Customise when Add fails because another season has the same name", async () => {
+    mocks.createSeason.mockRejectedValue(new ApiError(422, "There's already a season called “Thanksgiving”."));
+    renderField(ON);
+    const add = await screen.findByRole("button", { name: "Add Thanksgiving (US)" });
+    const card = add.closest("li") as HTMLElement;
+    await userEvent.click(add);
+    expect(await within(card).findByText(/already a season called/)).toBeInTheDocument();
+    await userEvent.click(within(card).getByRole("button", { name: "Customise Thanksgiving (US)" }));
+    expect(await screen.findByRole("dialog", { name: "Add Thanksgiving (US)" })).toBeInTheDocument();
   });
 
   it("says so when every ready-made season has been added", async () => {
@@ -255,7 +384,7 @@ describe("RowSeasonsField", () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledWith({ seasons: ["christmas"] }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(screen.getByRole("heading", { name: "Seasons" })).toHaveFocus());
-    expect(screen.getByRole("status")).toHaveTextContent("Deleted “🦃 Thanksgiving” and unticked it here.");
+    expect(screen.getByText("Deleted “🦃 Thanksgiving” and unticked it here.")).toHaveAttribute("role", "status");
   });
 
   it("drops a ready-made season's card once it is saved, ticks it, and puts focus on its checkbox", async () => {
@@ -268,9 +397,7 @@ describe("RowSeasonsField", () => {
     const onChange = renderField(ON);
     const presets = await screen.findByRole("list", { name: "Ready-made seasons" });
     await userEvent.click(await within(presets).findByRole("button", { name: "Add Thanksgiving (US)" }));
-    const dialog = await screen.findByRole("dialog", { name: "Add Thanksgiving (US)" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Save and add to this row" }));
-
+    await waitFor(() => expect(mocks.createSeason).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(onChange).toHaveBeenCalledWith({ seasons: ["halloween", "thanksgiving", "christmas"] });
     await waitFor(() => expect(within(presets).queryByText("Thanksgiving (US)")).toBeNull());

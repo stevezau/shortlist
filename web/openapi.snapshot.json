@@ -2414,7 +2414,8 @@
             "enum": [
               "fixed",
               "nth",
-              "easter"
+              "easter",
+              "month"
             ],
             "title": "Kind",
             "type": "string"
@@ -4593,7 +4594,7 @@
       },
       "PresetOut": {
         "additionalProperties": true,
-        "description": "A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``.",
+        "description": "A ready-made season's save fields plus catalogue metadata. ``preset`` is ``key``.",
         "properties": {
           "after_days": {
             "default": 0,
@@ -4602,6 +4603,16 @@
             "title": "After Days",
             "type": "integer"
           },
+          "category": {
+            "default": "holidays",
+            "enum": [
+              "holidays",
+              "film_days",
+              "spotlights"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
           "collections": {
             "items": {
               "$ref": "#/components/schemas/CollectionIO"
@@ -4609,6 +4620,11 @@
             "maxItems": 10,
             "title": "Collections",
             "type": "array"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
           },
           "emoji": {
             "maxLength": 8,
@@ -7305,6 +7321,13 @@
             ],
             "title": "Next Date"
           },
+          "next_windows": {
+            "items": {
+              "$ref": "#/components/schemas/shortlist__server__api__seasons__SeasonWindowOut"
+            },
+            "title": "Next Windows",
+            "type": "array"
+          },
           "rule_error": {
             "anyOf": [
               {
@@ -7494,6 +7517,13 @@
               "type": "string"
             },
             "title": "Next Dates",
+            "type": "array"
+          },
+          "next_windows": {
+            "items": {
+              "$ref": "#/components/schemas/shortlist__server__api__seasons__SeasonWindowOut"
+            },
+            "title": "Next Windows",
             "type": "array"
           },
           "picks": {
@@ -7747,7 +7777,7 @@
           "next": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SeasonWindowOut"
+                "$ref": "#/components/schemas/shortlist__server__api__collections__SeasonWindowOut"
               },
               {
                 "type": "null"
@@ -7757,7 +7787,7 @@
           "showing": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SeasonWindowOut"
+                "$ref": "#/components/schemas/shortlist__server__api__collections__SeasonWindowOut"
               },
               {
                 "type": "null"
@@ -7770,41 +7800,6 @@
           "next"
         ],
         "title": "SeasonStatusOut",
-        "type": "object"
-      },
-      "SeasonWindowOut": {
-        "additionalProperties": true,
-        "description": "One season's run for a row: which season, and the first and last days the row shows it.",
-        "properties": {
-          "emoji": {
-            "title": "Emoji",
-            "type": "string"
-          },
-          "ends": {
-            "title": "Ends",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "slug": {
-            "title": "Slug",
-            "type": "string"
-          },
-          "starts": {
-            "title": "Starts",
-            "type": "string"
-          }
-        },
-        "required": [
-          "slug",
-          "name",
-          "emoji",
-          "starts",
-          "ends"
-        ],
-        "title": "SeasonWindowOut",
         "type": "object"
       },
       "SeenRelease": {
@@ -10879,6 +10874,61 @@
           "completed"
         ],
         "title": "WizardStateSavedOut",
+        "type": "object"
+      },
+      "shortlist__server__api__collections__SeasonWindowOut": {
+        "additionalProperties": true,
+        "description": "One season's run for a row: which season, and the first and last days the row shows it.",
+        "properties": {
+          "emoji": {
+            "title": "Emoji",
+            "type": "string"
+          },
+          "ends": {
+            "title": "Ends",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "starts": {
+            "title": "Starts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "emoji",
+          "starts",
+          "ends"
+        ],
+        "title": "SeasonWindowOut",
+        "type": "object"
+      },
+      "shortlist__server__api__seasons__SeasonWindowOut": {
+        "additionalProperties": true,
+        "description": "Inclusive calendar dates for a month-long season.",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "SeasonWindowOut",
         "type": "object"
       }
     }

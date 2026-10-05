@@ -703,11 +703,15 @@ class TestPresets:
     }
 
     def test_tag_ids_are_the_spec_tables(self) -> None:
-        assert {preset.key: preset.season.keywords for preset in seasons.PRESETS} == self.SPEC_TAGS
+        assert {
+            preset.key: preset.season.keywords for preset in seasons.PRESETS if preset.key in self.SPEC_TAGS
+        } == self.SPEC_TAGS
 
     def test_each_falls_on_its_day_with_its_own_timing(self) -> None:
         assert {
-            p.key: (p.season.rule.anchor(2026), p.season.lead_days, p.season.after_days) for p in seasons.PRESETS
+            p.key: (p.season.rule.anchor(2026), p.season.lead_days, p.season.after_days)
+            for p in seasons.PRESETS
+            if p.key in self.SPEC_DAYS
         } == self.SPEC_DAYS
 
     def test_every_preset_validates_and_fits_what_the_editor_accepts(self) -> None:
@@ -724,7 +728,7 @@ class TestPresets:
 
     def test_a_region_is_in_the_label_and_never_in_the_name(self) -> None:
         """A season's name renders into Plex row titles ("💐 {season} picks"); the region is only for choosing."""
-        assert {p.key: (p.label, p.season.name) for p in seasons.PRESETS} == {
+        assert {p.key: (p.label, p.season.name) for p in seasons.PRESETS if p.key in self.SPEC_TAGS} == {
             "new_years_eve": ("New Year's Eve", "New Year's Eve"),
             "fourth_of_july": ("4th of July", "4th of July"),
             "thanksgiving_us": ("Thanksgiving (US)", "Thanksgiving"),

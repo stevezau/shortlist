@@ -645,7 +645,7 @@ class TestPresets:
     def test_a_preset_posts_back_as_a_season(self, client: TestClient):
         """What the editor does with one: open it pre-filled, then save it."""
         preset = next(p for p in client.get("/api/seasons/presets").json() if p["key"] == "st_patricks_day")
-        body = {k: v for k, v in preset.items() if k not in ("key", "label", "note")}
+        body = {k: v for k, v in preset.items() if k not in ("key", "label", "note", "category", "description")}
         r = client.post("/api/seasons", json=body)
         assert r.status_code == 201, r.text
         assert r.json()["excluded_genres"] == [27]
@@ -654,7 +654,7 @@ class TestPresets:
         """Names are unique (D13): the second asks the owner for another name rather than titling two rows alike."""
         offered = {p["key"]: p for p in client.get("/api/seasons/presets").json()}
         bodies = [
-            {k: v for k, v in offered[key].items() if k not in ("key", "label", "note")}
+            {k: v for k, v in offered[key].items() if k not in ("key", "label", "note", "category", "description")}
             for key in ("fathers_day", "fathers_day_au_nz")
         ]
         bodies = [{**body, "picks": [{"tmdb_id": 1, "media_type": "movie", "title": "Big Fish"}]} for body in bodies]
@@ -831,18 +831,19 @@ class TestNextDate:
         _connect(monkeypatch, client, None, None)
         _on(monkeypatch, datetime(2026, 10, 3, 12, 0))
         r = client.post("/api/seasons/next-date", json={"kind": "nth", "month": 11, "nth": 4, "weekday": 3})
-        assert (r.status_code, r.json()) == (200, {"next_date": "2026-11-26", "rule_error": None})
+        assert (r.status_code, r.json()) == (200, {"next_date": "2026-11-26", "rule_error": None, "next_windows": []})
 
     def test_a_day_already_past_this_year_falls_next_year(self, client: TestClient, monkeypatch):
         _on(monkeypatch, datetime(2026, 10, 3, 12, 0))
         r = client.post("/api/seasons/next-date", json={"kind": "fixed", "month": 3, "day": 17})
-        assert r.json() == {"next_date": "2027-03-17", "rule_error": None}
+        assert r.json() == {"next_date": "2027-03-17", "rule_error": None, "next_windows": []}
 
     def test_a_rule_that_cant_be_used_says_why(self, client: TestClient):
         r = client.post("/api/seasons/next-date", json={"kind": "fixed", "month": 2, "day": 29})
         assert r.json() == {
             "next_date": None,
             "rule_error": "29 February isn't every year — pick 28 February or 1 March.",
+            "next_windows": [],
         }
 
 
