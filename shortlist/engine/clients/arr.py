@@ -124,7 +124,12 @@ class _ArrClient:
             raise ArrError(f"{self.app_name} rejected the API key")
         if r.status_code != 200:
             raise ArrError(f"{self.app_name} GET {path} returned HTTP {r.status_code}")
-        return r.json()
+        try:
+            return r.json()
+        except ValueError as e:
+            # A proxy's HTML page or a truncated body. Left as ValueError it escaped every caller that
+            # catches ArrError, which is how the send pass would have crashed instead of recording an error.
+            raise ArrError(f"{self.app_name} GET {path} answered with a body that is not JSON") from e
 
     def _post(self, path: str, body: dict) -> dict:
         self._throttle()

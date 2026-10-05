@@ -794,7 +794,7 @@ class TestStateReadsRefuseAMalformedAnswer:
     def test_a_bad_answer_raises_instead_of_reading_as_empty(self, client_cls, target, path, method, response):
         respx.get(f"{target.url}{path}").mock(return_value=response)
         self._queue_empty(target)
-        with pytest.raises((ArrError, ValueError)):
+        with pytest.raises(ArrError):
             getattr(client_cls(target), method)()
 
     @respx.mock
@@ -812,7 +812,7 @@ class TestStateReadsRefuseAMalformedAnswer:
         """`_resolve_tag` used to read a bad tag list as "no tags" and POST a duplicate of every one."""
         respx.get(f"{target.url}/api/v3/tag").mock(return_value=response)
         post = respx.post(f"{target.url}/api/v3/tag")
-        with pytest.raises((ArrError, ValueError)):
+        with pytest.raises(ArrError):
             client_cls(target)._resolve_tag("req-sarah")
         assert not post.called
 
