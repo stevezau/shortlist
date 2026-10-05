@@ -342,6 +342,21 @@ class TestRowSourcesSetupCheck:
         assert (out["overseerr"], out["radarr"], out["sonarr"], out["complete"]) == ("off", "off", "off", True)
         assert out["people"] and all(p["linked"] is False and p["ready"] == 0 for p in out["people"])
 
+    def test_row_sources_redacts_credentials_in_a_failure_before_a_read_starts(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        _connect_overseerr(client)
+
+        def boom(*_a: object, **_k: object) -> None:
+            raise RuntimeError("refused http://seerr/api?apikey=SUPERSECRETKEY123")
+
+        monkeypatch.setattr("shortlist.engine.requests_row.collect_requests", boom)
+        r = client.get("/api/requests/row-sources")
+
+        assert r.status_code == 200, r.text
+        assert "SUPERSECRETKEY123" not in r.text
+        assert any(p.startswith("Request sources could not be read") for p in r.json()["problems"])
+
     def test_row_sources_says_unreachable_when_overseerr_is_down(self, client: TestClient):
         _connect_overseerr(client)
         with respx.mock:

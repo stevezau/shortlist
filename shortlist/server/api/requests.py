@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.models import MediaType, MissingTitle
 from shortlist.engine.request_config import resolve_request_config
 from shortlist.engine.requests import request_titles_by_row
@@ -503,8 +504,10 @@ async def get_row_sources(
             except Exception as e:
                 # collect_requests swallows per-source failures itself; this is for anything that
                 # goes wrong before a read starts (a client refusing its URL, say).
-                logger.warning("requests row check: sources could not be read ({})", e)
-                ledger = RequestLedger(titles=[], complete=False, problems=[f"Request sources could not be read: {e}"])
+                logger.warning("requests row check: sources could not be read ({})", redact(str(e)))
+                ledger = RequestLedger(
+                    titles=[], complete=False, problems=[f"Request sources could not be read: {redact(str(e))}"]
+                )
                 ledger.unreadable = {
                     app
                     for app, target in (
