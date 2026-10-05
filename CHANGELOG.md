@@ -6,6 +6,8 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-05
+
 ### Added
 
 - **An AI row: describe a row in plain words.** In **Add a row**, pick the AI filter and the **Describe a
