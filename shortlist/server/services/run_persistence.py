@@ -44,7 +44,12 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import RESTRICTION_RESTORED_SCOPE, add_audit
-from shortlist.server.services.delivery_snapshots import close_snapshots, current_pick_ids, record_snapshots
+from shortlist.server.services.delivery_snapshots import (
+    close_snapshots,
+    current_pick_ids,
+    record_delivery_boundaries,
+    record_snapshots,
+)
 from shortlist.server.services.watch_events import (
     RowMembership,
     _attribution_floor,
@@ -1339,6 +1344,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
     if not dry_run:
         # Forget BEFORE recording: a row removed and then re-delivered in the same run (a repair that
         # recreates it) must end up with the entry the delivery just wrote, not without one.
+        record_delivery_boundaries(session, user, user_report.delivery_boundaries)
         _forget_removed_deliveries(session, user.slug, user_report.removed_deliveries)
         _record_deliveries(session, user.slug, user_report.breakdown)
         for pick in user_report.picks:
@@ -1825,4 +1831,4 @@ def _finalize_run(
         stats["left_alone_failures"] = {str(account): why for account, why in report.left_alone_failures.items()}
     # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit
     # after assignment would not reliably mark it dirty.
-    run.stats = stats
+    run.stats = {**{key: value for key, value in (run.stats or {}).items() if key.startswith("assistant_")}, **stats}

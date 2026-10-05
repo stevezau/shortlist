@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RequestCandidate, User } from "@/lib/types";
+import type { AcquisitionClaim, RequestCandidate, User } from "@/lib/types";
 import { RequestsPage } from "@/pages/requests";
 
 const {
@@ -23,6 +23,8 @@ const {
   getSettings,
   getUsers,
   getArrStatus,
+  listAcquisitionClaims,
+  releaseAcquisitionClaim,
 } = vi.hoisted(() => ({
   listRequests: vi.fn(),
   getUsers: vi.fn((): Promise<unknown[]> => Promise.resolve([])),
@@ -43,6 +45,8 @@ const {
   getArrStatus: vi.fn((): Promise<unknown> =>
     Promise.resolve({ statuses: {}, radarr: "off", sonarr: "off" }),
   ),
+  listAcquisitionClaims: vi.fn(() => Promise.resolve({ items: [] as AcquisitionClaim[], next_offset: null })),
+  releaseAcquisitionClaim: vi.fn((_id: number, _token: string, _status: string) => Promise.resolve({ id: 1, status: "released" })),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -60,6 +64,8 @@ vi.mock("@/lib/api", () => ({
     getSettings: () => getSettings(),
     getUsers: () => getUsers(),
     getArrStatus: () => getArrStatus(),
+    listAcquisitionClaims: () => listAcquisitionClaims(),
+    releaseAcquisitionClaim: (id: number, token: string, status: string) => releaseAcquisitionClaim(id, token, status),
   },
 }));
 
@@ -186,6 +192,28 @@ describe("RequestsPage", () => {
       radarr: "off",
       sonarr: "off",
     });
+    listAcquisitionClaims.mockReset();
+    listAcquisitionClaims.mockResolvedValue({ items: [], next_offset: null });
+    releaseAcquisitionClaim.mockReset();
+    releaseAcquisitionClaim.mockResolvedValue({ id: 1, status: "released" });
+  });
+
+  it("shows recovery only for terminal claims and releases after destination review", async () => {
+    listRequests.mockResolvedValue([]);
+    listAcquisitionClaims.mockResolvedValue({
+      items: [
+        { id: 1, candidate_id: 10, origin: "manual", title: "Unknown send", tmdb_id: 10, media_type: "movie", destination: "Radarr", status: "outcome_unknown", created_at: "2026-10-05T00:00:00+00:00", external_started_at: null, finished_at: null, review_token: "a".repeat(64) },
+        { id: 2, candidate_id: 11, origin: "automatic", title: "Still sending", tmdb_id: 11, media_type: "show", destination: "Sonarr", status: "external_started", created_at: "2026-10-05T00:00:00+00:00", external_started_at: null, finished_at: null, review_token: "b".repeat(64) },
+      ],
+      next_offset: null,
+    });
+    renderPage();
+    expect(await screen.findByText("Acquisition checks needing review")).toBeTruthy();
+    expect(screen.getByText(/Inspect the actual destination before allowing a title to be requested again/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow retry" })).toBeTruthy();
+    expect(screen.getByText("Active claims cannot be released.")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Allow retry" }));
+    await waitFor(() => expect(releaseAcquisitionClaim).toHaveBeenCalledWith(1, "a".repeat(64), "outcome_unknown"));
   });
 
   it("shows an empty state when nothing has ever been queued", async () => {

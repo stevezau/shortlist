@@ -494,7 +494,17 @@ class TestHandlers:
         """`user.cleanup`, `user.hide`, `user.restore` and `row.reconcile` all take a target and
         DELETE or hide that target's rows. A generic "run a job" button must never be able to aim
         them — every one of them is queued by the mutation handler that knows the target."""
-        for targeted in ("user.cleanup", "user.hide", "user.restore", "row.reconcile"):
+        for targeted in (
+            "user.cleanup",
+            "user.hide",
+            "user.restore",
+            "row.reconcile",
+            # Assistant work requires its saved exact operation, target scopes and spend contract.
+            "assistant.converge",
+            "assistant.run",
+            "assistant.generate_theme",
+            "assistant.request_send",
+        ):
             assert targeted not in jobs.KINDS, targeted
             assert not jobs.BY_KIND[targeted].manual, targeted
         # The manual kinds are all converge-to-desired-state passes that take no target.
@@ -576,6 +586,10 @@ class TestHandlers:
             "notify.send",
             # Reads the libraries, writes only Shortlist's own database (#138).
             "themes.rotate",
+            # RunService owns the run's Plex lock; the other two never write Plex.
+            "assistant.run",
+            "assistant.generate_theme",
+            "assistant.request_send",
         }
         writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
         assert "privacy.sync" in writers and "sync.check" in writers

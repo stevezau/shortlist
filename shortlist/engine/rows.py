@@ -28,6 +28,7 @@ from shortlist.engine.clients.mdblist import MdbListRateLimitError
 from shortlist.engine.clients.plex_pms import _retry_idempotent
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
+    RowDeliveryRetry,
     deliver_rows,
     named_seed_pick,
     remove_row,
@@ -3642,6 +3643,7 @@ def _deliver_row(
     # attempt so the audit stays idempotent too, not just the Plex writes (rule 10). user_report.diff
     # needs no reset: it is None during delivery (only populated from swept rows after _run_user).
     breakdown_mark = len(user_report.breakdown)
+    retry_state = RowDeliveryRetry()
     cancelled = False
 
     def _deliver_locked() -> None:
@@ -3708,6 +3710,7 @@ def _deliver_row(
                 # Inside this lock hold, before the row's next library is written.
                 on_label_stored=on_first_row,
                 written_details=_written_details(ctx, user.slug, spec.slug),
+                retry_state=retry_state,
             )
             logger.debug(
                 "{}: row '{}' delivery — waited {:.1f}s for write-lock, wrote {} librar(ies) in {:.1f}s",
@@ -3718,7 +3721,18 @@ def _deliver_row(
                 time.monotonic() - work_start,
             )
 
-    _retry_idempotent(_deliver_locked, label=f"{user.username} delivery of {spec.slug!r}")
+    try:
+        _retry_idempotent(_deliver_locked, label=f"{user.username} delivery of {spec.slug!r}")
+    finally:
+        # Separate from the replaceable UI breakdown: even a final uncertain attempt must not
+        # leave an older snapshot eligible beyond a replacement we already confirmed.
+        present = {(e.get("row_slug"), str(e.get("library_key"))) for e in user_report.breakdown[breakdown_mark:]}
+        for (_account, _owner, row, library), entry in retry_state.confirmations.items():
+            if (row, library) not in present:
+                # A later retry can fail before reaching another library that already succeeded.
+                # Its unattempted confirmation is still valid; popped/uncertain ones are absent.
+                user_report.breakdown.append(entry)
+        user_report.delivery_boundaries.extend(retry_state.boundaries.values())
     return not cancelled
 
 

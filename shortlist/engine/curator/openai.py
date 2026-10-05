@@ -10,6 +10,7 @@ from shortlist.engine.curator.base import (
     parse_web_titles,
 )
 from shortlist.engine.models import UserProfile
+from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls, provider_call
 from shortlist.engine.web_guidance import Guidance
 
 # Must match `defaultModel` for "openai" in web/src/lib/providers.ts, which the wizard writes into
@@ -75,14 +76,37 @@ class OpenAICurator:
     last_tokens = ThreadLocalTokens()  # per-thread, so parallel per-user web search doesn't race
     last_output_tokens = ThreadLocalTokens()
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, timeout: float = 60.0, base_url: str | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_MODEL,
+        timeout: float = 60.0,
+        base_url: str | None = None,
+        max_retries: int = 2,
+        follow_redirects: bool = True,
+        provider_controls: ProviderCallControls | None = None,
+    ):
         try:
             import openai
         except ImportError as e:
             raise ImportError("OpenAI provider needs `pip install shortlist[openai]`") from e
+        if provider_controls is not None and base_url is None:
+            base_url = "https://api.openai.com/v1"
         # `base_url` points the same client at any server speaking the OpenAI API — llama.cpp,
         # LM Studio, vLLM, LocalAI, OpenRouter (issue #7). None keeps OpenAI's own endpoint.
-        self._client = openai.OpenAI(api_key=api_key, timeout=timeout, max_retries=2, base_url=base_url)
+        self._client = openai.OpenAI(
+            api_key=api_key,
+            timeout=timeout,
+            max_retries=0 if provider_controls is not None else max_retries,
+            base_url=base_url,
+            **(
+                {"http_client": openai.DefaultHttpxClient(follow_redirects=False)}
+                if provider_controls is not None or not follow_redirects
+                else {}
+            ),
+        )
+        self._provider_controls = provider_controls
+        self._destination = (base_url or "https://api.openai.com/v1").rstrip("/")
         self._model = model
         # Whether this model takes a response schema alongside web search. Measured true on
         # gpt-4o-mini and gpt-4.1-mini; assumed true until a call proves otherwise, then remembered
@@ -131,6 +155,9 @@ class OpenAICurator:
         try:
             r = self._web_search_call(system, user, with_schema=self._schema_supported)
         except openai.OpenAIError as e:
+            if self._provider_controls is not None:
+                logger.warning("llm_web (openai) failed ({})", type(e).__name__)
+                return []
             if not self._schema_supported:  # already schema-less, so the fault is not the format
                 logger.warning("llm_web (openai): {}", e)
                 return []
@@ -178,7 +205,22 @@ class OpenAICurator:
             # gpt-4.1-mini, 12 of 12 resolvable both times, and it cut output tokens from ~300 to 212
             # because the model stops narrating around the JSON.
             kwargs["text"] = _TITLES_FORMAT
-        return self._client.responses.create(**kwargs)
+        controls = self._provider_controls
+        if controls is not None:
+            kwargs["max_output_tokens"] = controls.max_output_tokens
+            kwargs["max_tool_calls"] = controls.max_native_tool_uses
+        with provider_call(
+            controls,
+            ProviderCall(
+                kind="native_search",
+                provider=self.name,
+                destination=self._destination,
+                model=self._model,
+                output_tokens=kwargs.get("max_output_tokens"),
+                native_tool_uses=kwargs.get("max_tool_calls"),
+            ),
+        ):
+            return self._client.responses.create(**kwargs)
 
     def _send_model(self) -> str:
         """The model name to send on a request. Overridden by the compatible provider, which resolves
@@ -190,15 +232,29 @@ class OpenAICurator:
         import openai
 
         kwargs: dict = {}
+        controls = self._provider_controls
+        if controls is not None:
+            max_tokens = controls.output_limit(max_tokens)
         if max_tokens is not None:
             # `max_completion_tokens`, not `max_tokens`: the gpt-5 and o-series reject the latter (see ping).
             kwargs["max_completion_tokens"] = max_tokens
         try:
-            r = self._client.chat.completions.create(
-                model=self._send_model(),
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                **kwargs,
-            )
+            model = self._send_model()
+            with provider_call(
+                controls,
+                ProviderCall(
+                    kind="completion",
+                    provider=self.name,
+                    destination=self._destination,
+                    model=model,
+                    output_tokens=max_tokens,
+                ),
+            ):
+                r = self._client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    **kwargs,
+                )
         except openai.OpenAIError as e:
             logger.warning("complete (openai): {}", e)
             return ""

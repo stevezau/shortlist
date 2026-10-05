@@ -115,6 +115,8 @@ nav:
         url: /guides/troubleshooting/
       - title: On the internet
         url: /guides/security/
+      - title: Connect an assistant
+        url: /guides/assistant-access/
   - title: What it works with
     url: /integrations/
   - title: Reference
@@ -127,6 +129,8 @@ nav:
         url: /reference/environment/
       - title: The API
         url: /reference/api/
+      - title: MCP assistant reference
+        url: /reference/assistant/
       - title: How Shortlist decides things
         url: /reference/concepts/
   - title: FAQ

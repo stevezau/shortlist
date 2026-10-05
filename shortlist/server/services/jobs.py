@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import FREED_NAME_HELPER_KEY, row_marker
@@ -418,6 +419,44 @@ CATALOG: tuple[JobKind, ...] = (
         ),
     ),
     JobKind(
+        kind="assistant.generate_theme",
+        label="Generate an approved assistant theme",
+        description="Uses one reserved provider call for an approved theme; uncertain outcomes are not replayed.",
+        manual=False,
+        writes_plex=False,
+        trigger="Queued with explicit generation permission and a reserved provider call.",
+    ),
+    JobKind(
+        kind="assistant.run",
+        label="Dispatch an approved assistant run",
+        description="Hands one authorized, bounded run to the run service without replaying uncertain work.",
+        manual=False,
+        writes_plex=False,
+        trigger="Queued atomically with an approved assistant run.",
+    ),
+    JobKind(
+        kind="assistant.request_send",
+        label="Send approved acquisition requests",
+        description=(
+            "Sends explicitly approved titles to the configured request destination once. "
+            "Each title crosses a durable external-started boundary and uncertain outcomes are never replayed."
+        ),
+        manual=False,
+        writes_plex=False,
+        trigger="Queued atomically with an approved assistant request-send operation.",
+    ),
+    JobKind(
+        kind="assistant.converge",
+        label="Finish an approved assistant change",
+        description=(
+            "Applies the fixed, ordered follow-up steps owed by an approved assistant change. "
+            "Each completed step is checkpointed, so a retry resumes with the first unfinished step."
+        ),
+        manual=False,
+        writes_plex=True,
+        trigger="Queued atomically with an approved assistant change that has follow-up work.",
+    ),
+    JobKind(
         kind="notify.send",
         label="Send an alert to your webhook",
         description=(
@@ -452,13 +491,53 @@ def handler(kind: str) -> Callable[[Handler], Handler]:
     return register
 
 
-def enqueue(sessions, kind: str, payload: dict | None = None, *, max_attempts: int = 3) -> int:
-    """Queue a job and return its id. Cheap and synchronous — safe to call from a request handler."""
+async def run_handler_inline(state, kind: str, payload: dict) -> dict:
+    """Run a registered primitive inside an already locked convergence job.
+
+    This deliberately does not enqueue or acquire the writer lock again.  Only
+    trusted server code can construct convergence steps, and the convergence
+    schema rejects ``assistant.converge`` itself.
+    """
+    if kind == "assistant.converge":
+        raise ValueError("a convergence job cannot contain another convergence job")
+    fn = _HANDLERS.get(kind)
+    if fn is None:
+        raise ValueError(f"unknown job kind {kind!r}")
+    if inspect.iscoroutinefunction(fn):
+        return await fn(state, payload)
+    return await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, state, payload))
+
+
+def enqueue_in_session(
+    session: Session,
+    kind: str,
+    payload: dict | None = None,
+    *,
+    max_attempts: int = 3,
+    operation_id: str | None = None,
+    effect_key: str | None = None,
+) -> Job:
+    """Add owed work to the caller's transaction, without committing or starting execution."""
     if kind not in _HANDLERS:
         raise ValueError(f"unknown job kind {kind!r}; known: {sorted(_HANDLERS)}")
+    if (operation_id is None) != (effect_key is None):
+        raise ValueError("operation_id and effect_key must be supplied together")
+    job = Job(
+        kind=kind,
+        payload=payload or {},
+        max_attempts=max_attempts,
+        operation_id=operation_id,
+        effect_key=effect_key,
+    )
+    session.add(job)
+    session.flush()
+    return job
+
+
+def enqueue(sessions, kind: str, payload: dict | None = None, *, max_attempts: int = 3) -> int:
+    """Queue a job and return its id. Cheap and synchronous — safe to call from a request handler."""
     with sessions() as session:
-        job = Job(kind=kind, payload=payload or {}, max_attempts=max_attempts)
-        session.add(job)
+        job = enqueue_in_session(session, kind, payload, max_attempts=max_attempts)
         session.commit()
         logger.debug("queued job {} ({})", job.id, kind)
         return job.id
@@ -2078,3 +2157,29 @@ def _notify_send(state, payload: dict) -> dict:
             # saved — so naming one here produced two contradictory sentences on the Jobs page.
             return {"sent": False, "detail": f"Not sent: {e}"}
     return {"sent": True, "detail": detail}
+
+
+# Import after every primitive handler is registered.  The convergence handler
+# delegates to this closed registry and must therefore be the final registration.
+from shortlist.server.assistant import row_effects as _assistant_row_effects  # noqa: E402,F401
+
+
+@handler("assistant.run")
+async def _assistant_run(state, payload: dict) -> dict:
+    from shortlist.server.assistant.run_adapter import dispatch_assistant_run
+
+    return await dispatch_assistant_run(state, payload)
+
+
+@handler("assistant.generate_theme")
+def _assistant_generate_theme(state, payload: dict, *, job_id: int) -> dict:
+    from shortlist.server.assistant.generation import dispatch_generation
+
+    return dispatch_generation(state, payload, job_id=job_id)
+
+
+@handler("assistant.request_send")
+async def _assistant_request_send(state, payload: dict, *, job_id: int) -> dict:
+    from shortlist.server.assistant.request_adapter import dispatch_assistant_requests
+
+    return await dispatch_assistant_requests(state, payload, job_id=job_id)

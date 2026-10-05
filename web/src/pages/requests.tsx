@@ -38,11 +38,13 @@ import { formatDate, settingBool, settingString } from "@/lib/format";
 import { languageName } from "@/lib/request-language";
 import {
   useArrStatus,
+  useAcquisitionClaims,
   useClearRequests,
   useDeleteRequests,
   useRejectRequests,
   useRequests,
   useRestoreRequests,
+  useReleaseAcquisitionClaim,
   useSendRequests,
   useSettings,
   useUsers,
@@ -1204,6 +1206,8 @@ function arrViewFor(
 
 export function RequestsPage() {
   const requestsQuery = useRequests();
+  const claimsQuery = useAcquisitionClaims();
+  const releaseClaim = useReleaseAcquisitionClaim();
   const settingsQuery = useSettings();
   const arrStatusQuery = useArrStatus();
   // `isPending` is the FIRST load only — a background refetch keeps the last answer on screen, so a
@@ -1467,6 +1471,44 @@ export function RequestsPage() {
         actions={settingsQuery.data ? <div className="text-left text-xs sm:text-right"><p className="font-medium text-foreground">Destination · {settingString(settingsQuery.data, "requests.target", "arr") === "overseerr" ? "Overseerr" : "Radarr & Sonarr"}</p><p className="mt-1 text-muted-foreground">{settingBool(settingsQuery.data, "requests.enabled") ? `Global auto-send is ${settingBool(settingsQuery.data, "requests.auto_send") ? "on" : "off"}` : "Requests disabled"} · <Link className="text-primary hover:underline" to={SETTINGS_LINK}>Settings</Link></p></div> : undefined}
         subtitle="Titles your people wanted that aren’t in your library yet. Send the ones you want, reject the rest."
       />
+
+      {claimsQuery.data && claimsQuery.data.items.length > 0 && (
+        <section className="mx-auto mb-5 max-w-6xl rounded-lg border border-warning/50 bg-warning/5 px-4 py-4 sm:px-5" aria-labelledby="acquisition-recovery-title">
+          <h2 id="acquisition-recovery-title" className="font-semibold">Acquisition checks needing review</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Inspect the actual destination before allowing a title to be requested again. Releasing a claim does not send the title.</p>
+          <div className="mt-3 divide-y rounded-md border bg-card">
+            {claimsQuery.data.items.map((claim) => {
+              const active = claim.status === "reserved" || claim.status === "external_started";
+              const releaseable = claim.status === "outcome_unknown" || claim.status === "succeeded";
+              return (
+                <div key={claim.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-3">
+                  <div className="min-w-0">
+                    <p className="font-medium">{claim.title}</p>
+                    <p className="text-xs text-muted-foreground">{claim.destination} · {claim.status === "outcome_unknown" ? "Outcome unknown" : claim.status === "succeeded" ? "Succeeded" : claim.status === "external_started" ? "Send in progress" : "Reserved"}</p>
+                  </div>
+                  {releaseable && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      loading={releaseClaim.isPending && releaseClaim.variables?.id === claim.id}
+                      disabled={releaseClaim.isPending}
+                      onClick={() => {
+                        if (claim.status === "outcome_unknown" || claim.status === "succeeded") {
+                          releaseClaim.mutate({ id: claim.id, reviewToken: claim.review_token, expectedStatus: claim.status });
+                        }
+                      }}
+                    >
+                      Allow retry
+                    </Button>
+                  )}
+                  {active && <span className="text-xs text-muted-foreground">Active claims cannot be released.</span>}
+                </div>
+              );
+            })}
+          </div>
+          {releaseClaim.isError && <p role="alert" className="mt-3 text-sm text-destructive-text">{apiErrorMessage(releaseClaim.error, "Could not release this acquisition claim. Check the destination again.")}</p>}
+        </section>
+      )}
 
       {/* Whether requests are ON is a fact about the SETTING, never about whether the inbox happens
           to be empty — with the feature off and stale candidates on file, this page used to render

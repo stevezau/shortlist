@@ -1534,6 +1534,8 @@ class CollectionDiff:
     rating_key: int = 0
     # Exact keys confirmed by delivery, after vanished items are omitted. None means no confirmed write.
     delivered_keys: list[int] | None = None
+    # True only after delivery reread the existing collection and needed no membership write.
+    membership_unchanged: bool = False
 
 
 @dataclass
@@ -1638,6 +1640,9 @@ class UserRunReport:
     # INTERNAL cursor, never persisted: which row `_timed_lock` charges write-lock waits to.
     # None means setup, whose wait is already inside `setup_s`.
     lock_bucket: str | None = None
+    # Earliest confirmed per-library boundaries survive a retry that loses its final breakdown.
+    # They only close older eligibility; they never claim current delivered membership.
+    delivery_boundaries: list[dict] = field(default_factory=list)
 
 
 @dataclass

@@ -48,6 +48,8 @@ const ANCHORS: Record<string, { tab: SettingsTab; anchor?: string }> = {
   "advanced-heading": { tab: "system", anchor: "advanced" },
   "api-access": { tab: "system" },
   "api-access-heading": { tab: "system", anchor: "api-access" },
+  "assistant-access": { tab: "system" },
+  "assistant-access-heading": { tab: "system", anchor: "assistant-access" },
   danger: { tab: "system" },
   "danger-heading": { tab: "system", anchor: "danger" },
 };
@@ -105,6 +107,7 @@ export type SettingsSearchEntry = {
 const at = (tab: SettingsTab, anchor: string) => `/settings/${tab}#${anchor}`;
 
 export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
+  { label: "AI assistants", keywords: "mcp chatgpt claude codex connect connection assistant access permissions", to: "/assistant-access", where: "Connections & permissions" },
   { label: "Plex", keywords: "server address token pms", to: at("connections", "connection-plex"), where: "Connections" },
   { label: "TMDB", keywords: "api key catalogue posters", to: at("connections", "connection-tmdb"), where: "Connections" },
   {

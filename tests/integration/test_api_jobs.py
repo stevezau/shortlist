@@ -11,7 +11,7 @@ import respx
 from fastapi.testclient import TestClient
 
 from shortlist.server.auth import SESSION_COOKIE
-from shortlist.server.db.models import User
+from shortlist.server.db.models import Job, User
 from shortlist.server.settings_store import SettingsStore
 from tests.integration.conftest import OWNER_JSON
 
@@ -213,9 +213,21 @@ class TestFilterWritesAreQueuedWhenOwed:
             respx.get("https://plex.tv/api/v2/user").mock(return_value=httpx.Response(200, json=dict(OWNER_JSON)))
             yield
 
+    def _jobs(self, client: TestClient) -> list[dict]:
+        with client.app.state.sessions() as session:
+            return [{"kind": job.kind, "payload": job.payload} for job in session.query(Job).order_by(Job.id)]
+
+    def _steps(self, client: TestClient) -> list[dict]:
+        """Plex obligations in dispatch order, including steps inside one atomic convergence job."""
+        return [
+            step
+            for job in self._jobs(client)
+            for step in (job["payload"]["steps"] if job["kind"] == "assistant.converge" else [job])
+            if step["kind"] != "schedule.rebuild"
+        ]
+
     def _kinds(self, client: TestClient) -> list[str]:
-        """Queued kinds, OLDEST FIRST. Order is load-bearing on the restore path, so it is asserted."""
-        return [j["kind"] for j in reversed(client.get("/api/system/jobs").json())]
+        return [step["kind"] for step in self._steps(client)]
 
     def _sarah_id(self, client: TestClient) -> int:
         return next(u["id"] for u in client.get("/api/users").json() if u["slug"] == "sarah")
@@ -240,7 +252,9 @@ class TestFilterWritesAreQueuedWhenOwed:
         )
         assert r.status_code == 200
 
-        assert "privacy.sync" in self._kinds(client)
+        assert self._steps(client) == [
+            {"kind": "privacy.sync", "payload": {"reason": f"the audience for row '{created.json()['slug']}' changed"}}
+        ]
 
     def test_widening_a_shared_rows_audience_queues_it_too(self, client: TestClient):
         """The other direction is equally stale: someone just ADDED to the audience still carries the
@@ -256,7 +270,9 @@ class TestFilterWritesAreQueuedWhenOwed:
         )
         assert r.status_code == 200
 
-        assert "privacy.sync" in self._kinds(client)
+        assert self._steps(client) == [
+            {"kind": "privacy.sync", "payload": {"reason": f"the audience for row '{created.json()['slug']}' changed"}}
+        ]
 
     def test_an_unchanged_shared_audience_queues_nothing(self, client: TestClient):
         """A filter pass is throttled plex.tv traffic across every account on the server. Re-sending
@@ -274,6 +290,11 @@ class TestFilterWritesAreQueuedWhenOwed:
         assert r.status_code == 200
 
         assert self._kinds(client) == []
+        assert all(
+            job["kind"] == "assistant.converge"
+            and job["payload"]["steps"] == [{"kind": "schedule.rebuild", "payload": {}}]
+            for job in self._jobs(client)
+        )
 
     def test_disabling_someone_writes_their_filters_as_well_as_removing_their_rows(self, client: TestClient):
         """Removing the collections is only half of "disabled". The other half is their OWN share
@@ -286,17 +307,44 @@ class TestFilterWritesAreQueuedWhenOwed:
 
         client.patch(f"/api/users/{uid}", json={"enabled": False})
 
-        assert self._kinds(client) == ["user.cleanup", "privacy.sync"]
+        assert self._jobs(client) == [
+            {
+                "kind": "assistant.converge",
+                "payload": {
+                    "domain": "people",
+                    "steps": [
+                        {"kind": "user.cleanup", "payload": {"slug": "sarah", "dry_run": False}},
+                        {
+                            "kind": "privacy.sync",
+                            "payload": {"reason": "person visibility or sharing preferences changed"},
+                        },
+                    ],
+                },
+            }
+        ]
 
     def test_disabling_everyone_queues_one_filter_pass_not_one_per_person(self, client: TestClient):
         """The pass rewrites EVERY account's filter, so N of them is N times the plex.tv traffic for
         an identical result. One cleanup per user, one pass at the end."""
         client.post("/api/users/set-enabled", json={"enabled": True})
         before = len(self._kinds(client))  # turning everyone ON queues a pass of its own
+        jobs_before = len(self._jobs(client))
+        enabled_slugs = [user["slug"] for user in client.get("/api/users").json() if user["enabled"]]
 
         client.post("/api/users/set-enabled", json={"enabled": False})
 
         assert self._kinds(client)[before:] == ["user.cleanup", "user.cleanup", "privacy.sync"]
+        added = self._jobs(client)[jobs_before:]
+        assert len(added) == 1
+        assert added[0]["kind"] == "assistant.converge"
+        steps = added[0]["payload"]["steps"]
+        assert sorted(steps[:-1], key=lambda step: step["payload"]["slug"]) == [
+            {"kind": "user.cleanup", "payload": {"slug": slug, "dry_run": False}} for slug in sorted(enabled_slugs)
+        ]
+        assert steps[-1] == {
+            "kind": "privacy.sync",
+            "payload": {"reason": "person visibility or sharing preferences changed"},
+        }
 
     def test_re_enabling_someone_gives_back_the_shared_rows_that_disabling_hid(self, client: TestClient):
         """Disabling now writes excludes that hide every shared row from that account. Without the
@@ -308,6 +356,7 @@ class TestFilterWritesAreQueuedWhenOwed:
         client.patch(f"/api/users/{uid}", json={"enabled": True})
 
         assert self._kinds(client)[-1] == "privacy.sync"
+        assert self._steps(client)[-1]["payload"] == {"reason": "person visibility or sharing preferences changed"}
 
     def test_un_pausing_queues_one_job_that_owns_its_own_ordering(self, client: TestClient):
         """Restoring an un-paused user is the one maintenance path that makes a row MORE visible, so
@@ -324,6 +373,11 @@ class TestFilterWritesAreQueuedWhenOwed:
         client.patch(f"/api/users/{uid}", json={"prefs": {"paused": False}})
 
         assert self._kinds(client) == ["user.hide", "user.restore"]
+        assert [job["kind"] for job in self._jobs(client)] == ["assistant.converge", "assistant.converge"]
+        assert self._steps(client) == [
+            {"kind": "user.hide", "payload": {"slug": "sarah", "dry_run": False}},
+            {"kind": "user.restore", "payload": {"slug": "sarah", "dry_run": False}},
+        ]
 
     def test_someone_who_leaves_the_share_is_turned_off_and_cleaned_up(self, client: TestClient, plextv):
         """A user who disappears from the plex.tv roster has lost access to the server, but nothing

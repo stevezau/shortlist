@@ -1023,7 +1023,11 @@ class TestSettingsThatDoRealWork:
         invisible until something writes."""
         client.put("/api/settings", json={"values": {"privacy.hide_shared_from_disabled": False}})
 
-        assert [j["kind"] for j in client.get("/api/system/jobs").json()] == ["privacy.sync"]
+        queued = client.get("/api/system/jobs").json()
+        assert len(queued) == 1 and queued[0]["kind"] == "assistant.converge"
+        assert queued[0]["payload"]["steps"] == [
+            {"kind": "privacy.sync", "payload": {"reason": "the shared-row privacy setting changed"}}
+        ]
 
     def test_saving_the_same_value_queues_nothing(self, client: TestClient):
         """A settings save sends the whole form, so every unrelated edit would otherwise trigger a

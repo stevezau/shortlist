@@ -473,31 +473,34 @@ class TestUsersApi:
         Storing the flag without queueing anything would leave the account exactly as polluted as
         before until the next nightly run — the "settings PATCH was inert" shape from §12's audit.
         """
-        import shortlist.server.api.users as users_api
+        from shortlist.server.db.models import Job
+        from shortlist.server.services import jobs
 
-        reasons: list[str] = []
+        async def no_drain(state, reason):
+            return None
 
-        async def fake_queue(state, reason):
-            reasons.append(reason)
+        monkeypatch.setattr(jobs, "drain_now", no_drain)
 
-        monkeypatch.setattr(users_api.jobs, "queue_privacy_sync", fake_queue)
+        def privacy_steps():
+            with client.app.state.sessions() as session:
+                return [
+                    step
+                    for job in session.query(Job).filter_by(kind="assistant.converge")
+                    for step in job.payload["steps"]
+                    if step["kind"] == "privacy.sync"
+                ]
+
         target = next(u for u in client.get("/api/users").json() if u["username"] == "mike")
-        assert target["manage_sharing"] is True  # managed by default — no live server changes on upgrade
-
+        assert target["manage_sharing"] is True
+        before = len(privacy_steps())
         r = client.patch(f"/api/users/{target['id']}", json={"manage_sharing": False})
-
         assert r.status_code == 200 and r.json()["manage_sharing"] is False
-        assert len(reasons) == 1 and "leave their Plex sharing alone" in reasons[0]
-
-        # Turning it back on queues the merge again...
+        assert len(privacy_steps()) == before + 1
         r = client.patch(f"/api/users/{target['id']}", json={"manage_sharing": True})
         assert r.json()["manage_sharing"] is True
-        assert len(reasons) == 2
-
-        # ...and a PATCH that does not CHANGE it queues nothing, so an unrelated edit (a nickname,
-        # the enabled switch) never fires a server-wide filter pass on the side.
+        assert len(privacy_steps()) == before + 2
         client.patch(f"/api/users/{target['id']}", json={"manage_sharing": True, "nickname": "Michael"})
-        assert len(reasons) == 2
+        assert len(privacy_steps()) == before + 2
 
     def test_the_owner_cannot_be_marked_left_alone(self, client: TestClient):
         """Plex has no share filters for the account that owns the server (rule 5), so the flag can

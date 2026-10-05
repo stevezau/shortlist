@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import UTC, datetime
 
 from loguru import logger
@@ -54,6 +55,8 @@ from shortlist.engine.models import (
     row_languages_or_inherit,
     row_monitor_or_inherit,
 )
+from shortlist.engine.provider_calls import ProviderCallControls
+from shortlist.engine.requests import AcquisitionGuard
 from shortlist.engine.rows import row_shown_today
 from shortlist.engine.themes import ThemeSpec
 from shortlist.engine.web_guidance import AiInstructions
@@ -79,6 +82,7 @@ from shortlist.server.prefs import blocked_ids
 from shortlist.server.services.pick_history import DbPickHistory
 from shortlist.server.services.plex_reachability import explained
 from shortlist.server.services.poster_service import load_upload, make_studio
+from shortlist.server.services.request_actions import AutomaticRequestGuard, durable_handled_requests
 from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.theme_store import spec_from_row
@@ -90,7 +94,7 @@ from shortlist.server.settings_store import SettingsStore
 EDITOR_PLEX_TIMEOUT_S = 8
 
 
-def curator_kwargs(get: Callable[[str], object]) -> dict:
+def curator_kwargs(get: Callable[[str], object], *, provider_controls: ProviderCallControls | None = None) -> dict:
     """Assemble ``make_curator`` kwargs from settings. A local/OpenAI-compatible server takes a
     base_url and an OPTIONAL key; every other provider takes an api_key; an optional model applies
     to all.
@@ -111,10 +115,24 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
         kwargs["api_key"] = get("curator.api_key")
     if get("curator.model"):
         kwargs["model"] = get("curator.model")
+    if provider_controls is not None:
+        kwargs.update(provider_controls=provider_controls, max_retries=0, follow_redirects=False)
+        endpoints = {
+            "openai": "https://api.openai.com/v1",
+            "anthropic": "https://api.anthropic.com",
+            "google": "https://generativelanguage.googleapis.com",
+        }
+        if provider in endpoints:
+            kwargs["base_url"] = endpoints[provider]
+        elif provider in ("openai_compatible", "ollama"):
+            # Bounded runs use the reviewed model, never a later model-list discovery.
+            kwargs["model"] = str(get("curator.model") or "")
     return kwargs
 
 
-def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None:
+def make_search_client(
+    get: Callable[[str], object], *, provider_controls: ProviderCallControls | None = None
+) -> WebSearchProvider | None:
     """The external web-search backend for the ``llm_web`` source, or None when there isn't one.
 
     Deciding WHICH provider belongs here rather than in the engine: the engine only knows "an
@@ -132,9 +150,14 @@ def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None
         A configured provider, or None when the backend is ``native`` or its own setup is missing.
     """
     mode = get("llm_web.search_provider") or "native"
+    kwargs = {"provider_controls": provider_controls} if provider_controls is not None else {}
     if mode == "exa":
         key = get("exa.apikey")
-        return ExaClient(key, search_type=str(get("exa.search_type") or DEFAULT_EXA_SEARCH_TYPE)) if key else None
+        return (
+            ExaClient(key, search_type=str(get("exa.search_type") or DEFAULT_EXA_SEARCH_TYPE), **kwargs)
+            if key
+            else None
+        )
     if mode == "searxng":
         url = (str(get("searxng.url") or "")).strip()
         if not url:
@@ -143,6 +166,7 @@ def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None
             url,
             username=str(get("searxng.username") or ""),
             password=str(get("searxng.password") or ""),
+            **kwargs,
         )
     return None  # native: the provider searches for itself, so there is no external client
 
@@ -390,8 +414,11 @@ class ContextBuilder:
         run_id: int | None = None,
         log_sink: Callable[[dict], None] | None = None,
         collection_ids: list[int] | None = None,
+        session: Session | None = None,
+        provider_controls: ProviderCallControls | None = None,
+        acquisition_guard: AcquisitionGuard | None = None,
     ) -> EngineContext:
-        with self._sessions() as session:
+        with self._sessions() if session is None else nullcontext(session) as session:
             store = SettingsStore(session, self._secrets)
             plex_url = store.get("plex.url")
             plex_token = store.get("plex.token")
@@ -412,7 +439,8 @@ class ContextBuilder:
             )
             # External web-search backend for the llm_web source; None when none is configured (the
             # native provider tools still work without it — only Ollama depends on it).
-            search = make_search_client(store.get)
+            provider_kwargs = {"provider_controls": provider_controls} if provider_controls is not None else {}
+            search = make_search_client(store.get, **provider_kwargs)
             history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
 
             def _pms_for_user(profile, _history=history, _url=plex_url):
@@ -431,13 +459,13 @@ class ContextBuilder:
                 return PlexClient(_url, token, timeout=int(store.get("plex.timeout_s") or 45)) if token else None
 
             provider = store.get("curator.provider")
-            curator = make_curator(provider, **curator_kwargs(store.get))
+            curator = make_curator(provider, **curator_kwargs(store.get, **provider_kwargs))
             # Build the poster studio only if a row actually renders a poster from text (built-in or
             # AI) — a server that never uses posters never touches Pillow or the image SDK. The studio
             # always provides the text engine; its AI engine is None when the provider can't make images.
             render_modes = {"text", "ai", "generate"}
             wants_studio = any((c.poster or {}).get("mode") in render_modes for c in session.query(Collection).all())
-            poster_artist = make_studio(store, self._sessions) if wants_studio else None
+            poster_artist = make_studio(store, self._sessions, **provider_kwargs) if wants_studio else None
             config = self._engine_config(session, store, dry_run=dry_run, collection_ids=collection_ids)
             previous = self._previous_picks(session)
             previous_recipes = self._previous_recipes(previous)
@@ -533,6 +561,9 @@ class ContextBuilder:
                 # complete picture converge needs before it may DELETE an unattributable collection.
                 may_delete_orphans=True,
                 handled_requests=self._handled_requests(session),
+                acquisition_guard=(
+                    acquisition_guard if acquisition_guard is not None else AutomaticRequestGuard(self._sessions)
+                ),
                 progress=progress,
                 # Everyone who could own a tag, not the run's scope and not only the enabled: the
                 # request ledger must see that a tag two people share is ambiguous even when one of
@@ -571,7 +602,7 @@ class ContextBuilder:
         wasn't a no.
         """
         rows = session.query(RequestCandidate).filter(RequestCandidate.status.in_(("sent", "rejected"))).all()
-        return {(row.tmdb_id, row.media_type) for row in rows}
+        return {(row.tmdb_id, row.media_type) for row in rows} | durable_handled_requests(session)
 
     def build_plex_only(self, *, dry_run: bool) -> EngineContext:
         """A context with the PMS, plex.tv and the watch-history source — and nothing else.

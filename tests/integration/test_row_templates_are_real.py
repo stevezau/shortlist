@@ -23,7 +23,8 @@ libraries of its type, libraries no row targets are never even indexed, the pool
 per-section loop filters again. Disabling two of them at once still produced no leak, so these two
 assertions are correct but their teeth are unproven; the redundancy is the actual guarantee.
 
-The template values are parsed out of ``web/src/lib/row-templates.ts`` rather than restated here, so
+The template values are parsed out of the shipped ``web/src/lib/row-templates.generated.ts`` rather than restated
+here, so
 this cannot silently drift from what actually ships. If that file's shape changes, the parser fails
 loudly (see :func:`_load_templates`) instead of quietly testing nothing.
 """
@@ -47,7 +48,7 @@ from tests.fakes.fake_plex import movie_title, show_title
 # The `client` fixture comes from tests/integration/conftest.py — the same app fixture the
 # `test_api_*.py` files use, so the two can never drift apart.
 
-TEMPLATES_TS = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "row-templates.ts"
+TEMPLATES_TS = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "row-templates.generated.ts"
 
 #: Every template in the gallery. Kept here so a NEW template cannot be added without either
 #: extending the proofs below or deliberately deleting its name from this list.
@@ -70,25 +71,19 @@ AI_TEMPLATE_IDS = {"describe-a-row"}
 
 
 def _load_templates() -> dict[str, dict]:
-    """`id -> values` straight out of the TypeScript source.
+    """`id -> values` straight out of the generated TypeScript source.
 
-    A deliberately strict little parser: the file is a static literal, so anything it cannot read is a
-    change in shape that should FAIL rather than yield an empty dict a test would happily pass on.
+    The generated catalog contains JSON-shaped literals. Keep this parser deliberately strict: anything
+    it cannot read is a shape change that should FAIL rather than yield an empty dict a test would happily
+    pass on.
     """
     source = TEMPLATES_TS.read_text(encoding="utf-8")
-    # Strip `//` comments (none of the literal's string values contain "//").
-    source = re.sub(r"^\s*//.*$", "", source, flags=re.MULTILINE)
 
     out: dict[str, dict] = {}
-    for block in re.finditer(r'id:\s*"([^"]+)",(.*?)values:\s*\{(.*?)\n    \},', source, re.DOTALL):
-        template_id, _meta, values_src = block.group(1), block.group(2), block.group(3)
-        # JS object literal -> JSON: quote the bare keys and drop the trailing comma. Values are left
-        # exactly as written — the file double-quotes every string, and normalising quote style would
-        # corrupt the apostrophes inside them ("you've already seen", "Tonight's").
-        body = re.sub(r"^(\s*)(\w+):", r'\1"\2":', values_src, flags=re.MULTILINE)
-        body = re.sub(r",\s*$", "", body.strip())
+    for block in re.finditer(r'"id":\s*"([^"]+)".*?"values":\s*(\{.*?\n    \})', source, re.DOTALL):
+        template_id, values_src = block.group(1), block.group(2)
         try:
-            out[template_id] = json.loads("{" + body + "}")
+            out[template_id] = json.loads(values_src)
         except json.JSONDecodeError as e:  # pragma: no cover - only on a shape change
             raise AssertionError(f"could not parse template {template_id!r} from {TEMPLATES_TS}: {e}") from e
 

@@ -10,6 +10,12 @@ from shortlist.engine.curator.base import (
     parse_web_titles,
 )
 from shortlist.engine.models import UserProfile
+from shortlist.engine.provider_calls import (
+    ProviderCall,
+    ProviderCallControls,
+    ProviderCallRefused,
+    provider_call,
+)
 from shortlist.engine.web_guidance import Guidance
 
 # An ALIAS, not a pinned model, and that is the whole point. This was `gemini-2.5-flash` until it
@@ -49,11 +55,22 @@ class GoogleCurator:
     last_tokens = ThreadLocalTokens()  # per-thread, so parallel per-user web search doesn't race
     last_output_tokens = ThreadLocalTokens()
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, timeout: float = 60.0):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_MODEL,
+        timeout: float = 60.0,
+        max_retries: int = 1,
+        base_url: str | None = None,
+        follow_redirects: bool = True,
+        provider_controls: ProviderCallControls | None = None,
+    ):
         try:
             from google import genai
         except ImportError as e:
             raise ImportError("Google provider needs `pip install shortlist[google]`") from e
+        if provider_controls is not None and base_url is None:
+            base_url = "https://generativelanguage.googleapis.com"
         # google-genai's HttpOptions.timeout is in MILLISECONDS; without this the constructor's
         # timeout was silently dropped, so a stalled Gemini call was bounded only by the SDK default.
         #
@@ -63,14 +80,21 @@ class GoogleCurator:
         # one provider with no retry at all — the SDK default does not cover rate limits.
         self._client = genai.Client(
             api_key=api_key,
+            **({"vertexai": False} if base_url is not None else {}),
             http_options={
+                **({"base_url": base_url} if base_url is not None else {}),
+                **(
+                    {"client_args": {"follow_redirects": False}, "async_client_args": {"follow_redirects": False}}
+                    if provider_controls is not None or not follow_redirects
+                    else {}
+                ),
                 "timeout": int(timeout * 1000),
                 "retry_options": {
                     # TWO attempts. google-genai retries httpx timeouts UNCONDITIONALLY, regardless
                     # of `http_status_codes`, so every extra attempt multiplies the wall clock the
                     # `timeout` above exists to bound — and `recommend_web` can call this twice when
                     # a model rejects the schema. Three made a stalled call ~368s per person.
-                    "attempts": 2,
+                    "attempts": 1 if provider_controls is not None else max_retries + 1,
                     "initial_delay": 1.0,
                     "max_delay": 30.0,
                     "exp_base": 2.0,
@@ -79,6 +103,8 @@ class GoogleCurator:
                 },
             },
         )
+        self._provider_controls = provider_controls
+        self._destination = (base_url or "https://generativelanguage.googleapis.com").rstrip("/")
         self._model = model
         # Whether this model takes a response schema alongside grounding. Gemini 3 does; 2.5 does not.
         # The owner picks the model, so this is learned from the first call and then remembered — a
@@ -130,6 +156,9 @@ class GoogleCurator:
         try:
             r = self._grounded_call(system, user, with_schema=self._schema_supported)
         except Exception as e:  # google-genai raises provider-specific exceptions
+            if self._provider_controls is not None:
+                logger.warning("llm_web (google) failed ({})", type(e).__name__)
+                return []
             # Type only, never the message — the google-genai error text carries the API key.
             if not self._schema_supported:  # already schema-less, so the fault is not the format
                 logger.warning("llm_web (google) failed ({})", type(e).__name__)
@@ -171,20 +200,48 @@ class GoogleCurator:
             "system_instruction": system,
             "tools": [types.Tool(google_search=types.GoogleSearch())],
         }
+        controls = self._provider_controls
+        if controls is not None:
+            if not controls.allow_provider_managed_search:
+                raise ProviderCallRefused("Google native search requires provider-managed search approval.")
+            config["max_output_tokens"] = controls.max_output_tokens
         if with_schema:
             config["response_mime_type"] = "application/json"
             config["response_schema"] = _TITLES_SCHEMA
-        return self._client.models.generate_content(
-            model=self._model, contents=user, config=types.GenerateContentConfig(**config)
-        )
+        with provider_call(
+            controls,
+            ProviderCall(
+                kind="native_search",
+                provider=self.name,
+                destination=self._destination,
+                model=self._model,
+                output_tokens=config.get("max_output_tokens"),
+            ),
+        ):
+            return self._client.models.generate_content(
+                model=self._model, contents=user, config=types.GenerateContentConfig(**config)
+            )
 
     def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         """Plain completion (no tools) — the external-search ``llm_web`` path (see base.complete)."""
         config: dict = {"system_instruction": system}
+        controls = self._provider_controls
+        if controls is not None:
+            max_tokens = controls.output_limit(max_tokens)
         if max_tokens is not None:
             config["max_output_tokens"] = max_tokens
         try:
-            r = self._client.models.generate_content(model=self._model, contents=user, config=config)
+            with provider_call(
+                controls,
+                ProviderCall(
+                    kind="completion",
+                    provider=self.name,
+                    destination=self._destination,
+                    model=self._model,
+                    output_tokens=max_tokens,
+                ),
+            ):
+                r = self._client.models.generate_content(model=self._model, contents=user, config=config)
         except Exception as e:
             # Type only — the google-genai error text carries the API key (`?key=AIza…`).
             logger.warning("complete (google) failed ({})", type(e).__name__)

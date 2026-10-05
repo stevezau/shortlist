@@ -29,6 +29,7 @@ import httpx
 from loguru import logger
 
 from shortlist.engine.clients import http_retry
+from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls, ProviderCallRefused, provider_call
 
 EXA_SEARCH_URL = "https://api.exa.ai/search"
 _DEFAULT_RESULTS = 8
@@ -229,8 +230,16 @@ class ExaClient:
     # nothing and asking for more only costs.
     results_per_query = 10
 
-    def __init__(self, api_key: str, *, search_type: str = DEFAULT_EXA_SEARCH_TYPE, timeout: float | None = None):
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        search_type: str = DEFAULT_EXA_SEARCH_TYPE,
+        timeout: float | None = None,
+        provider_controls: ProviderCallControls | None = None,
+    ):
         self._api_key = api_key
+        self._provider_controls = provider_controls
         # An unknown mode would be a 400 from Exa on every seed of every run, so an unrecognised
         # setting falls back to the default rather than failing the source all night.
         self._search_type = search_type if search_type in EXA_SEARCH_TYPES else DEFAULT_EXA_SEARCH_TYPE
@@ -281,6 +290,19 @@ class ExaClient:
     def _post(self, query: str, num_results: int) -> dict:
         """One raw search response. Raises for status; a non-JSON body raises too and is caught by
         the source's own guard — Exa answered 200 with an unparseable body once during testing."""
+        with provider_call(
+            self._provider_controls,
+            ProviderCall(
+                kind="external_search",
+                provider=self.name,
+                destination="https://api.exa.ai",
+                model=self._search_type,
+            ),
+        ):
+            return self._post_response(query, num_results)
+
+    def _post_response(self, query: str, num_results: int) -> dict:
+        bounded = self._provider_controls is not None
         response = http_retry.idempotent_post(
             EXA_SEARCH_URL,
             # Two budgets, because the two failures cost wildly different amounts of a run's night.
@@ -289,12 +311,13 @@ class ExaClient:
             # a 503 comes back in milliseconds — measured 0.2s — so capping those at two threw away a
             # nearly-free retry on the case a busy run actually hits, which is exactly what Exa does
             # when `run.concurrency` searches land together.
-            attempts=2,
-            status_attempts=5,
+            attempts=1 if bounded else 2,
+            status_attempts=1 if bounded else 5,
+            **({"follow_redirects": False} if bounded else {}),
             headers={"x-api-key": self._api_key, "Content-Type": "application/json"},
             json={
                 "query": query,
-                "numResults": num_results,
+                "numResults": min(num_results, self.results_per_query) if bounded else num_results,
                 "type": self._search_type,
                 "contents": {"text": {"maxCharacters": _DEFAULT_MAX_CHARS}},
                 "outputSchema": _EXA_TITLE_SCHEMA,
@@ -371,13 +394,27 @@ class SearxngClient:
     # across seeds — so it adds depth exactly where there is room for it, i.e. when few seeds ran.
     results_per_query = 10
 
-    def __init__(self, base_url: str, *, username: str = "", password: str = "", timeout: float = 20.0):
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        username: str = "",
+        password: str = "",
+        timeout: float = 20.0,
+        provider_controls: ProviderCallControls | None = None,
+    ):
         # Credentials inline in the URL (`http://user:pass@host:8080`) are moved into the auth header
         # and stripped from the URL, so they can't ride into a log line or an error string (rule 9).
         # This is a BACKSTOP, not the supported way in: the settings API refuses that shape outright,
         # because `searxng.url` is stored in the clear and recorded verbatim in the immutable
         # `settings.change` audit event, and stripping here would be far too late for either.
         parsed = httpx.URL(base_url.rstrip("/"))
+        if provider_controls is not None and (parsed.username or parsed.password or parsed.query or parsed.fragment):
+            raise ProviderCallRefused("Use a credential-free search endpoint for bounded provider requests.")
+        self._provider_controls = provider_controls
+        self._destination = (
+            base_url.rstrip("/") if provider_controls is not None else str(parsed.copy_with(userinfo=b"")).rstrip("/")
+        )
         url_user, url_password = parsed.username, parsed.password
         # Appended, never resolved as a relative reference: an instance proxied at `/searxng` must
         # keep that prefix, and RFC-3986 resolution would replace the last segment and drop it.
@@ -424,8 +461,20 @@ class SearxngClient:
 
     def _fetch(self, query: str) -> dict:
         """One raw JSON search page, with the two misconfigurations translated into their fix."""
+        with provider_call(
+            self._provider_controls,
+            ProviderCall(kind="external_search", provider=self.name, destination=self._destination),
+        ):
+            return self._fetch_response(query)
+
+    def _fetch_response(self, query: str) -> dict:
         response = http_retry.get(
             self._search_url,
+            **(
+                {"attempts": 1, "status_attempts": 1, "follow_redirects": False}
+                if self._provider_controls is not None
+                else {}
+            ),
             # `safesearch=1` is free: measured against a real instance it returned an identical
             # yield (12 usable titles either way), and a "what to watch next" recommender has no
             # business surfacing adult results. `safesearch=2` costs a title and is not worth it.

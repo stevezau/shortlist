@@ -33,10 +33,6 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.prefs import blocked_entries
 from shortlist.server.services import jobs, report_service
-from shortlist.server.services.user_sync import (
-    remove_users_rows,
-    rename_after_nickname,
-)
 from shortlist.server.services.watch_events import _as_utc
 from shortlist.server.settings_store import SettingsStore
 
@@ -427,89 +423,49 @@ async def set_all_users_enabled(body: BulkEnabled, request: Request) -> dict:
     Plex now and writes their share filters — the same cleanup the per-user toggle does, so 'off'
     means gone, not merely 'not refreshed'. Enabling gives back the shared rows that disabling hid;
     their own rows rebuild on the next run. Best-effort + audited."""
+    from shortlist.server.assistant.row_effects import queue_convergence_in_session
+    from shortlist.server.services.person_changes import apply_person_in_session, prepare_person_in_session
+
     state = request.app.state
-    to_clean: list[str] = []
-    reinstated = 0
     with state.sessions() as session:
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
         users = session.query(User).all()
-        for user in users:
-            if body.enabled is False and user.enabled:
-                to_clean.append(user.slug)  # was on, now off -> remove their rows from Plex
-            if body.enabled is True and not user.enabled:
-                reinstated += 1  # was off, now on -> the excludes that hid every shared row must go
-            user.enabled = body.enabled
-        session.commit()
+        mutations = [prepare_person_in_session(session, user.id, UserPatch(enabled=body.enabled)) for user in users]
+        cleaned = sum(bool(user.enabled and not body.enabled) for user in users)
+        steps = []
+        privacy_step = None
+        for mutation in mutations:
+            apply_person_in_session(session, mutation)
+            for step in mutation.steps:
+                if step["kind"] == "privacy.sync":
+                    privacy_step = step
+                else:
+                    steps.append(step)
+        # Finish every person's cleanup before the global filter pass. A failed
+        # privacy request must not prevent a later person's collections being removed.
+        if privacy_step is not None:
+            steps.append(privacy_step)
+        if steps:
+            queue_convergence_in_session(session, steps, domain="people")
         total = len(users)
-    await remove_users_rows(state, to_clean)
-    if reinstated:
-        await jobs.queue_privacy_sync(state, f"{reinstated} people were turned back on")
-    return {"updated": total, "cleaned": len(to_clean), "enabled": body.enabled}
+        session.commit()
+    if steps:
+        await jobs.drain_now(state, "people enablement changed")
+    return {"updated": total, "cleaned": cleaned, "enabled": body.enabled}
 
 
 @router.patch("/{user_id}", response_model=UserOut)
 async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
+    from shortlist.server.assistant.row_effects import queue_convergence_in_session
+    from shortlist.server.services.person_changes import apply_person_in_session, prepare_person_in_session
+
     state = request.app.state
-    disabled_slug: str | None = None
-    enabled_slug: str | None = None
-    paused_slug: str | None = None
-    unpaused_slug: str | None = None
-    sharing_slug: tuple[str, bool] | None = None  # (slug, now managed?) when the setting actually changed
-    was_called: dict[str, str] = {}  # {slug -> the display name their collections are still titled with}
     with state.sessions() as session:
-        user = session.get(User, user_id)
-        if user is None:
-            raise HTTPException(status_code=404, detail="user not found")
-        if patch.enabled is not None:
-            if user.enabled and patch.enabled is False:
-                # Turned off → remove their rows from Plex now, not just stop delivering to them.
-                disabled_slug = user.slug
-            if not user.enabled and patch.enabled is True:
-                # Turned back on → the excludes that hid every shared row from them must come off.
-                # Their own row is a rebuild, so that part still waits for the next run.
-                enabled_slug = user.slug
-            user.enabled = patch.enabled
-        if patch.manage_sharing is not None and user.user_type == "owner":
-            # Plex has no share filters for the account that owns the server (rule 5), so this flag
-            # can never mean anything for them. Ignored rather than stored: persisting it would badge
-            # the owner "Sharing untouched" in the Users list, which describes a state that does not
-            # exist. The UI already hides the switch for them; this is the same answer at the API.
-            patch.manage_sharing = None
-        if patch.manage_sharing is not None and patch.manage_sharing != user.manage_sharing:
-            # Both directions need the same pass, and it is the same pass everything else uses:
-            # `privacy.sync` is `engine_run(ctx, [])`, which walks every account's filter and builds,
-            # delivers and promotes nothing. Turning management OFF makes it remove our excludes from
-            # this one account; turning it back ON merges them in again. Neither creates a row, so the
-            # leak-safe ordering of §12 has nothing to order here — no row becomes visible that was not
-            # already on the server.
-            sharing_slug = (user.slug, patch.manage_sharing)
-            user.manage_sharing = patch.manage_sharing
-        if patch.nickname is not None:
-            nickname = patch.nickname.strip()
-            # Checked whether it is being SET or CLEARED: clearing falls back to the Tautulli or
-            # Plex name, which is just as capable of colliding as one that was typed.
-            _reject_display_name_clash(session, user, nickname or user.friendly_name or user.username)
-            if nickname != (user.nickname or ""):
-                was_called[user.slug] = user.display_name  # captured BEFORE the write
-            user.nickname = nickname
-        if patch.request_tag is not None:
-            user.request_tag = patch.request_tag.strip()
-        if patch.requested_by_tag is not None:
-            user.requested_by_tag = patch.requested_by_tag.strip()
-        if patch.prefs is not None:
-            was_paused = bool((user.prefs or {}).get("paused"))
-            prefs = merged_prefs(user.prefs or {}, patch.prefs)
-            user.prefs = prefs
-            # Pausing means "stop showing their row", so it has to come down NOW — a paused person is
-            # absent from every run by definition, so nothing else would ever act on it. Unpausing is
-            # the exact mirror: the collections still exist, they are merely demoted, so putting them
-            # back is a re-promote. Leaving it to "the next run" was wrong — a row whose schedule is
-            # blank has no next run, and neither does one while `paused_all` is set, so an unpaused
-            # person could stay invisible indefinitely.
-            now_paused = bool(prefs.get("paused"))
-            if now_paused and not was_paused:
-                paused_slug = user.slug
-            elif was_paused and not now_paused:
-                unpaused_slug = user.slug
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        mutation = prepare_person_in_session(session, user_id, patch)
+        user = apply_person_in_session(session, mutation)
+        if mutation.steps:
+            queue_convergence_in_session(session, mutation.steps, domain="people")
         session.commit()
         result = user_dict(
             user,
@@ -519,28 +475,8 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
             None,
             unhidden_rows=_unhidden_row_counts(session).get(user.username, 0),
         )
-    if disabled_slug is not None:
-        await remove_users_rows(state, [disabled_slug])
-    if enabled_slug is not None:
-        await jobs.queue_privacy_sync(state, f"'{enabled_slug}' was turned back on")
-    if sharing_slug is not None:
-        slug, managed = sharing_slug
-        # Both read as a clause after the job toast's "Share filters merged for every account
-        # after …", the same shape the enable/disable reasons already use.
-        await jobs.queue_privacy_sync(
-            state,
-            f"'{slug}' was set back to managed Plex sharing"
-            if managed
-            else f"'{slug}' was set to leave their Plex sharing alone",
-        )
-    if paused_slug is not None:
-        await _hide_paused_users_rows(state, paused_slug)
-    if unpaused_slug is not None:
-        await _restore_paused_users_rows(state, unpaused_slug)
-    # A nickname changes what `{user}` renders to, so this person's existing collections carry a title
-    # no future run will write. Renaming them in place is the same reconcile a row rename uses; without
-    # it a multi-row user keeps the old-named copy alongside the new one.
-    await rename_after_nickname(state, was_called)
+    if mutation.steps:
+        await jobs.drain_now(state, "person preferences changed")
     return result
 
 

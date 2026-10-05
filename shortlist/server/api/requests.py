@@ -17,12 +17,14 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from shortlist.engine.clients.http_retry import redact
-from shortlist.engine.models import MediaType, MissingTitle
+from shortlist.engine.models import MediaType
 from shortlist.engine.request_config import resolve_request_config
-from shortlist.engine.requests import request_titles_by_row
+from shortlist.engine.requests import RequestBatch, request_titles_by_row
 from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.assistant_auth.routes import BrowserOwnerDep
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, Event, RequestCandidate, iso_utc
 from shortlist.server.services.context_builder import row_request_overrides
@@ -586,8 +588,8 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
     """Ask Sonarr/Radarr for the chosen pending titles.
 
     A dry run previews the outcomes without asking and leaves every row pending. A real send marks a
-    row ``sent`` only when the app accepted it; a skip/error leaves it pending with the reason recorded,
-    so the owner can see why it didn't go and try again.
+    row ``sent`` only when the app accepted it. Known skips leave it available for another attempt;
+    uncertain outcomes keep a durable claim until the owner checks the destination and releases it.
     """
     state = request.app.state
     svc = state.run_service
@@ -599,63 +601,196 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
             # owner would have used is not knowable here — and guessing named the wrong one half
             # the time.
             raise HTTPException(status_code=409, detail="Turn on requests in Settings first.")
+        from types import SimpleNamespace
+
+        from shortlist.server.services.request_actions import (
+            finish_request_dispatch,
+            missing_title,
+            request_send_entry,
+            reserve_request_dispatches,
+            start_manual_request_dispatch,
+        )
+
         with state.sessions() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
             rows = (
                 session.query(RequestCandidate)
                 .filter(RequestCandidate.id.in_(body.ids), RequestCandidate.status == "pending")
                 .all()
             )
-
-            def _title(row: RequestCandidate) -> MissingTitle:
-                return MissingTitle(
-                    tmdb_id=row.tmdb_id,
-                    title=row.title,
-                    media_type=MediaType(row.media_type),
-                    year=row.year,
-                    rating=row.rating,
-                    vote_count=row.vote_count,
-                    language=row.language or "",
-                    demand=row.demand,
-                    tags=set(row.tags or []),
-                )
-
-            # Send each title under the target of the ROW that surfaced it — the whole point of
-            # per-row settings is that a kids row files into a different folder, and an approval is
-            # just a delayed send. Grouped so rows sharing a target share one client and its rate
-            # limiter (the plex-safety throttle lives on the client).
-            #
-            # `row_slug` is NULL on everything queued before per-row settings existed, and on a title
-            # whose row has since been deleted; both fall back to the global config, which is exactly
-            # what they were queued under.
+            entries = [request_send_entry(session, row, cfg) for row in rows]
             overrides = {
                 c.slug: row_request_overrides(c) for c in session.query(Collection).all() if c.build != "shared"
             }
-            # One claim per title tagged with its row, then a single send — so rows sharing a Radarr
-            # share one client and one rate limiter. A loop of per-group sends would give each group
-            # its own, multiplying the write rate to that server (plex-safety rule 6).
             cfg_by_row = {"": cfg} | {slug: resolve_request_config(cfg, ov) for slug, ov in overrides.items()}
-            claims = [(row.row_slug if row.row_slug in cfg_by_row else "", _title(row)) for row in rows]
-            report = request_titles_by_row(cfg_by_row, tmdb, claims, dry_run=body.dry_run)
-            by_key = {(o.tmdb_id, o.media_type.value): o for o in report.outcomes}
-            outcomes = []
-            for row in rows:
-                outcome = by_key.get((row.tmdb_id, row.media_type))
-                if outcome is None:
+            claims = []
+            if not body.dry_run:
+                try:
+                    claims = reserve_request_dispatches(session, rows, entries, origin="manual")
+                except ValueError as error:
+                    raise HTTPException(status_code=409, detail=str(error)) from None
+            dispatch_ids = {claim.candidate_id: claim.id for claim in claims}
+            session.commit()
+
+        # Individual durable checkpoints share one invocation-local client cache and server clock.
+        # No database transaction remains open during metadata reads or acquisition calls.
+        batch = RequestBatch()
+        outcomes = []
+        for entry in entries:
+            dispatch_id = dispatch_ids.get(entry["candidate_id"])
+            if dispatch_id is not None:
+                with state.sessions() as session:
+                    session.execute(text("BEGIN IMMEDIATE"))
+                    current = start_manual_request_dispatch(session, dispatch_id)
+                    session.commit()
+                if current is None:
+                    outcomes.append(
+                        {
+                            "id": entry["candidate_id"],
+                            "title": entry["title"]["title"],
+                            "status": "skipped_changed",
+                            "detail": "The selected candidate is no longer pending.",
+                        }
+                    )
                     continue
-                row.detail = outcome.detail
-                if outcome.arr_slug:
-                    row.arr_slug = outcome.arr_slug  # so the sent log deep-links to the arr page
-                if not body.dry_run and outcome.status == "requested":
-                    row.status = "sent"
-                    # Stamped once, here, so "watched since sent" can compare against the real send
-                    # time rather than an `updated_at` that later edits move around.
-                    row.sent_at = datetime.now(UTC)
-                outcomes.append({"id": row.id, "title": row.title, "status": outcome.status, "detail": outcome.detail})
+            slug = entry["row_slug"] if entry["row_slug"] in cfg_by_row else ""
+            try:
+                report = request_titles_by_row(
+                    cfg_by_row, tmdb, [(slug, missing_title(entry["title"]))], dry_run=body.dry_run, batch=batch
+                )
+                outcome = report.outcomes[0] if report.outcomes else None
+                if outcome is None:
+                    raise RuntimeError("The acquisition service returned no outcome")
+            except Exception:
+                outcome = SimpleNamespace(
+                    status="error",
+                    detail="The acquisition outcome is uncertain; check the destination before retrying.",
+                    arr_slug=None,
+                )
+            with state.sessions() as session:
+                if dispatch_id is not None:
+                    finish_request_dispatch(session, dispatch_id, outcome)
+                else:
+                    row = session.get(RequestCandidate, entry["candidate_id"])
+                    if row is not None:
+                        row.detail = outcome.detail
+                        if outcome.arr_slug:
+                            row.arr_slug = outcome.arr_slug
+                session.commit()
+            outcomes.append(
+                {
+                    "id": entry["candidate_id"],
+                    "title": entry["title"]["title"],
+                    "status": outcome.status,
+                    "detail": outcome.detail,
+                }
+            )
+        with state.sessions() as session:
             session.add(
                 Event(scope="requests.send", level="info", message={"dry_run": body.dry_run, "outcomes": outcomes})
             )
             session.commit()
-            sent = sum(1 for o in outcomes if o["status"] in ("requested", "would_request"))
-            return {"sent": sent, "dry_run": body.dry_run, "outcomes": outcomes}
+        sent = sum(1 for outcome in outcomes if outcome["status"] in ("requested", "would_request"))
+        return {"sent": sent, "dry_run": body.dry_run, "outcomes": outcomes}
 
     return await asyncio.get_running_loop().run_in_executor(None, _send)
+
+
+class AcquisitionReleaseIn(BaseModel):
+    """One owner-confirmed decision on an exact terminal acquisition record."""
+
+    model_config = {"extra": "forbid", "strict": True}
+    review_token: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    expected_status: Literal["outcome_unknown", "succeeded"]
+    checked_destination: Literal[True]
+
+
+@router.get("/acquisition-claims")
+def acquisition_claims(
+    request: Request,
+    owner: BrowserOwnerDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    offset: Annotated[int, Query(ge=0, le=100000)] = 0,
+) -> dict:
+    """Show durable acquisition reservations and uncertain outcomes to their owner."""
+    from shortlist.server.assistant.operation_models import AssistantRequestDispatch
+    from shortlist.server.services.request_actions import acquisition_review_token
+
+    with request.app.state.sessions() as session:
+        rows = (
+            session.query(AssistantRequestDispatch)
+            .filter(
+                AssistantRequestDispatch.status.in_(("reserved", "external_started", "outcome_unknown", "succeeded"))
+            )
+            .order_by(AssistantRequestDispatch.id.desc())
+            .offset(offset)
+            .limit(limit + 1)
+            .all()
+        )
+        items = [
+            {
+                "id": row.id,
+                "candidate_id": row.candidate_id,
+                "origin": row.origin,
+                "title": row.request_body["title"]["title"],
+                "tmdb_id": row.request_body["title"]["tmdb_id"],
+                "media_type": row.request_body["title"]["media_type"],
+                "destination": row.destination,
+                "status": row.status,
+                "created_at": iso_utc(row.created_at),
+                "external_started_at": iso_utc(row.external_started_at),
+                "finished_at": iso_utc(row.finished_at),
+                "review_token": acquisition_review_token(row),
+            }
+            for row in rows[:limit]
+        ]
+        return {"items": items, "next_offset": offset + limit if len(rows) > limit else None}
+
+
+@router.post("/acquisition-claims/{claim_id}/release")
+def release_acquisition_claim(
+    claim_id: int,
+    body: AcquisitionReleaseIn,
+    request: Request,
+    owner: BrowserOwnerDep,
+) -> dict:
+    """Release an exact terminal claim after the owner has checked the remote destination."""
+    from shortlist.server.assistant.operation_models import AssistantRequestDispatch
+    from shortlist.server.services.request_actions import acquisition_review_token
+
+    with request.app.state.sessions() as session:
+        session.execute(text("BEGIN IMMEDIATE"))
+        claim = session.get(AssistantRequestDispatch, claim_id)
+        if claim is None:
+            raise HTTPException(status_code=404, detail="Acquisition claim not found")
+        if (
+            claim.status not in {"outcome_unknown", "succeeded"}
+            or claim.status != body.expected_status
+            or acquisition_review_token(claim) != body.review_token
+        ):
+            raise HTTPException(
+                status_code=409, detail="The acquisition changed; review its current state before releasing it."
+            )
+        previous = claim.status
+        claim.status = "released"
+        claim.result = {
+            **claim.result,
+            "released_by_owner": owner.account_id,
+            "released_at": datetime.now(UTC).isoformat(),
+        }
+        session.add(
+            Event(
+                scope="requests.claim_release",
+                level="warning",
+                message={
+                    "claim_id": claim.id,
+                    "owner_account_id": owner.account_id,
+                    "previous_status": previous,
+                    "tmdb_id": claim.request_body["title"]["tmdb_id"],
+                    "media_type": claim.request_body["title"]["media_type"],
+                    "destination": claim.destination,
+                },
+            )
+        )
+        session.commit()
+        return {"id": claim.id, "status": "released"}

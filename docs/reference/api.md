@@ -9,6 +9,10 @@ set `SHORTLIST_ENABLE_DOCS=1` to expose `/api/docs` and `/api/openapi.json` for 
 (also required if you regenerate the frontend API types with `pnpm -C web gen:api` against a live
 server). Highlights:
 
+Assistant connections use the separately authenticated MCP endpoint. See the
+[MCP assistant reference](assistant.md) for its tool contracts and permissions, and
+[Connect an assistant](../guides/assistant-access.md) for OAuth and local credentials.
+
 ## Sign-in and setup
 
 ```
@@ -325,6 +329,20 @@ GET  /api/requests/row-sources?pattern= -> {overseerr, radarr, sonarr: "connecte
      whether its Tag Requests option is on. `complete` is false when a configured source could not be read, with the reason in `problems`
      and that source reported `unreachable` — never a 500, because this screen exists to show what is wrong.
 ```
+
+Manual sends, scheduled acquisition and assistant sends share durable title reservations. A
+reserved or uncertain title cannot be sent again through a different path or by deleting its inbox
+entry. Conflicting manual sends return `409`. The owner can inspect and release a terminal claim
+after checking the destination service:
+
+```
+GET  /api/requests/acquisition-claims?limit=100&offset=0 -> {items, next_offset}
+POST /api/requests/acquisition-claims/{claim_id}/release {review_token, expected_status: "outcome_unknown"|"succeeded", checked_destination: true} -> {id, status: "released"}
+```
+
+These recovery routes require the owner browser session; release also requires CSRF. A changed
+review token/status or an active claim returns `409`. Releasing a claim does not send the title.
+See **Requests → Acquisition checks needing review** in the browser.
 
 ## Events and notifications
 

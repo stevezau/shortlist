@@ -34,7 +34,6 @@ from shortlist.engine.models import (
     row_language_mode_or_inherit,
     row_languages_or_inherit,
     row_monitor_or_inherit,
-    slugify,
 )
 from shortlist.engine.placeholders import fill_theme, refusal, uses_season, uses_theme
 from shortlist.engine.rows import row_shown_today
@@ -51,6 +50,12 @@ from shortlist.server.api.row_changes import (
     plan_row_changes,
 )
 from shortlist.server.api.schemas import PassthroughModel, StrictRequestModel
+from shortlist.server.assistant.row_effects import (
+    privacy_sync_step,
+    queue_convergence_in_session,
+    reconcile_step,
+    schedule_rebuild_step,
+)
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -68,11 +73,16 @@ from shortlist.server.db.models import (
     User,
     iso_utc,
 )
-from shortlist.server.scheduler import crontab_trigger, rebuild_schedule
+from shortlist.server.scheduler import crontab_trigger
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs, poster_service, report_service
 from shortlist.server.services.audit import add_audit
 from shortlist.server.services.poster_service import load_upload
+from shortlist.server.services.row_mutations import (
+    apply_prevalidated_row_update_in_session,
+    create_row_in_session,
+    delete_row_in_session,
+)
 from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
@@ -1180,15 +1190,21 @@ def _validate_theme(
     seasons: list[str],
     rewatch: bool = False,
     requests_row: bool = False,
+    trusted_theme: Theme | None = None,
 ) -> Theme | None:
     """The theme an AI row follows, or None for an ordinary row; 422 for a row a theme cannot drive.
 
     Keyword-only on what the row will be, like `_validate_requests_row`: a PATCH judges the MERGED row.
     AI rows are per-person in v1, and a theme has no calendar, so a season is refused too.
     """
-    if theme_id is None:
+    if trusted_theme is not None:
+        from sqlalchemy import inspect
+
+        if theme_id is not None or not inspect(trusted_theme).transient:
+            raise ValueError("A trusted theme projection must be transient and cannot replace a saved theme ID.")
+    if theme_id is None and trusted_theme is None:
         return None
-    theme = session.get(Theme, theme_id)
+    theme = trusted_theme if trusted_theme is not None else session.get(Theme, theme_id)
     if theme is None:
         raise HTTPException(status_code=422, detail="That theme doesn't exist. Write or pick one first.")
     if build != "per_person":
@@ -1223,6 +1239,7 @@ def _validate_explore(
     own_slug: str,
     only: set[str] | None = None,
     already_avoided: tuple[str, ...] = (),
+    has_theme: bool | None = None,
 ) -> None:
     """422 for Explore settings or over-time controls a row cannot use (#138).
 
@@ -1231,7 +1248,7 @@ def _validate_explore(
     per-person rows, but only a slug the request newly ADDS is checked: ``already_avoided`` are the row's stored
     ones, which a row deleted since then must not make unsavable.
     """
-    if theme_id is None:
+    if not (theme_id is not None if has_theme is None else has_theme):
         stray = [c for c in (only if only is not None else _EXPLORE_COLUMNS) if values[c] != _EXPLORE_DEFAULTS[c]]
         if stray:
             raise HTTPException(
@@ -1536,98 +1553,18 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
         body.name_template or body.name, body.seasons, row_has_theme=body.theme_id is not None
     )
     with request.app.state.sessions() as session:
+        collection = create_row_in_session(session, request.app.state.secrets, body)
         catalogue = load_catalogue(session)
-        body.seasons = _known_seasons(body.seasons, catalogue=catalogue)
-        theme = _validate_theme(
+        queue_convergence_in_session(
             session,
-            body.theme_id,
-            build=body.build,
-            seasons=body.seasons,
-            rewatch=body.rewatch,
-            requests_row=body.requests_row,
+            [schedule_rebuild_step()],
+            domain="rows",
+            effect_key=f"row-{collection.id}-create",
         )
-        _validate_explore(
-            session,
-            {c: getattr(body, c) for c in _EXPLORE_COLUMNS},
-            theme_id=None if theme is None else theme.id,
-            own_slug="",
-        )
-        # The template this row will actually be titled from, not the bare name — a POST may set both. An AI
-        # row's `{theme}` is filled from its theme by the check itself.
-        template = body.name_template or body.name
-        _reject_duplicate_name(
-            session,
-            request.app.state.secrets,
-            template,
-            build=body.build,
-            fallback_name=body.fallback_name,
-            media=body.media,
-            library_keys=body.library_keys,
-            theme=None if theme is None else spec_from_row(theme),
-        )
-        _validate_anchor_rows(session, body, editing_slug="")
-        slug = _unique_slug(session, slugify(body.name))
-        collection = Collection(
-            slug=slug,
-            name=body.name,
-            build=body.build,
-            audience=body.audience,
-            enabled=body.enabled,
-            theme_id=None if theme is None else theme.id,
-            **{column: getattr(body, column) for column in _EXPLORE_COLUMNS},
-            schedule=body.schedule.strip(),
-            size=body.size,
-            media=body.media,
-            sort_order=body.sort_order,
-            name_template=body.name_template,
-            # Verbatim, NOT `or None`: "" is a real answer ("no fallback — skip those people"), and
-            # storing it as NULL makes it indistinguishable from "never asked", which migration 0070
-            # then overwrites on a replay.
-            fallback_name=body.fallback_name,
-            min_watchers=body.min_watchers,
-            request_tag=body.request_tag.strip(),
-            candidate_sources=body.candidate_sources,
-            watched_pct=body.watched_pct,
-            rewatch=body.rewatch,
-            rewatch_cooldown_days=body.rewatch_cooldown_days,
-            requests_row=body.requests_row,
-            requests_window_days=body.requests_window_days,
-            requests_tag_pattern=body.requests_tag_pattern.strip(),
-            unstarted_only=body.unstarted_only,
-            refresh_days=body.refresh_days,
-            idle_hold_days=body.idle_hold_days,
-            recency=body.recency,
-            recent_count=body.recent_count,
-            max_seeds=body.max_seeds,
-            max_runtime=body.max_runtime,
-            min_year=body.min_year,
-            max_year=body.max_year,
-            min_rating=body.min_rating,
-            cold_start=body.cold_start,
-            seed_window=body.seed_window,
-            pick_order=body.pick_order,
-            placement=body.placement,
-            show_days=body.show_days,
-            seasons=body.seasons,
-            season_lead_days=body.season_lead_days,
-            season_after_days=body.season_after_days,
-            placement_friends=body.placement_friends,
-            pin_top=body.pin_top,
-            hub_anchor={k: v.model_dump() for k, v in body.hub_anchor.items()},
-            library_keys=body.library_keys,
-            poster=body.poster.model_dump(),
-            prompt=_stored_instructions(body.ai_instructions),
-            description=body.description,
-            sort_title_prefix=body.sort_title_prefix,
-            **{column: getattr(body, column) for column in _REQUEST_COLUMNS},
-        )
-        collection.ai_tokens = _unattributed_theme_tokens(session, theme, exclude_id=None)
-        session.add(collection)
-        session.flush()
-        _set_audience(session, collection, body)
         session.commit()
+        created_slug = collection.slug
         result = _serialize(session, collection, catalogue=catalogue)
-    rebuild_schedule(request.app)  # a new row may carry a schedule — register its cron job now
+    await jobs.drain_now(request.app.state, f"row '{created_slug}' was created")
     return result
 
 
@@ -1713,6 +1650,7 @@ def _stranded_sections(
     new_media: str,
     new_keys: list[str],
     unreadable: list[str] | None = None,
+    sections: list | None = None,
 ) -> set[str]:
     """Section keys this row USED to deliver into and no longer does.
 
@@ -1734,16 +1672,17 @@ def _stranded_sections(
     """
     if (old_media, sorted(old_keys)) == (new_media, sorted(new_keys)):
         return set()
-    try:
-        sections = state.run_service.build_context(dry_run=True).plex.sections()
-    except Exception as e:
-        logger.warning("could not read libraries to narrow row scope ({}) — nothing removed", type(e).__name__)
-        if unreadable is not None:
-            unreadable.append(
-                "Plex could not be reached, so which libraries this row would leave is unknown — "
-                "it may remove collections this preview does not list. Check the connection and preview again."
-            )
-        return set()
+    if sections is None:
+        try:
+            sections = state.run_service.build_context(dry_run=True).plex.sections()
+        except Exception as e:
+            logger.warning("could not read libraries to narrow row scope ({}) — nothing removed", type(e).__name__)
+            if unreadable is not None:
+                unreadable.append(
+                    "Plex could not be reached, so which libraries this row would leave is unknown — "
+                    "it may remove collections this preview does not list. Check the connection and preview again."
+                )
+            return set()
 
     def targeted(media: str, keys: list[str]) -> set[str]:
         spec = RowSpec(slug="", name_template="", size=0, media=media, library_keys=list(keys))
@@ -1809,7 +1748,7 @@ def _apply_patch(
             or "" for every other edit. Resolved by the caller before the preview branch.
     """
     if default_rename_to:
-        SettingsStore(session, secrets).set("row.name_template", default_rename_to)
+        SettingsStore(session, secrets).set_in_transaction("row.name_template", default_rename_to)
     elif "name" in sent and not is_default:
         collection.name = body.name
     for column in _PATCHABLE_COLUMNS:
@@ -1891,6 +1830,17 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
     # resets the columns it omitted back to CollectionIn's defaults.
     sent = body.model_fields_set
     state = request.app.state
+    # A library narrowing needs Plex's current section list. Read it before the
+    # database transaction; the mutation service only consumes this bounded
+    # snapshot and never performs network I/O while local writes are pending.
+    section_snapshot = None
+    if not body.dry_run and sent & {"media", "library_keys"}:
+        try:
+            section_snapshot = state.run_service.build_context(dry_run=True).plex.sections()
+        except Exception as e:
+            logger.warning("could not read libraries to narrow row scope ({}) — nothing removed", type(e).__name__)
+            section_snapshot = []
+    queued_effects = False
     with state.sessions() as session:
         collection = session.get(Collection, collection_id)
         if collection is None:
@@ -2053,10 +2003,6 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     library_keys=merged_keys,
                     theme=merged_spec,
                 )
-        if theme is not None and "theme_id" in sent and theme.id != collection.theme_id:
-            collection.ai_tokens = (collection.ai_tokens or 0) + _unattributed_theme_tokens(
-                session, theme, exclude_id=collection.id
-            )
         # A theme newly set gives a `{theme}` row a title it never wore, as a ticked season does.
         if theme is not None and "theme_id" in sent and theme.id != collection.theme_id and not is_default:
             themed_template = _merged_template(collection, body, sent)
@@ -2091,7 +2037,6 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         # RESOLVED here, WRITTEN below the dry-run return: `SettingsStore.set` commits inside itself,
         # so writing it at this point would make a PREVIEW of this rename permanent — the one edit on
         # this handler that an end-of-request rollback could not take back.
-        default_rename_to = ""
         if "name" in sent and is_default:
             new_template = body.name.strip()
             previous = SettingsStore(session, state.secrets).get("row.name_template") or ""
@@ -2107,7 +2052,6 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     media=merged_media,
                     library_keys=merged_keys,
                 )
-                default_rename_to = new_template
                 template_before, template_after = previous, new_template
         merged_min_year = body.min_year if "min_year" in sent else collection.min_year
         merged_max_year = body.max_year if "max_year" in sent else collection.max_year
@@ -2145,20 +2089,20 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             )
             preview_row = _serialize(session, collection, catalogue=catalogue)
         else:
-            _apply_patch(
+            collection, steps, _diff = apply_prevalidated_row_update_in_session(
                 session,
                 state.secrets,
-                collection,
+                collection_id,
                 body,
                 sent,
-                is_default=is_default,
-                default_rename_to=default_rename_to,
+                library_sections=section_snapshot,
             )
-            session.commit()
-            after = _snapshot(session, collection)
-            if touching_name:
-                template_after = collection.name_template or collection.name
+            if steps:
+                queue_convergence_in_session(session, steps, domain="rows", effect_key=f"row-{collection.id}")
+                queued_effects = True
+            updated_slug = collection.slug
             result = _serialize(session, collection, catalogue=catalogue)
+            session.commit()
 
     if body.dry_run:
         warnings: list[str] = []
@@ -2181,30 +2125,8 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             "preview_incomplete": " ".join(warnings) or None,
         }
 
-    # A schedule or enable/disable change alters which cron jobs should exist — re-derive them.
-    if sent & {"schedule", "enabled"}:
-        rebuild_schedule(request.app)
-
-    change = _row_change(
-        before,
-        after,
-        template_before=template_before,
-        template_after=template_after,
-        defer_rename=body.defer_rename,
-    )
-
-    # Narrowing a row is not the same as removing it, and answering "which libraries did it leave"
-    # costs a Plex read — so it is passed as a callable and only paid for when the plan needs it.
-    def stranded() -> set[str]:
-        return _stranded_sections(
-            state,
-            old_media=change.media_before,
-            old_keys=list(change.libraries_before),
-            new_media=change.media_after,
-            new_keys=list(change.libraries_after),
-        )
-
-    await _apply_plan(state, plan_row_changes(change, stranded), slug=change.slug, build=change.build_before)
+    if queued_effects:
+        await jobs.drain_now(state, f"row '{updated_slug}' was edited")
     return result
 
 
@@ -2501,33 +2423,23 @@ async def delete_collection(collection_id: int, request: Request, dry_run: bool 
             ).model_dump()
         )
 
-    # Queue the Plex removal FIRST, then drop the DB row. Draining after the delete is deliberate:
-    # `is_default` aside, the removal no longer needs the row to exist, and queueing means a Plex outage
-    # right now leaves a retried job rather than orphaned collections nothing will ever revisit.
-    _queue_reconcile(state, slug=slug, build=build, scope="collection.delete", template=template)
     with state.sessions() as session:
-        collection = session.get(Collection, collection_id)
-        if collection is not None:
-            session.query(CollectionAudience).filter_by(collection_id=collection.id).delete()
-            # Keyed by id, and SQLite hands a freed highest id to the next row — which would otherwise
-            # serve, and could push to Plex, this row's artwork.
-            poster_service.clear_assets(session, collection.id)
-            session.delete(collection)
-            orphaned = _forget_anchor_row(session, slug)
-            if orphaned:
-                logger.info(
-                    "row '{}' was deleted — {} row(s) positioned relative to it now follow the library "
-                    "default instead: {}",
-                    slug,
-                    len(orphaned),
-                    ", ".join(orphaned),
-                )
-            session.commit()
-    if build == "shared":
-        # The row's own `shortlist__shared_<slug>` label is no longer declared shared by the config, so
-        # every account's excludes need recomputing — otherwise the label lingers in all of them.
-        jobs.enqueue(state.sessions, "privacy.sync", {"reason": f"row '{slug}' was deleted"})
-    rebuild_schedule(request.app)  # the deleted row's cron job (if any) must stop firing
+        deleted = delete_row_in_session(session, collection_id, template=template)
+        steps = [reconcile_step(slug, build=build, scope="collection.delete", template=template)]
+        if build == "shared":
+            # The shared label is no longer declared, so every account's excludes must be recomputed
+            # after the removal and before any later visibility-increasing work.
+            steps.append(privacy_sync_step(f"row '{slug}' was deleted"))
+        steps.append(schedule_rebuild_step())
+        queue_convergence_in_session(session, steps, domain="rows", effect_key=f"row-{collection_id}-delete")
+        session.commit()
+    if deleted.anchors_cleared:
+        logger.info(
+            "row '{}' was deleted — {} row(s) positioned relative to it now follow the library default instead: {}",
+            slug,
+            len(deleted.anchors_cleared),
+            ", ".join(deleted.anchors_cleared),
+        )
     # Drained in the BACKGROUND, not awaited. The row is gone from the DB the moment this returns,
     # which is what the page is waiting to hear — while the Plex side is a per-user walk over every
     # library, and for a shared row a privacy pass across every account on the server. Awaiting that
@@ -2722,17 +2634,9 @@ async def pause_ai(collection_id: int, body: AiPauseRequest, request: Request) -
     spends tokens writing or refining one (409 from the theme endpoints until resumed)."""
     with request.app.state.sessions() as session:
         collection = _require_collection(session, collection_id)
-        if collection.theme_id is None:
-            raise HTTPException(status_code=422, detail="Only an AI row has AI to pause.")
-        if collection.ai_paused != body.paused:
-            collection.ai_paused = body.paused
-            add_audit(
-                session,
-                "collection.ai_pause",
-                "info",
-                slug=collection.slug,
-                paused=body.paused,
-            )
+        from shortlist.server.services.row_mutations import set_ai_paused_in_session
+
+        set_ai_paused_in_session(session, collection, body.paused)
         session.commit()
         return _serialize(session, collection, catalogue=load_catalogue(session))
 

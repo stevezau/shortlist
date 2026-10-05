@@ -17,6 +17,22 @@ from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration
 
+
+def _plex_jobs(client: TestClient) -> list[dict]:
+    """Inspect actual persisted obligations, preserving ordered steps and physical job state.
+
+    Schedule rebuilds are local work; they do not touch Plex. All other steps remain
+    visible so a newly introduced external effect cannot disappear from these assertions.
+    """
+    jobs = sorted(client.get("/api/system/jobs").json(), key=lambda job: job["id"])
+    return [
+        {**job, "kind": step["kind"], "payload": step["payload"]}
+        for job in jobs
+        for step in (job["payload"]["steps"] if job["kind"] == "assistant.converge" else [job])
+        if step["kind"] != "schedule.rebuild"
+    ]
+
+
 # Response KEY SETS, spelled out — see the same note in test_api_users.py. A Pydantic response model
 # FILTERS the payload, so every model here sets `extra="allow"`; naming every key is what fails if
 # that config is ever stripped, or if a default starts inventing a key the handler never sent.
@@ -244,16 +260,6 @@ class TestCollectionsSeed:
         """The default row's editable name IS the global `row.name_template` (a per-collection value
         would beat each user's own `row_name_tpl` override). Editing it writes that setting and renames
         the collections already on Plex in place — the same reconcile a nickname change fires."""
-        from shortlist.server.services import collection_reconcile as rec
-
-        calls: list[tuple[str, str, str, str]] = []
-
-        async def fake_rename(state, *, slug, new_template, old_template, scope):
-            calls.append((slug, new_template, old_template, scope))
-            return [], None
-
-        monkeypatch.setattr(rec, "run_row_rename_from_plex", fake_rename)
-
         picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
         before = client.get("/api/settings").json()["row.name_template"]
         r = client.patch(f"/api/collections/{picked['id']}", json={"name": "✨ {library_name} Handpicked"})
@@ -265,30 +271,34 @@ class TestCollectionsSeed:
         # … and reconciled onto Plex for the default slug. The PREVIOUS template goes with it: it is
         # what the collections on the server are titled with, and therefore the only way to tell which
         # of a multi-row user's collections belongs to this row.
-        assert calls == [("picked", "✨ {library_name} Handpicked", before, "collection.rename")]
+        assert [(job["kind"], job["payload"]) for job in _plex_jobs(client)] == [
+            (
+                "row.rename",
+                {
+                    "slug": "picked",
+                    "new_template": "✨ {library_name} Handpicked",
+                    "old_template": before,
+                    "scope": "collection.rename",
+                },
+            )
+        ]
 
     def test_saving_the_default_row_with_an_unchanged_name_does_no_plex_work(self, client: TestClient, monkeypatch):
         """A save that doesn't move the name (e.g. an enable toggle carrying the current name) must not
         touch Plex — the rename reconcile does real I/O and only fires on a real change."""
-        from shortlist.server.services import collection_reconcile as rec
-
-        calls: list = []
-
-        async def fake_rename(state, **kwargs):
-            calls.append(kwargs)
-            return [], None
-
-        monkeypatch.setattr(rec, "run_row_rename_from_plex", fake_rename)
-
         client.put("/api/settings", json={"values": {"row.name_template": "✨ {library_name} Picked for You"}})
         picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        before = client.get("/api/system/jobs").json()
         # The editor round-trips the current template as the name — an unchanged value, so no reconcile.
         r = client.patch(
             f"/api/collections/{picked['id']}",
             json={"name": "✨ {library_name} Picked for You", "enabled": True},
         )
         assert r.status_code == 200
-        assert calls == [], "an unchanged default name must not reconcile onto Plex"
+        before_ids = {job["id"] for job in before}
+        assert not [job for job in _plex_jobs(client) if job["id"] not in before_ids], (
+            "an unchanged default name must not reconcile onto Plex"
+        )
 
     def test_default_row_size_and_name_follow_the_global_setting(self, client: TestClient, tmp_path):
         """The wizard/Settings set row.size and row.name_template; the default 'picked' row must
@@ -2013,16 +2023,13 @@ class TestCollectionsApi:
         """The Plex side is a per-user walk over every library — and for a shared row, a privacy pass
         across every account. Awaiting it held the request open for all of it, so the page sat on a
         spinner. The DB row is gone when this returns; the jobs are durable and visible meanwhile."""
-        from shortlist.server.db.models import Job
-
         created = client.post("/api/collections", json={"name": "Temp Row"})
         assert created.status_code in (200, 201)
-
         assert client.delete(f"/api/collections/{created.json()['id']}").status_code == 204
-
-        with client.app.state.sessions() as session:
-            queued = session.query(Job).filter(Job.kind == "row.reconcile").all()
-        assert queued, "the Plex removal must be QUEUED, not done inline"
+        queued = [job for job in _plex_jobs(client) if job["kind"] == "row.reconcile"]
+        assert len(queued) == 1, "the Plex removal must be durable"
+        assert queued[0]["payload"]["slug"] == "temp_row"
+        assert queued[0]["payload"]["template"] == "Temp Row"
 
     def test_validation_rejects_bad_enums(self, client: TestClient):
         assert client.post("/api/collections", json={"name": "X", "build": "nonsense"}).status_code == 422
@@ -2635,7 +2642,7 @@ class TestRowEditsReachPlexDurably:
         return deleted
 
     def _jobs(self, client: TestClient) -> list[dict]:
-        return client.get("/api/system/jobs").json()
+        return _plex_jobs(client)
 
     def test_switching_a_row_off_takes_its_collections_down(self, client: TestClient, monkeypatch):
         """Nothing used to fire here. The next run removes a disabled row only for the users it
@@ -2802,7 +2809,7 @@ class TestNarrowingARowsLibraries:
         r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "movie"})
 
         assert r.status_code == 200
-        assert [j["kind"] for j in client.get("/api/system/jobs").json()] == []
+        assert _plex_jobs(client) == []
 
 
 class TestDeletingAPosterImage:
@@ -3542,28 +3549,23 @@ class TestRowShowDaysApi:
         """Set "weekdays only" on a Saturday and the row has to go NOW. Waiting for midnight is the
         exact bug the `collection.disable` rule was added to fix: you save, nothing happens, and it
         reads as broken."""
-        queued: list[str] = []
-        from shortlist.server.services import jobs as jobs_mod
-
-        monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append(kind) or 1)
         cid = client.post("/api/collections", json={"name": "Weekdays"}).json()["id"]
 
         r = client.patch(f"/api/collections/{cid}", json={"name": "Weekdays", "show_days": [1, 2, 3, 4, 5]})
 
         assert r.status_code == 200
-        assert "rows.visibility" in queued, "the row's new schedule never reached Plex"
+        assert [(j["kind"], j["payload"]) for j in _plex_jobs(client)] == [
+            ("rows.visibility", {"row": "weekdays", "dry_run": False})
+        ]
 
     def test_an_edit_that_leaves_the_days_alone_queues_no_visibility_work(self, client: TestClient, monkeypatch):
         """Renaming a row must not fire a server-wide converge."""
-        queued: list[str] = []
-        from shortlist.server.services import jobs as jobs_mod
-
         cid = client.post("/api/collections", json={"name": "Weekdays", "show_days": [1]}).json()["id"]
-        monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append(kind) or 1)
+        before = {job["id"] for job in _plex_jobs(client)}
 
         client.patch(f"/api/collections/{cid}", json={"name": "Weekdays Renamed"})
 
-        assert "rows.visibility" not in queued
+        assert not any(job["kind"] == "rows.visibility" for job in _plex_jobs(client) if job["id"] not in before)
 
 
 def stored_setting(client: TestClient, key: str):
@@ -3734,15 +3736,13 @@ class TestSeasonalRowsApi:
 
     def test_changing_the_seasons_is_applied_now(self, client: TestClient, monkeypatch):
         """Make a row seasonal in September and it has to come off people's Home now, not at midnight."""
-        queued: list[str] = []
-        from shortlist.server.services import jobs as jobs_mod
-
-        monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append(kind) or 1)
         cid = client.post("/api/collections", json={"name": "Seasonal"}).json()["id"]
 
         client.patch(f"/api/collections/{cid}", json={"name": "Seasonal", "seasons": ["christmas"]})
 
-        assert "rows.visibility" in queued
+        assert [(j["kind"], j["payload"]) for j in _plex_jobs(client)] == [
+            ("rows.visibility", {"row": "seasonal", "dry_run": False})
+        ]
 
     def _default_row(self, client: TestClient) -> dict:
         return next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
@@ -3799,15 +3799,13 @@ class TestSeasonalRowsApi:
         assert body["shown_today"] is (body["season_status"]["showing"] is not None)
 
     def test_changing_how_early_it_shows_is_applied_now(self, client: TestClient, monkeypatch):
-        queued: list[str] = []
-        from shortlist.server.services import jobs as jobs_mod
-
         cid = client.post("/api/collections", json={"name": "Seasonal", "seasons": ["christmas"]}).json()["id"]
-        monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append(kind) or 1)
 
         client.patch(f"/api/collections/{cid}", json={"name": "Seasonal", "season_lead_days": 60})
 
-        assert "rows.visibility" in queued
+        assert [(j["kind"], j["payload"]) for j in _plex_jobs(client)] == [
+            ("rows.visibility", {"row": "seasonal", "dry_run": False})
+        ]
 
     def test_a_row_that_follows_no_season_cannot_be_named_after_one(self, client: TestClient):
         """Such a name can never be filled in, so the row would never be built for anyone."""
@@ -3963,7 +3961,7 @@ class TestDryRunPreview:
             return created.json()["id"], user.slug, row_marker(user.plex_account_id)
 
     def _jobs(self, client: TestClient) -> list[dict]:
-        return client.get("/api/system/jobs").json()
+        return _plex_jobs(client)
 
     def _row_state(self, client: TestClient, cid: int) -> dict | None:
         """One row, read off the LIST endpoint, or None if it is gone.
@@ -3984,12 +3982,14 @@ class TestDryRunPreview:
         )
         before = self._row_state(client, cid)
 
+        queue_before = client.get("/api/system/jobs").json()
+
         r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "movie", "dry_run": True})
 
         assert r.status_code == 200
         assert r.json()["dry_run"] is True
         assert self._row_state(client, cid) == before, "a preview must not edit the row"
-        assert self._jobs(client) == [], "a preview must not enqueue Plex work"
+        assert client.get("/api/system/jobs").json() == queue_before, "a preview must not enqueue any work"
         assert deleted == [], "a preview must not delete anything on Plex"
 
     def test_a_dry_run_rename_of_the_default_row_does_not_write_the_global_template(
@@ -4210,48 +4210,57 @@ class TestDryRunPreview:
         wrong about a delete. Both are run over the matrix `plan_row_changes` branches on and
         asserted to agree (`.claude/rules/testing.md`: cover the matrix, not one cell).
 
-        The plan the save executes is recorded at `_apply_plan` rather than reconstructed from side
-        effects. Reconstruction does not work here: a reconcile and a privacy sync become JOBS, while
-        a rename and a poster reset are carried out inline and leave only an audit event — so a
-        queue-only oracle reports an empty plan for two of the five kinds, and an oracle that
-        under-reports turns a real drift into a green test.
+        The actual save now persists every external effect in one ordered convergence job.
+        Compare that durable contract to the preview, including people and library targets.
         """
-        import shortlist.server.api.collections as collections_api
-
         cid, uslug, marker = self._row(client, poster={"mode": "text", "title": "Gems"})
         self._plex(
             monkeypatch,
             client,
             collections=[("Gems" + marker, f"shortlist_{uslug}", "1"), ("Gems" + marker, f"shortlist_{uslug}", "2")],
         )
-        executed: list[tuple] = []
-        original = collections_api._apply_plan
-
-        async def recording_apply_plan(state, plan, *, slug, build):
-            # The kind alone is not the contract. A projection can plan the right KIND of work
-            # against the wrong people or the wrong libraries — which is exactly how a preview
-            # under-reported an audience shrink as one removal while the save performed one per
-            # person — and a kinds-only comparison is green for all of it.
-            executed.extend((w.kind, w.scope, tuple(w.only_user_ids or ()), tuple(w.in_sections or ())) for w in plan)
-            await original(state, plan, slug=slug, build=build)
-
-        monkeypatch.setattr(collections_api, "_apply_plan", recording_apply_plan)
-
+        before = client.get("/api/system/jobs").json()
         preview = client.patch(f"/api/collections/{cid}", json={"name": "Gems", **patch, "dry_run": True})
         assert preview.status_code == 200
         previewed = [
             (e["kind"], e["reason"], tuple(e["only_user_ids"]), tuple(e["in_sections"])) for e in preview.json()["plan"]
         ]
-        assert executed == [], "a preview must not reach the apply path at all"
+        assert client.get("/api/system/jobs").json() == before, "a preview must not write any job"
 
         applied = client.patch(f"/api/collections/{cid}", json={"name": "Gems", **patch})
         assert applied.status_code == 200
 
+        before_ids = {job["id"] for job in before}
+        kind_map = {
+            "row.reconcile": "reconcile",
+            "privacy.sync": "privacy_sync",
+            "row.rename": "rename",
+            "poster.reset": "poster_reset",
+            "rows.visibility": "visibility",
+        }
+        executed = []
+        for job in _plex_jobs(client):
+            if job["id"] in before_ids:
+                continue
+            payload = job["payload"]
+            kind = kind_map[job["kind"]]
+            assert payload.get("slug", payload.get("row", "gems")) == "gems"
+            reason = payload.get("scope", payload.get("reason"))
+            # Visibility's persisted contract carries its exact row; the explanation is preview-only.
+            executed.append(
+                (kind, reason, tuple(payload.get("only_user_ids") or ()), tuple(payload.get("in_sections") or ()))
+            )
+        previewed = [
+            (kind, None if kind == "visibility" else reason, people, sections)
+            for kind, reason, people, sections in previewed
+        ]
         assert previewed == executed, f"the preview drifted from the edit for {patch}"
 
     def test_a_dry_run_delete_keeps_the_row_and_names_what_it_would_take(self, client: TestClient, monkeypatch):
         cid, uslug, marker = self._row(client)
         deleted = self._plex(monkeypatch, client, collections=[("Gems" + marker, f"shortlist_{uslug}", "1")])
+
+        queue_before = client.get("/api/system/jobs").json()
 
         r = client.delete(f"/api/collections/{cid}?dry_run=true")
 
@@ -4259,7 +4268,7 @@ class TestDryRunPreview:
         assert r.json()["dry_run"] is True
         assert r.json()["collections"] == ["Gems"]
         assert self._row_state(client, cid) is not None, "a preview must not delete the row"
-        assert self._jobs(client) == [] and deleted == []
+        assert client.get("/api/system/jobs").json() == queue_before and deleted == []
 
     @pytest.mark.parametrize(
         ("build", "schedule", "expect_privacy_sync", "expect_schedule_cleared"),

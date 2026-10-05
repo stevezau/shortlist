@@ -378,6 +378,27 @@ export type RequestSendOutcome = Schemas["SendOutcomeOut"];
 /** POST /api/requests/send response. */
 export type RequestSendResult = Schemas["SendOut"];
 
+/** A durable acquisition claim that needs owner review after an uncertain external send. */
+export interface AcquisitionClaim {
+  id: number;
+  candidate_id: number | null;
+  origin: string;
+  title: string;
+  tmdb_id: number;
+  media_type: "movie" | "show";
+  destination: string;
+  status: "reserved" | "external_started" | "outcome_unknown" | "succeeded";
+  created_at: string;
+  external_started_at: string | null;
+  finished_at: string | null;
+  review_token: string;
+}
+
+export interface AcquisitionClaimsPage {
+  items: AcquisitionClaim[];
+  next_offset: number | null;
+}
+
 /**
  * GET /api/requests/status — live Arr state for the inbox's badges.
  *
@@ -438,6 +459,91 @@ export type ApiTokenStatus = Schemas["ApiTokenStatusOut"];
 
 /** The response to generating a token. */
 export type ApiTokenCreated = Schemas["ApiTokenCreatedOut"];
+
+// --- Assistant access ---
+
+export type AssistantGrantPreset =
+  | "inspect"
+  | "manage_selected_rows"
+  | "owner_automation";
+
+export interface AssistantGrantConstraints {
+  row_ids: number[];
+  person_ids: number[];
+  library_keys: string[];
+  setting_groups: string[];
+  destination_ids: string[];
+  include_future_rows: boolean;
+  include_future_people: boolean;
+  include_future_libraries: boolean;
+  max_batch_size: number | null;
+  max_work_per_operation: number | null;
+  max_provider_calls: number;
+}
+
+export interface AssistantGrant {
+  id: string;
+  owner_account_id: number;
+  client_id: string;
+  name: string;
+  preset: AssistantGrantPreset;
+  capabilities: string[];
+  constraints: AssistantGrantConstraints;
+  revision: number;
+  created_at?: string;
+  updated_at?: string;
+  expires_at: string | null;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+  local_credential_count?: number;
+}
+
+export interface AssistantStatus {
+  enabled: boolean;
+  resource: string | null;
+  issuer: string | null;
+  configuration_error: string | null;
+  configuration_hint: string;
+  presets: Record<AssistantGrantPreset, string[]>;
+  setting_groups: string[];
+}
+
+export interface AssistantGrantCreate {
+  client_id: string;
+  name: string;
+  preset: AssistantGrantPreset;
+  capabilities?: string[];
+  constraints: AssistantGrantConstraints;
+  expires_in_days: number | null;
+}
+
+export interface AssistantCredentialCreated {
+  credential: string;
+  expires_at: string;
+}
+
+export interface AssistantConsentFlow {
+  flow_id: string;
+  csrf_token: string;
+  client: { id: string; name: string };
+  requested_scopes: string[];
+  resource: string;
+  expires_at: string;
+}
+
+export interface AssistantChangeReview {
+  change_id: string;
+  grant_id: string;
+  client_id: string;
+  kind: string;
+  summary: Record<string, unknown>;
+  requirements: Record<string, unknown>;
+  effects: Array<Record<string, unknown>>;
+  content_hash: string;
+  expires_at: string;
+  approved: boolean;
+  operation_id: string | null;
+}
 
 // --- Dashboard / report ---
 
