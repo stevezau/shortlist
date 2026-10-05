@@ -1832,3 +1832,79 @@ class TestAFinishedRunDropsTheCachedReport:
         service.cancel_run(run_id)
 
         assert report_cache.get_cached_report("30") is None
+
+    def test_a_run_that_errors_clears_the_cache(self, sessions, tmp_path, monkeypatch):
+        from shortlist.server.services import report_cache
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+
+        def boom(ctx, profiles):
+            raise RuntimeError("plex went away mid-run")
+
+        monkeypatch.setattr(run_service_mod, "engine_run", boom)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            report_cache.store_report("30", {"stale": True})
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+
+        assert run.status == "error"
+        assert report_cache.get_cached_report("30") is None
+
+    def test_a_run_stopped_mid_run_clears_the_cache(self, sessions, tmp_path, monkeypatch):
+        from shortlist.server.services import report_cache
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        engine_started = threading.Event()
+
+        def engine_that_stops_when_asked(ctx, profiles):
+            engine_started.set()
+            deadline = time.monotonic() + 5
+            while not ctx.cancelled() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            return fake_report()
+
+        monkeypatch.setattr(run_service_mod, "engine_run", engine_that_stops_when_asked)
+
+        async def scenario() -> int:
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            (task,) = service._tasks
+            await asyncio.get_running_loop().run_in_executor(None, engine_started.wait, 5)
+            report_cache.store_report("30", {"stale": True})
+            service.cancel_run(run_id)
+            await asyncio.wait({task}, timeout=5)
+            return run_id
+
+        run_id = asyncio.run(scenario())
+
+        with sessions() as session:
+            assert session.get(Run, run_id).status == "aborted"
+        assert report_cache.get_cached_report("30") is None
+
+    def test_a_run_cancelled_as_it_reaches_the_lock_clears_the_cache(self, sessions, tmp_path, monkeypatch):
+        """The flag is set while the run waits behind another one, without `cancel_run` marking it
+        aborted first — so only the in-lock early exit can drop the cached report."""
+        from shortlist.server.services import report_cache
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+
+        async def scenario() -> int:
+            async with service._lock:
+                run_id = await service.start_run(trigger="manual", dry_run=False)
+                service._cancels[run_id].set()
+                report_cache.store_report("30", {"stale": True})
+            (task,) = service._tasks
+            await asyncio.wait({task}, timeout=5)
+            return run_id
+
+        run_id = asyncio.run(scenario())
+
+        with sessions() as session:
+            assert session.get(Run, run_id).status == "aborted"
+        assert report_cache.get_cached_report("30") is None

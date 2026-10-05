@@ -316,3 +316,16 @@ class TestSectionsAreReadOncePerSync:
         _for_each_profile(ctx, [1, 2], ran.append)
 
         assert sorted(ran) == [1, 2]
+
+
+class TestACompletedSyncDropsTheCachedReport:
+    def test_a_watch_sync_clears_the_cached_report(self, sessions):
+        from shortlist.server.services import report_cache
+
+        pms = FakePms([1])
+        profiles = _people(sessions, 1)
+        report_cache.store_report("30", {"stale": True})
+
+        _sync(WatchSync(sessions, EventBus()), _ctx(pms, concurrency=1), profiles)
+
+        assert report_cache.get_cached_report("30") is None
