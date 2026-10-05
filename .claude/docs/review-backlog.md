@@ -36,6 +36,10 @@ request tag patterns choosing the wrong person (`engine/requests_row.py` `_add_t
 nobody; `TestOneTagAcrossSeveralPatterns`); malformed Arr replies authorizing row removal (`arr.py`
 `_records` raises `ArrError`, so the ledger is incomplete; `MALFORMED_ARR` tests); schema upgrades
 continuing after a failed backup (`run_migrations` raises `MigrationBackupError`).
+- Arr helper reads (`library_tmdb_ids`, `status_by_tmdb`, `library_ids`, `status_by_ids`, `_resolve_tag`) read
+  through `_records` like `tags`/`movies`/`series`: a malformed reply raises `ArrError`. The inbox status
+  endpoint reports that Arr `unreachable`; a send aborts before any write; the presence pre-check still fails
+  open by design (the send's own lookup answers `skipped_present`).
 
 **New 2026-10-05: dashboard report cache** (`shortlist/server/services/report_cache.py`, 120s TTL).
 Invalidated on run finish, the watch-sync stamp, `watch.reconcile`, `clear_deleted_rows` and
@@ -43,9 +47,6 @@ Invalidated on run finish, the watch-sync stamp, `watch.reconcile`, `clear_delet
 
 ### Left open
 
-- **LOW — Arr helper reads still accept a malformed reply as empty.** `library_tmdb_ids`,
-  `status_by_tmdb`, `library_ids`, `status_by_ids` and `_resolve_tag`. Callers are the request inbox and
-  send paths, not row removal, so an empty answer removes nothing. Still open 2026-10-05.
 - **LOW — a `rebuild_schedule` that lands while the loop is stalled loses that night's run.**
   Precondition: it runs before a due row job has been dispatched, so the next fire time is recomputed
   from now and the due one is dropped.

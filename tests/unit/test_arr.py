@@ -747,3 +747,81 @@ class TestRequestReadsRefuseAMalformedAnswer:
             respx.get(f"{CANARY_TARGET.url}{path}").mock(return_value=httpx.Response(200, json=[]))
             got = getattr(reader(CANARY_TARGET), method)()
         assert got == ({} if method == "tags" else [])
+
+
+STATE_READERS = [
+    pytest.param(RadarrClient, RADARR, "/api/v3/movie", "library_tmdb_ids", id="radarr-library_tmdb_ids"),
+    pytest.param(RadarrClient, RADARR, "/api/v3/movie", "status_by_tmdb", id="radarr-status_by_tmdb"),
+    pytest.param(SonarrClient, SONARR, "/api/v3/series", "library_ids", id="sonarr-library_ids"),
+    pytest.param(SonarrClient, SONARR, "/api/v3/series", "status_by_ids", id="sonarr-status_by_ids"),
+]
+EMPTY_RESULT = {
+    "library_tmdb_ids": set(),
+    "status_by_tmdb": {},
+    "library_ids": (set(), set()),
+    "status_by_ids": ({}, {}),
+}
+
+
+class TestStateReadsRefuseAMalformedAnswer:
+    """Presence/status reads: a reply that is not a list of records is an error, never "not in the library"."""
+
+    @staticmethod
+    def _queue_empty(target: ArrTarget) -> None:
+        respx.get(f"{target.url}/api/v3/queue").mock(
+            return_value=httpx.Response(200, json={"records": [], "totalRecords": 0})
+        )
+
+    @respx.mock
+    @pytest.mark.parametrize("client_cls,target,path,method", STATE_READERS)
+    def test_a_genuine_empty_list_is_a_complete_empty_answer(self, client_cls, target, path, method):
+        respx.get(f"{target.url}{path}").mock(return_value=httpx.Response(200, json=[]))
+        self._queue_empty(target)
+        assert getattr(client_cls(target), method)() == EMPTY_RESULT[method]
+
+    @respx.mock
+    @pytest.mark.parametrize("client_cls,target,path,method", STATE_READERS)
+    @pytest.mark.parametrize(
+        "response",
+        [
+            pytest.param(httpx.Response(200, content=b"<html>sso</html>"), id="malformed-json"),
+            pytest.param(httpx.Response(200, json={"message": "x"}), id="dict-instead-of-list"),
+            pytest.param(httpx.Response(200, json=[1, "x"]), id="list-of-non-objects"),
+            pytest.param(httpx.Response(200, json=[{"tmdbId": 1}, "x"]), id="list-with-one-non-object"),
+            pytest.param(httpx.Response(500), id="http-500"),
+        ],
+    )
+    def test_a_bad_answer_raises_instead_of_reading_as_empty(self, client_cls, target, path, method, response):
+        respx.get(f"{target.url}{path}").mock(return_value=response)
+        self._queue_empty(target)
+        with pytest.raises((ArrError, ValueError)):
+            getattr(client_cls(target), method)()
+
+    @respx.mock
+    @pytest.mark.parametrize("client_cls,target", [(RadarrClient, RADARR), (SonarrClient, SONARR)])
+    @pytest.mark.parametrize(
+        "response",
+        [
+            pytest.param(httpx.Response(200, content=b"<html>sso</html>"), id="malformed-json"),
+            pytest.param(httpx.Response(200, json={"message": "x"}), id="dict-instead-of-list"),
+            pytest.param(httpx.Response(200, json=[1, "x"]), id="list-of-non-objects"),
+            pytest.param(httpx.Response(500), id="http-500"),
+        ],
+    )
+    def test_a_bad_tag_list_creates_no_tag_and_fails_the_add(self, client_cls, target, response):
+        """`_resolve_tag` used to read a bad tag list as "no tags" and POST a duplicate of every one."""
+        respx.get(f"{target.url}/api/v3/tag").mock(return_value=response)
+        post = respx.post(f"{target.url}/api/v3/tag")
+        with pytest.raises((ArrError, ValueError)):
+            client_cls(target)._resolve_tag("req-sarah")
+        assert not post.called
+
+    @respx.mock
+    def test_a_bad_tag_list_aborts_add_movie_before_any_write(self):
+        respx.get(f"{RADARR.url}/api/v3/movie/lookup/tmdb").mock(return_value=httpx.Response(200, json=MOVIE_LOOKUP))
+        respx.get(f"{RADARR.url}/api/v3/tag").mock(return_value=httpx.Response(200, json={"oops": 1}))
+        tag_post = respx.post(f"{RADARR.url}/api/v3/tag")
+        movie_post = respx.post(f"{RADARR.url}/api/v3/movie")
+        with pytest.raises(ArrError):
+            RadarrClient(RADARR).add_movie(273481, dry_run=False, extra_tags={"req-sarah"})
+        assert not tag_post.called and not movie_post.called

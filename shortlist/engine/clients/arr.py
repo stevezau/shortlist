@@ -248,12 +248,9 @@ class _ArrClient:
         if key in self._resolved:
             return self._resolved[key]
         if self._existing_tags is None:
-            existing = self._get("/api/v3/tag")
-            self._existing_tags = {
-                str(t["label"]).lower(): int(t["id"])
-                for t in (existing if isinstance(existing, list) else [])
-                if isinstance(t, dict) and t.get("id") is not None and t.get("label")
-            }
+            # A malformed reply raises (via `tags`) rather than reading as "no tags yet": that would
+            # POST a duplicate of every tag the app already has.
+            self._existing_tags = {label.lower(): tag_id for tag_id, label in self.tags().items()}
         if key in self._existing_tags:
             self._resolved[key] = self._existing_tags[key]
             return self._resolved[key]
@@ -302,7 +299,7 @@ class RadarrClient(_ArrClient):
     def library_tmdb_ids(self) -> set[int]:
         """Every tmdbId Radarr already tracks — so a title it has (or is still downloading) isn't
         re-surfaced as 'missing' just because it isn't in Plex yet."""
-        return self._id_set("/api/v3/movie", "tmdbId")
+        return self._ids_from(self._records("/api/v3/movie"), "tmdbId")
 
     def excluded_tmdb_ids(self) -> set[int]:
         """tmdbIds on Radarr's import-exclusion list (usually left by a past delete)."""
@@ -316,11 +313,11 @@ class RadarrClient(_ArrClient):
         and the per-title form (lookup + fetch + queue, each round-tripped) made that cost scale with
         the number of rows on screen.
         """
-        movies = self._get("/api/v3/movie")
+        movies = self._records("/api/v3/movie")
         downloading = self._queued_ids("movieId")
         statuses: dict[int, str] = {}
-        for movie in movies if isinstance(movies, list) else []:
-            if not isinstance(movie, dict) or not movie.get("tmdbId"):
+        for movie in movies:
+            if not movie.get("tmdbId"):
                 continue
             statuses[int(movie["tmdbId"])] = _status_for(
                 has_all=bool(movie.get("hasFile")),
@@ -378,7 +375,7 @@ class SonarrClient(_ArrClient):
         puts ``tmdbId`` on every series; empty on v3) lets callers reconcile tmdb-keyed records —
         the request inbox — against Sonarr without a per-title TVDB lookup.
         """
-        data = self._get("/api/v3/series")
+        data = self._records("/api/v3/series")
         return self._ids_from(data, "tvdbId"), self._ids_from(data, "tmdbId")
 
     def excluded_tvdb_ids(self) -> set[int]:
@@ -394,13 +391,11 @@ class SonarrClient(_ArrClient):
         A show counts as ``downloaded`` only when every aired episode is on disk; some-but-not-all is
         ``downloading``, which is what a part-way season looks like to the person waiting on it.
         """
-        series_list = self._get("/api/v3/series")
+        series_list = self._records("/api/v3/series")
         downloading = self._queued_ids("seriesId")
         by_tvdb: dict[int, str] = {}
         by_tmdb: dict[int, str] = {}
-        for series in series_list if isinstance(series_list, list) else []:
-            if not isinstance(series, dict):
-                continue
+        for series in series_list:
             stats = series.get("statistics") or {}
             episodes = stats.get("episodeCount") or 0
             on_disk = stats.get("episodeFileCount") or 0
