@@ -43,7 +43,7 @@ import websockets
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
-from shortlist.server.db.models import Job, Setting, WatchSession
+from shortlist.server.db.models import Job, Server, Setting, WatchSession
 from shortlist.server.services import jobs
 from shortlist.server.settings_store import SettingsStore
 
@@ -582,11 +582,25 @@ class WatchStream:
         if self._snapshot_at is not None and now - self._snapshot_at < SESSION_CACHE_TTL:
             return self._snapshot
         try:
-            self._snapshot = await self._in_pool(ctx.plex.active_sessions)
+            self._snapshot = await self._in_pool(self._read_active_sessions, ctx)
             self._snapshot_at = now
         except Exception as e:
             logger.debug("watch-stream: could not read active sessions ({})", type(e).__name__)
         return self._snapshot
+
+    def _read_active_sessions(self, ctx) -> dict[str, dict]:
+        """Resolve the PMS-local owner only against the linked, authenticated server identity."""
+        machine_id = ctx.plex.machine_id
+        owner_account_id = None
+        if isinstance(machine_id, str) and machine_id:
+            with self._sessions() as session:
+                server = session.query(Server).filter(Server.machine_id == machine_id).one_or_none()
+                if server is not None:
+                    # Setup verified ownership through plex.tv. `machine_id` above comes from the
+                    # authenticated PMS response, not this database record. Personal-row settings
+                    # do not change who owns the server or whether their shared-row plays count.
+                    owner_account_id = server.owner_account_id
+        return ctx.plex.active_sessions(owner_account_id=owner_account_id)
 
     async def _housekeep(self, ctx) -> None:
         """Close sessions that stopped talking to us.
