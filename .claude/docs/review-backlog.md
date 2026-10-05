@@ -18,29 +18,37 @@ Plex changes, and runs record demotions and orphan deletes; "Your requests" tag 
 malformed-reply handling; no upgrade without a written backup, and no half-written backup offered; a
 retried job's stale error; the "no picks produced" wording; web-search diagnostics.
 
+**Fixed 2026-10-05 (`d80ccc6c`):**
+- Post-run save, crediting and the run-outcome alert no longer block the event loop: settling runs off
+  the loop, reconcile commits per person, and a cancel that lands while settling is ignored.
+- `build_context`'s PMS request runs off the loop.
+- A Cancel during `notify.after_run` no longer leaves a stale `cancel_requested` (cancel while settling
+  is ignored).
+- The title-list parser handles a fenced array followed by prose containing `[...]`.
+- Autumn DST repeated hour: a row schedule fires once, deduped per wall-clock minute. Accepted cost: an
+  hourly cron loses one fire a year.
+- Backup restore runs `PRAGMA integrity_check` and refuses an empty file or one with no `alembic_version`.
+- The row editor's Check names the right person: row-sources takes `row_id`; with no `row_id` it includes
+  all enabled requests rows.
+
+**Already fixed before this sweep** (verified in code 2026-10-05; the entries were stale): overlapping
+request tag patterns choosing the wrong person (`engine/requests_row.py` `_add_tagged`: ambiguous means
+nobody; `TestOneTagAcrossSeveralPatterns`); malformed Arr replies authorizing row removal (`arr.py`
+`_records` raises `ArrError`, so the ledger is incomplete; `MALFORMED_ARR` tests); schema upgrades
+continuing after a failed backup (`run_migrations` raises `MigrationBackupError`).
+
+**New 2026-10-05: dashboard report cache** (`shortlist/server/services/report_cache.py`, 120s TTL).
+Invalidated on run finish, the watch-sync stamp, `watch.reconcile`, `clear_deleted_rows` and
+`DELETE /api/runs`. Known lag, up to 120s: live-playback credits and retention pruning invalidate nothing.
+
 ### Left open
 
-- **LOW — post-run save, crediting and the run-outcome alert block the event loop for several seconds.**
-  Precondition: any run finishing; measured at 4.4s or more on a 46-user run. Harmless now (30s grace
-  for the fixed timers; row runs are never skipped). Moving it to a thread was tried and backed out:
-  `cancel_run` then interleaves with the save and wipes `Run.stats` (a lost update), and reconcile holds
-  SQLite's write lock from the first person to the final commit, so loop-side writers fail after the 5s
-  busy_timeout. Needs a settling guard in `cancel_run` plus per-person commits in reconcile.
-- **LOW — a Cancel pressed during `notify.after_run` leaves `cancel_requested` set on a run that already
-  finished.** Cosmetic; nothing reads it afterwards.
-- **LOW — the row editor's Check button can name a person the run gives nothing to.** Precondition: two
-  or more enabled requests rows with different tag patterns. The preview checks one pattern, but a run
-  judges a tag against every enabled requests row. Needs a row-id parameter on the row-sources endpoint
-  plus a `web/` change.
-- **LOW — Arr reads that never remove a row still accept a malformed reply as empty.**
-  `library_tmdb_ids`, `status_by_tmdb` and the tag read in `_resolve_tag`. Left because an empty answer
-  there removes nothing; only the reads that can take a row down were made strict.
+- **LOW — Arr helper reads still accept a malformed reply as empty.** `library_tmdb_ids`,
+  `status_by_tmdb`, `library_ids`, `status_by_ids` and `_resolve_tag`. Callers are the request inbox and
+  send paths, not row removal, so an empty answer removes nothing. Still open 2026-10-05.
 - **LOW — a `rebuild_schedule` that lands while the loop is stalled loses that night's run.**
   Precondition: it runs before a due row job has been dispatched, so the next fire time is recomputed
   from now and the due one is dropped.
-- **LOW — on the autumn daylight-saving night a row schedule in the repeated hour fires twice.**
-  Precondition: clocks repeat 02:00-02:59 and a row is scheduled in that hour. The second run queues
-  behind the first.
 - **LOW — the "no picks produced" line still says rows are left as they are when the only removals were
   swept unhideable rows.** The sweep's removals are added to the person's diff after the line is logged.
 - **LOW — a skipped scheduled job is not a webhook event.** It reaches the bell and the events log only.
@@ -49,14 +57,12 @@ retried job's stale error; the "no picks produced" wording; web-search diagnosti
 - **LOW — web search keeps a few loose ends.** A failed seed is never cached, so it is retried every
   night; `failed_seeds` is saved in the trace but no screen shows it; `exa_searches` counts failed
   searches too.
-- **LOW — the title-list parser slices from the first `[` to the last `]`.** A fenced array followed by
-  prose containing `[...]` fails to parse (reproduced with synthetic input). Not changed: the production
-  defect is unconfirmed until an `unparsed_reply` is captured in a trace.
 - **LOW — a Plex collection write that outlasts the 150s read timeout still completes on the server.**
   Worst seen 186.6s under load from another tool, so the retry repeats a write that already landed.
   Owner chose to move the row run's start time rather than change the timeout (2026-10-02).
-- **LOW — `build_context` does a PMS request on the event loop at run start,** up to the 45s timeout.
-- **LOW — backup restore runs no integrity check on the file it restores.**
+  Owner-accepted trade-off; still open 2026-10-05.
+- **LOW — the dashboard report cache (120s) can lag on two events nothing invalidates:** live-playback
+  credits and retention pruning. Added 2026-10-05; see the cache entry above.
 
 ### Left on purpose (owner decisions 2026-10-02)
 
