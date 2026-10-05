@@ -907,40 +907,17 @@ class ContextBuilder:
         return {(row.user_slug, row.collection_slug, row.library_key): row.season for row in rows}
 
     def _previous_picks(self, session: Session) -> dict[tuple[str, str, str], list[Pick]]:
-        """Each row+library's picks from the run that last built it, keyed (user_slug, row_slug, section_key).
+        """Each row+library's delivered picks, keyed (user_slug, row_slug, section_key).
 
         Carried into the engine so a row is REUSED unchanged on non-refresh nights instead of being
         re-curated (and re-written to Plex) from scratch every night — the fix for the nightly full-row
-        churn. We take the picks from the MAX run_id per (user, row, library), i.e. the last time we
-        delivered that exact row+library, which is the best proxy for what's on Plex now. Legacy rows
-        with no row/library stamp (blank collection_slug/section_key) can't be mapped, so they're
-        skipped and simply bootstrap by curating fresh.
+        churn. Independent current delivery records preserve that state when run logs are cleared.
+        Rows without confirmed delivery evidence bootstrap by curating fresh.
         """
-        latest = (
-            session.query(
-                PickRow.user_id.label("user_id"),
-                PickRow.collection_slug.label("slug"),
-                PickRow.section_key.label("section_key"),
-                func.max(PickRow.run_id).label("mrun"),
-            )
-            .filter(PickRow.collection_slug != "", PickRow.section_key != "")
-            .group_by(PickRow.user_id, PickRow.collection_slug, PickRow.section_key)
-            .subquery()
-        )
-        rows = (
-            session.query(PickRow)
-            .join(
-                latest,
-                and_(
-                    PickRow.user_id == latest.c.user_id,
-                    PickRow.collection_slug == latest.c.slug,
-                    PickRow.section_key == latest.c.section_key,
-                    PickRow.run_id == latest.c.mrun,
-                ),
-            )
-            .order_by(PickRow.rank)
-            .all()
-        )
+        from shortlist.server.services.delivery_snapshots import current_pick_ids
+
+        ids = {pick_id for picks in current_pick_ids(session).values() for pick_id in picks}
+        rows = session.query(PickRow).filter(PickRow.id.in_(ids)).order_by(PickRow.rank).all() if ids else []
         slug_by_id = {u.id: u.slug for u in session.query(User).all()}
         out: dict[tuple[str, str, str], list[Pick]] = {}
         for r in rows:
@@ -1227,6 +1204,13 @@ class ContextBuilder:
         """
         account_by_user, audience_by_collection = self._audience_maps(session)
 
+        muted_by_collection: dict[int, set[int]] = {}
+        for collection_id, user_id in session.query(
+            CollectionUserOverride.collection_id, CollectionUserOverride.user_id
+        ).filter(CollectionUserOverride.muted.is_(True)):
+            if user_id in account_by_user:
+                muted_by_collection.setdefault(collection_id, set()).add(account_by_user[user_id])
+
         specs: list[RowSpec] = []
         collections = (
             session.query(Collection)
@@ -1280,6 +1264,7 @@ class ContextBuilder:
                     media=collection.media,
                     shared=shared,
                     audience=audience,
+                    muted_accounts=muted_by_collection.get(collection.id, set()),
                     min_watchers=collection.min_watchers,
                     request_tag=(collection.request_tag or "").strip(),
                     auto_user_tag=collection.req_auto_user_tag,  # None -> inherit the global switch

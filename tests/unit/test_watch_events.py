@@ -39,6 +39,7 @@ from shortlist.server.services.watch_events import (
     tmdb_by_rating_key,
 )
 from tests.conftest import freeze_clock
+from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
@@ -99,6 +100,7 @@ def deliver(sessions, run_id: int, rating_keys, *, tmdb_base: int = 500, slug: s
                     created_at=delivered,
                 )
             )
+        personal_delivery(s, run_id, slug=slug)
         s.commit()
 
 
@@ -238,9 +240,8 @@ class TestMembershipIsAskedOfThePast:
         with world() as s:
             assert event_credits(s, RowMembership(s)) == {}
 
-    def test_a_detached_pick_cannot_be_placed_in_time(self, world):
-        """`DELETE /api/runs` and the retention prune both null `run_id`. Without a run there is no
-        delivery time, so no claim about "was it in the row then" can be supported."""
+    def test_a_detached_pick_keeps_its_independent_delivery_time(self, world):
+        """Clearing diagnostic history leaves the durable delivery evidence intact."""
         deliver(world, 1, [10])
         with world() as s:
             s.query(PickRow).update({"run_id": None})
@@ -248,7 +249,7 @@ class TestMembershipIsAskedOfThePast:
         play(world, 10, NOW - timedelta(hours=6))
 
         with world() as s:
-            assert event_credits(s, RowMembership(s)) == {}
+            assert (1, 510, "movie") in event_credits(s, RowMembership(s))
 
     def test_a_deleted_row_credits_nothing(self, world):
         deliver(world, 1, [10])
@@ -286,6 +287,7 @@ class TestTheSharedPathNeverCreditsAPersonalRow:
                     audience=audience,
                 )
             )
+            shared_delivery(s, run_id, slug="popular")
             s.commit()
 
     def test_a_shared_row_alone_credits_no_personal_pick(self, world):
@@ -430,6 +432,7 @@ class TestEngagementReport:
                     max_percent=percent,
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.commit()
 
     def test_the_four_outcomes_are_told_apart(self, world):
@@ -489,6 +492,7 @@ class TestEngagementReport:
                     max_percent=30,
                 )
             )
+            personal_delivery(s, 1, user_id=2, slug="picked", library="1")
             s.commit()
 
         with world() as s:
@@ -634,6 +638,7 @@ class TestReconcileActuallyUsesTheCredits:
                     watched_at=NOW - timedelta(hours=3),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 WatchSession(
                     plex_account_id=99,
@@ -730,6 +735,7 @@ class TestCarriedForwardPicksCarryNoRatingKey:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, run_id, user_id=1, slug="picked", library="1")
             s.commit()
 
     def test_a_title_whose_newest_delivery_has_the_placeholder_key_is_still_in_the_row(self, world):

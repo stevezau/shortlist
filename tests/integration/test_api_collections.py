@@ -4426,6 +4426,7 @@ class TestPreviewTitles:
     def _run(client: TestClient, picks: list[tuple[int, str, int, str, int]], *, dry_run: bool = False) -> int:
         """One run delivering `(user_id, slug, rating_key, title, rank)` picks."""
         from shortlist.server.db.models import PickRow, Run
+        from tests.watch_fixtures import live_row, personal_delivery
 
         with client.app.state.sessions() as session:
             run = Run(trigger="manual", status="ok", dry_run=dry_run)
@@ -4441,9 +4442,14 @@ class TestPreviewTitles:
                         rating_key=rating_key,
                         rank=rank,
                         collection_slug=slug,
+                        section_key="1",
                         title=title,
                     )
                 )
+            if not dry_run:
+                for user_id, slug in {(pick[0], pick[1]) for pick in picks}:
+                    live_row(session, user_id, slug, "1")
+                    personal_delivery(session, run.id, user_id=user_id, slug=slug)
             session.commit()
             return run.id
 
@@ -4507,13 +4513,15 @@ class TestPreviewTitles:
     def test_a_shared_row_reads_its_latest_real_delivery(self, client: TestClient):
         """A shared row's picks live only in `run_shared_rows` — and that table is written by dry runs
         too, so a preview must not show a row as holding titles a dry run only imagined."""
-        from shortlist.server.db.models import RunSharedRow
+        from shortlist.server.db.models import Delivery, RunSharedRow
+        from tests.watch_fixtures import shared_delivery
 
         slug = client.post("/api/collections", json={"name": "Popular", "build": "shared"}).json()["slug"]
         real = self._run(client, [])
         dry = self._run(client, [], dry_run=True)
         skipped = self._run(client, [])
         with client.app.state.sessions() as session:
+            session.add(Delivery(collection_slug=slug, user_slug=f"shared_{slug}", library_key="1", rating_key=7))
             session.add(
                 RunSharedRow(
                     run_id=real,
@@ -4532,6 +4540,7 @@ class TestPreviewTitles:
             )
             # A later run that delivered nothing for it leaves Plex holding the earlier titles.
             session.add(RunSharedRow(run_id=skipped, collection_slug=slug, status="skipped", picks=[]))
+            shared_delivery(session, real, slug=slug)
             session.commit()
 
         assert self._row(client, slug)["preview_titles"] == [

@@ -208,9 +208,15 @@ or Dry run mode on each line.
 
 ### How long history is kept
 
-Clearing run history lives on the Runs page. It clears the browsable history but preserves your
-dashboard metrics (delivered, watched and hit rate survive indefinitely), and doesn't affect
-Shortlist's ability to tidy up rows on Plex.
+**Clear run history** on the Runs page permanently deletes the run list and step-by-step logs.
+Your Plex rows, saved picks and watched-pick counts are kept. Watch tracking continues: Shortlist
+keeps the delivered titles and audience separately from the run history, so clearing that history
+doesn't stop new plays from counting or affect its ability to tidy up rows on Plex.
+
+If older delivery history is missing or its timing cannot be verified — including history already
+cleared before delivery records were kept separately — saved recommendations cannot restore it.
+Existing watched-pick counts are kept. Run the affected rows again to record their delivered titles
+and resume matching new watches.
 
 How long each of the two histories is kept is set in Settings → System:
 
@@ -219,7 +225,8 @@ How long each of the two histories is kept is set in Settings → System:
   defaults to **Forever**, because it is the only lasting answer to "what changed on whose account",
   so it outlives the runs around it.
 
-Both are applied by the nightly **Clear out old records** job.
+Both are applied by the nightly **Clear out old records** job. Expiring run history also keeps
+current row membership and watch tracking intact.
 
 ## Settings
 
@@ -252,10 +259,12 @@ counts here, as long as the row was still showing it: this figure is about watch
 For a series it counts from the **first finished episode**, because that is Plex's own definition and
 Plex offers no other — see Finished.
 
-A watch is credited only when the title was **in one of that person's rows at the time**. If a row
-rebuilt and swapped a title out, and they watched it afterwards, it does not count — they found it
-some other way. Once a pick is credited it stays credited, and finishing a series months later still
-upgrades it from started to finished.
+A watch is credited only when the title was **in one of that person's rows at the time**. Shortlist
+matches the play's time against the recorded delivery and audience, even if the play arrives after
+a later rebuild. If a row swapped a title out before they watched it, it does not count — they found
+it some other way. Saved recommendations alone are not proof that a title was delivered. Once a pick
+is credited it stays credited, and finishing a series months later still upgrades it from started
+to finished.
 
 **Finished** — of those, the ones they saw out: a film played, or a series with every episode
 watched. The two are worth reading together. On the maintainer's own server, of 158 series picks

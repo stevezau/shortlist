@@ -128,7 +128,7 @@ describe("RunsPage", () => {
     getRuns.mockResolvedValue([]);
     startRun.mockRejectedValue(new ApiError(503, START_FAILURE));
     renderPage();
-    await screen.findByText(/No runs yet/i);
+    await screen.findByText(/No run history/i);
 
     await userEvent.click(
       screen.getByRole("button", { name: /Run all rows now/i }),
@@ -144,7 +144,7 @@ describe("RunsPage", () => {
     getRuns.mockResolvedValue([]);
     startRun.mockResolvedValue({ run_id: 1 });
     renderPage();
-    await screen.findByText(/No runs yet/i);
+    await screen.findByText(/No run history/i);
 
     await userEvent.click(
       screen.getByRole("button", { name: /Run all rows now/i }),

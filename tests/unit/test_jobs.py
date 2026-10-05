@@ -1836,6 +1836,7 @@ class TestWatchReconcileTellsTheDashboard:
         from datetime import UTC, datetime, timedelta
 
         from shortlist.server.db.models import Collection, Delivery, PickRow, Run, User, WatchSession
+        from tests.watch_fixtures import personal_delivery
 
         now = datetime.now(UTC)
         with sessions() as s:
@@ -1876,6 +1877,7 @@ class TestWatchReconcileTellsTheDashboard:
                     end_reason="stopped",
                 )
             )
+            personal_delivery(s, run.id, user_id=user.id, slug="mine")
             s.commit()
 
     def _state(self, sessions):

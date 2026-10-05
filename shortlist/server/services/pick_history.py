@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, TitleKey
 from shortlist.server.db.models import PickRow, Run, User
+from shortlist.server.services.delivery_snapshots import current_pick_ids
 
 
 class DbPickHistory:
@@ -41,9 +42,12 @@ class DbPickHistory:
             return {_key(media, tmdb_id) for tmdb_id, media in session.execute(query)}
 
     def latest(self, user_slug: str, row_slug: str) -> set[TitleKey]:
-        newest = _real_picks(user_slug, row_slug).with_only_columns(func.max(PickRow.run_id)).scalar_subquery()
-        query = _real_picks(user_slug, row_slug).where(PickRow.run_id == newest)
         with self._sessions() as session:
+            user = session.scalar(select(User).where(User.slug == user_slug))
+            if user is None:
+                return set()
+            ids = current_pick_ids(session, user_id=user.id).get(user.id, set())
+            query = select(PickRow).where(PickRow.id.in_(ids), PickRow.collection_slug == row_slug)
             return {_key(p.media_type, p.tmdb_id) for p in session.scalars(query)}
 
 

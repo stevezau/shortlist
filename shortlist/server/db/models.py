@@ -752,6 +752,34 @@ class WatchStateSnapshot(Base):
     state: Mapped[list] = mapped_column(JSON, default=list)
 
 
+class RowDeliverySnapshot(Base):
+    """Confirmed row contents and audience, independent of disposable run logs.
+
+    Intervals are half open: delivered_at <= play < ended_at. The current interval survives
+    retention indefinitely; removing a collection closes it without inventing new contents.
+    Personal pick IDs are references to the retained impact ledger, validated by readers.
+    """
+
+    __tablename__ = "row_delivery_snapshots"
+    __table_args__ = (
+        Index("ix_row_delivery_identity_time", "user_slug", "collection_slug", "library_key", "delivered_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_key: Mapped[str] = mapped_column(String(255), unique=True)
+    collection_slug: Mapped[str] = mapped_column(String(255))
+    user_slug: Mapped[str] = mapped_column(String(255))
+    library_key: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    rating_key: Mapped[int] = mapped_column(Integer)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    picks: Mapped[list] = mapped_column(JSON, default=list)
+    audience: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    muted: Mapped[list] = mapped_column(JSON, default=list)
+
+
 class Delivery(Base):
     """Which Plex collection Shortlist built for one (row, user, library) — the delivery ledger.
 

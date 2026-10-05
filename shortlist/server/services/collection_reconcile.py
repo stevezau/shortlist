@@ -614,6 +614,9 @@ def forget_user_deliveries(session, user_slug: str) -> None:
     one of OUR labels first, so a stale key cannot reach anything) but it grows for ever and makes the
     audit lie about what is on the server. Found by testing a disable against a real PMS.
     """
+    from shortlist.server.services.delivery_snapshots import close_snapshots
+
+    close_snapshots(session, user_slug=user_slug)
     session.query(Delivery).filter_by(user_slug=user_slug).delete(synchronize_session=False)
 
 
@@ -634,6 +637,9 @@ def _forget_deliveries(
     a share filter, and `_refuse_a_different_server` rules out a ledger from another machine — but
     "harmless" is too strong, which is why forgetting is scoped as tightly as it is.
     """
+    from shortlist.server.services.delivery_snapshots import close_snapshots
+
+    close_snapshots(session, collection_slug=slug, user_slugs=user_slugs, libraries=in_sections)
     query = session.query(Delivery).filter_by(collection_slug=slug)
     if user_slugs is not None:
         query = query.filter(Delivery.user_slug.in_(user_slugs))

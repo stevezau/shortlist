@@ -467,7 +467,7 @@ export const api = {
   /** Everything on a timer — rows and jobs together, for the Schedule page. */
   getSchedule: (): Promise<ScheduleResponse> => request("/api/schedule"),
 
-  /** Delete ALL run history (runs, per-user rows, picks — and thus the report). Irreversible. */
+  /** Delete run history and logs; keep saved picks and watch tracking. */
   clearRuns: (): Promise<{ deleted: number }> =>
     request("/api/runs", { method: "DELETE" }),
 

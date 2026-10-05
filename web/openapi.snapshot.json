@@ -12677,7 +12677,7 @@
     },
     "/api/runs": {
       "delete": {
-        "description": "Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the\ndashboard's lifetime metrics survive \u2014 only the browsable history is cleared. Changes nothing\non Plex. Note: the next run will re-curate from scratch (no carry-forward) since picks lose\ntheir run association.",
+        "description": "Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the\ndashboard's lifetime metrics survive. Delivered membership is independent, so watch tracking\nand carry-forward keep working. Changes nothing on Plex.",
         "operationId": "clear_runs_api_runs_delete",
         "responses": {
           "200": {

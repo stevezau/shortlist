@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from fastapi.concurrency import run_in_threadpool
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import and_, func
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse, StreamingResponse
 
@@ -61,7 +61,6 @@ from shortlist.server.db.models import (
     Job,
     PickRow,
     RequestCandidate,
-    Run,
     RunSharedRow,
     SharedRowWatch,
     Theme,
@@ -964,12 +963,9 @@ PREVIEW_TITLE_COUNT = 4
 def _preview_titles(session: Session, slugs: list[str]) -> dict[str, list[dict]]:
     """Up to four titles from each row's most recent delivery, keyed by slug, for the Rows list.
 
-    Built for every row at once — the list renders them all, so this is two queries, not two per row.
-    A per-person row's picks are `picks` rows, written only by real runs; its newest run holds every
-    person's picks, so the same title arrives once per person and is kept once, at its best rank. A
-    shared row's picks live only in `run_shared_rows`, which dry runs write too, so that read skips dry
-    runs, and skips a run that delivered it nothing (Plex still holds the earlier titles then). A pick
-    never matched to a library item (`rating_key` 0) has no artwork to show and is left out.
+    Read confirmed current delivery snapshots, independently of diagnostic run history. Personal
+    titles are deduplicated at their best rank; shared titles retain their delivered order. Picks
+    without a matched Plex rating key have no artwork to show and are left out.
 
     Args:
         session: An open database session.
@@ -978,23 +974,13 @@ def _preview_titles(session: Session, slugs: list[str]) -> dict[str, list[dict]]
     Returns:
         slug -> `{"rating_key", "title"}` dicts, best ranked first. A row that never built is absent.
     """
-    latest_per_person = (
-        session.query(PickRow.collection_slug, func.max(PickRow.run_id).label("run_id"))
-        .filter(PickRow.collection_slug.in_(slugs))
-        .group_by(PickRow.collection_slug)
-        .subquery()
-    )
+    from shortlist.server.services.delivery_snapshots import current_pick_ids, current_snapshots
+
+    ids = {pick_id for picks in current_pick_ids(session).values() for pick_id in picks}
     best_rank = func.min(PickRow.rank)
     per_person = (
         session.query(PickRow.collection_slug, PickRow.rating_key, func.min(PickRow.title), best_rank)
-        .join(
-            latest_per_person,
-            and_(
-                PickRow.collection_slug == latest_per_person.c.collection_slug,
-                PickRow.run_id == latest_per_person.c.run_id,
-            ),
-        )
-        .filter(PickRow.rating_key > 0)
+        .filter(PickRow.id.in_(ids), PickRow.collection_slug.in_(slugs), PickRow.rating_key > 0)
         .group_by(PickRow.collection_slug, PickRow.rating_key)
         .order_by(PickRow.collection_slug, best_rank, PickRow.rating_key)
         .all()
@@ -1005,39 +991,18 @@ def _preview_titles(session: Session, slugs: list[str]) -> dict[str, list[dict]]
         if len(titles) < PREVIEW_TITLE_COUNT:
             titles.append({"rating_key": rating_key, "title": title})
 
-    latest_shared = (
-        session.query(RunSharedRow.collection_slug, func.max(RunSharedRow.run_id).label("run_id"))
-        .join(Run, Run.id == RunSharedRow.run_id)
-        .filter(
-            RunSharedRow.collection_slug.in_(slugs),
-            Run.dry_run.is_(False),
-            func.json_array_length(RunSharedRow.picks) > 0,
-        )
-        .group_by(RunSharedRow.collection_slug)
-        .subquery()
-    )
-    shared = (
-        session.query(RunSharedRow.collection_slug, RunSharedRow.picks)
-        .join(
-            latest_shared,
-            and_(
-                RunSharedRow.collection_slug == latest_shared.c.collection_slug,
-                RunSharedRow.run_id == latest_shared.c.run_id,
-            ),
-        )
-        .all()
-    )
-    for slug, picks in shared:
-        titles, seen = [], set()
-        for pick in sorted(picks, key=lambda p: p.get("rank") or 0):
+    for snapshot in current_snapshots(session):
+        if not snapshot.shared or snapshot.collection_slug not in slugs:
+            continue
+        titles = previews.setdefault(snapshot.collection_slug, [])
+        seen = {pick["rating_key"] for pick in titles}
+        for pick in snapshot.picks:
             rating_key = pick.get("rating_key") or 0
-            if rating_key <= 0 or rating_key in seen:
+            if rating_key <= 0 or rating_key in seen or len(titles) >= PREVIEW_TITLE_COUNT:
                 continue
             seen.add(rating_key)
             titles.append({"rating_key": rating_key, "title": pick.get("title") or ""})
-            if len(titles) == PREVIEW_TITLE_COUNT:
-                break
-        previews[slug] = titles
+
     return previews
 
 

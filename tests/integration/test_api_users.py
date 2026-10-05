@@ -1240,6 +1240,7 @@ class TestUserRowsApi:
         picks. Plex still holds the last real run's titles, so that is what the page shows — not
         "No picks in this row yet" for every person after one cancelled dry run."""
         from shortlist.server.db.models import Delivery, PickRow, Run, RunUser
+        from tests.watch_fixtures import personal_delivery
 
         uid = self._sarah_id(client)
 
@@ -1265,6 +1266,7 @@ class TestUserRowsApi:
             session.flush()
             session.add(RunUser(run_id=built.id, user_id=uid, status="ok"))
             session.add(pick(built.id, "Arrival"))
+            personal_delivery(session, built.id, user_id=uid)
             cancelled_dry = Run(trigger="manual", status="aborted", dry_run=True)
             session.add(cancelled_dry)
             session.flush()
@@ -1281,6 +1283,7 @@ class TestUserRowsApi:
             session.flush()
             session.add(RunUser(run_id=rebuilt.id, user_id=uid, status="ok"))
             session.add(pick(rebuilt.id, "Contact"))
+            personal_delivery(session, rebuilt.id, user_id=uid)
             session.commit()
 
         row = client.get(f"/api/users/{uid}/rows").json()[0]
@@ -1290,6 +1293,7 @@ class TestUserRowsApi:
         """Rows have their own crons, so the newest run is often scoped to ONE row. The other row's
         picks are still on Plex, so the page must show them, not "No picks in this row yet"."""
         from shortlist.server.db.models import Collection, Delivery, PickRow, Run, RunUser
+        from tests.watch_fixtures import personal_delivery
 
         uid = self._sarah_id(client)
 
@@ -1324,6 +1328,9 @@ class TestUserRowsApi:
             session.add(pick(run_a.id, "picked", "A picked"))
             session.add(pick(run_a.id, "weekend", "A weekend"))
             session.add(pick(run_b.id, "picked", "B picked"))
+            personal_delivery(session, run_a.id, user_id=uid)
+            personal_delivery(session, run_a.id, user_id=uid, slug="weekend")
+            personal_delivery(session, run_b.id, user_id=uid)
             session.commit()
 
         rows = {r["slug"]: r for r in client.get(f"/api/users/{uid}/rows").json()}

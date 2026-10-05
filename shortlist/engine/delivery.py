@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
 
 from loguru import logger
 
@@ -284,6 +285,7 @@ def _rebuild_under_name(
         added=[p.title for p in picks if p.rating_key not in dead], collection_title=display, created=True
     )
     diff.rating_key = _rating_key(collection)
+    diff.delivered_keys = [p.rating_key for p in picks if p.rating_key not in dead]
     return diff, stored, collection
 
 
@@ -948,6 +950,10 @@ def deliver_rows(
         entry: dict | None = None
         if breakdown is not None:
             entry = {
+                "delivery_id": str(uuid.uuid4()),
+                "delivered_at": datetime.now(UTC).isoformat(),
+                "audience": sorted(spec.audience) if spec.audience is not None else None,
+                "muted": sorted(spec.muted_accounts),
                 "row_slug": spec.slug,
                 "row_title": one.collection_title,
                 # The ledger's handle on this collection. Everything else in this entry describes
@@ -996,6 +1002,7 @@ def deliver_rows(
                         "order_rating_source": p.order_rating_source,
                     }
                     for p in this_section
+                    if one.delivered_keys is None or p.rating_key in one.delivered_keys
                 ],
             }
             breakdown.append(entry)
@@ -1842,6 +1849,7 @@ def _deliver_one(
             on_write=on_write,
         )
         diff.rating_key = _rating_key(collection)
+        diff.delivered_keys = [p.rating_key for p in picks if p.rating_key not in set(vanished)]
         if vanished:
             # Deleted from Plex between the picks being made and the row being created. The row holds
             # the survivors, so the diff must name only those — otherwise the run reports having
@@ -1932,6 +1940,7 @@ def _deliver_one(
         stored = plex.stored_label(collection, label)
         _apply_shortlist_label(plex, collection, profile.username)
         diff.rating_key = _rating_key(collection)
+        diff.delivered_keys = wanted_keys
         logger.info(
             "{}: '{}' in '{}' unchanged ({} items) — no membership write",
             profile.username,
@@ -2014,6 +2023,7 @@ def _deliver_one(
             on_write=on_write,
         )
         diff.rating_key = _rating_key(collection)
+        diff.delivered_keys = [p.rating_key for p in picks if p.rating_key not in set(vanished)]
         if vanished:
             dead = set(vanished)
             diff.added = [p.title for p in picks if p.rating_key not in dead]
@@ -2025,6 +2035,7 @@ def _deliver_one(
     stored = plex.stored_label(collection, label)
     _apply_shortlist_label(plex, collection, profile.username)
     diff.rating_key = _rating_key(collection)
+    diff.delivered_keys = wanted_keys
     # Promotion is deliberately NOT done here: the pipeline promotes only after every user's
     # share filters have been merged, so a new row is never PROMOTED before its exclusions exist
     # (see plex-safety rule 1 on the Collections tab).

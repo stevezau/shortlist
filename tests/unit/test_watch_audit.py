@@ -42,6 +42,7 @@ from shortlist.server.services.watch_events import (
     tmdb_by_rating_key,
 )
 from tests.conftest import freeze_clock
+from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
@@ -91,6 +92,7 @@ def pick(sessions, run_id, tmdb_id, *, rating_key, created=None, **kw):
                 **kw,
             )
         )
+        personal_delivery(s, run_id)
         s.commit()
 
 
@@ -315,6 +317,7 @@ class TestEmptyAndNullStates:
         with world() as s:
             s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared"))
             s.add(RunSharedRow(run_id=1, collection_slug="popular", picks=[{"title": "T", "year": 2020}]))
+            shared_delivery(s, 1, slug="popular")
             s.commit()
 
         with world() as s:
@@ -430,6 +433,7 @@ class TestTmdbIdsAreNamespacedPerMediaType:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 PickRow(
                     run_id=1,
@@ -445,6 +449,7 @@ class TestTmdbIdsAreNamespacedPerMediaType:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="2")
             s.add(
                 WatchEvent(
                     plex_account_id=99,
@@ -480,6 +485,7 @@ class TestTmdbIdsAreNamespacedPerMediaType:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 PickRow(
                     run_id=1,
@@ -495,6 +501,7 @@ class TestTmdbIdsAreNamespacedPerMediaType:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="2")
             s.commit()
         session_row(world, 10, started=NOW - timedelta(hours=6), offset=3_000_000)
 
@@ -651,6 +658,7 @@ class TestFinishedAtIsWhenTheyFinished:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 WatchEvent(
                     plex_account_id=99,
@@ -780,6 +788,7 @@ class TestACreditLandsOnlyOnTheRowThatShowedIt:
                         created_at=created,
                     )
                 )
+                personal_delivery(s, run_id, user_id=1, slug=slug, library="1")
             # `picked` re-delivered something else yesterday, so its newest delivery lacks 510.
             s.add(
                 PickRow(
@@ -795,6 +804,7 @@ class TestACreditLandsOnlyOnTheRowThatShowedIt:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 2, user_id=1, slug="picked", library="1")
             s.add(
                 WatchEvent(
                     plex_account_id=99,
@@ -843,6 +853,7 @@ class TestASeriesGetsNoPercentageFromOneEpisode:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 WatchSession(
                     plex_account_id=99,
@@ -1000,6 +1011,7 @@ class TestSeriesPercentagesAreCleared:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 PickRow(
                     run_id=1,
@@ -1015,6 +1027,7 @@ class TestSeriesPercentagesAreCleared:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.commit()
             s.execute(sa.text("UPDATE picks SET max_percent = NULL WHERE media_type = 'show'"))
             s.commit()
@@ -1197,11 +1210,12 @@ class TestTheClocksAndTheMaxima:
                         created_at=created,
                     )
                 )
+                personal_delivery(s, 2, user_id=1, slug="picked", library="1")
             s.commit()
 
         with world() as s:
-            timeline = RowMembership(s)._per_person[(1, "picked", "1")]
-        landed = min(at for at, _keys in timeline)
+            timeline = RowMembership(s)._per_person[1]
+        landed = min(row.delivered_at.replace(tzinfo=UTC) for row in timeline)
         assert landed == NOW - timedelta(hours=6), "the earliest pick, not the latest"
 
     def test_a_shared_rows_audience_comes_from_its_NEWEST_delivery(self, world):
@@ -1213,17 +1227,35 @@ class TestTheClocksAndTheMaxima:
             s.add(Run(id=3, trigger="schedule", status="ok", started_at=NOW - timedelta(days=3)))
             s.add(Run(id=4, trigger="schedule", status="ok", started_at=NOW - timedelta(days=1)))
             # Old delivery: alex could see it. New delivery: only sam.
-            s.add(RunSharedRow(run_id=3, collection_slug="staff", status="ok", picks=[], audience=[99]))
-            s.add(RunSharedRow(run_id=4, collection_slug="staff", status="ok", picks=[], audience=[77]))
+            s.add(
+                RunSharedRow(
+                    run_id=3,
+                    collection_slug="staff",
+                    status="ok",
+                    picks=[{"tmdb_id": 550, "media_type": "movie"}],
+                    audience=[99],
+                )
+            )
+            shared_delivery(s, 3, slug="staff")
+            s.add(
+                RunSharedRow(
+                    run_id=4,
+                    collection_slug="staff",
+                    status="ok",
+                    picks=[{"tmdb_id": 550, "media_type": "movie"}],
+                    audience=[77],
+                )
+            )
+            shared_delivery(s, 4, slug="staff")
             s.commit()
 
         with world() as s:
             alex = s.query(User).filter_by(id=1).one()
             membership = RowMembership(s)
-            assert membership._shared_visible_to("staff", alex, NOW) is False, (
+            assert membership.visible_shared_rows(alex, {(550, "movie")}, NOW) == [], (
                 "the NEWEST delivery excluded them; taking the oldest would still say yes"
             )
-            assert membership._shared_visible_to("staff", alex, NOW - timedelta(days=2)) is True, (
+            assert membership.visible_shared_rows(alex, {(550, "movie")}, NOW - timedelta(days=2)) == ["staff"], (
                 "back then the old delivery was in force"
             )
 

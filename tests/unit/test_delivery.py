@@ -3189,6 +3189,7 @@ class TestTheDiffReportsWhatLandedNotWhatWasAsked:
 
         alive = Pick(1, 101, "Still Here", rank=1, reason="r", media_type=MediaType.MOVIE)
         gone = Pick(2, 202, "Deleted Since", rank=2, reason="r", media_type=MediaType.MOVIE)
+        breakdown = []
 
         reports = deliver_rows(
             plex,
@@ -3199,6 +3200,7 @@ class TestTheDiffReportsWhatLandedNotWhatWasAsked:
             sections=[movies],
             section_picks={movies.key: [alive, gone]},
             dry_run=False,
+            breakdown=breakdown,
         )
 
         # `deliver_rows` returns (diff, label) — the diff is what the run report and the stats read.
@@ -3206,6 +3208,7 @@ class TestTheDiffReportsWhatLandedNotWhatWasAsked:
         added = diff.added if hasattr(diff, "added") else diff[0].added
         assert "Still Here" in added
         assert "Deleted Since" not in added, "the run must not claim it delivered a title Plex dropped"
+        assert [p["rating_key"] for p in breakdown[0]["picks"]] == [101], "watch membership must use actual delivery"
 
 
 class TestATitleAnotherRowBuildsUnderIsNeverThisRows:

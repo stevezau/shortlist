@@ -24,6 +24,7 @@ from shortlist.server.db.models import (
     CollectionUserOverride,
     Delivery,
     PickRow,
+    RowDeliverySnapshot,
     Run,
     RunSharedRow,
     SharedRowWatch,
@@ -44,6 +45,7 @@ from shortlist.server.services.run_persistence import (
 )
 from shortlist.server.services.watch_events import RowMembership, _as_utc, shared_credits
 from tests.conftest import freeze_clock
+from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
@@ -84,6 +86,7 @@ def world(sessions):
                 audience=None,
             )
         )
+        shared_delivery(s, 1)
         s.commit()
     return sessions
 
@@ -125,6 +128,7 @@ def a_pick_so_the_rating_key_resolves(sessions, *, tmdb_id=550, rating_key=9001)
                 created_at=NOW - timedelta(days=1),
             )
         )
+        personal_delivery(s, 1, user_id=2, slug="other", library="1")
         s.commit()
 
 
@@ -148,6 +152,7 @@ def an_old_pick_so_the_attribution_floor_reaches_back(sessions):
                 created_at=NOW - timedelta(days=60),
             )
         )
+        personal_delivery(s, 1, user_id=2, slug="ancient", library="1")
         s.commit()
 
 
@@ -228,7 +233,7 @@ class TestASharedRowIsStillBounded:
         what decides — not `collection_audience`, which is current state and would retroactively
         credit watches from before someone was added."""
         with world() as s:
-            s.query(RunSharedRow).filter_by(run_id=1).one().audience = [99]
+            s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one().audience = [99]
             s.add(CollectionAudience(collection_id=1, user_id=2))
             s.commit()
         a_pick_so_the_rating_key_resolves(world, rating_key=9001)
@@ -286,7 +291,7 @@ class TestSeriesProgressIsNotWritten:
         series is not 100% of the series, and recording it as such told the dashboard people abandon
         shows just before the end."""
         with world() as s:
-            s.query(RunSharedRow).filter_by(run_id=1).one().picks = [
+            s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one().picks = [
                 {"tmdb_id": 1399, "media_type": "show", "title": "Game of Thrones"}
             ]
             s.add(
@@ -303,6 +308,7 @@ class TestSeriesProgressIsNotWritten:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=2, slug="other", library="1")
             s.commit()
         with world() as s:
             s.add(
@@ -353,6 +359,7 @@ class TestTheTwoPathsDoNotCrossCredit:
                     created_at=NOW - timedelta(days=30),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.add(Run(id=2, trigger="schedule", status="ok", started_at=NOW - timedelta(hours=12)))
             s.add(
                 PickRow(
@@ -368,6 +375,7 @@ class TestTheTwoPathsDoNotCrossCredit:
                     created_at=NOW - timedelta(hours=12),
                 )
             )
+            personal_delivery(s, 2, user_id=1, slug="mine", library="1")
             s.commit()
         watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
 
@@ -397,6 +405,7 @@ class TestTheTwoPathsDoNotCrossCredit:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
 
@@ -444,7 +453,7 @@ class TestPicksWrittenBeforeMediaTypeWasCarried:
 
     def a_row_with_no_media_type(self, sessions, *, rating_key):
         with sessions() as s:
-            s.query(RunSharedRow).filter_by(run_id=1).one().picks = [
+            s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one().picks = [
                 {"tmdb_id": 550, "rating_key": rating_key, "rank": 1, "title": "Fight Club"}
             ]
             s.commit()
@@ -473,7 +482,7 @@ class TestPicksWrittenBeforeMediaTypeWasCarried:
         pre-0076 row creditable hands a SUBSET row's credits to people who were never in its audience.
         Here the row is alex-only and sam is the one who watches."""
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = None  # pre-0076: not recorded
             row.picks = [{"tmdb_id": 550, "rating_key": 9001, "rank": 1, "title": "Fight Club"}]
             s.query(Collection).filter_by(slug="staff").one().audience = "subset"
@@ -490,7 +499,7 @@ class TestPicksWrittenBeforeMediaTypeWasCarried:
     def test_a_movie_and_a_show_sharing_a_tmdb_id_do_not_collide(self, world):
         """TMDB ids are namespaced per type. If the type were dropped, one watch would credit both."""
         with world() as s:
-            s.query(RunSharedRow).filter_by(run_id=1).one().picks = [
+            s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one().picks = [
                 {"tmdb_id": 1399, "media_type": "movie", "rating_key": 8001, "title": "A Film"},
                 {"tmdb_id": 1399, "media_type": "show", "rating_key": 8002, "title": "A Series"},
             ]
@@ -508,6 +517,7 @@ class TestPicksWrittenBeforeMediaTypeWasCarried:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=2, slug="other", library="1")
             s.commit()
         watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000, rating_key=8001)
 
@@ -539,6 +549,7 @@ class TestEachRowKeepsItsOwnEarliestPlay:
                     audience=None,
                 )
             )
+            shared_delivery(s, 2, slug="trending")
             s.commit()
         a_pick_so_the_rating_key_resolves(world)
         early = NOW - timedelta(hours=20)  # only `staff` was showing it
@@ -619,7 +630,7 @@ class TestTheExpensiveMapsAreBuiltOnce:
         monkeypatch.setattr(run_persistence, "session_progress", counted)
 
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.picks = [{"tmdb_id": 550, "media_type": "movie", "title": "Fight Club", "rating_key": 9001}]
             s.commit()
         a_pick_so_the_rating_key_resolves(world)
@@ -675,6 +686,7 @@ class TestTheTilesCannotContradictEachOther:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
         reconcile_watched(world, [profile()])
@@ -754,6 +766,7 @@ class TestTheBreakdownsAgreeWithTheTiles:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
         reconcile_watched(world, [profile()])
@@ -770,7 +783,7 @@ class TestTheAudienceGateBothWays:
 
     def a_subset_row_containing(self, world, *account_ids):
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = list(account_ids)
             s.query(Collection).filter_by(slug="staff").one().audience = "subset"
             s.commit()
@@ -797,9 +810,9 @@ class TestTheAudienceGateBothWays:
         # Re-snapshot the way a run would. BOTH halves: `audience` is the allow-list (None = public)
         # and `muted` is the deny-list beside it.
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = _shared_audience(s, "staff")
-            row.muted = _shared_muted(s, "staff")
+            row.muted = _shared_muted(s, "staff") or []
             s.commit()
         a_pick_so_the_rating_key_resolves(world)
         watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
@@ -941,6 +954,7 @@ class TestASlugCarryingBothKindsOfHistory:
                         created_at=NOW - timedelta(days=2),
                     )
                 )
+                personal_delivery(s, 1, user_id=1, slug="switched", library="1")
             for tmdb in (700, 701):
                 s.add(
                     SharedRowWatch(
@@ -982,6 +996,7 @@ class TestASlugCarryingBothKindsOfHistory:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="switched", library="1")
             s.add(
                 SharedRowWatch(
                     user_id=1,
@@ -1154,6 +1169,7 @@ class TestAServerWithNoSharedRowsIsUnaffected:
                         finished_at=NOW - timedelta(hours=2) if tmdb == 11 else None,
                     )
                 )
+                personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
 
         with world() as s:
@@ -1204,7 +1220,7 @@ class TestTheWriterAndTheReaderAgree:
             )
         )
         with world() as s:
-            s.query(RunSharedRow).filter_by(run_id=1).one().picks = written
+            s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one().picks = written
             s.commit()
 
         with world() as s:
@@ -1251,6 +1267,7 @@ class TestStoppingPlaybackCreditsImmediately:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
 
@@ -1359,6 +1376,7 @@ class TestStoppingPlaybackCreditsImmediately:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         # No session, no event — only a title sitting in a live row.
         reconcile_from_events(world)
@@ -1411,6 +1429,7 @@ class TestTheIdleCountIsNotASubtraction:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 2, user_id=1, slug="mine", library="1")
             # Sam got hers LAST month and watched it yesterday — a watcher, but not one of the
             # people this window delivered to.
             s.add(
@@ -1476,6 +1495,7 @@ class TestASharedRowIsTimedByItsOwnDelivery:
                     delivered_at=landed,
                 )
             )
+            shared_delivery(s, 3, slug="staff")
             s.commit()
         a_pick_so_the_rating_key_resolves(world)
         watch_session(world, 99, started=played, offset=1_800_000)
@@ -1597,6 +1617,7 @@ class TestADryRunNeverChangesWhoGetsCredited:
                     delivered_at=self.PREVIEW_AT,
                 )
             )
+            shared_delivery(s, run_id, slug="staff")
             s.commit()
 
     def test_a_preview_does_not_erase_a_real_delivery(self, world):
@@ -1629,6 +1650,7 @@ class TestADryRunNeverChangesWhoGetsCredited:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=2, slug="other", library="1")
             s.commit()
         self._preview(world, 9, tmdb=8888)
         watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000, rating_key=7777)
@@ -1643,7 +1665,7 @@ class TestADryRunNeverChangesWhoGetsCredited:
         `audience = NULL`, which `_shared_visible_to` reads as "everyone" — and being the newest
         delivery, it would decide visibility for a row that excludes this person."""
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = [77]  # sam only — alex cannot see it
             s.query(Collection).filter_by(slug="staff").one().audience = "subset"
             s.commit()
@@ -1704,9 +1726,9 @@ class TestAMuteDoesNotFreezeAPublicRowsAudience:
             s.add(CollectionUserOverride(collection_id=1, user_id=2, muted=True))
             s.commit()
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = _shared_audience(s, "staff")
-            row.muted = _shared_muted(s, "staff")
+            row.muted = _shared_muted(s, "staff") or []
             s.commit()
         # A new person joins AFTER that delivery, and watches off the row.
         with world() as s:
@@ -1727,9 +1749,9 @@ class TestAMuteDoesNotFreezeAPublicRowsAudience:
             s.add(CollectionUserOverride(collection_id=1, user_id=1, muted=True))
             s.commit()
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = _shared_audience(s, "staff")
-            row.muted = _shared_muted(s, "staff")
+            row.muted = _shared_muted(s, "staff") or []
             s.commit()
         a_pick_so_the_rating_key_resolves(world)
         watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
@@ -1777,9 +1799,9 @@ class TestAMuteIsNeverBakedIntoASubsetAudience:
         being wrong was invisible."""
         self._subset_with_a_mute(world)
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = _shared_audience(s, "staff")
-            row.muted = _shared_muted(s, "staff")
+            row.muted = _shared_muted(s, "staff") or []
             s.commit()
         a_pick_so_the_rating_key_resolves(world)
         watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
@@ -1799,9 +1821,9 @@ class TestAMuteIsNeverBakedIntoASubsetAudience:
             s.query(CollectionUserOverride).delete()  # they un-mute it
             s.commit()
         with world() as s:
-            row = s.query(RunSharedRow).filter_by(run_id=1).one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = _shared_audience(s, "staff")
-            row.muted = _shared_muted(s, "staff")
+            row.muted = _shared_muted(s, "staff") or []
             s.commit()
         a_pick_so_the_rating_key_resolves(world)
         watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
@@ -1842,8 +1864,9 @@ class TestOneSharedRowsAudienceNeverAnswersForAnother:
                     delivered_at=NOW - timedelta(hours=6),
                 )
             )
+            shared_delivery(s, 2, slug="insiders")
             # The public row in the `world` fixture, re-stamped as the MOST RECENT delivery.
-            row = s.query(RunSharedRow).filter_by(run_id=1, collection_slug="staff").one()
+            row = s.query(RowDeliverySnapshot).filter_by(source_key="fixture:1:shared:staff:1").one()
             row.audience = None
             row.delivered_at = NOW - timedelta(hours=1)
             s.commit()
@@ -1854,19 +1877,19 @@ class TestOneSharedRowsAudienceNeverAnswersForAnother:
             alex = s.query(User).filter_by(slug="alex").one()
             membership = RowMembership(s)
 
-            assert membership._shared_visible_to("insiders", alex, NOW) is False, (
+            assert membership.visible_shared_rows(alex, {(680, "movie")}, NOW) == [], (
                 "alex is not in the private row's audience; a newer PUBLIC row answered for it"
             )
             # The control: the public row really is visible to them, so the assertion above is about
             # the slug filter and not about alex being invisible to everything.
-            assert membership._shared_visible_to("staff", alex, NOW) is True
+            assert membership.visible_shared_rows(alex, {(550, "movie")}, NOW) == ["staff"]
 
     def test_the_person_who_is_in_the_private_audience_still_sees_it(self, world):
         """The other direction, so the guard cannot be 'fixed' by refusing everyone."""
         self._two_rows(world)
         with world() as s:
             sam = s.query(User).filter_by(slug="sam").one()
-            assert RowMembership(s)._shared_visible_to("insiders", sam, NOW) is True
+            assert RowMembership(s).visible_shared_rows(sam, {(680, "movie")}, NOW) == ["insiders"]
 
     def test_a_play_off_the_private_row_credits_nobody_outside_its_audience(self, world):
         """End to end through the credit pass, not just the predicate."""

@@ -944,9 +944,8 @@ export interface paths {
         /**
          * Clear Runs
          * @description Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the
-         *     dashboard's lifetime metrics survive — only the browsable history is cleared. Changes nothing
-         *     on Plex. Note: the next run will re-curate from scratch (no carry-forward) since picks lose
-         *     their run association.
+         *     dashboard's lifetime metrics survive. Delivered membership is independent, so watch tracking
+         *     and carry-forward keep working. Changes nothing on Plex.
          */
         delete: operations["clear_runs_api_runs_delete"];
         options?: never;

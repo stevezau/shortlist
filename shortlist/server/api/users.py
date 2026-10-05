@@ -24,6 +24,7 @@ from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
     Event,
     PickRow,
+    RowDeliverySnapshot,
     Run,
     RunUser,
     SharedRowWatch,
@@ -923,6 +924,7 @@ async def remove_departed_user(user_id: int, request: Request) -> dict:
                 status_code=409,
                 detail=f"{user.display_name} still shares this server — turn them off instead of removing them",
             )
+        session.query(RowDeliverySnapshot).filter_by(user_id=user_id).delete(synchronize_session=False)
         picks = session.query(PickRow).filter_by(user_id=user_id).delete(synchronize_session=False)
         # Shared-row watches go with the picks: they are the same fact about the same person for a row
         # that happens to have no pick rows, and leaving them would keep a departed account in the

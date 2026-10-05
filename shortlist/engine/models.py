@@ -707,6 +707,8 @@ class RowSpec:
     over_time: OverTime = field(default_factory=OverTime)
     # Per-person themes (#138): (user slug, that person's theme). A person absent here gets ``theme``.
     person_themes: tuple[tuple[str, ThemeSpec], ...] = ()
+    # Appended to preserve positional callers. Frozen with this run's delivery audience.
+    muted_accounts: set[int] = field(default_factory=set)
 
     def for_person(self, user_slug: str) -> RowSpec:
         """This row as ``user_slug`` sees it: with their own theme when they have one."""
@@ -1530,6 +1532,8 @@ class CollectionDiff:
     # library". Titles are not — a `{top_seed}` row renders differently every run, so nothing computed
     # from config can find it later. 0 in a dry run and whenever the PMS didn't hand one back.
     rating_key: int = 0
+    # Exact keys confirmed by delivery, after vanished items are omitted. None means no confirmed write.
+    delivered_keys: list[int] | None = None
 
 
 @dataclass

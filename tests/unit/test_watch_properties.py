@@ -33,6 +33,7 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement, resolve_outcomes
 from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
+from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 SETTINGS = settings(max_examples=50, deadline=None)
@@ -80,6 +81,7 @@ def _seed(sessions, deliveries, plays, sess, *, media_type="movie"):
                     created_at=NOW - timedelta(days=d),
                 )
             )
+            personal_delivery(s, i, user_id=1, slug="picked", library="1")
         for j, d in enumerate(plays):
             s.add(
                 WatchEvent(
@@ -386,6 +388,7 @@ def _populate(factory, users, rows, titles, deliveries, plays, sess):
                             delivered_at=NOW - timedelta(days=d),
                         )
                     )
+                    shared_delivery(s, run_id, slug=f"row{r}")
                 else:
                     for u in range(1, users + 1):
                         for t in range(1, titles + 1):
@@ -404,6 +407,7 @@ def _populate(factory, users, rows, titles, deliveries, plays, sess):
                                     created_at=NOW - timedelta(days=d),
                                 )
                             )
+                            personal_delivery(s, run_id, user_id=u, slug=f"row{r}", library="1")
         for i, (u, d) in enumerate(plays):
             if u > users:
                 continue

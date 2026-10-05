@@ -18,7 +18,6 @@ from datetime import UTC, datetime, timedelta
 from functools import cached_property
 
 from loguru import logger
-from sqlalchemy import and_, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -33,6 +32,7 @@ from shortlist.server.db.models import (
     Event,
     PickRow,
     RequestCandidate,
+    RowDeliverySnapshot,
     Run,
     RunLogLine,
     RunSharedRow,
@@ -44,6 +44,7 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import RESTRICTION_RESTORED_SCOPE, add_audit
+from shortlist.server.services.delivery_snapshots import close_snapshots, current_pick_ids, record_snapshots
 from shortlist.server.services.watch_events import (
     RowMembership,
     _attribution_floor,
@@ -131,6 +132,7 @@ def _forget_removed_deliveries(session: Session, user_slug: str, removed: list[d
             continue
         row = session.get(Delivery, (slug, user_slug, library_key))
         if row is not None:
+            close_snapshots(session, user_slug=user_slug, collection_slug=slug, libraries={library_key})
             session.delete(row)
 
 
@@ -230,76 +232,8 @@ def _row_slug(m) -> str | None:
 
 
 def live_pick_ids(session: Session, *, user_id: int | None = None) -> dict[int, set[int]]:
-    """The picks that are on Plex RIGHT NOW, as ``{user_id: {pick_id}}``.
-
-    A row+library's live contents are the picks from the MAX ``run_id`` that delivered it — the same
-    definition `context_builder._previous_picks` carries into the engine for carry-forward, so "what
-    is in their row" means one thing in this codebase rather than two. Grouping per (user, row,
-    library) is what makes it correct: rows carry their own crons, so the newest run is routinely
-    scoped to ONE row, and taking the newest run overall would read every other row as empty.
-
-    Existing is not the same as ON PLEX, so both are required. The row must still exist and be
-    enabled, AND the delivery ledger must still carry its `(row, user, library)` entry — the ledger is
-    the record of what is actually on the server, and `_forget_removed_deliveries` drops the entry
-    whenever a run REMOVES a collection (a muted or retired row, a cold-start skip, a user leaving the
-    audience). Testing `collections` alone would leave those picks creditable for ever: the Plex
-    collection is gone, the row definition stays so the owner can switch it back on, and no later run
-    re-delivers that group to move its MAX ``run_id``. Measured on the maintainer's server: 184 ledger
-    entries against 185 pick groups, the one difference being a row whose collection Plex no longer
-    has. The ledger join also drops the blank-`section_key` picks predating multi-row, which no
-    `library_key` can match.
-
-    Picks whose run was detached (`DELETE /api/runs`, or the retention prune) have no ``run_id`` and
-    so read as not-live until that row next delivers, which re-stamps them. Carry-forward already
-    behaves exactly this way — the clear-runs endpoint says so in as many words — and the cost here
-    is the same shape: a watch in that window is not credited.
-
-    Args:
-        session: An open DB session.
-        user_id: When given, read only that one user's picks and ledger entries; the result is then
-            ``{user_id: ...}`` or empty. ``None`` (the default) covers every user.
-    """
-    live_slugs = [slug for (slug,) in session.query(Collection.slug).filter(Collection.enabled.is_(True)).all()]
-    if not live_slugs:
-        return {}
-    # Matched in Python, not as a third SQL join: the ledger is keyed by user SLUG where picks carry
-    # user_id, and it is small (one row per row/user/library actually on the server).
-    users = session.query(User.id, User.slug)
-    if user_id is not None:
-        users = users.filter(User.id == user_id)
-    slug_by_user = {uid: slug for uid, slug in users.all()}
-    deliveries = session.query(Delivery).filter(Delivery.collection_slug.in_(live_slugs))
-    if user_id is not None:
-        deliveries = deliveries.filter(Delivery.user_slug == slug_by_user.get(user_id))
-    on_plex = {(row.user_slug, row.collection_slug, row.library_key) for row in deliveries}
-    newest = session.query(
-        PickRow.user_id.label("user_id"),
-        PickRow.collection_slug.label("slug"),
-        PickRow.section_key.label("section_key"),
-        func.max(PickRow.run_id).label("mrun"),
-    ).filter(PickRow.collection_slug.in_(live_slugs))
-    if user_id is not None:
-        newest = newest.filter(PickRow.user_id == user_id)
-    latest = newest.group_by(PickRow.user_id, PickRow.collection_slug, PickRow.section_key).subquery()
-    rows = (
-        session.query(PickRow.id, PickRow.user_id, PickRow.collection_slug, PickRow.section_key)
-        .join(
-            latest,
-            and_(
-                PickRow.user_id == latest.c.user_id,
-                PickRow.collection_slug == latest.c.slug,
-                PickRow.section_key == latest.c.section_key,
-                PickRow.run_id == latest.c.mrun,
-            ),
-        )
-        .all()
-    )
-    out: dict[int, set[int]] = {}
-    for pick_id, user_id, slug, section_key in rows:
-        if (slug_by_user.get(user_id), slug, section_key) not in on_plex:
-            continue
-        out.setdefault(user_id, set()).add(pick_id)
-    return out
+    """Current delivered personal picks, retained independently of diagnostic run history."""
+    return current_pick_ids(session, user_id=user_id)
 
 
 @dataclass
@@ -334,6 +268,7 @@ def _decide_outcomes(
     latest_watch: dict[tuple[int, str], datetime],
     finished_keys: set[tuple[int, str]],
     live_pick_ids_for_user: set[int],
+    membership: RowMembership | None = None,
 ) -> dict[tuple[int, str], _Outcome]:
     """Work out what is true for this person, from every source, without writing anything.
 
@@ -360,15 +295,7 @@ def _decide_outcomes(
     #    per row, because a `rewatch` row leading with titles they have already seen would otherwise
     #    inherit another row's older delivery and credit a watch from before it existed.
     if live_pick_ids_for_user and latest_watch:
-        first_delivered: dict[tuple[str, int, str], datetime] = {
-            (slug, tid, mt): _as_utc(when)
-            for slug, tid, mt, when in session.query(
-                PickRow.collection_slug, PickRow.tmdb_id, PickRow.media_type, func.min(PickRow.created_at)
-            )
-            .filter(PickRow.user_id == user.id)
-            .group_by(PickRow.collection_slug, PickRow.tmdb_id, PickRow.media_type)
-            .all()
-        }
+        membership = membership or RowMembership(session)
         for pick in (
             session.query(PickRow).filter(PickRow.user_id == user.id, PickRow.id.in_(live_pick_ids_for_user)).all()
         ):
@@ -383,9 +310,8 @@ def _decide_outcomes(
             # credit; a bare lookup must never be what decides it exists.
             if watched is None or (key in desired and desired[key].watched_at is not None):
                 continue
-            since = first_delivered.get((pick.collection_slug, *key))
-            if since is None or watched < since:
-                continue  # recommending something they had already seen is not a hit
+            if pick.collection_slug not in membership.visible_rows(user, {key}, watched):
+                continue
             out = desired[key]
             out.watched_at = watched
             out.slugs |= {pick.collection_slug}
@@ -795,6 +721,7 @@ def reconcile_from_events(sessions: sessionmaker[Session]) -> int:
                 # run here. Passing the live set would credit a title Plex flagged watched, from a
                 # function that never asked Plex anything.
                 live_pick_ids_for_user=set(),
+                membership=membership,
             )
             existing = shared_rows[user.id]
             shared_desired = _decide_shared(
@@ -914,6 +841,7 @@ def reconcile_watched(
                 latest_watch=latest_watch,
                 finished_keys=finished_keys,
                 live_pick_ids_for_user=live.get(user.id, set()),
+                membership=membership,
             )
             _apply_outcomes(session, user, desired)
 
@@ -1148,6 +1076,9 @@ def prune_runs(session: Session, retention_months: int) -> int:
         .delete(synchronize_session=False)
     )
     session.query(WatchSession).filter(WatchSession.started_at < watch_cutoff).delete(synchronize_session=False)
+    session.query(RowDeliverySnapshot).filter(
+        RowDeliverySnapshot.ended_at.isnot(None), RowDeliverySnapshot.ended_at < watch_cutoff
+    ).delete(synchronize_session=False)
 
     if retention_months <= 0:
         return 0
@@ -1340,6 +1271,7 @@ def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_r
     if not dry_run:
         _forget_removed_deliveries(session, user_report.slug, user_report.removed_deliveries)
         _record_deliveries(session, user_report.slug, breakdown)
+        record_snapshots(session, run_id, user_report.slug, breakdown, user_id=None)
 
 
 def _cost_blob(user_report) -> dict | None:
@@ -1435,6 +1367,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
                     lead_seed_title=pick.lead_seed_title or None,
                 )
             )
+        record_snapshots(session, run_id, user.slug, user_report.breakdown, user_id=user.id)
     _add_event(
         session,
         "run.user",

@@ -303,7 +303,7 @@ export function RunsPage() {
                 onClick={() => setClearOpen(true)}
               >
                 <Trash2 aria-hidden="true" />
-                Clear runs
+                Clear run history
               </Button>
             )}
             <RunRowsDialog
@@ -331,10 +331,9 @@ export function RunsPage() {
           <DialogHeader>
             <DialogTitle>Clear all run history?</DialogTitle>
             <DialogDescription>
-              This empties the list below and the step-by-step record of each
-              run. Everything the Dashboard counts &mdash; what was put in
-              people&rsquo;s rows, and what they went on to watch &mdash; is
-              kept. Nothing changes on Plex.
+              Permanently deletes the run list and step-by-step logs. Your
+              Plex rows, saved picks and watched-pick counts are kept, and
+              watch tracking continues.
             </DialogDescription>
           </DialogHeader>
           {clearRuns.isError && (
@@ -345,7 +344,7 @@ export function RunsPage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setClearOpen(false)}>
-              Keep them
+              Keep run history
             </Button>
             <Button
               variant="destructive"
@@ -395,13 +394,13 @@ export function RunsPage() {
         isEmpty={() => runs.length === 0}
         empty={
           <EmptyState
-            title={rowSlug ? "No runs for this row yet" : "No runs yet"}
+            title={rowSlug ? "No runs for this row yet" : "No run history"}
             hint={
               rowSlug
                 ? "This row hasn't been built in any recorded run yet. It'll show up here after its next run."
                 : // There is no single global schedule any more — each row carries its own cron
                   // (Collection.schedule), and a row with a blank one never runs on a timer at all.
-                  "Shortlist hasn't built any rows so far. Start one with the button above, or wait for a row to reach its own schedule — each row is given one in its editor, on the Rows page."
+                  "New runs will appear here. Start one above, or check row schedules on the Rows page."
             }
           />
         }

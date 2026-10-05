@@ -32,6 +32,7 @@ from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
+from tests.watch_fixtures import personal_delivery
 
 
 def _fake_ctx() -> SimpleNamespace:
@@ -759,6 +760,7 @@ class TestRunExecution:
                         created_at=now - timedelta(days=1),
                     )
                 )
+            personal_delivery(session, last_night.id, user_id=sarah.id, slug=DEFAULT_SLUG)
             session.commit()
         report = RunReport(
             started_at=now,
@@ -1647,6 +1649,7 @@ class TestTheLiveRowSnapshotIsTakenBeforeTheRebuild:
                     created_at=now - timedelta(days=1),
                 )
             )
+            personal_delivery(session, last_night.id, user_id=sarah.id, slug=DEFAULT_SLUG)
             session.commit()
 
         # Tonight's run rebuilds the SAME row with a different title — the state the reconcile sees.
@@ -1676,6 +1679,15 @@ class TestTheLiveRowSnapshotIsTakenBeforeTheRebuild:
                 )
             ],
         )
+        report.users[0].breakdown = [
+            {
+                "row_slug": DEFAULT_SLUG,
+                "library_key": "1",
+                "rating_key": 7,
+                "delivered_at": (now + timedelta(seconds=1)).isoformat(),
+                "picks": [{"tmdb_id": 2, "media_type": "movie", "rating_key": 20, "rank": 1, "title": "Fresh"}],
+            }
+        ]
         profile = UserProfile(
             username="sarah",
             plex_account_id=100,
@@ -1695,6 +1707,9 @@ class TestTheLiveRowSnapshotIsTakenBeforeTheRebuild:
         with sessions() as session:
             watched = session.query(PickRow).filter_by(tmdb_id=1).one()
             fresh = session.query(PickRow).filter_by(tmdb_id=2).one()
+            from shortlist.server.services.run_persistence import live_pick_ids
+
+            assert live_pick_ids(session)[fresh.user_id] == {fresh.id}, "the new delivery really replaced the row"
             assert watched.watched_at is not None, (
                 "the snapshot was taken after the rebuild — the row had already dropped the title she watched"
             )

@@ -23,6 +23,7 @@ from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
+from tests.watch_fixtures import live_row, personal_delivery
 
 
 @pytest.fixture
@@ -514,6 +515,9 @@ class TestBuildContext:
             session.add_all([pick(old_id, 100, 1), pick(old_id, 101, 2)])
             session.add_all([pick(new_id, 200, 2), pick(new_id, 201, 1)])
             session.add(pick(new_id, 300, 1, slug="", section=""))
+            live_row(session, user_id, "picked", "movies-1")
+            personal_delivery(session, old_id, user_id=user_id, slug="picked", library="movies-1")
+            personal_delivery(session, new_id, user_id=user_id, slug="picked", library="movies-1")
             session.commit()
 
         ctx = service.build_context(dry_run=True)
@@ -564,6 +568,8 @@ class TestBuildContext:
                     built_at=built,
                 )
             )
+            live_row(session, session.query(User).one().id, "picked", "movies-1")
+            personal_delivery(session, run.id, user_id=session.query(User).one().id, slug="picked", library="movies-1")
             session.commit()
 
         ctx = service.build_context(dry_run=True)
@@ -595,6 +601,8 @@ class TestBuildContext:
                     lead_seed_title="Fargo",
                 )
             )
+            live_row(session, session.query(User).one().id, "because", "movies-1")
+            personal_delivery(session, run.id, user_id=session.query(User).one().id, slug="because", library="movies-1")
             session.commit()
 
         pick = service.build_context(dry_run=True).previous_picks[("sarah", "because", "movies-1")][0]
@@ -939,6 +947,7 @@ class TestSyncWatched:
                     title="Dune",
                 )
             )
+            personal_delivery(s, run.id, user_id=user.id, slug=DEFAULT_SLUG, library="1")
             s.commit()
 
         # This person has since watched the recommended title — the sync must credit it, no run needed.

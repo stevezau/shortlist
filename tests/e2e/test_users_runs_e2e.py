@@ -246,7 +246,7 @@ class TestRuns:
         state = reset_fake_plex
 
         page.goto("/runs")
-        expect(page.get_by_text("No runs yet")).to_be_visible(timeout=LOAD)
+        expect(page.get_by_text("No run history")).to_be_visible(timeout=LOAD)
         page.get_by_role("button", name="Run all rows now").click()
 
         # The row appears the moment the run is queued — the owner is never left guessing.
