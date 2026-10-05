@@ -1,4 +1,4 @@
-# Resolve Plex owner identity for live watch attribution
+# Resolve Plex owner identity for watch attribution
 
 ## Evidence and scope
 
@@ -30,3 +30,22 @@ keep their IDs. Do not infer identity from names or rewrite historical events.
 6. After the guarded update, repeat genuine owner playback with a new eligible shared title and prove
    decoded playback, the PMS session, canonical persisted session and a fresh Shortlist credit. Keep
    the failed first play unchanged as evidence; do not synthesize progress, completion or credit.
+
+## Completed-history fallback
+
+The guarded live-session correction passed real normal playback, canonical session/shared credit,
+empty-history clear retention and independent server verification. A final bounded review found
+that the completed-history feed still persisted the same raw owner alias unchanged.
+
+Use one strict authenticated-machine/verified-owner resolver for both ingestion paths. Normalize
+only newly ingested owner events, retaining their exact event timestamps; do not rewrite existing
+keyed or keyless evidence. For keyless overlap, compare both the raw and canonical natural keys so
+the cursor rewind cannot duplicate an already-persisted unresolved event. Unknown authority and
+other users preserve their existing behavior. No migration, cursor reset or live history repair.
+
+The history regression must drive the real parser through ingestion, persisted WatchEvent and
+personal/shared attribution with run history absent. Cover disabled personal rows, no/mismatched
+server authority, invalid owners, other users, exact delivery intervals and repeated/keyless reads.
+Both primary regressions failed on the old code: stored owner1 instead of verified99. Run focused
+tests, independent review and required full backend/static checks before freezing a new compatible
+artifact; publish only the matching watch-only patch and preserve all MCP schema/runtime state.

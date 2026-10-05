@@ -34,6 +34,7 @@ from shortlist.server.db.models import (
     WatchEvent,
     WatchSession,
 )
+from shortlist.server.services.watch_identity import verified_owner_account_id
 
 #: Where the incremental read resumes from.
 CURSOR_KEY = "sync.history_cursor"
@@ -76,6 +77,9 @@ def ingest_play_history(session: Session, plex, store, *, limit: int = 20000) ->
     events = plex.play_history(since=since, limit=limit)
     if not events:
         return 0
+    # PMS history uses the same local owner alias as active sessions. Resolve only at this
+    # verified ingestion boundary; keep the raw parser and previously persisted evidence intact.
+    owner_account_id = verified_owner_account_id(session, plex) if any(e.plex_account_id == 1 for e in events) else None
 
     known = {
         key
@@ -96,12 +100,16 @@ def ingest_play_history(session: Session, plex, store, *, limit: int = 20000) ->
     for event in events:
         if event.history_key and event.history_key in known:
             continue
-        natural = (event.plex_account_id, event.rating_key, _as_utc(event.viewed_at))
-        if not event.history_key and natural in keyless:
+        account_id = owner_account_id if event.plex_account_id == 1 and owner_account_id else event.plex_account_id
+        original = (event.plex_account_id, event.rating_key, _as_utc(event.viewed_at))
+        natural = (account_id, event.rating_key, _as_utc(event.viewed_at))
+        # A prior keyless row may still carry unresolved local ID1. The overlapping cursor must
+        # neither duplicate that old evidence under a new identity nor rewrite it retrospectively.
+        if not event.history_key and (original in keyless or natural in keyless):
             continue
         session.add(
             WatchEvent(
-                plex_account_id=event.plex_account_id,
+                plex_account_id=account_id,
                 rating_key=event.rating_key,
                 show_rating_key=event.show_rating_key,
                 media_type=event.media_type,
