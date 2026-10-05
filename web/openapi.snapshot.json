@@ -95,6 +95,71 @@
         "title": "AccountPrivacyOut",
         "type": "object"
       },
+      "AiInstructionsIn": {
+        "additionalProperties": false,
+        "description": "What AI web search should look for on this row (#138). ``default`` uses the built-in wording\nplus the server-wide instructions; ``add`` appends ``text`` to them; ``own`` replaces them.",
+        "properties": {
+          "mode": {
+            "default": "default",
+            "description": "AI instructions must be default, add or own",
+            "enum": [
+              "add",
+              "default",
+              "own"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "title": "AiInstructionsIn",
+        "type": "object"
+      },
+      "AiInstructionsOut": {
+        "additionalProperties": true,
+        "description": "A row's AI web search instructions as the editor reads them.",
+        "properties": {
+          "mode": {
+            "description": "default, add or own",
+            "enum": [
+              "add",
+              "default",
+              "own"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "text"
+        ],
+        "title": "AiInstructionsOut",
+        "type": "object"
+      },
+      "AiPauseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ],
+        "title": "AiPauseRequest",
+        "type": "object"
+      },
       "ApiTokenCreatedOut": {
         "additionalProperties": true,
         "properties": {
@@ -487,6 +552,20 @@
         "title": "BulkEnabledOut",
         "type": "object"
       },
+      "CapabilitiesOut": {
+        "additionalProperties": true,
+        "properties": {
+          "ai": {
+            "title": "Ai",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ai"
+        ],
+        "title": "CapabilitiesOut",
+        "type": "object"
+      },
       "CleanupOut": {
         "additionalProperties": true,
         "description": "What `POST /collections/{id}/cleanup` removed (or would remove, on a dry run).",
@@ -567,9 +646,66 @@
         "title": "ClearedOut",
         "type": "object"
       },
+      "CollectionCountOut": {
+        "additionalProperties": true,
+        "properties": {
+          "found": {
+            "title": "Found",
+            "type": "boolean"
+          },
+          "in_library": {
+            "title": "In Library",
+            "type": "integer"
+          },
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "section_key",
+          "found",
+          "in_library"
+        ],
+        "title": "CollectionCountOut",
+        "type": "object"
+      },
+      "CollectionIO": {
+        "additionalProperties": true,
+        "description": "A Plex collection, by library and title \u2014 never ratingKey: Kometa recreates its seasonal ones each year.",
+        "properties": {
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "section_title": {
+            "title": "Section Title",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_key",
+          "section_title",
+          "title"
+        ],
+        "title": "CollectionIO",
+        "type": "object"
+      },
       "CollectionIn": {
         "additionalProperties": false,
         "properties": {
+          "ai_instructions": {
+            "$ref": "#/components/schemas/AiInstructionsIn"
+          },
           "audience": {
             "default": "everyone",
             "description": "Everyone, or the subset named by audience_user_ids.",
@@ -586,6 +722,21 @@
             },
             "title": "Audience User Ids",
             "type": "array"
+          },
+          "avoid_rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slugs of other per-person rows whose titles this row keeps out; null is none.",
+            "title": "Avoid Rows"
           },
           "build": {
             "default": "per_person",
@@ -643,6 +794,13 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "explore_brief": {
+            "default": "",
+            "description": "What kind of themes Explore should look for; blank lets the AI choose.",
+            "maxLength": 500,
+            "title": "Explore Brief",
+            "type": "string"
+          },
           "fallback_name": {
             "default": "",
             "maxLength": 255,
@@ -676,6 +834,19 @@
             "title": "Library Keys",
             "type": "array"
           },
+          "max_runtime": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runtime"
+          },
           "max_seeds": {
             "anyOf": [
               {
@@ -689,6 +860,19 @@
             ],
             "title": "Max Seeds"
           },
+          "max_year": {
+            "anyOf": [
+              {
+                "maximum": 2100.0,
+                "minimum": 1870.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Year"
+          },
           "media": {
             "default": "both",
             "description": "Which library types this row builds in.",
@@ -700,11 +884,37 @@
             "title": "Media",
             "type": "string"
           },
+          "min_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Rating"
+          },
           "min_watchers": {
             "default": 2,
             "minimum": 2.0,
             "title": "Min Watchers",
             "type": "integer"
+          },
+          "min_year": {
+            "anyOf": [
+              {
+                "maximum": 2100.0,
+                "minimum": 1870.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Year"
           },
           "name": {
             "maxLength": 255,
@@ -801,6 +1011,34 @@
               }
             ],
             "title": "Refresh Days"
+          },
+          "refresh_share": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The share of picks swapped on a refresh night; null keeps two thirds.",
+            "title": "Refresh Share"
+          },
+          "repeat_cooldown_days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Don't pick a title again within this many days; null is off.",
+            "title": "Repeat Cooldown Days"
           },
           "req_auto_min_demand": {
             "anyOf": [
@@ -1045,6 +1283,24 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requests_row": {
+            "default": false,
+            "title": "Requests Row",
+            "type": "boolean"
+          },
+          "requests_tag_pattern": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requests Tag Pattern",
+            "type": "string"
+          },
+          "requests_window_days": {
+            "default": 90,
+            "maximum": 3650.0,
+            "minimum": 0.0,
+            "title": "Requests Window Days",
+            "type": "integer"
+          },
           "rewatch": {
             "default": false,
             "title": "Rewatch",
@@ -1080,7 +1336,7 @@
             "type": "integer"
           },
           "seasons": {
-            "description": "Seasons this row follows (see GET /api/collections/seasons). Empty means it is not seasonal.",
+            "description": "Seasons this row follows (see GET /api/seasons). Empty means it is not seasonal.",
             "items": {
               "type": "string"
             },
@@ -1121,6 +1377,42 @@
             "title": "Sort Title Prefix",
             "type": "string"
           },
+          "theme_days": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many days a theme lasts in Explore; null is 7.",
+            "title": "Theme Days"
+          },
+          "theme_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The theme this AI row follows (see POST /api/themes). Null for an ordinary row.",
+            "title": "Theme Id"
+          },
+          "theme_mode": {
+            "default": "fixed",
+            "description": "fixed keeps one theme; explore picks a new one for each person on a schedule.",
+            "enum": [
+              "fixed",
+              "explore"
+            ],
+            "title": "Theme Mode",
+            "type": "string"
+          },
           "unstarted_only": {
             "default": false,
             "title": "Unstarted Only",
@@ -1150,6 +1442,19 @@
         "additionalProperties": true,
         "description": "A curated-row definition \u2014 the response shape of :func:`_serialize`.",
         "properties": {
+          "ai_instructions": {
+            "$ref": "#/components/schemas/AiInstructionsOut"
+          },
+          "ai_paused": {
+            "description": "Whether the row's AI is paused: it keeps its theme but spends no tokens.",
+            "title": "Ai Paused",
+            "type": "boolean"
+          },
+          "ai_tokens": {
+            "description": "Tokens the AI has spent writing this row's themes.",
+            "title": "Ai Tokens",
+            "type": "integer"
+          },
           "audience": {
             "description": "Everyone, or the subset named by audience_user_ids.",
             "enum": [
@@ -1165,6 +1470,21 @@
             },
             "title": "Audience User Ids",
             "type": "array"
+          },
+          "avoid_rows": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Slugs of rows whose titles this row keeps out; null is none.",
+            "title": "Avoid Rows"
           },
           "build": {
             "description": "Who the row is built for: one per person, or one shared row.",
@@ -1218,6 +1538,11 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "explore_brief": {
+            "description": "What Explore is asked to look for; blank lets the AI choose.",
+            "title": "Explore Brief",
+            "type": "string"
+          },
           "fallback_name": {
             "title": "Fallback Name",
             "type": "string"
@@ -1262,6 +1587,17 @@
             "title": "Library Keys",
             "type": "array"
           },
+          "max_runtime": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runtime"
+          },
           "max_seeds": {
             "anyOf": [
               {
@@ -1273,6 +1609,17 @@
             ],
             "title": "Max Seeds"
           },
+          "max_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Year"
+          },
           "media": {
             "description": "Which library types this row builds in.",
             "enum": [
@@ -1283,9 +1630,31 @@
             "title": "Media",
             "type": "string"
           },
+          "min_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Rating"
+          },
           "min_watchers": {
             "title": "Min Watchers",
             "type": "integer"
+          },
+          "min_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Year"
           },
           "name": {
             "title": "Name",
@@ -1362,6 +1731,13 @@
             ],
             "title": "Preview Incomplete"
           },
+          "preview_titles": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewTitleOut"
+            },
+            "title": "Preview Titles",
+            "type": "array"
+          },
           "recency": {
             "anyOf": [
               {
@@ -1394,6 +1770,30 @@
               }
             ],
             "title": "Refresh Days"
+          },
+          "refresh_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Share of picks swapped on a refresh night; null keeps two thirds.",
+            "title": "Refresh Share"
+          },
+          "repeat_cooldown_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "No repeats within this many days; null is off.",
+            "title": "Repeat Cooldown Days"
           },
           "req_auto_min_demand": {
             "anyOf": [
@@ -1619,6 +2019,18 @@
             "title": "Request Tag",
             "type": "string"
           },
+          "requests_row": {
+            "title": "Requests Row",
+            "type": "boolean"
+          },
+          "requests_tag_pattern": {
+            "title": "Requests Tag Pattern",
+            "type": "string"
+          },
+          "requests_window_days": {
+            "title": "Requests Window Days",
+            "type": "integer"
+          },
           "rewatch": {
             "title": "Rewatch",
             "type": "boolean"
@@ -1693,6 +2105,63 @@
             "title": "Sort Title Prefix",
             "type": "string"
           },
+          "theme_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Days a theme lasts in Explore; null is 7.",
+            "title": "Theme Days"
+          },
+          "theme_emoji": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The fixed theme's emoji; null when it has none, or for Explore.",
+            "title": "Theme Emoji"
+          },
+          "theme_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The theme an AI row follows; null for an ordinary row.",
+            "title": "Theme Id"
+          },
+          "theme_mode": {
+            "description": "Whether an AI row keeps one theme or explores.",
+            "enum": [
+              "fixed",
+              "explore"
+            ],
+            "title": "Theme Mode",
+            "type": "string"
+          },
+          "theme_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The fixed theme's name; null for an ordinary row or an Explore row.",
+            "title": "Theme Name"
+          },
           "unstarted_only": {
             "title": "Unstarted Only",
             "type": "boolean"
@@ -1714,6 +2183,7 @@
           "slug",
           "name",
           "last_run_id",
+          "preview_titles",
           "build",
           "audience",
           "audience_user_ids",
@@ -1732,12 +2202,19 @@
           "watched_pct",
           "rewatch",
           "rewatch_cooldown_days",
+          "requests_row",
+          "requests_window_days",
+          "requests_tag_pattern",
           "unstarted_only",
           "refresh_days",
           "idle_hold_days",
           "recency",
           "recent_count",
           "max_seeds",
+          "max_runtime",
+          "min_year",
+          "max_year",
+          "min_rating",
           "cold_start",
           "seed_window",
           "req_min_rating",
@@ -1769,7 +2246,19 @@
           "pin_top",
           "hub_anchor",
           "library_keys",
-          "poster"
+          "poster",
+          "ai_instructions",
+          "theme_id",
+          "theme_name",
+          "theme_emoji",
+          "ai_paused",
+          "ai_tokens",
+          "theme_mode",
+          "explore_brief",
+          "theme_days",
+          "refresh_share",
+          "repeat_cooldown_days",
+          "avoid_rows"
         ],
         "title": "CollectionOut",
         "type": "object"
@@ -1910,6 +2399,51 @@
           }
         },
         "title": "CuratorModelsRequest",
+        "type": "object"
+      },
+      "DateRuleIO": {
+        "additionalProperties": true,
+        "description": "When a season falls: see `seasons.DateRule`. ``weekday`` is Monday=0; ``nth`` is 1-4, or -1 for the last.",
+        "properties": {
+          "day": {
+            "default": 1,
+            "title": "Day",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "fixed",
+              "nth",
+              "easter"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "month": {
+            "default": 1,
+            "title": "Month",
+            "type": "integer"
+          },
+          "nth": {
+            "default": 1,
+            "title": "Nth",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "weekday": {
+            "default": 0,
+            "title": "Weekday",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "DateRuleIO",
         "type": "object"
       },
       "DeletedOut": {
@@ -2362,6 +2896,42 @@
           "observed_at"
         ],
         "title": "EngagementPickOut",
+        "type": "object"
+      },
+      "EventOut": {
+        "additionalProperties": true,
+        "description": "One audit row. `message` is the writer's structured diff, and its keys depend on `scope`.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "additionalProperties": true,
+            "title": "Message",
+            "type": "object"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "ts": {
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "level",
+          "scope",
+          "message"
+        ],
+        "title": "EventOut",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2921,6 +3491,46 @@
           "count"
         ],
         "title": "LibrarySectionOut",
+        "type": "object"
+      },
+      "LibraryTitleOut": {
+        "additionalProperties": true,
+        "properties": {
+          "media_type": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media_type",
+          "title",
+          "year"
+        ],
+        "title": "LibraryTitleOut",
         "type": "object"
       },
       "LinkRequest": {
@@ -3493,6 +4103,75 @@
         "title": "PerUserOut",
         "type": "object"
       },
+      "PersonReadyOut": {
+        "additionalProperties": true,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "ready": {
+            "title": "Ready",
+            "type": "integer"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name",
+          "linked",
+          "ready"
+        ],
+        "title": "PersonReadyOut",
+        "type": "object"
+      },
+      "PickIO": {
+        "additionalProperties": true,
+        "description": "A title the owner picked by hand.",
+        "properties": {
+          "media_type": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media_type",
+          "title"
+        ],
+        "title": "PickIO",
+        "type": "object"
+      },
       "PickOut": {
         "additionalProperties": true,
         "description": "One delivered recommendation, as the run detail lists it.",
@@ -3507,6 +4186,28 @@
               }
             ],
             "title": "Affinity"
+          },
+          "order_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Rating"
+          },
+          "order_rating_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Rating Source"
           },
           "rank": {
             "title": "Rank",
@@ -3527,6 +4228,17 @@
             "default": 0,
             "title": "Rating Key",
             "type": "integer"
+          },
+          "rating_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating Source"
           },
           "reason": {
             "title": "Reason",
@@ -3691,6 +4403,49 @@
         "title": "PlanEntryOut",
         "type": "object"
       },
+      "PlexCollectionOut": {
+        "additionalProperties": true,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "media_type": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media Type",
+            "type": "string"
+          },
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "section_title": {
+            "title": "Section Title",
+            "type": "string"
+          },
+          "smart": {
+            "title": "Smart",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "section_key",
+          "section_title",
+          "title",
+          "count",
+          "smart",
+          "media_type"
+        ],
+        "title": "PlexCollectionOut",
+        "type": "object"
+      },
       "PlexServerOut": {
         "additionalProperties": true,
         "description": "A server plex.tv says this account can reach, with every advertised address already tried.",
@@ -3836,6 +4591,236 @@
         "title": "PosterUploadOut",
         "type": "object"
       },
+      "PresetOut": {
+        "additionalProperties": true,
+        "description": "A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``.",
+        "properties": {
+          "after_days": {
+            "default": 0,
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "After Days",
+            "type": "integer"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
+          },
+          "emoji": {
+            "maxLength": 8,
+            "minLength": 1,
+            "title": "Emoji",
+            "type": "string"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "lead_days": {
+            "default": 7,
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "title": "Lead Days",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DateRuleIO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "emoji",
+          "rule",
+          "key",
+          "label",
+          "note"
+        ],
+        "title": "PresetOut",
+        "type": "object"
+      },
+      "PreviewIn": {
+        "properties": {
+          "brief": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Brief",
+            "type": "string"
+          },
+          "change": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Change",
+            "type": "string"
+          },
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
+          "current_draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_theme_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Theme Id"
+          },
+          "guidance": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Guidance",
+            "type": "string"
+          },
+          "media": {
+            "default": "both",
+            "enum": [
+              "movie",
+              "show",
+              "both"
+            ],
+            "title": "Media",
+            "type": "string"
+          }
+        },
+        "title": "PreviewIn",
+        "type": "object"
+      },
+      "PreviewOut": {
+        "additionalProperties": true,
+        "properties": {
+          "diff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeDiffOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "draft": {
+            "$ref": "#/components/schemas/ThemeOut"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/ThemeStatsOut"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draft",
+          "stats",
+          "diff",
+          "tokens"
+        ],
+        "title": "PreviewOut",
+        "type": "object"
+      },
+      "PreviewTitleOut": {
+        "additionalProperties": true,
+        "description": "One title from a row's latest delivery, for the Rows list's poster collage.",
+        "properties": {
+          "rating_key": {
+            "title": "Rating Key",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rating_key",
+          "title"
+        ],
+        "title": "PreviewTitleOut",
+        "type": "object"
+      },
       "PrivacyStatusOut": {
         "additionalProperties": true,
         "description": "One live reading of the whole server's sharing state.",
@@ -3883,6 +4868,10 @@
             "title": "Rows On Plex",
             "type": "array"
           },
+          "snapshots_kept": {
+            "title": "Snapshots Kept",
+            "type": "integer"
+          },
           "summary": {
             "title": "Summary",
             "type": "string"
@@ -3895,7 +4884,8 @@
           "rows_on_plex",
           "rows_error",
           "error",
-          "enforcement"
+          "enforcement",
+          "snapshots_kept"
         ],
         "title": "PrivacyStatusOut",
         "type": "object"
@@ -4035,6 +5025,25 @@
         "title": "ProbeResultOut",
         "type": "object"
       },
+      "PromptsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "guidance": {
+            "title": "Guidance",
+            "type": "string"
+          },
+          "mechanics": {
+            "title": "Mechanics",
+            "type": "string"
+          }
+        },
+        "required": [
+          "guidance",
+          "mechanics"
+        ],
+        "title": "PromptsOut",
+        "type": "object"
+      },
       "QualityProfileOut": {
         "additionalProperties": true,
         "properties": {
@@ -4154,6 +5163,20 @@
           "finished_at"
         ],
         "title": "RecentWatchOut",
+        "type": "object"
+      },
+      "RegenerateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "RegenerateRequest",
         "type": "object"
       },
       "RejectedOut": {
@@ -4579,6 +5602,83 @@
         "title": "RootFolderOut",
         "type": "object"
       },
+      "RotationTargetOut": {
+        "additionalProperties": true,
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeRefOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history": {
+            "description": "Their earlier themes on this row, newest first.",
+            "items": {
+              "$ref": "#/components/schemas/ThemeRefOut"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThemeRefOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The theme queued to start when the current one ends."
+          },
+          "next_due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the current theme ends and the next one starts.",
+            "title": "Next Due At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the current theme started.",
+            "title": "Started At"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "name",
+          "current",
+          "next",
+          "started_at",
+          "next_due_at",
+          "history"
+        ],
+        "title": "RotationTargetOut",
+        "type": "object"
+      },
       "RowDeletePreviewOut": {
         "additionalProperties": true,
         "description": "What `DELETE /collections/{id}?dry_run=true` WOULD do. Nothing is written.",
@@ -4920,6 +6020,209 @@
         "title": "RowOverrideSavedOut",
         "type": "object"
       },
+      "RowSourceServerOut": {
+        "additionalProperties": true,
+        "description": "One Radarr/Sonarr server Overseerr sends to, and whether it stamps the requester's tag.",
+        "properties": {
+          "is4k": {
+            "title": "Is4K",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tag_requests": {
+            "title": "Tag Requests",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "is4k",
+          "tag_requests"
+        ],
+        "title": "RowSourceServerOut",
+        "type": "object"
+      },
+      "RowSourcesOut": {
+        "additionalProperties": true,
+        "description": "The requests-row setup check: can the row know who asked for what, and for whom?",
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "overseerr": {
+            "enum": [
+              "connected",
+              "unreachable",
+              "off"
+            ],
+            "title": "Overseerr",
+            "type": "string"
+          },
+          "people": {
+            "items": {
+              "$ref": "#/components/schemas/PersonReadyOut"
+            },
+            "title": "People",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "radarr": {
+            "enum": [
+              "connected",
+              "unreachable",
+              "off"
+            ],
+            "title": "Radarr",
+            "type": "string"
+          },
+          "seerr_linked": {
+            "title": "Seerr Linked",
+            "type": "integer"
+          },
+          "seerr_requesters": {
+            "title": "Seerr Requesters",
+            "type": "integer"
+          },
+          "seerr_requests": {
+            "title": "Seerr Requests",
+            "type": "integer"
+          },
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/RowSourceServerOut"
+            },
+            "title": "Servers",
+            "type": "array"
+          },
+          "sonarr": {
+            "enum": [
+              "connected",
+              "unreachable",
+              "off"
+            ],
+            "title": "Sonarr",
+            "type": "string"
+          },
+          "tagged_movies": {
+            "title": "Tagged Movies",
+            "type": "integer"
+          },
+          "tagged_shows": {
+            "title": "Tagged Shows",
+            "type": "integer"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagMatchOut"
+            },
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "overseerr",
+          "radarr",
+          "sonarr",
+          "complete",
+          "problems",
+          "seerr_requests",
+          "seerr_requesters",
+          "seerr_linked",
+          "servers",
+          "tagged_movies",
+          "tagged_shows",
+          "people",
+          "tags"
+        ],
+        "title": "RowSourcesOut",
+        "type": "object"
+      },
+      "RulesIO": {
+        "additionalProperties": true,
+        "description": "A theme's hard limits. A missing or null one is no limit.",
+        "properties": {
+          "max_runtime": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runtime"
+          },
+          "max_year": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1850.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Year"
+          },
+          "min_rating": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Rating"
+          },
+          "min_votes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Votes"
+          },
+          "min_year": {
+            "anyOf": [
+              {
+                "maximum": 2200.0,
+                "minimum": 1850.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Year"
+          }
+        },
+        "title": "RulesIO",
+        "type": "object"
+      },
       "RunCancelledOut": {
         "additionalProperties": true,
         "properties": {
@@ -4993,6 +6296,16 @@
             "title": "Id",
             "type": "integer"
           },
+          "privacy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunPrivacyOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "promotion_blockers": {
             "items": {
               "type": "string"
@@ -5049,6 +6362,7 @@
           "stats",
           "error",
           "promotion_blockers",
+          "privacy",
           "users",
           "shared_rows"
         ],
@@ -5187,6 +6501,99 @@
           "seq"
         ],
         "title": "RunLogLineOut",
+        "type": "object"
+      },
+      "RunPrivacyOut": {
+        "additionalProperties": true,
+        "description": "What this run measured about who can see whose rows. Reporting only.",
+        "properties": {
+          "can_see_others": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Can See Others",
+            "type": "array"
+          },
+          "filters_not_enforced": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters Not Enforced"
+          },
+          "left_alone": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Left Alone"
+          },
+          "unchecked": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unchecked"
+          },
+          "unreadable_filters": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unreadable Filters"
+          },
+          "write_failed": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Write Failed"
+          }
+        },
+        "required": [
+          "can_see_others",
+          "unreadable_filters",
+          "filters_not_enforced",
+          "unchecked",
+          "write_failed",
+          "left_alone"
+        ],
+        "title": "RunPrivacyOut",
         "type": "object"
       },
       "RunProgressEvent": {
@@ -5397,6 +6804,16 @@
             "title": "Id",
             "type": "integer"
           },
+          "privacy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunPrivacyOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "promotion_blockers": {
             "items": {
               "type": "string"
@@ -5438,7 +6855,8 @@
           "dry_run",
           "stats",
           "error",
-          "promotion_blockers"
+          "promotion_blockers",
+          "privacy"
         ],
         "title": "RunSummaryOut",
         "type": "object"
@@ -5872,13 +7290,162 @@
         "title": "ScheduleRowsOut",
         "type": "object"
       },
+      "SeasonDateOut": {
+        "additionalProperties": true,
+        "description": "When a date rule next falls (ISO), or, with ``next_date`` None, why the rule can't be used.",
+        "properties": {
+          "next_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Date"
+          },
+          "rule_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Error"
+          }
+        },
+        "required": [
+          "next_date",
+          "rule_error"
+        ],
+        "title": "SeasonDateOut",
+        "type": "object"
+      },
+      "SeasonIn": {
+        "additionalProperties": false,
+        "description": "A custom season, to create or replace.",
+        "properties": {
+          "after_days": {
+            "default": 0,
+            "maximum": 30.0,
+            "minimum": 0.0,
+            "title": "After Days",
+            "type": "integer"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
+          },
+          "emoji": {
+            "maxLength": 8,
+            "minLength": 1,
+            "title": "Emoji",
+            "type": "string"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "lead_days": {
+            "default": 7,
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "title": "Lead Days",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DateRuleIO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "emoji",
+          "rule"
+        ],
+        "title": "SeasonIn",
+        "type": "object"
+      },
       "SeasonOut": {
         "additionalProperties": true,
-        "description": "A season a row can follow.",
+        "description": "A season a row can follow. A built-in's sources live in code and are not listed.",
         "properties": {
-          "day": {
-            "title": "Day",
-            "type": "integer"
+          "after_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Days"
+          },
+          "builtin": {
+            "title": "Builtin",
+            "type": "boolean"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
           },
           "description": {
             "title": "Description",
@@ -5888,28 +7455,289 @@
             "title": "Emoji",
             "type": "string"
           },
-          "month": {
-            "title": "Month",
-            "type": "integer"
+          "excluded_genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "lead_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Days"
           },
           "name": {
             "title": "Name",
             "type": "string"
           },
+          "next_dates": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Next Dates",
+            "type": "array"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preset"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DateRuleIO"
+          },
+          "rule_label": {
+            "title": "Rule Label",
+            "type": "string"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          },
+          "used_by": {
+            "items": {
+              "$ref": "#/components/schemas/UsedByOut"
+            },
+            "title": "Used By",
+            "type": "array"
           }
         },
         "required": [
           "slug",
           "name",
           "emoji",
-          "month",
-          "day",
-          "description"
+          "description",
+          "builtin",
+          "rule",
+          "rule_label",
+          "next_dates",
+          "lead_days",
+          "after_days",
+          "preset",
+          "used_by"
         ],
         "title": "SeasonOut",
+        "type": "object"
+      },
+      "SeasonPreviewIn": {
+        "additionalProperties": true,
+        "description": "A draft season to count, for the row the editor was opened from. Undeclared fields are let through, not\nrefused: the editor posts its whole draft, and a preview stores nothing that a misspelt field could\nsilently fail to set.",
+        "properties": {
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 5,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genre": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Genre"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array"
+          },
+          "media": {
+            "default": "both",
+            "enum": [
+              "movie",
+              "show",
+              "both"
+            ],
+            "title": "Media",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/DateRuleIO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rule"
+        ],
+        "title": "SeasonPreviewIn",
+        "type": "object"
+      },
+      "SeasonPreviewOut": {
+        "additionalProperties": true,
+        "description": "What the editor's summary shows. Every count is of titles in the libraries.",
+        "properties": {
+          "from_collections": {
+            "title": "From Collections",
+            "type": "integer"
+          },
+          "from_genre": {
+            "title": "From Genre",
+            "type": "integer"
+          },
+          "from_picks": {
+            "title": "From Picks",
+            "type": "integer"
+          },
+          "from_tags": {
+            "title": "From Tags",
+            "type": "integer"
+          },
+          "movies": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Movies"
+          },
+          "next_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Date"
+          },
+          "per_collection": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionCountOut"
+            },
+            "title": "Per Collection",
+            "type": "array"
+          },
+          "per_tag": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Per Tag",
+            "type": "object"
+          },
+          "rule_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Error"
+          },
+          "sample": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample",
+            "type": "array"
+          },
+          "shows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shows"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "next_date",
+          "rule_error",
+          "total",
+          "movies",
+          "shows",
+          "from_tags",
+          "from_genre",
+          "from_collections",
+          "from_picks",
+          "per_tag",
+          "per_collection",
+          "sample"
+        ],
+        "title": "SeasonPreviewOut",
         "type": "object"
       },
       "SeasonStatusOut": {
@@ -6517,6 +8345,675 @@
         "title": "SyncsOut",
         "type": "object"
       },
+      "TagIO": {
+        "additionalProperties": true,
+        "description": "A TMDB tag (keyword), with its name so the editor can show it without asking TMDB.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "TagIO",
+        "type": "object"
+      },
+      "TagMatchOut": {
+        "additionalProperties": true,
+        "description": "How one requester tag on Radarr/Sonarr resolved \u2014 the preview under \"Use my own tags\".",
+        "properties": {
+          "ambiguous": {
+            "title": "Ambiguous",
+            "type": "boolean"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "overseerr",
+              "pattern",
+              "override"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "titles": {
+            "title": "Titles",
+            "type": "integer"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "label",
+          "source",
+          "user_id",
+          "display_name",
+          "titles",
+          "ambiguous"
+        ],
+        "title": "TagMatchOut",
+        "type": "object"
+      },
+      "TagOut": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "movies": {
+            "title": "Movies",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "movies"
+        ],
+        "title": "TagOut",
+        "type": "object"
+      },
+      "ThemeDiffOut": {
+        "additionalProperties": true,
+        "properties": {
+          "added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "added_count": {
+            "title": "Added Count",
+            "type": "integer"
+          },
+          "after_count": {
+            "title": "After Count",
+            "type": "integer"
+          },
+          "before_count": {
+            "title": "Before Count",
+            "type": "integer"
+          },
+          "genres_added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres Added",
+            "type": "array"
+          },
+          "genres_removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres Removed",
+            "type": "array"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          },
+          "removed_count": {
+            "title": "Removed Count",
+            "type": "integer"
+          },
+          "rules_changed": {
+            "title": "Rules Changed",
+            "type": "boolean"
+          },
+          "tags_added": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags Added",
+            "type": "array"
+          },
+          "tags_removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags Removed",
+            "type": "array"
+          },
+          "unchanged": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unchanged",
+            "type": "array"
+          }
+        },
+        "required": [
+          "rules_changed",
+          "added",
+          "removed",
+          "unchanged",
+          "added_count",
+          "removed_count",
+          "tags_added",
+          "tags_removed",
+          "genres_added",
+          "genres_removed",
+          "before_count",
+          "after_count"
+        ],
+        "title": "ThemeDiffOut",
+        "type": "object"
+      },
+      "ThemeIn": {
+        "description": "A theme to store. Undeclared fields (a hash echoed back from a preview) are ignored, never stored.",
+        "properties": {
+          "brief": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Brief",
+            "type": "string"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "maxItems": 10,
+            "title": "Collections",
+            "type": "array"
+          },
+          "emoji": {
+            "anyOf": [
+              {
+                "maxLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emoji"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Genres",
+            "type": "array"
+          },
+          "media": {
+            "items": {
+              "enum": [
+                "movie",
+                "show"
+              ],
+              "type": "string"
+            },
+            "maxItems": 2,
+            "minItems": 1,
+            "title": "Media",
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "default": "manual",
+            "enum": [
+              "ai",
+              "manual"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/ThemePickIO"
+            },
+            "maxItems": 200,
+            "title": "Picks",
+            "type": "array"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/RulesIO"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "maxItems": 20,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "media"
+        ],
+        "title": "ThemeIn",
+        "type": "object"
+      },
+      "ThemeOut": {
+        "additionalProperties": true,
+        "properties": {
+          "ai_tokens": {
+            "title": "Ai Tokens",
+            "type": "integer"
+          },
+          "brief": {
+            "title": "Brief",
+            "type": "string"
+          },
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionIO"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "emoji": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emoji"
+          },
+          "excluded_genres": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Genres",
+            "type": "array"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Genres",
+            "type": "array"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "media": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Media",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/ThemePickIO"
+            },
+            "title": "Picks",
+            "type": "array"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/RulesIO"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Stats",
+            "type": "object"
+          },
+          "tags": {
+            "items": {
+              "$ref": "#/components/schemas/TagIO"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "topped_up_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topped Up At"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "emoji",
+          "brief",
+          "origin",
+          "media",
+          "tags",
+          "genres",
+          "excluded_genres",
+          "collections",
+          "picks",
+          "rules",
+          "content_hash",
+          "ai_tokens",
+          "stats"
+        ],
+        "title": "ThemeOut",
+        "type": "object"
+      },
+      "ThemePickIO": {
+        "additionalProperties": true,
+        "description": "A title a theme names by TMDB id; ``origin`` says whether the AI or the owner chose it.",
+        "properties": {
+          "media": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Media",
+            "type": "string"
+          },
+          "origin": {
+            "default": "owner",
+            "enum": [
+              "ai",
+              "owner"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media"
+        ],
+        "title": "ThemePickIO",
+        "type": "object"
+      },
+      "ThemeRefOut": {
+        "additionalProperties": true,
+        "description": "A theme as one person's rotation holds it: which one, when it started, and when it hands over.",
+        "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "emoji": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emoji"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "theme_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The stored theme; null once it has been deleted.",
+            "title": "Theme Id"
+          }
+        },
+        "required": [
+          "theme_id",
+          "name",
+          "emoji",
+          "started_at",
+          "due_at"
+        ],
+        "title": "ThemeRefOut",
+        "type": "object"
+      },
+      "ThemeRotationOut": {
+        "additionalProperties": true,
+        "properties": {
+          "days": {
+            "description": "How many days a theme lasts.",
+            "title": "Days",
+            "type": "integer"
+          },
+          "mode": {
+            "enum": [
+              "fixed",
+              "explore"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/RotationTargetOut"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode",
+          "days",
+          "targets"
+        ],
+        "title": "ThemeRotationOut",
+        "type": "object"
+      },
+      "ThemeSaveIn": {
+        "description": "A save: the theme, what the AI call that wrote it cost, and the row it was written for.",
+        "properties": {
+          "collection_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Id"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/ThemeIn"
+          },
+          "stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Stats",
+            "type": "object"
+          },
+          "tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draft"
+        ],
+        "title": "ThemeSaveIn",
+        "type": "object"
+      },
+      "ThemeStatsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "after_rules": {
+            "title": "After Rules",
+            "type": "integer"
+          },
+          "ai_kept": {
+            "default": 0,
+            "title": "Ai Kept",
+            "type": "integer"
+          },
+          "in_library": {
+            "title": "In Library",
+            "type": "integer"
+          },
+          "named": {
+            "title": "Named",
+            "type": "integer"
+          },
+          "resolved": {
+            "title": "Resolved",
+            "type": "integer"
+          },
+          "runtime_checked": {
+            "default": 0,
+            "title": "Runtime Checked",
+            "type": "integer"
+          },
+          "runtime_total": {
+            "default": 0,
+            "title": "Runtime Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unwatched_median": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unwatched Median"
+          }
+        },
+        "required": [
+          "named",
+          "resolved",
+          "in_library",
+          "after_rules",
+          "unwatched_median"
+        ],
+        "title": "ThemeStatsOut",
+        "type": "object"
+      },
       "TitleMatchOut": {
         "additionalProperties": true,
         "description": "TMDB's own best guess for a title search, for the \"block a seed\" picker.",
@@ -7033,6 +9530,45 @@
         "title": "UninstallUnreachableOut",
         "type": "object"
       },
+      "UpNextRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "theme_id": {
+            "title": "Theme Id",
+            "type": "integer"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "theme_id"
+        ],
+        "title": "UpNextRequest",
+        "type": "object"
+      },
+      "UsedByOut": {
+        "additionalProperties": true,
+        "description": "A row that follows the season.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "UsedByOut",
+        "type": "object"
+      },
       "UserOut": {
         "additionalProperties": true,
         "description": "One person \u2014 the response shape of :func:`user_dict`.",
@@ -7065,20 +9601,20 @@
             "title": "History Depth",
             "type": "integer"
           },
-          "hit_rate": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_pick_watched_at": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Hit Rate"
-          },
-          "id": {
-            "title": "Id",
-            "type": "integer"
+            "title": "Last Pick Watched At"
           },
           "last_run_at": {
             "anyOf": [
@@ -7099,6 +9635,17 @@
             "title": "Nickname",
             "type": "string"
           },
+          "picks_watched_30d": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Picks Watched 30D"
+          },
           "plex_account_id": {
             "title": "Plex Account Id",
             "type": "integer"
@@ -7117,6 +9664,10 @@
           },
           "request_tag": {
             "title": "Request Tag",
+            "type": "string"
+          },
+          "requested_by_tag": {
+            "title": "Requested By Tag",
             "type": "string"
           },
           "restricted": {
@@ -7159,10 +9710,12 @@
           "manage_sharing",
           "cold_start",
           "request_tag",
+          "requested_by_tag",
           "prefs",
           "history_depth",
           "last_run_at",
-          "hit_rate",
+          "picks_watched_30d",
+          "last_pick_watched_at",
           "preview_titles",
           "unhidden_rows",
           "departed"
@@ -7227,6 +9780,18 @@
               }
             ],
             "title": "Request Tag"
+          },
+          "requested_by_tag": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Tag"
           }
         },
         "title": "UserPatch",
@@ -8159,6 +10724,71 @@
         "title": "WatcherOut",
         "type": "object"
       },
+      "WebPromptPreviewIn": {
+        "additionalProperties": false,
+        "description": "What to preview: a row's instructions and/or unsaved server-wide text; either may be omitted.",
+        "properties": {
+          "ai_instructions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AiInstructionsIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "server_text": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Text"
+          }
+        },
+        "title": "WebPromptPreviewIn",
+        "type": "object"
+      },
+      "WebPromptPreviewOut": {
+        "additionalProperties": true,
+        "description": "The prompt AI web search would send, the built-in wording, and whether instructions do anything.",
+        "properties": {
+          "backend": {
+            "title": "Backend",
+            "type": "string"
+          },
+          "builtin_guidance": {
+            "title": "Builtin Guidance",
+            "type": "string"
+          },
+          "builtin_template": {
+            "title": "Builtin Template",
+            "type": "string"
+          },
+          "inert": {
+            "title": "Inert",
+            "type": "boolean"
+          },
+          "system": {
+            "title": "System",
+            "type": "string"
+          }
+        },
+        "required": [
+          "backend",
+          "system",
+          "builtin_guidance",
+          "builtin_template",
+          "inert"
+        ],
+        "title": "WebPromptPreviewOut",
+        "type": "object"
+      },
       "WhatsNewOut": {
         "additionalProperties": true,
         "properties": {
@@ -8255,10 +10885,52 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.9.3"
+    "version": "1.10.0"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/ai/web-prompt-preview": {
+      "post": {
+        "description": "The system prompt AI web search sends with these instructions. Reads settings; writes nothing.",
+        "operationId": "web_prompt_preview_api_ai_web_prompt_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPromptPreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebPromptPreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Web Prompt Preview",
+        "tags": [
+          "ai"
+        ]
+      }
+    },
     "/api/auth/logout": {
       "post": {
         "operationId": "logout_api_auth_logout_post",
@@ -8429,32 +11101,6 @@
         ]
       }
     },
-    "/api/collections/seasons": {
-      "get": {
-        "description": "Every season a row can follow, in calendar order (discussion #124).",
-        "operationId": "list_seasons_api_collections_seasons_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/SeasonOut"
-                  },
-                  "title": "Response List Seasons Api Collections Seasons Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "List Seasons",
-        "tags": [
-          "collections"
-        ]
-      }
-    },
     "/api/collections/{collection_id}": {
       "delete": {
         "description": "Delete a row, or with ``dry_run=true`` report what deleting it would do and write nothing.\n\nA query parameter rather than a body: `DELETE` bodies are awkward through both `fetch` and\nFastAPI, and this works with the SPA's existing `request()` helper unchanged.\n\n`POST /{id}/cleanup?dry_run=true` already previews the PLEX half. What only this can show is the\nLOCAL half, and one part of it is a genuine surprise: deleting this row silently strips every\nOTHER row's shelf placement that was positioned relative to it, changing where two other people's\nrows appear. That was logged after the fact and warned about nowhere.\n\nA preview answers 200 with :class:`RowDeletePreviewOut` instead of the delete's 204.",
@@ -8557,6 +11203,59 @@
           }
         },
         "summary": "Update Collection",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/ai-pause": {
+      "post": {
+        "description": "Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; it just never\nspends tokens writing or refining one (409 from the theme endpoints until resumed).",
+        "operationId": "pause_ai_api_collections__collection_id__ai_pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AiPauseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause Ai",
         "tags": [
           "collections"
         ]
@@ -8888,6 +11587,155 @@
         ]
       }
     },
+    "/api/collections/{collection_id}/theme-rotation": {
+      "get": {
+        "description": "Where each person's Explore rotation stands: their current theme, the one queued next, and what came before.",
+        "operationId": "get_theme_rotation_api_collections__collection_id__theme_rotation_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeRotationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Theme Rotation",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/up-next": {
+      "put": {
+        "description": "Point a person's \"Up next\" at a saved theme, replacing any theme already queued. Changes no Plex state.",
+        "operationId": "set_up_next_api_collections__collection_id__up_next_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpNextRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeRefOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Up Next",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/up-next/regenerate": {
+      "post": {
+        "description": "Write a new \"Up next\" theme for one person now, with one AI call, replacing any theme queued.\n\n409 while the row's AI is paused, 422 without an AI provider or when the row isn't set to Explore.",
+        "operationId": "regenerate_up_next_api_collections__collection_id__up_next_regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeRefOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Up Next",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
     "/api/events": {
       "get": {
         "operationId": "stream_api_events_get",
@@ -8932,7 +11780,7 @@
     },
     "/api/events/log": {
       "get": {
-        "description": "The audit trail, newest first. `before_id` pages backwards \u2014 pass the id of the oldest entry\nyou already have. A cursor, not an offset: events are appended while you read.",
+        "description": "The audit trail, newest first. `before_id` pages backwards \u2014 pass the id of the oldest entry\nyou already have. A cursor, not an offset: events are appended while you read. Every filter given\napplies.",
         "operationId": "audit_log_api_events_log_get",
         "parameters": [
           {
@@ -8949,6 +11797,36 @@
                 }
               ],
               "title": "Scope"
+            }
+          },
+          {
+            "description": "Only scopes starting with this, e.g. `run.`. Case-insensitive on SQLite (it is a LIKE).",
+            "in": "query",
+            "name": "scope_prefix",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only scopes starting with this, e.g. `run.`. Case-insensitive on SQLite (it is a LIKE).",
+              "title": "Scope Prefix"
+            }
+          },
+          {
+            "description": "Only the scopes that record a write to Plex or plex.tv. Includes dry-run audit rows (`message.dry_run` true), which changed nothing on Plex; the UI labels them as dry runs.",
+            "in": "query",
+            "name": "plex_writes",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Only the scopes that record a write to Plex or plex.tv. Includes dry-run audit rows (`message.dry_run` true), which changed nothing on Plex; the UI labels them as dry runs.",
+              "title": "Plex Writes",
+              "type": "boolean"
             }
           },
           {
@@ -8986,8 +11864,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/EventOut"
                   },
                   "title": "Response Audit Log Api Events Log Get",
                   "type": "array"
@@ -9619,6 +12496,71 @@
         ]
       }
     },
+    "/api/requests/row-sources": {
+      "get": {
+        "description": "Read every request source once and say whether a \"Your requests\" row can be built from it.\n\nRead-only: nothing is written to Overseerr, the Arrs, or Plex. A source that is down reads as\n\"unreachable\" with the reason in `problems` \u2014 never a 500, because the screen this feeds exists\nprecisely to show the owner what is wrong.",
+        "operationId": "get_row_sources_api_requests_row_sources_get",
+        "parameters": [
+          {
+            "description": "An own-tag pattern to preview, e.g. req-{username}",
+            "in": "query",
+            "name": "pattern",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "An own-tag pattern to preview, e.g. req-{username}",
+              "maxLength": 128,
+              "title": "Pattern",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them. Omitted, every enabled requests row's saved pattern joins the typed one.",
+            "in": "query",
+            "name": "row_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them. Omitted, every enabled requests row's saved pattern joins the typed one.",
+              "title": "Row Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowSourcesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Row Sources",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
     "/api/requests/send": {
       "post": {
         "description": "Ask Sonarr/Radarr for the chosen pending titles.\n\nA dry run previews the outcomes without asking and leaves every row pending. A real send marks a\nrow ``sent`` only when the app accepted it; a skip/error leaves it pending with the reason recorded,\nso the owner can see why it didn't go and try again.",
@@ -10127,6 +13069,413 @@
         "summary": "Schedule",
         "tags": [
           "schedule"
+        ]
+      }
+    },
+    "/api/seasons": {
+      "get": {
+        "description": "Every season a row can follow, in calendar order: the built-ins and the owner's own.",
+        "operationId": "list_seasons_api_seasons_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SeasonOut"
+                  },
+                  "title": "Response List Seasons Api Seasons Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Seasons",
+        "tags": [
+          "seasons"
+        ]
+      },
+      "post": {
+        "description": "Save a new season. Its slug is made from its name now and never changes (D14).",
+        "operationId": "create_season_api_seasons_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Season",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/library-search": {
+      "get": {
+        "description": "Films and shows in the libraries whose title contains ``q``, for picking by hand.",
+        "operationId": "library_search_api_seasons_library_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LibraryTitleOut"
+                  },
+                  "title": "Response Library Search Api Seasons Library Search Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Library Search",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/next-date": {
+      "post": {
+        "description": "When a draft date rule next falls, or why it can't be used \u2014 from the rule alone.\n\nThe editor's \"Next: \u2026\" line asks this rather than the count, so a count that fails (no TMDB key, Plex\ndown) never takes the date with it. Reads no clock but the server's, and nothing else.",
+        "operationId": "next_date_api_seasons_next_date_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DateRuleIO"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonDateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Next Date",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/plex-collections": {
+      "get": {
+        "description": "The libraries' collections whose title contains ``q``, in any case, by title. Never one of Shortlist's.",
+        "operationId": "plex_collections_api_seasons_plex_collections_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlexCollectionOut"
+                  },
+                  "title": "Response Plex Collections Api Seasons Plex Collections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plex Collections",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/presets": {
+      "get": {
+        "description": "The ready-made seasons not added yet (#137 D9).",
+        "operationId": "list_presets_api_seasons_presets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PresetOut"
+                  },
+                  "title": "Response List Presets Api Seasons Presets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Presets",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/preview": {
+      "post": {
+        "description": "Count a draft season's titles in one row's libraries, as a run would, without saving anything.\n\nOnly the row's own media type and libraries count: that is all the row draws from (#137 I-1). An invalid\ndate rule still counts: the editor shows what is wrong with the date beside the count.",
+        "operationId": "preview_season_api_seasons_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeasonPreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonPreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Season",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/tmdb-tags": {
+      "get": {
+        "description": "TMDB tags whose name matches ``q``, each with how many films TMDB tags with it.",
+        "operationId": "tmdb_tags_api_seasons_tmdb_tags_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagOut"
+                  },
+                  "title": "Response Tmdb Tags Api Seasons Tmdb Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Tmdb Tags",
+        "tags": [
+          "seasons"
+        ]
+      }
+    },
+    "/api/seasons/{slug}": {
+      "delete": {
+        "description": "Delete a custom season and untick it in every row, in one transaction (D12).\n\nRefused, naming the rows, while it is any row's only season: that row would be left following nothing.",
+        "operationId": "delete_season_api_seasons__slug__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Season",
+        "tags": [
+          "seasons"
+        ]
+      },
+      "put": {
+        "description": "Replace a custom season, keeping its slug.\n\nA change of date or timing changes which days its rows are shown on, so it is applied to Plex now, as a\nchange to a row's own seasons is. A source change rebuilds its rows on their next build (D11).",
+        "operationId": "update_season_api_seasons__slug__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeasonIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeasonOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Season",
+        "tags": [
+          "seasons"
         ]
       }
     },
@@ -12118,9 +15467,230 @@
         ]
       }
     },
+    "/api/themes": {
+      "post": {
+        "description": "Save a theme. Its slug is made from its name now; its hash is worked out here.",
+        "operationId": "create_theme_api_themes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThemeSaveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Theme",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
+    "/api/themes/capabilities": {
+      "get": {
+        "description": "Whether an AI provider is set, so the editor can hide the half that needs one.",
+        "operationId": "capabilities_api_themes_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapabilitiesOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Capabilities",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
+    "/api/themes/preview": {
+      "post": {
+        "description": "Write or refine a theme from a brief with one AI call, without saving anything.\n\n409 while the row's AI is paused, 422 without an AI provider (neither makes a call).",
+        "operationId": "preview_theme_api_themes_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Theme",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
+    "/api/themes/prompts": {
+      "get": {
+        "description": "The system prompt \"Build the list\" sends: the guidance an owner may replace, and the mechanics they may not.",
+        "operationId": "prompts_api_themes_prompts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Prompts",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
+    "/api/themes/{theme_id}": {
+      "get": {
+        "operationId": "get_theme_api_themes__theme_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "theme_id",
+            "required": true,
+            "schema": {
+              "title": "Theme Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Theme",
+        "tags": [
+          "themes"
+        ]
+      },
+      "put": {
+        "description": "Replace a theme's contents (a hand edit, or an AI refinement the owner kept), keeping its slug.",
+        "operationId": "update_theme_api_themes__theme_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "theme_id",
+            "required": true,
+            "schema": {
+              "title": "Theme Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThemeSaveIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThemeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Theme",
+        "tags": [
+          "themes"
+        ]
+      }
+    },
     "/api/users": {
       "get": {
-        "description": "Every user with their badges, watch depth, lifetime hit rate and a pick preview.\n\nDeliberately a plain `def`, not `async def`: it issues four synchronous queries PER USER,\nwhich on a 40-account server is ~160 round-trips. On the event loop that stalls SSE,\n`/api/system/health` and every other request for the duration; as a sync handler Starlette\nruns it in a worker thread instead.",
+        "description": "Every user with their badges, watch depth, picks watched in 30 days and a pick preview.\n\nDeliberately a plain `def`, not `async def`: it issues a handful of synchronous queries. On the\nevent loop that stalls SSE, `/api/system/health` and every other request for the duration; as a\nsync handler Starlette runs it in a worker thread instead. Each metric is ONE grouped query for\neveryone, never one per person \u2014 a 40-account server used to cost ~80 round-trips here.",
         "operationId": "list_users_api_users_get",
         "responses": {
           "200": {

@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 
 import { Button } from "@/components/ui/button";
+import { MutationAlert } from "@/components/mutation-alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -11,16 +12,18 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
   const pausedAll = settings["paused_all"] === true;
 
   return (
-    <section aria-labelledby="danger-heading" className="space-y-3">
+    <section id="danger" aria-labelledby="danger-heading" className="scroll-mt-32 space-y-3 md:scroll-mt-8">
       <h2
         id="danger-heading"
-        className="text-lg font-semibold text-destructive-text"
+        className="text-base font-semibold tracking-tight text-destructive-text"
       >
         Danger zone
       </h2>
       {/* The read-only Plex audit used to sit here, above everything. It was the safest control on
           the page — it changes nothing — under the scariest heading, which reads as a warning it
-          does not deserve. It lives under Advanced now. */}
+          does not deserve. It lives under System → On your Plex now.
+
+          Pause all stays here: the Users page has no bulk pause, so this is the only place it is. */}
       <Card className="border-destructive/40">
         <CardContent className="space-y-4 pt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -48,6 +51,12 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
               {pausedAll ? "Resume all" : "Pause all"}
             </Button>
           </div>
+          {saveSettings.isError && <MutationAlert error={saveSettings.error}
+            fallback="Couldn’t change whether processing is paused. Try again."
+            onRetry={() => saveSettings.mutate({ paused_all: !pausedAll })} />}
+          {saveSettings.isSuccess && <p role="status" className="text-sm text-success">
+            {saveSettings.variables?.paused_all ? "Processing paused. Existing rows stay where they are." : "Processing resumed."}
+          </p>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
             <div>
               <p className="font-medium">Full uninstall</p>

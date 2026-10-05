@@ -1,6 +1,7 @@
 import type {
   Job,
   PrivacyStatus,
+  AuditEvent,
   UserPickOutcome,
   RowEffectiveness,
   JobCatalogEntry,
@@ -11,6 +12,7 @@ import type {
   NotificationsPage,
   WhatsNew,
   ArrOptions,
+  RowSources,
   SeerrOptions,
   Backup,
   PendingRestore,
@@ -20,8 +22,27 @@ import type {
   EngagementReport,
   OwnedCollectionsAudit,
   PlexLibrary,
+  PlexCollectionMatch,
+  LibraryTitle,
   Season,
+  SeasonDate,
+  SeasonInput,
+  SeasonPreset,
+  WebPromptPreview,
+  WebPromptPreviewInput,
+  SeasonPreview,
+  SeasonPreviewInput,
+  TmdbTag,
+  Theme,
+  ThemeCapabilities,
+  ThemeRef,
+  ThemeRotation,
+  ThemePreview,
+  ThemePreviewInput,
+  ThemePrompts,
+  ThemeSaveInput,
   ConnectionTestResult,
+  DateRule,
   LinkRequest,
   PinCreated,
   CleanupResult,
@@ -469,6 +490,19 @@ export const api = {
    *  authenticates it, so it needs no fetch/blob dance). */
   logsDownloadUrl: (): string => apiUrl("/api/system/logs/download"),
 
+  /** The audit trail, newest first. `plexWrites` keeps only the scopes that record a write to Plex or
+   *  plex.tv; `beforeId` pages backwards — the id of the oldest event you already have. */
+  getEventLog: (
+    params: { plexWrites?: boolean; beforeId?: number; limit?: number } = {},
+  ): Promise<AuditEvent[]> => {
+    const query = new URLSearchParams();
+    if (params.plexWrites) query.set("plex_writes", "true");
+    if (params.beforeId !== undefined) query.set("before_id", String(params.beforeId));
+    if (params.limit !== undefined) query.set("limit", String(params.limit));
+    const qs = query.toString();
+    return request(qs ? `/api/events/log?${qs}` : "/api/events/log");
+  },
+
   startRun: (body: RunRequest = {}): Promise<RunCreated> =>
     request("/api/runs", { method: "POST", body: JSON.stringify(body) }),
 
@@ -498,6 +532,18 @@ export const api = {
   getSeerrOptions: (): Promise<SeerrOptions> =>
     request("/api/settings/overseerr/options"),
 
+  /** The request sources a "Your requests" row can read, with a preview of the own-tag pattern.
+   *  Read-only on the server, but it reads every source in turn (dozens of external calls), so the
+   *  UI asks once on mount and then only when the owner presses Check. */
+  getRequestRowSources: (pattern: string, rowId: number | null = null): Promise<RowSources> => {
+    const params = new URLSearchParams();
+    if (pattern) params.set("pattern", pattern);
+    // The saved row being edited: the server judges the tag against every OTHER enabled requests row too.
+    if (rowId !== null) params.set("row_id", String(rowId));
+    const query = params.toString();
+    return request(`/api/requests/row-sources${query ? `?${query}` : ""}`);
+  },
+
   /** Model ids a provider offers, for the model picker. The body carries the (possibly unsaved)
    *  provider + key/URL being edited so the list reflects the current form; blank fields fall back to
    *  saved settings and a redacted key means "use the saved key" (empty result = free-text fallback). */
@@ -514,8 +560,93 @@ export const api = {
   /** The server's Plex libraries, for the Rows editor's per-row delivery-target picker. */
   getLibraries: (): Promise<PlexLibrary[]> => request("/api/system/libraries"),
 
-  /** Every season a row can follow, in calendar order (discussion #124). */
-  getSeasons: (): Promise<Season[]> => request("/api/collections/seasons"),
+  /** Every season a row can follow, in calendar order: the built-ins and the owner's own (#137). */
+  getSeasons: (): Promise<Season[]> => request("/api/seasons"),
+
+  /** The ready-made seasons not added yet. */
+  getSeasonPresets: (): Promise<SeasonPreset[]> => request("/api/seasons/presets"),
+
+  /** Save a new season for the whole server. Its slug comes back and never changes. */
+  createSeason: (body: SeasonInput): Promise<Season> =>
+    request("/api/seasons", { method: "POST", body: JSON.stringify(body) }),
+
+  updateSeason: (slug: string, body: SeasonInput): Promise<Season> =>
+    request(`/api/seasons/${encodeURIComponent(slug)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  /** Delete a season and untick it in every row. 409 while it is any row's only season. */
+  deleteSeason: (slug: string): Promise<void> =>
+    request(`/api/seasons/${encodeURIComponent(slug)}`, { method: "DELETE" }),
+
+  /** Count a draft season's films in the libraries, as a run would, saving nothing. The first call can
+   *  take several seconds while the server reads the libraries. */
+  previewSeason: (body: SeasonPreviewInput): Promise<SeasonPreview> =>
+    request("/api/seasons/preview", { method: "POST", body: JSON.stringify(body) }),
+
+  /** The system prompt AI web search would send with these instructions (#138). Reads settings and
+   *  writes nothing; an omitted field falls back to what is saved. */
+  previewWebPrompt: (body: WebPromptPreviewInput): Promise<WebPromptPreview> =>
+    request("/api/ai/web-prompt-preview", { method: "POST", body: JSON.stringify(body) }),
+
+  // --- AI rows (#138) ---
+
+  /** Whether an AI provider is set. Without one the AI row editor offers hand-editing instead. */
+  getThemeCapabilities: (): Promise<ThemeCapabilities> => request("/api/themes/capabilities"),
+
+  /** The "Write the list" prompt: the default guidance and the locked mechanics. */
+  getThemePrompts: (): Promise<ThemePrompts> => request("/api/themes/prompts"),
+
+  /** Write (or refine) a theme with one AI call and save nothing. Spends the owner's AI tokens. */
+  previewTheme: (body: ThemePreviewInput): Promise<ThemePreview> =>
+    request("/api/themes/preview", { method: "POST", body: JSON.stringify(body) }),
+
+  getTheme: (id: number): Promise<Theme> => request(`/api/themes/${id}`),
+
+  createTheme: (body: ThemeSaveInput): Promise<Theme> =>
+    request("/api/themes", { method: "POST", body: JSON.stringify(body) }),
+
+  updateTheme: (id: number, body: ThemeSaveInput): Promise<Theme> =>
+    request(`/api/themes/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+
+  /** Pause or resume an AI row's AI: it keeps its theme but spends no tokens. */
+  setAiPause: (collectionId: number, paused: boolean): Promise<Collection> =>
+    request(`/api/collections/${collectionId}/ai-pause`, { method: "POST", body: JSON.stringify({ paused }) }),
+
+  /** Where each person's Explore rotation stands. */
+  getThemeRotation: (collectionId: number): Promise<ThemeRotation> =>
+    request(`/api/collections/${collectionId}/theme-rotation`),
+
+  /** Point one person's "Up next" at a saved theme. Changes no Plex state. */
+  setUpNext: (collectionId: number, userId: number, themeId: number): Promise<ThemeRef> =>
+    request(`/api/collections/${collectionId}/up-next`, {
+      method: "PUT",
+      body: JSON.stringify({ user_id: userId, theme_id: themeId }),
+    }),
+
+  /** Write a new "Up next" theme for one person now, with one AI call. */
+  regenerateUpNext: (collectionId: number, userId: number): Promise<ThemeRef> =>
+    request(`/api/collections/${collectionId}/up-next/regenerate`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    }),
+
+  /** When a date rule next falls, from the rule alone: no TMDB key or Plex needed. */
+  getSeasonNextDate: (rule: DateRule): Promise<SeasonDate> =>
+    request("/api/seasons/next-date", { method: "POST", body: JSON.stringify(rule) }),
+
+  /** TMDB tags whose name matches, each with how many films TMDB gives it. */
+  getTmdbTags: (q: string): Promise<TmdbTag[]> =>
+    request(`/api/seasons/tmdb-tags?q=${encodeURIComponent(q)}`),
+
+  /** The libraries' collections whose title contains `q` (never one of Shortlist's own rows). */
+  getPlexCollections: (q: string): Promise<PlexCollectionMatch[]> =>
+    request(`/api/seasons/plex-collections?q=${encodeURIComponent(q)}`),
+
+  /** Films and shows in the libraries whose title contains `q`, for picking by hand. */
+  searchLibrary: (q: string): Promise<LibraryTitle[]> =>
+    request(`/api/seasons/library-search?q=${encodeURIComponent(q)}`),
 
   /** The running app version + update check (for the footer + update banner). */
   getVersion: (): Promise<VersionInfo> => request("/api/system/version"),

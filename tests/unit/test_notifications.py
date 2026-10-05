@@ -1315,6 +1315,90 @@ class TestRestrictionsRestoredNotice:
         assert notif._restrictions_restored(session) is None
 
 
+class TestScheduledJobMissed:
+    """APScheduler skips a job that starts more than its grace late, and said so only in a log line —
+    the whole 2026-09-29 nightly row run went that way and the owner found out from a log audit. Row runs
+    now have no grace, so every miss here is a fixed timer's."""
+
+    DUE = datetime(2026, 9, 29, 2, 0, tzinfo=UTC)
+
+    @staticmethod
+    def _missed(session, job: str, *, at: datetime, due: datetime = DUE, name: str | None = None) -> Event:
+        message = {"job": job, "scheduled_for": due.isoformat(), "late_by_s": 45}
+        if name:
+            message["name"] = name
+        event = Event(scope="schedule.missed", level="warning", ts=at, message=message)
+        session.add(event)
+        session.commit()
+        return event
+
+    @staticmethod
+    def _local(moment: datetime) -> str:
+        local = moment.astimezone()
+        return f"{local:%H:%M} on {local.day} {local:%B}"
+
+    def test_a_missed_timer_job_says_what_and_when_in_words(self, session):
+        event = self._missed(session, "watch-sync", at=datetime.now(UTC), name="Sync watch history")
+
+        card = notif._scheduled_jobs_missed(session)
+
+        assert card["id"] == f"schedule-missed-{event.id}"
+        assert card["severity"] == "warning"
+        assert card["dismissable"] is True
+        assert card["title"] == "A scheduled job didn't run"
+        assert "Sync watch history" in card["body"]
+        assert self._local(self.DUE) in card["body"]
+        assert "busy" in card["body"]
+        assert "next scheduled time" in card["body"]
+        assert "watch-sync" not in card["body"], "never show the owner a raw job id"
+        assert (card["action_url"], card["action_label"]) == ("/jobs", "Open Jobs")
+
+    def test_several_missed_jobs_make_one_item_keyed_to_the_newest(self, session):
+        self._missed(session, "watch-sync", at=datetime.now(UTC) - timedelta(hours=3), name="Sync watch history")
+        newest = self._missed(session, "db-backup", at=datetime.now(UTC), name="Back up the database")
+
+        card = notif._scheduled_jobs_missed(session)
+        items = [n for n in notif.build_notifications(session, SettingsStore(session), "1.0.0") if "missed" in n["id"]]
+
+        assert [n["id"] for n in items] == [f"schedule-missed-{newest.id}"]
+        assert card["title"] == "2 scheduled jobs didn't run"
+        assert "Sync watch history" in card["body"] and "Back up the database" in card["body"]
+
+    def test_a_miss_older_than_a_day_shows_nothing(self, session):
+        self._missed(session, "db-backup", at=datetime.now(UTC) - timedelta(hours=25), name="Back up the database")
+
+        assert notif._scheduled_jobs_missed(session) is None
+
+    def test_nothing_missed_shows_nothing(self, session):
+        assert notif._scheduled_jobs_missed(session) is None
+
+    def test_dismissing_it_hides_it_until_the_next_miss(self, session):
+        first = self._missed(
+            session, "db-backup", at=datetime.now(UTC) - timedelta(hours=1), name="Back up the database"
+        )
+        store = SettingsStore(session)
+        store.set(notif.DISMISSED_KEY, [f"schedule-missed-{first.id}"])
+
+        assert not [n for n in notif.build_notifications(session, store, "1.0.0") if "missed" in n["id"]]
+
+        second = self._missed(session, "watch-sync", at=datetime.now(UTC), name="Sync watch history")
+
+        assert [n["id"] for n in notif.build_notifications(session, store, "1.0.0")] == [f"schedule-missed-{second.id}"]
+
+    def test_the_service_errors_item_does_not_also_fire_for_a_miss(self, session):
+        """A miss is recorded at warning, so `_recent_service_errors` (error level, non-run scopes) stays quiet."""
+        event = self._missed(session, "db-backup", at=datetime.now(UTC), name="Back up the database")
+
+        items = notif.build_notifications(session, SettingsStore(session), "1.0.0")
+
+        assert [n["id"] for n in items] == [f"schedule-missed-{event.id}"]
+
+    def test_it_renders(self, session):
+        self._missed(session, "db-backup", at=datetime.now(UTC), name="Back up the database")
+
+        TestEveryNotificationIsRenderable()._check("_scheduled_jobs_missed", notif._scheduled_jobs_missed(session))
+
+
 class TestAFailedJobSaysOnlyWhatIsTrueOfIt:
     """The body used to make two claims about every failure: that Plex might not reflect what you
     asked for, and that you can run it again. `watch.reconcile` is the first kind for which BOTH are

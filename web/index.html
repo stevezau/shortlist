@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%A8%3C/text%3E%3C/svg%3E"
-    />
+    <!-- Through the asset pipeline (src/), not public/: it gets an /assets/ URL, which the server
+         rewrites under APP_BASE_PATH. A bare /favicon.svg would load from the proxy's root. -->
+    <link rel="icon" type="image/svg+xml" href="/src/favicon.svg" />
     <title>Shortlist</title>
+    <meta name="description" content="Private recommendation rows for every Plex user." />
   </head>
   <body>
     <div id="root"></div>

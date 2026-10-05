@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel
 
+from shortlist.engine.clients.arr import ArrError
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.search import EXA_SEARCH_TYPES
+from shortlist.engine.clients.seerr import SeerrError
 from shortlist.engine.models import (
     LANGUAGE_MODES,
     MAX_REFRESH_DAYS,
@@ -23,6 +27,7 @@ from shortlist.engine.models import (
     SONARR_MONITOR_MODES,
 )
 from shortlist.engine.placeholders import refusal
+from shortlist.engine.web_guidance import MAX_INSTRUCTIONS_CHARS
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, Server
@@ -30,6 +35,7 @@ from shortlist.server.net_guard import BlockedUrl, check_url
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import actor_of, add_audit
+from shortlist.server.services.plex_reachability import describe_address, error_text, explained
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_owner)])
@@ -190,6 +196,19 @@ def _one_of(*allowed: str):
     return check
 
 
+def _text_at_most(limit: int) -> Callable[[object], str | None]:
+    """Free text up to ``limit`` characters (no other free-text setting caps its length yet)."""
+
+    def check(value: object) -> str | None:
+        if not isinstance(value, str):
+            return "must be text"
+        if len(value) > limit:
+            return f"must be at most {limit} characters"
+        return None
+
+    return check
+
+
 def _is_bool(value: object) -> str | None:
     # A non-empty STRING is truthy in Python, so "false" would have switched paused_all ON while the
     # UI read it as off. Only real booleans are accepted.
@@ -313,6 +332,7 @@ VALIDATORS = {
     "requests.auto_send": _is_bool,
     "candidates.sources": _known_sources,
     "llm_web.search_provider": _one_of("native", "exa", "searxng"),
+    "llm_web.instructions": _text_at_most(MAX_INSTRUCTIONS_CHARS),
     # Validated here as well as clamped in the client: a typo saved through the API would otherwise
     # be a 400 from Exa on every seed of every run, and the owner would see an empty row, not a bad
     # setting. The client's fallback is the second line of defence, for a value written before this.
@@ -568,6 +588,8 @@ async def put_settings(
             # serves the cached result rather than re-authenticating.
             add_audit(session, "settings.change", "info", changed=changed, actor=actor_of(auth, request))
             session.commit()
+            if "plex.url" in changed:
+                logger.info("settings: the Plex address is now {}", describe_address(str(store.get("plex.url") or "")))
         if "log.level" in update.values:
             # Apply immediately so a live "turn on DEBUG to watch this run" takes effect without a
             # container restart. The file sink is preserved from boot.
@@ -665,7 +687,9 @@ async def test_connection(service: str, request: Request) -> dict:
             if service == "plex":
                 from shortlist.engine.clients.plex_pms import PlexClient
 
-                plex = PlexClient(get("plex.url"), get("plex.token"))
+                url = get("plex.url")
+                with explained(url):
+                    plex = PlexClient(url, get("plex.token"))
                 # "PMS" is our word for it, not Plex's own UI's — an owner reading this on the
                 # Connections card has no reason to know the abbreviation.
                 return f"Connected to {plex.server_name} (Plex Media Server {plex.version})"
@@ -790,9 +814,9 @@ async def test_connection(service: str, request: Request) -> dict:
     except HTTPException:
         raise
     except Exception as e:
-        # plexapi/PMS exceptions can embed the tokened request URL — redact before it reaches the
-        # API response (plex-safety rule 9: tokens never leave the box, even in an error string).
-        return {"ok": False, "message": redact(f"{type(e).__name__}: {e}")}
+        # plexapi/PMS exceptions can embed the tokened request URL — `error_text` redacts before it
+        # reaches the API response (plex-safety rule 9: tokens never leave the box, even in an error string).
+        return {"ok": False, "message": error_text(e)}
 
 
 class QualityProfileOut(PassthroughModel):
@@ -808,6 +832,28 @@ class RootFolderOut(PassthroughModel):
 class ArrOptionsOut(PassthroughModel):
     quality_profiles: list[QualityProfileOut]
     root_folders: list[RootFolderOut]
+
+
+def _origin_of(url: str) -> str:
+    """``scheme://host[:port]`` of a configured address: no credentials, path or query string."""
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme}://{host}{port}" if parsed.scheme and host else "the address you entered"
+
+
+def _service_error_detail(app: str, url: str, error: Exception) -> str:
+    """Plain-English reason a Sonarr/Radarr/Overseerr call failed, safe to show in the UI.
+
+    The clients' own messages ("Radarr rejected the API key") already read well and carry no secret,
+    so they pass through; an "unreachable (ConnectError)" and anything unexpected become a sentence
+    naming the address. The exception type and text go to the server log only.
+    """
+    logger.warning("{} request failed ({}): {}", app, type(error).__name__, redact(str(error)))
+    text = redact(str(error))
+    if isinstance(error, ArrError | SeerrError) and "unreachable" not in text:
+        return text
+    return f"{app} didn't answer at {_origin_of(url)}. Check the address and that it's running."
 
 
 @router.get("/arr/{service}/options", response_model=ArrOptionsOut)
@@ -835,7 +881,7 @@ async def arr_options(service: str, request: Request) -> dict:
     try:
         return await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
+        raise HTTPException(status_code=502, detail=_service_error_detail(service.title(), url, e)) from e
 
 
 class SeerrUserOut(PassthroughModel):
@@ -883,7 +929,7 @@ async def overseerr_options(request: Request) -> dict:
     try:
         return await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
+        raise HTTPException(status_code=502, detail=_service_error_detail("Overseerr", url, e)) from e
 
 
 class CuratorModelsOut(PassthroughModel):

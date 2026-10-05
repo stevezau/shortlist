@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PMS 1.43.4.10903 GET /library/sections/{key}/all?includeGuids=1&title=free with the headers
+  X-Plex-Container-Start=0 and X-Plex-Container-Size=5, which is what plexapi's
+  LibrarySection.search(title="free", maxresults=5) issues. Recorded 2026-10-02, read-only, off a real
+  server's Movies library (10,030 films) for the season editor's film search (issue #137).
+  File paths are neutralised, and so is one Shortlist row's title (see below); everything else is verbatim.
+
+  What it settles:
+  - `title=` is a SUBSTRING match, not a prefix or whole-title one: "free" finds Free Burma Rangers and
+    Free Guy alike. totalSize is 21; the container headers cut the page to 5.
+  - Every result carries its <Guid id="tmdb://..."> inline.
+  - A result lists Shortlist's own rows among its <Collection tag> children, per-account title marker
+    included (as &#8203; / &#8204; entities). Free Guy's named the person and a film they watched, so it
+    is replaced by a neutral title with an all-zero marker.
+-->
+<MediaContainer size="5" totalSize="21" offset="0" allowSync="1" art="/:/resources/movie-fanart.jpg" identifier="com.plexapp.plugins.library" librarySectionID="1" librarySectionTitle="Movies" librarySectionUUID="16681dae-b1e4-4d36-8e2c-2a71dbbc6c31" mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1786914632" thumb="/:/resources/movie.png" title1="Movies" title2="All Movies" viewGroup="movie" viewMode="65592">
+<Video ratingKey="99159" key="/library/metadata/99159" guid="plex://movie/5e2041fc785b5a003bb2e8ee" slug="free-burma-rangers" studio="Deidox Films" type="movie" title="Free Burma Rangers" contentRating="Not Rated" summary="The film follows Dave, Karen, and their three young children, as they venture into war zones where they are fighting to bring hope. Viewers will follow the family into firefights, heroic rescues, and experience life-changing ministry." audienceRating="8.1" year="2020" tagline="A Family Brings Hope To The Front Lines" thumb="/library/metadata/99159/thumb/1787695478" art="/library/metadata/99159/art/1787695478" duration="5818912" originallyAvailableAt="2020-02-24" addedAt="1612663755" updatedAt="1787695478" primaryExtraKey="/library/metadata/664907">
+<Media id="988639" duration="5818912" bitrate="9341" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="eac3" videoCodec="h264" videoResolution="1080" container="mkv" videoFrameRate="24p" videoProfile="high" hasVoiceActivity="1">
+<Part id="1171846" key="/library/parts/1171846/1787068112/file.mkv" duration="5818912" file="/movies/Free Burma Rangers (2020)/Free Burma Rangers (2020).mkv" size="6794274335" container="mkv" indexes="sd" videoProfile="high" />
+</Media>
+<Image alt="Free Burma Rangers" type="coverPoster" url="/library/metadata/99159/thumb/1787695478" />
+<Image alt="Free Burma Rangers" type="background" url="/library/metadata/99159/art/1787695478" />
+<Image alt="Free Burma Rangers" type="backgroundSquare" url="/library/metadata/99159/squareArt/1787695478" />
+<UltraBlurColors topLeft="113434" topRight="071d20" bottomRight="255c5c" bottomLeft="944218" />
+<Guid id="imdb://tt10683800" />
+<Guid id="tmdb://663075" />
+<Guid id="tvdb://160833" />
+<Genre tag="Documentary" />
+<Country tag="United States of America" />
+<Collection tag="Hidden Gems Movies" />
+<Director tag="Brent Gudgel" />
+<Writer tag="Brent Gudgel" />
+<Role tag="David Eubank" />
+<Role tag="Karen Eubank" />
+<Role tag="Peter Eubank" />
+</Video>
+<Video ratingKey="229797" key="/library/metadata/229797" guid="plex://movie/61b5e9177eca5f90ad609858" slug="free-chol-soo-lee" studio="XTR" type="movie" title="Free Chol Soo Lee" contentRating="PG-13" summary="In 1970s San Francisco, Korean immigrant Chol Soo Lee is wrongly convicted of a Chinatown gang murder. After spending years fighting to survive, journalist K.W. Lee takes an interest in his case, igniting an unprecedented social movement." rating="10.0" audienceRating="7.2" year="2022" thumb="/library/metadata/229797/thumb/1787049158" art="/library/metadata/229797/art/1787049158" duration="5141013" originallyAvailableAt="2022-10-07" addedAt="1674282697" updatedAt="1787049158" primaryExtraKey="/library/metadata/664918">
+<Media id="376631" duration="5141013" bitrate="5758" width="1920" height="1080" aspectRatio="1.78" audioChannels="2" audioCodec="aac" videoCodec="h264" videoResolution="1080" container="mkv" videoFrameRate="24p" audioProfile="lc" videoProfile="main" hasVoiceActivity="1">
+<Part id="503259" key="/library/parts/503259/1674282545/file.mkv" duration="5141013" file="/movies/Free Chol Soo Lee (2022)/Free Chol Soo Lee (2022).mkv" size="3700334976" audioProfile="lc" container="mkv" indexes="sd" videoProfile="main" />
+</Media>
+<Image alt="Free Chol Soo Lee" type="coverPoster" url="/library/metadata/229797/thumb/1787049158" />
+<Image alt="Free Chol Soo Lee" type="background" url="/library/metadata/229797/art/1787049158" />
+<Image alt="Free Chol Soo Lee" type="backgroundSquare" url="/library/metadata/229797/squareArt/1787049158" />
+<UltraBlurColors topLeft="2d2d34" topRight="141419" bottomRight="14131b" bottomLeft="1b1c21" />
+<Guid id="imdb://tt16376512" />
+<Guid id="tmdb://913824" />
+<Guid id="tvdb://341736" />
+<Genre tag="Documentary" />
+<Genre tag="Crime" />
+<Country tag="United States of America" />
+<Director tag="Eugene Yi" />
+<Director tag="Julie Ha" />
+<Writer tag="Carol Dysinger" />
+<Writer tag="Julie Ha" />
+<Role tag="Chol Soo Lee" />
+<Role tag="Sebastian Yoon" />
+<Role tag="Ranko Yamada" />
+</Video>
+<Video ratingKey="617288" key="/library/metadata/617288" guid="plex://movie/5d776b9196b655001fe155fc" slug="free-fire" studio="Rook Films" type="movie" title="Free Fire" contentRating="R" contentRatingAge="18" summary="When a black market arms deal goes wrong, Justine is caught in the crossfire and forced to navigate a warehouse full of trigger-happy madmen." rating="6.9" audienceRating="6.3" year="2016" tagline="All guns. No control." thumb="/library/metadata/617288/thumb/1787059153" art="/library/metadata/617288/art/1787059153" duration="5434475" originallyAvailableAt="2016-09-08" addedAt="1656699276" updatedAt="1787059153" primaryExtraKey="/library/metadata/617296">
+<Media id="920292" duration="5434475" bitrate="10359" width="1920" height="808" aspectRatio="2.35" audioChannels="6" audioCodec="dca" videoCodec="h264" videoResolution="1080" container="mkv" videoFrameRate="24p" audioProfile="dts" videoProfile="high" hasVoiceActivity="1">
+<Part id="1103499" key="/library/parts/1103499/1656699105/file.mkv" duration="5434475" file="/movies/Free Fire (2016)/Free Fire (2016).mkv" size="7036946913" audioProfile="dts" container="mkv" indexes="sd" videoProfile="high" />
+</Media>
+<Image alt="Free Fire" type="coverPoster" url="/library/metadata/617288/thumb/1787059153" />
+<Image alt="Free Fire" type="background" url="/library/metadata/617288/art/1787059153" />
+<Image alt="Free Fire" type="clearLogo" url="/library/metadata/617288/clearLogo/1787059153" />
+<Image alt="Free Fire" type="backgroundSquare" url="/library/metadata/617288/squareArt/1787059153" />
+<UltraBlurColors topLeft="3e290b" topRight="0d2b2c" bottomRight="63330f" bottomLeft="805117" />
+<Guid id="imdb://tt4158096" />
+<Guid id="tmdb://334521" />
+<Guid id="tvdb://4897" />
+<Genre tag="Action" />
+<Genre tag="Thriller" />
+<Country tag="United Kingdom" />
+<Director tag="Ben Wheatley" />
+<Writer tag="Amy Jump" />
+<Writer tag="Ben Wheatley" />
+<Role tag="Cillian Murphy" />
+<Role tag="Brie Larson" />
+<Role tag="Armie Hammer" />
+</Video>
+<Video ratingKey="498564" key="/library/metadata/498564" guid="plex://movie/5d777089ad5437001f824d31" slug="free-guy" studio="Berlanti Productions" type="movie" title="Free Guy" contentRating="PG-13" contentRatingAge="13" summary="When Guy, a bank teller, learns that he is a non-player character in a bloodthirsty, open-world video game, he goes on to become the hero of the story and takes the responsibility of saving the world." rating="8.0" audienceRating="7.1" year="2021" tagline="Life&#39;s too short to be a background character." thumb="/library/metadata/498564/thumb/1788943746" art="/library/metadata/498564/art/1788943746" duration="6898599" originallyAvailableAt="2021-08-11" addedAt="1755144844" updatedAt="1788943746" audienceRatingImage="imdb://image.rating" chapterSource="media" primaryExtraKey="/library/metadata/664933">
+<Media id="1001065" duration="6898599" bitrate="19293" width="3840" height="1608" aspectRatio="2.35" audioChannels="6" audioCodec="eac3" videoCodec="hevc" videoResolution="4k" container="mkv" videoFrameRate="24p" audioProfile="dolby digital plus + dolby atmos" videoProfile="main 10" hasVoiceActivity="1">
+<Part id="1184275" key="/library/parts/1184275/1788941330/file.mkv" duration="6898599" file="/movies/Free Guy (2021)/Free Guy (2021).mkv" size="16505977824" audioProfile="dolby digital plus + dolby atmos" container="mkv" videoProfile="main 10" />
+</Media>
+<Image alt="Free Guy" type="coverPoster" url="/library/metadata/498564/thumb/1788943746" />
+<Image alt="Free Guy" type="background" url="/library/metadata/498564/art/1788943746" />
+<Image alt="Free Guy" type="clearLogo" url="/library/metadata/498564/clearLogo/1788943746" />
+<Image alt="Free Guy" type="backgroundSquare" url="/library/metadata/498564/squareArt/1788943746" />
+<UltraBlurColors topLeft="162e4f" topRight="1e516a" bottomRight="9c3916" bottomLeft="2f618d" />
+<Guid id="imdb://tt6264654" />
+<Guid id="tmdb://550988" />
+<Guid id="tvdb://57325" />
+<Genre tag="Comedy" />
+<Genre tag="Science Fiction" />
+<Country tag="United States of America" />
+<Collection tag="&#127919; Because you watched A Film&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;&#8203;" />
+<Director tag="Shawn Levy" />
+<Writer tag="Matt Lieberman" />
+<Writer tag="Zak Penn" />
+<Role tag="Ryan Reynolds" />
+<Role tag="Jodie Comer" />
+<Role tag="Lil Rel Howery" />
+</Video>
+<Video ratingKey="8734" key="/library/metadata/8734" guid="plex://movie/5d77703751dd69001fe56cac" slug="free-solo" studio="National Geographic Documentary Films" type="movie" title="Free Solo" contentRating="PG-13" contentRatingAge="11" summary="Follow Alex Honnold as he attempts to become the first person to ever free solo climb Yosemite&#39;s 3,000 foot high El Capitan wall. With no ropes or safety gear, this would arguably be the greatest feat in rock climbing history." rating="9.7" audienceRating="8.1" year="2018" tagline="Live beyond fear." thumb="/library/metadata/8734/thumb/1787049164" art="/library/metadata/8734/art/1787049164" duration="6013007" originallyAvailableAt="2018-12-13" addedAt="1588600126" updatedAt="1787049164" chapterSource="media" loudnessAnalysisVersion="0.02" primaryExtraKey="/library/metadata/664940" ratingImage="imdb://image.rating">
+<Media id="21784" duration="6013007" bitrate="9191" width="3840" height="2080" aspectRatio="1.85" audioChannels="6" audioCodec="dca-ma" videoCodec="hevc" videoResolution="4k" container="mkv" videoFrameRate="24p" audioProfile="ma" videoProfile="main 10" hasVoiceActivity="1">
+<Part id="346243" key="/library/parts/346243/1588600126/file.mkv" duration="6013007" file="/movies/Free Solo (2018)/Free Solo (2018).mkv" size="6908237434" audioProfile="ma" container="mkv" indexes="sd" videoProfile="main 10" />
+</Media>
+<Image alt="Free Solo" type="coverPoster" url="/library/metadata/8734/thumb/1787049164" />
+<Image alt="Free Solo" type="background" url="/library/metadata/8734/art/1787049164" />
+<Image alt="Free Solo" type="clearLogo" url="/library/metadata/8734/clearLogo/1787049164" />
+<Image alt="Free Solo" type="backgroundSquare" url="/library/metadata/8734/squareArt/1787049164" />
+<UltraBlurColors topLeft="51180b" topRight="454343" bottomRight="293515" bottomLeft="a62a07" />
+<Guid id="imdb://tt7775622" />
+<Guid id="tmdb://515042" />
+<Guid id="tvdb://83" />
+<Genre tag="Documentary" />
+<Genre tag="Adventure" />
+<Country tag="United States of America" />
+<Collection tag="Critically Acclaimed Movies" />
+<Director tag="Jimmy Chin" />
+<Director tag="Elizabeth Chai Vasarhelyi" />
+<Role tag="Alex Honnold" />
+<Role tag="Tommy Caldwell" />
+<Role tag="Jimmy Chin" />
+</Video>
+</MediaContainer>

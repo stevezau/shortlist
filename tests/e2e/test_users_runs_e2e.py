@@ -129,6 +129,39 @@ class TestTheOwnerIsAUserToo:
 
 
 class TestUsers:
+    def test_selected_pause_survives_reload_without_changing_access_or_other_people(
+        self, page: Page, app: ShortlistApp
+    ):
+        before = _users_by_name(app)
+        page.goto("/users")
+        page.get_by_label("Search users").fill("sarah")
+        # The checkboxes appear once selecting is switched on.
+        page.get_by_role("button", name="Select people", exact=True).click()
+        page.get_by_role("checkbox", name="Select sarah", exact=True).check()
+        page.get_by_role("button", name="Pause rebuilding", exact=True).click()
+        _wait_until(
+            lambda: _users_by_name(app)["sarah"]["prefs"].get("paused") is True,
+            "selected pause must reach the stored preferences",
+        )
+        page.reload()
+        sarah = page.get_by_role("row").filter(has=page.get_by_role("link", name="sarah", exact=True))
+        expect(sarah.get_by_text("Paused", exact=True)).to_be_visible(timeout=LOAD)
+        paused = _users_by_name(app)
+        assert {name: user["enabled"] for name, user in paused.items()} == {
+            name: user["enabled"] for name, user in before.items()
+        }
+        for name in before.keys() - {"sarah"}:
+            assert paused[name]["prefs"] == before[name]["prefs"]
+
+        page.get_by_role("button", name="Select people", exact=True).click()  # a reload leaves selecting off
+        page.get_by_role("checkbox", name="Select sarah", exact=True).check()
+        page.get_by_role("button", name="Resume rebuilding", exact=True).click()
+        _wait_until(
+            lambda: _users_by_name(app)["sarah"]["prefs"].get("paused") is False,
+            "selected resume must reach the stored preferences",
+        )
+        assert _users_by_name(app)["sarah"]["enabled"] == before["sarah"]["enabled"]
+
     def test_disabling_a_user_persists_and_leaves_the_others_alone(self, page: Page, app: ShortlistApp):
         page.goto("/users")
         jess = page.get_by_role("switch", name="Shortlist row for jess")

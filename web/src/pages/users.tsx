@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Eye, RefreshCw, ShieldCheck, Users as UsersIcon } from "lucide-react";
+import { Eye, Info, Search, ShieldCheck, UserPlus } from "lucide-react";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { toast } from "sonner";
@@ -8,18 +9,18 @@ import { toast } from "sonner";
 import { apiErrorMessage } from "@/lib/api";
 
 import { MutationAlert } from "@/components/mutation-alert";
+import { HeaderPopover } from "@/components/layout/header-popover";
 import { OwnerNote } from "@/components/owner-note";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
+import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
 import {
   ColdStartBadge,
   DepartedBadge,
-  RestrictedBadge,
   SharingUntouchedBadge,
-  UnhiddenRowsBadge,
-  UserTypeBadge,
 } from "@/components/user-badges";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { GatedSwitch } from "@/components/ui/gated-switch";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -40,18 +42,334 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
-import { profileName } from "@/lib/user-profile";
-import type { User } from "@/lib/types";
-import { formatHitRate, timeAgo } from "@/lib/format";
+import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
+import { profileName, USER_TYPE_LABEL } from "@/lib/user-profile";
+import type { AccountPrivacy, Collection, PrivacyStatus, RowSources, User } from "@/lib/types";
+import { timeAgo } from "@/lib/format";
+import { coarseHitArea } from "@/lib/hit-area";
 import {
   queryKeys,
-  useHitRatesMatured,
+  useCollections,
+  usePrivacyStatus,
   useRemoveUser,
+  useRequestRowSources,
   useSetAllUsersEnabled,
   usePatchUser,
   useUsers,
 } from "@/lib/queries";
 
+/** The one state vocabulary for a person (design refresh, app-users): On, Paused or Off. */
+type UserState = "on" | "paused" | "off";
+
+/**
+ * What a run will do for this person. A restriction profile is Off whatever `enabled` says: Plex
+ * refuses hide rules for a profiled account, so the engine builds no row for it — which is also what
+ * the person's switch shows (`checked={enabled && !restriction_profile}`).
+ */
+function userState(user: User): UserState {
+  if (!user.enabled || user.restriction_profile) return "off";
+  return user.prefs.paused ? "paused" : "on";
+}
+
+function needsAttention(user: User): boolean {
+  return Boolean(user.restriction_profile || user.unhidden_rows || user.departed);
+}
+
+type StatusFilter = "all" | "attention" | UserState;
+
+const STATUS_FILTERS: readonly { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "attention", label: "Needs attention" },
+  { value: "on", label: "On" },
+  { value: "paused", label: "Paused" },
+  { value: "off", label: "Off" },
+];
+
+function matchesStatus(user: User, filter: StatusFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "attention") return needsAttention(user);
+  return userState(user) === filter;
+}
+
+const STATE_LABEL: Record<UserState, string> = { on: "On", paused: "Paused", off: "Off" };
+
+function stateTitle(user: User, state: UserState): string {
+  if (user.departed) return "Plex no longer lists this account, so Shortlist switched them off and removed their rows.";
+  if (user.restriction_profile) {
+    return `Plex's ${profileName(user)} restriction profile is set on this account, so Shortlist builds no row for it.`;
+  }
+  if (state === "paused") return "Their rows are off Home and Recommended and stop updating until you resume them.";
+  if (state === "off") return "Shortlist builds no rows for them, and their rows are off Plex.";
+  return "Their rows run on each row's schedule.";
+}
+
+function StatePill({ user }: { user: User }) {
+  const state = userState(user);
+  const variant = state === "on" ? "success" : state === "paused" ? "warning" : "outline";
+  return (
+    <Badge
+      variant={variant}
+      data-testid="user-state"
+      title={stateTitle(user, state)}
+      className={state === "off" ? "text-muted-foreground" : undefined}
+    >
+      {STATE_LABEL[state]}
+    </Badge>
+  );
+}
+
+/** Plex's own parental-control profile: a fact about the account, not a fault, so it is never red. */
+function RestrictedPill({ user }: { user: User }) {
+  if (!user.restriction_profile) return null;
+  return (
+    <Badge
+      variant="outline"
+      data-testid="restricted-pill"
+      // Never broken over two lines at 390px: the name row wraps the pill as one unit instead.
+      className="whitespace-nowrap font-medium text-muted-foreground"
+      title={`Plex's ${profileName(user)} restriction profile is set on this account. Plex refuses hide rules for profiled accounts, so no row is built for it. Shortlist never changes the profile; set it to None in Plex to give this person recommendations.`}
+    >
+      Restricted · <span>{profileName(user)}</span>
+    </Badge>
+  );
+}
+
+/**
+ * Each privacy state in the Privacy page's words, short enough for a column: the same live reading
+ * (`usePrivacyStatus`), so the two pages can never disagree about an account.
+ */
+const PRIVACY_WORDS: Record<string, { label: string; dot: string }> = {
+  hiding: { label: "Hiding every row", dot: "bg-success" },
+  missing: { label: "Missing hide rules", dot: "bg-destructive" },
+  unreadable_filter: { label: "Plex can’t read its restrictions", dot: "bg-destructive" },
+  left_alone: { label: "Left alone by choice", dot: "bg-muted-foreground" },
+  refused_by_plex: { label: "Won’t accept hide rules", dot: "bg-warning" },
+  owner: { label: "You own the server", dot: "bg-muted-foreground" },
+  unknown: { label: "Not checked", dot: "bg-muted-foreground" },
+};
+
+type PrivacyQuery = { data?: PrivacyStatus; isPending: boolean; isError: boolean; error: unknown };
+
+/** "can see 3 rows…" opens a cell of its own here, so it starts with a capital. */
+function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function PrivacyCell({ user, privacy }: { user: User; privacy: PrivacyQuery }) {
+  const account: AccountPrivacy | undefined = privacy.data?.accounts.find((a) => a.user_id === user.id);
+  // The same figure, in the same words, as the Dashboard's Privacy cell and the Privacy page's
+  // "Hides X of Y rows" (`rowsNotHidden`) — never the run's per-library collection count. It sits under
+  // the state that explains it and leads to the remedy: a profiled account's own page says how to clear
+  // the profile; anything else is the Privacy page's to explain.
+  const exposed = account && privacy.data ? rowsNotHidden(account, privacy.data) : 0;
+  const name = user.display_name || user.username;
+  const exposure =
+    exposed > 0 ? (
+      <Link
+        to={account?.state === "refused_by_plex" ? `/users/${user.id}` : "/privacy"}
+        aria-label={`${name} ${rowsNotTheirs(exposed)} — how to fix it`}
+        className="mt-0.5 block text-sm text-accent-foreground underline underline-offset-4"
+      >
+        {capitalise(rowsNotTheirs(exposed))}
+      </Link>
+    ) : null;
+
+  if (privacy.isPending) return <Skeleton className="h-5 w-32" />;
+  const failure = privacy.isError
+    ? apiErrorMessage(privacy.error, "Couldn’t read plex.tv.")
+    : (privacy.data?.error ?? null);
+  let state: ReactNode;
+  if (failure && !account) {
+    state = (
+      <span className="text-muted-foreground" title={failure}>
+        Couldn’t read
+      </span>
+    );
+  } else if (!account) {
+    state = (
+      <span className="text-muted-foreground" title="plex.tv doesn't list a share for this account.">
+        —
+      </span>
+    );
+  } else {
+    const words = PRIVACY_WORDS[account.state] ?? PRIVACY_WORDS.unknown;
+    state = (
+      <span className="inline-flex items-center gap-2">
+        <span aria-hidden="true" className={`size-2 shrink-0 rounded-full ${words?.dot ?? ""}`} />
+        {words?.label}
+      </span>
+    );
+  }
+  return (
+    <div>
+      {state}
+      {exposure}
+    </div>
+  );
+}
+
+type CollectionsQuery = { data?: Collection[]; isPending: boolean; isError: boolean };
+
+/** How many switched-on rows have this person in their audience; a dash when they get none at all. */
+function RowsCell({ user, collections }: { user: User; collections: CollectionsQuery }) {
+  if (collections.isPending) return <Skeleton className="h-5 w-6" />;
+  if (collections.isError || !collections.data) {
+    return (
+      <span data-testid="user-rows" title="Couldn’t load the rows">
+        —
+      </span>
+    );
+  }
+  if (userState(user) === "off") {
+    return (
+      <span data-testid="user-rows" title="Off: no rows are built for them">
+        —
+      </span>
+    );
+  }
+  const count = collections.data.filter(
+    (row) => row.enabled && (row.audience === "everyone" || row.audience_user_ids.includes(user.id)),
+  ).length;
+  return (
+    <span data-testid="user-rows" className="tabular-nums">
+      {count}
+    </span>
+  );
+}
+
+function PicksCell({ user }: { user: User }) {
+  if (user.picks_watched_30d === null) {
+    return <span title="Hasn’t had a pick yet">—</span>;
+  }
+  return (
+    <span
+      className="tabular-nums"
+      title={
+        user.last_pick_watched_at
+          ? `Last watched a pick ${timeAgo(user.last_pick_watched_at)}`
+          : "Hasn’t watched a pick yet"
+      }
+    >
+      {user.picks_watched_30d}
+    </span>
+  );
+}
+
+/** "02:30 today", "02:30 yesterday", "28 Sept, 02:30" — when the last run that included the person finished. It counts dry and cancelled runs too, so it must never be labelled as a build. */
+function builtAt(iso: string | null): string {
+  if (!iso) return "Never";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === today.toDateString()) return `${time} today`;
+  if (date.toDateString() === yesterday.toDateString()) return `${time} yesterday`;
+  return date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+/** A data cell's own label on a phone, where the person is a card and there are no column headers. */
+function CellLabel({ children }: { children: ReactNode }) {
+  return (
+    <span className="mb-0.5 block text-xs font-semibold uppercase tracking-wide text-faint-foreground xl:hidden">
+      {children}
+    </span>
+  );
+}
+
+/** Request context for one person: whether a Your requests row can find anything of theirs.
+ *
+ *  Reads the ONE row-sources query the page makes (`useRequestRowSources("")` costs up to a few
+ *  dozen HTTP calls to Overseerr and the Arrs, so it is never made per row). A dash carries its
+ *  reason in `title`: the dashes — can't read the sources, Overseerr not connected — would otherwise
+ *  be indistinguishable from each other and from "no requests". With no source connected at all it
+ *  says nothing: the page says that once, above the list. */
+function RequestsCell({
+  user,
+  sources,
+}: {
+  user: User;
+  sources: { data?: RowSources; isPending: boolean; isError: boolean };
+}) {
+  if (sources.isPending) {
+    return <Skeleton data-testid="requests-loading" className="h-5 w-24" />;
+  }
+  const tag = user.requested_by_tag ? (
+    <Badge variant="outline" className="max-w-full break-all">Tag: {user.requested_by_tag}</Badge>
+  ) : null;
+  const cell = (badge: ReactNode, note: string | null) => (
+    <span className="inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="sr-only">Request status: </span>
+      <span className="inline-flex max-w-full flex-wrap items-center gap-1.5">
+        {badge}
+        {tag}
+      </span>
+      {note && <span className="text-xs text-muted-foreground">{note}</span>}
+    </span>
+  );
+  const dash = (reason: string) =>
+    cell(
+      <span title={reason} aria-label={reason}>
+        <span className="hidden xl:inline">—</span><span className="xl:hidden">{reason}</span>
+      </span>,
+      null,
+    );
+  const data = sources.data;
+  if (sources.isError || !data) return dash(unreadableSources(data));
+  if (noRequestSource(data)) return null;
+  // The endpoint never fails: a configured-but-down Overseerr answers 200 with nobody linked, which
+  // would read as every shared person lacking an account and every managed one unable to get one.
+  if (data.overseerr === "unreachable") return dash("Couldn’t read Overseerr");
+
+  const person = data.people.find((p) => p.user_id === user.id);
+  const ready = person?.ready ?? 0;
+  const readyNote = ready > 0 ? `${ready} ready` : null;
+  // Without Overseerr only the tag applies — "hasn't signed in" would blame them for an account
+  // that can't exist — but tag-credited titles still count as ready.
+  if (data.overseerr === "off") {
+    return tag || readyNote ? cell(null, readyNote) : null;
+  }
+  if (person?.linked) {
+    return cell(<Badge variant="success" title="Requests linked to their Overseerr account">Linked</Badge>, readyNote);
+  }
+  if (user.user_type === "managed") {
+    return cell(
+      <Badge variant="secondary">Can’t use Overseerr</Badge>,
+      "Managed profiles can’t sign in to it",
+    );
+  }
+  return cell(
+    <Badge variant="secondary">No account</Badge>,
+    "Hasn’t signed in to Overseerr",
+  );
+}
+
+function noRequestSource(data: RowSources): boolean {
+  return [data.overseerr, data.radarr, data.sonarr].every((s) => s === "off");
+}
+
+/** Why the Requests column is blank after a failed read. A failed REFETCH still has the last answer,
+ *  which says which sources are configured — so an install with only Radarr/Sonarr is not told that
+ *  an Overseerr it never connected is down. With no answer at all, nothing can be blamed by name. */
+function unreadableSources(data: RowSources | undefined): string {
+  const configured = data
+    ? (
+        [
+          ["Overseerr", data.overseerr],
+          ["Radarr", data.radarr],
+          ["Sonarr", data.sonarr],
+        ] as const
+      )
+        .filter(([, state]) => state !== "off")
+        .map(([name]) => name)
+    : [];
+  return configured.length > 0
+    ? `Couldn’t read ${configured.join("/")}`
+    : "Couldn’t read the request sources";
+}
+
+/** Plex's word for each account type, as plain text under the name — every person has one. */
 function UsersSkeleton() {
   return (
     <div className="space-y-2">
@@ -64,9 +382,46 @@ function UsersSkeleton() {
 
 export function UsersPage() {
   const usersQuery = useUsers();
+  const privacy = usePrivacyStatus();
+  const collections = useCollections();
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [sort, setSort] = useState("name");
+  // Bulk selection is a mode: the checkboxes and the bulk bar appear when the owner asks for them, so
+  // the list itself reads as people rather than as a form.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [allActionsOpen, setAllActionsOpen] = useState(false);
+  const [batchError, setBatchError] = useState("");
+  const users = usersQuery.data ?? [];
+  const visibleUsers = users.filter((user) => {
+    const matchesName = `${user.display_name} ${user.username}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
+    return matchesName && matchesStatus(user, status);
+  }).sort((a, b) => sort === "history" ? b.history_depth - a.history_depth :
+    sort === "last-run" ? (b.last_run_at ?? "").localeCompare(a.last_run_at ?? "") :
+    (a.display_name || a.username).localeCompare(b.display_name || b.username));
   const navigate = useNavigate();
   const patchUser = usePatchUser();
-  const ratesMatured = useHitRatesMatured();
+  const toggleSelected = (id: number) => setSelected((before) => { const next = new Set(before); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const selectedUsers = users.filter((user) => selected.has(user.id));
+  const selectedVisible = visibleUsers.filter((user) => selected.has(user.id));
+  const stopSelecting = () => { setSelecting(false); setSelected(new Set()); setBatchError(""); };
+  const pauseSelected = async (paused: boolean) => {
+    setBatchBusy(true); setBatchError("");
+    const failed = new Set<number>();
+    for (const user of selectedUsers) {
+      try { await patchUser.mutateAsync({ id: user.id, patch: { prefs: { paused } } }); }
+      catch { failed.add(user.id); }
+    }
+    setSelected(failed); setBatchBusy(false);
+    if (failed.size) setBatchError(`${failed.size} ${failed.size === 1 ? "person couldn’t" : "people couldn’t"} be updated. They stay selected; try again. Other changes were saved.`);
+    // users.py: pausing takes their rows off every surface NOW (`user.pause.hide`) and resuming
+    // re-promotes them — it is not "rows stay exactly as they are".
+    else toast.success(paused ? "Paused. Their rows are off Home until you resume; nothing is deleted." : "Resumed for the people who are on. Their rows go back on Home.");
+  };
+  // ONCE for the page, never per row — see RequestsCell.
+  const requestSources = useRequestRowSources("", true);
 
   /**
    * Toggle one person, and say so immediately.
@@ -97,7 +452,7 @@ export function UsersPage() {
               : "Their rows are off Plex and everyone else's filters are updated.",
             action: {
               label: "Jobs",
-              onClick: () => navigate("/jobs"),
+              onClick: () => navigate("/activity?tab=jobs"),
             },
           }),
         onError: (error) =>
@@ -116,10 +471,12 @@ export function UsersPage() {
   // and run history, and that is not something to undo by clicking again.
   const [removing, setRemoving] = useState<User | null>(null);
   const removeUser = useRemoveUser();
-  const userCount = usersQuery.data?.length ?? 0;
+  const userCount = users.length;
 
-  // The wizard syncs on its way past, but an install that finished setup had NO way to pull the
-  // roster again — so someone newly invited to Plex, and the owner's own row, never appeared.
+  // "Add people" is the roster sync: Shortlist finds people through Plex, so adding someone means
+  // sharing the server with them in Plex and pulling the roster again. The wizard syncs on its way
+  // past, but an install that finished setup had NO other way to pull it — so someone newly invited
+  // to Plex, and the owner's own row, never appeared.
   const sync = useMutation({
     mutationFn: api.syncUsers,
     // A sync is a Plex WRITER (it renames collections when a nickname changes), so it waits for a
@@ -131,71 +488,58 @@ export function UsersPage() {
             description:
               "A run is using Plex right now, so this will happen the moment it finishes.",
           })
-        : toast.success(
-            result.added || result.updated
-              ? `Synced — ${result.added} new, ${result.updated} updated`
-              : "Synced — no changes",
-          ),
+        : result.added || result.updated
+          ? toast.success(`Synced — ${result.added} new, ${result.updated} updated`)
+          : toast.success("Synced — no changes", {
+              description:
+                "Nobody new on plex.tv. Share your server with them in Plex first, then press Add people again.",
+            }),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.users }),
   });
+  const hasOwner = users.some((user) => user.user_type === "owner");
 
   return (
     <div>
       <PageHeader
-        icon={UsersIcon}
         title="Users"
-        subtitle="Turn someone on and they start getting the rows you’ve built."
+        subtitle="Who gets a row, whether it’s private, and whether they watch it."
         actions={
-          // Wraps: three buttons need 345px in one line and ran off a 320px screen.
-          <div className="flex flex-wrap gap-2">
+          <>
+            <div className="relative w-full sm:w-60" role="search" aria-label="Find a user">
+              <Search aria-hidden="true" className="absolute left-3 top-2.5 size-4 text-faint-foreground" />
+              <Input type="search" aria-label="Search users" placeholder="Find a person…" value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" />
+            </div>
+            <Segmented<StatusFilter>
+              joined
+              ariaLabel="Show"
+              value={status}
+              onChange={setStatus}
+              options={STATUS_FILTERS.map(({ value, label }) => ({
+                value,
+                label: (
+                  <>
+                    {label}
+                    <span className="ml-1.5 tabular-nums opacity-70">{users.filter((user) => matchesStatus(user, value)).length}</span>
+                  </>
+                ),
+              }))}
+            />
+            {/* Neither the trigger nor its items carry `loading` — they merely OPEN a confirmation; the
+                mutation (and its loading state) belongs to the confirm button inside it. */}
+            <HeaderPopover open={allActionsOpen} onOpenChange={setAllActionsOpen} align="right" label="All user actions" width={192} className="grid gap-2 p-2" trigger={<Button variant="outline">All users…</Button>}>
+              <Button variant="outline" onClick={() => { setAllActionsOpen(false); setConfirmEnableOpen(true); }}>Enable all</Button>
+              <Button variant="outline" onClick={() => { setAllActionsOpen(false); setConfirmDisableOpen(true); }}>Disable all</Button>
+            </HeaderPopover>
             <Button
-              variant="outline"
               onClick={() => sync.mutate()}
               loading={sync.isPending}
-              title="Pull the latest users from Plex and friendly names from Tautulli (if connected)"
+              title="Pulls in everyone your Plex server is shared with. Share it with someone in Plex first."
             >
-              <RefreshCw aria-hidden="true" />
-              Sync users
+              <UserPlus aria-hidden="true" />
+              Add people
             </Button>
-            {/* Neither trigger carries `loading` — both merely OPEN a dialog; the mutation (and its
-                loading state) belongs to the confirm button inside it. */}
-            {/* Beside the people it is about, not in a Settings section: "is everyone's row
-                actually hidden from everyone else" is a question the owner asks while looking at
-                this list. */}
-            <Button variant="outline" asChild>
-              <Link to="/sharing">
-                <ShieldCheck aria-hidden="true" />
-                Sharing and privacy
-              </Link>
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setConfirmEnableOpen(true)}
-            >
-              Enable all
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setConfirmDisableOpen(true)}
-            >
-              Disable all
-            </Button>
-            {/* Always here, and deliberately not behind the owner note — that note is dismissible,
-                and dismissing "you see everyone's rows" is how people say "yes, I know" rather than
-                "I never want the tool again". Before this, hiding the note hid the only way back to
-                it short of remembering the URL. */}
-            {(usersQuery.data ?? []).some(
-              (user) => user.user_type === "owner",
-            ) && (
-              <Button variant="outline" asChild>
-                <Link to="/watching-account?setup=1">
-                  <Eye aria-hidden="true" />
-                  Watching account
-                </Link>
-              </Button>
-            )}
-          </div>
+          </>
         }
       />
 
@@ -349,116 +693,105 @@ export function UsersPage() {
       <QueryBoundary
         query={usersQuery}
         skeleton={<UsersSkeleton />}
-        isEmpty={(users) => users.length === 0}
+        isEmpty={(list) => list.length === 0}
         empty={
           <EmptyState
             title="No users yet"
-            hint="Shortlist hasn’t found anyone on your server. Press “Sync users” above to ask plex.tv again — and if that turns up nothing, check the server address and token in Settings → Connections, on the Plex card."
+            hint="Shortlist hasn’t found anyone on your server. Press “Add people” above to ask plex.tv again — and if that turns up nothing, check the server address and token in Settings → Connections, on the Plex card."
           />
         }
       >
-        {(users) => (
+        {(list) => (
           <div className="space-y-4">
-            {users.some((user) => user.user_type === "owner") && <OwnerNote />}
-            <div className="overflow-hidden rounded-xl border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    {/* Six columns do not fit a phone. Unhidden they simply ran off the card —
-                        356px of container for 463px of table — so "Picks watched" and "Enabled"
-                        sat outside it, cut mid-number, inside a horizontal scroller with no
-                        visible edge to suggest scrolling. Dropping the two time columns below `lg`
-                        gets the remaining four under 356px. Type stays at every width: its badges
-                        are the warnings ("Sees 8 rows of others'", "Older Kid"), which is the last
-                        thing a narrow screen should lose — and rendering them twice, once per
-                        breakpoint, would announce every one of them twice to a screen reader. */}
-                    <TableHead>User</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="hidden lg:table-cell">
-                      Watch history
-                    </TableHead>
-                    <TableHead className="hidden lg:table-cell">
-                      Last run
-                    </TableHead>
-                    {/* One more column goes at 320: four still overran by 32px there, and the one
-                        left outside the card was Enabled — a switch you could not reach. A number
-                        you cannot see is a nuisance; a control you cannot press is a broken page,
-                        so the number is what yields. */}
-                    <TableHead
-                      className="hidden sm:table-cell"
-                      // NOT "a pick gets a month before it counts" — that is the DASHBOARD's
-                      // landing rate, which uses a matured cohort. This figure is lifetime
-                      // watched-over-delivered with no maturity filter at all (`api/users.py`), so
-                      // borrowing that sentence would describe a different number. All the blank
-                      // means is "too early for a zero to tell you anything".
-                      title={
-                        ratesMatured
-                          ? "Share of Shortlist's picks this person has watched, over all time"
-                          : "Share of Shortlist's picks this person has watched, over all time. Blank while every pick on the server is still too new to judge."
-                      }
-                    >
-                      Picks watched
-                      {/* Visible, not only in the `title`. Before maturity this column is a dash
-                          for every person, and a whole column of dashes with its explanation
-                          hover-only tells a phone or keyboard user nothing at all. The tooltip
-                          stays for the detail; this says the one word that makes the dashes read
-                          as "not yet" instead of "broken". */}
-                      {!ratesMatured && (
-                        <span className="ml-1.5 font-normal text-muted-foreground">
-                          (too early)
-                        </span>
-                      )}
-                    </TableHead>
-                    <TableHead className="text-right">Enabled</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {users.map((user) => (
-                    <TableRow key={user.id} className="group">
-                      <TableCell>
-                        <Link
-                          to={`/users/${user.id}`}
-                          className="flex items-center gap-3 rounded-sm font-medium text-foreground group-hover:text-primary"
-                          title={`Plex username: ${user.username}`}
-                        >
+            {hasOwner && <OwnerNote />}
+            {/* Once for the page: per person it was the same dash forty times over. */}
+            {requestSources.data && !requestSources.isError && noRequestSource(requestSources.data) && (
+              <p className="flex items-start gap-2 text-sm text-muted-foreground">
+                <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  No request source is connected, so nobody&rsquo;s missing picks can be requested.{" "}
+                  <Link to="/settings/connections" className="text-accent-foreground underline underline-offset-4">
+                    Set one up in Connections
+                  </Link>
+                </span>
+              </p>
+            )}
+            <div role="group" aria-label="User list controls" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                {selecting ? (
+                  <>
+                    <Button size="sm" variant="outline" disabled={batchBusy} onClick={stopSelecting}>Done selecting</Button>
+                    <label className={`flex cursor-pointer items-center gap-2 text-foreground ${coarseHitArea}`}>
+                      <input type="checkbox" aria-label="Select visible users" checked={visibleUsers.length > 0 && selectedVisible.length === visibleUsers.length} ref={(box) => { if (box) box.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visibleUsers.length; }} disabled={batchBusy || visibleUsers.length === 0} onChange={(event) => setSelected((before) => { const next = new Set(before); for (const user of visibleUsers) { if (event.target.checked) next.add(user.id); else next.delete(user.id); } return next; })} className="size-4 shrink-0 accent-primary" />
+                      Select visible
+                    </label>
+                  </>
+                ) : (
+                  <Button size="sm" variant="outline" onClick={() => setSelecting(true)} title="Pick people to pause or resume together">Select people</Button>
+                )}
+                <p role="status">Showing {visibleUsers.length} of {list.length} people</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-2">Sort by<select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-xs"><option value="name">Name A–Z</option><option value="history">Most watch history</option><option value="last-run">Last run</option></select></label>
+                {/* Always here, and deliberately not behind the owner note — that note is dismissible,
+                    and dismissing "you see everyone's rows" is how people say "yes, I know" rather than
+                    "I never want the tool again". Before this, hiding the note hid the only way back to
+                    it short of remembering the URL. */}
+                {/* Beside the people it is about, not in a Settings section: "is everyone's row actually
+                    hidden from everyone else" is a question the owner asks while looking at this list. */}
+                <Button size="sm" variant="ghost" asChild>
+                  <Link to="/privacy">
+                    <ShieldCheck aria-hidden="true" />
+                    Privacy
+                  </Link>
+                </Button>
+                {hasOwner && (
+                  <Button size="sm" variant="ghost" asChild>
+                    <Link to="/watching-account?setup=1">
+                      <Eye aria-hidden="true" />
+                      Watching account
+                    </Link>
+                  </Button>
+                )}
+              </div>
+            </div>
+            {selecting && selectedUsers.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border-strong bg-elevated px-4 py-3"><div className="text-sm"><strong>{selectedUsers.length} selected</strong><button type="button" className="ml-3 text-xs text-muted-foreground underline" disabled={batchBusy} onClick={() => setSelected(new Set())}>Clear</button><p className="mt-1 text-xs text-muted-foreground">Pausing takes their rows off Home until you resume; nothing is deleted. Off accounts stay off.</p></div><div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={batchBusy} onClick={() => void pauseSelected(false)}>Resume rebuilding</Button><Button size="sm" variant="outline" loading={batchBusy} onClick={() => void pauseSelected(true)}>Pause rebuilding</Button></div></div>}
+            {batchError && <p role="alert" className="text-sm text-destructive-text">{batchError}</p>}
+            {visibleUsers.length === 0 ? (
+              <EmptyState title="No matching users" hint="Try another name or status." action={<Button variant="outline" onClick={() => { setSearch(""); setStatus("all"); }}>Clear filters</Button>} />
+            ) : (
+              <div className="overflow-hidden rounded-xl border bg-card">
+                <Table>
+                  <TableHeader className="hidden xl:table-header-group">
+                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead className="pr-8 text-right">Picks watched (30 days)</TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
+                  </TableHeader>
+                  <TableBody className="grid xl:table-row-group">
+                    {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 xl:table-row xl:p-0 [&>td]:p-0 xl:[&>td]:px-3 xl:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
+                      <TableCell className="min-w-0 xl:w-[34%] xl:pl-4">
+                        <div className="flex items-start gap-3">
+                          {selecting && <label className={`mt-1.5 flex shrink-0 cursor-pointer ${coarseHitArea}`}><input type="checkbox" aria-label={`Select ${user.display_name || user.username}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="size-4 shrink-0 accent-primary" /></label>}
                           <UserAvatar name={user.username} size="sm" />
-                          <span className="group-hover:underline">
-                            {user.display_name || user.username}
-                          </span>
-                        </Link>
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <Link to={`/users/${user.id}`} className="min-w-0 break-words font-semibold hover:text-primary hover:underline" title={`Plex username: ${user.username}`}>{user.display_name || user.username}</Link>
+                              <RestrictedPill user={user} />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                              <span>{USER_TYPE_LABEL[user.user_type] ?? user.user_type}</span>
+                              {user.display_name && user.display_name !== user.username && <span className="break-all" title="Plex username">{user.username}</span>}
+                              <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1"><span className="whitespace-nowrap tabular-nums">{user.history_depth} titles watched</span><ColdStartBadge user={user} /></span>
+                            </div>
+                            {(!user.manage_sharing || user.departed) && <div className="flex flex-wrap gap-1.5"><SharingUntouchedBadge user={user} /><DepartedBadge user={user} /></div>}
+                            <div className="text-xs text-muted-foreground"><RequestsCell user={user} sources={requestSources} /></div>
+                          </div>
+                        </div>
                       </TableCell>
-                      <TableCell>
-                        <span className="flex flex-wrap items-center gap-1.5">
-                          <UserTypeBadge user={user} />
-                          <RestrictedBadge user={user} />
-                          <UnhiddenRowsBadge user={user} />
-                          <SharingUntouchedBadge user={user} />
-                          <DepartedBadge user={user} />
-                        </span>
-                      </TableCell>
-                      <TableCell className="hidden text-muted-foreground lg:table-cell">
-                        {/* "New viewer" belongs HERE, next to the number it explains — it's a
-                            state, not a type, and in the Type column it read as one. */}
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span className="tabular-nums">
-                            {user.history_depth} titles
-                          </span>
-                          <ColdStartBadge user={user} />
-                        </span>
-                      </TableCell>
-                      <TableCell className="hidden text-muted-foreground lg:table-cell">
-                        {timeAgo(user.last_run_at)}
-                      </TableCell>
-                      {/* An em dash, not "0%", until a pick has actually had its chance. On day one
-                          this whole column read 0% for everybody — a number the dashboard itself
-                          refuses to compute yet. */}
-                      <TableCell className="hidden text-muted-foreground tabular-nums sm:table-cell">
-                        {formatHitRate(user.hit_rate, ratesMatured)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {/* Gated on the PRESET, not on `restricted` — plex.tv sets that for every Plex
-                            Home user, so keying on it greyed out ordinary managed accounts that can
-                            perfectly well have a row (#20). */}
+                      <TableCell className="justify-self-end xl:justify-self-auto"><StatePill user={user} /></TableCell>
+                      <TableCell className="text-sm xl:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
+                      <TableCell className="text-sm xl:pr-8 xl:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
+                      <TableCell className="text-sm"><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
+                      <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? new Date(user.last_run_at).toLocaleString() : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
+                      <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap xl:table-cell xl:pr-4 xl:text-right">
                         <GatedSwitch
                           checked={user.enabled && !user.restriction_profile}
                           reason={
@@ -485,11 +818,18 @@ export function UsersPage() {
                           </Button>
                         )}
                       </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                    </TableRow>)}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              <strong className="font-semibold text-foreground">On</strong>: rows run on each row&rsquo;s schedule.{" "}
+              <strong className="font-semibold text-foreground">Paused</strong>: their rows come off Home and Recommended and stop updating; resuming puts them back, nothing is deleted.{" "}
+              <strong className="font-semibold text-foreground">Off</strong>: their rows come off Plex.{" "}
+              <strong className="font-semibold text-foreground">Restricted</strong> is Plex&rsquo;s own parental-control profile; Shortlist never changes it.
+            </p>
           </div>
         )}
       </QueryBoundary>

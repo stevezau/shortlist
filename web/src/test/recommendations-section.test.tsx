@@ -1,21 +1,23 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RecommendationsSection } from "@/components/settings/recommendations-section";
 import type { Settings } from "@/lib/types";
 
-const { putSettings } = vi.hoisted(() => ({
+const { putSettings, previewWebPrompt } = vi.hoisted(() => ({
   putSettings: vi.fn((values: Settings) => Promise.resolve(values)),
+  previewWebPrompt: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
-  api: { putSettings, testConnection: vi.fn() },
+  api: { putSettings, previewWebPrompt, testConnection: vi.fn() },
 }));
 
-function renderSection(settings: Settings) {
+function renderSection(settings: Settings, expand = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -26,10 +28,30 @@ function renderSection(settings: Settings) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  if (!expand) return;
+  // These tests exercise the full controls; the compact disclosure defaults are checked separately.
+  for (const title of ["Web search", "More recommendation controls"]) {
+    const summary = screen.getAllByText(title).map((node) => node.closest("summary")).find(Boolean);
+    if (summary && !(summary.parentElement as HTMLDetailsElement).open) fireEvent.click(summary);
+  }
 }
 
 describe("RecommendationsSection", () => {
-  beforeEach(() => putSettings.mockClear());
+  beforeEach(() => {
+    putSettings.mockClear();
+    previewWebPrompt.mockReset();
+    previewWebPrompt.mockResolvedValue({ backend: "native", system: "", builtin_guidance: "", inert: false });
+  });
+
+  it("keeps common controls and enabled web-search guidance visible", () => {
+    renderSection({ "candidates.sources": ["llm_web"], "curator.provider": "none", "llm_web.search_provider": "native" }, false);
+    // The cadence, the watched cap and recent releases are always on screen, not behind a disclosure.
+    expect(screen.getByText("Titles refresh every")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: /titles refresh every, in days/i })).toBeVisible();
+    expect(screen.getByText("Already-watched titles").closest("details")).toBeNull();
+    expect(screen.getByText("More recommendation controls").closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText(/the search runs inside it/i)).toBeVisible();
+  });
 
   // The model is "intent + inline fix": a source's toggle is never disabled; when it's on but its
   // dependency is missing, the card shows exactly how to satisfy it right there.
@@ -180,7 +202,7 @@ describe("RecommendationsSection", () => {
       screen.getByRole("slider", { name: /release date counts/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("spinbutton", { name: /how often the row rebuilds/i }),
+      screen.getByRole("spinbutton", { name: /titles refresh every, in days/i }),
     ).toBeInTheDocument();
   });
 
@@ -188,7 +210,7 @@ describe("RecommendationsSection", () => {
     renderSection({ "recommendations.idle_hold_days": 0 });
     // Off is the shipped default, so the control has to explain the DEFAULT, not just the feature.
     expect(
-      screen.getByText(/rebuild on schedule whatever/i),
+      screen.getByText(/refresh when due, whatever/i),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^a month$/i }));
@@ -204,7 +226,7 @@ describe("RecommendationsSection", () => {
     // what this is for, and the number is the only thing on screen that says otherwise.
     renderSection({ "recommendations.idle_hold_days": 30 });
     expect(
-      screen.getByText(/rebuilds anyway after 30 days/i),
+      screen.getByText(/refreshes anyway after 30 days/i),
     ).toBeInTheDocument();
   });
 
@@ -228,7 +250,7 @@ describe("RecommendationsSection", () => {
       "recommendations.refresh_days": 0,
       "recommendations.idle_hold_days": 30,
     });
-    expect(screen.getByText(/never rebuild/i)).toBeInTheDocument();
+    expect(screen.getByText(/never refresh/i)).toBeInTheDocument();
   });
 
   it("does not warn when the hold is above the cadence", () => {
@@ -263,6 +285,7 @@ describe("RecommendationsSection", () => {
     expect(input).toHaveValue(10);
 
     fireEvent.change(input, { target: { value: "4" } });
+    fireEvent.blur(input);
 
     await waitFor(() => expect(putSettings).toHaveBeenCalled());
     expect(
@@ -299,5 +322,141 @@ describe("RecommendationsSection", () => {
 
     expect(screen.queryByText(/a narrower slice of the same list/i)).toBeNull();
     expect(screen.queryByText(/cached for 7 days/i)).toBeNull();
+  });
+
+  it("shows Shortlist's built-in instructions until the owner writes their own, which starts from its template", async () => {
+    previewWebPrompt.mockResolvedValue({
+      backend: "exa",
+      system: "",
+      builtin_guidance: "BUILT IN TEXT",
+      builtin_template: "Pick {count} from {last_year} or {year}.",
+      inert: false,
+    });
+    renderSection({ "llm_web.instructions": "", "candidates.sources": ["tmdb_similar", "llm_web"] });
+    expect(await screen.findByText("BUILT IN TEXT")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Write your own" }));
+    // The template, not the rendered text: a saved copy of "2025 or 2026" would never move on.
+    expect(screen.getByLabelText("AI instructions")).toHaveValue("Pick {count} from {last_year} or {year}.");
+    expect(screen.getByText("You can use {count}, {year} and {last_year}.")).toBeInTheDocument();
+  });
+
+  it("asks for the built-in instructions again when the search backend changes", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = (backend: string) => (
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <RecommendationsSection
+            settings={{ "llm_web.instructions": "", "candidates.sources": ["llm_web"], "llm_web.search_provider": backend }}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui("native"));
+    await waitFor(() => expect(previewWebPrompt).toHaveBeenCalledTimes(1));
+    rerender(ui("exa"));
+    await waitFor(() => expect(previewWebPrompt).toHaveBeenCalledTimes(2));
+  });
+
+  it("stores the built-in template, untouched, as empty so no row rebuilds", async () => {
+    previewWebPrompt.mockResolvedValue({
+      backend: "native",
+      system: "",
+      builtin_guidance: "BUILT IN TEXT",
+      builtin_template: "Pick {count} from {year}.",
+      inert: false,
+    });
+    renderSection({ "llm_web.instructions": "", "candidates.sources": ["llm_web"] });
+    await userEvent.click(await screen.findByRole("button", { name: "Write your own" }));
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(putSettings.mock.calls.at(-1)?.[0]["llm_web.instructions"]).toBe("");
+    // Trailing whitespace is still the template.
+    await userEvent.type(screen.getByLabelText("AI instructions"), "  ");
+    await waitFor(() => expect(putSettings).toHaveBeenCalledTimes(2));
+    expect(putSettings.mock.calls.at(-1)?.[0]["llm_web.instructions"]).toBe("");
+  });
+
+  it("stores the template once the owner changes it", async () => {
+    previewWebPrompt.mockResolvedValue({
+      backend: "native",
+      system: "",
+      builtin_guidance: "BUILT IN TEXT",
+      builtin_template: "Pick {count} from {year}.",
+      inert: false,
+    });
+    renderSection({ "llm_web.instructions": "", "candidates.sources": ["llm_web"] });
+    await userEvent.click(await screen.findByRole("button", { name: "Write your own" }));
+    await userEvent.type(screen.getByLabelText("AI instructions"), " No horror.");
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ "llm_web.instructions": "Pick {count} from {year}. No horror." }),
+      ),
+    );
+  });
+
+  it("asks for web search to be turned on, rather than loading forever, when it is off", () => {
+    renderSection({ "llm_web.instructions": "", "candidates.sources": ["tmdb_similar"] });
+    const message = screen.getByText("Turn on web search to set these.");
+    expect(message.parentElement?.querySelector(".animate-pulse")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Write your own" })).toBeNull();
+  });
+
+  it("autosaves the owner's instructions", async () => {
+    renderSection({ "llm_web.instructions": "Favour classics.", "candidates.sources": ["llm_web"] });
+    const box = screen.getByLabelText("AI instructions");
+    await userEvent.type(box, " Any decade.");
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ "llm_web.instructions": "Favour classics. Any decade." }),
+      ),
+    );
+  });
+
+  it("Reset to Shortlist's default clears the setting", async () => {
+    renderSection({ "llm_web.instructions": "Favour classics.", "candidates.sources": ["llm_web"] });
+    await userEvent.click(screen.getByRole("button", { name: "Reset to Shortlist's default" }));
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith(expect.objectContaining({ "llm_web.instructions": "" })),
+    );
+  });
+
+  it("says so, with a Retry, when the built-in instructions won't load", async () => {
+    previewWebPrompt.mockRejectedValue(new Error("boom"));
+    renderSection({ "llm_web.instructions": "", "candidates.sources": ["llm_web"] });
+    expect(await screen.findByText("Couldn't load Shortlist's default instructions.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("keeps the textarea, focused, when the owner clears it", async () => {
+    renderSection({ "llm_web.instructions": "Favour classics.", "candidates.sources": ["llm_web"] });
+    const box = screen.getByLabelText("AI instructions");
+    await userEvent.clear(box);
+    const after = screen.getByLabelText("AI instructions");
+    expect(after).toBe(box);
+    expect(after).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Write your own" })).toBeNull();
+    await waitFor(() => expect(putSettings).toHaveBeenCalledWith(expect.objectContaining({ "llm_web.instructions": "" })));
+  });
+
+  it("saves whitespace-only instructions as empty", async () => {
+    renderSection({ "llm_web.instructions": "Favour classics.", "candidates.sources": ["llm_web"] });
+    const box = screen.getByLabelText("AI instructions");
+    await userEvent.clear(box);
+    await userEvent.type(box, "   ");
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(putSettings.mock.calls.at(-1)?.[0]["llm_web.instructions"]).toBe("");
+  });
+
+  it("Reset returns to the built-in view and saves empty", async () => {
+    previewWebPrompt.mockResolvedValue({ backend: "native", system: "", builtin_guidance: "BUILT IN TEXT", inert: false });
+    renderSection({ "llm_web.instructions": "Favour classics.", "candidates.sources": ["llm_web"] });
+    await userEvent.click(screen.getByRole("button", { name: "Reset to Shortlist's default" }));
+    expect(await screen.findByText("BUILT IN TEXT")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "AI instructions" })).toBeNull();
+    await waitFor(() => expect(putSettings).toHaveBeenCalledWith(expect.objectContaining({ "llm_web.instructions": "" })));
+  });
+
+  it("does not fetch the built-in instructions while web search is off", () => {
+    renderSection({ "llm_web.instructions": "", "candidates.sources": ["tmdb_similar"] });
+    expect(previewWebPrompt).not.toHaveBeenCalled();
   });
 });

@@ -295,6 +295,30 @@ CATALOG: tuple[JobKind, ...] = (
         ),
     ),
     JobKind(
+        kind="themes.rotate",
+        label="Pick new row themes",
+        description=(
+            "For every AI row set to Explore, gives each person a new theme when their current one has "
+            "run its course, and writes the following theme a day early so you can look at it and change "
+            "it. It asks your AI provider for a theme only when one is needed, and the tokens are counted "
+            "against that row."
+            "\n\nIt also tops up an AI row's list once: when someone has watched most of the titles the AI "
+            "named and their row has started filling with tag and genre matches, it asks the AI for about "
+            "40 more titles for that theme and adds them. A theme is topped up once, ever; if the AI "
+            "doesn't answer, the next pass tries again."
+            "\n\nIt changes nothing on Plex. A row picks up its new theme the next time the row itself "
+            "builds. If something goes wrong (the AI is paused or unreachable, TMDB has no key) the "
+            "person keeps the theme they have, the problem is recorded in the change log, and the next "
+            "pass tries again."
+            "\n\nRuns once a day by default. How often a theme changes is set on each row, not here."
+        ),
+        manual=True,
+        writes_plex=False,  # reads the libraries to see what the server holds; writes only Shortlist's database
+        schedule_job_id="themes-rotate",
+        schedule_setting="themes.rotate_cron",
+        schedule_optional=True,
+    ),
+    JobKind(
         kind="user.cleanup",
         label="Remove a disabled person's rows",
         description=(
@@ -645,6 +669,7 @@ def _finish(sessions, job_id: int, *, result: dict | None = None, error: str | N
         job.finished_at = datetime.now(UTC)
         if error is None:
             job.status = "done"
+            job.error = None  # an earlier attempt's text is kept in its job.attempt_failed event
             job.result = result or {}
             job.detail = str((result or {}).get("detail", ""))[:512]
         elif job.attempts < job.max_attempts:
@@ -989,6 +1014,9 @@ def _sync_check(state, payload: dict) -> dict:
     # anything: `dry_run` is True only when `ctx.config.dry_run` is (it is one of the two terms it is
     # OR'd from), and converge checks that flag before every delete, logging the would-be removal.
     _converge_phase(ctx, set(), report, may_delete=confirmed or dry_run)
+    # Before the shelf pass, whose library read can raise: an orphan deleted here is gone from Plex, and the
+    # retry's converge finds nothing left to record.
+    _audit_runless_pass(state, report, dry_run, "sync.check")
     # A row stranded at the bottom of the Recommended shelf IS a row "in the wrong place", which is
     # what this button says it fixes — so put the shelf right here too, not only on a full run. It is
     # cosmetic and privacy-neutral (positions only, on hubs already promoted and browse-hidden), so it
@@ -1082,6 +1110,34 @@ def _audit_hub_orderings(state, report, dry_run: bool) -> None:
         )
 
 
+def _audit_runless_pass(state, report, dry_run: bool, kind: str) -> None:
+    """Audit what a pass that persists no run did to Plex — the rows its sweep deleted, every share filter it
+    wrote, every row its converge took off Home and every orphan converge deleted (plex-safety rule 10).
+
+    The run persister is the only other place `report.swept_rows`, `report.filter_writes`,
+    `report.converge_demotions` and `report.orphan_deletions` become events: on 2026-09-27 a `privacy.sync`
+    took a deleted shared row's exclude off ~46 accounts with no event, and a swept row was deleted from Plex
+    with none either. Each emitter adds nothing for an empty list, so one call covers every job: the privacy
+    passes never delete an orphan (`engine_run(ctx, [])` hands converge no delete authority) and `sync.check`
+    neither sweeps nor writes a filter. Committed in its own session, as `write_audit` is, so the record
+    survives a raise later in the job — the deletes and writes that landed are on Plex, and the retry finds
+    nothing left to do.
+    """
+    from shortlist.server.services.run_persistence import (
+        audit_demotions,
+        audit_filter_writes,
+        audit_orphan_deletes,
+        audit_sweep,
+    )
+
+    with state.sessions() as session:
+        audit_sweep(session, report, dry_run=dry_run, job=kind)
+        audit_filter_writes(session, report, dry_run=dry_run, job=kind)
+        audit_demotions(session, report, dry_run=dry_run, job=kind)
+        audit_orphan_deletes(session, report, dry_run=dry_run, job=kind)
+        session.commit()
+
+
 @handler("privacy.sync")
 def _privacy_sync(state, payload: dict) -> dict:
     """Merge every account's share filter without building anything.
@@ -1126,6 +1182,7 @@ def _privacy_sync(state, payload: dict) -> dict:
     # Before the check that may raise: an account repaired in a pass that another account blocked is
     # still repaired, and the retry will find nothing left to report.
     audit_restored_restrictions(state, report)
+    _audit_runless_pass(state, report, dry_run, "privacy.sync")
     _require_filters_merged(report, "reporting the filters as merged")
     _audit_hub_orderings(state, report, dry_run)
     swept = sum(len(titles) for key, titles in report.swept_rows.items() if not key.startswith(FREED_NAME_HELPER_KEY))
@@ -1141,8 +1198,8 @@ def _privacy_sync(state, payload: dict) -> dict:
         detail += f" after {reason}"
     if swept:
         detail += f"; swept {swept} unhidable row(s)"
-    # Not rows: collections a run that was stopped left behind while freeing a row's name. This job writes no
-    # run, so this line is the only record of deleting them (rule 10).
+    # Not rows: collections a run that was stopped left behind while freeing a row's name. The `run.sweep` event
+    # is the audit (rule 10); this line is the Jobs page's answer to what the pass did.
     if helpers_removed:
         detail += f"; removed {helpers_removed} leftover name-freeing helper collection(s)"
     # `privacy.sync` persists no run, so `report.left_alone_failures` has nowhere else to surface —
@@ -1320,12 +1377,58 @@ def _watch_reconcile(state, payload: dict) -> dict:
     and the nightly sync reaches the same conclusion later from the same records. Waiting instead
     would mean an 88-minute run silently swallowing every partial watch made during it.
     """
+    from shortlist.server.services.report_cache import invalidate_report_cache
     from shortlist.server.services.run_persistence import reconcile_from_events
 
     changed = reconcile_from_events(state.sessions)
     if changed:
+        invalidate_report_cache()
         state.bus.publish("sync.finished", {"kind": "credited", "ok": True, "count": changed})
     return {"users_credited": changed}
+
+
+@handler("themes.rotate")
+def _themes_rotate(state, payload: dict) -> dict:
+    """Promote and author explore rows' per-person themes (#138). Writes Shortlist's own database only.
+
+    Authoring needs an AI provider, a TMDB key and a connected Plex. Without one, no theme changes: every
+    person who needed one keeps theirs and gets an event saying why, and the next pass tries again.
+    """
+    from shortlist.server.services.theme_rotation import (
+        _once,
+        authoring_tools,
+        rotate_themes,
+        rotation_targets,
+        top_up_rows,
+        top_up_themes,
+    )
+
+    # Nothing to do means nothing is built: an install with an AI provider but no AI row must not connect
+    # to Plex every night, or ring the bell when Plex is down.
+    targets = rotation_targets(state.sessions)
+    if not targets and not top_up_rows(state.sessions):
+        return {"targets": 0}
+    now = datetime.now(UTC)
+    tools = _once(lambda: authoring_tools(state))
+    outcomes = rotate_themes(
+        state.sessions,
+        now=now,
+        secrets=state.secrets,
+        tools=tools,
+        profile_for=state.run_service.profile_with_history,
+    )
+    counts: dict[str, int] = {}
+    for outcome in outcomes:
+        counts[outcome.action] = counts.get(outcome.action, 0) + 1
+    # After the rotation, so a theme just written is judged on its own list; before the nightly row run.
+    topped_up = top_up_themes(
+        state.sessions,
+        now=now,
+        secrets=state.secrets,
+        tools=tools,
+        dry_run=bool(payload.get("dry_run", False)),
+    )
+    return {"targets": len(outcomes), **counts, "topped_up": topped_up}
 
 
 @handler("maintenance.prune")
@@ -1451,7 +1554,7 @@ def _user_restore(state, payload: dict) -> dict:
     report and raises. The whole job is then retried, and nothing is promoted meanwhile.
     """
     from shortlist.engine.models import UserProfile, UserType
-    from shortlist.engine.pipeline import any_row_hidden_today, identity_map, promote_user_rows
+    from shortlist.engine.pipeline import any_row_hidden_today, built_seasons, identity_map, promote_user_rows
     from shortlist.engine.pipeline import run as engine_run
     from shortlist.server.db.models import Delivery, Run, RunUser, User
 
@@ -1526,13 +1629,19 @@ def _user_restore(state, payload: dict) -> dict:
     # Before the check that may raise: an account repaired in a pass that another account blocked is
     # still repaired, and the retry will find nothing left to report.
     audit_restored_restrictions(state, report)
+    _audit_runless_pass(state, report, dry_run, "user.restore")
     _require_filters_merged(report, f"promoting {slug}'s rows")
     # Left alone, not shown, when a row is hidden today: un-pausing on a row's day off must not put an
     # unidentifiable `{top_seed}` collection back on Home, exactly as `_promote_phase` decides it. The
     # trade is the nightly run's too: after a pause "left alone" means still hidden, until that row's
     # next delivery writes the ledger key that identifies it. Over-showing is the one this cannot risk.
     restored = promote_user_rows(
-        ctx, profile, placements, placement_keys=keys, skip_unmatched=any_row_hidden_today(ctx.config)
+        ctx,
+        profile,
+        placements,
+        placement_keys=keys,
+        skip_unmatched=any_row_hidden_today(ctx.config),
+        built_for=built_seasons(ctx),
     )
     # `dry_run` recorded, not assumed False: `promote_user_rows` carries its own safe-mode guard, so
     # under SHORTLIST_DRY_RUN it returns the keys it WOULD have promoted and nothing on Plex moved.
@@ -1752,9 +1861,9 @@ def _rows_visibility(state, payload: dict) -> dict:
     mean anything, and it is why the schedule is a MIDNIGHT job rather than a flag a run reads.
 
     **This handler keeps no state of its own.** Today's answer is
-    ``row_shown_today(show_days, seasons, lead, after, now)`` — schedule, seasons and calendar, nothing
-    else — so there is nothing to cache, nothing to keep in sync, and no ordering rule about when to
-    record it. An earlier version cached the last-applied answer per row to skip work, and that cache
+    ``row_shown_today(show_days, seasons, lead, after, now, catalogue=...)`` — schedule, seasons and
+    calendar, nothing else — so there is nothing to cache, nothing to keep in sync, and no ordering rule
+    about when to record it. An earlier version cached the last-applied answer per row to skip work, and that cache
     produced two bugs by itself: it recorded rows as converged under ``paused_all``, and again for a
     collection the pass had SKIPPED. Both left a row visible on a day its schedule said to hide it,
     permanently, because the cache then agreed that there was nothing to do. Recomputing is simpler AND
@@ -1784,11 +1893,12 @@ def _rows_visibility(state, payload: dict) -> dict:
     individually paused person. This is the first scheduled task that writes to people's shelves, so a
     kill switch it did not honour would be a kill switch in name only.
     """
-    from shortlist.engine.pipeline import identity_map, promote_shared_row, promote_user_rows
+    from shortlist.engine.pipeline import built_seasons, identity_map, promote_shared_row, promote_user_rows
     from shortlist.engine.pipeline import run as engine_run
     from shortlist.engine.rows import row_shown_today
     from shortlist.server.db.models import Collection, Delivery
     from shortlist.server.services.context_builder import local_now
+    from shortlist.server.services.season_catalogue import load_catalogue
 
     requested = bool(payload.get("dry_run", False))
     now = local_now()
@@ -1799,9 +1909,10 @@ def _rows_visibility(state, payload: dict) -> dict:
         # Every enabled row's answer, scheduled or not: a pass queued for ONE row reports that row, and a
         # seasonal row with no day schedule is missing from `scheduled` on most nights, hidden or shown.
         today: dict[str, bool] = {}
+        catalogue = load_catalogue(session)
         for row in session.query(Collection).filter_by(enabled=True):
             calendar = (row.seasons, row.season_lead_days, row.season_after_days)
-            shown = today[row.slug] = row_shown_today(row.show_days, *calendar, now)
+            shown = today[row.slug] = row_shown_today(row.show_days, *calendar, now, catalogue=catalogue)
             # A seasonal row with no day schedule takes a pass only in the week after a season opens or
             # closes for it (discussion #124) — stateless, since each earlier day's answer is the same pure
             # call — so a server whose only scheduled row is seasonal converges a few weeks a year, not
@@ -1809,7 +1920,7 @@ def _rows_visibility(state, payload: dict) -> dict:
             if row.show_days or (
                 row.seasons
                 and any(
-                    shown != row_shown_today(row.show_days, *calendar, now - timedelta(days=back))
+                    shown != row_shown_today(row.show_days, *calendar, now - timedelta(days=back), catalogue=catalogue)
                     for back in range(1, _SEASON_TURNOVER_LOOKBACK_DAYS + 1)
                 )
             ):
@@ -1883,6 +1994,7 @@ def _rows_visibility(state, payload: dict) -> dict:
     # Before the check that may raise: an account repaired in a pass that another account blocked is
     # still repaired, and the retry will find nothing left to report.
     audit_restored_restrictions(state, report)
+    _audit_runless_pass(state, report, dry_run, "rows.visibility")
     _require_filters_merged(report, "applying today's row schedule")
 
     touched: set[int] = set()
@@ -1899,6 +2011,10 @@ def _rows_visibility(state, payload: dict) -> dict:
             {(d.user_slug, d.collection_slug, d.library_key): d.rating_key for d in session.query(Delivery)}
         )
 
+    # A seasonal row whose new season found nothing in a library still has LAST season's collection there:
+    # it stays hidden on the day the season opens rather than being shown under last season's title (#137),
+    # when the gate admits the row; a hand-over between seasons, shown on both days, is hidden by the run.
+    built_for = built_seasons(ctx)
     for profile in profiles:
         # All-or-nothing on purpose: raising leaves the whole pass owed, and the durable queue retries
         # it with backoff. Carrying on would report a converge that only partly happened.
@@ -1913,11 +2029,12 @@ def _rows_visibility(state, payload: dict) -> dict:
             # key would be promoted onto Home on a day its schedule says to hide it.
             skip_unmatched=True,
             only_row=row,
+            built_for=built_for,
         )
 
     for spec in ctx.config.shared_rows():
         if row is None or spec.slug == row:
-            promote_shared_row(ctx, spec, into=touched)
+            promote_shared_row(ctx, spec, into=touched, built_for=built_for)
 
     # `scheduled`, not "changed": this pass applies today's answer to every scheduled row (or to the one row it
     # was queued for) rather than tracking which ones moved, so calling it "changed" would overstate what the

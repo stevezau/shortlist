@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Navigate, useNavigate } from "react-router";
 
 import { ErrorState } from "@/components/query-boundary";
+import { Wordmark } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { resolveArea } from "@/lib/auth";
@@ -46,35 +47,36 @@ function Wizard() {
   if (!meta || !Step) return null;
 
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-10">
-      <header className="mb-8 space-y-4">
-        <p className="text-lg font-semibold tracking-tight text-primary">
-          <span aria-hidden="true">✨</span> Shortlist setup
-        </p>
+    <main className={`mx-auto w-full px-5 py-6 sm:px-10 sm:py-8 ${wizard.step === 5 ? "max-w-[1110px]" : "max-w-2xl"}`}>
+      <header className="mb-7">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3"><Wordmark size="sm" /><span className="text-sm text-muted-foreground">setup</span></div>
+          <p className="text-xs text-muted-foreground">Step {wizard.step + 1} of {TOTAL_STEPS}</p>
+        </div>
         <div
           role="progressbar"
           aria-valuemin={1}
           aria-valuemax={TOTAL_STEPS}
           aria-valuenow={wizard.step + 1}
           aria-label={`Setup step ${wizard.step + 1} of ${TOTAL_STEPS}`}
-          className="flex gap-1"
+          className="mb-8 mt-5 flex gap-1.5"
         >
           {WIZARD_STEPS.map((step, index) => (
             <div
               key={step.title}
               className={
-                index <= wizard.step
-                  ? "h-1.5 flex-1 rounded-full bg-primary"
-                  : "h-1.5 flex-1 rounded-full bg-muted"
+                index === wizard.step
+                  ? "h-[3px] flex-1 rounded-full bg-primary"
+                  : index < wizard.step ? "h-[3px] flex-1 rounded-full bg-primary/40" : "h-[3px] flex-1 rounded-full bg-muted"
               }
             />
           ))}
         </div>
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="mb-2 text-[28px] font-semibold leading-tight tracking-tight sm:text-3xl">
             {meta.title}
           </h1>
-          <p className="text-sm text-muted-foreground">{meta.why}</p>
+          <p className="max-w-xl text-[13px] leading-relaxed text-muted-foreground sm:text-sm">{meta.why}</p>
         </div>
       </header>
 
@@ -83,9 +85,10 @@ function Wizard() {
         update={wizard.update}
         next={wizard.next}
         complete={wizard.complete}
+        back={wizard.back}
       />
 
-      {wizard.step > 0 && wizard.step < TOTAL_STEPS - 1 && (
+      {wizard.step > 0 && wizard.step < TOTAL_STEPS - 1 && wizard.step !== 5 && (
         <footer className="mt-8 flex items-center justify-between border-t pt-4">
           <Button variant="ghost" onClick={wizard.back}>
             <ArrowLeft aria-hidden="true" />
@@ -134,6 +137,7 @@ export function SetupPage() {
     session.data.login_required,
   );
   if (area === "login") return <Navigate to="/login" replace />;
+  if (setup.isError) return <div className="mx-auto mt-16 max-w-2xl px-4"><ErrorState error={setup.error} onRetry={() => void setup.refetch()} /></div>;
   if (area === "app") return <Navigate to="/" replace />;
 
   return <Wizard />;

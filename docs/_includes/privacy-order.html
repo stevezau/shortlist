@@ -49,19 +49,21 @@ wrapping, selectable text at the page's own font size.
       <span class="flow__num" aria-hidden="true">3</span>
       <div class="flow__body">
         <strong>Now show it</strong>
-        <span>Only now does the row appear, so it is never visible before it is private.</span>
+        <span>Only after the sharing filters are applied is the row promoted onto Home.</span>
       </div>
       <p class="flow__state flow__state--on">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M3 12c0-2.5 4-7 9-7s9 4.5 9 7c0 2.5-4 7-9 7s-9-4.5-9-7Z"/>
           <circle cx="12" cy="12" r="3"/>
         </svg>
-        On its owner&rsquo;s Home, and nobody else&rsquo;s
+        On the intended viewer&rsquo;s Home
       </p>
     </li>
   </ol>
   <figcaption>
-    The first two steps leave the row on nobody&rsquo;s home screen. There is no moment where it
-    exists and is visible to the wrong person.
+    The first two steps keep a new row off Home. An unpromoted row can still appear in the library’s
+    Collections tab until its sharing filters apply. Plex cannot hide collections from the server
+    owner, and restriction profiles can prevent the filters from working.
+    <a href="{{ "/plex-per-user-collections/#two-things-to-watch-out-for" | relative_url }}">Read the visibility exceptions</a>.
   </figcaption>
 </figure>

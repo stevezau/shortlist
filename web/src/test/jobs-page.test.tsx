@@ -5,7 +5,8 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
-import { JobsPage } from "@/pages/jobs";
+import { ActivityPage } from "@/pages/activity";
+import { JobsPanel } from "@/pages/jobs";
 
 const {
   syncWatched,
@@ -124,7 +125,22 @@ function renderPage(path = "/jobs") {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
-        <JobsPage />
+        <JobsPanel />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+/** The whole Activity page, for what crosses from the Jobs tab to the Job history tab. The job
+ *  history was a switch inside JobsPanel; it is a tab of the page now. */
+function renderActivity(path = "/activity") {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <ActivityPage />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -877,13 +893,13 @@ describe("JobsPage — sync check", () => {
         finished_at: null,
       },
     ]);
-    renderPage();
+    renderActivity();
 
     // The Jobs area does NOT fetch the cross-job feed.
     await screen.findByTestId("job-sync.users");
     expect(getJobs).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: /^Activity$/ }));
+    await userEvent.click(screen.getByRole("tab", { name: "Job history" }));
 
     // The third argument is the status filter, and `undefined` is load-bearing: the unfiltered
     // feed must ask the server for everything, not quietly narrow itself.
@@ -930,17 +946,18 @@ describe("JobsPage — one place for everything on a timer", () => {
     FakeEventSource.latest = null;
   });
 
-  it("offers Jobs and Activity — the schedule is not a third view", async () => {
+  it("offers Jobs and Job history — the schedule is not a third view", async () => {
     // Row schedules were the only thing Timeline showed that this list didn't: every job already
     // carries its own next-run, so a separate tab meant two places each holding half the answer.
-    renderPage();
+    renderActivity();
 
     expect(
-      await screen.findByRole("button", { name: "Jobs" }),
+      await screen.findByRole("tab", { name: "Jobs" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Activity" }),
+      screen.getByRole("tab", { name: "Job history" }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Timeline" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
   });
 
@@ -971,16 +988,16 @@ describe("JobsPage — one place for everything on a timer", () => {
     );
   });
 
-  it("strips a row name's placeholders instead of printing the braces", async () => {
+  it("preserves full row titles with readable placeholder chips", async () => {
     // A row is configured as a template, so this chip used to read "✨ {library_name} Picked for
     // You" — which looks like a substitution that failed, on a page that is otherwise all plain
     // English. Same treatment the run pages give it (`rowDisplayName`).
     renderPage();
 
     const link = await screen.findByRole("link", { name: /Picked for You/ });
-    expect(link.textContent).toBe("✨ Picked for You");
+    expect(link.textContent).toBe("✨ library name Picked for You");
     expect(link.textContent).not.toContain("{");
-    expect(link).toHaveAttribute("title", "Edit ✨ Picked for You");
+    expect(link).toHaveAttribute("title", "Edit ✨ {library_name} Picked for You");
   });
 
   it("still lands somewhere sensible for an old ?tab=timeline link", async () => {
@@ -1127,22 +1144,98 @@ describe("JobsPage — the schedule panel for a job you can switch off", () => {
     expect(off.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("still calls a blank cron Daily for a job that cannot be switched off", async () => {
+  it("falls back to Daily for a job that cannot be switched off when the schedule has no entry for it yet", async () => {
+    // beforeEach's schedule mock only carries "sync.check" — nothing yet identifies what
+    // maintenance.prune's own default is, so the blank chip falls back to the generic label rather
+    // than showing a wrong time.
     renderPage();
     const row = await screen.findByTestId("job-maintenance.prune");
     await userEvent.click(
       within(row).getByRole("button", { name: "Clear out old records" }),
     );
 
-    // For every other job a blank cron means "use the built-in default", which is daily — so the
-    // chip means what it says, and there is no off state to offer.
     expect(
       within(row).getByRole("button", { name: "Daily" }),
     ).toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: "Off" })).toBeNull();
-    // And no second way back to the default: Daily already IS it here, so a Built-in chip beside it
-    // would be two chips for one state.
+    // And no second way back to the default: the blank chip already IS it here, so a Built-in chip
+    // beside it would be two chips for one state.
     expect(within(row).queryByRole("button", { name: /Built-in/ })).toBeNull();
+  });
+
+  it("labels the blank chip with the built-in time on the sync jobs that draw their own panel", async () => {
+    // Sync watch history and Sync people from Plex render their own CronPicker rather than
+    // SchedulePanel's, so the Built-in label reached the generic panel and missed these two — they
+    // still read "Daily" on a live server (2026-09-28).
+    const scheduled = (kind: string, setting: string, defaultCron: string) => ({
+      type: "job" as const,
+      kind,
+      label: kind,
+      description: "",
+      setting,
+      cron: "",
+      using_default: true,
+      default_cron: defaultCron,
+      optional: false,
+      writes_plex: false,
+      next_run: "2026-08-01T04:00:00Z",
+    });
+    getSchedule.mockResolvedValue({
+      jobs: [
+        scheduled("sync.history", "sync.watch_cron", "17 4 * * *"),
+        scheduled("sync.users", "sync.users_cron", "47 4 * * *"),
+      ],
+      rows: [],
+    });
+    renderPage();
+
+    for (const [kind, label, time] of [
+      ["sync.history", "Sync watch history", "04:17"],
+      ["sync.users", "Sync people from Plex", "04:47"],
+    ] as const) {
+      const row = await screen.findByTestId(`job-${kind}`);
+      await userEvent.click(within(row).getByRole("button", { name: label }));
+      expect(
+        await within(row).findByRole("button", { name: `Built-in (${time})` }),
+      ).toBeInTheDocument();
+      expect(within(row).queryByRole("button", { name: "Daily" })).toBeNull();
+    }
+  });
+
+  it("labels the blank chip with the built-in time for a job that cannot be switched off", async () => {
+    // Accurate but vague: "Daily" doesn't say WHEN, and the five non-off-able jobs don't all
+    // default to the same time. /api/schedule carries `default_cron` for maintenance.prune too, so
+    // the blank chip can say what it actually runs at.
+    getSchedule.mockResolvedValue({
+      jobs: [
+        {
+          type: "job",
+          kind: "maintenance.prune",
+          label: "Clear out old records",
+          description: "",
+          setting: "maintenance.prune_cron",
+          cron: "",
+          using_default: true,
+          default_cron: "0 3 * * *",
+          optional: false,
+          writes_plex: false,
+          next_run: "2026-08-01T03:00:00Z",
+        },
+      ],
+      rows: [],
+    });
+    renderPage();
+    const row = await screen.findByTestId("job-maintenance.prune");
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Clear out old records" }),
+    );
+
+    expect(
+      await within(row).findByRole("button", { name: "Built-in (03:00)" }),
+    ).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Daily" })).toBeNull();
+    // Still no off state and no second "restore" chip — blank already IS the default here.
+    expect(within(row).queryByRole("button", { name: "Off" })).toBeNull();
   });
 });
 
@@ -1208,7 +1301,7 @@ describe("JobsPage — the failure count has to lead somewhere", () => {
     // attempt, which succeeded, so the count was the only evidence they existed.
     getJobCatalog.mockResolvedValue(HEALTHY_LOOKING_BUT_FAILED);
     getJobs.mockResolvedValue([OLD_FAILURE]);
-    renderPage();
+    renderActivity();
 
     const badge = await screen.findByRole("button", { name: /8 failed/i });
     await userEvent.click(badge);
@@ -1234,7 +1327,7 @@ describe("JobsPage — the failure count has to lead somewhere", () => {
       (_kind: string | undefined, _limit: number, status?: string) =>
         Promise.resolve(status === "failed" ? [OLD_FAILURE] : [RECENT_SUCCESS]),
     );
-    renderPage("/jobs?tab=activity&filter=failed");
+    renderActivity("/activity?tab=jobs&view=activity&filter=failed");
 
     expect(await screen.findByText(/No route to host/i)).toBeInTheDocument();
     expect(screen.queryByText(/that's the good outcome/i)).toBeNull();

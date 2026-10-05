@@ -1,6 +1,8 @@
+import { useLayoutEffect, useRef } from "react";
+
 import { api } from "@/lib/api";
 import { renderRowName, sampleLibraryName } from "@/lib/format";
-import { fillPlaceholders, LIBRARY_NAME, TOP_SEED, USER, usesSeason } from "@/lib/placeholders";
+import { fillPlaceholders, LIBRARY_NAME, TOP_SEED, USER, usesSeason, usesTheme } from "@/lib/placeholders";
 import type { CollectionInput, Season } from "@/lib/types";
 
 /** The sample person and library every preview on this card is filled in for. */
@@ -15,8 +17,9 @@ function renderDescription(
   template: string,
   libraryName: string,
   season: { name: string; emoji: string } = { name: "Christmas", emoji: "🎄" },
+  theme?: { name: string; emoji: string },
 ): string {
-  return fillPlaceholders(template, { ...SAMPLE, libraryName, season }).trim();
+  return fillPlaceholders(template, { ...SAMPLE, libraryName, season, theme }).trim();
 }
 
 /** What varies about the name, in the words the caption uses — or null when nothing does. */
@@ -29,12 +32,46 @@ function nameCaption(input: CollectionInput, template: string): string | null {
   if (usesSeason(template)) {
     return "Example only — the name follows the season the row is in.";
   }
+  if (usesTheme(template)) {
+    return "Example only — the name follows the row’s theme.";
+  }
   if (input.build !== "shared" && perPerson) {
     return "Example only — each person gets their own name here, from their own viewing.";
   }
   return perLibrary
     ? "Example only — the real library name fills in, so each library gets its own."
     : null;
+}
+
+/** Fit both lines inside a 2:3 poster, including long unbroken titles and browser zoom. */
+function PosterWords({ title, subtitle }: { title: string; subtitle: string }) {
+  const frame = useRef<HTMLDivElement>(null);
+  const words = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const fit = () => {
+      if (!frame.current || !words.current || !frame.current.clientWidth) return;
+      const box = frame.current;
+      const content = words.current;
+      const padding = Math.round(box.clientWidth * 0.09);
+      box.style.padding = `${padding}px`;
+      let size = Math.min(20, box.clientWidth * 0.145);
+      content.style.fontSize = `${size}px`;
+      while (size > 4 && (content.scrollHeight > box.clientHeight - padding * 2 || content.scrollWidth > box.clientWidth - padding * 2)) {
+        size -= 0.5;
+        content.style.fontSize = `${size}px`;
+      }
+    };
+    fit();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    if (frame.current) observer?.observe(frame.current);
+    return () => observer?.disconnect();
+  }, [title, subtitle]);
+  return <div ref={frame} data-poster-words className="flex size-full items-end bg-accent p-2 text-accent-foreground">
+    <div ref={words} className="w-full min-w-0 space-y-1 text-sm leading-tight [overflow-wrap:anywhere]">
+      <p className="font-semibold">{title}</p>
+      {subtitle && <p className="text-[0.75em] text-accent-foreground/80">{subtitle}</p>}
+    </div>
+  </div>;
 }
 
 /**
@@ -53,19 +90,24 @@ export function RowPlexCard({
   collectionId,
   hasImage,
   sampleSeason,
+  sampleTheme,
+  compact = false,
 }: {
   input: CollectionInput;
   collectionId: number | null;
   hasImage: boolean;
   /** The first season the row follows, to fill `{season}` with a real one; undefined uses a sample. */
   sampleSeason?: Season;
+  /** An AI row's theme, to fill `{theme}` with its real name; undefined uses a sample. */
+  sampleTheme?: { name: string; emoji: string };
+  compact?: boolean;
 }) {
   const template = input.name_template || input.name;
   const sampleLibrary = sampleLibraryName(input.media);
   const shown =
-    renderRowName(template, SAMPLE.topSeed, SAMPLE.user, sampleLibrary, sampleSeason) ||
+    renderRowName(template, SAMPLE.topSeed, SAMPLE.user, sampleLibrary, sampleSeason, sampleTheme) ||
     "Picked for You";
-  const description = renderDescription(input.description, sampleLibrary, sampleSeason);
+  const description = renderDescription(input.description, sampleLibrary, sampleSeason, sampleTheme);
   const caption = nameCaption(input, template);
   const mode = input.poster.mode;
   const posterTitle = renderRowName(
@@ -74,6 +116,7 @@ export function RowPlexCard({
     SAMPLE.user,
     sampleLibrary,
     sampleSeason,
+    sampleTheme,
   );
   const posterSubtitle = renderRowName(
     input.poster.subtitle,
@@ -81,14 +124,15 @@ export function RowPlexCard({
     SAMPLE.user,
     sampleLibrary,
     sampleSeason,
+    sampleTheme,
   );
 
   return (
-    <div className="space-y-2">
+    <div className="flow-root space-y-2">
       <p className="text-xs uppercase tracking-wide text-muted-foreground">
         On Plex
       </p>
-      <div className="aspect-[2/3] w-full max-w-44 overflow-hidden rounded-md border bg-muted">
+      <div className={compact ? "float-left mr-3 aspect-[2/3] w-28 max-w-full overflow-hidden rounded-md border bg-muted" : "aspect-[2/3] w-full max-w-44 overflow-hidden rounded-md border bg-muted"}>
         {mode === "upload" && collectionId !== null && hasImage ? (
           <img
             src={api.posterImageUrl(collectionId)}
@@ -102,16 +146,7 @@ export function RowPlexCard({
               : "Plex’s own artwork"}
           </div>
         ) : (
-          <div className="flex size-full flex-col justify-end gap-1 bg-accent p-3">
-            <p className="break-words text-sm font-semibold text-accent-foreground">
-              {posterTitle || shown}
-            </p>
-            {posterSubtitle && (
-              <p className="break-words text-xs text-accent-foreground/80">
-                {posterSubtitle}
-              </p>
-            )}
-          </div>
+          <PosterWords title={posterTitle || shown} subtitle={posterSubtitle} />
         )}
       </div>
       <p className="break-words text-sm font-medium">“{shown}”</p>

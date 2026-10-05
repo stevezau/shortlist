@@ -16,25 +16,25 @@ import { useDeleteCollection } from "@/lib/queries";
 import type { Collection } from "@/lib/types";
 
 /**
- * The two ways to un-ship a row, with their confirmations.
+ * The editor's Danger zone: the two ways to un-ship a row, with their confirmations.
  *
  * They are deliberately not interchangeable and must not look it: "Remove from Plex" takes the
  * collections off the server but keeps the row here, so the next run rebuilds it; "Delete" destroys
  * the row itself. Both reach into someone else's Plex server, so both confirm first, and the
- * removal previews what it WOULD take away (a dry run) before it takes anything.
- *
- * Shared by the rows list and the row editor so the wording, the dry run and the confirmations
- * cannot drift apart between the two places you can trigger them from.
+ * removal previews what it WOULD take away (a dry run) before it takes anything. Each sits on its
+ * own line with the sentence that says what it does, because a hover title is the only place the
+ * difference used to be written down.
  */
 export function RowDestructiveActions({
   collection,
+  reach = null,
   onDeleted,
-  size = "sm",
 }: {
   collection: Collection;
-  /** Where to go once the row no longer exists. The list stays put; the editor has to leave. */
+  /** How many people have the row right now, for the delete line; null when not known. */
+  reach?: number | null;
+  /** Where to go once the row no longer exists. The editor has to leave. */
   onDeleted?: () => void;
-  size?: "sm" | "default";
 }) {
   const remove = useDeleteCollection();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -50,35 +50,54 @@ export function RowDestructiveActions({
 
   return (
     <>
-      <Button
-        variant="ghost"
-        size={size}
-        onClick={() => {
-          cleanup.reset();
-          preview.reset();
-          setCleanupOpen(true);
-          preview.mutate();
-        }}
-        aria-label={`Remove ${collection.name} from Plex`}
-        title="Take the row off Plex now, but keep it here to rebuild next run"
-      >
-        <Eraser aria-hidden="true" />
-        Remove from Plex
-      </Button>
-      {/* The default row is deletable too. Hiding this on one card left the first row in the
-          list without the button every other row had, and nothing on screen said why. */}
-      <Button
-        variant="ghost"
-        size={size}
-        loading={remove.isPending}
-        onClick={() => setConfirmOpen(true)}
-        aria-label={`Delete ${collection.name}`}
-        title="Delete this row for good"
-        className="text-destructive-text hover:text-destructive-text"
-      >
-        {!remove.isPending && <Trash2 aria-hidden="true" />}
-        Delete
-      </Button>
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-0.5">
+          <p className="text-sm font-medium">Take it off Plex for now</p>
+          <p className="text-sm text-muted-foreground">
+            Deletes its collections from Plex now but keeps the row here, so the
+            next run builds it again.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0 self-start sm:self-auto"
+          onClick={() => {
+            cleanup.reset();
+            preview.reset();
+            setCleanupOpen(true);
+            preview.mutate();
+          }}
+          aria-label={`Remove ${collection.name} from Plex`}
+        >
+          <Eraser aria-hidden="true" />
+          Remove from Plex…
+        </Button>
+      </div>
+      {/* The default row is deletable too. Hiding this on one row left it without the control every
+          other row had, and nothing on screen said why. */}
+      <div className="flex flex-col gap-3 border-t border-destructive/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 space-y-0.5">
+          <p className="text-sm font-medium">Delete this row</p>
+          <p className="text-sm text-muted-foreground">
+            {reach === null
+              ? "Removes this row from Plex Home for everyone who has it."
+              : `Removes this row from ${reach} ${reach === 1 ? "person's" : "people's"} Plex Home.`}{" "}
+            Shortlist&rsquo;s hide rules for it are cleaned up on the next run.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          loading={remove.isPending}
+          onClick={() => setConfirmOpen(true)}
+          aria-label={`Delete ${collection.name}`}
+          className="shrink-0 self-start border-destructive/50 text-destructive-text hover:bg-destructive/10 hover:text-destructive-text sm:self-auto"
+        >
+          {!remove.isPending && <Trash2 aria-hidden="true" />}
+          Delete row…
+        </Button>
+      </div>
 
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>

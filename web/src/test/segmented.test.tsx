@@ -60,3 +60,29 @@ describe("Segmented", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("Segmented — joined", () => {
+  it("draws ONE control: every option in a single bordered bar, raised and amber-edged when chosen", () => {
+    render(<Segmented joined ariaLabel="Show" value="b" options={OPTIONS} onChange={() => {}} />);
+
+    const group = screen.getByRole("group", { name: "Show" });
+    const bar = screen.getByRole("button", { name: "Apple" }).parentElement as HTMLElement;
+    expect(group).toContainElement(bar);
+    expect(bar).toContainElement(screen.getByRole("button", { name: "Banana" }));
+    expect(bar.className).toMatch(/\bborder\b/);
+    const chosen = screen.getByRole("button", { name: "Banana" });
+    expect(chosen.classList.contains("bg-raised")).toBe(true);
+    expect(chosen.classList.contains("shadow-selected-x")).toBe(true);
+    expect(chosen.classList.contains("bg-primary")).toBe(false);
+    expect(screen.getByRole("button", { name: "Apple" }).classList.contains("bg-raised")).toBe(false);
+  });
+
+  it("still reports which option is pressed and changes on click", async () => {
+    const onChange = vi.fn();
+    render(<Segmented joined ariaLabel="Show" value="a" options={OPTIONS} onChange={onChange} />);
+
+    expect(screen.getByRole("button", { name: "Apple" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Banana" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("b");
+  });
+});

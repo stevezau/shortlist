@@ -442,7 +442,9 @@ fixes are load-bearing in ways the code alone doesn't explain.
 
    Now the automatic reconciles (delete, build flip, audience shrink, row disabled, library narrowing)
    are queued as `row.reconcile` and drained inline, and `user.restore` mirrors `user.hide`. The one
-   still inline is the interactive **cleanup** button, which has to return what it removed.
+   still inline is the interactive **cleanup** button, which has to return what it removed. It takes
+   `plex_writer_lock` itself, on uninstall's policy: 409 while a run is in flight, a bounded wait
+   (`WRITER_LOCK_WAIT_S`) behind a writer job, and no lock for a dry run (2026-09-28).
 
 3. **Settings PATCH was inert.** It stored values and did nothing. It now compares before/after for the
    two settings that change Plex — `row.name_template` and `privacy.hide_shared_from_disabled` — and
@@ -659,6 +661,64 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
 
   The lesson is the one rule 4 already encodes: an assumption about what another system does, written
   as a comment instead of a probe, is how a privacy gap hides in plain sight for a year.
+
+- **The "Your requests" row removes itself (2026-09-28, issue #127).** The one row kind whose empty
+  state is a DELETE, not a skip: a person's requests row holds only what they asked for and have not
+  watched, so once the last title is watched, leaving the collection would keep watched titles sitting
+  in it. What reaches Plex: in `rows._run_user`, for each target library where `build_requests_picks`
+  returns nothing, `remove_row` (delivery.py) deletes that person's collection for that row in that
+  library — under `ctx.write_lock`, `dry_run`-aware (logs the would-be delete, removes nothing),
+  addressed by rendered title plus the delivery ledger's ratingKey, scoped to the `shortlist_<slug>`
+  label like every other removal — and the section keys it actually deleted in are recorded on the
+  report via `removed_deliveries`, so the persist path forgets those ledger entries and a reused
+  ratingKey is never re-presented. Deletion only ever makes the server more private (rule 1), so the
+  privacy side needs no new write.
+
+  The gate is `RequestLedger.complete`. `collect_requests` reads every configured source once per run
+  and flips `complete` to False when any of them fails (or answers a shape that can only be a broken
+  read: Overseerr with no users AND no requests). While it is False, `build_requests_picks` still
+  builds whatever it can, but the removal branch does not run at all: a source outage reads as
+  "nothing requested" for everyone, and the alternative is one down Overseerr taking every person's
+  row off the server in one night. §14's rule — a removal needs evidence, not the absence of an
+  exception — applied to a third source of "nothing here".
+
+- **Runless jobs audit what they did to Plex (2026-10-02).** The register above treated the run
+  persister as the only place a pass's deletes and filter writes become events, so a job that persists
+  no run changed Plex with no record: on 2026-09-27 a `privacy.sync` took a deleted shared row's exclude
+  off ~46 accounts, and a swept row was deleted, each with no event (rule 10). Filter writes
+  (`run.privacy_sync`), sweep deletes (`run.sweep`), converge demotions (`run.demote`, new) and orphan
+  deletions (`run.orphan_delete`, new) are now emitted by shared functions in `run_persistence.py` —
+  `audit_filter_writes`, `audit_sweep`, `audit_demotions`, `audit_orphan_deletes` — which the run path
+  and `jobs._audit_runless_pass` both call. The latter covers `privacy.sync`, `user.restore`,
+  `rows.visibility` and `sync.check`, stamps each event with `job` and a null `run_id`, and commits in
+  its own session, before any check that can raise, so a retry that finds nothing left to do does not
+  lose the record. Each emitter writes nothing for an empty list, so one call serves every job: only
+  `sync.check` can ever record an orphan delete, because the privacy passes (`engine_run(ctx, [])`) are
+  handed no authority to delete.
+
+- **Last season's collection is never shown for the next one (2026-10-02, issue #137 C-1).** A seasonal row
+  that builds nothing in a library for tonight's season leaves that library's collection as it was (rule 1's
+  "a library with no picks is left alone"), still titled and filled for the previous season. Every door that
+  promotes — the run's `_promote_phase`, `rows.visibility` (which a season PUT or DELETE also queues), and
+  `user.restore` — now passes `pipeline.built_seasons`, and `promote_user_rows`/`promote_shared_row` treat a
+  collection whose record is not tonight's season as dormant: hidden, never deleted. Tonight's means the same
+  slug with a recorded day no further from tonight's day, either side, than the window is wide (lead + after;
+  `RowSeason.holds`, with the window `row_season_on` sets): the showing it was built for overlaps this one. A
+  season whose date the owner moves by no more than that keeps its correctly built rows shown, and the recipe's
+  full day still rebuilds them at the next run. An earlier day of the same year further off does not pass,
+  which a slug-and-YEAR comparison let through (Diwali moved from March to November showed March's
+  collection); another year's showing is 365 days off against a window of at most 120. A one-sided "day
+  before it opens to the day it closes" check came between them and hid a row moved one day EARLIER with no
+  days after, the default (review round 4).
+  The record is `deliveries.season` (0096), written on the persist path from each breakdown entry, with the
+  stored picks' recipe as the fallback for older PER-PERSON deliveries — a shared row stores no picks recipe,
+  so its deliveries from before 0096 have no record and are promoted as before. A run lays its own deliveries
+  over both, as `live_delivered_keys` does. A person whose in-season seasonal row built nothing is a promotion candidate,
+  as one with a dormant row is, so the hiding happens on the run too. Season PUT/DELETE queue a pass
+  (`api/seasons._pass_owed`) for every enabled following row shown before or after the edit whose shown-today
+  answer, or the day or window of the season it shows, changed. The pass, not the gate, judges the ledger's own
+  record: a gate that guessed from the season's pre-edit day skipped the pass on a second edit before the next
+  run. A rename or an edit to a field the rule's kind ignores queues nothing.
 
 ### Corrections to this document
 

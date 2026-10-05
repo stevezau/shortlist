@@ -108,6 +108,18 @@ class TestSpaTraversal:
         assert status == 200
         assert b"app shell" in body
 
+    @pytest.mark.parametrize("raw_path", ["/api", "/api/", "/api/collections/seasons", "/api/no/such/endpoint"])
+    def test_an_unknown_api_path_is_a_404_not_the_shell(self, spa_app, raw_path):
+        """A removed or misspelt endpoint answered 200 with the app shell, so a client reading JSON got HTML
+        and a check that an endpoint is gone passed or failed by whether the SPA had been built."""
+        status, body, _headers = asyncio.run(_asgi_get(spa_app, raw_path))
+        assert status == 404
+        assert b"app shell" not in body
+
+    def test_a_route_that_only_starts_with_api_still_serves_the_shell(self, spa_app):
+        status, body, _headers = asyncio.run(_asgi_get(spa_app, "/apiary"))
+        assert (status, b"app shell" in body) == (200, True)
+
 
 class TestTheShellIsNeverServedFromCacheWithoutAsking:
     """`index.html` is the only file that NAMES the hashed bundles.

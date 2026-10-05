@@ -677,3 +677,151 @@ class TestTheWriteClockBelongsToTheServer:
         one = RadarrClient(ArrTarget(url="http://a", api_key="k", quality_profile_id=1, root_folder="/m"))
         two = RadarrClient(ArrTarget(url="http://b", api_key="k", quality_profile_id=1, root_folder="/m"))
         assert one._write_clock is not two._write_clock
+
+
+class TestTagReads:
+    def test_tags_is_a_read_only_id_to_label_map(self):
+        fx = json.loads((FIXTURES / "radarr_request_tags.json").read_text())
+        with respx.mock:
+            get = respx.get(f"{RADARR.url}/api/v3/tag").mock(return_value=httpx.Response(200, json=fx["tags"]))
+            post = respx.post(f"{RADARR.url}/api/v3/tag")
+            got = RadarrClient(RADARR).tags()
+        assert got == {t["id"]: t["label"] for t in fx["tags"]}
+        assert get.called and not post.called
+
+    def test_movies_returns_the_raw_items_with_tags_and_file_state(self):
+        fx = json.loads((FIXTURES / "radarr_request_tags.json").read_text())
+        with respx.mock:
+            respx.get(f"{RADARR.url}/api/v3/movie").mock(return_value=httpx.Response(200, json=fx["tagged_items"]))
+            got = RadarrClient(RADARR).movies()
+        assert [m["tmdbId"] for m in got] == [m["tmdbId"] for m in fx["tagged_items"]]
+        assert "hasFile" in got[0] and "tags" in got[0]
+
+    def test_series_returns_the_raw_items(self):
+        fx = json.loads((FIXTURES / "sonarr_request_tags.json").read_text())
+        with respx.mock:
+            respx.get(f"{SONARR.url}/api/v3/series").mock(return_value=httpx.Response(200, json=fx["tagged_items"]))
+            got = SonarrClient(SONARR).series()
+        assert [s["tvdbId"] for s in got] == [s["tvdbId"] for s in fx["tagged_items"]]
+        assert "statistics" in got[0]
+
+
+REQUEST_READERS = [
+    pytest.param(RadarrClient, "/api/v3/tag", "tags", id="radarr-tags"),
+    pytest.param(RadarrClient, "/api/v3/movie", "movies", id="radarr-movies"),
+    pytest.param(SonarrClient, "/api/v3/tag", "tags", id="sonarr-tags"),
+    pytest.param(SonarrClient, "/api/v3/series", "series", id="sonarr-series"),
+]
+CANARY_TARGET = ArrTarget(url="http://arr.test", api_key="ARR-KEY-CANARY", quality_profile_id=1, root_folder="/m")
+
+
+class TestRequestReadsRefuseAMalformedAnswer:
+    """The reads a requests row is built from fail on a 200 that is not a list of records.
+
+    Coerced to an empty list, such an answer read as "nothing requested" and let the row be removed.
+    The message names the endpoint and the JSON type, never the body or the key.
+    """
+
+    @pytest.mark.parametrize("reader,path,method", REQUEST_READERS)
+    @pytest.mark.parametrize(
+        "body,shape",
+        [
+            pytest.param(b'{"message": "CANARY"}', "an object", id="object"),
+            pytest.param(b"null", "null", id="null"),
+            pytest.param(b'"CANARY"', "a string", id="string"),
+            pytest.param(b'[{"id": 1, "label": "a", "tmdbId": 5}, "CANARY"]', "a list holding a string", id="list"),
+        ],
+    )
+    def test_a_malformed_200_is_an_arr_error_naming_the_endpoint_and_shape(self, reader, path, method, body, shape):
+        with respx.mock:
+            respx.get(f"{CANARY_TARGET.url}{path}").mock(return_value=httpx.Response(200, content=body))
+            with pytest.raises(ArrError) as raised:
+                getattr(reader(CANARY_TARGET), method)()
+        message = str(raised.value)
+        assert f"{reader.app_name} GET {path} answered with {shape}" in message
+        assert "CANARY" not in message and "arr.test" not in message
+
+    @pytest.mark.parametrize("reader,path,method", REQUEST_READERS)
+    def test_an_empty_list_is_a_complete_empty_read(self, reader, path, method):
+        with respx.mock:
+            respx.get(f"{CANARY_TARGET.url}{path}").mock(return_value=httpx.Response(200, json=[]))
+            got = getattr(reader(CANARY_TARGET), method)()
+        assert got == ({} if method == "tags" else [])
+
+
+STATE_READERS = [
+    pytest.param(RadarrClient, RADARR, "/api/v3/movie", "library_tmdb_ids", id="radarr-library_tmdb_ids"),
+    pytest.param(RadarrClient, RADARR, "/api/v3/movie", "status_by_tmdb", id="radarr-status_by_tmdb"),
+    pytest.param(SonarrClient, SONARR, "/api/v3/series", "library_ids", id="sonarr-library_ids"),
+    pytest.param(SonarrClient, SONARR, "/api/v3/series", "status_by_ids", id="sonarr-status_by_ids"),
+]
+EMPTY_RESULT = {
+    "library_tmdb_ids": set(),
+    "status_by_tmdb": {},
+    "library_ids": (set(), set()),
+    "status_by_ids": ({}, {}),
+}
+
+
+class TestStateReadsRefuseAMalformedAnswer:
+    """Presence/status reads: a reply that is not a list of records is an error, never "not in the library"."""
+
+    @staticmethod
+    def _queue_empty(target: ArrTarget) -> None:
+        respx.get(f"{target.url}/api/v3/queue").mock(
+            return_value=httpx.Response(200, json={"records": [], "totalRecords": 0})
+        )
+
+    @respx.mock
+    @pytest.mark.parametrize("client_cls,target,path,method", STATE_READERS)
+    def test_a_genuine_empty_list_is_a_complete_empty_answer(self, client_cls, target, path, method):
+        respx.get(f"{target.url}{path}").mock(return_value=httpx.Response(200, json=[]))
+        self._queue_empty(target)
+        assert getattr(client_cls(target), method)() == EMPTY_RESULT[method]
+
+    @respx.mock
+    @pytest.mark.parametrize("client_cls,target,path,method", STATE_READERS)
+    @pytest.mark.parametrize(
+        "response",
+        [
+            pytest.param(httpx.Response(200, content=b"<html>sso</html>"), id="malformed-json"),
+            pytest.param(httpx.Response(200, json={"message": "x"}), id="dict-instead-of-list"),
+            pytest.param(httpx.Response(200, json=[1, "x"]), id="list-of-non-objects"),
+            pytest.param(httpx.Response(200, json=[{"tmdbId": 1}, "x"]), id="list-with-one-non-object"),
+            pytest.param(httpx.Response(500), id="http-500"),
+        ],
+    )
+    def test_a_bad_answer_raises_instead_of_reading_as_empty(self, client_cls, target, path, method, response):
+        respx.get(f"{target.url}{path}").mock(return_value=response)
+        self._queue_empty(target)
+        with pytest.raises(ArrError):
+            getattr(client_cls(target), method)()
+
+    @respx.mock
+    @pytest.mark.parametrize("client_cls,target", [(RadarrClient, RADARR), (SonarrClient, SONARR)])
+    @pytest.mark.parametrize(
+        "response",
+        [
+            pytest.param(httpx.Response(200, content=b"<html>sso</html>"), id="malformed-json"),
+            pytest.param(httpx.Response(200, json={"message": "x"}), id="dict-instead-of-list"),
+            pytest.param(httpx.Response(200, json=[1, "x"]), id="list-of-non-objects"),
+            pytest.param(httpx.Response(500), id="http-500"),
+        ],
+    )
+    def test_a_bad_tag_list_creates_no_tag_and_fails_the_add(self, client_cls, target, response):
+        """`_resolve_tag` used to read a bad tag list as "no tags" and POST a duplicate of every one."""
+        respx.get(f"{target.url}/api/v3/tag").mock(return_value=response)
+        post = respx.post(f"{target.url}/api/v3/tag")
+        with pytest.raises(ArrError):
+            client_cls(target)._resolve_tag("req-sarah")
+        assert not post.called
+
+    @respx.mock
+    def test_a_bad_tag_list_aborts_add_movie_before_any_write(self):
+        respx.get(f"{RADARR.url}/api/v3/movie/lookup/tmdb").mock(return_value=httpx.Response(200, json=MOVIE_LOOKUP))
+        respx.get(f"{RADARR.url}/api/v3/tag").mock(return_value=httpx.Response(200, json={"oops": 1}))
+        tag_post = respx.post(f"{RADARR.url}/api/v3/tag")
+        movie_post = respx.post(f"{RADARR.url}/api/v3/movie")
+        with pytest.raises(ArrError):
+            RadarrClient(RADARR).add_movie(273481, dry_run=False, extra_tags={"req-sarah"})
+        assert not tag_post.called and not movie_post.called

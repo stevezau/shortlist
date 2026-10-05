@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -6,16 +7,22 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "./api";
+import { dailyCronTime, describeCron } from "./cron";
 import { runRefetchIntervalMs, runsListRefetchIntervalMs } from "./run-format";
+import { loadCachedReport, saveCachedReport } from "./report-cache";
+import { needsSetup } from "./season-draft";
 import { useSSE } from "./sse";
-import { useLiveClock } from "./use-live-clock";
 import type {
   ArrStatus,
+  AuditEvent,
   CollectionInput,
+  DateRule,
   ReportWindow,
   Run,
   RowOverridePatch,
   RunRequest,
+  SeasonInput,
+  SeasonPreviewInput,
   Settings,
   User,
   UserPatch,
@@ -46,6 +53,8 @@ export const queryKeys = {
   arrOptions: (service: "radarr" | "sonarr") =>
     ["arr-options", service] as const,
   seerrOptions: ["seerr-options"] as const,
+  requestRowSources: (pattern: string, rowId: number | null) =>
+    ["request-row-sources", pattern, rowId] as const,
   arrStatus: ["arrStatus"] as const,
   curatorModels: (provider: string, credential: string) =>
     ["curator-models", provider, credential] as const,
@@ -72,6 +81,15 @@ export const queryKeys = {
   schedule: ["schedule"] as const,
   libraries: ["libraries"] as const,
   seasons: ["seasons"] as const,
+  seasonPresets: ["season-presets"] as const,
+  seasonPreview: (draft: SeasonPreviewInput) => ["season-preview", draft] as const,
+  seasonNextDate: (rule: DateRule) => ["season-next-date", rule] as const,
+  themeCapabilities: ["theme-capabilities"] as const,
+  themePrompts: ["theme-prompts"] as const,
+  theme: (id: number) => ["themes", id] as const,
+  themeRotation: (collectionId: number) => ["theme-rotation", collectionId] as const,
+  seasonSearch: (kind: "tags" | "collections" | "library", q: string) =>
+    ["season-search", kind, q] as const,
   libraryCollections: (key: string) => ["library-collections", key] as const,
   ownedCollections: ["owned-collections"] as const,
   notifications: ["notifications"] as const,
@@ -86,6 +104,7 @@ export const queryKeys = {
   jobs: ["jobs"] as const,
   jobsCatalog: ["jobs", "catalog"] as const,
   privacyStatus: ["privacy", "status"] as const,
+  plexChanges: ["events", "plex-writes"] as const,
 };
 
 /**
@@ -175,6 +194,20 @@ export function useRunsSummary() {
   });
 }
 
+/**
+ * The newest few runs, for a glance at the latest one (the dashboard's Last run).
+ *
+ * A few rather than one: the newest run may still be queued or running, and what the dashboard
+ * reports is the newest FINISHED one. Under `queryKeys.runs`, so starting or finishing a run (which
+ * invalidates that prefix) refreshes it too.
+ */
+export function useRecentRuns(limit = 10) {
+  return useQuery({
+    queryKey: [...queryKeys.runs, "recent", limit] as const,
+    queryFn: () => api.getRuns(undefined, undefined, limit),
+  });
+}
+
 export function useBlockSeed(userId: number) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -218,6 +251,23 @@ export function useClearDeletedRows() {
 
 export function useSchedule() {
   return useQuery({ queryKey: queryKeys.schedule, queryFn: api.getSchedule });
+}
+
+/**
+ * What the blank schedule chip says for a job where blank means "use the built-in default".
+ *
+ * "Built-in (03:00)" from the `default_cron` /api/schedule reports for `kind`, the plain-English
+ * description for a default that isn't a daily time, or "Daily" until that response lands. One hook
+ * because four panels draw this chip, and a label fixed in only one of them left the rest saying
+ * "Daily".
+ */
+export function useBuiltInScheduleLabel(kind: string): string {
+  const schedule = useSchedule();
+  const defaultCron =
+    schedule.data?.jobs.find((j) => j.kind === kind)?.default_cron ?? "";
+  const time = dailyCronTime(defaultCron);
+  if (time) return `Built-in (${time})`;
+  return (defaultCron && describeCron(defaultCron)) || "Daily";
 }
 
 export function useClearRuns() {
@@ -451,6 +501,25 @@ export function useSeerrOptions(enabled: boolean) {
   });
 }
 
+/**
+ * Whether a "Your requests" row can know who asked for what, with `pattern` previewed as own tags.
+ *
+ * Never per keystroke: the endpoint reads Overseerr and every Arr in turn. Callers fetch once with
+ * the saved pattern and then call `refetch()` from a Check button.
+ */
+export function useRequestRowSources(pattern: string, enabled: boolean, rowId: number | null = null) {
+  return useQuery({
+    queryKey: queryKeys.requestRowSources(pattern, rowId),
+    queryFn: () => api.getRequestRowSources(pattern, rowId),
+    enabled,
+    // Up to a few dozen HTTP calls to Overseerr and the Arrs per read, for a row that is built
+    // nightly: five minutes is fresh enough, and a tab switch must not re-run it.
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
 export function useArrOptions(service: "radarr" | "sonarr", enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.arrOptions(service),
@@ -507,14 +576,127 @@ export function useCuratorModels(
   });
 }
 
-/** The season catalogue. It only changes with the app, so it is never refetched; `enabled` lets a
- *  component that shows seasons only on a seasonal row avoid asking for them on every other row. */
+/** The season catalogue: the built-ins and the owner's own (#137). `enabled` lets a component that
+ *  shows seasons only on a seasonal row avoid asking for them on every other row. Saving a season
+ *  refreshes it; the minute's `staleTime` is for what changes elsewhere — which rows use a season,
+ *  and its next dates at midnight. */
 export function useSeasons(enabled = true) {
   return useQuery({
     queryKey: queryKeys.seasons,
     queryFn: () => api.getSeasons(),
-    staleTime: Infinity,
+    staleTime: 60_000,
     enabled,
+  });
+}
+
+export function useSeasonPresets(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.seasonPresets,
+    queryFn: () => api.getSeasonPresets(),
+    staleTime: 60_000,
+    retry: false,
+    enabled,
+  });
+}
+
+/** How many films a draft season finds in the libraries. Debounce `draft` in the caller: every change
+ *  of source is a new count. The first count of a session can take several seconds (the server reads
+ *  the libraries), so nothing here retries on its own, and the same draft is never counted twice in
+ *  five minutes — a list of seasons and the editor opened on one of them share the count.
+ *
+ *  `keepPrevious` holds the last count on screen while the next one runs, for the editor, where a
+ *  number that blinks to a skeleton on every tick would be harder to follow than one that updates. */
+export function useSeasonPreview(
+  draft: SeasonPreviewInput,
+  { enabled = true, keepPrevious = false }: { enabled?: boolean; keepPrevious?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.seasonPreview(draft),
+    // The draft rides along, so a count held on screen while the next one runs says what it counted.
+    queryFn: async () => ({ ...(await api.previewSeason(draft)), draft }),
+    staleTime: 5 * 60_000,
+    retry: false,
+    // Only after a refusal for a missing setup step: the owner went to Settings (in another tab) to add
+    // the TMDB key, and coming back is the moment to count again.
+    refetchOnWindowFocus: (query) => needsSetup(query.state.error),
+    placeholderData: keepPrevious ? keepPreviousData : undefined,
+    enabled,
+  });
+}
+
+/** When a date rule next falls, for the editor's "Next: …" line. Asked apart from the count, so a count
+ *  that fails never takes the date with it. The answer only moves at midnight. */
+export function useSeasonNextDate(rule: DateRule) {
+  return useQuery({
+    queryKey: queryKeys.seasonNextDate(rule),
+    queryFn: () => api.getSeasonNextDate(rule),
+    staleTime: 60 * 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** The editor's searches answer nothing under 2 characters, so they aren't asked. */
+const MIN_SEARCH = 2;
+
+function useSeasonSearch<T>(kind: "tags" | "collections" | "library", q: string, load: (q: string) => Promise<T[]>) {
+  const query = q.trim();
+  return useQuery({
+    queryKey: queryKeys.seasonSearch(kind, query),
+    queryFn: () => load(query),
+    staleTime: 5 * 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+    enabled: query.length >= MIN_SEARCH,
+  });
+}
+
+export function useTmdbTags(q: string) {
+  return useSeasonSearch("tags", q, api.getTmdbTags);
+}
+
+export function usePlexCollections(q: string) {
+  return useSeasonSearch("collections", q, api.getPlexCollections);
+}
+
+export function useLibrarySearch(q: string) {
+  return useSeasonSearch("library", q, api.searchLibrary);
+}
+
+/** After any season is saved or deleted: the catalogue, the presets still on offer, and the rows —
+ *  a delete unticks the season from every row that had it. Awaited, so a caller that ticks the new
+ *  season reads a catalogue that already has it. */
+function useInvalidateSeasons() {
+  const queryClient = useQueryClient();
+  return () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.seasons }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.seasonPresets }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
+    ]);
+}
+
+export function useCreateSeason() {
+  const invalidate = useInvalidateSeasons();
+  return useMutation({
+    mutationFn: (body: SeasonInput) => api.createSeason(body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateSeason() {
+  const invalidate = useInvalidateSeasons();
+  return useMutation({
+    mutationFn: ({ slug, body }: { slug: string; body: SeasonInput }) => api.updateSeason(slug, body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteSeason() {
+  const invalidate = useInvalidateSeasons();
+  return useMutation({
+    mutationFn: (slug: string) => api.deleteSeason(slug),
+    onSuccess: invalidate,
   });
 }
 
@@ -835,44 +1017,18 @@ export function useEngagement(window: ReportWindow = "30") {
 export function useReport(window: ReportWindow = "30") {
   return useQuery({
     queryKey: queryKeys.reportWindow(window),
-    queryFn: () => api.getReport(window),
+    queryFn: async () => {
+      const fresh = await api.getReport(window);
+      // Written here, not on `data`, so placeholder data is never saved back as if it were fetched.
+      saveCachedReport(window, fresh);
+      return fresh;
+    },
     staleTime: 60_000,
+    // Show the report remembered for the SELECTED window first; only without one, keep the previous
+    // window on screen while the new one loads. Placeholder (unlike initialData) leaves the query
+    // pending-then-refetching.
+    placeholderData: (previous) => loadCachedReport(window) ?? previous,
   });
-}
-
-/**
- * Has enough time passed for a per-person "picks watched" figure to mean anything?
- *
- * A pick only counts once it has had its full `matured_days` to be watched — the rule the dashboard's
- * "Needs a look" card states when it holds its warnings back. Until the OLDEST pick on
- * the server reaches that age, no pick anywhere has had its chance, so every person's rate is 0 and
- * says nothing about them. `formatHitRate` renders those as "—".
- *
- * Install-wide rather than per person, because that is the granularity the data supports: the users
- * payload carries a rate but no pick dates. It is also monotonic — once the first pick is old
- * enough this is true for good — which the windowed `landing.rate === null` would not be, since a
- * quiet fortnight can empty that cohort on a mature server and hide rates that do mean something.
- *
- * Defaults to FALSE while the report is loading, so a 0 is withheld until it is known to be real
- * rather than shown and then retracted.
- *
- * The clock comes from `useLiveClock`, not from `Date.now()` in the body: `Date.now()` is impure,
- * and calling it while rendering makes the answer depend on when React happens to re-render
- * (`react-hooks/purity` rejects it outright). The idle cadence is a minute, which is ample for a
- * threshold measured in days — and it means a page left open across the boundary starts showing
- * real rates without a reload.
- *
- * @returns True once picks are old enough for a zero to be a finding rather than a formality.
- */
-export function useHitRatesMatured(): boolean {
-  const report = useReport();
-  const now = useLiveClock(false);
-  const firstPick = report.data?.first_pick;
-  const maturedDays = report.data?.overall.landing.matured_days;
-  if (!firstPick || maturedDays === undefined) return false;
-  const first = Date.parse(firstPick);
-  if (Number.isNaN(first)) return false;
-  return now - first >= maturedDays * 86_400_000;
 }
 
 /**
@@ -968,6 +1124,32 @@ export function useLogs(
     // buries the real error under a stream of identical ones. The error state offers Retry.
     refetchInterval: (query) => (follow && !query.state.error ? 3000 : false),
     placeholderData: (previous) => previous,
+  });
+}
+
+/** How many audit events one "Load older changes" press fetches (the server's default page). */
+export const PLEX_CHANGES_PAGE = 200;
+
+/**
+ * Every write Shortlist made to Plex or plex.tv, newest first, paged backwards by event id.
+ *
+ * A cursor, not an offset: events are appended while you read. A short page means there is nothing
+ * older — the endpoint returns a plain array, so only the page length can say so.
+ */
+export function usePlexChanges() {
+  return useInfiniteQuery({
+    queryKey: queryKeys.plexChanges,
+    queryFn: ({ pageParam }) =>
+      api.getEventLog({
+        plexWrites: true,
+        beforeId: pageParam as number | undefined,
+        limit: PLEX_CHANGES_PAGE,
+      }),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (lastPage: AuditEvent[]) =>
+      lastPage.length < PLEX_CHANGES_PAGE
+        ? undefined
+        : lastPage[lastPage.length - 1]?.id,
   });
 }
 

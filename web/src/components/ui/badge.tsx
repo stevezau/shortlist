@@ -8,7 +8,10 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "border-transparent bg-primary text-primary-foreground",
+        // Neutral: amber is the primary action's colour, so a badge that merely labels something
+        // stays out of it. `accent` is the rare badge that has to draw the eye.
+        default: "border-border-strong bg-elevated text-foreground",
+        accent: "border-primary/40 bg-primary/10 text-accent-foreground",
         secondary: "border-transparent bg-secondary text-secondary-foreground",
         destructive:
           "border-transparent bg-destructive text-destructive-foreground",

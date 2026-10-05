@@ -12,9 +12,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowEditor } from "@/components/rows/row-editor";
 import type * as ApiModule from "@/lib/api";
+import { toInput } from "@/lib/collections";
 import type { Collection, User } from "@/lib/types";
+import { BUILTINS } from "@/test/season-fixtures";
 
-const { updateCollection, settingsData, startRun } = vi.hoisted(() => ({
+const { updateCollection, settingsData, startRun, scheduleData, privacyData, effectivenessData } = vi.hoisted(() => ({
+  // null = that endpoint fails, which is what every test that doesn't set one gets.
+  scheduleData: { current: null as unknown },
+  privacyData: { current: null as unknown },
+  effectivenessData: { current: null as unknown },
   updateCollection: vi.fn((id: number, body: unknown) =>
     Promise.resolve({ ...(body as object), id }),
   ),
@@ -32,15 +38,19 @@ vi.mock("@/lib/api", async (importOriginal) => {
         updateCollection(id, body),
       getSettings: () => Promise.resolve(settingsData.current),
       getLibraries: () => Promise.resolve([]),
-      getSeasons: () =>
-        Promise.resolve([
-          { slug: "valentines", name: "Valentine's Day", emoji: "💘", month: 2, day: 14, description: "Valentine's films and romance" },
-          { slug: "halloween", name: "Halloween", emoji: "🎃", month: 10, day: 31, description: "Halloween films and horror" },
-          { slug: "christmas", name: "Christmas", emoji: "🎄", month: 12, day: 25, description: "Christmas films" },
-        ]),
+      getSeasons: () => Promise.resolve(BUILTINS),
+      getSeasonPresets: () => Promise.resolve([]),
       getImageProvider: () =>
         Promise.resolve({ capable: false, provider: "", reason: "" }),
       startRun: (body: unknown) => startRun(body),
+      getSchedule: () =>
+        scheduleData.current ? Promise.resolve(scheduleData.current) : Promise.reject(new Error("no schedule")),
+      getPrivacyStatus: () =>
+        privacyData.current ? Promise.resolve(privacyData.current) : Promise.reject(new Error("no privacy read")),
+      getCollectionEffectiveness: () =>
+        effectivenessData.current
+          ? Promise.resolve(effectivenessData.current)
+          : Promise.reject(new Error("no history")),
     },
   };
 });
@@ -51,6 +61,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     slug: "hidden-gems",
     name: "Hidden Gems",
     last_run_id: null,
+    preview_titles: [],
     build: "per_person",
     audience: "everyone",
     audience_user_ids: [],
@@ -70,12 +81,19 @@ function row(patch: Partial<Collection> = {}): Collection {
     watched_pct: null,
     rewatch: false,
     rewatch_cooldown_days: 30,
+    requests_row: false,
+    requests_window_days: 90,
+    requests_tag_pattern: "",
     unstarted_only: false,
     refresh_days: null,
     idle_hold_days: null,
     recency: null,
     recent_count: null,
     max_seeds: null,
+    max_runtime: null,
+    min_year: null,
+    max_year: null,
+    min_rating: null,
     cold_start: null,
     req_min_rating: null,
     req_min_votes: null,
@@ -107,6 +125,18 @@ function row(patch: Partial<Collection> = {}): Collection {
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
+    ai_instructions: { mode: "default", text: "" },
+    theme_id: null,
+    theme_name: null,
+    theme_emoji: null,
+    ai_paused: false,
+    ai_tokens: 0,
+    theme_mode: "fixed",
+    explore_brief: "",
+    theme_days: null,
+    refresh_share: null,
+    repeat_cooldown_days: null,
+    avoid_rows: null,
     ...patch,
   };
 }
@@ -124,7 +154,9 @@ function user(patch: Partial<User> = {}): User {
     history_depth: 10,
     last_run_at: null,
     request_tag: "",
-    hit_rate: null,
+    requested_by_tag: "",
+    picks_watched_30d: null,
+    last_pick_watched_at: null,
     nickname: "",
     friendly_name: "",
     display_name: "",
@@ -139,7 +171,7 @@ function user(patch: Partial<User> = {}): User {
   };
 }
 
-function renderEditor(collection: Collection, users: User[] = []) {
+function renderEditor(collection: Collection, users: User[] = [], expand = true) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -150,6 +182,7 @@ function renderEditor(collection: Collection, users: User[] = []) {
       </QueryClientProvider>
     </MemoryRouter>,
   );
+  if (expand) document.querySelectorAll<HTMLDetailsElement>("details[data-settings-group], details[data-setting='kind']").forEach((group) => { if (group.dataset.settingsGroup !== "Requests") group.open = true; });
 }
 
 describe("RowEditor — acting on the row you're editing", () => {
@@ -192,13 +225,13 @@ describe("RowEditor — acting on the row you're editing", () => {
   });
 
   it("points at removing and deleting rather than leaving them below the fold", async () => {
-    // They stay fenced off at the bottom — they reach into other people's Plex and Cancel does not
+    // They stay fenced off at the bottom — they reach into other people's Plex and Discard does not
     // undo them — but fenced off had become invisible: nothing on the first screen said they exist.
+    // The jump list, on the first screen, names the Danger zone.
     renderEditor(row());
 
-    expect(
-      await screen.findByRole("button", { name: /Remove or delete/i }),
-    ).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "Row settings sections" });
+    expect(within(nav).getByRole("link", { name: "Danger zone" })).toHaveAttribute("href", "#danger-zone");
   });
 
   it("warns that Run rebuilds the SAVED row once the form has been edited", async () => {
@@ -214,6 +247,208 @@ describe("RowEditor — acting on the row you're editing", () => {
     await userEvent.click(screen.getByRole("button", { name: "Change it" }));
 
     expect(await screen.findByText(/unsaved changes/i)).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — Live on Plex and the save bar", () => {
+  beforeEach(() => {
+    settingsData.current = {};
+    updateCollection.mockClear();
+  });
+
+  it("puts the on/off switch in Live on Plex, and it still writes straight away", async () => {
+    renderEditor(row());
+    const live = screen.getByRole("region", { name: "Live on Plex" });
+    expect(within(live).getByText("Changes here apply to Plex immediately.")).toBeInTheDocument();
+
+    await userEvent.click(within(live).getByRole("switch", { name: /Enable Hidden Gems/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "Turn it off" }));
+
+    // No Save pressed: the switch PATCHes the whole saved row with only `enabled` flipped.
+    await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
+    expect(updateCollection).toHaveBeenCalledWith(1, { ...toInput(row()), enabled: false });
+  });
+
+  it("holds a draft edit in the save bar, naming the change, until Save sends it", async () => {
+    renderEditor(row());
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+    expect(within(bar).queryByText(/unsaved change/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Shuffled" }));
+
+    expect(within(bar).getByText("1 unsaved change")).toBeInTheDocument();
+    expect(bar).toHaveTextContent("Order: Best match → Shuffled");
+    expect(updateCollection).not.toHaveBeenCalled();
+
+    await userEvent.click(within(bar).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
+    expect(updateCollection).toHaveBeenCalledWith(1, { ...toInput(row()), pick_order: "shuffle" });
+  });
+
+  it("names an AI instructions change in the save bar and sends it on Save", async () => {
+    renderEditor(row({ candidate_sources: ["llm_web"] }));
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Add to the default" }));
+    expect(bar).toHaveTextContent("AI instructions: Use the default → Add to the default");
+    await userEvent.type(screen.getByRole("textbox", { name: "Also tell the AI" }), "No sequels.");
+
+    await userEvent.click(within(bar).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
+    expect(updateCollection).toHaveBeenCalledWith(1, {
+      ...toInput(row({ candidate_sources: ["llm_web"] })),
+      ai_instructions: { mode: "add", text: "No sequels." },
+    });
+  });
+
+  it("counts no change after adding instructions and switching back to the default, and keeps the text", async () => {
+    renderEditor(row({ candidate_sources: ["llm_web"] }));
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Add to the default" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Also tell the AI" }), "x");
+    expect(within(bar).getByText("1 unsaved change")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Use the default" }));
+    expect(within(bar).queryByText(/unsaved change/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Add to the default" }));
+    expect(screen.getByRole("textbox", { name: "Also tell the AI" })).toHaveValue("x");
+  });
+
+  it("counts no change after switching a row's instructions to Write your own and back", async () => {
+    renderEditor(row({ candidate_sources: ["llm_web"], ai_instructions: { mode: "add", text: "No sequels." } }));
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Write your own" }));
+    expect(within(bar).getByText("1 unsaved change")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Add to the default" }));
+    expect(within(bar).queryByText(/unsaved change/)).toBeNull();
+  });
+
+  it("throws the draft away on Discard without saving anything", async () => {
+    renderEditor(row());
+    const bar = screen.getByRole("region", { name: "Unsaved changes" });
+    await userEvent.type(screen.getByLabelText("Description"), "Picked nightly");
+    expect(within(bar).getByText("1 unsaved change")).toBeInTheDocument();
+
+    await userEvent.click(within(bar).getByRole("button", { name: "Discard" }));
+
+    expect(screen.getByLabelText("Description")).toHaveValue("");
+    expect(within(bar).queryByText(/unsaved change/)).toBeNull();
+    expect(updateCollection).not.toHaveBeenCalled();
+  });
+
+  it("keeps the name read-only, changed only through Rename on Plex", async () => {
+    renderEditor(row());
+    const looks = screen.getByRole("region", { name: "Name & look" });
+    expect(within(looks).queryByRole("textbox", { name: "Name" })).toBeNull();
+    expect(within(looks).getByText("Changed with Rename on Plex")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Live on Plex" })).getByRole("button", { name: "Rename on Plex…" }),
+    ).toBeEnabled();
+  });
+
+  it("sums up the row's record in one line, judging nothing before its picks have had their time", async () => {
+    effectivenessData.current = {
+      delivered: 60,
+      watched: 0,
+      finished: 0,
+      first_delivered_at: "2026-09-20T02:30:00Z",
+      last_delivered_at: "2026-09-28T02:30:00Z",
+      matured: null,
+      matured_days: 30,
+      per_library: [],
+      runs: 3,
+    };
+    try {
+      renderEditor(row());
+      const live = screen.getByRole("region", { name: "Live on Plex" });
+      expect(await within(live).findByText(/titles delivered/)).toBeInTheDocument();
+      expect(live).toHaveTextContent("60 titles delivered");
+      expect(live).toHaveTextContent("0 watched so far, a pick is judged once it’s had 30 days");
+      expect(within(live).getByRole("link", { name: "See runs →" })).toHaveAttribute("href", "/runs?row=hidden-gems");
+    } finally {
+      effectivenessData.current = null;
+    }
+  });
+
+  it("says when it next runs, from the scheduler when the schedule on screen is the saved one", async () => {
+    const next = new Date();
+    next.setDate(next.getDate() + 1);
+    next.setHours(2, 30, 0, 0);
+    scheduleData.current = {
+      jobs: [],
+      rows: [{ cron: "30 2 * * *", next_run: next.toISOString(), rows: [{ id: 1, name: "Hidden Gems", slug: "hidden-gems" }], type: "cron" }],
+    };
+    try {
+      renderEditor(row({ schedule: "30 2 * * *" }));
+      const when = next.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      expect(await within(screen.getByRole("region", { name: "Schedule" })).findByText(`It runs tomorrow at ${when}.`, { exact: false })).toBeInTheDocument();
+    } finally {
+      scheduleData.current = null;
+    }
+  });
+
+  it("resolves an inheriting row's cadence against the real global in the Next line", async () => {
+    settingsData.current = { "recommendations.refresh_days": 8 };
+    renderEditor(row({ refresh_days: null, schedule: "30 3 * * *" }));
+    const schedule = screen.getByRole("region", { name: "Schedule" });
+
+    expect(
+      await within(schedule).findByText(/Its titles change on a cycle of 8 days \(the global default\)\./),
+    ).toHaveTextContent("Next: It runs every day at 3:30 AM, Shortlist's clock.");
+  });
+
+  it("says every night for a row that follows a watch, whatever cadence is stored", () => {
+    settingsData.current = { "recommendations.refresh_days": 8 };
+    renderEditor(row({ refresh_days: 0, name_template: "Because you watched {top_seed}" }));
+
+    expect(
+      within(screen.getByRole("region", { name: "Schedule" })).getByText(/Its titles change every night, because it follows their latest watch/),
+    ).toBeInTheDocument();
+  });
+
+  it("names each person it reaches and whether their account hides other rows, leaving the owner to the caveat", async () => {
+    privacyData.current = {
+      accounts: [
+        { account_id: 11, user_id: 2, state: "hiding", restriction_profile: "" },
+        { account_id: 12, user_id: 3, state: "missing", restriction_profile: "" },
+      ],
+      enforcement: {},
+      error: null,
+      read_at: "2026-10-03T00:00:00Z",
+      rows_error: null,
+      rows_on_plex: [],
+      summary: "attention",
+    };
+    try {
+      renderEditor(row(), [
+        user({ id: 1, username: "owner", user_type: "owner" }),
+        user({ id: 2, username: "sarah" }),
+        user({ id: 3, username: "mike" }),
+        user({ id: 4, username: "paused", prefs: { paused: true } }),
+      ]);
+      const who = screen.getByRole("region", { name: "Who gets it" });
+      const rows = within(who).getAllByRole("row").slice(1);
+
+      expect(rows.map((line) => within(line).getAllByRole("cell")[0]!.textContent)).toEqual([
+        expect.stringContaining("sarah"),
+        expect.stringContaining("mike"),
+      ]);
+      expect(await within(rows[0]!).findByText("Yes")).toBeInTheDocument();
+      expect(within(rows[1]!).getByRole("link", { name: /No, hide rules missing/ })).toHaveAttribute("href", "/privacy");
+      expect(within(who).getByText(/Plex can.t restrict the owner/)).toBeInTheDocument();
+    } finally {
+      privacyData.current = null;
+    }
+  });
+
+  it("keeps delete out of the header: the Danger zone is the only way to it", () => {
+    renderEditor(row());
+    const danger = screen.getByRole("region", { name: "Danger zone" });
+    expect(within(danger).getByRole("button", { name: "Delete Hidden Gems" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /^Delete/ })).toHaveLength(1);
   });
 });
 
@@ -344,6 +579,7 @@ describe("RowEditor — already-watched titles", () => {
 });
 
 describe("RowEditor — the default row's name", () => {
+  const openRename = () => userEvent.click(screen.getByRole("button", { name: "Rename on Plex…" }));
   const defaultRow = (patch: Partial<Collection> = {}) =>
     row({
       slug: "picked",
@@ -357,6 +593,7 @@ describe("RowEditor — the default row's name", () => {
 
   it("lets you type a new name, and says it is not applied until you press Rename", async () => {
     renderEditor(defaultRow());
+    await openRename();
     const input = screen.getByDisplayValue("✨ {library_name} Picked for You");
     expect(input).toBeEnabled();
 
@@ -364,7 +601,7 @@ describe("RowEditor — the default row's name", () => {
 
     // The warning is the whole point of letting the box be editable: a name typed here has changed
     // nothing on Plex yet, and Save on this page will not apply it either.
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByText(/Not applied yet — press/)).toHaveTextContent(
       /Not applied yet/i,
     );
     expect(screen.getByRole("button", { name: /Rename/ })).toBeEnabled();
@@ -375,6 +612,7 @@ describe("RowEditor — the default row's name", () => {
     // said "Renaming rewrites this row on Plex…" and nothing else, so the placeholders were invisible
     // exactly where a rename is typed.
     renderEditor(defaultRow());
+    await openRename();
     // The hint is one sentence built from several spans, so match the paragraph as a whole.
     const hint = () =>
       screen.getByText(
@@ -386,7 +624,7 @@ describe("RowEditor — the default row's name", () => {
 
     await userEvent.type(screen.getByDisplayValue("✨ {library_name} Picked for You"), "!");
 
-    expect(await screen.findByRole("status")).toHaveTextContent(/Not applied yet/i);
+    expect(await screen.findByText(/Not applied yet — press/)).toHaveTextContent(/Not applied yet/i);
     expect(hint()).toHaveTextContent("{library_name}");
   });
 
@@ -394,6 +632,7 @@ describe("RowEditor — the default row's name", () => {
     // Enabled on an unchanged name it offered to rewrite every collection on Plex, for every
     // person, to the name they already had — minutes of writes for no change at all.
     renderEditor(defaultRow());
+    await openRename();
     const input = screen.getByDisplayValue("✨ {library_name} Picked for You");
 
     expect(screen.getByRole("button", { name: /Rename/ })).toBeDisabled();
@@ -410,10 +649,12 @@ describe("RowEditor — the default row's name", () => {
     // The draft is held apart from the form on purpose. Saving a new name here without renaming on
     // Plex would leave the database and the server disagreeing, with nothing on screen saying so.
     renderEditor(defaultRow());
+    await openRename();
     await userEvent.type(
       screen.getByDisplayValue("✨ {library_name} Picked for You"),
       " CHANGED",
     );
+    await userEvent.keyboard("{Escape}");
     await userEvent.click(screen.getByRole("button", { name: /^Save/ }));
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
@@ -758,11 +999,11 @@ describe("RowEditor — rebuild cadence", () => {
     renderEditor(row({ refresh_days: 11 }));
     expect(
       screen.getByRole("spinbutton", {
-        name: /how often the row rebuilds/i,
+        name: /titles refresh every, in days/i,
       }),
     ).toHaveValue(11);
     expect(
-      screen.getByRole("switch", { name: /global rebuild cadence/i }),
+      screen.getByRole("switch", { name: /global refresh cadence/i }),
     ).not.toBeChecked();
   });
 
@@ -772,7 +1013,7 @@ describe("RowEditor — rebuild cadence", () => {
     renderEditor(row({ refresh_days: null }));
 
     await userEvent.click(
-      screen.getByRole("switch", { name: /global rebuild cadence/i }),
+      screen.getByRole("switch", { name: /global refresh cadence/i }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
@@ -814,7 +1055,7 @@ describe("RowEditor — idle hold", () => {
     ).toBeInTheDocument();
     // ...while the CADENCE control stays hidden for it, which is a different question.
     expect(
-      screen.queryByRole("switch", { name: /global rebuild cadence/i }),
+      screen.queryByRole("switch", { name: /global refresh cadence/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -1095,9 +1336,9 @@ describe("RowEditor — how many recent watches to match", () => {
 });
 
 describe("RowEditor — how often it changes", () => {
-  const cadenceBlock = () => screen.queryByText(/How often it changes/i);
+  const cadenceBlock = () => screen.queryByText(/Titles refresh every/i);
   const cadenceToggle = () =>
-    screen.queryByRole("switch", { name: /global rebuild cadence/i });
+    screen.queryByRole("switch", { name: /global refresh cadence/i });
 
   it("drops the setting entirely on a row named after a watch", () => {
     // The engine runs these rows nightly whatever is stored, so there is no cadence to choose. It
@@ -1296,7 +1537,7 @@ describe("RowEditor — name template variables", () => {
 
     // `{{` is user-event's escape for a literal brace, so this types "{user}'s Picks".
     await user.type(screen.getByLabelText("Name"), "{{user}'s Picks");
-    expect(screen.getByText(/Sarah's Picks/)).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Name & look" })).getByText(/Sarah's Picks/)).toBeInTheDocument();
   });
 
   it("shows no preview for a plain name — there is nothing to substitute", async () => {
@@ -1397,58 +1638,67 @@ describe("RowEditor — rating source is answerable where the order is chosen", 
     // screen, under a different heading — is how the setting stayed undiscovered.
     settingsData.current = { "recommendations.rating_source": "imdb" };
     renderEditor(row({ pick_order: "best" }));
-    expect(screen.queryByLabelText("Rated by")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Rated by · global setting")).not.toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("button", { name: "Highest rated" }),
     );
 
-    expect(await screen.findByLabelText("Rated by")).toHaveValue("imdb");
+    expect(await screen.findByLabelText("Rated by · global setting")).toHaveValue("imdb");
+    expect(screen.getByRole("link", { name: "Global row defaults" })).toHaveAttribute("href", "/settings#defaults");
   });
 });
 
-describe("RowEditor — every group is on screen, only the optional ones fold", () => {
-  const groupNamed = (title: string) =>
-    screen.getByText(title, { selector: "summary span span" }).closest("details");
-  const GROUPS = [
-    "How it looks on Plex",
-    // Directly under it: the kind decides every setting below (design §3). A seasonal row's seasons
-    // live in this group now, since following the calendar is a kind.
-    "What kind of row is this?",
-    "Who gets it",
-    "What goes in it",
-    "When it updates",
-    "Where and when people see it",
-    "Requests",
-  ];
+describe("RowEditor — one page of sections, one way around it", () => {
+  const SECTIONS = [
+    ["Name & look", "name-and-look"],
+    ["Who gets it", "who-gets-it"],
+    ["What goes in", "what-goes-in"],
+    ["Schedule", "schedule"],
+    ["Placement", "placement"],
+    ["Requests", "requests"],
+    ["Danger zone", "danger-zone"],
+  ] as const;
+  const section = (name: string) => screen.getByRole("region", { name });
 
-  it("leaves the groups that decide what a row does open", () => {
-    renderEditor(row());
+  it("lists the seven sections in order, each a link to that section on the page", () => {
+    renderEditor(row(), [], false);
+    const nav = screen.getByRole("navigation", { name: "Row settings sections" });
+    const links = within(nav).getAllByRole("link");
 
-    expect(screen.getByLabelText("Name", { exact: true })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Best match" })).toBeVisible();
-    expect(screen.getByText("How many titles")).toBeVisible();
-
-    // Open, because a page has room for them. As a modal these were collapsed to fit inside the
-    // viewport cap — which is how the movies-and-TV seed warning ended up somewhere nobody looks.
-    for (const group of GROUPS.slice(0, -1)) {
-      expect(groupNamed(group)).toHaveAttribute("open");
-    }
+    expect(links.map((link) => link.textContent)).toEqual(SECTIONS.map(([label]) => label));
+    expect(links.map((link) => link.getAttribute("href"))).toEqual(SECTIONS.map(([, id]) => `#${id}`));
+    const regions = SECTIONS.map(([label, id]) => {
+      const region = section(label);
+      expect(region).toHaveAttribute("id", id);
+      return region;
+    });
+    // In document order, the order the list gives them.
+    regions.slice(1).forEach((region, index) => {
+      expect(regions[index]!.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
   });
 
-  it("folds only the group most people never touch", () => {
-    renderEditor(row());
-
-    expect(groupNamed("Requests")).not.toHaveAttribute("open");
+  it("folds nothing: no section chips, no accordions, every section's settings on the page", () => {
+    renderEditor(row(), [], false);
+    expect(document.querySelector("details[data-settings-group]")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Appearance" })).toBeNull();
+    for (const [label] of SECTIONS) expect(section(label)).toBeVisible();
+    expect(within(section("Placement")).getByLabelText("Sort title prefix")).toBeVisible();
   });
 
-  it("asks its questions in order: how it looks, what kind it is, who gets it, what's in it, when it updates, where and when it shows", () => {
-    renderEditor(row());
-
-    const titles = Array.from(
-      document.querySelectorAll("details > summary span span:first-child"),
-    ).map((el) => el.textContent);
-    expect(titles).toEqual(GROUPS);
+  it("has no Danger zone for a row being created, which has nothing on Plex yet", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <RowEditor collection={null} users={[]} onClose={() => {}} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    const nav = screen.getByRole("navigation", { name: "Row settings sections" });
+    expect(within(nav).queryByRole("link", { name: "Danger zone" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Live on Plex" })).toBeNull();
   });
 
   it("keeps everything people see about the row together at the top", () => {
@@ -1456,73 +1706,38 @@ describe("RowEditor — every group is on screen, only the optional ones fold", 
     // bottom — so the settings that decide what someone sees on Plex were the hardest to find.
     renderEditor(row());
 
-    const looks = groupNamed("How it looks on Plex")!;
-    expect(within(looks).getByLabelText("Name", { exact: true })).toBeInTheDocument();
+    const looks = section("Name & look");
+    expect(within(looks).getByText("Changed with Rename on Plex")).toBeInTheDocument();
     expect(within(looks).getByLabelText("Description")).toBeInTheDocument();
     expect(within(looks).getByRole("button", { name: "Plex default" })).toBeInTheDocument();
     expect(within(looks).getByText("On Plex")).toBeInTheDocument();
   });
 
-  it("puts each setting in the group that answers its question", () => {
+  it("puts each setting in the section that answers its question", () => {
     renderEditor(row());
 
-    expect(within(groupNamed("What goes in it")!).getByText("How many titles")).toBeInTheDocument();
-    expect(
-      within(groupNamed("What goes in it")!).getByRole("button", { name: "Best match" }),
-    ).toBeInTheDocument();
-    expect(within(groupNamed("When it updates")!).getByText("Schedule")).toBeInTheDocument();
-    expect(
-      within(groupNamed("Where and when people see it")!).getByLabelText("Sort title prefix"),
-    ).toBeInTheDocument();
-    expect(
-      within(groupNamed("Where and when people see it")!).getByRole("button", { name: "Every day" }),
-    ).toBeInTheDocument();
+    expect(within(section("What goes in")).getByText("How many titles")).toBeInTheDocument();
+    expect(within(section("What goes in")).getByRole("button", { name: "Best match" })).toBeInTheDocument();
+    expect(within(section("What goes in")).getByText("Row type: Picked for You")).toBeInTheDocument();
+    expect(within(section("Schedule")).getByText("Runs on…", { selector: "label" })).toBeInTheDocument();
+    expect(within(section("Schedule")).getByText("Titles refresh every…")).toBeInTheDocument();
+    expect(within(section("Placement")).getByLabelText("Sort title prefix")).toBeInTheDocument();
+    expect(within(section("Placement")).getByRole("button", { name: "Every day" })).toBeInTheDocument();
   });
 
-  it("a folded group still says what is inside it", async () => {
-    // A disclosure that hides its contents AND what they are set to is worse than no disclosure.
-    // Scoped to the group's own summary: the preview panel also reports the tag, so an unscoped
-    // match would pass on the panel alone even if the summary said nothing. Requests are on: with
-    // them off the group holds only a note, and its summary says so instead.
+  it("shows the Requests settings outright when requests are on", async () => {
     settingsData.current = { "requests.enabled": true };
     renderEditor(row({ request_tag: "family-picks" }));
 
-    const requests = groupNamed("Requests")!;
-    expect(requests).not.toHaveAttribute("open");
-    expect(
-      await within(requests.querySelector("summary") as HTMLElement).findByText(/family-picks/),
-    ).toBeInTheDocument();
+    expect(await within(section("Requests")).findByDisplayValue("family-picks")).toBeVisible();
   });
 
-  it("sums up the folded Requests group in the same words as the preview's Requests line", async () => {
-    settingsData.current = {
-      "requests.enabled": true,
-      "requests.max_per_run": 5,
-      "requests.auto_send": true,
-    };
-    renderEditor(row({ request_tag: "family-picks", req_max_per_row: 3 }));
-
-    const summary = await within(
-      groupNamed("Requests")!.querySelector("summary") as HTMLElement,
-    ).findByText(/Up to 3 a run/);
-    expect(summary).toHaveTextContent(
-      "Up to 3 a run, sent to Radarr/Sonarr automatically (global default), tagged “family-picks”",
-    );
-    expect(document.querySelector('[data-fact="requests"] dd')?.textContent).toBe(
-      summary.textContent,
-    );
-  });
-
-  it("says in the folded Requests group when requests are off", async () => {
+  it("says in the Requests section when requests are off", async () => {
     settingsData.current = { "requests.enabled": false };
     renderEditor(row({ request_tag: "family-picks" }));
 
-    const requests = groupNamed("Requests")!;
-    expect(
-      await within(requests.querySelector("summary") as HTMLElement).findByText(
-        "None — requests are off in Settings",
-      ),
-    ).toBeInTheDocument();
+    const requests = section("Requests");
+    expect(await within(requests).findByText(/Requests are turned off/)).toBeInTheDocument();
     expect(within(requests).queryByLabelText(/Request tag/)).toBeNull();
   });
 
@@ -1595,9 +1810,7 @@ describe("RowEditor — a typed row says so", () => {
       "Picked for {{user}",
     );
 
-    const looks = screen
-      .getByText("How it looks on Plex", { selector: "summary span span" })
-      .closest("details")!;
+    const looks = screen.getByRole("region", { name: "Name & look" });
     expect(within(looks).getByText("Picked for Sarah")).toBeInTheDocument();
   });
 
@@ -1667,38 +1880,10 @@ describe("RowEditor — the outcome preview", () => {
     settingsData.current = {};
   });
 
-  it("resolves an inheriting row's cadence against the real global", async () => {
-    // "Whatever the global default is" names the setting instead of its effect, which is the one
-    // answer this panel must never give — it exists to say what the row will DO.
-    settingsData.current = { "recommendations.refresh_days": 8 };
-    renderEditor(row({ refresh_days: null, name_template: "Popular here" }));
-
-    expect(await screen.findByText("Every 8 days")).toBeInTheDocument();
-  });
-
-  it("says every night for a row that follows a watch, whatever is stored", () => {
-    settingsData.current = { "recommendations.refresh_days": 8 };
-    renderEditor(
-      row({ refresh_days: 0, name_template: "Because you watched {top_seed}" }),
-    );
-
-    expect(screen.getByText("Every night")).toBeInTheDocument();
-  });
-
   it("shows what a templated name becomes, not the raw placeholder", () => {
     renderEditor(row({ name_template: "Because you watched {top_seed}" }));
 
     expect(screen.getByText(/“Because you watched Fargo”/)).toBeInTheDocument();
-  });
-
-  it("gives the default row's size from Settings, which is what the engine builds it to", async () => {
-    // The default row's own `size` column is ignored (`context_builder`: `row.size` when is_default).
-    settingsData.current = { "row.size": 25 };
-    renderEditor(row({ slug: "picked", name: "✨ {library_name} Picked for You", size: 15 }));
-
-    const panel = within(document.querySelector("dl") as HTMLElement);
-    expect(await panel.findByText(/Up to 25 titles/)).toBeInTheDocument();
-    expect(panel.queryByText(/Up to 15 titles/)).toBeNull();
   });
 });
 
@@ -1853,7 +2038,7 @@ describe("RowEditor — recent releases", () => {
     );
 
     expect(
-      screen.queryByRole("switch", { name: /global rebuild cadence/i }),
+      screen.queryByRole("switch", { name: /global refresh cadence/i }),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("slider", { name: /release date counts/i }),
@@ -1870,7 +2055,7 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
   // kind picker, so it is no longer a per-person dial to hide.
   const perPersonOnly = [
     /global already-watched default/i,
-    /global rebuild cadence/i,
+    /global refresh cadence/i,
     /not started/i,
     /global setting for people without enough watch history/i,
   ];
@@ -1900,7 +2085,7 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     renderEditor(row({ build: "shared", min_watchers: 2 }));
 
     expect(
-      screen.queryByText(/sources you enabled in Settings/i),
+      screen.queryByText(/sources you enabled in/i),
     ).not.toBeInTheDocument();
     expect(
       screen.getByText(/most-watched titles, most watched first/i),
@@ -1916,7 +2101,7 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
       screen.queryByText(/most-watched titles, most watched first/i),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/sources you enabled in Settings/i),
+      screen.getByText(/sources you enabled in/i),
     ).toBeInTheDocument();
   });
 
@@ -1946,34 +2131,6 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     renderEditor(row({ build: "shared", min_watchers: 2 }));
     expect(
       screen.queryByRole("switch", { name: /global recent-releases default/i }),
-    ).not.toBeInTheDocument();
-  });
-});
-
-describe("RowPreview — what a shared row says it will do", () => {
-  // The panel exists to explain the row, so naming behaviour the engine no longer has is worse than
-  // leaving a line out. A shared row shows what people HAVE watched, pools everyone's viewing,
-  // searches nothing, and is ordered by watcher count.
-  it("describes the tally, not the search it used to run", () => {
-    renderEditor(row({ build: "shared", min_watchers: 2 }));
-
-    expect(
-      screen.getByText("What people here have watched most"),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/pooled — no search, no AI/i)).toBeInTheDocument();
-    expect(screen.getByText("Most watched first")).toBeInTheDocument();
-    expect(screen.queryByText("Found via")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/Only things they haven.t seen/i),
-    ).not.toBeInTheDocument();
-  });
-
-  it("leaves a per-person row's summary alone", () => {
-    renderEditor(row({ build: "per_person" }));
-
-    expect(screen.getByText("Found via")).toBeInTheDocument();
-    expect(
-      screen.queryByText("What people here have watched most"),
     ).not.toBeInTheDocument();
   });
 });
@@ -2077,51 +2234,6 @@ describe("RowEditor — seasons", () => {
     expect(screen.queryByRole("checkbox", { name: /Halloween/ })).toBeNull();
     expect(screen.queryByText("Not seasonal")).toBeNull();
   });
-
-  it("names the seasons in the summary panel", async () => {
-    renderEditor(row({ seasons: ["halloween", "christmas"] }));
-
-    const panel = within(document.querySelector("dl") as HTMLElement);
-    expect(panel.getByText("Seasons")).toBeInTheDocument();
-    expect(await panel.findByText(/🎃 Halloween, 🎄 Christmas/)).toBeInTheDocument();
-    // The season's own titles are the row's first source, and the panel must say so.
-    expect(panel.getByText(/^Seasonal list/)).toBeInTheDocument();
-  });
-
-  it("gives both ends of each season's window in the summary panel", async () => {
-    renderEditor(row({ seasons: ["christmas"], season_lead_days: 30, season_after_days: 7 }));
-    const panel = within(document.querySelector("dl") as HTMLElement);
-    expect(await panel.findByText(/30 days before to 7 days after/)).toBeInTheDocument();
-  });
-
-  it("says a season with no days after ends on its day", async () => {
-    renderEditor(row({ seasons: ["christmas"], season_lead_days: 1, season_after_days: 0 }));
-    const panel = within(document.querySelector("dl") as HTMLElement);
-    expect(await panel.findByText(/1 day before to the day itself/)).toBeInTheDocument();
-  });
-});
-
-describe("RowPreview — a row that only appears on some days says so", () => {
-  it("adds an Only on line naming the days", () => {
-    renderEditor(row({ show_days: [1, 3, 5] }));
-
-    // Scoped to the preview panel: the group's own collapsed summary says "Mon, Wed, Fri" too, and
-    // an unscoped query matches both — which would pass even if the panel line were missing.
-    const panel = document.querySelector("dl");
-    expect(panel).not.toBeNull();
-    const preview = within(panel as HTMLElement);
-    expect(preview.getByText("Only on")).toBeInTheDocument();
-    expect(preview.getByText("Mon, Wed, Fri")).toBeInTheDocument();
-  });
-
-  it("leaves the panel alone for a row that appears every day", () => {
-    // The panel claims to summarise the WHOLE row, so an always-on row must not grow a line that
-    // implies a restriction it does not have.
-    renderEditor(row({ show_days: [] }));
-
-    const panel = document.querySelector("dl");
-    expect(within(panel as HTMLElement).queryByText("Only on")).toBeNull();
-  });
 });
 
 describe("RowEditor — switching to a day schedule does not guess at today", () => {
@@ -2160,4 +2272,33 @@ describe("RowEditor — switching to a day schedule does not guess at today", ()
     const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
     expect(body.show_days).toEqual([1, 2, 3, 4, 5, 6]);
   });
+});
+
+
+describe("RowEditor — audience availability", () => {
+  it("does not present a failed roster as an empty audience", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const retry = vi.fn();
+    render(<MemoryRouter><QueryClientProvider client={client}><RowEditor collection={row()} users={[]} audienceState="error" onRetryAudience={retry} onClose={() => {}} /></QueryClientProvider></MemoryRouter>);
+    expect(screen.queryByText(/No users yet/)).not.toBeInTheDocument();
+    const audience = within(screen.getByRole("region", { name: "Who gets it" }));
+    expect(audience.getByRole("alert")).toHaveTextContent("Couldn’t load the audience. Your saved audience is unchanged.");
+    await userEvent.click(audience.getByRole("button", { name: "Retry audience" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+
+it("asks before a rename discards unsaved row settings", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const rename = vi.fn();
+  render(<MemoryRouter><QueryClientProvider client={client}><RowEditor collection={row()} users={[]} onClose={() => {}} onRename={rename} /></QueryClientProvider></MemoryRouter>);
+  await userEvent.type(screen.getByLabelText("Description"), "a draft description");
+  await userEvent.click(screen.getByRole("button", { name: "Rename on Plex…" }));
+  await userEvent.type(screen.getByLabelText("New name"), " updated");
+  await userEvent.click(screen.getByRole("button", { name: "Rename on Plex" }));
+  expect(screen.getByRole("dialog", { name: "Discard unsaved settings and rename?" })).toBeInTheDocument();
+  expect(rename).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(screen.getByLabelText("Description")).toHaveValue("a draft description");
 });

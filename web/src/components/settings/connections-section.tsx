@@ -1,12 +1,13 @@
-import { Compass, Film, Globe, Inbox, Tv, Webhook } from "lucide-react";
+import { Compass, Film, Globe, Inbox, Server, Tv, Webhook } from "lucide-react";
+import type { ReactNode } from "react";
 
 import {
   MdblistGlyph,
-  PlexGlyph,
   TautulliGlyph,
   TmdbGlyph,
 } from "@/components/brand-glyphs";
 import { ConnectionCard } from "@/components/connection-card";
+import { NotificationsSection } from "@/components/settings/notifications-section";
 import { settingBool, settingString } from "@/lib/format";
 import { CURATOR_PROVIDERS, findProvider } from "@/lib/providers";
 import { useRuns } from "@/lib/queries";
@@ -222,28 +223,85 @@ function searchFootnote(
   return `Last run: ${lastSearches.toLocaleString()} web search${lastSearches === 1 ? "" : "es"} · results are shared by everyone and reused for ${WEB_SEARCH_CACHE_DAYS} days`;
 }
 
-/** Connections: Plex, Tautulli, TMDB, and the AI provider — each editable and testable in place. */
+/** "2 of 4 set up": how many of a group's services have something on file. Set up, not "connected" —
+ *  whether each one actually answers is its own pill, from a real test. */
+function setUpCount(summaries: string[]): string {
+  const done = summaries.filter(Boolean).length;
+  return done === 0 ? "None set up" : `${done} of ${summaries.length} set up`;
+}
+
+/** One group of services: a heading, a line on why the group matters, and one row per service. */
+function ConnectionGroup({
+  id,
+  title,
+  description,
+  count,
+  children,
+}: {
+  id: string;
+  title: string;
+  description: string;
+  count?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section
+      id={id}
+      aria-labelledby={`${id}-title`}
+      className="scroll-mt-32 overflow-hidden rounded-lg border bg-card md:scroll-mt-8"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 border-b px-4 py-3.5 sm:px-5">
+        <div className="min-w-0 space-y-0.5">
+          <h2 id={`${id}-title`} className="text-sm font-semibold">
+            {title}
+          </h2>
+          <p className="max-w-prose text-sm text-muted-foreground">{description}</p>
+        </div>
+        {count && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count}</span>}
+      </div>
+      <div className="divide-y">{children}</div>
+    </section>
+  );
+}
+
+/** Connections: every service Shortlist talks to, one row each, editable and testable in place. */
 export function ConnectionsSection({ settings }: { settings: Settings }) {
   const runs = useRuns();
   const lastFinishedRun = runs.data?.find((r) => r.finished_at);
+  const summaries = {
+    plex: settingString(settings, "plex.url"),
+    tmdb: settingString(settings, "tmdb.apikey") ? "API key saved" : "",
+    search: searchSummary(settings),
+    tautulli: settingString(settings, "tautulli.url"),
+    trakt: settingString(settings, "trakt.client_id") ? "API key saved" : "",
+    mdblist: settingString(settings, "requests.mdblist.apikey") ? "API key saved" : "",
+    overseerr: settingString(settings, "requests.overseerr.url"),
+    radarr: settingString(settings, "requests.radarr.url"),
+    sonarr: settingString(settings, "requests.sonarr.url"),
+    webhook: settingString(settings, "notify.webhook.url")
+      ? settingString(settings, "notify.webhook.auth_header_value") &&
+        settingString(settings, "notify.webhook.auth_header_name")
+        ? "Address and auth header saved"
+        : "Address saved"
+      : "",
+  };
   return (
-    <section
-      id="connections"
-      aria-labelledby="connections-heading"
-      className="scroll-mt-6 space-y-3"
-    >
-      <h2 id="connections-heading" className="text-lg font-semibold">
-        Connections
-      </h2>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ConnectionCard
+    <div id="connections" className="scroll-mt-32 space-y-6 md:scroll-mt-8">
+
+        <ConnectionGroup
+          id="connections-essential"
+          title="Essential"
+          description="Shortlist can’t build rows without these."
+          count={setUpCount([summaries.plex, summaries.tmdb])}
+        >
+<ConnectionCard
           service="plex"
           title="Plex"
           need="required"
           purpose="Where Shortlist reads watch history, and where it builds each person’s row."
           settings={settings}
-          summary={settingString(settings, "plex.url")}
-          glyph={<PlexGlyph />}
+          summary={summaries.plex}
+          glyph={<Server aria-hidden className="text-muted-foreground" />}
           fields={[
             {
               key: "plex.url",
@@ -254,32 +312,13 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             { key: "plex.token", label: "Plex token", kind: "password" },
           ]}
         />
-        <ConnectionCard
-          service="tautulli"
-          title="Tautulli"
-          purpose="Supplies the friendlier names your users go by, so rows say “Sarah” and not an email address."
-          settings={settings}
-          summary={settingString(settings, "tautulli.url")}
-          glyph={<TautulliGlyph />}
-          fields={[
-            {
-              key: "tautulli.url",
-              label: "Address",
-              kind: "text",
-              placeholder: "http://your-host:8181",
-            },
-            { key: "tautulli.apikey", label: "API key", kind: "password" },
-          ]}
-        />
-        <ConnectionCard
+<ConnectionCard
           service="tmdb"
           title="TMDB"
           need="required"
           purpose="The free catalogue Shortlist looks titles up in. A key is free."
           settings={settings}
-          summary={
-            settingString(settings, "tmdb.apikey") ? "API key saved" : ""
-          }
+          summary={summaries.tmdb}
           glyph={<TmdbGlyph />}
           fields={[
             {
@@ -290,22 +329,21 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        {/* ONE card, not two. The AI provider and the web search are halves of a single decision:
-            which half you need depends on where you search, and nothing on screen said so. Named
-            "AI & Web search" rather than "Web search" precisely because the AI key has a second
-            consumer (poster art, OpenAI/Gemini only) — a box called "Web search" could not honestly
-            own it, which is what blocked this merge for so long.
-
-            The duplication this used to cause is avoided by there being exactly ONE home: the
-            provider picker lives here and nowhere else, so two copies cannot disagree. */}
-        <ConnectionCard
+        </ConnectionGroup>
+        <ConnectionGroup
+          id="connections-discovery"
+          title="Discovery & watch history"
+          description="Each one widens where picks come from, or how people are named. Rows build fine without them."
+          count={setUpCount([summaries.search, summaries.tautulli, summaries.trakt, summaries.mdblist])}
+        >
+<ConnectionCard
           service={testableSearchService(settings)}
           testId="connection-llm"
           title="AI & Web search"
           need="optional"
           purpose="Finds what critics and “what to watch next” articles are recommending right now, and keeps only the titles you already own. Optional — without it, rows are built from your library alone."
           settings={settings}
-          summary={searchSummary(settings)}
+          summary={summaries.search}
           glyph={<Globe aria-hidden className="text-primary" />}
           footnote={searchFootnote(
             settings,
@@ -404,12 +442,78 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        <ConnectionCard
+<ConnectionCard
+          service="tautulli"
+          title="Tautulli"
+          purpose="Supplies the friendlier names your users go by, so rows say “Sarah” and not an email address."
+          settings={settings}
+          summary={summaries.tautulli}
+          glyph={<TautulliGlyph />}
+          fields={[
+            {
+              key: "tautulli.url",
+              label: "Address",
+              kind: "text",
+              placeholder: "http://your-host:8181",
+            },
+            { key: "tautulli.apikey", label: "API key", kind: "password" },
+          ]}
+        />
+<ConnectionCard
+          service="trakt"
+          title="Trakt"
+          // Trakt made API keys VIP-only, so people followed our instructions, found no way to
+          // create a key, and reported it as a Shortlist bug (issue #73). The badge says it before
+          // they go looking, rather than burying it mid-paragraph where it was skimmed past.
+          requires="Needs paid Trakt VIP"
+          purpose="Its “related titles” often catch suggestions TMDB misses. Switch the source on under Defaults → Title sources once the key is saved."
+          settings={settings}
+          summary={summaries.trakt}
+          glyph={<Compass aria-hidden className="text-primary" />}
+          fields={[
+            {
+              key: "trakt.client_id",
+              label: "API key (Trakt app client ID)",
+              kind: "password",
+            },
+          ]}
+        />
+<ConnectionCard
+          service="mdblist"
+          title="MDBList"
+          // Two consumers, not one: `requests.rating_source` gates what gets requested, and
+          // `recommendations.rating_source` orders any row set to "Highest rated". Naming only
+          // Requests left the row-ordering setting looking like it needed nothing.
+          // "off TMDB" read two ways — scores taken FROM TMDB, or a row switched AWAY from TMDB —
+          // and it means the second. Say which score is being swapped for which instead.
+          purpose="IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. Only needed if you want a “Highest rated” row ranked by one of those instead of by TMDB’s score, or requests judged by them."
+          settings={settings}
+          summary={summaries.mdblist}
+          glyph={<MdblistGlyph />}
+          fields={[
+            {
+              key: "requests.mdblist.apikey",
+              label: "API key",
+              kind: "password",
+              placeholder: "Free key from mdblist.com",
+              helpUrl: "https://mdblist.com/preferences/",
+            },
+          ]}
+        />
+        </ConnectionGroup>
+        <ConnectionGroup
+          id="connections-requests"
+          title="Requests"
+          description="Where picks that aren’t in your library get sent, once requests are turned on under Defaults."
+          count={setUpCount([summaries.overseerr, summaries.radarr, summaries.sonarr])}
+        >
+<ConnectionCard
           service="overseerr"
           title="Overseerr / Jellyseerr"
           purpose="An alternative to connecting Radarr and Sonarr directly: Shortlist files a request here and it fetches the title, using its own quality settings and approval rules. Works with Overseerr, Jellyseerr and Seerr — they share one API."
           settings={settings}
-          summary={settingString(settings, "requests.overseerr.url")}
+          summary={summaries.overseerr}
+          unsetLabel="Not set up"
           glyph={<Inbox aria-hidden className="text-primary" />}
           fields={[
             {
@@ -425,12 +529,13 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        <ConnectionCard
+<ConnectionCard
           service="radarr"
           title="Radarr"
           purpose="Fetches films Shortlist wanted to recommend but couldn’t find on your server."
           settings={settings}
-          summary={settingString(settings, "requests.radarr.url")}
+          summary={summaries.radarr}
+          unsetLabel="Not set up"
           glyph={<Film aria-hidden className="text-primary" />}
           fields={[
             {
@@ -446,12 +551,13 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        <ConnectionCard
+<ConnectionCard
           service="sonarr"
           title="Sonarr"
           purpose="Fetches shows Shortlist wanted to recommend but couldn’t find on your server."
           settings={settings}
-          summary={settingString(settings, "requests.sonarr.url")}
+          summary={summaries.sonarr}
+          unsetLabel="Not set up"
           glyph={<Tv aria-hidden className="text-primary" />}
           fields={[
             {
@@ -467,67 +573,20 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-        <ConnectionCard
-          service="trakt"
-          title="Trakt"
-          // Trakt made API keys VIP-only, so people followed our instructions, found no way to
-          // create a key, and reported it as a Shortlist bug (issue #73). The badge says it before
-          // they go looking, rather than burying it mid-paragraph where it was skimmed past.
-          requires="Needs paid Trakt VIP"
-          purpose="Its “related titles” often catch suggestions TMDB misses. Switch the source on under Finding titles once the key is saved."
-          settings={settings}
-          summary={
-            settingString(settings, "trakt.client_id") ? "API key saved" : ""
-          }
-          glyph={<Compass aria-hidden className="text-primary" />}
-          fields={[
-            {
-              key: "trakt.client_id",
-              label: "API key (Trakt app client ID)",
-              kind: "password",
-            },
-          ]}
-        />
-        <ConnectionCard
-          service="mdblist"
-          title="MDBList"
-          // Two consumers, not one: `requests.rating_source` gates what gets requested, and
-          // `recommendations.rating_source` orders any row set to "Highest rated". Naming only
-          // Requests left the row-ordering setting looking like it needed nothing.
-          // "off TMDB" read two ways — scores taken FROM TMDB, or a row switched AWAY from TMDB —
-          // and it means the second. Say which score is being swapped for which instead.
-          purpose="IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. Only needed if you want a “Highest rated” row ranked by one of those instead of by TMDB’s score, or requests judged by them."
-          settings={settings}
-          summary={
-            settingString(settings, "requests.mdblist.apikey")
-              ? "API key saved"
-              : ""
-          }
-          glyph={<MdblistGlyph />}
-          fields={[
-            {
-              key: "requests.mdblist.apikey",
-              label: "API key",
-              kind: "password",
-              placeholder: "Free key from mdblist.com",
-              helpUrl: "https://mdblist.com/preferences/",
-            },
-          ]}
-        />
-        <ConnectionCard
+        </ConnectionGroup>
+        <ConnectionGroup
+          id="notifications"
+          title="Notifications"
+          description="Shortlist runs while you’re asleep. This is how it tells you what happened."
+        >
+<ConnectionCard
           service="notify"
           title="Webhook"
           purpose="Where Shortlist sends its alerts: a Discord or Slack channel, ntfy, Gotify, Home Assistant, n8n, or anything else that accepts a webhook."
           settings={settings}
           footnote={<WebhookNextStep settings={settings} />}
-          summary={
-            settingString(settings, "notify.webhook.url")
-              ? settingString(settings, "notify.webhook.auth_header_value") &&
-                settingString(settings, "notify.webhook.auth_header_name")
-                ? "Address and auth header saved"
-                : "Address saved"
-              : ""
-          }
+          summary={summaries.webhook}
+          unsetLabel="Not set up"
           glyph={<Webhook aria-hidden className="text-primary" />}
           // Its test posts a real message into the owner's channel, so it never runs by itself.
           autoTest={false}
@@ -556,18 +615,20 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             },
           ]}
         />
-      </div>
+          {/* The switch and the events sit with the webhook they send to: one Webhook, one place. */}
+          <NotificationsSection settings={settings} />
+        </ConnectionGroup>
       {/* Required by the TMDB API terms of use whenever their data is displayed. */}
       <p className="text-xs text-muted-foreground">
         This product uses the TMDB API but is not endorsed or certified by TMDB.
       </p>
-    </section>
+    </div>
   );
 }
 
 /**
- * Saving the address sends nothing by itself: the switch and the events are in Notifications, further
- * down the page. Once an address is saved, say which of those states it is in and link straight there.
+ * Saving the address sends nothing by itself: the switch and the events are just below it, under
+ * Notifications. Once an address is saved, say which of those states it is in and link there.
  */
 function WebhookNextStep({ settings }: { settings: Settings }) {
   if (!settingString(settings, "notify.webhook.url")) return null;

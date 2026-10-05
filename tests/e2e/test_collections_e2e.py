@@ -7,10 +7,13 @@ decides what Shortlist builds, so "I clicked Add and it saved" has to be true en
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
 
+from shortlist.server.db.models import User
+from shortlist.server.db.session import make_engine, make_session_factory
 from tests.e2e.conftest import ShortlistApp
 
 pytestmark = pytest.mark.e2e
@@ -41,16 +44,21 @@ def _saved_row(page: Page, name: str):
     return page.get_by_text(name, exact=False).first
 
 
-def _edit_row(page: Page, name: str) -> None:
-    """Open THIS row's editor. `Edit.last` clicked whichever card rendered last — under load the list
-    from before the save, so the editor opened the default row instead (seen twice at load 27)."""
-    actions = (
-        page.locator("div")
-        .filter(has=page.get_by_role("link", name=f"Remove or delete {name}"))
-        .filter(has=page.get_by_role("button", name="Edit"))
-        .last
-    )
-    actions.get_by_role("button", name="Edit").click()
+def _open_row_menu(page: Page, name: str | None = None) -> None:
+    """Open a row card's "⋯" menu: THIS row's when named, else the first card's.
+
+    Named by its own card's button, not `.last` — under load the list from before the save rendered
+    last, so a positional pick opened the default row instead (seen twice at load 27)."""
+    if name is None:
+        page.get_by_role("button", name=re.compile(r"^More actions for ")).first.click()
+    else:
+        page.get_by_role("button", name=f"More actions for {name}", exact=True).click()
+
+
+def _edit_row(page: Page, name: str | None = None) -> None:
+    """Open a row's editor through its card's menu (the first card's when no name is given)."""
+    _open_row_menu(page, name)
+    page.get_by_role("menuitem", name="Edit", exact=True).click()
 
 
 def _open_rows(page: Page) -> None:
@@ -80,8 +88,7 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
     _open_rows(page)
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Popular Here")
-    # One row for everyone is the Popular on this server kind; a new row switches with no dialog.
-    page.get_by_role("radio", name="Popular on this server", exact=True).click()
+    page.get_by_role("radio", name="Shared", exact=True).click()
     # The aggregate-privacy control appears only for shared rows.
     expect(page.get_by_text("Only titles watched by at least")).to_be_visible()
     page.get_by_role("button", name="Add row").click()
@@ -89,6 +96,166 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
     expect(page.get_by_text("Popular Here").first).to_be_visible(timeout=LOAD)
     created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == "Popular Here")
     assert created["build"] == "shared"
+
+
+@pytest.mark.parametrize(("build", "width"), [("shared", 390), ("per_person", 1440)])
+def test_a_seasonal_template_keeps_its_seasons_when_choosing_shared_or_per_person(
+    page: Page, app: ShortlistApp, build: str, width: int, tmp_path: Path
+):
+    page.set_viewport_size({"width": width, "height": 900})
+    _open_rows(page)
+    page.get_by_role("button", name="Add a row").click()
+    page.get_by_role("group", name="Templates", exact=True).get_by_role("button", name=re.compile(r"^Seasonal")).click()
+    page.get_by_role("button", name="Use template").click()
+    expect(page.get_by_role("heading", name="Add a row")).to_be_visible(timeout=LOAD)
+    expect(page.get_by_role("radio", name="Shared", exact=True)).to_be_checked()
+    expect(page.get_by_role("button", name="Everyone", exact=True)).to_have_attribute("aria-pressed", "true")
+    name = f"Seasonal {build} regression"
+    page.get_by_label("Name", exact=True).fill(name)
+
+    if build == "per_person":
+        page.get_by_role("radio", name="Per person", exact=True).click()
+        page.get_by_role("radiogroup", name="How it's filled").get_by_role(
+            "radio", name="Watch it again", exact=True
+        ).click()
+        page.locator('li[data-season="valentines"]').get_by_role("checkbox").uncheck()
+        page.get_by_role("radio", name="Shared", exact=True).click()
+        expect(page.get_by_role("dialog")).to_have_count(0)
+        page.get_by_role("radio", name="Per person", exact=True).click()
+        expect(
+            page.get_by_role("radiogroup", name="How it's filled").get_by_role(
+                "radio", name="Watch it again", exact=True
+            )
+        ).to_be_checked()
+    page.get_by_role("radio", name="Shared", exact=True).scroll_into_view_if_needed()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=tmp_path / f"row-sharing-{width}.png")
+    page.get_by_role("button", name="Add row").click()
+    expect(_saved_row(page, name)).to_be_visible(timeout=LOAD)
+
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == name)
+    assert created["build"] == build
+    assert created["audience"] == "everyone"
+    assert created["audience_user_ids"] == []
+    assert created["min_watchers"] == 2
+    assert set(created["seasons"]) == (
+        {"valentines", "halloween", "christmas"} if build == "shared" else {"halloween", "christmas"}
+    )
+    assert created["rewatch"] is (build == "per_person")
+    _edit_row(page, name)
+    expect(page.get_by_role("radio", name="Shared" if build == "shared" else "Per person", exact=True)).to_be_checked()
+
+
+def test_changing_a_saved_rows_sharing_requires_confirmation_and_save(page: Page, app: ShortlistApp):
+    _open_rows(page)
+    _add_a_row(page)
+    name = "Sharing confirmation regression"
+    page.get_by_label("Name", exact=True).fill(name)
+    page.get_by_role("button", name="Add row").click()
+    expect(_saved_row(page, name)).to_be_visible(timeout=LOAD)
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == name)
+    row_id = created["id"]
+
+    for choice, previous, expected in [("Shared", "per_person", "shared"), ("Per person", "shared", "per_person")]:
+        _edit_row(page, name)
+        page.get_by_role("radio", name=choice, exact=True).click()
+        dialog = page.get_by_role("dialog")
+        expect(dialog).to_contain_text("Saving removes")
+        dialog.get_by_role("button", name="Cancel", exact=True).click()
+        expect(
+            page.get_by_role("radio", name="Per person" if previous == "per_person" else "Shared", exact=True)
+        ).to_be_checked()
+        assert next(c for c in app.api("GET", "/api/collections").json() if c["id"] == row_id)["build"] == previous
+
+        page.get_by_role("radio", name=choice, exact=True).click()
+        dialog.get_by_role("button", name="Change it", exact=True).click()
+        expect(page.get_by_role("radio", name=choice, exact=True)).to_be_checked()
+        assert next(c for c in app.api("GET", "/api/collections").json() if c["id"] == row_id)["build"] == previous
+        page.get_by_role("button", name="Save changes").click()
+        expect(_saved_row(page, name)).to_be_visible(timeout=LOAD)
+        assert next(c for c in app.api("GET", "/api/collections").json() if c["id"] == row_id)["build"] == expected
+
+
+@pytest.mark.parametrize("width", [320, 390, 1440])
+def test_a_large_audience_keeps_selections_across_pages_search_and_save(
+    page: Page, app: ShortlistApp, width: int, tmp_path: Path
+):
+    engine = make_engine(app.config_dir)
+    try:
+        with make_session_factory(engine)() as session:
+            session.add_all(
+                User(
+                    plex_account_id=600_000 + index,
+                    username=f"audience{index:03}",
+                    slug=f"audience{index:03}",
+                    enabled=True,
+                )
+                for index in range(1, 97)
+            )
+            session.commit()
+    finally:
+        engine.dispose()
+    users = {user["username"]: user["id"] for user in app.api("GET", "/api/users").json()}
+    assert len(users) == 100
+    page.set_viewport_size({"width": width, "height": 900})
+    _open_rows(page)
+    _add_a_row(page)
+    name = f"Audience pagination {width}"
+    page.get_by_label("Name", exact=True).fill(name)
+    audience = page.locator('[data-setting="audience"]')
+    table = audience.get_by_role("table", name="People")
+    search = audience.get_by_role("searchbox", name="Search people")
+    expect(table.locator("tbody tr")).to_have_count(10)
+    expect(audience.get_by_role("switch")).to_have_count(0)
+    audience.get_by_role("button", name="Next page", exact=True).click()
+    expect(audience.get_by_role("status")).to_contain_text("11\u201320 of 100 people")
+    search.fill("audience096")
+    expect(table.locator("tbody tr")).to_have_count(1)
+    search.fill("")
+    search.evaluate("element => element.scrollIntoView({behavior: 'instant', block: 'center'})")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=tmp_path / f"audience-everyone-{width}.png")
+    audience.get_by_role("button", name="Choose people", exact=True).click()
+    audience.get_by_role("combobox", name="People per page").select_option("25")
+
+    first = audience.get_by_role("switch").first
+    first_name = first.get_attribute("aria-label")
+    first.click()
+    audience.get_by_role("button", name="Next page", exact=True).click()
+    second = audience.get_by_role("switch").first
+    second_name = second.get_attribute("aria-label")
+    second.click()
+    search.fill("audience096")
+    audience.get_by_role("switch", name="audience096", exact=True).click()
+    selected = {users[first_name], users[second_name], users["audience096"]}
+    assert len(selected) == 3
+    search.fill("nobody-matches-this")
+    expect(audience.get_by_role("switch")).to_have_count(0)
+    search.fill("")
+    expect(audience.get_by_role("switch", name=first_name, exact=True)).to_be_checked()
+    expect(audience.get_by_role("switch")).to_have_count(25)
+    assert table.locator(f'[title="{first_name}"]').evaluate("element => element.scrollWidth <= element.clientWidth")
+    search.evaluate("element => element.scrollIntoView({behavior: 'instant', block: 'center'})")
+    if width == 1440:
+        for medium_width in (1024, 1280):
+            page.set_viewport_size({"width": medium_width, "height": 900})
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            expect(audience.get_by_role("switch", name=first_name, exact=True)).to_be_visible()
+        page.set_viewport_size({"width": width, "height": 900})
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=tmp_path / f"audience-pagination-{width}.png")
+    page.get_by_role("button", name="Add row").click()
+    expect(_saved_row(page, name)).to_be_visible(timeout=LOAD)
+
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == name)
+    assert created["audience"] == "subset"
+    assert set(created["audience_user_ids"]) == selected
+    _edit_row(page, name)
+    audience.get_by_role("button", name="3 of 100 people chosen").click()
+    for username in (first_name, second_name, "audience096"):
+        audience.get_by_role("searchbox", name="Search people").fill(username)
+        expect(audience.get_by_role("switch", name=username, exact=True)).to_be_checked()
+    expect(page.get_by_role("button", name="Discard", exact=True)).to_be_disabled()
 
 
 def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp):
@@ -100,8 +267,10 @@ def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp
 
     # Re-open it and choose a built-in text poster — this needs no AI provider, so it works on any setup.
     _edit_row(page, "Poster Row")
-    expect(page.get_by_label("Name", exact=True)).to_have_value("Poster Row")
-    # The poster sits in the open "How it looks on Plex" group, beside the name it belongs to.
+    # A saved row's name is read-only now (it changes only through Rename on Plex), so the page
+    # heading is what says this is the row just added.
+    expect(page.get_by_role("heading", name="Poster Row", level=1)).to_be_visible(timeout=LOAD)
+    # The poster sits in the open "Appearance" group, beside the name it belongs to.
     page.get_by_role("button", name="Text", exact=True).click()
     page.get_by_label("Title text").fill("Weekend Picks")
     page.get_by_role("button", name="Save changes").click()
@@ -124,7 +293,9 @@ def test_a_row_can_be_given_a_description_and_sort_title_prefix(page: Page, app:
     expect(_saved_row(page, "Sorted Row")).to_be_visible(timeout=LOAD)
 
     _edit_row(page, "Sorted Row")
-    expect(page.get_by_label("Name", exact=True)).to_have_value("Sorted Row")
+    # A saved row's name is read-only now (it changes only through Rename on Plex), so the page
+    # heading is what says this is the row just added.
+    expect(page.get_by_role("heading", name="Sorted Row", level=1)).to_be_visible(timeout=LOAD)
     page.get_by_label("Description", exact=True).fill("Picked for {user}")
     page.get_by_label("Sort title prefix").fill("!010_")
     expect(page.get_by_text("!010_Sorted Row")).to_be_visible()
@@ -137,25 +308,28 @@ def test_a_row_can_be_given_a_description_and_sort_title_prefix(page: Page, app:
 
 def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(page: Page, app: ShortlistApp):
     """The default row's name field used to be disabled (name came only from Settings → Defaults).
-    It's now editable inline, and saving it writes the shared `row.name_template` setting."""
+    It's now editable through Rename on Plex…, and renaming writes the shared `row.name_template`
+    setting."""
     _open_rows(page)
-    # The default row is the only one on a fresh install, so its Edit button is the first.
-    page.get_by_role("button", name="Edit").first.click()
-    expect(page.get_by_role("heading", name="Edit row")).to_be_visible()
+    # The default row is the only one on a fresh install, so its card is the first.
+    _edit_row(page)
+    expect(page.get_by_role("heading", name="✨ library name Picked for You", exact=True)).to_be_visible()
 
-    name = page.get_by_label("Name", exact=True)
-    expect(name).to_be_enabled()  # type here, but Save never carries it — only Rename applies it
+    # The editor shows the name read-only; a new one is typed in the Rename on Plex dialog, because
+    # Save never carries a name — only Rename applies it.
+    page.get_by_role("button", name="Rename on Plex…").click()
+    name = page.get_by_role("dialog").get_by_label("New name", exact=True)
+    expect(name).to_be_enabled()
     expect(name).to_have_value("✨ {library_name} Picked for You")  # its value IS the global template
     # Typing must say, on screen, that nothing has happened yet. Without this the box looks like
     # every other field on the page, which would imply Save applies it — Save deliberately does not.
     name.fill("✨ {library_name} Not applied")
     expect(page.get_by_text("Not applied yet")).to_be_visible()
 
-    # Rename is the editor's, beside the name it changes — the Rows card no longer offers one. The
-    # button only enables once the name differs, and that click IS the go-ahead: the rename screen
-    # starts on arrival rather than asking a second time.
+    # The button only enables once the name differs, and that click IS the go-ahead: the rename
+    # screen starts on arrival rather than asking a second time.
     name.fill("✨ {library_name} Handpicked")
-    page.get_by_role("button", name="Rename…").click()
+    page.get_by_role("dialog").get_by_role("button", name="Rename on Plex", exact=True).click()
     expect(page.get_by_role("heading", name=re.compile("^Renaming "))).to_be_visible(timeout=LOAD)
     expect(page.get_by_role("button", name="Rename on Plex")).to_have_count(0)
 
@@ -176,14 +350,23 @@ def test_the_default_row_can_be_deleted_like_any_other(page: Page, app: Shortlis
     # this row, so its rendered title is not stable. "Every row has a way out" is also the actual
     # property — the bug was ONE card missing the control its neighbours had.
     #
-    # A LINK now, not a button. "Remove from Plex" and "Delete" used to sit on the card side by
-    # side with nothing saying which one loses the row's settings; the card carries one honest
-    # "Remove or delete" that opens the editor's danger section, where that difference is already
-    # written out (audit finding, Sep 2026). The 204 and the row actually disappearing are covered
-    # in tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
+    # A LINK, not a button, and in each card's "⋯" menu. "Remove from Plex" and "Delete" used to sit
+    # on the card side by side with nothing saying which one loses the row's settings; the menu
+    # carries one honest "Remove or delete…" that opens the editor's danger section, where that
+    # difference is already written out (audit finding, Sep 2026). The 204 and the row actually
+    # disappearing are covered in
+    # tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
     assert picked, "the seeded default row must exist for this to mean anything"
     rows = app.api("GET", "/api/collections").json()
-    expect(page.get_by_role("link", name=re.compile(r"^Remove or delete "))).to_have_count(len(rows))
+    menus = page.get_by_role("button", name=re.compile(r"^More actions for "))
+    expect(menus).to_have_count(len(rows))
+    for index in range(len(rows)):
+        menus.nth(index).click()
+        way_out = page.get_by_role("menu").get_by_role("menuitem", name="Remove or delete…")
+        expect(way_out).to_have_count(1)
+        expect(way_out).to_have_attribute("href", re.compile(r"/rows/\d+#remove-this-row$"))
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("menu")).to_have_count(0)
 
 
 PLACEMENT_SWITCHES = (

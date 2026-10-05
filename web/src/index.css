@@ -43,6 +43,15 @@
        status meaning (red is an error, green is OK, amber a warning or the brand). */
     --support: 330 70% 68%;
     --border: 240 5% 17%;
+    /* A firmer edge for controls that must read as controls (outline buttons, segment groups). */
+    --border-strong: 240 5% 24%;
+    /* The selected-state surface (lib/selected.ts): one step above --elevated. Foreground on it
+       measures 13.6:1, muted-foreground 6.3:1. */
+    --raised: 240 6% 15%;
+    /* Tertiary text: column headings, quiet meta. 52% lightness measures 5.33:1 on --background,
+       5.01:1 on --card and 4.66:1 on --elevated, so it clears AA (4.5:1) at body sizes on all
+       three. Do not lighten the surface under it past --elevated without re-measuring. */
+    --faint-foreground: 40 4% 52%;
     --input: 240 5% 19%;
     --ring: 43 92% 55%;
     --radius: 0.625rem;
@@ -50,17 +59,34 @@
 
   * {
     @apply border-border;
+    scrollbar-color: hsl(var(--border-strong)) transparent;
+  }
+
+  html {
+    color-scheme: dark;
   }
 
   body {
-    @apply bg-background text-foreground antialiased;
-    /* A faint warm glow anchored top-left, so the flat dark canvas has some depth. */
-    background-image: radial-gradient(
-      55rem 40rem at 15% -10%,
-      hsl(43 60% 20% / 0.12),
-      transparent
-    );
-    background-attachment: fixed;
+    @apply bg-background font-sans text-foreground antialiased;
+    /* Columns of counts, durations and times line up when every digit is the same width. */
+    font-variant-numeric: tabular-nums;
+    caret-color: hsl(var(--primary));
+  }
+
+  ::selection {
+    background-color: hsl(var(--primary) / 0.28);
+    color: hsl(var(--foreground));
+  }
+
+  /* Code, cron, log lines and filter strings. Ligatures off: JetBrains Mono draws `!=` as a single
+     "≠" glyph, and a share filter reading `label≠shortlist_sarah` is not what Plex stores, nor what
+     anyone can type back in. */
+  code,
+  kbd,
+  pre,
+  samp,
+  .font-mono {
+    font-variant-ligatures: none;
   }
 
   /* Accessibility: always-visible keyboard focus */

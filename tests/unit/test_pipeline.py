@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import ClassVar
 from unittest.mock import MagicMock
+from unittest.mock import call as plex_call
 
 import pytest
 from hypothesis import given
@@ -29,15 +30,20 @@ from shortlist.engine.delivery import (
     strip_marker,
 )
 from shortlist.engine.models import (
+    ArrTarget,
     EngineConfig,
     MediaType,
     OwnedRow,
     Pick,
+    RequestSources,
     RowOverride,
     RowSpec,
+    SeerrTarget,
+    UserProfile,
     UserRunReport,
     UserType,
 )
+from shortlist.engine.requests_row import RequestedTitle, RequestLedger
 from tests.conftest import NOW, MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 
@@ -2248,6 +2254,87 @@ class TestPerRowOverrides:
         assert not {30, 31, 32, 33, 34} & ids, f"the unseeded row was carried forward under Fargo's name, got {ids}"
         assert seeds == {"Fargo"}
 
+    def _three_seed_named_row_ctx(self, ctx, *, twelve_affinity: float = 0.2, chernobyl_finds_twelve: bool = False):
+        """A `{top_seed}` row built from up to three watches in one Movies library — SFLIX's per-row budget.
+
+        Fargo (900) is the newest watch; its look-alikes 20-22 are middling matches. Heat (902) has one
+        look-alike, 12, a weak match that discover ALSO finds. Chernobyl (901) has weak look-alikes 25-27,
+        and with ``chernobyl_finds_twelve`` finds 12 as well. Discover's 10-12 score above Fargo's
+        look-alikes once they carry no seed of their own.
+        """
+        self._named_row_ctx(ctx, refresh_days=1, max_seeds=3)
+        ctx.config.rows = [replace(ctx.config.rows[0], candidate_sources=["tmdb_similar", "tmdb_discover"])]
+        ctx.plex.build_library_index.return_value = {
+            900: 999,
+            901: 998,
+            902: 997,
+            **{i: 1000 + i for i in range(10, 30)},
+        }
+
+        def item(tmdb_id: int, vote: float) -> dict:
+            return {"id": tmdb_id, "title": f"T{tmdb_id}", "genre_ids": [18], "vote_average": vote}
+
+        similar = {
+            900: [(item(i, 8.0), 0.25) for i in (20, 21, 22)],
+            902: [(item(12, 9.0), twelve_affinity)],
+            901: [(item(i, 5.0), 0.25) for i in (25, 26, 27)],
+        }
+        if chernobyl_finds_twelve:
+            similar[901].append((item(12, 9.0), twelve_affinity))
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: similar.get(tid, [])
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [item(i, 9.0) for i in (10, 11, 12)]
+
+    def _night(self, ctx, mock_plextv, *watched: tuple[str, int, int]):
+        """One run from ``(title, days_ago, rating_key)`` watches, carrying its picks and recipe into the
+        next run the way `context_builder` does. Returns the titles, the picks, and the trace decision."""
+        ctx.history_source.fetch.return_value = [make_watched(t, days_ago=d, rating_key=rk) for t, d, rk in watched]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        user = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
+        picks = sorted(user.picks, key=lambda p: p.rank)
+        ctx.previous_picks = {("sarah", "picked", "1"): [replace(p, section_key=str(p.section_key)) for p in picks]}
+        ctx.previous_recipes = {("sarah", "picked", "1"): picks[0].recipe}
+        titles = [strip_marker(t) for _library, t in user.placement_titles]
+        return titles, picks, (user.trace.get("selection") or [{}])[0].get("decision")
+
+    def test_a_refresh_never_names_a_watch_that_left_the_seed_set(self, ctx: EngineContext, mock_plextv):
+        """Above one seed per library, `_seed_moved` can pass while the title moves onto a dead watch.
+
+        Night one is named after Fargo and carries 12 at rank 3, found as Heat's look-alike. Heat is then
+        un-watched. Fargo still leads tonight's pool, so the row refreshes and keeps 12 — which is now a
+        discover title with no seed, outranks Fargo's look-alikes, and still carries last night's seed. The
+        title said "Because you watched Heat", a watch no longer in the seed set, until the next night's
+        check saw that name and rebuilt the whole row.
+        """
+        self._three_seed_named_row_ctx(ctx)
+        fargo, heat, chernobyl = ("Fargo", 1, 999), ("Heat", 2, 997), ("Chernobyl", 3, 998)
+        first, first_picks, _ = self._night(ctx, mock_plextv, fargo, heat, chernobyl)
+        assert first == ["Because you watched Fargo"]
+        assert {p.tmdb_id: p.seed_title for p in first_picks}.get(12) == "Heat", "the scenario needs 12 from Heat"
+
+        second, picks, decision = self._night(ctx, mock_plextv, fargo, chernobyl)
+        _third, _, next_decision = self._night(ctx, mock_plextv, fargo, chernobyl)
+
+        assert decision == "refreshed" and 12 in {p.tmdb_id for p in picks}, "a refresh keeps its strong picks"
+        assert second == ["Because you watched Fargo"], f"named a watch outside tonight's seeds: {second}"
+        assert next_decision == "refreshed", "an honest title leaves the next night nothing to rebuild"
+
+    def test_a_survivor_whose_watch_left_answers_to_a_live_watch_that_still_finds_it(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The same refresh when a watch still in the seed set (Chernobyl) ALSO finds 12: the kept pick
+        answers to Chernobyl, as a newcomer of the same title would — not to Heat, and not to nothing."""
+        self._three_seed_named_row_ctx(ctx, twelve_affinity=0.1, chernobyl_finds_twelve=True)
+        fargo, heat, chernobyl = ("Fargo", 1, 999), ("Heat", 2, 997), ("Chernobyl", 3, 998)
+        _, first_picks, _ = self._night(ctx, mock_plextv, fargo, heat, chernobyl)
+        assert {p.tmdb_id: p.seed_title for p in first_picks}.get(12) == "Heat", "the scenario needs 12 from Heat"
+
+        titles, picks, decision = self._night(ctx, mock_plextv, fargo, chernobyl)
+
+        assert decision == "refreshed"
+        assert {p.tmdb_id: p.seed_title for p in picks}.get(12) == "Chernobyl"
+        assert titles == ["Because you watched Fargo"]
+
     def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
         """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —
         re-deriving a normal 30-seed row on any seed change would make every refresh a full rebuild."""
@@ -2735,7 +2822,7 @@ class TestPerRowOverrides:
             supports_native_web_search = True
             last_tokens = 0
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 # Set BY the call, as every real provider does. A value left over from before the call
                 # is exactly what a failed call reads back, and it is no longer billed.
                 self.last_tokens = 50
@@ -5113,6 +5200,165 @@ class TestOrphanDeletion:
         assert report.orphans_removed == ["Shortlist_ghost"]
 
 
+ALL_SURFACES_OFF = plex_call(recommended=False, home=False, shared=False)
+
+
+class TestConvergeRecordsEachRowItTouched:
+    """`report.converged` and `report.orphans_removed` hold bare labels — no collection, no library, no reason —
+    so no exact audit event could be built from them, and a converge demotion or orphan delete reached Plex with
+    no event at all (plex-safety rule 10). Each branch now records an entry beside them.
+
+    Every cell also pins the exact Plex calls its branch makes: recording what happened must not change what
+    happens. The four demotion branches are four cells because each decides on a different reason and three of
+    them make a different write.
+    """
+
+    _collection = TestConverge._collection
+
+    # reason -> (the row's label, how the pass is set up, the Plex calls a live pass makes, the hub write)
+    DEMOTIONS: ClassVar[dict[str, tuple]] = {
+        "paused": (
+            "Shortlist_sarah",
+            {"paused": {"sarah"}},
+            lambda c: [plex_call.claims_any_surface(c), plex_call.demote_all(c, reason="paused")],
+            ALL_SURFACES_OFF,
+        ),
+        "shared_row_switched_off": (
+            "Shortlist__shared_retired",
+            {},
+            lambda c: [plex_call.claims_any_surface(c), plex_call.demote_all(c, reason="row switched off")],
+            ALL_SURFACES_OFF,
+        ),
+        "unknown_owner": (
+            "Shortlist_ghost",
+            {"known": {100: "steve"}},
+            lambda c: [plex_call.claims_any_surface(c), plex_call.demote_all(c, reason="unknown owner")],
+            ALL_SURFACES_OFF,
+        ),
+        "on_owner_home": (
+            "Shortlist_mike",
+            {},
+            lambda c: [plex_call.reads_as_on_owner_home(c), plex_call.demote_own_home(c)],
+            plex_call(recommended=True, home=False, shared=True),
+        ),
+    }
+
+    def _run(self, ctx, collection, *, paused=frozenset(), known=None, may_delete=False, dry_run=False):
+        from shortlist.engine.models import RunReport
+        from shortlist.engine.pipeline import _converge_phase
+
+        section = ctx.plex.sections.return_value[0]
+        section.key = 1
+        section.collections.return_value = [collection]
+        ctx.owner_slug = "steve"
+        ctx.paused_slugs = set(paused)
+        ctx.known_slugs = known or {}
+        ctx.may_delete_orphans = may_delete
+        ctx.config.dry_run = dry_run
+        ctx.config.rows = []
+        # The REAL reads and demotes, so a cell covers the read-then-write contract, not a stub's answer.
+        ctx.plex.claims_any_surface.side_effect = lambda c: PlexClient.claims_any_surface(ctx.plex, c)
+        ctx.plex.demote_all.side_effect = lambda c, **kw: PlexClient.demote_all(ctx.plex, c, **kw)
+        ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
+        ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
+        report = RunReport(started_at=datetime.now(UTC))
+        _converge_phase(ctx, set(), report)
+        return report
+
+    @staticmethod
+    def _entry(label: str, **extra) -> dict:
+        return {"label": label, "title": "row-1", "rating_key": 1, "library_key": "1", "library": "Movies", **extra}
+
+    @pytest.mark.parametrize("reason", list(DEMOTIONS))
+    def test_a_demotion_is_recorded_with_its_collection_library_and_reason(self, ctx: EngineContext, reason):
+        label, setup, _, _ = self.DEMOTIONS[reason]
+
+        report = self._run(ctx, self._collection(1, label), **setup)
+
+        assert report.converge_demotions == [self._entry(label, reason=reason)]
+        assert report.orphan_deletions == []
+
+    @pytest.mark.parametrize("reason", list(DEMOTIONS))
+    def test_a_dry_run_records_the_demotion_it_would_make(self, ctx: EngineContext, reason):
+        """The same rows `converged` lists in a preview — which is the actual list, not every candidate."""
+        label, setup, _, _ = self.DEMOTIONS[reason]
+
+        report = self._run(ctx, self._collection(1, label), dry_run=True, **setup)
+
+        assert report.converge_demotions == [self._entry(label, reason=reason)]
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["live", "dry_run"])
+    @pytest.mark.parametrize("reason", list(DEMOTIONS))
+    def test_each_demotion_branch_makes_the_same_plex_calls(self, ctx: EngineContext, reason, dry_run):
+        """Regression pin: the reads, the write and its kwargs, in order — and in a dry run the reads alone."""
+        label, setup, plex_calls, hub_write = self.DEMOTIONS[reason]
+        row = self._collection(1, label)
+
+        report = self._run(ctx, row, dry_run=dry_run, **setup)
+
+        expected = plex_calls(row)[:1] if dry_run else plex_calls(row)
+        assert ctx.plex.method_calls == [plex_call.sections(), *expected]
+        assert row.visibility.return_value.updateVisibility.call_args_list == ([] if dry_run else [hub_write])
+        assert report.converged == [label]
+        assert report.orphans_removed == []
+
+    def test_a_demote_plex_did_not_make_is_not_recorded(self, ctx: EngineContext):
+        """`demote_all` reads the hub again and writes nothing when it no longer claims a surface — a row that
+        came down between the check and the write. An entry says Plex changed, so it follows `converged`."""
+        row = self._collection(1, "Shortlist_sarah")
+        settled = MagicMock(promotedToRecommended=False, promotedToOwnHome=False, promotedToSharedHome=False)
+        row.visibility.side_effect = [row.visibility.return_value, settled]
+
+        report = self._run(ctx, row, paused={"sarah"})
+
+        settled.updateVisibility.assert_not_called()
+        assert report.converged == []
+        assert report.converge_demotions == []
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_an_orphan_deletion_is_recorded_with_its_collection_and_library(self, ctx: EngineContext, dry_run):
+        row = self._collection(1, "Shortlist_ghost")
+
+        report = self._run(ctx, row, known={100: "steve"}, may_delete=True, dry_run=dry_run)
+
+        assert report.orphan_deletions == [self._entry("Shortlist_ghost")]
+        assert report.converge_demotions == []
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["live", "dry_run"])
+    def test_an_orphan_deletion_makes_the_same_plex_calls(self, ctx: EngineContext, dry_run):
+        """Regression pin: one delete, with Shortlist's label prefix as the ownership proof, and nothing else."""
+        row = self._collection(1, "Shortlist_ghost")
+
+        report = self._run(ctx, row, known={100: "steve"}, may_delete=True, dry_run=dry_run)
+
+        deletes = [] if dry_run else [plex_call.delete_owned_collection(row, "shortlist")]
+        assert ctx.plex.method_calls == [plex_call.sections(), *deletes]
+        row.visibility.assert_not_called()
+        assert report.orphans_removed == ["Shortlist_ghost"]
+        assert report.converged == []
+
+    def test_a_pass_with_no_users_records_no_deletion_however_complete_the_roster(self, ctx: EngineContext):
+        """Why the three run-less jobs audit demotions and not deletions: `engine_run(ctx, [])` hands converge no
+        delete authority, so an orphan is DEMOTED (and recorded as one) even when the roster is complete and the
+        context would allow it. Through the real `run`, not `_converge_phase`, so the authority it passes is
+        what is pinned."""
+        orphan = self._collection(1, "Shortlist_ghost")
+        section = ctx.plex.sections.return_value[0]
+        section.key = 1
+        section.collections.return_value = [orphan]
+        ctx.owner_slug = "steve"
+        ctx.known_slugs = {100: "steve", 200: "sarah"}
+        ctx.may_delete_orphans = True
+        ctx.plex.claims_any_surface.return_value = True
+        ctx.plex.demote_all.return_value = True
+
+        report = pipeline_mod.run(ctx, [])
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphan_deletions == []
+        assert report.converge_demotions == [self._entry("Shortlist_ghost", reason="unknown_owner")]
+
+
 class TestRatingSource:
     """Ordering by "Highest rated" when the owner picked a non-TMDB service (IMDb, Trakt, …).
 
@@ -5236,6 +5482,56 @@ class TestRatingSource:
         # And with no map (the quota-spent / no-key fallback) the SAME picks order on TMDB alone.
         fallback = _apply_order(picks, "rating", row_slug="r", user_slug="u", run_day=5, ratings=None)
         assert [p.tmdb_id for p in fallback] == [1, 2], "the fallback is one consistent TMDB scale"
+
+    def _picks(self, report):
+        return next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+
+    def test_the_breakdown_carries_the_score_the_row_was_sorted_on(self, ctx: EngineContext, mock_plextv):
+        """The run page renders the breakdown. A row sorted on IMDb but showing TMDB scores looks
+        unordered, so each pick carries the sorted-on score and its source beside the TMDB one."""
+        from tests.unit.test_requests import FakeMdbList
+
+        ratings: dict[int, tuple[float, int] | None] = {tid: (float(tid) / 2, 5000) for tid in range(10, 20)}
+        ratings[12] = None
+        self._rating_ctx(ctx, "imdb", FakeMdbList(ratings))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        picks = self._picks(pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]))
+
+        for p in picks:
+            assert p["order_rating_source"] == "imdb"
+            assert p["order_rating"] == (0.0 if p["tmdb_id"] == 12 else p["tmdb_id"] / 2)
+            assert p["rating_source"] == "tmdb"
+            assert p["rating"] == 9.5 - (p["tmdb_id"] - 10) * 0.5, "rating stays TMDB's"
+
+    def test_a_tmdb_sorted_row_has_no_order_score_but_names_its_rating_source(self, ctx: EngineContext, mock_plextv):
+        from tests.unit.test_requests import FakeMdbList
+
+        self._rating_ctx(ctx, "tmdb", FakeMdbList({}))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        picks = self._picks(pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]))
+
+        assert picks
+        for p in picks:
+            assert p["order_rating"] is None
+            assert p["order_rating_source"] is None
+            assert p["rating_source"] == "tmdb"
+
+    def test_a_spent_quota_leaves_no_order_score_on_the_picks(self, ctx: EngineContext, mock_plextv):
+        from tests.unit.test_requests import FakeMdbList
+
+        mdblist = FakeMdbList({tid: (float(tid), 5000) for tid in range(10, 20)}, rate_limit_after=2)
+        self._rating_ctx(ctx, "imdb", mdblist)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        picks = self._picks(pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]))
+
+        assert picks
+        for p in picks:
+            assert p["order_rating"] is None
+            assert p["order_rating_source"] is None
+            assert p["rating_source"] == "tmdb"
 
     def test_a_spent_quota_stops_being_retried_for_the_rest_of_the_run(self, ctx: EngineContext, mock_plextv):
         """Without a latch, every rating-ordered row for every user re-attempts after the first 429 —
@@ -6175,6 +6471,32 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
 
         assert self._selection(ctx, mock_plextv)["decision"] == "settings_changed"
 
+    def _named_after(self, ctx: EngineContext, *, seed_tmdb_id: int, seed_title: str) -> None:
+        """A `{top_seed}` row whose last run was named after the given watch."""
+        self._ctx(ctx, refresh_days=1)
+        ctx.config.rows = [replace(ctx.config.rows[0], name_template="Because you watched {top_seed}")]
+        ctx.previous_picks = {
+            self.KEY: [replace(p, seed_tmdb_id=seed_tmdb_id, seed_title=seed_title) for p in self._prior()]
+        }
+        ctx.previous_recipes = {}
+
+    def test_a_rebuild_because_the_named_watch_changed_is_named_as_the_reason(self, ctx: EngineContext, mock_plextv):
+        """Issue #133's leftover: the row is rebuilt from scratch because the watch its title names is no
+        longer what it is built from — but the trace said "refreshed", the line for a row that kept its
+        strongest picks. A nightly full rebuild then looked like a normal refresh to anyone reading it."""
+        self._named_after(ctx, seed_tmdb_id=424242, seed_title="A Film They Un-watched")
+
+        entry = self._selection(ctx, mock_plextv)
+
+        assert entry["decision"] == "seed_moved"
+
+    def test_a_named_row_whose_watch_is_unchanged_is_still_refreshed(self, ctx: EngineContext, mock_plextv):
+        """The other cell: 900 is what "Fargo" resolves to here, so the named watch has not moved and the
+        row keeps its strongest picks — `seed_moved` must not become the answer for every named row."""
+        self._named_after(ctx, seed_tmdb_id=900, seed_title="Fargo")
+
+        assert self._selection(ctx, mock_plextv)["decision"] == "refreshed"
+
     def test_it_carries_the_settings_that_decided_the_row(self, ctx: EngineContext, mock_plextv):
         """The settings are reported from the values the branch itself used, so the trace cannot
         claim one thing while the engine did another."""
@@ -6452,6 +6774,7 @@ class TestIdleHoldInARun:
         _, entry = self._run(ctx, mock_plextv)
 
         assert entry["decision"] != "held_idle", "a row whose title no longer matches its seed must rebuild"
+        assert entry["decision"] == "seed_moved"
 
     def test_a_settings_change_still_rebuilds_a_held_row(self, ctx: EngineContext, mock_plextv):
         """The owner's deliberate edit outranks the hold. Making them wait up to the ceiling for an
@@ -7396,3 +7719,1072 @@ class TestShelfSequence:
             ("anchor", "Recently Added Movies"),
             ("rows", {21}),
         ]
+
+
+def _run_one(ctx: EngineContext, mock_plextv, profile) -> UserRunReport:
+    """One person through the real pipeline with the rows the test configured, returning their report."""
+    mock_plextv.users = [plextv_user(profile.plex_account_id, profile.username)]
+    report = pipeline_mod.run(ctx, [profile])
+    return report.users[0]
+
+
+def _requests_spec(slug: str = "asked", **kw) -> RowSpec:
+    return RowSpec(slug=slug, name_template="{library_name} you asked for", size=5, requests_row=True, **kw)
+
+
+def _ledger(
+    *tmdb_ids: int, complete: bool = True, person: int = 100, media_type: MediaType = MediaType.MOVIE
+) -> RequestLedger:
+    at = datetime(2026, 9, 27, tzinfo=UTC)
+    return RequestLedger(
+        titles=[
+            RequestedTitle(
+                tmdb_id=t,
+                media_type=media_type,
+                plex_account_id=person,
+                requested_at=at,
+                landed_at=at,
+                on_disk=True,
+                seasons_landed=True,
+                found_in=("overseerr",),
+            )
+            for t in tmdb_ids
+        ],
+        complete=complete,
+    )
+
+
+class TestRequestsRow:
+    """The requests row is built from the ledger, never gathered, and is the one row kind that removes
+    its own collection when the person has nothing ready — gated on a COMPLETE source read."""
+
+    def test_a_requests_row_delivers_the_ledger_and_never_gathers(self, ctx: EngineContext, mock_plextv, mock_tmdb):
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(10, 20)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        assert sorted(p.tmdb_id for p in report.picks) == [10, 20]
+        assert all(p.sources == ["requests"] for p in report.picks)
+        assert all(p.collection_slug == "asked" for p in report.picks)
+        mock_tmdb.suggestions.assert_not_called()
+        decisions = {entry["decision"] for entry in report.trace["selection"]}
+        assert decisions == {"requests"}
+
+    @staticmethod
+    def _seed_server(ctx: EngineContext) -> tuple[object, object]:
+        """The person's requests row already on Plex, beside a SIBLING row under the same label.
+
+        Real `remove_row`, real `find_owned_collections`: the sibling is what a title-blind delete
+        would take with it, and the tests below assert it is left alone.
+        """
+        ctx.plex.sections.return_value[0].key = "1"
+        existing = fake_media_item(4242, "Movies you asked for" + row_marker(100))
+        sibling = fake_media_item(4343, "✨ Movies Picked for You" + row_marker(100))
+        ctx.plex.find_owned_collections.return_value = [existing, sibling]
+        return existing, sibling
+
+    def test_an_empty_requests_row_is_removed_when_the_read_was_complete(self, ctx: EngineContext, mock_plextv):
+        existing, _sibling = self._seed_server(ctx)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is existing
+        assert report.removed_deliveries == [{"row_slug": "asked", "library_key": "1"}]
+        assert report.diff.deleted == ["Movies you asked for"]
+        assert report.picks == []
+
+    def test_a_dry_run_reports_the_removal_and_deletes_nothing(self, ctx: EngineContext, mock_plextv):
+        """Rule 8 covers this DELETE too: previewed in the diff, nothing written, nothing forgotten."""
+        self._seed_server(ctx)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True, dry_run=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.diff.deleted == ["Movies you asked for"]
+        assert report.removed_deliveries == []
+
+    @staticmethod
+    def _no_picks_lines(run) -> list[str]:
+        from loguru import logger as loguru_logger
+
+        lines: list[str] = []
+        sink = loguru_logger.add(lambda message: lines.append(str(message)), level="WARNING")
+        try:
+            run()
+        finally:
+            loguru_logger.remove(sink)
+        return [line for line in lines if "no picks produced" in line]
+
+    def test_the_no_picks_line_says_what_was_removed_when_the_run_removed_a_row(self, ctx: EngineContext, mock_plextv):
+        """ "Left as they are" was false for a person whose row this very run had just deleted."""
+        self._seed_server(ctx)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        found = self._no_picks_lines(lambda: _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100)))
+
+        assert len(found) == 1
+        assert "removed 1 row(s) this run; any other rows are left as they are" in found[0]
+        assert "existing rows are left as they are" not in found[0]
+
+    def test_the_no_picks_line_says_would_remove_on_a_dry_run(self, ctx: EngineContext, mock_plextv):
+        self._seed_server(ctx)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True, dry_run=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        found = self._no_picks_lines(lambda: _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100)))
+
+        assert len(found) == 1
+        assert "would remove 1 row(s) this run; any other rows are left as they are" in found[0]
+
+    def test_the_no_picks_line_keeps_its_wording_when_nothing_was_removed(self, ctx: EngineContext, mock_plextv):
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        found = self._no_picks_lines(lambda: _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100)))
+
+        assert len(found) == 1
+        assert "no picks produced — existing rows are left as they are (history=" in found[0]
+
+    def test_an_empty_requests_row_is_left_alone_when_the_read_was_incomplete(self, ctx: EngineContext, mock_plextv):
+        self._seed_server(ctx)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=False)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.removed_deliveries == []
+        assert not (report.diff and report.diff.deleted)
+
+    def test_the_empty_library_is_removed_while_the_other_is_delivered(self, ctx: EngineContext, mock_plextv):
+        """Per LIBRARY: a person whose only ready request is a show loses the Movies copy and gets TV."""
+        existing, _sibling = self._seed_server(ctx)
+        movies = ctx.plex.sections.return_value[0]
+        shows = MagicMock()
+        shows.type, shows.title, shows.key = "show", "TV Shows", "2"
+        shows.collections.return_value = []
+        ctx.plex.sections.return_value = [movies, shows]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+        ctx.plex.build_library_index.side_effect = lambda s: (
+            {900: 999, 10: 1010, 20: 1020} if s is movies else {30: 2030}
+        )
+        on_server = ctx.plex.find_owned_collections.return_value
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: on_server if section is movies else []
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(30, media_type=MediaType.SHOW)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is existing
+        assert report.removed_deliveries == [{"row_slug": "asked", "library_key": "1"}]
+        assert [(p.tmdb_id, p.rating_key) for p in report.picks] == [(30, 2030)]
+        assert ctx.plex.create_collection.call_args.args[0] is shows
+
+    def test_a_row_whose_every_title_is_hidden_from_them_is_removed(self, ctx: EngineContext, mock_plextv):
+        """Ready titles their Plex restrictions hide are not in the row, so the row is empty — and gone."""
+        existing, _sibling = self._seed_server(ctx)
+        ctx.token_for_user = lambda user: "their-token"
+        ctx.plex.visible_to.return_value = set()
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(10, 20, complete=True)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is existing
+        assert report.picks == []
+        results = {r["tmdb_id"]: r["result"] for r in report.trace["selection"][0]["requests"]}
+        assert results == {10: "hidden", 20: "hidden"}
+
+    def test_a_requests_row_beside_a_picked_row_leaves_the_picked_row_to_gather(
+        self, ctx: EngineContext, mock_plextv, mock_tmdb
+    ):
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec(), RowSpec(slug="picked", name_template="Picked for You", size=5)],
+            rows_defined=True,
+        )
+        ctx.request_ledger = _ledger(10)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        by_row: dict[str, list[int]] = {}
+        for pick in report.picks:
+            by_row.setdefault(pick.collection_slug, []).append(pick.tmdb_id)
+        assert by_row["asked"] == [10]
+        assert sorted(by_row["picked"]) == [10, 20]
+        assert mock_tmdb.suggestions.call_count == 1
+        assert report.status == "ok"
+
+    def test_a_cold_person_still_gets_their_requests_row(self, ctx: EngineContext, mock_plextv, mock_tmdb):
+        ctx.history_source.fetch.return_value = []  # below min_history
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True, cold_start="skip")
+        ctx.request_ledger = _ledger(10)
+
+        report = _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100))
+
+        assert [p.tmdb_id for p in report.picks] == [10]
+        mock_tmdb.suggestions.assert_not_called()
+        ctx.plex.top_rated.assert_not_called()
+
+    def test_the_pipeline_builds_the_ledger_once_when_a_requests_row_exists(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        calls: list[frozenset[str]] = []
+        monkeypatch.setattr(
+            pipeline_mod, "collect_requests", lambda sources, people, **kw: calls.append(kw["patterns"]) or _ledger(10)
+        )
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec(requests_tag_pattern="req-{username}"), _requests_spec(slug="asked-2")],
+            rows_defined=True,
+            request_sources=RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(101, "mike")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=101)])
+
+        assert calls == [frozenset({"req-{username}"})]
+        assert ctx.request_ledger is not None and [t.tmdb_id for t in ctx.request_ledger.titles] == [10]
+
+    def test_no_sources_means_no_ledger_and_no_row(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        monkeypatch.setattr(pipeline_mod, "collect_requests", lambda *a, **kw: pytest.fail("read with no source"))
+        monkeypatch.setattr(rows_mod, "remove_row", lambda *a, **kw: pytest.fail("removed with no source"))
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True, request_sources=None)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert ctx.request_ledger is None
+        assert report.users[0].picks == []
+
+    def test_a_run_scoped_to_another_row_reads_no_sources_and_removes_nothing(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """A requests row that is not due tonight (another row's own cron) is neither built nor removed:
+        `_run_user` drops not-due rows before its requests branch, and the ledger is not even read."""
+        monkeypatch.setattr(pipeline_mod, "collect_requests", lambda *a, **kw: pytest.fail("read for a row not due"))
+        self._seed_server(ctx)
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec(), RowSpec(slug="picked", name_template="Picked for You", size=5)],
+            rows_defined=True,
+            request_sources=RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")),
+            build_only=frozenset({"picked"}),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert ctx.request_ledger is None
+        assert report.users[0].rows_considered["asked"] == "not_due"
+        assert {p.collection_slug for p in report.users[0].picks} == {"picked"}
+        ctx.plex.delete_owned_collection.assert_not_called()
+
+    def test_the_ledger_is_read_over_the_whole_roster_not_the_users_in_scope(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """Two people typed the same tag. A run scoped to ONE of them must not credit that person with
+        the other's requests: the ledger reads the full roster, so the tag stays ambiguous."""
+        real_collect = pipeline_mod.collect_requests
+        radarr = MagicMock()
+        radarr.app_name = "Radarr"
+        radarr.tags.return_value = {7: "children"}
+        radarr.movies.return_value = [{"tmdbId": 10, "tags": [7], "hasFile": True, "movieFile": {}, "title": "A"}]
+        monkeypatch.setattr(
+            pipeline_mod,
+            "collect_requests",
+            lambda sources, people, **kw: real_collect(sources, people, radarr=radarr, **kw),
+        )
+        sarah = make_profile("sarah", account_id=100, requested_by_tag="children")
+        kid = make_profile("kid", account_id=101, requested_by_tag="children")
+        ctx.roster = [sarah, kid]
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec()],
+            rows_defined=True,
+            request_sources=RequestSources(
+                radarr=ArrTarget(url="http://r", api_key="k", quality_profile_id=0, root_folder="", tag="shortlist")
+            ),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(101, "kid")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert report.users[0].picks == []
+        assert ctx.request_ledger is not None and ctx.request_ledger.titles == []
+        assert [(m.label, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [("children", True)]
+
+    def test_without_a_roster_the_users_in_scope_are_the_roster(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """A direct engine caller passes no roster; `users` doubles as it."""
+        seen: list[list[str]] = []
+        monkeypatch.setattr(
+            pipeline_mod,
+            "collect_requests",
+            lambda sources, people, **kw: seen.append([p.username for p in people]) or _ledger(),
+        )
+        ctx.config = replace(
+            ctx.config,
+            rows=[_requests_spec()],
+            rows_defined=True,
+            request_sources=RequestSources(overseerr=SeerrTarget(url="http://s", api_key="k")),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert seen == [["sarah"]]
+
+
+def _by_username_row() -> RowSpec:
+    return RowSpec(
+        slug="asked-u",
+        name_template="{library_name} you asked for",
+        size=5,
+        requests_row=True,
+        requests_tag_pattern="req-{username}",
+    )
+
+
+def _by_name_row() -> RowSpec:
+    return RowSpec(
+        slug="asked-n",
+        name_template="{library_name} requested by name",
+        size=5,
+        requests_row=True,
+        requests_tag_pattern="req-{name}",
+    )
+
+
+class TestTagAmbiguityAcrossEveryEnabledRequestsRow:
+    """A requester tag is judged against the pattern of every ENABLED requests row, due tonight or not.
+
+    Judged against the due rows alone, a night when one of two overlapping rows ran by itself handed
+    `req-bob` to whoever that row's pattern names — the wrong-person outcome the cross-pattern check
+    exists to stop. Which rows RECEIVE titles is unchanged: only the rows being built.
+    """
+
+    @staticmethod
+    def _alice_nicknamed_bob_and_bob() -> list[UserProfile]:
+        return [
+            make_profile("alice", account_id=101, nickname="bob"),
+            make_profile("bob", account_id=102, nickname="Robert"),
+        ]
+
+    @staticmethod
+    def _run(
+        ctx: EngineContext,
+        mock_plextv: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        roster: list[UserProfile],
+        users: list[UserProfile],
+        rows: list[RowSpec],
+        build_only: frozenset[str] | None = None,
+    ) -> dict[tuple[str, str], list[int]]:
+        """One night with `req-bob` on movie 10 in Radarr; ``{(username, row slug): picked tmdb ids}``."""
+        real_collect = pipeline_mod.collect_requests
+        radarr = MagicMock()
+        radarr.app_name = "Radarr"
+        radarr.tags.return_value = {7: "req-bob"}
+        radarr.movies.return_value = [{"tmdbId": 10, "tags": [7], "hasFile": True, "movieFile": {}, "title": "A"}]
+        monkeypatch.setattr(
+            pipeline_mod,
+            "collect_requests",
+            lambda sources, people, **kw: real_collect(sources, people, radarr=radarr, **kw),
+        )
+        ctx.roster = roster
+        ctx.config = replace(
+            ctx.config,
+            rows=rows,
+            rows_defined=True,
+            build_only=build_only,
+            request_sources=RequestSources(
+                radarr=ArrTarget(url="http://r", api_key="k", quality_profile_id=0, root_folder="", tag="shortlist")
+            ),
+        )
+        mock_plextv.users = [plextv_user(p.plex_account_id, p.username) for p in roster]
+
+        report = pipeline_mod.run(ctx, users)
+
+        return {
+            (u.username, spec.slug): [p.tmdb_id for p in u.picks if p.collection_slug == spec.slug]
+            for u in report.users
+            for spec in rows
+        }
+
+    def test_a_tag_two_enabled_rows_render_for_two_people_goes_to_nobody_when_only_one_row_is_due(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        people = self._alice_nicknamed_bob_and_bob()
+
+        picked = self._run(
+            ctx,
+            mock_plextv,
+            monkeypatch,
+            roster=people,
+            users=people,
+            rows=[_by_username_row(), _by_name_row()],
+            build_only=frozenset({"asked-u"}),
+        )
+
+        assert picked == {
+            ("alice", "asked-u"): [],
+            ("alice", "asked-n"): [],
+            ("bob", "asked-u"): [],
+            ("bob", "asked-n"): [],
+        }
+        assert ctx.request_ledger is not None and ctx.request_ledger.titles == []
+        assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
+            ("req-bob", None, True)
+        ]
+
+    def test_with_the_overlapping_row_disabled_the_tag_goes_to_its_single_owner(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """A disabled row never reaches the engine's row list, so its pattern names nobody."""
+        people = self._alice_nicknamed_bob_and_bob()
+
+        picked = self._run(ctx, mock_plextv, monkeypatch, roster=people, users=people, rows=[_by_username_row()])
+
+        assert picked == {("alice", "asked-u"): [], ("bob", "asked-u"): [10]}
+        assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
+            ("req-bob", 102, False)
+        ]
+
+    @pytest.mark.parametrize(
+        "build_only,scoped_to_bob",
+        [
+            pytest.param(None, False, id="full-run"),
+            pytest.param(None, True, id="one-person"),
+            pytest.param(frozenset({"asked-u"}), False, id="one-row"),
+            pytest.param(frozenset({"asked-u"}), True, id="one-row-one-person"),
+            pytest.param(frozenset({"asked-n"}), False, id="the-other-row"),
+        ],
+    )
+    def test_a_scoped_run_judges_the_tag_exactly_as_a_full_run_does(
+        self, ctx: EngineContext, mock_plextv, monkeypatch, build_only, scoped_to_bob
+    ):
+        people = self._alice_nicknamed_bob_and_bob()
+
+        picked = self._run(
+            ctx,
+            mock_plextv,
+            monkeypatch,
+            roster=people,
+            users=people[1:] if scoped_to_bob else people,
+            rows=[_by_username_row(), _by_name_row()],
+            build_only=build_only,
+        )
+
+        assert all(ids == [] for ids in picked.values())
+        assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
+            ("req-bob", None, True)
+        ]
+
+    def test_one_person_both_enabled_patterns_render_it_for_is_not_ambiguous(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        bob = make_profile("bob", account_id=102, nickname="bob")
+        alice = make_profile("alice", account_id=101, nickname="Alice")
+
+        picked = self._run(
+            ctx,
+            mock_plextv,
+            monkeypatch,
+            roster=[alice, bob],
+            users=[alice, bob],
+            rows=[_by_username_row(), _by_name_row()],
+            build_only=frozenset({"asked-u"}),
+        )
+
+        # Only the due row is built: the not-due `asked-n` receives nothing tonight, as before.
+        assert picked == {
+            ("alice", "asked-u"): [],
+            ("alice", "asked-n"): [],
+            ("bob", "asked-u"): [10],
+            ("bob", "asked-n"): [],
+        }
+        assert [(m.label, m.plex_account_id, m.ambiguous) for m in ctx.request_ledger.tag_matches] == [
+            ("req-bob", 102, False)
+        ]
+
+
+class TestRowLimitsRecipe:
+    """#138 phase 2: limits join the recipe only when set, so no existing row rebuilds on upgrade."""
+
+    @staticmethod
+    def _recipe(**spec_kw) -> str:
+        from shortlist.engine.models import EngineConfig
+        from shortlist.engine.rows import RowPolicy, _rating_key_resolver, row_recipe
+
+        cfg = EngineConfig()
+        spec = RowSpec(slug="picked", name_template="", size=4, media="movie", **spec_kw)
+        ctx = MagicMock()
+        ctx.config = cfg
+        policy = RowPolicy(
+            ctx=ctx,
+            user=make_profile("sarah", account_id=100),
+            cfg=cfg,
+            specs=[spec],
+            library_index={},
+            report=MagicMock(),
+            resolve=_rating_key_resolver({}),
+        )
+        return row_recipe(policy, spec)
+
+    def test_recipe_is_byte_identical_when_no_limit_is_set(self):
+        # Captured from the parent commit, before row_recipe was touched.
+        assert self._recipe() == "movie||tmdb_similar|0.0|0.0|False|False|30|1|popular"
+
+    def test_a_limit_changes_the_recipe_and_names_it(self):
+        recipe = self._recipe(max_runtime=120)
+        assert recipe == "movie||tmdb_similar|0.0|0.0|False|False|30|1|popular|limits=rt<=120"
+
+    def test_clearing_the_limits_restores_the_original_recipe(self):
+        original = self._recipe()
+        assert self._recipe(min_year=1990) != original
+        assert self._recipe(min_year=None, max_runtime=None) == original
+
+    def test_a_zero_min_rating_leaves_the_recipe_alone(self):
+        assert self._recipe(min_rating=0.0) == self._recipe()
+
+
+class TestRowLimitsInThePipeline:
+    """A row's limits narrow the pool before ranking, so the picks are drawn only from titles inside them."""
+
+    def _setup(self, ctx: EngineContext, mock_plextv, **spec_kw):
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": 8.0,
+                "release_date": f"{1970 + (i - 10) * 6}-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.tmdb.details.side_effect = lambda tid, mt: {"runtime": 90 if tid <= 12 else 150}
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=4, media="movie", **spec_kw)]
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        return sorted(p["tmdb_id"] for p in picks)
+
+    def test_max_year_keeps_only_titles_released_by_then(self, ctx, mock_plextv):
+        ids = self._setup(ctx, mock_plextv, max_year=2000)
+        assert ids == [10, 11, 12, 13]
+        ctx.tmdb.details.assert_not_called()
+
+    def test_max_runtime_asks_details_only_for_titles_that_passed_the_year_limit(self, ctx, mock_plextv):
+        ids = self._setup(ctx, mock_plextv, max_year=2000, max_runtime=100)
+        assert ids == [10, 11, 12]
+        asked = {c.args[0] for c in ctx.tmdb.details.call_args_list if c.args[0] >= 10}
+        assert asked == {10, 11, 12, 13, 14, 15}
+
+    def test_no_limits_still_fills_the_row_from_the_whole_pool(self, ctx, mock_plextv):
+        ids = self._setup(ctx, mock_plextv)
+        assert len(ids) == 4
+
+
+class TestLimitsReachRewatchAndColdStart:
+    """Rewatch titles and cold-start fillers are built outside the candidate pool, so the pool's limits never
+    saw them: a "released by 2000" Watch-it-again row could lead with a 2021 film."""
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _rewatch(self, ctx: EngineContext, mock_plextv, **spec_kw) -> list[int]:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010, 20: 2020, 30: 2030}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [{"id": 30, "title": "Fresh", "genre_ids": [], "vote_average": 7.0, "release_date": "1990-01-01"}]
+        )
+        ctx.tmdb.details.side_effect = lambda tid, mt: {"runtime": 90 if tid != 20 else 180}
+        ctx.history_source.fetch.return_value = [
+            *[make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)],
+            make_watched("Old Favourite", days_ago=6, tmdb_id=10, year=1995),
+            # Watched longest ago, so unlimited it leads the row.
+            make_watched("New Film", days_ago=7, tmdb_id=20, year=2021),
+        ]
+        ctx.config.max_seeds = 1
+        ctx.config.rows = [RowSpec(slug="again", name_template="Again", size=2, rewatch=True, **spec_kw)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+
+    def test_a_rewatch_row_without_limits_still_leads_with_the_newer_film(self, ctx, mock_plextv):
+        assert self._rewatch(ctx, mock_plextv)[0] == 20
+
+    def test_a_rewatch_row_does_not_lead_with_a_film_past_its_max_year(self, ctx, mock_plextv):
+        delivered = self._rewatch(ctx, mock_plextv, max_year=2000)
+        assert 20 not in delivered
+        assert 10 in delivered
+
+    def test_a_rewatch_row_asks_details_to_judge_the_runtime_of_its_history(self, ctx, mock_plextv):
+        delivered = self._rewatch(ctx, mock_plextv, max_runtime=120)
+        assert 20 not in delivered
+        assert 10 in delivered
+        asked = {c.args for c in ctx.tmdb.details.call_args_list}
+        assert (20, MediaType.MOVIE) in asked
+
+    def _cold(self, ctx: EngineContext, mock_plextv, **spec_kw) -> list[int]:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.delivery_sections = [movies]
+        ctx.plex.build_library_index.return_value = {}
+        years = {100: 2021, 101: 1995, 102: 1990, 103: 1985, 104: 1980, 105: 1975}
+        ctx.plex.top_rated.side_effect = lambda section, n: [
+            (tid, fake_media_item(9000 + tid, f"Top{tid}", tmdb_id=tid, year=years[tid])) for tid in list(years)[:n]
+        ]
+        ctx.tmdb.details.side_effect = lambda tid, mt: {"runtime": 180 if tid == 101 else 100}
+        ctx.history_source.fetch.return_value = []
+        ctx.config.min_history = 5
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=2, media="movie", **spec_kw)]
+        ctx.run_day = self.RUN_DAY
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+
+    def test_a_newcomer_row_without_limits_gets_the_top_rated_titles(self, ctx, mock_plextv):
+        assert self._cold(ctx, mock_plextv) == [100, 101]
+
+    def test_a_newcomer_does_not_get_a_film_past_the_max_year(self, ctx, mock_plextv):
+        delivered = self._cold(ctx, mock_plextv, max_year=2000)
+        assert len(delivered) == 2
+        assert 100 not in delivered
+
+    def test_a_newcomer_does_not_get_a_film_past_the_max_runtime(self, ctx, mock_plextv):
+        delivered = self._cold(ctx, mock_plextv, max_runtime=120)
+        assert len(delivered) == 2
+        assert 101 not in delivered
+        assert (101, MediaType.MOVIE) in {c.args for c in ctx.tmdb.details.call_args_list}
+
+
+class TestLimitsAndRequestDemand:
+    """A title a row's limits would never show must not be credited to that row's request tag."""
+
+    def _demand(self, ctx: EngineContext, mock_plextv, monkeypatch, **spec_kw):
+        from shortlist.engine.models import ArrTarget, RequestConfig, RequestReport
+
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {
+                    "id": 30,
+                    "title": "Recent",
+                    "genre_ids": [],
+                    "vote_average": 8.4,
+                    "vote_count": 800,
+                    "release_date": "2024-01-01",
+                },
+                {
+                    "id": 31,
+                    "title": "Old",
+                    "genre_ids": [],
+                    "vote_average": 8.2,
+                    "vote_count": 800,
+                    "release_date": "1999-01-01",
+                },
+            ]
+        )
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=5, media="movie", **spec_kw)]
+        ctx.config.requests = RequestConfig(
+            enabled=True,
+            radarr=ArrTarget(url="http://radarr.test", api_key="k", quality_profile_id=1, root_folder="/m"),
+        )
+        captured = {}
+
+        def spy(cfg, tmdb, demand, **kw):
+            captured["demand"] = demand
+            return RequestReport()
+
+        monkeypatch.setattr(pipeline_mod.requests_mod, "request_missing", spy)
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return {row.slug: set(row.demand) for row in captured.get("demand", [])}.get("picked", set())
+
+    def test_a_row_with_no_limits_credits_every_missing_title(self, ctx, mock_plextv, monkeypatch):
+        assert self._demand(ctx, mock_plextv, monkeypatch) == {(30, MediaType.MOVIE), (31, MediaType.MOVIE)}
+
+    def test_a_row_with_a_max_year_credits_only_the_missing_titles_it_could_show(self, ctx, mock_plextv, monkeypatch):
+        assert self._demand(ctx, mock_plextv, monkeypatch, max_year=2000) == {(31, MediaType.MOVIE)}
+
+
+class TestRowsDifferingOnlyByLimitsShareOneGather:
+    """Native AI web search has no cache, so a limited row that gathered on its own cost an extra search."""
+
+    def _run(self, ctx: EngineContext, mock_plextv, rows: list[RowSpec]) -> dict[str, list[int]]:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": 8.0,
+                "release_date": f"{1970 + (i - 10) * 6}-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.reset_mock()
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = rows
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        out: dict[str, list[int]] = {}
+        for pick in report.users[0].picks:
+            out.setdefault(pick.collection_slug, []).append(pick.tmdb_id)
+        return {slug: sorted(ids) for slug, ids in out.items()}
+
+    @staticmethod
+    def _row(slug: str, **kw) -> RowSpec:
+        return RowSpec(slug=slug, name_template=slug, size=10, media="movie", **kw)
+
+    def test_a_limited_row_and_an_unlimited_one_gather_once(self, ctx, mock_plextv):
+        self._run(ctx, mock_plextv, [self._row("all")])
+        alone = ctx.tmdb.suggestions.call_count
+
+        picks = self._run(ctx, mock_plextv, [self._row("all"), self._row("old", max_year=2000)])
+
+        assert ctx.tmdb.suggestions.call_count == alone
+        assert len(picks["all"]) == 10
+        assert picks["old"] == [10, 11, 12, 13, 14, 15]
+
+    def test_rows_with_different_limits_share_one_gather_and_get_different_pools(self, ctx, mock_plextv):
+        self._run(ctx, mock_plextv, [self._row("all")])
+        alone = ctx.tmdb.suggestions.call_count
+
+        picks = self._run(ctx, mock_plextv, [self._row("old", max_year=2000), self._row("older", max_year=1985)])
+
+        assert ctx.tmdb.suggestions.call_count == alone
+        assert picks["old"] == [10, 11, 12, 13, 14, 15]
+        assert picks["older"] == [10, 11, 12]
+
+    def test_the_limited_pool_is_labelled_and_the_log_names_the_person_and_row(self, ctx, mock_plextv):
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{message}")
+        try:
+            self._run(ctx, mock_plextv, [self._row("all"), self._row("old", max_year=2000)])
+        finally:
+            logger.remove(sink)
+
+        assert any(line.startswith("sarah/old: limits: kept=6 dropped=4 unknown=0") for line in lines)
+
+    def _two_row_run(self, ctx, mock_plextv, rows):
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 10, "title": "T", "genre_ids": [], "vote_average": 8.0, "release_date": "1970-01-01"}]
+        )
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = rows
+        ctx.config.min_history = 1
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        return pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
+
+    def test_a_single_limited_row_labels_its_pool_limits(self, ctx, mock_plextv):
+        user = self._two_row_run(ctx, mock_plextv, [self._row("old", max_year=2000)])
+        assert [c["label"] for c in user.pool_costs] == ["movie · tmdb_similar · limits"]
+
+    def test_rows_sharing_a_gather_file_one_trace_entry_and_one_cost_entry(self, ctx, mock_plextv):
+        for rows in (
+            [self._row("all"), self._row("old", max_year=2000)],
+            [self._row("old", max_year=2000), self._row("all")],
+        ):
+            user = self._two_row_run(ctx, mock_plextv, rows)
+
+            assert len(user.trace["gathers"]) == 1
+            assert [c["label"] for c in user.pool_costs] == ["movie · tmdb_similar"]
+            assert sorted(user.pool_costs[0]["rows"]) == ["all", "old"]
+
+
+class TestSharedGatherIsRankedSafelyTwice:
+    """Two rows sharing a gather rank the SAME candidate objects, so no ranking step may leave a mark the
+    other row's ranking reads."""
+
+    @staticmethod
+    def _rows(order: str) -> list[RowSpec]:
+        plain = RowSpec(slug="all", name_template="all", size=3, media="movie")
+        limited = RowSpec(slug="old", name_template="old", size=3, media="movie", max_year=2000)
+        return [plain, limited] if order == "plain-first" else [limited, plain]
+
+    def _run(self, ctx, mock_plextv, rows):
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": (7.0 if i < 15 else 7.2) - 0.01 * i,
+                "release_date": "1980-01-01" if i < 15 else "2010-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.tmdb.details.side_effect = lambda tid, mt: {
+            "runtime": 90,
+            "belongs_to_collection": {"id": 7, "name": "Dune Collection"},
+        }
+        ctx.tmdb.collection_members.side_effect = lambda cid: set(range(10, 20))
+        casts = {900: ["Lead"], **{i: ["Lead", f"Extra{i}"] for i in range(10, 15)}}
+        ctx.tmdb.top_cast.side_effect = lambda tid, mt, n=5: casts.get(tid, [f"Other{tid}"])
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = rows
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 3
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        return pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)]).users[0]
+
+    @pytest.mark.parametrize("order", ["plain-first", "limited-first"])
+    def test_a_franchise_reason_is_stamped_once_however_many_rows_share_the_gather(self, ctx, mock_plextv, order):
+        ctx.config.franchise = 1.0
+
+        user = self._run(ctx, mock_plextv, self._rows(order))
+
+        reasons = [p.reason for p in user.picks]
+        assert reasons and all("also part of" in r for r in reasons)
+        assert all(r.count("also part of") == 1 for r in reasons), reasons
+
+    @pytest.mark.parametrize("order", ["plain-first", "limited-first"])
+    def test_the_cast_dial_ranks_the_plain_row_the_same_with_or_without_a_limited_sibling(
+        self, ctx, mock_plextv, order
+    ):
+        ctx.config.cast = 1.0
+        alone = self._run(ctx, mock_plextv, self._rows("plain-first")[:1])
+        alone_ids = sorted(p.tmdb_id for p in alone.picks if p.collection_slug == "all")
+
+        shared = self._run(ctx, mock_plextv, self._rows(order))
+
+        assert sorted(p.tmdb_id for p in shared.picks if p.collection_slug == "all") == alone_ids
+
+
+def _profiled_remote(profile: str, account_id: int = 500, username: str = "kid"):
+    """A Plex Home account with a parental Restriction Profile — the kind Plex refuses a hide-list for."""
+    from shortlist.engine.clients.plextv import PlexTvUser
+
+    return PlexTvUser(
+        id=account_id,
+        username=username,
+        user_type=UserType.MANAGED,
+        home=True,
+        restricted=True,
+        protected=False,
+        restriction_profile=profile,
+        filters=dict.fromkeys(("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos"), ""),
+    )
+
+
+class TestAccountsThePrivacyLoopCannotVouchFor:
+    """An account the privacy loop could not vouch for is RECORDED, never left silent.
+
+    The run page counts every account it is not told about as "hides every row". So a profiled account
+    `_record_unhideable` could not look through (no token, no usable collections read, a read that
+    raised), an account whose filter write failed, and an account the owner left alone all read as
+    hiding — a green "2 of 2" over a run whose own log says it "reports nothing rather than a false
+    all-clear". Reporting only: none of these changes what is written or promoted.
+    """
+
+    OWNED: ClassVar[dict] = {"sarah": OwnedRow(label="Shortlist_sarah", rating_keys=[11])}
+
+    @staticmethod
+    def _report():
+        return pipeline_mod.RunReport(started_at=datetime.now(UTC))
+
+    def test_a_profiled_account_no_token_could_be_minted_for_is_recorded_as_unchecked(self, ctx: EngineContext):
+        """The archetype: `canary_server_token` refuses a PIN-protected Home user."""
+        ctx.pms_for_user = lambda profile: None
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+        assert report.unhideable_rows == {}
+
+    def test_a_profiled_account_is_recorded_as_unchecked_when_the_collections_read_failed(self, ctx: EngineContext):
+        ctx.pms_for_user = MagicMock()
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), {}, False, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+        ctx.pms_for_user.assert_not_called()
+
+    def test_a_profiled_account_is_recorded_as_unchecked_when_the_collections_read_came_back_empty(
+        self, ctx: EngineContext
+    ):
+        """An empty read cannot prove no row exists (plex-safety rule 4), so it vouches for nobody."""
+        ctx.pms_for_user = MagicMock()
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), {}, True, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+
+    def test_a_profiled_account_is_recorded_as_unchecked_when_looking_through_it_raises(self, ctx: EngineContext):
+        ctx.pms_for_user = MagicMock(side_effect=RuntimeError("PMS timed out"))
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+        assert report.unhideable_rows == {}
+
+    def test_a_profiled_account_is_recorded_as_unchecked_when_the_engine_has_no_per_account_client(
+        self, ctx: EngineContext
+    ):
+        ctx.pms_for_user = None
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("little_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == ["kid"]
+
+    def test_a_profiled_account_that_was_looked_through_is_not_recorded_as_unchecked(
+        self, ctx: EngineContext, monkeypatch
+    ):
+        ctx.pms_for_user = MagicMock()
+        monkeypatch.setattr(pipeline_mod, "unhidden_rows_visible_to", lambda as_them, owned, slug: [])
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == []
+        assert report.unhideable_rows == {}
+
+    def test_a_profiled_account_seen_to_expose_rows_is_a_finding_not_unchecked(self, ctx: EngineContext, monkeypatch):
+        ctx.pms_for_user = MagicMock()
+        monkeypatch.setattr(pipeline_mod, "unhidden_rows_visible_to", lambda as_them, owned, slug: [11])
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("kid", account_id=500), _profiled_remote("older_kid"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == []
+        assert report.unhideable_rows == {"kid": [11]}
+
+    def test_an_account_with_no_profile_is_not_this_checks_business(self, ctx: EngineContext):
+        """Its hide-list was written and read back by the loop itself; this check is for profiled ones."""
+        ctx.pms_for_user = lambda profile: None
+        report = self._report()
+
+        pipeline_mod._record_unhideable(
+            ctx, make_profile("sarah", account_id=100), plextv_user(100, "sarah"), self.OWNED, True, report
+        )
+
+        assert report.privacy_unchecked == []
+
+    def test_the_run_records_a_profiled_account_it_could_not_look_through(self, ctx: EngineContext, mock_plextv):
+        """End to end through the loop: the `little_kid` account is never written to, so the loop hands it to
+        `_record_unhideable`, which cannot mint a token for it."""
+        ctx.pms_for_user = lambda profile: None
+        ctx.plex.owned_collections.return_value = dict(self.OWNED)
+        mock_plextv.users = [plextv_user(100, "sarah"), _profiled_remote("little_kid")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("kid", account_id=500)])
+
+        assert report.unhideable_measured is True
+        assert report.privacy_unchecked == ["kid"]
+        assert report.privacy_write_failed == []
+        assert report.privacy_left_alone == []
+
+    def test_a_refused_write_on_an_account_whose_profile_could_not_be_read_is_unchecked(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The profile-unknown arm skips the account as expected — no exclude written, nothing looked
+        through, so the run cannot vouch for it either."""
+        mock_plextv.users = [plextv_user(100, "sarah"), _profiled_remote("")]
+        mock_plextv.home_profile_known.return_value = False
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("kid", account_id=500)])
+
+        assert not report.promotion_blockers
+        assert report.privacy_unchecked == ["kid"]
+
+    def test_an_account_whose_filter_write_plex_refused_is_recorded(self, ctx: EngineContext, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah"), _profiled_remote("")]
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("kid", account_id=500)])
+
+        assert report.promotion_blockers
+        assert report.privacy_write_failed == ["kid"]
+        assert report.privacy_unchecked == []
+
+    def test_an_account_whose_filter_write_raised_is_recorded(self, ctx: EngineContext, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(300, "jess")]
+
+        def fail_jess(account_id, fields):
+            if account_id == 300:
+                raise RuntimeError("connection reset")
+
+        mock_plextv.update_user_filters.side_effect = fail_jess
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("jess", account_id=300)])
+
+        assert report.promotion_blockers
+        assert report.privacy_write_failed == ["jess"]
+
+    def test_an_account_left_alone_is_recorded(self, ctx: EngineContext, mock_plextv):
+        """`manage_sharing=0`: it keeps none of our excludes, so it sees every row — by the owner's choice."""
+        ctx.unmanaged_account_ids = {300}
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(300, "jess")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert report.privacy_left_alone == ["jess"]
+        assert report.privacy_unchecked == []
+        assert report.privacy_write_failed == []

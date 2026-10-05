@@ -26,7 +26,15 @@ from shortlist.engine.models import (
     UserProfile,
     WrittenDetails,
 )
-from shortlist.engine.placeholders import fill_season, names_a_seed, needs_a_run, season_renderings, uses_season
+from shortlist.engine.placeholders import (
+    fill_season,
+    fill_theme,
+    names_a_seed,
+    needs_a_run,
+    season_renderings,
+    uses_season,
+    uses_theme,
+)
 
 DEFAULT_ROW_NAME = "✨ Picked for You"
 
@@ -450,7 +458,7 @@ def render_row_name(
     top_seed = top_seed_of(picks)
     # A season placeholder still standing here had no season to fill it (`resolve_row_template` fills
     # them), so it is unfillable exactly as a `{top_seed}` with no seed is.
-    unfillable = (names_a_seed(template) and not top_seed) or uses_season(template)
+    unfillable = (names_a_seed(template) and not top_seed) or uses_season(template) or uses_theme(template)
     rendered = "" if unfillable else _fill(template, profile, top_seed, library_name)
     if rendered:
         return rendered
@@ -464,12 +472,12 @@ def render_row_name(
 
 def season_poster(spec: RowSpec) -> PosterSpec | None:
     """The row's poster with its season filled into the text lines; None when the row has no poster."""
-    if spec.poster is None or spec.season is None:
+    if spec.poster is None or (spec.season is None and spec.theme is None):
         return spec.poster
     return replace(
         spec.poster,
-        title=fill_season(spec.poster.title, spec.season),
-        subtitle=fill_season(spec.poster.subtitle, spec.season),
+        title=fill_theme(fill_season(spec.poster.title, spec.season), spec.theme),
+        subtitle=fill_theme(fill_season(spec.poster.subtitle, spec.season), spec.theme),
     )
 
 
@@ -550,7 +558,12 @@ def render_description(template: str, profile: UserProfile, picks: list[Pick], l
     would flatten a description typed over several lines.
     """
     top_seed = top_seed_of(picks)
-    if not template.strip() or (names_a_seed(template) and not top_seed) or uses_season(template):
+    if (
+        not template.strip()
+        or (names_a_seed(template) and not top_seed)
+        or uses_season(template)
+        or uses_theme(template)
+    ):
         return ""
     return (
         template.replace(placeholders.TOP_SEED, top_seed)
@@ -614,7 +627,9 @@ def apply_row_details(
         return written, {}
     try:
         wanted = {
-            "summary": render_description(fill_season(spec.description, spec.season), profile, picks, library_name),
+            "summary": render_description(
+                fill_theme(fill_season(spec.description, spec.season), spec.theme), profile, picks, library_name
+            ),
             "titleSort": f"{prefix}{display}" if prefix else "",
         }
         clearing = collection is not None and (
@@ -673,7 +688,7 @@ def resolve_row_template(spec: RowSpec, profile: UserProfile, config: EngineConf
     resolved the template differently, promote would look for a title delivery never created and the
     row's placement/privacy promotion would silently no-op (plex-safety: a row could stay unhidden).
     """
-    return fill_season(raw_row_template(spec, profile, config), spec.season)
+    return fill_theme(fill_season(raw_row_template(spec, profile, config), spec.season), spec.theme)
 
 
 def raw_row_template(spec: RowSpec, profile: UserProfile, config: EngineConfig) -> str:
@@ -753,7 +768,11 @@ def titles_other_rows_build(
             continue  # builds nothing for this person, so no title of theirs can be its collection
         # A seasonal row claims the title of EVERY season, not only tonight's: its collection wears
         # whichever season it was last built for. Claiming more only ever removes less.
-        templates = season_renderings(raw_row_template(other, profile, config))
+        # A themed row's name follows its theme, which is known without picks: fill it, or its title
+        # renders empty and the row claims nothing.
+        # ...from THIS person's theme: an explore row wears a different one for each person.
+        raw = fill_theme(raw_row_template(other, profile, config), other.for_person(profile.slug).theme)
+        templates = season_renderings(raw, config.season_catalogue()) if uses_season(raw) else [raw]
         for section in target_sections(sections, other):
             for template in templates:
                 display = render_row_name(
@@ -901,6 +920,10 @@ def deliver_rows(
             # DIFFERENT library must never be allowed to match here.
             delivered_key=(delivered_keys or {}).get(str(section.key)),
             dry_run=dry_run,
+            # Filled as each delete lands rather than merged from `one` below: a shared row has no retry
+            # wrapper, so if this library's own write then raises, `one` never comes back and a delete that
+            # happened would reach no events row (rule 10).
+            duplicates_audit=combined.duplicates_removed,
             poster=season_poster(spec) if spec else None,
             artist=poster_artist,
             order_work=order_work,
@@ -931,12 +954,16 @@ def deliver_rows(
                 # what CHANGED; this says WHICH Plex object it changed, which is the one thing a
                 # later reconcile cannot recompute — a `{top_seed}` title is different every run.
                 "rating_key": one.rating_key,
+                # What these picks were chosen for, so promotion can tell this library's collection from
+                # one a later season left untouched ("" for a row that is not seasonal).
+                "season": spec.season.built_for if spec.season else "",
                 "library_key": str(section.key),
                 "library_title": getattr(section, "title", str(section.key)),
                 "added": list(one.added),
                 "removed": list(one.removed),
                 "kept": list(one.kept),
                 "deleted": list(one.deleted),
+                "duplicates_removed": list(one.duplicates_removed),
                 "created": one.created,
                 "picks": [
                     {
@@ -962,6 +989,11 @@ def deliver_rows(
                         # any good?" is the first thing asked of a row that looks wrong.
                         "year": p.year,
                         "rating": p.rating,
+                        # `rating` is always TMDB's. `order_rating` is what a row sorted on another
+                        # service (IMDb via MDBList) was ordered by — shown instead, so the order reads.
+                        "rating_source": "tmdb",
+                        "order_rating": p.order_rating,
+                        "order_rating_source": p.order_rating_source,
                     }
                     for p in this_section
                 ],
@@ -1087,7 +1119,7 @@ def remove_row(
         # survives a title which differs per person, which is exactly what a fallback creates.
         # A seasonal name is the same case from the other side: it renders tonight's season, and the
         # collection may still wear the last one it was built for.
-        unrenderable = not display or names_a_seed(template) or uses_season(raw_template)
+        unrenderable = not display or names_a_seed(template) or uses_season(raw_template) or uses_theme(raw_template)
         if unrenderable and ledger_key is None:
             # This row has no title to match on — a `{top_seed}` template (which renders per person,
             # so no title computed here is anyone's) or one that renders blank. Per-person rows share
@@ -1501,6 +1533,7 @@ def _remove_shared_row_duplicates(
     label_prefix: str,
     dry_run: bool,
     who: str,
+    audit: list[str],
 ) -> list[str]:
     """Delete the unmarked leftovers of a SHARED row, keeping the collection already resolved as the row.
 
@@ -1542,10 +1575,14 @@ def _remove_shared_row_duplicates(
         label_prefix: The label prefix Shortlist owns.
         dry_run: Log the would-be delete and change nothing.
         who: For the log line only.
+        audit: The caller's run-wide accumulator (``CollectionDiff.duplicates_removed``). Each title is
+            appended the moment its delete returns, because the row's own write comes next and may raise,
+            and then this function's return value never reaches the audit trail (rule 10).
 
     Returns:
-        The human titles of the collections removed, for ``CollectionDiff.deleted`` — a delete on
-        someone's real server has to reach the audit trail, not just the log (rule 10).
+        The human titles of the collections removed (or, in a dry run, that would be), for this library's
+        ``CollectionDiff.duplicates_removed``. A failed delete is not among them: the duplicate is still on
+        Plex, and the WARNING says why.
     """
     keep_key = _rating_key(keep)
     removed: list[str] = []
@@ -1568,25 +1605,29 @@ def _remove_shared_row_duplicates(
             getattr(section, "title", "?"),
             _rating_key(other),
         )
-        removed.append(strip_marker(other.title))
-        if dry_run:
-            continue
-        try:
-            plex.delete_owned_collection(other, label_prefix)
-        except Exception as exc:
-            # Never re-raised: this is cosmetic housekeeping and must not cost the audience their row.
-            # The message is deliberately NOT logged — plexapi embeds the request URL, which carries a
-            # token (rule 9). `_rebuild_under_twin_name` logs the message because the exception there is
-            # one of ours; this one comes from the PMS.
-            logger.warning(
-                "{}: could not delete the duplicate shared row in '{}' (ratingKey {}, {}). Both copies of "
-                "a shared row are public by design, so this is no more visible than the live one — the "
-                "audience just sees the row twice until a later run clears it.",
-                who,
-                getattr(section, "title", "?"),
-                _rating_key(other),
-                type(exc).__name__,
-            )
+        if not dry_run:
+            try:
+                plex.delete_owned_collection(other, label_prefix)
+            except Exception as exc:
+                # Never re-raised: this is cosmetic housekeeping and must not cost the audience their row.
+                # Only the class name is logged. plexapi 4.18.2 builds its error text from `response.url`
+                # and the response body, and that URL carries `X-Plex-Token` only when plexapi's
+                # `log.show_secrets` is on — token-free by default, but rule 9 should not rest on a library
+                # setting. `_rebuild_under_name` does log its message, for the detail its create path's own
+                # RuntimeError carries; plexapi's exceptions can reach that handler too.
+                logger.warning(
+                    "{}: could not delete the duplicate shared row in '{}' (ratingKey {}, {}). Both copies "
+                    "of a shared row are public by design, so this is no more visible than the live one — "
+                    "the audience just sees the row twice until a later run clears it.",
+                    who,
+                    getattr(section, "title", "?"),
+                    _rating_key(other),
+                    type(exc).__name__,
+                )
+                continue
+        title = strip_marker(other.title)
+        removed.append(title)
+        audit.append(title)
     return removed
 
 
@@ -1692,6 +1733,7 @@ def _deliver_one(
     fallback_name: str = "",
     delivered_key: int | None = None,
     dry_run: bool,
+    duplicates_audit: list[str],
     label_prefix: str = LABEL_PREFIX,
     poster: PosterSpec | None = None,
     artist: PosterArtist | None = None,
@@ -1770,6 +1812,7 @@ def _deliver_one(
             label_prefix=label_prefix,
             dry_run=dry_run,
             who=profile.username,
+            audit=duplicates_audit,
         )
 
     wanted_titles = [p.title for p in picks]
@@ -1822,10 +1865,10 @@ def _deliver_one(
         removed=[i.title for i in existing_items if i.ratingKey not in wanted_set],
         kept=[title_by_key.get(k, str(k)) for k in wanted_keys if k in current_keys],
         collection_title=display,  # the human title: the marker is Plex's business, not the owner's
-        # A duplicate removed above is a real deletion on someone's server, so it belongs in the diff
-        # the run reports and audits, not only in the log (rule 10). Only this branch can carry any: the
-        # cleanup runs solely when a collection was RESOLVED, which is what sends us down this path.
-        deleted=list(removed_duplicates),
+        # This library's share of what `duplicates_audit` already holds, for its breakdown entry. Only this
+        # branch can carry any: the cleanup runs solely when a collection was RESOLVED, which is what
+        # sends us down this path.
+        duplicates_removed=list(removed_duplicates),
     )
     to_add_keys = [k for k in wanted_keys if k not in current_keys]
     to_remove_count = sum(1 for i in existing_items if i.ratingKey not in wanted_set)

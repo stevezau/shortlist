@@ -1,0 +1,241 @@
+{
+ "_provenance": "Radarr v3 GET /api/v3/tag and GET /api/v3/movie recorded 2026-09-28 off a live server (10168 items, 48 tags, of which 5 are Seerr requester tags on 7 items). Items are cut to the keys a requests row reads (full key set in `all_item_keys`), titles and paths neutralised, tag user numbers remapped to match overseerr_requests_page.json.",
+ "_what_the_live_response_settled": {
+  "requester_tag_format": "<seerr user id>-<username>, no spaces (Seerr \u2265 2.x; older wrote `12 - name`, and Seerr's 0007_migrate_arr_tags renamed those). Matching is on the leading number only.",
+  "tag_survives_request_delete": "3 of 7 tagged films and 3 of 4 tagged shows had their Seerr request already deleted, and every one still carried its tag \u2014 Seerr never removes a tag (MediaRequestSubscriber.afterRemove only recalculates media status).",
+  "added_is_iso_utc": true,
+  "hasFile_present_on_movies": true,
+  "statistics_present_on_series": false
+ },
+ "all_item_keys": [
+  "added",
+  "alternateTitles",
+  "certification",
+  "cleanTitle",
+  "digitalRelease",
+  "folderName",
+  "genres",
+  "hasFile",
+  "id",
+  "images",
+  "imdbId",
+  "inCinemas",
+  "isAvailable",
+  "keywords",
+  "lastSearchTime",
+  "minimumAvailability",
+  "monitored",
+  "movieFile",
+  "movieFileId",
+  "originalLanguage",
+  "originalTitle",
+  "overview",
+  "path",
+  "popularity",
+  "qualityProfileId",
+  "ratings",
+  "releaseDate",
+  "rootFolderPath",
+  "runtime",
+  "secondaryYearSourceId",
+  "sizeOnDisk",
+  "sortTitle",
+  "statistics",
+  "status",
+  "studio",
+  "tags",
+  "title",
+  "titleSlug",
+  "tmdbId",
+  "website",
+  "year",
+  "youTubeTrailerId"
+ ],
+ "tags": [
+  {
+   "id": 50,
+   "label": "10-person10"
+  },
+  {
+   "id": 57,
+   "label": "17-person17"
+  },
+  {
+   "id": 31,
+   "label": "13-person13"
+  },
+  {
+   "id": 30,
+   "label": "14-person14"
+  },
+  {
+   "id": 61,
+   "label": "11-person11"
+  },
+  {
+   "id": 43,
+   "label": "other-tag"
+  },
+  {
+   "id": 5,
+   "label": "other-tag"
+  }
+ ],
+ "tagged_items": [
+  {
+   "id": 10302,
+   "title": "movie 1",
+   "year": 2026,
+   "tmdbId": 1384216,
+   "imdbId": "tt21285562",
+   "tags": [
+    3,
+    30,
+    2
+   ],
+   "added": "2026-08-27T11:31:48Z",
+   "hasFile": false,
+   "monitored": true,
+   "status": "inCinemas",
+   "path": "/media/movie/1",
+   "rootFolderPath": "/media/movie",
+   "statistics": {
+    "movieFileCount": 0,
+    "sizeOnDisk": 0,
+    "releaseGroups": [],
+    "movieFileQualities": []
+   }
+  },
+  {
+   "id": 10340,
+   "title": "movie 2",
+   "year": 2026,
+   "tmdbId": 1690893,
+   "imdbId": "tt42412044",
+   "tags": [
+    3,
+    31,
+    8
+   ],
+   "added": "2026-09-01T15:26:59Z",
+   "hasFile": false,
+   "monitored": true,
+   "status": "announced",
+   "path": "/media/movie/2",
+   "rootFolderPath": "/media/movie",
+   "statistics": {
+    "movieFileCount": 0,
+    "sizeOnDisk": 0,
+    "releaseGroups": [],
+    "movieFileQualities": []
+   }
+  },
+  {
+   "id": 10414,
+   "title": "movie 3",
+   "year": 2026,
+   "tmdbId": 1760395,
+   "imdbId": "tt44949874",
+   "tags": [
+    3,
+    50
+   ],
+   "added": "2026-09-13T02:54:08Z",
+   "hasFile": true,
+   "monitored": true,
+   "status": "released",
+   "path": "/media/movie/3",
+   "rootFolderPath": "/media/movie",
+   "statistics": {
+    "movieFileCount": 1,
+    "sizeOnDisk": 5412283886,
+    "releaseGroups": [
+     "DARKFLiX"
+    ],
+    "movieFileQualities": [
+     {
+      "id": 9,
+      "name": "HDTV-1080p",
+      "source": "tv",
+      "resolution": 1080,
+      "modifier": "none"
+     }
+    ]
+   },
+   "movieFile": {
+    "id": 11143,
+    "dateAdded": "2026-09-20T20:44:00Z",
+    "quality": {
+     "quality": {
+      "id": 9,
+      "name": "HDTV-1080p",
+      "source": "tv",
+      "resolution": 1080,
+      "modifier": "none"
+     },
+     "revision": {
+      "version": 1,
+      "real": 0,
+      "isRepack": false
+     }
+    }
+   }
+  }
+ ],
+ "untagged_item": {
+  "id": 1,
+  "title": "movie 4",
+  "year": 2020,
+  "tmdbId": 614696,
+  "imdbId": "tt10620868",
+  "tags": [
+   14
+  ],
+  "added": "2025-09-03T13:55:11Z",
+  "hasFile": true,
+  "monitored": true,
+  "status": "released",
+  "path": "/media/movie/4",
+  "rootFolderPath": "/media/movie",
+  "statistics": {
+   "movieFileCount": 1,
+   "sizeOnDisk": 4842249783,
+   "releaseGroups": [
+    "GPRS"
+   ],
+   "movieFileQualities": [
+    {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "webdl",
+     "resolution": 1080,
+     "modifier": "none"
+    }
+   ]
+  },
+  "movieFile": {
+   "id": 1,
+   "dateAdded": "2026-08-14T11:32:36Z",
+   "quality": {
+    "quality": {
+     "id": 3,
+     "name": "WEBDL-1080p",
+     "source": "webdl",
+     "resolution": 1080,
+     "modifier": "none"
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   }
+  }
+ },
+ "counts": {
+  "items": 10168,
+  "tags": 48,
+  "requester_tags": 5,
+  "tagged_items": 7
+ }
+}

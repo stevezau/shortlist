@@ -103,7 +103,7 @@ describe("ConnectionCard", () => {
       { key: "tmdb.apikey", label: "API key", kind: "password" },
     ]);
     await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(1));
-    expect(await screen.findByText("Connection OK")).toBeInTheDocument();
+    expect(await screen.findByText("Connected")).toBeInTheDocument();
   });
 
   it("does not auto-test a connection that isn't set up", async () => {
@@ -126,10 +126,11 @@ describe("ConnectionCard", () => {
     expect(putSettings.mock.calls[0]?.[0]).toEqual({ "tmdb.apikey": "abc123" });
   });
 
-  it("puts a cost on its own badge instead of burying it mid-paragraph", async () => {
+  it("puts a cost on its own badge when you go to set it up, instead of burying it mid-paragraph", async () => {
     // Trakt's copy read as one five-line block, and "needs a paid VIP subscription" sat in the
     // middle of it — so people went looking for a key they could not create (issue #73). The thing
-    // that stops you has to be the thing you see first.
+    // that stops you has to be the thing you see first — when you go to set it up. On the idle row
+    // it read as a warning about a service nobody had even started on.
     render(
       <QueryClientProvider client={new QueryClient()}>
         <ConnectionCard
@@ -148,15 +149,17 @@ describe("ConnectionCard", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText("Needs paid Trakt VIP")).toBeInTheDocument();
+    expect(screen.queryByText("Needs paid Trakt VIP")).toBeNull();
     expect(screen.getByText("Optional")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Set up" }));
+    expect(screen.getByText("Needs paid Trakt VIP")).toBeInTheDocument();
     // ...and the three parts are separate elements, not one run-on string.
     expect(
       screen.getByText(/Trakt is a site where people log/),
     ).not.toHaveTextContent("Needs paid Trakt VIP");
   });
 
-  it("marks a connection Shortlist cannot run without as Required", async () => {
+  it("marks a connection Shortlist cannot run without as not set up, never Optional", async () => {
     render(
       <QueryClientProvider client={new QueryClient()}>
         <ConnectionCard
@@ -172,7 +175,8 @@ describe("ConnectionCard", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText("Required")).toBeInTheDocument();
+    // Its group says Shortlist can't build rows without it; the pill says it isn't set up yet.
+    expect(screen.getByText("Not set up")).toBeInTheDocument();
     expect(screen.queryByText("Optional")).not.toBeInTheDocument();
   });
 

@@ -8,6 +8,7 @@ JSON is right and whose text omits the finding has failed at the only job it has
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -504,6 +505,19 @@ class TestCopyBlocks:
         assert "version" in body and "generated" in body
         assert body.rstrip().endswith("=== end ===")
 
+    @pytest.mark.parametrize(("inside", "word"), [(True, "yes"), (False, "no")])
+    def test_every_block_says_whether_shortlist_runs_in_a_container(self, client, monkeypatch, inside, word):
+        """`localhost` means something different inside one, and a report that does not say which
+        leaves "why can't it reach Plex" unanswerable (issue #139)."""
+        from shortlist.server.services import plex_reachability
+
+        monkeypatch.setattr(plex_reachability, "in_container", lambda: inside)
+        _enable(client)
+
+        body = client.get("/api/support/health").json()["text"]
+
+        assert re.search(rf"^container\s+{word}$", body, re.MULTILINE), body
+
     @pytest.mark.parametrize("path", ["/api/support/health", "/api/support/rows", "/api/support/libraries"])
     def test_no_line_is_wide_enough_for_discord_or_reddit_to_mangle(self, client, path):
         """Both destinations wrap or truncate wide text, which destroys the column alignment that
@@ -546,6 +560,29 @@ class TestDegradesInsteadOfBlanking:
         plex = next(c for c in r.json()["checks"] if c["name"] == "Plex server")
         assert plex["ok"] is False and plex["detail"] == "not connected"
         assert "BAD  Plex server" in r.json()["text"]
+
+    def test_health_says_what_kind_of_address_an_unreachable_plex_is_saved_at(self, client, monkeypatch):
+        """The host is scrubbed from a report, so without the kind nobody can tell an internet
+        address — which breaks when the public IP changes — from a LAN one (issue #139)."""
+        import requests
+
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            store.set("plex.url", f"https://8-8-8-8.{'a' * 32}.plex.direct:32400")
+            store.set("plex.token", "owner-token")
+            session.commit()
+
+        def refuse(self, *a, **k):
+            raise requests.exceptions.ConnectionError("[Errno 111] Connection refused")
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient.__init__", refuse)
+        _enable(client)
+
+        plex = next(c for c in client.get("/api/support/health").json()["checks"] if c["name"] == "Plex server")
+
+        assert plex["ok"] is False
+        assert " at a plex.direct (internet) address (https) — ConnectionError" in plex["detail"]
+        assert "8-8-8-8" not in plex["detail"]
 
     def test_every_health_check_reports_independently(self, client):
         """One broken probe must not take the others with it — the panel's whole job is the contrast

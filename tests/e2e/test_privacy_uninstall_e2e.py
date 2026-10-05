@@ -8,6 +8,7 @@ are private" and "I can put your server back". Both are checked here against a r
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -81,7 +82,7 @@ class TestUninstall:
         assert state.users[201].filters["filterMovies"] == "label!=Shortlist_jess,Shortlist_mike"
 
         # Uninstall is its own page now (with a live per-step log), reached from the Danger Zone link.
-        page.goto("/settings")
+        page.goto("/settings#danger")
         page.get_by_role("link", name="Uninstall Shortlist…").click()
         expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)
 
@@ -115,8 +116,20 @@ class TestUninstall:
         # column keeps the whole chain — un-share, sweep, uninstall — under test.
         departed = state.users.pop(202)
         assert app.api("POST", "/api/users/sync").status_code == 200
+        # A completed run can still hold the writer lock while its cleanup finishes. The sync
+        # endpoint then returns queued; wait for the real worker to record the departure before
+        # testing the confirmed-departure uninstall branch. A missing account alone must not be
+        # treated as confirmed departed by uninstall.
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            mike = next(user for user in app.api("GET", "/api/users").json() if user["username"] == "mike")
+            if mike["departed"]:
+                break
+            time.sleep(0.25)
+        assert mike["departed"], "the real sync worker did not record the account's departure"
+        assert mike["enabled"] is False
 
-        page.goto("/settings")
+        page.goto("/settings#danger")
         page.get_by_role("link", name="Uninstall Shortlist…").click()
         expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)
         page.get_by_role("textbox").fill("uninstall shortlist")
@@ -152,12 +165,12 @@ class TestUninstall:
         )
         state.collections[9999] = foreign
 
-        page.goto("/settings")
+        page.goto("/settings#danger")
         page.get_by_role("link", name="Uninstall Shortlist…").click()
         expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)
 
-        page.get_by_role("button", name="Preview what would change").click()
-        # The preview summary counts the 5 Shortlist rows that would go — and never the Kometa one.
+        # The preview loads on arrival. Its summary counts the 5 Shortlist rows that would go — and
+        # never the Kometa one.
         expect(page.locator("body")).to_contain_text("5 collections", timeout=SLOW)
         expect(page.locator("body")).not_to_contain_text("Kometa")
 

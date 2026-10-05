@@ -24,7 +24,6 @@ import {
   Check,
   ChevronDown,
   ClipboardCopy,
-  LifeBuoy,
   MessagesSquare,
   RefreshCw,
   Search,
@@ -32,6 +31,7 @@ import {
 } from "lucide-react";
 
 import { DownloadButton } from "@/components/download-button";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -96,9 +96,9 @@ const CHECKS: Check[] = [
   },
   {
     id: "row-schedule",
-    label: "When does each row next rebuild?",
+    label: "When do each row's titles next refresh?",
     blurb:
-      "A setting change does nothing until the row rebuilds. This says when that is.",
+      "A setting change does nothing until the row's titles refresh. This says when that is.",
     needs: "nothing",
     run: () => api.supportRowSchedule(),
   },
@@ -195,7 +195,7 @@ const CHECKS: Check[] = [
   {
     id: "settings-history",
     label: "What changed recently?",
-    blurb: "Settings edits, and whether a rebuild has happened since.",
+    blurb: "Settings edits, and whether the rows have refreshed since.",
     needs: "nothing",
     run: () => api.supportSettingsHistory(),
   },
@@ -262,7 +262,7 @@ const PROBLEMS: { title: string; blurb: string; checks: string[] }[] = [
   },
   {
     title: "A setting I changed did nothing",
-    blurb: "Shows which value applied, and when the row next rebuilds.",
+    blurb: "Shows which value applied, and when the row's titles next refresh.",
     checks: ["rows", "row-schedule"],
   },
   {
@@ -313,6 +313,8 @@ export function IssuePage() {
   // opening the second used to destroy the first, so each had to be copied before moving on.
   const [openIds, setOpenIds] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
+  const [checkSearch, setCheckSearch] = useState("");
+  const visibleChecks = CHECKS.filter((check) => `${check.label} ${check.blurb}`.toLocaleLowerCase().includes(checkSearch.trim().toLocaleLowerCase()));
 
   /** A problem card: show exactly its checks, or close them all if they are already showing. */
   const pickProblem = (checks: string[]) => {
@@ -361,19 +363,16 @@ export function IssuePage() {
   const enabled = status.data?.enabled ?? false;
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
-      <header className="flex flex-col gap-2">
-        <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-          <LifeBuoy className="h-6 w-6 text-primary" aria-hidden="true" />
-          Have an issue?
-        </h1>
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          Run a few read-only checks to find out what's happening — most answer
-          the question on their own. If they don't, the last step turns what you
-          found into a bug report. Nothing here changes your Plex server, your
-          rows, or your settings.
-        </p>
-      </header>
+    <div className="flex min-w-0 flex-col gap-5">
+      <PageHeader
+        className="mb-0"
+        title="Have an issue?"
+        subtitle={
+          <span className="block max-w-[65ch]">
+            Run a few read-only checks to find out what's happening — most answer the question on their own. If they don't, the last step turns what you found into a bug report. Nothing here changes your Plex server, your rows, or your settings.
+          </span>
+        }
+      />
 
       {status.isLoading ? (
         <div
@@ -468,8 +467,11 @@ export function IssuePage() {
               {showAll ? "Hide" : "Show"} all {CHECKS.length} checks
             </button>
             {showAll ? (
-              <div className="grid gap-2 sm:grid-cols-2">
-                {CHECKS.map((check) => {
+              <div className="space-y-3">
+              <Input type="search" aria-label="Search diagnostic checks" placeholder="Find a check…" value={checkSearch} onChange={(event) => setCheckSearch(event.target.value)} className="sm:max-w-sm" />
+              {visibleChecks.length === 0 && <p className="text-sm text-muted-foreground">No checks match that search.</p>}
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                {visibleChecks.map((check) => {
                   const showing =
                     openFrom === "all" && openIds.includes(check.id);
                   return (
@@ -493,7 +495,7 @@ export function IssuePage() {
                     </button>
                   );
                 })}
-              </div>
+              </div></div>
             ) : null}
           </section>
 
@@ -546,7 +548,7 @@ function ModeBanner({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <p className="text-sm font-semibold">
-            {enabled ? "Checks are switched on" : "Switch on the checks"}
+            {enabled ? "Checks are switched on" : "Read-only checks"}
           </p>
           <p className="text-xs text-muted-foreground">
             {enabled
@@ -874,11 +876,11 @@ function verdictFor(
       return waiting.length
         ? {
             bad: false,
-            text: `${waiting.length} ${waiting.length === 1 ? "row is" : "rows are"} not due to rebuild yet — a setting you changed does not reach a row until it does. The table below says when.${held}`,
+            text: `${waiting.length} ${waiting.length === 1 ? "row is" : "rows are"} not due to refresh yet — a setting you changed does not reach a row until it does. The table below says when.${held}`,
           }
         : {
             bad: false,
-            text: `Every row is due to rebuild, so the next run will pick up anything you have changed.${held}`,
+            text: `Every row is due to refresh, so the next run will pick up anything you have changed.${held}`,
           };
     }
     case "funnel": {
@@ -1018,7 +1020,7 @@ function verdictFor(
           }
         : {
             bad: true,
-            text: `This server runs on ${where}, but NOTHING is scheduled to fire — so nothing will rebuild on its own.`,
+            text: `This server runs on ${where}, but NOTHING is scheduled to fire — so nothing will run on its own.`,
           };
     }
     case "config": {
@@ -1476,7 +1478,7 @@ function ReportSection({
       </p>
 
       <div className="flex flex-wrap gap-2">
-        <Button asChild>
+        <Button asChild variant="outline">
           <a href={DISCUSSIONS_URL} target="_blank" rel="noopener noreferrer">
             <MessagesSquare className="mr-2 h-4 w-4" aria-hidden="true" />
             Ask a question

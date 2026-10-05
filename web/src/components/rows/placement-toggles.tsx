@@ -1,3 +1,5 @@
+import { ChevronRight } from "lucide-react";
+
 import {
   encode,
   hasHome,
@@ -24,8 +26,12 @@ function slugify(label: string): string {
  *  what?" moment. Native <details> so it is keyboard- and screen-reader-accessible with no library. */
 export function PlacementHelp({ isShared }: { isShared: boolean }) {
   return (
-    <details className="group border-t pt-3">
-      <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <details className="group">
+      <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+        />
         How does this work?
       </summary>
       <div className="mt-3 space-y-3 text-xs text-muted-foreground">
@@ -158,14 +164,14 @@ export function PlacementToggles({
   };
 
   return (
-    <div className="space-y-3 rounded-md border p-4">
+    <div className="space-y-3">
       {/* The two audience columns are EQUAL fixed widths, not `auto`. On a shared row the Recommended
           control is one switch spanning both (Plex has a single promotedToRecommended flag per
           collection, so it cannot differ by audience) — and with auto columns "Everyone else · 49
           other people" is far wider than "Just me · S_FLIX", so the centred switch drifted under the
           right-hand header and read as applying to everyone-but-you. */}
       {/* Narrower columns and gap below `sm`: at 7.5rem each the two fixed columns plus the
-          gaps plus this card's padding come to 320px on their own, which is the whole viewport
+          gaps plus the editor card's padding come to 320px on their own, which is the whole viewport
           on a small phone — the row editor scrolled sideways by 22px (measured). They stay
           EQUAL to each other at both sizes, which is what keeps the shared-row switch centred
           under both headers rather than drifting under the right-hand one. */}
@@ -176,7 +182,7 @@ export function PlacementToggles({
             Just me
           </p>
           {owner && (
-            <p className="text-[11px] font-normal normal-case text-muted-foreground/70">
+            <p className="text-sm font-normal normal-case text-muted-foreground/70">
               {owner}
             </p>
           )}
@@ -186,7 +192,7 @@ export function PlacementToggles({
             Everyone else
           </p>
           {users.length > 0 && (
-            <p className="text-[11px] font-normal normal-case text-muted-foreground/70">
+            <p className="text-sm font-normal normal-case text-muted-foreground/70">
               {others === 1 ? "1 other person" : `${others} other people`}
             </p>
           )}
@@ -238,52 +244,55 @@ export function PlacementToggles({
         </p>
       )}
 
-      {!allOff && (
-        <p className="rounded-md bg-muted/50 p-3 text-sm">
-          {placementSummary(
-            ownerLibrary,
-            ownerHome,
-            friendsLibrary,
-            friendsHome,
-            isShared,
-          )}
-        </p>
-      )}
+      {/* Plain lines under a hairline, not boxes: this already sits inside the editor's section card. */}
+      <div className="space-y-2 border-t pt-3">
+        {!allOff && (
+          <p className="text-sm">
+            {placementSummary(
+              ownerLibrary,
+              ownerHome,
+              friendsLibrary,
+              friendsHome,
+              isShared,
+            )}
+          </p>
+        )}
 
-      {!isShared && (
-        <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
-          The library&rsquo;s{" "}
-          <strong className="text-foreground">Collections tab</strong> lists
-          every collection on the server, so from your admin account
-          you&rsquo;ll see one row there per person. Everyone else sees only
-          their own row, wherever you&rsquo;ve placed it, plus their own
-          Collections tab.
-        </p>
-      )}
+        {!isShared && (
+          <p className="text-xs text-muted-foreground">
+            The library&rsquo;s{" "}
+            <strong className="text-foreground">Collections tab</strong> lists
+            every collection on the server, so from your admin account
+            you&rsquo;ll see one row there per person. Everyone else sees only
+            their own row, wherever you&rsquo;ve placed it, plus their own
+            Collections tab.
+          </p>
+        )}
 
-      {friendsLibrary && !isShared && (
-        <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
-          {ownerLibrary
-            ? "Everyone else’s rows show on your Recommended shelf too."
-            : "Your row is off this shelf, but everyone else’s rows still show on your Recommended shelf."}{" "}
-          Plex keeps each row private through the share you gave that person
-          &mdash; and you own the server, so you have no share of your own for
-          it to hide anything behind. Turn off{" "}
-          <strong className="text-foreground">
-            Everyone else &rarr; Recommended shelf
-          </strong>{" "}
-          to clear them from it, or keep the shelf and move your own watching to
-          a separate account. <WatchingAccountLink />
-        </p>
-      )}
+        {friendsLibrary && !isShared && (
+          <p className="text-xs text-muted-foreground">
+            {ownerLibrary
+              ? "Everyone else’s rows show on your Recommended shelf too."
+              : "Your row is off this shelf, but everyone else’s rows still show on your Recommended shelf."}{" "}
+            Plex keeps each row private through the share you gave that person
+            &mdash; and you own the server, so you have no share of your own for
+            it to hide anything behind. Turn off{" "}
+            <strong className="text-foreground">
+              Everyone else &rarr; Recommended shelf
+            </strong>{" "}
+            to clear them from it, or keep the shelf and move your own watching to
+            a separate account. <WatchingAccountLink />
+          </p>
+        )}
 
-      {allOff && (
-        <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
-          This row won&rsquo;t appear on any Home screen or Recommended shelf.
-          It&rsquo;s still built and kept private &mdash; you&rsquo;ll find it
-          under the library&rsquo;s Collections tab.
-        </p>
-      )}
+        {allOff && (
+          <p className="text-sm text-muted-foreground">
+            This row won&rsquo;t appear on any Home screen or Recommended shelf.
+            It&rsquo;s still built and kept private &mdash; you&rsquo;ll find it
+            under the library&rsquo;s Collections tab.
+          </p>
+        )}
+      </div>
 
       <PlacementHelp isShared={isShared} />
     </div>

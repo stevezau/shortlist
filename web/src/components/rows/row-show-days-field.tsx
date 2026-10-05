@@ -1,7 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Segmented } from "@/components/segmented";
+import { selectedClass, unselectedClass } from "@/lib/selected";
 import { DAY_CHIPS, type ShowDays, showDaysSentence } from "@/lib/show-days";
+import { cn } from "@/lib/utils";
 
 type Mode = "always" | "days";
 
@@ -70,9 +72,9 @@ export function RowShowDaysField({
                 key={chip.iso}
                 type="button"
                 size="sm"
-                variant={on ? "default" : "outline"}
+                variant="outline"
                 aria-pressed={on}
-                className="min-w-14"
+                className={cn("min-w-14", on ? selectedClass : unselectedClass)}
                 onClick={() => toggle(chip.iso)}
               >
                 {chip.short}

@@ -76,10 +76,10 @@ def render_shell(html: str, base_path: str) -> str:
     """Rewrite the built shell so it loads from, and knows about, `base_path`.
 
     Rewriting the HTML is enough only because the bundle contains no absolute asset URLs of its
-    own: the build emits a single JS and a single CSS file, both named here. Add a `React.lazy`
-    route or a webfont and Vite starts writing `/assets/...` INSIDE the JS/CSS, where nothing
-    rewrites it — the app would then break behind a prefix as a blank page, not a failing test.
-    Either move to a relative `base` in `vite.config.ts` at that point, or keep the bundle flat.
+    own. The build is split (lazy routes, vendor chunks, self-hosted fonts), so Vite would write
+    `/assets/...` INSIDE the JS and CSS, where nothing here rewrites it. `vite.config.ts` prevents
+    that with `experimental.renderBuiltUrl`, which makes every URL inside a chunk relative. Remove it
+    and the app breaks behind a prefix as a blank page; `tests/e2e/test_base_path_e2e.py` is what catches it.
     """
     if not base_path:
         return html

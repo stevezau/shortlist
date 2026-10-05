@@ -61,6 +61,29 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
 
 ## Troubleshooting
 
+- **Shortlist can't reach Plex** ("Shortlist could not reach Plex at …" on a run, or on the Plex
+  card under Settings → Connections) — the server address is tried from where Shortlist runs, and
+  in Docker that is _inside the container_, not your desktop. Change it under Settings →
+  Connections, then press **Test**. The usual causes:
+  - **`localhost` or `127.0.0.1`.** Inside a container that is the container itself, even when Plex
+    is on the same machine. On Docker Desktop (Windows or Mac) use
+    `http://host.docker.internal:32400`. On Linux use the machine's own network address, such as
+    `http://192.168.1.10:32400`.
+  - **An address ending in `.plex.direct` that starts with your public IP.** That is your server's
+    internet address. It only works while your internet connection is up and your public IP has
+    not changed, so it can stop working after an outage or a router restart. Use an address on
+    your own network instead.
+  - **`https://` with an IP address or hostname.** Plex's certificate only covers its own
+    `.plex.direct` name, so use `http://` for anything else. If Plex has **Settings → Network →
+    Secure connections** set to _Required_ it refuses plain `http://`; set it to _Preferred_.
+  - **The wrong port.** Plex listens on `32400` unless you mapped it to something else.
+  - **"… sent Shortlist on to …".** The address you saved answered with a redirect, and it is the
+    second address that failed. The message names both, so you can tell which one to fix.
+
+  To check an address from where Shortlist actually runs, ask the container itself (swap in your
+  container's name and the address): `docker exec shortlist curl -s http://192.168.1.10:32400/identity`.
+  A line of XML means Shortlist can reach it; an error means the container can't, whatever a
+  browser on your desktop says.
 - **A run says "skipped" and no collections were made** — a skip is always a configuration
   outcome, and the run page now says which one. The two common ones: _every enabled row is a
   **shared** row_, so there is no per-person row to build for anybody (add one under Rows), or a
@@ -94,7 +117,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
      Worth checking whether it can exclude by _label or pattern_ rather than per collection — a
      per-collection exclusion has to be redone every time you add a Plex user, because that creates
      a new row the other tool will discover and start managing.
-  2. Let the other tool own the shelf: Settings → Row placement → turn off **Let Shortlist order the
+  2. Let the other tool own the shelf: Settings → Defaults → Row placement → turn off **Let Shortlist order the
      Recommended shelf**. Shortlist stops touching the order entirely and the two stop fighting.
      Your rows are still built, delivered and kept private exactly as before — only their position
      on the shelf is handed over.
@@ -108,7 +131,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   2. _You're looking at the wrong account._ Watched state in Plex is per person, so a title ticked
      off on your account says nothing about theirs.
   3. _Timing._ The watched set is read per run, so a title marked watched after the last run stays
-     eligible until the next one. **Jobs → Sync history** re-reads everyone's set immediately
+     eligible until the next one. **Activity → Jobs → Sync watch history** re-reads everyone's set immediately
      (writes nothing to Plex); any run after that drops it. Note also that a row only re-picks its
      titles on a rebuild night — every 8 days by default — so a change can take
      until then to show. The **"When does each row next rebuild?"** check gives the date.
@@ -117,10 +140,10 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
   watched for a row left at 0%, so two episodes in is enough to keep it out. See
   [what "already watched" means for a show](../reference/concepts.md#what-already-watched-means-for-a-show).
 
-- **Everything broke, get me out** — Settings → Danger Zone → **Uninstall** restores every
+- **Everything broke, get me out** — Settings → System → Danger zone → **Uninstall** restores every
   user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled
   collection. Kometa and other tools' collections are never touched.
-- **Did anything drift out of sync?** — Settings → Danger Zone → **What Shortlist has on your
+- **Did anything drift out of sync?** — Settings → System → Danger zone → **What Shortlist has on your
   Plex** ("Check Plex") lists every shortlist-labeled collection read straight from the server (not
   the database), flagging any whose user/row no longer exists in the app. Every collection is
   labeled at creation, in one step, so a collection that can't be labeled is deleted rather than left
@@ -128,7 +151,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
 
 ## Backups
 
-Shortlist copies its whole database to `/config/backups` on a schedule (Jobs → Backups; nightly at
+Shortlist copies its whole database to `/config/backups` on a schedule (Activity → Jobs → Back up the database; nightly at
 3 AM by default), before every upgrade, and before any restore. It keeps the newest 10 by default.
 
 A backup holds everything Shortlist knows: settings and connections, your rows and their audiences,
@@ -137,9 +160,13 @@ copies of each user's original Plex share filters that an uninstall restores fro
 
 Restoring one takes effect when you restart the container: Shortlist saves a copy of the current
 database and swaps the backup in as it starts, before anything else opens the database. Until that
-restart it keeps running on the database it has, and Jobs → Backups says a restore is waiting, with a
+restart it keeps running on the database it has, and Activity → Jobs → Back up the database says a restore is waiting, with a
 button to cancel it. A restore still waiting a day later is dropped rather than applied by whatever
 restarts the container next.
+
+If the backup taken before an upgrade cannot be written, Shortlist does not start the upgrade and the
+container log says why. The database is left unchanged. Free some disk space or fix the permissions on
+the config folder, then restart.
 
 Because a backup holds your rows' **audiences**, restoring one also restores who could see which
 rows at that moment. If you have narrowed a shared row's audience since the backup was taken,

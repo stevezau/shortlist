@@ -1,8 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SettingsTabs } from "@/components/settings/section-layout";
 import { RequestsSettings } from "@/components/requests-settings";
 import type { Settings } from "@/lib/types";
 
@@ -75,7 +77,7 @@ function renderPanel(settings: Settings = {}) {
   });
   render(
     <QueryClientProvider client={client}>
-      <RequestsSettings settings={settings} />
+      <MemoryRouter><RequestsSettings settings={settings} /></MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -743,5 +745,43 @@ describe("RequestsSettings", () => {
       ).toBeTruthy();
       expect(screen.queryByText(/count against their quota/)).toBeNull();
     });
+  });
+});
+
+function CurrentSettingsLocation() {
+  const location = useLocation();
+  return <output aria-label="Current settings URL">{location.pathname}{location.search}{location.hash}</output>;
+}
+
+const CONNECTION_SHORTCUTS: { label: string; target: string; button: string; index: number; connectedMdblist?: boolean }[] = [
+  { label: "Arr missing-connection prompt", target: "arr", button: "Go to Connections", index: 0 },
+  { label: "Radarr setup", target: "arr", button: "Go to Connections", index: 1 },
+  { label: "Sonarr setup", target: "arr", button: "Go to Connections", index: 2 },
+  { label: "Overseerr missing-connection prompt", target: "overseerr", button: "Go to Connections", index: 0 },
+  { label: "Overseerr setup", target: "overseerr", button: "Go to Connections", index: 1 },
+  { label: "MDBList setup", target: "arr", button: "Set up MDBList in Connections", index: 0 },
+  { label: "existing MDBList connection", target: "arr", button: "Connections", index: 0, connectedMdblist: true },
+];
+
+describe("Requests connection shortcuts across the Settings tabs", () => {
+  beforeEach(() => { Element.prototype.scrollIntoView = vi.fn(); });
+  it.each(CONNECTION_SHORTCUTS)("opens Connections from $label and retains the Requests provider", async ({ target, button, index, connectedMdblist }) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const settings: Settings = { "requests.enabled": true, "requests.target": target, "requests.rating_source": "imdb",
+      ...(connectedMdblist ? { "requests.mdblist.apikey": "•••••" } : {}) };
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/settings/defaults?view=sections#requests"]}>
+      <CurrentSettingsLocation />
+      <Routes>
+        <Route path="/settings/:tab?" element={<SettingsTabs content={{ connections: <p>Connection controls</p>, defaults: <section id="requests"><RequestsSettings settings={settings} /></section>, system: null }} />} />
+      </Routes>
+    </MemoryRouter></QueryClientProvider>);
+    const provider = screen.getByRole("button", { name: target === "overseerr" ? "Overseerr / Jellyseerr" : "Radarr & Sonarr" });
+    await userEvent.click(screen.getAllByRole("button", { name: button })[index]!);
+    await waitFor(() => expect(screen.getByLabelText("Current settings URL")).toHaveTextContent("/settings/connections?view=sections#connections"));
+    expect(screen.getByText("Connection controls")).toBeVisible();
+    expect(provider).not.toBeVisible();
+    await userEvent.click(screen.getByRole("tab", { name: "Defaults" }));
+    expect(provider).toBeVisible();
+    expect(provider).toHaveAttribute("aria-pressed", "true");
   });
 });

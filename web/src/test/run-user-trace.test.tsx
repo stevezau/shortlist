@@ -1,11 +1,14 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { api } from "@/lib/api";
 import { TraceView } from "@/pages/run-user-trace";
 import type {
   RunUserTraceResponse,
   TraceRatings,
+  TraceSelection,
   TraceWatch,
 } from "@/lib/types";
 
@@ -748,7 +751,8 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     size: 15,
     delivered: 15,
     candidates: 62,
-    cut_cap: 40,
+    // `candidates` is what the cut LEFT, so for one media type it can never exceed the cap.
+    cut_cap: 80,
     carried: 0,
     new: 15,
     refresh_night: true,
@@ -778,11 +782,11 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
       />,
     );
     expect(screen.getByText(/not re-picked tonight/i)).toBeInTheDocument();
-    expect(screen.getByText(/rebuilds every 8 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/titles refresh every 8 days/i)).toBeInTheDocument();
     // Names the control that EXISTS, and the right direction — the cadence is a day count now, so
     // you lower it to rebuild sooner. This asserted "Raise Freshness" for a control that was gone.
     expect(
-      screen.getByText(/Lower .How often rows rebuild./i),
+      screen.getByText(/Lower .Titles refresh every./i),
     ).toBeInTheDocument();
   });
 
@@ -831,15 +835,25 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     ).toBeInTheDocument();
   });
 
+  it("names a changed watch as the reason a named row was rebuilt, not refreshed", () => {
+    // A "Because you watched X" row whose watch changed is rebuilt from scratch. Shown as a refresh
+    // ("the strongest picks stayed"), a nightly full rebuild looked like the normal cadence.
+    render(<TraceView data={withSelection({ decision: "seed_moved" })} />);
+    expect(
+      screen.getByText(/the watch it was named after changed/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/strongest picks stayed/i)).not.toBeInTheDocument();
+  });
+
   it("has a shortlisted step showing the cut", () => {
     // Between search and order, because that is where it happens: the cut decides what can be
     // ordered at all, so explaining ordering without it describes half the mechanism.
     render(<TraceView data={withSelection()} />);
     expect(
-      screen.getByText(/62 candidates survived filtering/i),
+      screen.getByText(/62 titles made the shortlist here/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/strongest 40 per media type/i),
+      screen.getByText(/at most 80 per media type/i),
     ).toBeInTheDocument();
   });
 
@@ -856,6 +870,21 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
 
     expect(screen.getAllByText("✨ Picked for You").length).toBeGreaterThan(0);
     expect(screen.queryByText("picked")).toBeNull();
+  });
+
+  it("fills {library_name} with the library the section is about", () => {
+    // Each of these sections is one library's story, so the token has exactly one honest value
+    // here; stripping it read "📬 you asked for — their own requests…".
+    render(
+      <TraceView
+        data={withSelection()}
+        rowNames={{ picked: "✨ {library_name} Picked for You" }}
+      />,
+    );
+
+    expect(screen.getAllByText("✨ Movies Picked for You").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/\{library_name\}/)).toBeNull();
+    expect(screen.queryByText("✨ Picked for You")).toBeNull();
   });
 
   it("falls back to the slug for a row that no longer exists", () => {
@@ -883,7 +912,7 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
   it("adds no shortlisted step for a run recorded before this existed", () => {
     // Absent must read as "not recorded", never as a stage with empty numbers.
     render(<TraceView data={okTrace()} />);
-    expect(screen.queryByText(/survived filtering/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/made the shortlist here/i)).not.toBeInTheDocument();
   });
 });
 
@@ -980,13 +1009,358 @@ describe("TraceView for a shared row", () => {
 
   it("drops the person framing and names the row as the run page does", () => {
     render(
-      <TraceView data={sharedData} rowName="👥 Popular on SFLIX" sharedRow />,
+      <TraceView data={sharedData} rowName="👥 Popular {library_name} on SFLIX" sharedRow />,
     );
 
     expect(
-      screen.getByText(/How we picked for 👥 Popular on SFLIX/),
+      screen.getByRole("heading", { name: /How we picked for 👥 Popular library name on SFLIX/ }),
     ).toBeInTheDocument();
     expect(screen.getByText(/for this shared row/i)).toBeInTheDocument();
     expect(screen.queryByText(/for this person/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("TraceView — a Your requests row", () => {
+  /** What the engine records for a requests row: one `selection` entry per library, carrying every
+   *  request it looked at and what became of each. No seeds, no gathers — nothing was searched. */
+  const requestsTrace = (
+    patch: Partial<TraceSelection> = {},
+    extraSelection: TraceSelection[] = [],
+  ) =>
+    okTrace({
+      status: "ok",
+      trace: {
+        history: {
+          total: 1,
+          recent: [],
+          watched_movies: 1,
+          watched_shows: 0,
+          watched_by_library: { Movies: { movie: 1, show: 0 } },
+        },
+        seeds: [],
+        gathers: [],
+        selection: [
+          {
+            row: "your-requests",
+            library: "Movies",
+            decision: "requests",
+            size: 15,
+            delivered: 1,
+            candidates: 3,
+            pick_order: "newest",
+            requests: [
+              {
+                tmdb_id: 863,
+                media_type: "movie",
+                title: "Toy Story 2",
+                asked_at: "2026-09-01T10:00:00Z",
+                landed_at: "2026-09-03T10:00:00Z",
+                found_in: ["overseerr"],
+                result: "in_row",
+              },
+              {
+                tmdb_id: 920,
+                media_type: "movie",
+                title: "Cars",
+                asked_at: "2026-05-01T10:00:00Z",
+                landed_at: "2026-05-02T10:00:00Z",
+                found_in: ["overseerr", "tag"],
+                result: "too_old",
+              },
+              {
+                tmdb_id: 10193,
+                media_type: "movie",
+                title: "Toy Story 3",
+                asked_at: null,
+                landed_at: null,
+                found_in: ["tag"],
+                result: "not_on_plex",
+              },
+            ],
+            ...patch,
+          },
+          ...extraSelection,
+        ],
+      },
+      breakdown: okTrace().breakdown.map((b) => ({
+        ...b,
+        row_slug: "your-requests",
+        row_title: "Your requests",
+      })),
+    });
+
+  it("renders one 'What they asked for' step in place of the watched/searched/ordered steps", () => {
+    render(<TraceView data={requestsTrace()} />);
+    expect(screen.getByText("What they asked for")).toBeInTheDocument();
+    expect(screen.getByText("3 requests looked at")).toBeInTheDocument();
+    // Nothing was searched or ranked for this row, so those steps would explain a run that never
+    // happened.
+    expect(screen.queryByText(/What they watched recently/)).toBeNull();
+    expect(screen.queryByText(/Where we searched/)).toBeNull();
+    expect(screen.queryByText(/What survived/)).toBeNull();
+    expect(screen.queryByText(/How we ordered the shortlist/)).toBeNull();
+    // Still ends where every flow ends.
+    expect(screen.getByText(/What we put in Movies/)).toBeInTheDocument();
+  });
+
+  it("counts one request in the singular", () => {
+    const one = requestsTrace().trace!.selection![0]!.requests![0]!;
+    render(<TraceView data={requestsTrace({ candidates: 1, delivered: 1, requests: [one] })} />);
+    expect(screen.getByText("1 request looked at")).toBeInTheDocument();
+  });
+
+  it("keeps each date on one line, so a narrow screen scrolls the table instead of stacking a date", () => {
+    render(<TraceView data={requestsTrace()} />);
+    // The title is also in the delivered list below, so start from the table's cell.
+    const cells = within(
+      screen.getByRole("cell", { name: "Toy Story 2" }).closest("tr")!,
+    ).getAllByRole("cell");
+    expect(cells[1]).toHaveClass("whitespace-nowrap");
+    expect(cells[2]).toHaveClass("whitespace-nowrap");
+  });
+
+  it("lists every request with where it was found and what became of it", () => {
+    render(<TraceView data={requestsTrace()} />);
+    const step = screen
+      .getByText("What they asked for")
+      .closest("section") as HTMLElement;
+    const rows = within(step).getAllByRole("row");
+    // Header + three requests.
+    expect(rows).toHaveLength(4);
+    const row = (i: number) => within(rows[i] as HTMLElement);
+    expect(row(1).getByText("Toy Story 2")).toBeInTheDocument();
+    expect(row(1).getByText("Overseerr")).toBeInTheDocument();
+    expect(row(1).getByText("In the row")).toBeInTheDocument();
+    expect(row(2).getByText("Overseerr, tag")).toBeInTheDocument();
+    expect(row(2).getByText("Landed too long ago")).toBeInTheDocument();
+    expect(row(3).getByText("tag")).toBeInTheDocument();
+    expect(row(3).getByText("Not on Plex yet")).toBeInTheDocument();
+    // A request with no dates shows a dash, not "Invalid Date".
+    expect(row(3).getAllByText("—")).toHaveLength(2);
+  });
+
+  it("names the row's window in days when the row's settings are known", () => {
+    render(
+      <TraceView
+        data={requestsTrace()}
+        rowWindows={{ "your-requests": 60 }}
+      />,
+    );
+    expect(
+      screen.getByText("Landed more than 60 days ago"),
+    ).toBeInTheDocument();
+  });
+
+  it("prefers the window the run itself recorded over the row's current setting", () => {
+    // The row may have been edited since the night the verdict was reached; the trace entry carries
+    // the setting that actually dropped the title.
+    render(
+      <TraceView
+        data={requestsTrace({ requests_window_days: 30 })}
+        rowWindows={{ "your-requests": 60 }}
+      />,
+    );
+    expect(
+      screen.getByText("Landed more than 30 days ago"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/60 days/)).toBeNull();
+  });
+
+  it("keeps the recommendation steps when the library also holds a picked row", () => {
+    render(
+      <TraceView
+        data={requestsTrace({}, [
+          {
+            row: "picked",
+            library: "Movies",
+            decision: "rebuilt",
+            size: 15,
+            delivered: 15,
+            candidates: 62,
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByText("What they asked for")).toBeInTheDocument();
+    expect(screen.getByText(/What they watched recently/)).toBeInTheDocument();
+    expect(screen.getByText(/How we ordered the shortlist/)).toBeInTheDocument();
+  });
+});
+
+
+describe("Trace seed action feedback", () => {
+  it("reports a rejected seed change and permits a successful retry with the same seed", async () => {
+    const block = vi.spyOn(api, "blockSeed").mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ blocked_seeds: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><TraceView data={okTrace()} userId={7} /></QueryClientProvider>);
+    await userEvent.click(screen.getByRole("button", { name: "Don’t seed" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t block this seed");
+    expect(screen.queryByRole("button", { name: "Seed blocked" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: "Seed blocked" })).toBeDisabled();
+    expect(block).toHaveBeenLastCalledWith(7, { tmdbId: 862, title: "Toy Story", mediaType: "movie" });
+    block.mockRestore();
+  });
+});
+
+
+describe("Trace step navigation", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  function layout(pickerHeight = 57) {
+    let searchedTop = 900;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const picker = this.tagName === "LABEL" && this.querySelector('[aria-label="Trace step"]');
+      const top = picker ? 64 : this.id === "Movies-searched" ? searchedTop : this.id === "Movies-watched" ? -200 : 2000;
+      const height = picker ? pickerHeight : 500;
+      return { top, bottom: top + height, left: 0, right: 358, width: 358, height, x: 0, y: top, toJSON() {} };
+    });
+    const getStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
+      const style = getStyle(element);
+      if (element.tagName === "LABEL" && element.querySelector('[aria-label="Trace step"]')) Object.defineProperty(style, "top", { value: "64px", configurable: true });
+      return style;
+    });
+    const scroll = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    return { scroll, setSearchedTop: (top: number) => { searchedTop = top; } };
+  }
+
+  it("keeps the destination below both sticky bars, focuses its heading and marks the section", () => {
+    const { scroll } = layout();
+    render(<TraceView data={okTrace()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Trace step" }), { target: { value: "Movies-searched" } });
+    const heading = screen.getByRole("heading", { name: /Where we searched/ });
+    expect(scroll).toHaveBeenLastCalledWith({ top: 767, behavior: "smooth" });
+    expect(heading).toHaveFocus();
+    expect(heading.closest("section")).toHaveAttribute("data-navigation-highlight", "true");
+  });
+
+  it("measures a taller step picker and respects reduced motion", () => {
+    const { scroll } = layout(90);
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({ matches: true }));
+    render(<TraceView data={okTrace()} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Trace step" }), { target: { value: "Movies-searched" } });
+    expect(scroll).toHaveBeenLastCalledWith({ top: 734, behavior: "instant" });
+  });
+  it("tracks the heading below the measured picker when scrolling between steps", () => {
+    const { setSearchedTop } = layout();
+    render(<TraceView data={okTrace()} />);
+    setSearchedTop(133);
+    fireEvent.scroll(window);
+    expect(screen.getByRole("combobox", { name: "Trace step" })).toHaveValue("Movies-searched");
+    setSearchedTop(900);
+    fireEvent.scroll(window);
+    expect(screen.getByRole("combobox", { name: "Trace step" })).toHaveValue("Movies-watched");
+  });
+
+});
+
+describe("TraceView — the stage counts", () => {
+  /** A movie library that ran a full flow: 3 seeds, 2 sources × 3 searches, a 10-title shortlist and
+   *  2 titles delivered. The numbers are the engine's own shape: `candidates` is the shortlist AFTER
+   *  the cut, so it never exceeds `cut_cap` for a single media type. */
+  function funnelTrace(): RunUserTraceResponse {
+    const base = okTrace();
+    const library = base.breakdown[0];
+    const pick = library?.picks[0];
+    if (!library || !pick) throw new Error("okTrace() must deliver one pick");
+    const seed = (title: string, tmdb_id: number, recency_days: number) => ({
+      title,
+      media: "movie",
+      library: "Movies",
+      tmdb_id,
+      weight: 1,
+      watch_count: 1,
+      recency_days,
+    });
+    const source = (name: string) => ({
+      source: name,
+      status: "ok",
+      contributed: 12,
+      detail: "",
+      searched: { movie: 3 },
+      queries: [],
+    });
+    return {
+      ...base,
+      trace: {
+        ...base.trace,
+        seeds: [seed("Toy Story", 862, 0), seed("Up", 14160, 0), seed("Coco", 354912, 4)],
+        gathers: [{ pool: "movie · tmdb_similar, trakt", sources: [source("tmdb_similar"), source("trakt")] }],
+        selection: [
+          {
+            row: "picked",
+            library: "Movies",
+            decision: "rebuilt",
+            size: 2,
+            delivered: 2,
+            candidates: 10,
+            cut_cap: 80,
+            carried: 0,
+            new: 2,
+            refresh_night: true,
+            rebuild_every_days: 8,
+            recency: 0,
+            watched_pct: 0,
+            pick_order: "best",
+          },
+        ],
+      },
+      breakdown: [
+        {
+          ...library,
+          picks: [
+            { ...pick, rank: 1 },
+            { ...pick, rank: 2, title: "Cars" },
+          ],
+        },
+      ],
+    } as RunUserTraceResponse;
+  }
+
+  function railCounts(): Record<string, string> {
+    const rail = screen.getByRole("navigation", { name: "Steps" });
+    return Object.fromEntries(
+      within(rail)
+        .getAllByRole("link")
+        .map((link) => {
+          const label = link.querySelector("[data-rail-label]")?.textContent ?? "";
+          const count = link.querySelector("[data-rail-count]")?.textContent ?? "";
+          return [label, count];
+        }),
+    );
+  }
+
+  it("never grows from the shortlist to delivery, and names what every count counts", () => {
+    render(<TraceView data={funnelTrace()} />);
+
+    const counts = railCounts();
+    // The two input stages count seeds and searches, so they say so: a bare "6" beside a title
+    // count read as six titles found.
+    expect(counts["Watched recently"]).toBe("3 seeds");
+    expect(counts["Searched"]).toBe("6 searches");
+    // From the shortlist on, every stage counts titles, drawn from the same selection entries.
+    const titles = ["Shortlisted", "Ordered", "Delivered"].map((stage) => {
+      const match = /^(\d+) titles?$/.exec(counts[stage] ?? "");
+      if (!match) throw new Error(`${stage} should count titles, got "${counts[stage]}"`);
+      return Number(match[1]);
+    });
+    expect(titles).toEqual([10, 10, 2]);
+    for (let i = 1; i < titles.length; i++) expect(titles[i]).toBeLessThanOrEqual(titles[i - 1] ?? 0);
+  });
+
+  it("says the shortlist count is what the cut left, never 'the strongest 80 kept' of 10", () => {
+    render(<TraceView data={funnelTrace()} />);
+
+    expect(screen.getByText(/10 titles made the shortlist here/)).toBeInTheDocument();
+    expect(screen.getByText(/at most 80 per media type/)).toBeInTheDocument();
+    expect(screen.queryByText(/strongest 80/)).not.toBeInTheDocument();
+  });
+
+  it("says 'watched most recently' once, not on every seed watched that day", () => {
+    render(<TraceView data={funnelTrace()} />);
+
+    expect(screen.getAllByText("watched most recently")).toHaveLength(1);
+    expect(screen.getByText("4 days ago")).toBeInTheDocument();
   });
 });

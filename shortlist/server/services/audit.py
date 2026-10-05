@@ -72,6 +72,49 @@ def actor_of(auth: dict | None, request) -> dict:
 #: run persister and by every job that runs the privacy pass without persisting a run; read by the bell.
 RESTRICTION_RESTORED_SCOPE = "privacy.restriction_restored"
 
+#: Every audit scope that records a write to Plex or plex.tv — what `GET /api/events/log?plex_writes=true`
+#: returns for the Activity page's "Changes on Plex". Literals rather than imports from their writers:
+#: most are inline strings at the write site, and `tests/unit/test_plex_write_scopes.py` fails if any
+#: of these stops being written anywhere in `shortlist/`.
+#:
+#: The `collection.*`, `settings.rename` and `user.nickname` entries are the scopes callers pass into
+#: `collection_reconcile`'s three audited writes and the `row.reconcile` job: poster reset
+#: (`collection.poster`), row removal (`build`/`audience`/`disable`/`libraries`/`delete`/`cleanup`) and
+#: rename (`collection.rename`, `settings.rename`, `user.nickname`). `collection.poster` is ALSO written
+#: when a row's poster setting changes without touching Plex; its message has `mode`, not `poster_reset`.
+PLEX_WRITE_SCOPES: frozenset[str] = frozenset(
+    (
+        "run.user",
+        "run.shared",
+        "run.sweep",
+        "run.orphan_delete",
+        "run.privacy_sync",
+        "run.demote",
+        "run.hub_order",
+        "run.hub_unplaced",
+        "run.requests",
+        "collection.poster",
+        "collection.build",
+        "collection.audience",
+        "collection.disable",
+        "collection.libraries",
+        "collection.delete",
+        "collection.cleanup",
+        "collection.rename",
+        "settings.rename",
+        "user.nickname",
+        "user.disable.cleanup",
+        "user.pause.hide",
+        "user.unpause.restore",
+        # Shelf placement a job does outside a run (jobs.py, `_audit_hub_orderings`).
+        "shelf.order",
+        "shelf.unplaced",
+        "uninstall.user",
+        "system.uninstall",
+        RESTRICTION_RESTORED_SCOPE,
+    )
+)
+
 
 def audit_restored_restrictions(state, report) -> None:
     """Record each account a run-less privacy pass repaired, so the bell hears about it (#116)."""

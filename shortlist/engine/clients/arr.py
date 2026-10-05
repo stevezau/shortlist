@@ -57,6 +57,25 @@ class ArrError(RuntimeError):
     """
 
 
+_JSON_TYPES = {dict: "an object", list: "a list", str: "a string", int: "a number", float: "a number"}
+
+
+def json_shape(value: object) -> str:
+    """What a decoded JSON body is, by type alone: ``an object``, ``null``, ``a list holding a string``.
+
+    Never its contents: the result lands in an error message shown in the UI and written to events,
+    and a proxy's error page can echo the request back.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, list):
+        stray = [v for v in value if not isinstance(v, dict)]
+        return f"a list holding {json_shape(stray[0])}" if stray else "a list"
+    return _JSON_TYPES.get(type(value), "an unknown type")
+
+
 class _ArrClient:
     """Shared HTTP plumbing for the two apps; subclasses add the movie/series specifics."""
 
@@ -105,7 +124,12 @@ class _ArrClient:
             raise ArrError(f"{self.app_name} rejected the API key")
         if r.status_code != 200:
             raise ArrError(f"{self.app_name} GET {path} returned HTTP {r.status_code}")
-        return r.json()
+        try:
+            return r.json()
+        except ValueError as e:
+            # A proxy's HTML page or a truncated body. Left as ValueError it escaped every caller that
+            # catches ArrError, which is how the send pass would have crashed instead of recording an error.
+            raise ArrError(f"{self.app_name} GET {path} answered with a body that is not JSON") from e
 
     def _post(self, path: str, body: dict) -> dict:
         self._throttle()
@@ -229,12 +253,9 @@ class _ArrClient:
         if key in self._resolved:
             return self._resolved[key]
         if self._existing_tags is None:
-            existing = self._get("/api/v3/tag")
-            self._existing_tags = {
-                str(t["label"]).lower(): int(t["id"])
-                for t in (existing if isinstance(existing, list) else [])
-                if isinstance(t, dict) and t.get("id") is not None and t.get("label")
-            }
+            # A malformed reply raises (via `tags`) rather than reading as "no tags yet": that would
+            # POST a duplicate of every tag the app already has.
+            self._existing_tags = {label.lower(): tag_id for tag_id, label in self.tags().items()}
         if key in self._existing_tags:
             self._resolved[key] = self._existing_tags[key]
             return self._resolved[key]
@@ -247,14 +268,43 @@ class _ArrClient:
             logger.debug("{}: created tag {!r} (id {})", self.app_name, label, tag_id)
         return tag_id
 
+    def _records(self, path: str) -> list[dict]:
+        """A list endpoint a requests row is built from. A 200 that is not a list of objects raises.
+
+        Coerced to an empty list, a ``{}``, ``null`` or a proxy's bare string read as "nobody asked
+        for anything" on a COMPLETE ledger, and that removes the person's requests row. A real ``[]``
+        is a complete read and passes.
+
+        Raises:
+            ArrError: The body is not a list of objects; names the endpoint and the JSON type only.
+        """
+        payload = self._get(path)
+        if isinstance(payload, list) and all(isinstance(r, dict) for r in payload):
+            return payload
+        raise ArrError(
+            f"{self.app_name} GET {path} answered with {json_shape(payload)} where a list of records was expected"
+        )
+
+    def tags(self) -> dict[int, str]:
+        """Every tag the app has, id -> label. A READ: `_resolve_tag` is the one that may create."""
+        return {
+            int(t["id"]): str(t["label"])
+            for t in self._records("/api/v3/tag")
+            if t.get("id") is not None and t.get("label")
+        }
+
 
 class RadarrClient(_ArrClient):
     app_name = "Radarr"
 
+    def movies(self) -> list[dict]:
+        """Every movie Radarr tracks, raw — `tags`, `hasFile`, `movieFile.dateAdded` are what a requests row reads."""
+        return self._records("/api/v3/movie")
+
     def library_tmdb_ids(self) -> set[int]:
         """Every tmdbId Radarr already tracks — so a title it has (or is still downloading) isn't
         re-surfaced as 'missing' just because it isn't in Plex yet."""
-        return self._id_set("/api/v3/movie", "tmdbId")
+        return self._ids_from(self._records("/api/v3/movie"), "tmdbId")
 
     def excluded_tmdb_ids(self) -> set[int]:
         """tmdbIds on Radarr's import-exclusion list (usually left by a past delete)."""
@@ -268,11 +318,11 @@ class RadarrClient(_ArrClient):
         and the per-title form (lookup + fetch + queue, each round-tripped) made that cost scale with
         the number of rows on screen.
         """
-        movies = self._get("/api/v3/movie")
+        movies = self._records("/api/v3/movie")
         downloading = self._queued_ids("movieId")
         statuses: dict[int, str] = {}
-        for movie in movies if isinstance(movies, list) else []:
-            if not isinstance(movie, dict) or not movie.get("tmdbId"):
+        for movie in movies:
+            if not movie.get("tmdbId"):
                 continue
             statuses[int(movie["tmdbId"])] = _status_for(
                 has_all=bool(movie.get("hasFile")),
@@ -316,6 +366,13 @@ class RadarrClient(_ArrClient):
 class SonarrClient(_ArrClient):
     app_name = "Sonarr"
 
+    def series(self) -> list[dict]:
+        """Every series Sonarr tracks, raw.
+
+        `tags`, `tmdbId`, `added`, `statistics.episodeFileCount` are what a requests row reads.
+        """
+        return self._records("/api/v3/series")
+
     def library_ids(self) -> tuple[set[int], set[int]]:
         """(tvdbIds, tmdbIds) Sonarr already tracks, from ONE /series fetch.
 
@@ -323,7 +380,7 @@ class SonarrClient(_ArrClient):
         puts ``tmdbId`` on every series; empty on v3) lets callers reconcile tmdb-keyed records —
         the request inbox — against Sonarr without a per-title TVDB lookup.
         """
-        data = self._get("/api/v3/series")
+        data = self._records("/api/v3/series")
         return self._ids_from(data, "tvdbId"), self._ids_from(data, "tmdbId")
 
     def excluded_tvdb_ids(self) -> set[int]:
@@ -339,13 +396,11 @@ class SonarrClient(_ArrClient):
         A show counts as ``downloaded`` only when every aired episode is on disk; some-but-not-all is
         ``downloading``, which is what a part-way season looks like to the person waiting on it.
         """
-        series_list = self._get("/api/v3/series")
+        series_list = self._records("/api/v3/series")
         downloading = self._queued_ids("seriesId")
         by_tvdb: dict[int, str] = {}
         by_tmdb: dict[int, str] = {}
-        for series in series_list if isinstance(series_list, list) else []:
-            if not isinstance(series, dict):
-                continue
+        for series in series_list:
             stats = series.get("statistics") or {}
             episodes = stats.get("episodeCount") or 0
             on_disk = stats.get("episodeFileCount") or 0

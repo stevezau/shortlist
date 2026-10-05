@@ -24,14 +24,13 @@ LOAD = 15_000
 
 
 def _open_row_requests(page: Page) -> None:
-    """The default per-person row's editor, with its Requests group expanded (collapsed by default)."""
+    """The default per-person row's editor, at its Requests section (every section is always rendered)."""
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
-    page.get_by_role("button", name="Edit").first.click()
-    expect(page.get_by_role("heading", name="Edit row")).to_be_visible(timeout=LOAD)
-    # The group's own <summary>, not any text reading "Requests" — the sidebar's Requests LINK is
-    # first in the DOM, so a loose text match navigates away from the editor instead of expanding it.
-    page.locator("details:has(> summary:has-text('Requests')) > summary").click()
+    page.get_by_role("button", name=re.compile(r"^More actions for ")).first.click()
+    page.get_by_role("menuitem", name="Edit", exact=True).click()
+    expect(page.get_by_role("heading", name="✨ library name Picked for You", exact=True)).to_be_visible(timeout=LOAD)
+    expect(page.locator("section#requests")).to_be_visible()
 
 
 def _connect_sonarr(app: ShortlistApp) -> None:
@@ -51,7 +50,7 @@ def _connect_sonarr(app: ShortlistApp) -> None:
 
 def test_the_global_amount_of_a_show_saves_and_survives_a_reload(page: Page, app: ShortlistApp):
     _connect_sonarr(app)
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     monitor = page.get_by_label("How much of a show to grab")
     expect(monitor).to_be_visible(timeout=LOAD)
@@ -61,7 +60,10 @@ def test_the_global_amount_of_a_show_saves_and_survives_a_reload(page: Page, app
     expect(page.get_by_text(re.compile("Season 1 only"))).to_be_visible()
 
     # Autosave has no button; wait for the value to reach the API rather than a fixed sleep.
-    expect(page.get_by_text(re.compile("Saved|Saving", re.I)).first).to_be_visible(timeout=LOAD)
+    # The Defaults tab reports every section's autosave in one save bar at its foot, not per card.
+    expect(page.locator("[aria-live=polite]").get_by_text(re.compile(r"^Saved|^Saving", re.I)).first).to_be_visible(
+        timeout=LOAD
+    )
     page.wait_for_timeout(2000)
 
     saved = app.api("GET", "/api/settings").json()

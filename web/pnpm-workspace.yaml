@@ -28,6 +28,7 @@ overrides:
   js-yaml@>=4.0.0 <4.3.2: 4.3.2
   # GHSA-mh99-v99m-4gvg and GHSA-rgw5-rvv9-x895: brace-expansion expands unbounded patterns (DoS).
   # Same build-time-only path as js-yaml above (openapi-typescript -> @redocly/openapi-core ->
-  # minimatch 5, which asks for ^2.0.1). 2.1.4 is the first release fixing both; eslint's minimatch 10
-  # already brings the unaffected 5.x line, which this range leaves alone.
-  brace-expansion@>=2.0.0 <2.1.4: 2.1.4
+  # minimatch 5, which asks for ^2.0.1). 2.1.7 is the first release fixing all
+  # three advisories on this line (2.1.4 fixed only the two above); eslint's minimatch 10 already
+  # brings the unaffected 5.x line, which this range leaves alone.
+  brace-expansion@>=2.0.0 <2.1.7: 2.1.7

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PMS 1.43.4.10903 GET /library/collections/{ratingKey}/children?includeGuids=1, exactly what plexapi's
+  Collection.items() issues. Recorded 2026-10-02, read-only, off a real server's Movies library for custom
+  seasons (issue #137), where a season may read its films from one of the owner's own Plex collections.
+  A regular (non-smart) collection of 50 films, cut to its first 4 with the container's size to match.
+  File paths are neutralised; every other attribute, child and value is verbatim.
+
+  What it settles:
+  - Every member carries its <Guid id="tmdb://..."> inline, so one read resolves a collection to TMDB ids
+    with no per-item re-read. 50 of 50 here, and every member of 46 to 1,187-film collections on the
+    same server, smart and regular alike.
+  - The container carries ONLY `size`: no totalSize, no librarySectionID. Each <Video> carries its own
+    librarySectionID / librarySectionKey / librarySectionTitle instead.
+  - Each member lists the collections it belongs to as <Collection tag> children.
+-->
+<MediaContainer size="4">
+<Video ratingKey="682457" key="/library/metadata/682457" guid="plex://movie/5d7768255af944001f1f65a1" slug="schindlers-list" studio="Amblin Entertainment" type="movie" title="Schindler&#39;s List" librarySectionTitle="Movies" librarySectionID="1" librarySectionKey="/library/sections/1" contentRating="R" contentRatingAge="15" summary="Oskar Schindler is a vain and greedy German businessman who becomes an unlikely humanitarian amid the barbaric German Nazi reign when he feels compelled to turn his factory into a refuge for Jews. Based on the true story of Oskar Schindler who managed to save about 1100 Jews from being gassed at the Auschwitz concentration camp, it is a testament to the good in all of us." rating="9.8" audienceRating="9.0" year="1993" tagline="Whoever saves one life, saves the world entire." thumb="/library/metadata/682457/thumb/1787702837" art="/library/metadata/682457/art/1787702837" duration="11707744" originallyAvailableAt="1993-12-15" addedAt="1787677823" updatedAt="1787702837" audienceRatingImage="imdb://image.rating" chapterSource="media" primaryExtraKey="/library/metadata/682458">
+<Media id="992564" duration="11707744" bitrate="16860" width="3840" height="2076" aspectRatio="1.85" audioChannels="8" audioCodec="eac3" videoCodec="hevc" videoResolution="4k" container="mkv" videoFrameRate="24p" videoProfile="main 10" hasVoiceActivity="1">
+<Part id="1175772" key="/library/parts/1175772/1717116624/file.mkv" duration="11707744" file="/movies/Schindlers List (1993)/Schindlers List (1993).mkv" size="24673498765" container="mkv" indexes="sd" videoProfile="main 10" />
+</Media>
+<Image alt="Schindler&#39;s List" type="coverPoster" url="/library/metadata/682457/thumb/1787702837" />
+<Image alt="Schindler&#39;s List" type="background" url="/library/metadata/682457/art/1787702837" />
+<Image alt="Schindler&#39;s List" type="clearLogo" url="/library/metadata/682457/clearLogo/1787702837" />
+<Image alt="Schindler&#39;s List" type="backgroundSquare" url="/library/metadata/682457/squareArt/1787702837" />
+<UltraBlurColors topLeft="0d0202" topRight="090b0c" bottomRight="91403e" bottomLeft="030403" />
+<Guid id="imdb://tt0108052" />
+<Guid id="tmdb://424" />
+<Guid id="tvdb://223" />
+<Genre tag="Drama" />
+<Genre tag="War" />
+<Country tag="United States of America" />
+<Collection tag="Critically Acclaimed Movies" />
+<Collection tag="IMDb Top 250 Movies" />
+<Director tag="Steven Spielberg" />
+<Writer tag="Steven Zaillian" />
+<Writer tag="Thomas Keneally" />
+<Role tag="Liam Neeson" />
+<Role tag="Ben Kingsley" />
+<Role tag="Ralph Fiennes" />
+</Video>
+<Video ratingKey="266520" key="/library/metadata/266520" guid="plex://movie/5d776824eb5d26001f1dd005" slug="braveheart" studio="The Ladd Company" type="movie" title="Braveheart" librarySectionTitle="Movies" librarySectionID="1" librarySectionKey="/library/sections/1" contentRating="R" contentRatingAge="16" summary="Enraged at the slaughter of Murron, his new bride and childhood love, Scottish warrior William Wallace slays a platoon of the local English lord&#39;s soldiers. This leads the village to revolt and, eventually, the entire country to rise up against English rule." rating="7.4" audienceRating="8.3" year="1995" tagline="Every man dies, not every man really lives." thumb="/library/metadata/266520/thumb/1790282931" art="/library/metadata/266520/art/1790282931" duration="10663168" originallyAvailableAt="1995-05-24" addedAt="1685373932" updatedAt="1790282931" chapterSource="media" primaryExtraKey="/library/metadata/647599" ratingImage="imdb://image.rating">
+<Media id="426940" duration="10663168" bitrate="23603" width="3840" height="1636" aspectRatio="2.35" audioChannels="8" audioCodec="truehd" videoCodec="hevc" videoResolution="4k" container="mkv" videoFrameRate="24p" audioProfile="dolby truehd + dolby atmos" videoProfile="main 10" hasVoiceActivity="1">
+<Part id="685332" key="/library/parts/685332/1680537667/file.mkv" duration="10663168" file="/movies/Braveheart (1995)/Braveheart (1995).mkv" size="31460212362" audioProfile="dolby truehd + dolby atmos" container="mkv" hasThumbnail="1" indexes="sd" videoProfile="main 10" />
+</Media>
+<Image alt="Braveheart" type="coverPoster" url="/library/metadata/266520/thumb/1790282931" />
+<Image alt="Braveheart" type="background" url="/library/metadata/266520/art/1790282931" />
+<Image alt="Braveheart" type="clearLogo" url="/library/metadata/266520/clearLogo/1790282931" />
+<Image alt="Braveheart" type="backgroundSquare" url="/library/metadata/266520/squareArt/1790282931" />
+<UltraBlurColors topLeft="432511" topRight="673d1f" bottomRight="562612" bottomLeft="844e2b" />
+<Guid id="imdb://tt0112573" />
+<Guid id="tmdb://197" />
+<Guid id="tvdb://703" />
+<Genre tag="Action" />
+<Genre tag="War" />
+<Country tag="United States of America" />
+<Collection tag="Oscars Best Picture Winners" />
+<Collection tag="Letterboxd Oscars Best Picture Winners" />
+<Director tag="Mel Gibson" />
+<Writer tag="Randall Wallace" />
+<Role tag="Mel Gibson" />
+<Role tag="Catherine McCormack" />
+<Role tag="Sophie Marceau" />
+</Video>
+<Video ratingKey="524327" key="/library/metadata/524327" guid="plex://movie/6562d1dbf8acedbdfebce1d1" slug="one-battle-after-another" studio="Warner Bros. Pictures" type="movie" title="One Battle After Another" librarySectionTitle="Movies" librarySectionID="1" librarySectionKey="/library/sections/1" contentRating="R" contentRatingAge="16" summary="Washed-up revolutionary Bob exists in a state of stoned paranoia, surviving off-grid with his spirited, self-reliant daughter, Willa. When his evil nemesis resurfaces after 16 years and she goes missing, the former radical scrambles to find her, father and daughter both battling the consequences of his past." rating="9.4" audienceRating="7.6" year="2025" tagline="Some search for battle, others are born into it..." thumb="/library/metadata/524327/thumb/1787054928" art="/library/metadata/524327/art/1787054928" duration="9704196" originallyAvailableAt="2025-09-24" addedAt="1763045138" updatedAt="1787054928" audienceRatingImage="imdb://image.rating" chapterSource="media" primaryExtraKey="/library/metadata/676561">
+<Media id="756828" duration="9704196" bitrate="25856" width="3840" height="2160" aspectRatio="1.78" audioChannels="8" audioCodec="truehd" videoCodec="hevc" videoResolution="4k" container="mkv" videoFrameRate="24p" audioProfile="dolby truehd + dolby atmos" videoProfile="main 10" hasVoiceActivity="1">
+<Part id="939998" key="/library/parts/939998/1768152227/file.mkv" duration="9704196" file="/movies/One Battle After Another (2025)/One Battle After Another (2025).mkv" size="31364277915" audioProfile="dolby truehd + dolby atmos" container="mkv" indexes="sd" videoProfile="main 10" />
+</Media>
+<Image alt="One Battle After Another" type="coverPoster" url="/library/metadata/524327/thumb/1787054928" />
+<Image alt="One Battle After Another" type="background" url="/library/metadata/524327/art/1787054928" />
+<Image alt="One Battle After Another" type="clearLogo" url="/library/metadata/524327/clearLogo/1787054928" />
+<Image alt="One Battle After Another" type="backgroundSquare" url="/library/metadata/524327/squareArt/1787054928" />
+<UltraBlurColors topLeft="402003" topRight="341c03" bottomRight="8c4922" bottomLeft="5a2e0b" />
+<Guid id="imdb://tt30144839" />
+<Guid id="tmdb://1054867" />
+<Guid id="tvdb://355416" />
+<Genre tag="Crime" />
+<Genre tag="Thriller" />
+<Country tag="United States of America" />
+<Collection tag="Critically Acclaimed Movies" />
+<Collection tag="Letterboxd Top of Decade" />
+<Director tag="Paul Thomas Anderson" />
+<Writer tag="Paul Thomas Anderson" />
+<Role tag="Leonardo DiCaprio" />
+<Role tag="Sean Penn" />
+<Role tag="Chase Infiniti" />
+</Video>
+<Video ratingKey="538504" key="/library/metadata/538504" guid="plex://movie/5d9f34fd9dd5f4001e843056" slug="terms-of-endearment-1983" studio="Paramount Pictures" type="movie" title="Terms of Endearment" librarySectionTitle="Movies" librarySectionID="1" librarySectionKey="/library/sections/1" contentRating="PG" contentRatingAge="15" summary="Aurora and Emma are mother and daughter who march to different drummers. Beginning with Emma&#39;s marriage, Aurora shows how difficult and loving she can be. The movie covers several years of their lives as each finds different reasons to go on living and find joy. Aurora&#39;s interludes with Garrett Breedlove, retired astronaut and next door neighbor are quite striking. In the end, different people show their love in very different ways." rating="8.1" audienceRating="7.4" year="1983" tagline="Come to laugh, come to cry, come to care, come to terms." thumb="/library/metadata/538504/thumb/1787057610" art="/library/metadata/538504/art/1787057610" duration="7914336" originallyAvailableAt="1983-11-23" addedAt="1768670483" updatedAt="1787057610" audienceRatingImage="imdb://image.rating" chapterSource="media" primaryExtraKey="/library/metadata/678355">
+<Media id="760252" duration="7914336" bitrate="23790" width="1920" height="1038" aspectRatio="1.85" audioChannels="6" audioCodec="dca-ma" videoCodec="hevc" videoResolution="1080" container="mkv" videoFrameRate="24p" audioProfile="ma" videoProfile="main 10" hasVoiceActivity="1">
+<Part id="943421" key="/library/parts/943421/1750143734/file.mkv" duration="7914336" file="/movies/Terms of Endearment (1983)/Terms of Endearment (1983).mkv" size="23535506017" audioProfile="ma" container="mkv" indexes="sd" videoProfile="main 10" />
+</Media>
+<Image alt="Terms of Endearment" type="coverPoster" url="/library/metadata/538504/thumb/1787057610" />
+<Image alt="Terms of Endearment" type="background" url="/library/metadata/538504/art/1787057610" />
+<Image alt="Terms of Endearment" type="clearLogo" url="/library/metadata/538504/clearLogo/1787057610" />
+<Image alt="Terms of Endearment" type="backgroundSquare" url="/library/metadata/538504/squareArt/1787057610" />
+<UltraBlurColors topLeft="4d1a27" topRight="270e08" bottomRight="471823" bottomLeft="331110" />
+<Guid id="imdb://tt0086425" />
+<Guid id="tmdb://11050" />
+<Guid id="tvdb://7095" />
+<Genre tag="Drama" />
+<Genre tag="Comedy" />
+<Country tag="United States of America" />
+<Collection tag="Letterboxd Oscars Best Picture Winners" />
+<Collection tag="Oscars Best Picture Winners" />
+<Director tag="James L. Brooks" />
+<Writer tag="James L. Brooks" />
+<Writer tag="Larry McMurtry" />
+<Role tag="Shirley MacLaine" />
+<Role tag="Debra Winger" />
+<Role tag="Jack Nicholson" />
+</Video>
+</MediaContainer>

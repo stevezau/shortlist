@@ -10,6 +10,7 @@ from shortlist.engine.curator.base import (
     parse_web_titles,
 )
 from shortlist.engine.models import UserProfile
+from shortlist.engine.web_guidance import Guidance
 
 # Design doc §3: cheap tier is plenty for a web-search title lookup.
 #
@@ -60,16 +61,20 @@ class AnthropicCurator:
                 "claude-sonnet-4",
             ]
 
-    def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
+    def recommend_web(
+        self, profile: UserProfile, seeds: list, k: int, *, guidance: Guidance | None = None
+    ) -> list[dict]:
         """Propose up to k titles to watch next via Claude's web-search tool (the ``llm_web`` source).
 
         Returns ``[{title, year, media}]`` for the caller to resolve against TMDB. Degrades to an
         empty list on a provider error; the source's own try/except in candidates.py is the backstop
         for any other failure (unexpected response shape, etc.), so a run never fails here.
+
+        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt.
         """
         import anthropic
 
-        system, user = build_web_prompt(profile, seeds, k)
+        system, user = build_web_prompt(profile, seeds, k, guidance=guidance)
         try:
             response = self._client.messages.create(
                 model=self._model,
@@ -102,14 +107,14 @@ class AnthropicCurator:
         text = "".join(b.text for b in response.content if b.type == "text")
         return parse_web_titles(text, k)
 
-    def complete(self, system: str, user: str) -> str:
+    def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
         """Plain completion (no tools) — the external-search ``llm_web`` path (see base.complete)."""
         import anthropic
 
         try:
             response = self._client.messages.create(
                 model=self._model,
-                max_tokens=2048,
+                max_tokens=max_tokens or 2048,
                 system=system,
                 messages=[{"role": "user", "content": user}],
             )

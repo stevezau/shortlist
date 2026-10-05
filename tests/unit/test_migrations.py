@@ -9,7 +9,10 @@ a NULL production accepted was unreachable in a test.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,9 +22,16 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config as AlembicConfig
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 
 from shortlist.server.db.models import Base
-from shortlist.server.db.session import ALEMBIC_DIR, db_url, make_engine, run_migrations
+from shortlist.server.db.session import (
+    ALEMBIC_DIR,
+    MigrationBackupError,
+    db_url,
+    make_engine,
+    run_migrations,
+)
 
 
 def _alembic(config_dir: Path) -> AlembicConfig:
@@ -508,6 +518,103 @@ class TestThePreMigrationBackup:
 
         assert len(self._backups(tmp_path)) == 1
         assert self._backups(tmp_path)[0].endswith("_pre-migration.db")
+
+
+@contextmanager
+def _unwritable_backups(config_dir: Path) -> Iterator[None]:
+    """`/config/backups` exists but cannot be written — the way a backup really fails on a box whose
+    volume has the wrong owner. `take_backup` answers None to it rather than raising."""
+    backups = config_dir / "backups"
+    backups.mkdir(exist_ok=True)
+    backups.chmod(0o500)
+    try:
+        yield
+    finally:
+        backups.chmod(0o700)
+
+
+def _stamp(config_dir: Path) -> str:
+    with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+        return con.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+
+
+def _head(config_dir: Path) -> str:
+    return ScriptDirectory.from_config(_alembic(config_dir)).get_current_head()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes through directory permissions")
+class TestAnUpgradeNeedsItsBackup:
+    """The pre-migration backup is the way back from a migration that goes wrong, and `take_backup`
+    mostly answers None instead of raising when it cannot write one. An upgrade that ran on past that
+    answer changed the schema with no copy of the old one anywhere. Built at 0093 so 0094's new column
+    (`collections.requests_row`) shows whether the upgrade ran."""
+
+    @staticmethod
+    def _backups(config_dir: Path) -> list[str]:
+        return sorted(p.name for p in (config_dir / "backups").glob("*.db"))
+
+    @staticmethod
+    def _has_requests_row(config_dir: Path) -> bool:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            return any(row[1] == "requests_row" for row in con.execute("PRAGMA table_info(collections)"))
+
+    def test_a_pending_migration_is_refused_when_its_backup_cannot_be_written(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0093")
+
+        with _unwritable_backups(tmp_path), pytest.raises(MigrationBackupError) as refused:
+            run_migrations(tmp_path)
+
+        assert _stamp(tmp_path) == "0093"
+        assert not self._has_requests_row(tmp_path), "the migration ran with no backup to go back to"
+        assert self._backups(tmp_path) == []
+        assert str(tmp_path / "backups") in str(refused.value)
+
+    def test_a_pending_migration_is_refused_when_the_backups_folder_cannot_be_created(self, tmp_path: Path):
+        """A first upgrade with no `backups/` yet and a config folder that cannot be written: creating
+        the folder RAISES inside `take_backup`, rather than answering None. Same refusal either way."""
+        command.upgrade(_alembic(tmp_path), "0093")
+        files_before = sorted(os.listdir(tmp_path))
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            schema_before = sorted(con.execute("SELECT type, name, sql FROM sqlite_master").fetchall())
+
+        tmp_path.chmod(0o500)
+        try:
+            with pytest.raises(MigrationBackupError) as refused:
+                run_migrations(tmp_path)
+        finally:
+            tmp_path.chmod(0o700)
+
+        assert isinstance(refused.value.__cause__, OSError), "the real cause must stay in the traceback"
+        assert _stamp(tmp_path) == "0093"
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            assert sorted(con.execute("SELECT type, name, sql FROM sqlite_master").fetchall()) == schema_before
+        assert sorted(os.listdir(tmp_path)) == files_before
+        assert str(tmp_path / "backups") in str(refused.value)
+
+    def test_a_pending_migration_runs_when_its_backup_is_written(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0093")
+
+        run_migrations(tmp_path)
+
+        assert _stamp(tmp_path) == _head(tmp_path)
+        assert self._has_requests_row(tmp_path)
+        assert [name.endswith("_pre-migration.db") for name in self._backups(tmp_path)] == [True]
+
+    def test_a_fresh_install_boots_without_a_backup(self, tmp_path: Path):
+        """Nothing to back up yet, so a backup that cannot be written must not stop the first boot."""
+        with _unwritable_backups(tmp_path):
+            run_migrations(tmp_path)
+
+        assert _stamp(tmp_path) == _head(tmp_path)
+
+    def test_a_restart_with_nothing_pending_boots_without_a_backup(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        with _unwritable_backups(tmp_path):
+            run_migrations(tmp_path)
+
+        assert _stamp(tmp_path) == _head(tmp_path)
+        assert self._backups(tmp_path) == []
 
 
 class TestUpgradingAnOldInstall:
@@ -1545,6 +1652,187 @@ class TestPickLeadSeed0093:
         run_migrations(tmp_path)
         command.downgrade(_alembic(tmp_path), "0092")
         assert not ({"lead_seed_tmdb_id", "lead_seed_title"} & self._columns(tmp_path))
+
+
+class TestCustomSeasons0095:
+    """0095 adds the `seasons` table for owner-defined seasons (issue #137). It starts empty, so every
+    existing row still follows only the built-ins it followed before."""
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, tuple[bool, str | None]]:
+        """column -> (NOT NULL, default)."""
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            return {r[1]: (bool(r[3]), r[4]) for r in con.execute("PRAGMA table_info(seasons)")}
+
+    def test_it_creates_an_empty_seasons_table(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        columns = self._columns(tmp_path)
+        assert columns == {
+            "id": (True, None),
+            "slug": (True, None),
+            "name": (True, None),
+            "emoji": (True, None),
+            "rule_kind": (True, None),
+            "month": (True, "'1'"),
+            "day": (True, "'1'"),
+            "nth": (True, "'1'"),
+            "weekday": (True, "'0'"),
+            "easter_offset": (True, "'0'"),
+            "lead_days": (True, "'7'"),
+            "after_days": (True, "'0'"),
+            "tags": (True, "'[]'"),
+            "genre": (False, None),
+            "excluded_genres": (True, "'[]'"),
+            "collections": (True, "'[]'"),
+            "picks": (True, "'[]'"),
+            "preset": (False, None),
+            "created_at": (True, None),
+            "updated_at": (True, None),
+        }
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            assert con.execute("SELECT COUNT(*) FROM seasons").fetchone() == (0,)
+
+    def test_a_slug_is_unique(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        insert = (
+            "INSERT INTO seasons (slug, name, emoji, rule_kind, created_at, updated_at) "
+            "VALUES ('diwali', ?, '🪔', 'fixed', '2026-10-02', '2026-10-02')"
+        )
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            con.execute(insert, ("Diwali",))
+            with pytest.raises(sqlite3.IntegrityError):
+                con.execute(insert, ("Deepavali",))
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0094")
+        run_migrations(tmp_path)
+        assert "slug" in self._columns(tmp_path)
+
+    def test_the_downgrade_drops_the_table(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0094")
+        assert self._columns(tmp_path) == {}
+
+
+class TestDeliverySeason0096:
+    """0096 adds `deliveries.season`, the season a collection was last built for (#137 C-1). Every existing
+    ledger row comes out NULL — "not recorded" — so promotion behaves as before until the next delivery."""
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, tuple[bool, str | None]]:
+        """column -> (NOT NULL, default)."""
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            return {r[1]: (bool(r[3]), r[4]) for r in con.execute("PRAGMA table_info(deliveries)")}
+
+    def test_it_adds_a_nullable_season_with_no_default(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        assert self._columns(tmp_path)["season"] == (False, None)
+
+    def test_an_existing_delivery_comes_out_unrecorded(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0095")
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            con.execute(
+                "INSERT INTO deliveries (collection_slug, user_slug, library_key, rating_key, title, updated_at) "
+                "VALUES ('seasonal', 'sarah', '1', 42, 'x', '2026-10-02')"
+            )
+            con.commit()
+
+        run_migrations(tmp_path)
+
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            assert con.execute("SELECT season FROM deliveries").fetchall() == [(None,)]
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0095")
+        run_migrations(tmp_path)
+        assert "season" in self._columns(tmp_path)
+
+    def test_the_downgrade_drops_the_column(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0095")
+        assert "season" not in self._columns(tmp_path)
+
+
+class TestRowLimits0097:
+    """0097 adds the four per-row limit columns (#138). All NULL = off, so no existing row changes."""
+
+    _LIMITS = frozenset({"max_runtime", "min_year", "max_year", "min_rating"})
+
+    @staticmethod
+    def _columns(config_dir: Path) -> dict[str, tuple[bool, str | None]]:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            return {r[1]: (bool(r[3]), r[4]) for r in con.execute("PRAGMA table_info(collections)")}
+
+    def test_it_adds_four_nullable_columns_with_no_default(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        columns = self._columns(tmp_path)
+        assert all(columns[name] == (False, None) for name in self._LIMITS)
+
+    def test_an_existing_row_reads_null(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            row = con.execute("SELECT max_runtime, min_year, max_year, min_rating FROM collections").fetchone()
+        assert row == (None, None, None, None)
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0096")
+        run_migrations(tmp_path)
+        assert set(self._columns(tmp_path)) >= self._LIMITS
+
+    def test_the_downgrade_removes_them_again(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0096")
+        assert not (self._LIMITS & set(self._columns(tmp_path)))
+
+
+class TestPicksReportIndexes0101:
+    """0101 adds the two composite `picks` indexes the dashboard report reads through."""
+
+    @staticmethod
+    def _indexes(config_dir: Path) -> dict[str, list[str]]:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as con:
+            names = [r[1] for r in con.execute("PRAGMA index_list(picks)")]
+            return {n: [c[2] for c in con.execute(f"PRAGMA index_info({n})")] for n in names}
+
+    def test_head_has_both_indexes_with_their_columns_in_order(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        indexes = self._indexes(tmp_path)
+        assert indexes["ix_picks_user_title_dates"] == ["user_id", "tmdb_id", "media_type", "created_at", "watched_at"]
+        assert indexes["ix_picks_user_created"] == ["user_id", "created_at"]
+
+    def test_running_it_again_over_an_already_migrated_database_is_a_no_op(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.stamp(_alembic(tmp_path), "0100")
+        run_migrations(tmp_path)
+        assert "ix_picks_user_created" in self._indexes(tmp_path)
+
+    def test_the_downgrade_drops_both_and_keeps_the_single_column_indexes(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        command.downgrade(_alembic(tmp_path), "0100")
+
+        indexes = self._indexes(tmp_path)
+        assert not {"ix_picks_user_title_dates", "ix_picks_user_created"} & set(indexes)
+        assert {"ix_picks_user_id", "ix_picks_created_at"} <= set(indexes)
+
+    def test_the_average_days_query_is_answered_from_the_covering_index(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con:
+            plan = " ".join(
+                row[3]
+                for row in con.execute(
+                    "EXPLAIN QUERY PLAN SELECT user_id, tmdb_id, media_type, min(created_at), min(watched_at) "
+                    "FROM picks GROUP BY user_id, tmdb_id, media_type"
+                )
+            )
+        assert "USING COVERING INDEX ix_picks_user_title_dates" in plan
+        assert "TEMP B-TREE" not in plan
 
 
 class TestRowShowDaysDowngrade0088:

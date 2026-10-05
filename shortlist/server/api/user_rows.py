@@ -19,9 +19,9 @@ from shortlist.server.db.models import (
     CollectionAudience,
     CollectionUserOverride,
     PickRow,
-    RunUser,
     User,
 )
+from shortlist.server.services.run_persistence import live_pick_ids
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
@@ -86,14 +86,15 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
 
-        # Latest run's picks for this user, grouped by (row, library). A row spanning multiple
-        # libraries is one Plex collection per library — show them as separate cards.
-        latest = session.query(RunUser.run_id).filter_by(user_id=user.id).order_by(RunUser.run_id.desc()).first()
+        # What is on Plex right now, grouped by (row, library): each row's picks come from the newest run
+        # that delivered IT (`live_pick_ids`), not the newest run overall. Rows have their own crons, so
+        # a run that built one row must not blank the others, and a dry run or cancelled run writes no
+        # picks and changes nothing here. A row spanning multiple libraries is one Plex collection per
+        # library — show them as separate cards.
+        live_ids = live_pick_ids(session, user_id=user.id).get(user.id, set())
         picks_by_row_lib: dict[tuple[str, str], list[dict]] = {}
-        if latest is not None:
-            for pick in (
-                session.query(PickRow).filter_by(user_id=user.id, run_id=latest.run_id).order_by(PickRow.rank).all()
-            ):
+        if live_ids:
+            for pick in session.query(PickRow).filter(PickRow.id.in_(live_ids)).order_by(PickRow.rank).all():
                 key = (pick.collection_slug or DEFAULT_SLUG, pick.section_key or "")
                 picks_by_row_lib.setdefault(key, []).append(pick_dict(pick))
 

@@ -9,6 +9,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
+import { RowName } from "@/components/rows/row-name";
 import { Segmented } from "@/components/segmented";
 import { UserPanel } from "@/components/runs/user-panel";
 import { UserTabs } from "@/components/runs/user-tabs";
@@ -30,6 +31,8 @@ import type {
   RunLogEntry,
   RunRowCost,
 } from "@/lib/types";
+
+const NOBODY = new Set<string>();
 
 /** Why this person got, or did not get, this row. */
 const DECISION_LABEL: Record<string, string> = {
@@ -77,6 +80,8 @@ function SharedRowPanel({
   }
   const current =
     breakdown.find((entry) => entry.library_key === active) ?? breakdown[0];
+  // Absent on runs recorded before the field existed.
+  const duplicates = current?.duplicates_removed ?? [];
 
   return (
     <div className="space-y-4 p-5">
@@ -113,6 +118,14 @@ function SharedRowPanel({
                 {current.created && <Badge variant="outline">new row</Badge>}
               </div>
               <PickList picks={current.picks} collapseAfter={10} />
+              {duplicates.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {duplicates.length === 1
+                    ? "Removed a duplicate copy of this row"
+                    : `Removed ${duplicates.length} duplicate copies of this row`}
+                  : {duplicates.join(", ")}
+                </p>
+              )}
             </div>
           )}
         </>
@@ -163,6 +176,7 @@ function RowCard({
   defaultOpen,
   idBySlug,
   focusUser,
+  notPrivate,
 }: {
   group: RunRowGroup;
   run: RunDetail;
@@ -171,6 +185,8 @@ function RowCard({
   focusUser?: string | null;
   /** person slug -> user id, so their panel can link to their own trace. */
   idBySlug: Map<string, number>;
+  /** Lower-cased usernames this run found could see rows that are not theirs. */
+  notPrivate: Set<string>;
 }) {
   const inThisRow = focusUser
     ? group.people.some((person) => person.result.slug === focusUser)
@@ -196,9 +212,17 @@ function RowCard({
   let chosenPerson: RunRowPerson | undefined;
   const costBySlug = new Map<string, RunRowCost | null>();
   const builtBySlug = new Map<string, boolean | null>();
+  // `result.breakdown` is already narrowed to THIS row, so this is what the row added for them.
+  const newBySlug = new Map<string, number>();
+  let notPrivateHere = 0;
   for (const person of group.people) {
     costBySlug.set(person.result.slug, person.cost);
     builtBySlug.set(person.result.slug, person.built);
+    newBySlug.set(
+      person.result.slug,
+      person.result.breakdown.reduce((n, entry) => n + entry.added.length, 0),
+    );
+    if (notPrivate.has(person.result.username.toLowerCase())) notPrivateHere += 1;
     if (person.result.slug === chosen?.slug) chosenPerson = person;
   }
   const decision = chosenPerson?.decision;
@@ -220,7 +244,9 @@ function RowCard({
           />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="font-medium">{group.title}</span>
+              {/* The header spans every library the row built, so no one library can fill
+                  `{library_name}`; the chip says what it is instead of dropping it. */}
+              <RowName name={group.template} />
               {libraries && (
                 <span className="text-xs tracking-wide text-muted-foreground uppercase">
                   {libraries}
@@ -230,6 +256,9 @@ function RowCard({
             <span className="text-xs text-muted-foreground">
               {group.kind === "shared" ? "Shared" : "Per-person"} ·{" "}
               {notStarted ? "waiting to build" : rowSummary(group)}
+              {notPrivateHere > 0 && (
+                <span className="text-warning">{` · ${notPrivateHere} not private`}</span>
+              )}
               {time !== null && (
                 <span
                   title={
@@ -298,6 +327,8 @@ function RowCard({
               showSummary={false}
               costBySlug={costBySlug}
               builtBySlug={builtBySlug}
+              newBySlug={newBySlug}
+              notPrivate={notPrivate}
             />
             <div className="min-w-0">
               {decision && decision !== "due" && (
@@ -336,6 +367,7 @@ export function RunRowsTab({
   idBySlug,
   liveLog,
   focusUser,
+  notPrivate = NOBODY,
 }: {
   run: RunDetail;
   titles: Record<string, string>;
@@ -344,6 +376,8 @@ export function RunRowsTab({
   /** Person slug from `?user=` — their row opens with them selected, so a link from their own page
    *  lands on their result rather than the top of a run with forty others in it. */
   focusUser?: string | null;
+  /** Lower-cased usernames this run's privacy measurement flagged; empty when it measured nothing. */
+  notPrivate?: Set<string>;
 }) {
   const { groups, notInRun } = groupRunByRow(run, titles, idBySlug);
   const [showSkipped, setShowSkipped] = useState(false);
@@ -358,16 +392,27 @@ export function RunRowsTab({
         <div className="space-y-1">
           {/* A RUNNING run has nothing persisted yet, so it lands here — and blaming a legacy run for
               a run that started seconds ago is a confidently wrong explanation, the exact failure
-              this view exists to end. Three cases, not one. */}
+              this view exists to end. So does a run that FAILED before it knew its rows (Plex
+              unreachable, issue #139), and so does one CANCELLED before anyone's turn, with no error at all. */}
           <p className="font-medium">
-            {run.finished_at ? "This run built no rows" : "Getting ready…"}
+            {!run.finished_at
+              ? "Getting ready…"
+              : run.error
+                ? "This run stopped before it built any rows"
+                : run.status === "aborted"
+                  ? "This run was cancelled before it built any rows"
+                  : "This run built no rows"}
           </p>
           <p className="text-muted-foreground">
             {!run.finished_at
               ? "This run hasn’t picked up its rows yet. They appear here the moment it does — the Log tab has the live detail."
-              : notInRun.length > 0
-                ? `Nothing was due to rebuild. ${notInRun.length} row${notInRun.length === 1 ? " was" : "s were"} considered and skipped.`
-                : "Runs from before this view existed recorded their results per person rather than per row — the Log tab still has everything that happened."}
+              : run.error
+                ? "The error above says why. The Log tab has anything the run recorded before it stopped."
+                : run.status === "aborted"
+                  ? "It was stopped before anyone’s turn. The Log tab has anything it recorded first."
+                  : notInRun.length > 0
+                  ? `Nothing was due to run. ${notInRun.length} row${notInRun.length === 1 ? " was" : "s were"} considered and skipped.`
+                  : "Runs from before this view existed recorded their results per person rather than per row — the Log tab still has everything that happened."}
           </p>
         </div>
       </div>
@@ -379,12 +424,13 @@ export function RunRowsTab({
       <CommonFailure run={run} />
       {groups.map((group) => (
         <RowCard
-          key={`${group.kind}:${group.slug}`}
+          key={`${group.kind}:${group.slug}:${focusUser ?? ""}`}
           group={group}
           run={run}
           liveLog={liveLog}
           idBySlug={idBySlug}
           focusUser={focusUser}
+          notPrivate={notPrivate}
           // One row is the whole story of a scoped run — open it on arrival rather than making the
           // operator click to see the only thing that happened.
           defaultOpen={groups.length === 1}

@@ -7,9 +7,11 @@ the whole "when does this run" question is answered per row.
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
-from datetime import tzinfo
+from datetime import UTC, datetime, tzinfo
 
+from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.combining import OrTrigger
@@ -29,6 +31,15 @@ PRIVACY_SYNC_JOB_ID = "privacy-sync"
 ROW_VISIBILITY_JOB_ID = "rows-visibility"
 SYNC_CHECK_JOB_ID = "sync-check"
 MAINTENANCE_PRUNE_JOB_ID = "maintenance-prune"
+THEMES_ROTATE_JOB_ID = "themes-rotate"
+JOBS_DRAIN_JOB_ID = "jobs.drain"
+JOBS_SWEEP_JOB_ID = "jobs.sweep"
+
+#: One event per scheduled job APScheduler skipped for starting later than its grace. Read by the bell.
+SCHEDULE_MISSED_SCOPE = "schedule.missed"
+# The queue worker's own ticks. A late one is caught by the next tick a minute later, so recording it would
+# only bury the misses that matter.
+_UNRECORDED_MISSES = frozenset({JOBS_DRAIN_JOB_ID, JOBS_SWEEP_JOB_ID})
 
 
 #: The built-in cron for each schedulable settings key, and the ONLY place each of these expressions
@@ -63,12 +74,16 @@ DEFAULT_CRONS: dict[str, str] = {
     # 06:15 — last of the night, after every other schedule has finished writing runs and events, so
     # the retention pass trims a settled database rather than one still being appended to.
     "maintenance.prune_cron": "15 6 * * *",
+    # Once a day. Rows have their own crons and read the theme the DB holds, so when this fires is not
+    # load-bearing for a row's build: one that builds before it simply uses the theme it already has. The job
+    # itself judges "due" on the calendar day (UTC), so firing any time on the day gives the same answer.
+    "themes.rotate_cron": "30 1 * * *",
 }
 
 
 #: Schedules the owner can switch off entirely. For these, a stored blank means OFF; for every other
 #: key it means "inherit the built-in default".
-_OFF_ABLE = {"sync.check_cron"}
+_OFF_ABLE = {"sync.check_cron", "themes.rotate_cron"}
 
 
 def effective_cron(app, key: str) -> str:
@@ -162,8 +177,25 @@ def schedule_groups(app) -> dict[str, list[int]]:
     return dict(groups)
 
 
+def _local_now() -> datetime:
+    """Now in the server's local time zone (the zone APScheduler evaluates crontabs in)."""
+    return datetime.now().astimezone()
+
+
 def _make_job(app, cron: str, collection_ids: list[int]):
+    last_slot: datetime | None = None
+
     async def fire() -> None:
+        nonlocal last_slot
+        # On the autumn clock change the repeated hour makes a cron slot inside it come round twice: same
+        # wall-clock minute, an hour apart. The second firing would queue a full duplicate run behind the first.
+        # Accepted: this keys on the actual fire minute, so an hourly cron's legitimately repeated-hour fire
+        # is dropped once a year too.
+        slot = _local_now().replace(tzinfo=None, second=0, microsecond=0)
+        if slot == last_slot:
+            logger.info("scheduled run skipped: cron '{}' already fired for {} (repeated hour)", cron, slot)
+            return
+        last_slot = slot
         logger.info("scheduled run firing: cron '{}' for {} row(s)", cron, len(collection_ids))
         try:
             await app.state.run_service.start_run(trigger="schedule", dry_run=False, collection_ids=collection_ids)
@@ -179,7 +211,16 @@ def _make_job(app, cron: str, collection_ids: list[int]):
 
 def _register(scheduler: AsyncIOScheduler, app, groups: dict[str, list[int]]) -> None:
     for cron, ids in groups.items():
-        scheduler.add_job(_make_job(app, cron, ids), crontab_trigger(cron), id=_job_id(cron), replace_existing=True)
+        # Owner decision 2026-10-02: a late row run still runs (`None` = no grace). A restart replays nothing
+        # (in-memory job store, rebuilt at boot), but a paused host/VM or a forward clock jump wakes the live
+        # process past due and starts one full run (coalesced) then. Accepted: leak-safe ordering still holds.
+        scheduler.add_job(
+            _make_job(app, cron, ids),
+            crontab_trigger(cron),
+            id=_job_id(cron),
+            misfire_grace_time=None,
+            replace_existing=True,
+        )
 
 
 async def _queue_and_drain(app, kind: str, payload: dict | None = None) -> None:
@@ -395,6 +436,21 @@ def _register_maintenance_prune(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, crontab_trigger(cron), id=MAINTENANCE_PRUNE_JOB_ID, replace_existing=True)
 
 
+def _register_theme_rotation(scheduler: AsyncIOScheduler, app) -> None:
+    """The daily pass that gives explore rows' people their next theme (#138). Database only; clearing the
+    cron turns it off."""
+    cron = _resolve_cron(app, "themes.rotate_cron", DEFAULT_CRONS["themes.rotate_cron"], blank_means_off=True)
+    if not cron:
+        if scheduler.get_job(THEMES_ROTATE_JOB_ID):
+            scheduler.remove_job(THEMES_ROTATE_JOB_ID)
+        return
+
+    async def fire() -> None:
+        await _queue_and_drain(app, "themes.rotate")
+
+    scheduler.add_job(fire, crontab_trigger(cron), id=THEMES_ROTATE_JOB_ID, replace_existing=True)
+
+
 def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:
     """Drain the durable job queue on a short interval, and sweep abandoned jobs on a long one.
 
@@ -422,12 +478,63 @@ def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:
     # 60s, not 10s: every path that queues a job also drains it inline, so this tick only catches
     # work queued while something else held the lock, or retries after a backoff. Ten seconds bought
     # nothing and cost a pair of scheduler log lines every ten seconds, all day.
-    scheduler.add_job(drain, "interval", seconds=60, id="jobs.drain", max_instances=1, replace_existing=True)
-    scheduler.add_job(sweep, "interval", minutes=5, id="jobs.sweep", max_instances=1, replace_existing=True)
+    scheduler.add_job(drain, "interval", seconds=60, id=JOBS_DRAIN_JOB_ID, max_instances=1, replace_existing=True)
+    scheduler.add_job(sweep, "interval", minutes=5, id=JOBS_SWEEP_JOB_ID, max_instances=1, replace_existing=True)
+
+
+def _record_missed_runs(app):
+    """A listener that writes one audit event for each scheduled job APScheduler skipped as too late.
+
+    APScheduler drops a job that starts more than `misfire_grace_time` late and says so only in a log
+    line — the whole 2026-09-29 nightly row run went that way, and the owner learned of it from a log
+    audit. It calls this on the event-loop thread, so the audit commit runs on the default executor. It
+    swallows anything the listener raises, but the guards here are ours so the reason lands in our log.
+    """
+
+    def write(job_id: str, fields: dict[str, object]) -> None:
+        try:
+            from shortlist.server.services.audit import write_audit
+
+            # Warning, not error: `_recent_service_errors` counts error events, which would alert twice.
+            write_audit(app.state, SCHEDULE_MISSED_SCOPE, "warning", **fields)
+        except Exception:
+            logger.exception("could not record that scheduled job {} was skipped", job_id)
+
+    def listener(event: JobExecutionEvent) -> None:
+        if event.job_id in _UNRECORDED_MISSES:
+            return
+        try:
+            from shortlist.server.services.jobs import CATALOG
+
+            due = event.scheduled_run_time
+            fields: dict[str, object] = {"job": event.job_id}
+            name = next((entry.label for entry in CATALOG if entry.schedule_job_id == event.job_id), None)
+            if name:
+                fields["name"] = name
+            fields["scheduled_for"] = due.astimezone(UTC).isoformat()
+            # Measured at dispatch, moments after APScheduler's own lateness check: a skipped job never ran.
+            fields["late_by_s"] = round((datetime.now(UTC) - due).total_seconds())
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                write(event.job_id, fields)  # no loop to stall (a synchronous dispatch): write it here
+                return
+            # A miss means the loop is already congested; a commit waiting out another writer's lock here
+            # would stall it for up to the busy timeout. `write` logs its own failure, so the future is
+            # never left holding an unretrieved exception.
+            loop.run_in_executor(None, write, event.job_id, fields)
+        except Exception:
+            logger.exception("could not record that scheduled job {} was skipped", event.job_id)
+
+    return listener
 
 
 def build_scheduler(app) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler()
+    # The one-second default skips nightly runs after even a brief event-loop delay.
+    scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 30})
+    # Here and never in `rebuild_schedule`: a rebuild re-adds jobs to this same scheduler, whose listeners
+    # persist, so registering there would record every miss once per rebuild.
+    scheduler.add_listener(_record_missed_runs(app), EVENT_JOB_MISSED)
     groups = schedule_groups(app)
     _register(scheduler, app, groups)
     _register_watch_sync(scheduler, app)
@@ -437,6 +544,7 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register_row_visibility(scheduler, app)
     _register_sync_check(scheduler, app)
     _register_maintenance_prune(scheduler, app)
+    _register_theme_rotation(scheduler, app)
     _register_jobs_worker(scheduler, app)
     logger.info(
         "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + row-visibility "
@@ -464,6 +572,7 @@ def rebuild_schedule(app) -> None:
     _register_row_visibility(scheduler, app)
     _register_sync_check(scheduler, app)
     _register_maintenance_prune(scheduler, app)
+    _register_theme_rotation(scheduler, app)
     logger.info(
         "rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync "
         "+ row-visibility + prune{}",

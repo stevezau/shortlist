@@ -6,6 +6,120 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-05
+
+### Added
+
+- **An AI row: describe a row in plain words.** In **Add a row**, pick the AI filter and the **Describe a
+  row** template, write what you want ("slow-burn heist films", "cosy mysteries for a rainy Sunday"),
+  and the AI builds a theme once: a name, rules, TMDB tags and genres, and about 60 named titles with a
+  one-line reason each. Shortlist checks every title against TMDB, your library and the row's limits.
+  After that, every run fills the row for each person from that theme with no AI, ranked by their own
+  taste. The editor has **Write the list**, **Adjust the list** (shows a diff, and works before the row is
+  saved), **Try it** (a
+  practice run for one person that writes nothing to Plex, and works on a switched-off row), **Advanced: how
+  the AI is instructed** (your guidance, plus the locked mechanics), usage per row, and **Pause AI for this
+  row**. A new AI row goes live like any other row. Per-person rows only, and library-only: a title your server lacks is
+  never requested. With no AI provider you can still hand-edit the
+  tags, genres and limits. See [An AI row](https://shortlistapp.dev/guides/ai/#an-ai-row). (#138)
+- **Explore: an AI row that picks a new theme every few days (#138).** In an AI row's editor, choose
+  **Pick a new theme every few days** and each person gets their own theme, chosen from what they watch (or
+  from a brief you write), for 7 days by default. The next theme is written a day early and shown as **Up
+  next**, where you can **Change it** or **Pick another**; the last six are listed as **Recent themes**. A
+  new **Pick new row themes** job (setting `themes.rotate_cron`, daily by default) does the switching. One
+  AI call per person per change. Every AI row starts on **Keep the same theme**, so nothing changes on
+  upgrade.
+- **An AI row only covers the kinds of title its AI named (#138).** A films-only list no longer fills your
+  TV libraries with genre filler on a row that covers both. If a change or an Explore theme drops a kind,
+  the row's existing collection in those libraries is removed on its next run.
+- **An AI row's list is topped up once (#138).** When someone has watched most of the titles the AI named
+  and their row has started filling with tag and genre matches, the nightly **Pick new row themes** job
+  asks the AI once for about 40 more titles for that theme and adds them, keeping what the list already
+  has. Never repeated for a theme (a night the AI doesn't answer doesn't count), and the theme card says
+  when it happened.
+- **Over-time controls on AI rows (#138).** **How much changes each time** (a fifth, a third by default,
+  half, or almost everything), **Don't repeat a title for N days** (off by default), and **Keep out titles
+  already in** other per-person rows. See [Explore](https://shortlistapp.dev/guides/ai/#explore-a-new-theme-every-few-days).
+- **AI instructions: tell AI web search what to look for**, server-wide in Settings → Defaults → Title
+  sources and per row under What goes in. A row can use the default, add to it, or write its own.
+  See [AI instructions](https://shortlistapp.dev/guides/rows/what-goes-in/#ai-instructions).
+- **A "Your requests" row.** Choose _Your requests_ as a row's kind and each person gets a private row of
+  the titles they asked for in Overseerr (or Jellyseerr), or that carry their requester tag in Radarr or
+  Sonarr, once the title is on Plex and until they have watched it. Newest arrival first, no AI, no
+  padding; a person with nothing ready has no row. The Users page gains a **Requests** column saying
+  whether each person is linked to an Overseerr account, and the row editor shows where requests are
+  read from and whether Overseerr's Tag Requests is on. (#127)
+- **Length, year and rating limits on a row.** Under What goes in, a row can leave out titles longer
+  than a set number of minutes, released outside a range of years, or rated below a minimum. All are off
+  by default, and a title TMDB has no data for (or that TMDB failed to answer for) is kept. They also apply to Watch it again rows and the popular-on-this-server fallback. See
+  [Length, year and rating limits](https://shortlistapp.dev/guides/rows/what-goes-in/#length-year-and-rating-limits). (#138)
+
+### Changed
+
+- **A run reports "OK with warnings" when an account can see other people's rows.** A run used to read
+  plain OK while a Plex restriction profile kept someone's sharing filter from hiding the rest; the run
+  page and the dashboard now name those accounts, and a run that could not measure privacy says so.
+- **Activity has a "Changes on Plex" tab** listing every write Shortlist made to your server, newest first.
+- **The dashboard leads with last run, next run, privacy and the Plex connection**, and a run's page opens
+  on its rows, each with what happened for every person.
+- **Laptop-width and phone layouts are tidier.** The Users table switches to cards below 1280px instead of
+  wrapping every cell, run logs read one line per entry on a phone, the uninstall preview groups repeated
+  rows, and the website's reference tables stack into readable cards on a phone.
+- **On-switches are neutral, and amber is kept for each screen's one main button.** Settings text is
+  full size, and no section draws a box inside a box.
+- **Picking a template is a page of its own.** The template picker shows each row kind with what it
+  holds and who it is for, instead of a drop-down.
+- **The web interface has one consistent layout** across every page, with navigation that works on a
+  phone and a row editor whose sections you can jump to.
+- **The Users page has a Status column** (Active, Paused, Off or Restricted) with search and filters,
+  and shows how many different picks each person watched in the last 30 days.
+- **Failed web searches say how long they took, and an unreadable AI reply is kept.** The log now names
+  the attempt that failed and how long it ran before failing. When the AI's reply to a web search could
+  not be read as a list of titles, the whole reply is saved in that person's run details so it can be
+  diagnosed.
+
+### Fixed
+
+- **A dry run, or a run cancelled before someone's turn, no longer empties their user page.** The page
+  showed "No picks in this row yet" for everyone after one cancelled test run, while Plex still held
+  their rows; it now shows the last titles actually built.
+- **The Users page's Requests column, the Requests page, and the nightly run's request read are faster.** Radarr, Sonarr and
+  Overseerr are now read at the same time instead of one after another; on a large library that took
+  the wait from 12–25 seconds to about 8.
+- **A Radarr, Sonarr or Overseerr that doesn't answer is explained in plain words** ("Radarr didn't answer
+  at http://host:7878. Check the address and that it's running.") instead of a Python error name.
+- **A cancelled run says it was cancelled**, instead of "nothing was due" or that it predates the run page.
+- **The Users page's last column says "Last run"**, not "Last built": it counts dry and cancelled runs too.
+- **A row run that starts late still runs.** It used to be skipped if it started more than 30 seconds
+  late. Any other scheduled job that is skipped for starting late now shows a bell alert, "A scheduled
+  job didn't run", and is recorded in the change log.
+- **Stopping or updating the container while Shortlist is open in a browser now shuts down cleanly.**
+  It used to hang until Docker force-killed it, which also left in-progress plays marked as timed out.
+- **Everything a background job changes on Plex is now recorded.** Share-filter changes, rows removed
+  and rows taken off Home by the privacy sync, restore, row-visibility and sync check jobs used to
+  leave no event, and so did the orphaned rows the sync check deletes. Runs now also record the rows
+  they take off Home and the orphans they delete.
+- **"Your requests": a tag that could belong to two different people now goes to nobody.** It used to go
+  to whichever person matched first. A person matched by the tags of two rows now gets the title in
+  both.
+- **"Your requests": an unreadable reply from Radarr, Sonarr or Overseerr no longer removes someone's
+  row.** It is treated as a failed read, so the row is kept.
+- **An upgrade no longer goes ahead when its safety backup could not be written.** Shortlist stops with
+  a message saying why, and the database is left unchanged. Free some disk space or fix the config
+  folder's permissions, then restart.
+- **A half-written backup is never offered as a restore point.** A backup stopped part-way through, for
+  example by a container stop, is now discarded instead of listed.
+- **A job that succeeded on a retry no longer shows its earlier error.**
+- **A Plex server that can't be reached is explained in plain words** instead of showing the Python
+  error. (#139)
+- **The run log no longer says "existing rows are left as they are" for a person whose rows that run
+  removed.** It says how many rows were removed.
+
+### Security
+
+- **Updated cryptography to 50.0.2 and urllib3 to 2.8.0.** The build-tool dependency brace-expansion is
+  also updated.
+
 ## [1.9.3] - 2026-09-27
 
 ### Changed
@@ -1693,6 +1807,10 @@ First public beta. Everything below ships in this release.
 - **Multiple rows + shared rows** — several rows per person and server-wide shared rows, each with
   its own sources, size, libraries, curation style/prompt, audience, schedule, placement, and
   poster.
+
+  _Later removed: per-row curation styles and prompts, the AI curator and "AI suggests from your
+  library" were withdrawn before 0.1.0-beta.9, when ranking and reasons moved into code. Per-row AI
+  instructions for AI web search returned in [Unreleased]._
 - **Freshness as a cadence** — rows stay stable and refresh every N days (nightly → fortnightly),
   so a person's row isn't reshuffled every night; unchanged rows skip the Plex write entirely.
 - **Row placement** — choose the Plex shelf (Home / library Recommended / both) and position, per

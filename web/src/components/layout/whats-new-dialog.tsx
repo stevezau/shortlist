@@ -1,7 +1,6 @@
 import { ExternalLink } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
-import { ReleaseNotes } from "@/components/layout/release-notes";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,8 +10,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate } from "@/lib/format";
 import { useMarkWhatsNewSeen, useWhatsNew } from "@/lib/queries";
+
+// The markdown renderer is ~116 kB, and this dialog is in the app shell, so a static import put it in
+// every first paint for a pop-up that opens at most once per release. Loaded with the dialog instead.
+const ReleaseNotes = lazy(() =>
+  import("@/components/layout/release-notes").then((module) => ({
+    default: module.ReleaseNotes,
+  })),
+);
+
+function NotesLoading() {
+  return (
+    <div role="status" className="space-y-2">
+      <span className="sr-only">Loading the release notes…</span>
+      <Skeleton className="h-4 w-1/3" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-5/6" />
+    </div>
+  );
+}
 
 /**
  * The release notes, shown once to the owner after an upgrade.
@@ -56,24 +75,26 @@ export function WhatsNewDialog() {
         </DialogHeader>
 
         <div className="-mx-6 min-h-0 flex-1 space-y-6 overflow-y-auto border-y px-6 py-4">
-          {releases.map((release) => (
-            <section
-              key={release.version}
-              className="space-y-3 text-sm text-muted-foreground"
-            >
-              {releases.length > 1 && (
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <h3 className="text-base font-semibold text-foreground">
-                    Shortlist {release.version}
-                  </h3>
-                  <p className="text-xs">
-                    {formatDate(release.published_at, { dateOnly: true })}
-                  </p>
-                </div>
-              )}
-              <ReleaseNotes markdown={release.notes} />
-            </section>
-          ))}
+          <Suspense fallback={<NotesLoading />}>
+            {releases.map((release) => (
+              <section
+                key={release.version}
+                className="space-y-3 text-sm text-muted-foreground"
+              >
+                {releases.length > 1 && (
+                  <div className="flex flex-wrap items-baseline gap-x-2">
+                    <h3 className="text-base font-semibold text-foreground">
+                      Shortlist {release.version}
+                    </h3>
+                    <p className="text-xs">
+                      {formatDate(release.published_at, { dateOnly: true })}
+                    </p>
+                  </div>
+                )}
+                <ReleaseNotes markdown={release.notes} />
+              </section>
+            ))}
+          </Suspense>
         </div>
 
         <DialogFooter className="gap-2 sm:items-center">

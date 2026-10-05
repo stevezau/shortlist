@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -54,6 +55,7 @@ EXPECTED_IDS = {
     "picked-for-you",
     "because-you-watched",
     "seen-it-already",
+    "your-requests",
     "fresh-finds",
     "from-the-vault",
     "popular-here",
@@ -61,6 +63,10 @@ EXPECTED_IDS = {
     "more-tv",
     "seasonal",
 }
+
+#: The AI templates (`AI_TEMPLATES` in row-templates.ts), kept apart so the ordinary gallery's set above
+#: stays exactly as strict. The AI row needs a theme to build, so its delivery proof builds one.
+AI_TEMPLATE_IDS = {"describe-a-row"}
 
 
 def _load_templates() -> dict[str, dict]:
@@ -86,8 +92,8 @@ def _load_templates() -> dict[str, dict]:
         except json.JSONDecodeError as e:  # pragma: no cover - only on a shape change
             raise AssertionError(f"could not parse template {template_id!r} from {TEMPLATES_TS}: {e}") from e
 
-    assert set(out) == EXPECTED_IDS, (
-        f"parsed {sorted(out)} but expected {sorted(EXPECTED_IDS)} — the gallery changed, so these "
+    assert set(out) == EXPECTED_IDS | AI_TEMPLATE_IDS, (
+        f"parsed {sorted(out)} but expected {sorted(EXPECTED_IDS | AI_TEMPLATE_IDS)} — the gallery changed, so these "
         "proofs must be updated to match rather than left asserting a stale set"
     )
     return out
@@ -110,6 +116,9 @@ def _spec(template_id: str, **overrides) -> RowSpec:
     # placement) on the spec, never a field the engine reads.
     values.pop("season_lead_days", None)
     values.pop("season_after_days", None)
+    # Whether the row runs at all is the server's switch, not a recipe the engine reads (the AI template
+    # ships switched off until the owner has seen its list).
+    values.pop("enabled", None)
 
     unsupported = [k for k in values if not hasattr(RowSpec, k) and k not in RowSpec.__annotations__]
     assert not unsupported, f"{template_id}: the engine has no setting for {unsupported}"
@@ -126,6 +135,9 @@ def _spec(template_id: str, **overrides) -> RowSpec:
 class TestEveryTemplateSaves:
     """Layer 1: every option a template sets exists all the way through the API."""
 
+    # The AI template is not here: the API refuses its {theme} name on a row with no theme, so it cannot
+    # round-trip bare. Its create/validate path is covered by the API tests for AI rows, and its delivery
+    # by test_describe_a_row_fills_from_its_theme_with_no_curator_call below.
     @pytest.mark.parametrize("template_id", sorted(EXPECTED_IDS))
     def test_the_api_accepts_it_and_gives_it_back_unchanged(self, template_id: str, client):
         values = TEMPLATES[template_id]
@@ -134,6 +146,9 @@ class TestEveryTemplateSaves:
         assert created.status_code == 201, f"{template_id}: {created.text}"
 
         body = created.json()
+        assert body["build"] == ("shared" if template_id in {"seasonal", "popular-here"} else "per_person")
+        assert body["audience"] == "everyone"
+        assert body["audience_user_ids"] == []
         for field, expected in values.items():
             assert body[field] == expected, f"{template_id}: {field} came back as {body[field]!r}, sent {expected!r}"
 
@@ -145,6 +160,8 @@ class TestEveryTemplateSaves:
         cid = client.post("/api/collections", json=values).json()["id"]
 
         reloaded = next(c for c in client.get("/api/collections").json() if c["id"] == cid)
+        assert reloaded["audience"] == "everyone"
+        assert reloaded["audience_user_ids"] == []
         for field, expected in values.items():
             assert reloaded[field] == expected, f"{template_id}: {field} did not persist"
 
@@ -322,18 +339,72 @@ class TestEveryTemplateDelivers:
         assert delivered, "the row delivered nothing"
         assert delivered[0] == 20, f"an already-watched title must LEAD the row, got {delivered}"
 
+    def test_your_requests_delivers_only_what_they_asked_for_newest_first(self, engine_ctx, mock_plextv):
+        """Claims: "Only what they asked for", "Newest first" — and the blurb's "once it's on Plex".
+
+        The row is built from the request ledger the run reads once for everyone; here it is handed
+        in directly, the way the pipeline's own tests do, because the proof is about what the row
+        makes of it. A recommendation pool is offered too, so "only what they asked for" has
+        something real to refuse.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine.requests_row import RequestedTitle, RequestLedger
+
+        spec = _spec("your-requests")
+        assert spec.requests_row, "the tile is a requests row"
+        assert spec.requests_window_days == 90, "the tile promises a season's worth"
+
+        def asked(tmdb_id: int, days_ago: int, *, on_disk: bool = True) -> RequestedTitle:
+            at = datetime.now(UTC) - timedelta(days=days_ago)
+            return RequestedTitle(
+                tmdb_id=tmdb_id,
+                media_type=MediaType.MOVIE,
+                plex_account_id=100,
+                requested_at=at,
+                landed_at=at,
+                on_disk=on_disk,
+                seasons_landed=True,
+                found_in=("overseerr",),
+            )
+
+        engine_ctx.request_ledger = RequestLedger(
+            titles=[
+                asked(10, 5),
+                asked(20, 1),
+                asked(30, 100),  # on Plex, but older than the 90-day window
+                asked(555, 2, on_disk=False),  # asked for, not here yet
+            ],
+            complete=True,
+        )
+        engine_ctx.history_source.fetch.return_value = _mixed_history()
+        engine_ctx.tmdb.suggestions.return_value = _movies(10, 20)
+        engine_ctx.config.rows = [spec]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(engine_ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in _picks_by_row(report)["your_requests"]]
+        assert delivered == [20, 10], f"newest arrival first, only what landed inside the window, got {delivered}"
+        engine_ctx.tmdb.suggestions.assert_not_called()
+        assert all(p.sources == ["requests"] for p in report.users[0].picks)
+
     def test_fresh_finds_delivers_nothing_already_watched_and_rebuilds_nightly(self, engine_ctx, mock_plextv):
         """Claims: "Rebuilds nightly" and "Nothing already watched"."""
         import shortlist.engine.pipeline as pipeline_mod
-        from shortlist.engine.rows import _is_refresh_night
+        from shortlist.engine.rows import _is_refresh_night, effective_idle_hold_days
 
         engine_ctx.config.max_seeds = 1
+        engine_ctx.config.watched_pct = 1.0
+        engine_ctx.config.idle_hold_days = 90
         engine_ctx.history_source.fetch.return_value = [
             *[make_watched("Seed", days_ago=i, rating_key=999) for i in range(1, 5)],
             make_watched(movie_title(20), days_ago=8, tmdb_id=20),  # finished
         ]
         engine_ctx.tmdb.suggestions.return_value = _movies(10, 20)
         spec = _spec("fresh-finds")
+        assert effective_idle_hold_days(spec, engine_ctx.config) == 0
         engine_ctx.config.rows = [spec]
         mock_plextv.users = [plextv_user(100, "sarah")]
 
@@ -351,6 +422,24 @@ class TestEveryTemplateDelivers:
         spec = _spec("from-the-vault")
         assert spec.refresh_days == 0
         assert not any(_is_refresh_night(spec.slug, "sarah", day, spec.refresh_days) for day in range(1, 400))
+
+    def test_from_the_vault_excludes_watched_even_when_the_global_default_allows_it(self, engine_ctx, mock_plextv):
+        import shortlist.engine.pipeline as pipeline_mod
+
+        engine_ctx.config.watched_pct = 1.0
+        engine_ctx.config.rows = [_spec("from-the-vault")]
+        engine_ctx.history_source.fetch.return_value = [
+            *_mixed_history(),
+            make_watched(movie_title(20), days_ago=8, tmdb_id=20),
+        ]
+        engine_ctx.tmdb.suggestions.side_effect = _both_types
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(engine_ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in _picks_by_row(report)["from_the_vault"]]
+        assert delivered, "the fake pool must have an unseen title to deliver"
+        assert 20 not in delivered, "the vault promises unseen picks regardless of the global watched cap"
 
     def test_popular_on_this_server_is_shared_and_needs_several_watchers(self, engine_ctx, mock_plextv):
         """Claims: "Shared with everyone" and "Needs 3 watchers" — a title one person watched must not
@@ -391,8 +480,11 @@ class TestEveryTemplateDelivers:
     def test_movie_night_is_movies_only_ten_picks_and_weekly(self, engine_ctx, mock_plextv):
         """Claims: "Movies only", "10 picks", "Weekly"."""
         import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine.rows import effective_idle_hold_days
 
         spec = _spec("movie-night")
+        engine_ctx.config.idle_hold_days = 90
+        assert effective_idle_hold_days(spec, engine_ctx.config) == 0
         assert spec.media == "movie"
         assert spec.size == 10
         assert spec.refresh_days == 7, "the tile says weekly, so the cadence must BE weekly"
@@ -425,9 +517,17 @@ class TestEveryTemplateDelivers:
         values = TEMPLATES["seasonal"]
         assert values["seasons"] == ["valentines", "halloween", "christmas"]
         lead, after = values["season_lead_days"], values["season_after_days"]
-        assert seasons.shown_on(values["seasons"], lead, after, date(2026, 9, 30)) is None
-        assert seasons.shown_on(values["seasons"], lead, after, date(2026, 10, 1)).season.slug == "halloween"
-        spec = _spec("seasonal", season=RowSeason("halloween", "Halloween", "🎃", date(2026, 10, 31)))
+        catalogue = seasons.BUILTIN_SEASONS
+        assert seasons.shown_on(values["seasons"], lead, after, date(2026, 9, 30), catalogue=catalogue) is None
+        assert (
+            seasons.shown_on(values["seasons"], lead, after, date(2026, 10, 1), catalogue=catalogue).season.slug
+            == "halloween"
+        )
+        # Choosing Per person is still supported; template defaults must never rewrite that choice.
+        spec = replace(
+            _spec("seasonal", season=RowSeason("halloween", "Halloween", "🎃", date(2026, 10, 31))),
+            shared=False,
+        )
         assert all(_is_refresh_night(spec.slug, "sarah", day, spec.refresh_days) for day in range(1, 30))
 
         engine_ctx.history_source.fetch.return_value = _mixed_history()
@@ -439,6 +539,7 @@ class TestEveryTemplateDelivers:
             else []
         )
         engine_ctx.config.rows = [spec]
+        engine_ctx.config.seasons = dict(catalogue)
         mock_plextv.users = [plextv_user(100, "sarah")]
         profile = make_profile("sarah", account_id=100)
 
@@ -448,6 +549,40 @@ class TestEveryTemplateDelivers:
         assert [p.tmdb_id for p in picks] == [20], "a film outside the season reached a seasonal row"
         rendered = render_row_name(resolve_row_template(spec, profile, engine_ctx.config), profile, picks, "Movies")
         assert rendered == "🎃 Halloween picks"
+
+    def test_seasonal_defaults_to_one_shared_row_with_two_watchers_and_seasonal_titles(self, engine_ctx, mock_plextv):
+        from datetime import date
+
+        import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine import seasons
+        from shortlist.engine.models import RowSeason
+
+        spec = _spec("seasonal", season=RowSeason("halloween", "Halloween", "🎃", date(2026, 10, 31)))
+        assert spec.shared
+        assert spec.min_watchers == 2
+        engine_ctx.config.rows = [spec]
+        engine_ctx.config.seasons = dict(seasons.BUILTIN_SEASONS)
+        # Both people watched Halloween 20 and non-seasonal 10. Only Sarah watched Halloween 30.
+        common = [make_watched(movie_title(i), days_ago=1, tmdb_id=i) for i in (10, 20)]
+        engine_ctx.history_source.fetch.side_effect = lambda user, **kw: (
+            [*common, make_watched(movie_title(30), days_ago=2, tmdb_id=30)]
+            if user.username == "sarah"
+            else list(common)
+        )
+        engine_ctx.tmdb.discover_all.side_effect = lambda media, params: (
+            [{"id": i, "title": movie_title(i), "genre_ids": [27]} for i in (20, 30)]
+            if media is MediaType.MOVIE and "with_keywords" in params
+            else []
+        )
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+
+        report = pipeline_mod.run(
+            engine_ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)]
+        )
+
+        shared_reports = [user for user in report.users if user.slug.startswith("shared")]
+        assert len(shared_reports) == 1
+        assert [p.tmdb_id for p in shared_reports[0].picks] == [20]
 
     def test_more_tv_to_watch_excludes_a_series_already_started(self, engine_ctx, mock_plextv):
         """Claims: "TV only" and "Never started" — the second is stricter than the normal filter, which
@@ -473,3 +608,44 @@ class TestEveryTemplateDelivers:
         assert all(p.media_type is MediaType.SHOW for p in picks), "a movie reached a TV-only row"
         assert 30 not in delivered, "a series they had already started reached a 'to start' row"
         assert 40 in delivered
+
+    def test_describe_a_row_fills_from_its_theme_with_no_curator_call(self, engine_ctx, mock_plextv):
+        """Claims: "The AI writes the list once" and "One row each". The AI is not asked again at run
+        time: the row is picked in code from a theme's titles. Its wider behaviour (ranking, reasons,
+        failure handling) is covered in tests/unit/test_themes_rows.py."""
+        import shortlist.engine.pipeline as pipeline_mod
+        from shortlist.engine.models import RowLimits
+        from shortlist.engine.themes import ThemeSpec
+
+        tag = 555
+        theme = ThemeSpec(
+            slug="twists",
+            name="Twist endings",
+            emoji="🌀",
+            media=(MediaType.MOVIE,),
+            tags=(tag,),
+            genres=(),
+            excluded_genres=(),
+            collections=(),
+            picks=(),
+            rules=RowLimits(),
+            min_votes=None,
+        )
+        spec = _spec("describe-a-row", theme=theme, media="movie")
+        assert not spec.shared, "the tile says one row each"
+
+        engine_ctx.history_source.fetch.return_value = _mixed_history()
+        engine_ctx.tmdb.suggestions.return_value = _movies(10)
+        engine_ctx.tmdb.discover_all.side_effect = lambda media, params: (
+            [{"id": i, "title": f"Movie {i}", "genre_ids": [], "vote_average": 7.0} for i in (10, 20)]
+            if media is MediaType.MOVIE and params.get("with_keywords") == str(tag)
+            else []
+        )
+        engine_ctx.config.rows = [spec]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(engine_ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = {p.tmdb_id for p in _picks_by_row(report)["describe_a_row"]}
+        assert delivered == {10, 20}, f"the row must hold the theme's titles, got {delivered}"
+        engine_ctx.curator.complete.assert_not_called()

@@ -36,10 +36,12 @@ from shortlist.engine.models import (
     EngineConfig,
     HubAnchor,
     MediaType,
+    OverTime,
     Pick,
     PosterSpec,
     RequestConfig,
     RequestOverrides,
+    RequestSources,
     RowOverride,
     RowSpec,
     SeerrTarget,
@@ -53,6 +55,8 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
 )
 from shortlist.engine.rows import row_shown_today
+from shortlist.engine.themes import ThemeSpec
+from shortlist.engine.web_guidance import AiInstructions
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -63,6 +67,8 @@ from shortlist.server.db.models import (
     PickRow,
     RequestCandidate,
     Server,
+    Theme,
+    ThemeHistory,
     User,
     WatchedTitle,
     WatchSyncState,
@@ -70,9 +76,18 @@ from shortlist.server.db.models import (
     utcnow,
 )
 from shortlist.server.prefs import blocked_ids
+from shortlist.server.services.pick_history import DbPickHistory
+from shortlist.server.services.plex_reachability import explained
 from shortlist.server.services.poster_service import load_upload, make_studio
+from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.sse import EventBus
+from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
+
+#: The season editor's PMS reads (#137). A page waits on them, so a stalled server fails in seconds rather
+#: than holding the tab for a run's `plex.timeout_s` — `api/system._INTERACTIVE_TIMEOUT_S`'s reasoning.
+#: A library scan pages through the PMS, so no single read in it is long.
+EDITOR_PLEX_TIMEOUT_S = 8
 
 
 def curator_kwargs(get: Callable[[str], object]) -> dict:
@@ -384,7 +399,9 @@ class ContextBuilder:
                 raise RuntimeError("Plex connection is not configured yet — finish setup first")
             # A large TV library's collection rebuild legitimately takes 15-20s+; the configured
             # per-call timeout (default 45s) gives those headroom instead of timing out + retrying.
-            plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
+            # The run page is where this lands, so say where the address is changed.
+            with explained(plex_url, fix_hint=" Change the address under Settings → Connections."):
+                plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
             _refuse_a_different_server(session, plex.machine_id)
             plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
@@ -426,6 +443,7 @@ class ContextBuilder:
             previous_recipes = self._previous_recipes(previous)
             delivered_keys = self._delivered_keys(session)
             delivered_details = self._delivered_details(session)
+            delivered_seasons = self._delivered_seasons(session)
             # Opted-out accounts: with hide_shared_from_disabled, even public shared rows are hidden
             # from them, so disabling a user removes them from Shortlist entirely.
             disabled_account_ids = {u.plex_account_id for u in session.query(User).filter_by(enabled=False).all()}
@@ -491,6 +509,8 @@ class ContextBuilder:
                 curator=curator,
                 snapshots=DbSnapshotStore(self._sessions),
                 index_cache=DbCache(self._sessions, kind="library_index"),
+                # The factory, not a session: the engine reads it from worker threads for the whole run.
+                pick_history=DbPickHistory(self._sessions),
                 web_search_cache=DbCache(self._sessions, kind="websearch"),
                 mdblist=self._build_mdblist(store),
                 concurrency=concurrency,
@@ -498,6 +518,7 @@ class ContextBuilder:
                 previous_recipes=previous_recipes,
                 delivered_keys=delivered_keys,
                 delivered_details=delivered_details,
+                delivered_seasons=delivered_seasons,
                 pms_for_user=_pms_for_user,
                 # Same token `_pms_for_user` builds its client from — including the canary fallback
                 # for a Home profile that was never separately shared.
@@ -513,6 +534,10 @@ class ContextBuilder:
                 may_delete_orphans=True,
                 handled_requests=self._handled_requests(session),
                 progress=progress,
+                # Everyone who could own a tag, not the run's scope and not only the enabled: the
+                # request ledger must see that a tag two people share is ambiguous even when one of
+                # them is disabled, paused or simply not in tonight's run.
+                roster=self.all_profiles(session),
             )
 
     def _build_mdblist(self, store: SettingsStore) -> MdbListClient | None:
@@ -580,6 +605,10 @@ class ContextBuilder:
                 history_source=ShareTokenWatchSource(plex, plextv, owner_token=plex_token),
                 curator=make_curator(""),
                 snapshots=DbSnapshotStore(self._sessions),
+                pick_history=DbPickHistory(self._sessions),
+                # The watch sync reads people this many at a time. Only `engine_run` and the watch
+                # sync consult it, and every plex-only caller of `engine_run` passes no users.
+                concurrency=int(store.get("run.concurrency") or 1),
             )
 
     def build_requests_only(self) -> tuple[RequestConfig | None, TmdbClient]:
@@ -593,6 +622,63 @@ class ContextBuilder:
             store = SettingsStore(session, self._secrets)
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             return self._build_requests(store), tmdb
+
+    def build_tmdb_only(self) -> TmdbClient | None:
+        """A TMDB client on the shared cache, or None when no API key is set. Touches no network."""
+        with self._sessions() as session:
+            api_key = SettingsStore(session, self._secrets).get("tmdb.apikey")
+        return TmdbClient(api_key, cache=DbCache(self._sessions)) if api_key else None
+
+    def build_plex_reader(self) -> PlexClient | None:
+        """The owner's PMS for the season editor's reads, or None before setup has connected one.
+
+        Connects to the server, so call it off the event loop. Read-only by use, not by type: nothing that
+        holds this client writes (plex-safety rule 4 — a collection a season reads is never touched).
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            url, token = store.get("plex.url"), store.get("plex.token")
+        if not url or not token:
+            return None
+        return PlexClient(url, token, timeout=EDITOR_PLEX_TIMEOUT_S)
+
+    def build_request_sources_only(self) -> tuple[RequestSources | None, list[UserProfile], dict[int, int]]:
+        """What the requests-row setup check reads: the sources, the roster, and each person's DB id.
+
+        The third item maps ``plex_account_id`` -> ``users.id``, because a `UserProfile` carries only
+        the Plex id the engine keys on while the API answers in DB ids. No Plex/LLM/TMDB client is built:
+        the check reads Overseerr and the Arrs and nothing else.
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            # The same roster the run resolves tags against, so the preview cannot show a tag as
+            # one person's that the run will read as ambiguous. A disabled person is still on the
+            # Users page, and their cell should not read "No account" because they are off.
+            profiles = self.all_profiles(session)
+            db_ids = {
+                u.plex_account_id: u.id
+                for u in session.query(User).filter(User.departed_at.is_(None), User.removed_at.is_(None)).all()
+            }
+            return self._build_request_sources(store), profiles, db_ids
+
+    def profile_with_history(self, session: Session, user_id: int) -> UserProfile:
+        """One person's profile with their watch history read the way a run reads it — for authoring a theme.
+
+        Raises RuntimeError if Plex isn't configured yet, LookupError if the person is gone.
+        """
+        user = session.get(User, user_id)
+        if user is None:
+            raise LookupError("user not found")
+        store = SettingsStore(session, self._secrets)
+        plex_url, plex_token = store.get("plex.url"), store.get("plex.token")
+        if not plex_url or not plex_token:
+            raise RuntimeError("Plex connection is not configured yet")
+        profile = self._profile(user, {})
+        plex = PlexClient(plex_url, plex_token)
+        plextv = PlexTvClient(plex_token, plex.machine_id)
+        history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
+        profile.history = history.fetch(profile, min_completion=EngineConfig().min_completion)
+        return profile
 
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         """Recent watches for one user, newest first — the same source that feeds recommendations.
@@ -814,6 +900,12 @@ class ContextBuilder:
             for row in rows
         }
 
+    def _delivered_seasons(self, session: Session) -> dict[tuple[str, str, str], str]:
+        """The season each collection was last built for, keyed like `_delivered_keys`. Only collections
+        carrying a record: one delivered before seasons were recorded is judged by its picks' recipe."""
+        rows = session.query(Delivery).filter(Delivery.season.isnot(None))
+        return {(row.user_slug, row.collection_slug, row.library_key): row.season for row in rows}
+
     def _previous_picks(self, session: Session) -> dict[tuple[str, str, str], list[Pick]]:
         """Each row+library's picks from the run that last built it, keyed (user_slug, row_slug, section_key).
 
@@ -939,30 +1031,47 @@ class ContextBuilder:
             # person can see anything.
             if user.restricted and user.restriction_profile:
                 continue
-            prefs = user.prefs or {}
-            if prefs.get("paused"):
+            if (user.prefs or {}).get("paused"):
                 continue
-            # The tag the owner typed on this person, if any. The AUTOMATIC alternative — their slug,
-            # under `requests.auto_user_tag` — is applied in the engine, not here: it is overridable
-            # per row, so it cannot be baked into one value that every row then shares.
-            request_tag = (user.request_tag or "").strip()
-            profiles.append(
-                UserProfile(
-                    username=user.username,
-                    plex_account_id=user.plex_account_id,
-                    user_type=UserType(user.user_type),
-                    slug=user.slug,
-                    nickname=user.nickname or user.friendly_name,
-                    excluded_genres=set(prefs.get("excluded_genres") or []),
-                    # Through the reader, not straight off prefs: the list holds bare ints on an
-                    # older install and records on a newer one, and the engine only wants ids.
-                    blocked_seeds=blocked_ids(prefs),
-                    row_name_template=prefs.get("row_name_tpl"),
-                    request_tag=request_tag,
-                    row_overrides=overrides.get(user.id, {}),
-                )
-            )
+            profiles.append(self._profile(user, overrides))
         return profiles
+
+    def all_profiles(self, session: Session) -> list[UserProfile]:
+        """Everyone who could own a requester tag: every user still on the server, enabled or not.
+
+        The request ledger resolves tags against this list. Disabling or pausing someone takes them
+        out of the run, not off their tag — so a tag two people share has to stay ambiguous while
+        one of them is switched off, or the other's private row fills with the disabled person's
+        requests. Only a person plex.tv stopped listing (`departed_at`) or the owner filed away
+        (`removed_at`) is off it. Someone here who is not in the run is harmless: the pipeline only
+        asks the ledger for the people it builds for.
+        """
+        overrides = self._row_overrides(session)
+        query = session.query(User).filter(User.departed_at.is_(None), User.removed_at.is_(None))
+        return [self._profile(user, overrides) for user in query.all()]
+
+    @staticmethod
+    def _profile(user: User, overrides: dict[int, dict[str, RowOverride]]) -> UserProfile:
+        prefs = user.prefs or {}
+        # The tag the owner typed on this person, if any. The AUTOMATIC alternative — their slug,
+        # under `requests.auto_user_tag` — is applied in the engine, not here: it is overridable
+        # per row, so it cannot be baked into one value that every row then shares.
+        request_tag = (user.request_tag or "").strip()
+        return UserProfile(
+            username=user.username,
+            plex_account_id=user.plex_account_id,
+            user_type=UserType(user.user_type),
+            slug=user.slug,
+            nickname=user.nickname or user.friendly_name,
+            excluded_genres=set(prefs.get("excluded_genres") or []),
+            # Through the reader, not straight off prefs: the list holds bare ints on an
+            # older install and records on a newer one, and the engine only wants ids.
+            blocked_seeds=blocked_ids(prefs),
+            row_name_template=prefs.get("row_name_tpl"),
+            request_tag=request_tag,
+            requested_by_tag=(user.requested_by_tag or "").strip(),
+            row_overrides=overrides.get(user.id, {}),
+        )
 
     @staticmethod
     def _row_overrides(session: Session) -> dict[int, dict[str, RowOverride]]:
@@ -998,13 +1107,23 @@ class ContextBuilder:
         }
 
     @staticmethod
-    def _build_only_slugs(session: Session, collection_ids: list[int] | None) -> frozenset[str] | None:
+    def _build_only_slugs(
+        session: Session, collection_ids: list[int] | None, *, dry_run: bool = False
+    ) -> frozenset[str] | None:
         """The row slugs a scoped (per-row scheduled) run rebuilds; None = a full run builds every row.
-        Intersected with ``enabled=True`` so a stale schedule for a since-disabled row rebuilds nothing."""
+        Intersected with ``enabled=True`` so a stale schedule for a since-disabled row rebuilds nothing.
+        A DRY run is the exception: a row it names is tried even while switched off (`_dry_run_rows`)."""
         if collection_ids is None:
             return None
-        rows = session.query(Collection).filter(Collection.id.in_(collection_ids), Collection.enabled).all()
+        enabled = Collection.enabled | Collection.id.in_(collection_ids) if dry_run else Collection.enabled
+        rows = session.query(Collection).filter(Collection.id.in_(collection_ids), enabled).all()
         return frozenset(row.slug for row in rows)
+
+    @staticmethod
+    def _dry_run_rows(collection_ids: list[int] | None, dry_run: bool) -> frozenset[int]:
+        """The switched-off rows a run may build anyway: those a DRY run names (an AI row's "Try it" before it goes
+        live). A real run never builds a disabled row, and an unscoped run names none."""
+        return frozenset(collection_ids) if dry_run and collection_ids else frozenset()
 
     def _engine_config(
         self,
@@ -1021,6 +1140,9 @@ class ContextBuilder:
         a field forgotten here is invisible: the setting saves, the UI shows it, and the engine simply
         never sees it.
         """
+        # One catalogue for the whole run: the rows' specs resolve tonight's season from it, and the engine
+        # reads each season's titles from the same one.
+        catalogue = load_catalogue(session)
         return EngineConfig(
             row_size=int(store.get("row.size")),
             row_name_template=store.get("row.name_template"),
@@ -1031,6 +1153,7 @@ class ContextBuilder:
                 tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
             },
             web_search_provider=store.get("llm_web.search_provider") or "native",
+            web_instructions=str(store.get("llm_web.instructions") or ""),
             manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
             # The `or` fallbacks below are safe only because the validators exclude the falsy
             # value: `min_history` is bounded 1-100, `recent_count` 1-25, `max_seeds` 5-100
@@ -1062,7 +1185,9 @@ class ContextBuilder:
             dislike_threshold=(_dislike_threshold(store) if store.get("recommendations.use_plex_ratings") else None),
             hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
             dry_run=dry_run,
-            rows=self._build_rows(session, store),
+            rows=self._build_rows(
+                session, store, catalogue=catalogue, include_ids=self._dry_run_rows(collection_ids, dry_run)
+            ),
             # The server owns the row list: an empty one means every row is DISABLED, not
             # 'unconfigured' — so nothing new is delivered, rather than the legacy default row
             # being resurrected behind a Rows page that shows it switched off.
@@ -1070,14 +1195,23 @@ class ContextBuilder:
             # ...and a row switched off has its already-built collection removed from its owner's
             # Home on this run, so "off" means gone, not merely "not refreshed". Runs stay full
             # here even when scoped: retiring a DISABLED row on any run is always correct.
-            retired_rows=self._retired_rows(session, store),
+            retired_rows=self._retired_rows(session, store, keep_ids=self._dry_run_rows(collection_ids, dry_run)),
             # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
             # delivery only — classification/sync/sweep/promotion above still see the full list.
-            build_only=self._build_only_slugs(session, collection_ids),
+            build_only=self._build_only_slugs(session, collection_ids, dry_run=dry_run),
             requests=self._build_requests(store),
+            request_sources=self._build_request_sources(store),
+            seasons=catalogue,
         )
 
-    def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
+    def _build_rows(
+        self,
+        session: Session,
+        store: SettingsStore,
+        *,
+        catalogue: seasons_mod.Catalogue,
+        include_ids: frozenset[int] = frozenset(),
+    ) -> list[RowSpec]:
         """Build the engine's row specs from the enabled collections.
 
         The default 'picked' row keeps an empty name_template here, so the per-user row-name on the
@@ -1087,12 +1221,18 @@ class ContextBuilder:
         Always ALL enabled rows — never scoped. A per-row scheduled run limits which rows actually
         rebuild via ``EngineConfig.build_only``, not by hiding rows from this list, so privacy
         classification, the share-filter sync, the sweep, and promotion all still see every row.
+
+        ``include_ids`` are switched-off rows built anyway, for a dry run that names them; a dry run writes
+        nothing, so nothing reaches Plex for a row the owner has not switched on.
         """
         account_by_user, audience_by_collection = self._audience_maps(session)
 
         specs: list[RowSpec] = []
         collections = (
-            session.query(Collection).filter_by(enabled=True).order_by(Collection.sort_order, Collection.id).all()
+            session.query(Collection)
+            .filter(Collection.enabled | Collection.id.in_(include_ids))
+            .order_by(Collection.sort_order, Collection.id)
+            .all()
         )
         # ONE clock read for the whole context, not one per row: built a millisecond either side of
         # midnight, two rows would otherwise disagree about what day it is.
@@ -1111,11 +1251,20 @@ class ContextBuilder:
             # before a season opens, that season, so it is built while still hidden. None between
             # seasons is what makes the row dormant.
             shown = row_shown_today(
-                collection.show_days, collection.seasons, collection.season_lead_days, collection.season_after_days, now
+                collection.show_days,
+                collection.seasons,
+                collection.season_lead_days,
+                collection.season_after_days,
+                now,
+                catalogue=catalogue,
             )
             season = (
                 seasons_mod.row_season_on(
-                    list(collection.seasons), collection.season_lead_days, collection.season_after_days, now.date()
+                    list(collection.seasons),
+                    collection.season_lead_days,
+                    collection.season_after_days,
+                    now.date(),
+                    catalogue=catalogue,
                 )
                 if collection.seasons
                 else None
@@ -1144,6 +1293,11 @@ class ContextBuilder:
                     recency=collection.recency,  # None -> inherit the global recency
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
+                    max_runtime=collection.max_runtime,  # the four limits: None = no limit
+                    min_year=collection.min_year,
+                    max_year=collection.max_year,
+                    # float(): RowLimits.fingerprint formats it as given, and 7 vs 7.0 must not change the recipe.
+                    min_rating=None if collection.min_rating is None else float(collection.min_rating),
                     cold_start=collection.cold_start,  # None -> inherit the global recommendations.cold_start
                     # "" means this row has no name for someone who cannot be named, and is therefore
                     # not built for them — the engine never invents one (issue #84).
@@ -1157,14 +1311,61 @@ class ContextBuilder:
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],
                     poster=self._build_poster(session, collection),
+                    ai_instructions=AiInstructions.from_stored(collection.prompt),
                     request_overrides=row_request_overrides(collection),
                     description=collection.description or "",
                     sort_title_prefix=collection.sort_title_prefix or "",
                     seasons=list(collection.seasons or []),
                     season=season,
+                    theme=self._theme_spec(session, collection),
+                    over_time=OverTime(
+                        refresh_share=collection.refresh_share,
+                        repeat_cooldown_days=collection.repeat_cooldown_days,
+                        avoid_rows=tuple(collection.avoid_rows or ()),
+                    ),
+                    person_themes=self._person_themes(session, collection, audience_by_collection),
+                    requests_row=bool(collection.requests_row),
+                    requests_window_days=int(
+                        collection.requests_window_days if collection.requests_window_days is not None else 90
+                    ),
+                    requests_tag_pattern=(collection.requests_tag_pattern or "").strip(),
                 )
             )
         return specs
+
+    @staticmethod
+    def _person_themes(
+        session: Session, collection: Collection, audience_by_collection: dict[int, set[int]]
+    ) -> tuple[tuple[str, ThemeSpec], ...]:
+        """Each person's own current theme on an explore row (#138); empty for any other row.
+
+        Read from the DB, never from a clock: the rotation job decides when a theme changes, and a row
+        built before it runs simply builds with the theme the person still has. Someone with no current
+        theme is left out, and the engine gives them the row's own theme.
+        """
+        if collection.theme_id is None or collection.theme_mode != "explore":
+            return ()
+        query = (
+            session.query(User.slug, Theme)
+            .join(ThemeHistory, ThemeHistory.user_id == User.id)
+            .join(Theme, Theme.id == ThemeHistory.theme_id)
+            .filter(ThemeHistory.collection_id == collection.id, ThemeHistory.state == "current")
+            # Someone the run no longer builds for must not cost it a TMDB read of their theme.
+            .filter(User.enabled.is_(True), User.departed_at.is_(None), User.removed_at.is_(None))
+            .order_by(User.id, ThemeHistory.started_at.desc(), ThemeHistory.id.desc())
+        )
+        if collection.audience == "subset":
+            query = query.filter(User.id.in_(audience_by_collection.get(collection.id, set())))
+        themes: dict[str, ThemeSpec] = {}
+        for slug, theme in query:
+            themes.setdefault(slug, spec_from_row(theme))
+        return tuple(themes.items())
+
+    @staticmethod
+    def _theme_spec(session: Session, collection: Collection) -> ThemeSpec | None:
+        """The theme an AI row (#138) is filled from, or None for an ordinary row."""
+        theme = session.get(Theme, collection.theme_id) if collection.theme_id is not None else None
+        return None if theme is None else spec_from_row(theme)
 
     @staticmethod
     def _build_poster(session: Session, collection) -> PosterSpec | None:
@@ -1203,7 +1404,9 @@ class ContextBuilder:
         """
         return cls._parse_hub_anchors(collection.hub_anchor or {})
 
-    def _retired_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
+    def _retired_rows(
+        self, session: Session, store: SettingsStore, *, keep_ids: frozenset[int] = frozenset()
+    ) -> list[RowSpec]:
         """Per-person rows that are DISABLED, and every enabled SHARED row's per-person copies — all to be removed.
 
         Only enough of each spec to find and delete the collection (its rendered title, media and
@@ -1232,6 +1435,8 @@ class ContextBuilder:
         retired: list[RowSpec] = []
         disabled = session.query(Collection).filter_by(enabled=False, build="per_person").all()
         for collection in disabled:
+            if collection.id in keep_ids:  # a dry run is building this row, not retiring it
+                continue
             is_default = collection.slug == DEFAULT_SLUG
             # The template this row's title actually renders from — the global one for the default
             # row, its own for a custom row. Skip any that RENDERS to the default title with no picks:
@@ -1282,6 +1487,43 @@ class ContextBuilder:
                         before=bool(entry.get("before", False)),
                     )
         return anchors
+
+    @staticmethod
+    def _build_request_sources(store: SettingsStore) -> RequestSources | None:
+        """Where a requests row reads from — every app with a URL and key, whatever `requests.*` says.
+
+        Independent of `_build_requests`: the owner may send nothing through Shortlist and still want
+        the row. Only the Overseerr account Shortlist FILES AS is excluded, and only while it actually
+        files there — otherwise that account's requests are somebody's own.
+        """
+
+        def seerr() -> SeerrTarget | None:
+            url = (store.get("requests.overseerr.url") or "").strip()
+            key = store.get("requests.overseerr.apikey") or ""
+            if not (url and key):
+                return None
+            request_as = int(store.get("requests.overseerr.request_as_user_id") or 0)
+            return SeerrTarget(url=url, api_key=key, request_as_user_id=request_as)
+
+        def arr(prefix: str) -> ArrTarget | None:
+            url = (store.get(f"{prefix}.url") or "").strip()
+            key = store.get(f"{prefix}.apikey") or ""
+            if not (url and key):
+                return None
+            # Reading needs no profile, folder or tag — those say where a NEW request is filed.
+            return ArrTarget(url=url, api_key=key, quality_profile_id=0, root_folder="", tag="")
+
+        overseerr, radarr, sonarr = seerr(), arr("requests.radarr"), arr("requests.sonarr")
+        if not (overseerr or radarr or sonarr):
+            return None
+        sends_via_seerr = bool(store.get("requests.enabled")) and store.get("requests.target") == "overseerr"
+        return RequestSources(
+            overseerr=overseerr,
+            radarr=radarr,
+            sonarr=sonarr,
+            exclude_seerr_user_id=overseerr.request_as_user_id if overseerr and sends_via_seerr else 0,
+            shortlist_tag=(store.get("requests.tag") or "").strip(),
+        )
 
     @staticmethod
     def _build_requests(store: SettingsStore) -> RequestConfig | None:

@@ -14,8 +14,8 @@ import { useHashScroll } from "@/lib/use-hash-scroll";
  * `/rows/new?template=<id>` to add, `/rows/:id` to edit. A page rather than the dialog it used to
  * be: a modal is capped at 90% of the viewport, and that cap — not the number of settings — is what
  * forced every group of settings into a collapsed accordion, which in turn hid the warnings that
- * only matter before you save. A page also gives the outcome preview somewhere to live, and makes a
- * single setting linkable from anywhere else in the app.
+ * only matter before you save. A page shows every section at once, and makes a single section
+ * linkable from anywhere else in the app (`/rows/3#schedule`).
  */
 export function RowEditPage() {
   const { id } = useParams();
@@ -59,6 +59,8 @@ export function RowEditPage() {
               collection={collection}
               template={template}
               users={users.data ?? []}
+              audienceState={users.isError ? "error" : users.isPending ? "loading" : "ready"}
+              onRetryAudience={() => { void users.refetch(); }}
               onClose={() => navigate("/rows")}
               onRename={(proposedName, saved) =>
                 collection &&

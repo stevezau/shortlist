@@ -15,6 +15,7 @@ export const CTX: RowKindContext = {
   defaultRowName: "✨ {library_name} Picked for You",
   globalSources: ["tmdb_similar", "tmdb_discover"],
   seasonCatalogue: ["valentines", "halloween", "christmas"],
+  builtinSeasons: ["valentines", "halloween", "christmas"],
 };
 
 export const BYW_NAME = "🎯 Because you watched {top_seed}";
@@ -82,6 +83,7 @@ export const FIXTURES: [string, Collection, RowKindContext][] = [
   ["Because you watched", row({ ...named(BYW_NAME), max_seeds: 2 }), CTX],
   ["Watch it again", row({ ...named("☕ {library_name} you've already seen"), rewatch: true, watched_pct: 1 }), CTX],
   ["Popular on this server", row({ ...named("👥 Popular {library_name}"), build: "shared", min_watchers: 3 }), CTX],
+  ["Your requests", row({ ...named("📬 {library_name} you asked for"), requests_row: true, requests_window_days: 90 }), CTX],
   ["Seasonal", row({ ...named("{season_emoji} {season} picks"), seasons: ["halloween"] }), CTX],
   [
     "row 2's live state",

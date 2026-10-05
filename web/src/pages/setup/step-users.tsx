@@ -99,12 +99,10 @@ export function StepUsers() {
             asks the owner to DO something (switch themselves on) is the one that has to survive a
             skim, and it stopped standing out once the caveat behind it grew to five lines. */}
         <p className="mt-2 text-muted-foreground">
-          Your own Home screen only ever shows your row. What Plex can&rsquo;t
-          do is keep <em>other</em> people&rsquo;s rows out of the
-          library&rsquo;s <strong>Collections</strong> tab and{" "}
-          <strong>Recommended</strong> shelf for you &mdash; you own the server,
-          so you have no share with yourself, and there is nothing for Plex to
-          hide them behind. Everyone else still only ever sees their own.
+          Your Home screen shows your own rows. Plex cannot hide other people’s rows from
+          you in a library’s <strong>Collections</strong> tab or <strong>Recommended</strong> shelf,
+          because the owner has no sharing restrictions. Managed accounts with parental
+          profiles also have limits on hiding rows.
         </p>
 
         {/* This used to end with "look for You see everyone's rows on the Users page" — a forward

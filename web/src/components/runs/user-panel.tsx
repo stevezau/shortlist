@@ -19,6 +19,7 @@ import {
 import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { githubIssueSnippet } from "@/lib/github";
+import { RATING_LABELS, type RatingSource } from "@/lib/rating-sources";
 import { describeStage } from "@/lib/run-stages";
 import { useCopy } from "@/lib/use-copy";
 import { cn } from "@/lib/utils";
@@ -61,15 +62,24 @@ function CopyForGitHubButton({
   );
 }
 
-/** The score recorded for a pick when it was chosen, e.g. "TMDB 7.4".
+/** The score shown for a pick, e.g. "IMDb 7.7" or "TMDB 7.4".
  *
- *  Always TMDB: `Candidate.rating` is TMDB's `vote_average`, and that is what is stamped onto the
- *  pick. A server set to rank by IMDb/Trakt/Rotten Tomatoes fetches those through MDBList only to
- *  ORDER a rating-sorted row — the number is never written back — so labelling this with the
- *  configured source would put a name on a figure that did not come from it.
+ *  `rating` is always TMDB's `vote_average`. A row sorted on another service (IMDb/Trakt/… via
+ *  MDBList) also carries `order_rating` + `order_rating_source`: that is the number its order follows,
+ *  so it is shown instead — TMDB's figure beside an IMDb-sorted list reads as an unordered row.
+ *  Runs recorded before those fields existed carry only `rating`, which is TMDB's, so they keep the
+ *  TMDB label.
  *
- *  0 means "unrated at pick time", which is not a score and must not render as "TMDB 0.0". */
+ *  0 means "unrated", which is not a score and must not render as "TMDB 0.0". */
 function ratingLabel(pick: Pick): string {
+  if (pick.order_rating != null && pick.order_rating_source) {
+    const name =
+      RATING_LABELS[pick.order_rating_source as RatingSource] ??
+      pick.order_rating_source;
+    return pick.order_rating
+      ? `${name} ${pick.order_rating.toFixed(1)}`
+      : `${name} unrated`;
+  }
   return pick.rating ? `TMDB ${pick.rating.toFixed(1)}` : "";
 }
 
@@ -152,7 +162,7 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
         title={isNew ? "New this run" : "Kept from last run"}
       />
       <span className="min-w-0 flex-1 text-sm">
-        <span className="block truncate">
+        <span className="block break-words">
           <span className="font-medium">{pick.title}</span>
           {/* Release year sits with the TITLE, not on the metadata line: "is this an old film?" is
               asked while reading the name, and the Recent releases setting is judged on it. Absent
@@ -164,7 +174,7 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
             </span>
           )}
           {pick.reason && (
-            <span className="text-muted-foreground"> — {pick.reason}</span>
+            <span className="block text-xs leading-relaxed text-muted-foreground">{pick.reason}</span>
           )}
         </span>
         {/* Where it came from. This page has its own pick renderer rather than using PickList, so
@@ -276,7 +286,7 @@ function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
  *  hovering to guess. Shown once above a person's rows. */
 function ResultsLegend() {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
       <span className="font-medium text-foreground/70">What changed:</span>
       <span className="inline-flex items-center gap-1.5">
         <span className="h-2 w-2 rounded-full bg-success" aria-hidden="true" />
@@ -425,12 +435,7 @@ export function UserPanel({
             )
           )}
           {result.has_trace && userId !== null && userId !== undefined && (
-            <Button
-              asChild
-              variant="secondary"
-              size="sm"
-              className="shrink-0 gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
-            >
+            <Button asChild variant="outline" size="sm" className="shrink-0 gap-1.5">
               <Link to={`/runs/${run.id}/trace/${userId}`}>
                 <Telescope className="h-3.5 w-3.5" aria-hidden="true" />
                 How we picked

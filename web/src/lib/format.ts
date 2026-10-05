@@ -146,28 +146,6 @@ export function triggerLabel(trigger: string): string {
   return TRIGGER_LABELS[trigger] ?? trigger.replace(/_/g, " ");
 }
 
-/**
- * hit_rate fraction (0..1) → "31%", or "—" when there is nothing meaningful to report.
- *
- * `matured` is the second way to get an em dash, and it exists because of what a fresh install
- * looks like: `hit_rate` is watched-over-delivered across all time, so on day one it is 0 for
- * everyone — a column of "0%" that reads as "nobody watches any of this" when the truth is that no
- * pick has had time to be watched yet. The app says as much on the dashboard, which withholds its
- * landing rate until picks reach `matured_days` old. This is the same withholding, and it only
- * applies at 0: any non-zero rate means somebody has watched something, which is meaningful
- * whatever the calendar says.
- *
- * @param rate Watched-over-delivered as a fraction, or null when the person has no picks at all.
- * @param matured Whether enough time has passed for a zero to mean anything. Defaults to true, so
- *   a caller with no way to know keeps the old behaviour rather than silently hiding real zeroes.
- * @returns The percentage, or "—".
- */
-export function formatHitRate(rate: number | null, matured = true): string {
-  if (rate === null) return "—";
-  if (rate === 0 && !matured) return "—";
-  return `${Math.round(rate * 100)}%`;
-}
-
 /** Narrow an unknown settings value to a string, else fall back. */
 export function settingString(
   settings: Record<string, unknown>,
@@ -263,6 +241,11 @@ export function timeFromCron(cron: string): { time: string; weekly: boolean } {
   return { time: "03:30", weekly: false };
 }
 
+/** "1 request", "3 requests": a count with its noun, for nouns that pluralise with an s. */
+export function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 /** Row-name templates render {top_seed} from each user's history and {library_name} per library nightly. */
 export function renderRowName(
   template: string,
@@ -270,11 +253,12 @@ export function renderRowName(
   user = "Sarah",
   libraryName = "Movies",
   season: { name: string; emoji: string } = { name: "Christmas", emoji: "🎄" },
+  theme?: { name: string; emoji: string },
 ): string {
   // Fill EVERY placeholder with a sample value so the "on Plex this looks like" preview shows what
   // {user}/{top_seed}/{library_name}/{season} actually become — leaving any literal made the field
   // look broken.
-  const rendered = fillPlaceholders(template, { topSeed, user, libraryName, season });
+  const rendered = fillPlaceholders(template, { topSeed, user, libraryName, season, theme });
   // A {library_name} title collapses its gap when the sample is empty, matching the backend renderer.
   return template.includes(LIBRARY_NAME)
     ? rendered.replace(/\s+/g, " ").trim()

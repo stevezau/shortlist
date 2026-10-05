@@ -15,33 +15,48 @@ import {
   Globe,
   History,
   Filter,
+  Inbox,
   ListOrdered,
   Search,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 
+import { MutationAlert } from "@/components/mutation-alert";
 import { BackLink } from "@/components/back-link";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
+import { RowName } from "@/components/rows/row-name";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { formatDate, plural } from "@/lib/format";
 import { provenanceLabel, sourceLabel } from "@/lib/pick-provenance";
 import { Button } from "@/components/ui/button";
 import {
   useBlockSeed,
   useCollections,
+  useRun,
   useRunSharedRowTrace,
   useRunUserTrace,
 } from "@/lib/queries";
-import { rowDisplayName } from "@/lib/run-rows";
+import { ApiError } from "@/lib/api";
 import {
   buildLibraries,
   fateLabel,
   orderingRows,
+  requestFoundInLabel,
   requestNote,
+  requestResultLabel,
   shortlistBreakdown,
   mediaGroupLabel,
   mediaLabel,
@@ -50,12 +65,13 @@ import {
   webMechanism,
   type LibraryView,
 } from "@/lib/trace";
-import { useScrollSpy } from "@/lib/use-scroll-spy";
+import { traceReadingLine, useScrollSpy } from "@/lib/use-scroll-spy";
 import type {
   Pick,
   RunLibraryBreakdown,
   RunUserTraceResponse,
   TraceRatings,
+  TraceRequest,
   TraceRequestOutcome,
   TraceReturn,
   TraceSeed,
@@ -94,34 +110,57 @@ export function RunUserTracePage() {
   const userQuery = useRunUserTrace(runId, uid, valid && !isRow);
   const rowQuery = useRunSharedRowTrace(runId, rowSlug ?? "", valid && isRow);
   const query = isRow ? rowQuery : userQuery;
-  // The row's configured name, stripped of its `{placeholder}` — exactly what the run page shows —
-  // so the trace and the row card never disagree about what the row is called.
+  // A 404 here means the run has no such shared row: nothing to retry, and the server's own words
+  // ("no such shared row in this run") are not a sentence for a person. Whether the run built ANY
+  // shared row decides which true sentence to say, so the run is read only once that is the question.
+  const rowNotInRun =
+    isRow && rowQuery.error instanceof ApiError && rowQuery.error.status === 404;
+  const run = useRun(runId, rowNotInRun);
   const collections = useCollections();
   const rowName = isRow
-    ? rowDisplayName(
-        collections.data?.find((row) => row.slug === rowSlug)?.name ?? "",
-      ) || undefined
+    ? collections.data?.find((row) => row.slug === rowSlug)?.name || undefined
     : undefined;
-  // Every row's name by slug, for the same reason and by the same rule: the trace's own
-  // `selection` entries carry slugs, and printing one in prose reads as a stray token.
+  // Every row's configured name by slug, for the same reason: the trace's own `selection` entries
+  // carry slugs, and printing one in prose reads as a stray token. Kept as the template — each
+  // section below is one library's story, so `RowName` fills `{library_name}` there.
   const rowNames = useMemo(
     () =>
       Object.fromEntries(
-        (collections.data ?? []).flatMap((row) => {
-          const name = rowDisplayName(row.name);
-          return name ? [[row.slug, name] as const] : [];
-        }),
+        (collections.data ?? []).flatMap((row) =>
+          row.name.trim() ? [[row.slug, row.name] as const] : [],
+        ),
+      ),
+    [collections.data],
+  );
+  // Each row's request window by slug, so a request dropped as `too_old` can say how many days the
+  // row keeps a landed title — the trace records the verdict, not the setting behind it.
+  const rowWindows = useMemo(
+    () =>
+      Object.fromEntries(
+        (collections.data ?? []).map(
+          (row) => [row.slug, row.requests_window_days] as const,
+        ),
       ),
     [collections.data],
   );
 
   return (
     <div className="space-y-6">
-      <BackLink to={`/runs/${runId}`} label={`Back to run #${runId}`} />
+      <BackLink to={`/runs/${runId}`} label={`Run #${runId}`} />
       {!valid ? (
         <EmptyState
           title="That trace doesn’t exist"
           hint="The link may be wrong, or the run was removed."
+        />
+      ) : rowNotInRun ? (
+        <EmptyState
+          title={
+            run.data && run.data.shared_rows.length === 0
+              ? "This run built no shared rows"
+              : `This row was not part of run #${runId}`
+          }
+          hint="The run’s page lists every row it did build."
+          action={<BackLink to={`/runs/${runId}`} label={`Back to run #${runId}`} />}
         />
       ) : (
         <QueryBoundary
@@ -130,7 +169,7 @@ export function RunUserTracePage() {
           isEmpty={(d) => isEmptyTrace(d)}
           empty={
             <EmptyState
-              title="Nothing was recorded for this person"
+              title={rowSlug ? "Nothing was recorded for this row" : "Nothing was recorded for this person"}
               hint="This run happened before traces were added, or they were skipped before we gathered anything."
             />
           }
@@ -141,6 +180,7 @@ export function RunUserTracePage() {
               userId={uid}
               rowName={rowName}
               rowNames={rowNames}
+              rowWindows={rowWindows}
               sharedRow={isRow}
             />
           )}
@@ -162,7 +202,7 @@ function isEmptyTrace(d: RunUserTraceResponse): boolean {
 function TraceSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-10 w-96" />
+      <Skeleton className="h-10 w-96 max-w-full" />
       <Skeleton className="h-[28rem] w-full" />
     </div>
   );
@@ -175,6 +215,7 @@ export function TraceView({
   userId,
   rowName,
   rowNames = {},
+  rowWindows = {},
   sharedRow = false,
 }: {
   data: RunUserTraceResponse;
@@ -186,6 +227,9 @@ export function TraceView({
   /** Every row's name by SLUG, for the shortlist and delivery lines — the trace records slugs.
    *  Optional so the view still renders standalone; unknown slugs fall back to the slug itself. */
   rowNames?: Record<string, string>;
+  /** Each requests row's `requests_window_days` by slug, for the "landed more than N days ago"
+   *  verdict. Optional: without it the window is described, not counted. */
+  rowWindows?: Record<string, number>;
   /** A shared row belongs to nobody, so the person-framed copy in this view is wrong for it. */
   sharedRow?: boolean;
 }) {
@@ -198,8 +242,8 @@ export function TraceView({
     <RequestsContext.Provider value={data.requests ?? {}}>
       <div className="space-y-6">
         <header className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            How we picked for {name}
+          <h1 className="break-words text-2xl font-semibold tracking-tight">
+            How we picked for {sharedRow ? <RowName name={name} /> : name}
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
             {sharedRow
@@ -247,6 +291,7 @@ export function TraceView({
                   (e) => e.library === current.label,
                 )}
                 rowNames={rowNames}
+                rowWindows={rowWindows}
               />
             )}
           </>
@@ -299,8 +344,8 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
     <div className="mt-3 space-y-2">
       <p className="text-sm font-medium">
         {partial
-          ? `What happened to the ${total} candidates the run recorded`
-          : `What happened to all ${total} candidates`}
+          ? `What happened to the ${plural(total, "returned title")} the run recorded`
+          : `What happened to all ${plural(total, "title")} the searches returned`}
       </p>
       {partial && (
         <p className="text-xs text-muted-foreground">
@@ -309,63 +354,65 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
           been recorded.
         </p>
       )}
-      {groups.map((group) => {
-        const kept = group.fate === "kept";
-        return (
-          <details
-            key={group.fate}
-            open={kept}
-            className="rounded-md border bg-muted/30 px-3 py-2"
-          >
-            <summary className="cursor-pointer text-sm">
-              <span className={cn("font-medium", kept && "text-success")}>
-                {kept ? "Made the shortlist" : fateLabel(group.fate)}
-              </span>{" "}
-              <span className="text-muted-foreground">
-                — {group.titles.length}
-              </span>
-            </summary>
-            <ul className="mt-2 space-y-0.5">
-              {group.titles.map((t) => (
-                <li
-                  key={t.tmdb_id}
-                  className="flex flex-wrap items-baseline gap-x-2 text-xs"
-                >
-                  <span className={cn(!kept && "text-muted-foreground")}>
-                    {t.title}
-                    {t.year ? ` (${t.year})` : ""}
-                  </span>
-                  {t.rating != null && (
-                    <span className="text-muted-foreground">
-                      rated {t.rating.toFixed(1)}
+      <div className="divide-y border-t">
+        {groups.map((group) => {
+          const kept = group.fate === "kept";
+          return (
+            <details key={group.fate} open={kept} className="group py-2">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm [&::-webkit-details-marker]:hidden">
+                <ChevronRight
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+                />
+                <span className={cn("font-medium", kept && "text-success")}>
+                  {kept ? "Made the cut" : fateLabel(group.fate)}
+                </span>{" "}
+                <span className="text-muted-foreground">
+                  — {group.titles.length}
+                </span>
+              </summary>
+              <ul className="mt-2 space-y-0.5 pl-5">
+                {group.titles.map((t) => (
+                  <li
+                    key={t.tmdb_id}
+                    className="flex flex-wrap items-baseline gap-x-2 text-xs"
+                  >
+                    <span className={cn(!kept && "text-muted-foreground")}>
+                      {t.title}
+                      {t.year ? ` (${t.year})` : ""}
                     </span>
-                  )}
-                  {/* The release-date multiplier actually applied — the answer to "why did a 2003
-                      title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
-                  {t.age_weight != null && t.age_weight !== 1 && (
-                    <span className="font-mono text-muted-foreground">
-                      release date &times;{t.age_weight.toFixed(2)}
-                    </span>
-                  )}
-                  {/* This group IS the Radarr/Sonarr pool, so say what was asked for and what was
-                      not — the two halves of the product were never joined up on screen. */}
-                  {(() => {
-                    // Keyed "<tmdb_id>:<media>" — the pair, because a tmdb_id is NOT unique on
-                    // its own (`uq_request_candidate_title` is (tmdb_id, media_type)). Falling back
-                    // to the movie key would report a movie's request against a show of the same id.
-                    const note = requestNote(
-                      requests[`${t.tmdb_id}:${t.media}`],
-                    );
-                    return note ? (
-                      <span className="text-primary/80">{note}</span>
-                    ) : null;
-                  })()}
-                </li>
-              ))}
-            </ul>
-          </details>
-        );
-      })}
+                    {t.rating != null && (
+                      <span className="text-muted-foreground">
+                        rated {t.rating.toFixed(1)}
+                      </span>
+                    )}
+                    {/* The release-date multiplier actually applied — the answer to "why did a 2003
+                        title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
+                    {t.age_weight != null && t.age_weight !== 1 && (
+                      <span className="font-mono text-muted-foreground">
+                        release date &times;{t.age_weight.toFixed(2)}
+                      </span>
+                    )}
+                    {/* This group IS the Radarr/Sonarr pool, so say what was asked for and what was
+                        not — the two halves of the product were never joined up on screen. */}
+                    {(() => {
+                      // Keyed "<tmdb_id>:<media>" — the pair, because a tmdb_id is NOT unique on
+                      // its own (`uq_request_candidate_title` is (tmdb_id, media_type)). Falling back
+                      // to the movie key would report a movie's request against a show of the same id.
+                      const note = requestNote(
+                        requests[`${t.tmdb_id}:${t.media}`],
+                      );
+                      return note ? (
+                        <span className="text-primary/80">{note}</span>
+                      ) : null;
+                    })()}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -377,10 +424,16 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
  * lines below lead with it in bold — so a row configured as "✨ {library_name} Picked for You"
  * announced itself as **picked** in the middle of a sentence written for a person. `rowNames` is
  * the collections list keyed by slug; the slug remains the fallback for a row that has since been
- * deleted, where there is no name left to show.
+ * deleted, where there is no name left to show. The entry is one library's, so that library fills
+ * `{library_name}` — "📬 Movies you asked for", not "📬 you asked for".
  */
-function rowLabel(slug: string, rowNames: Record<string, string>): string {
-  return rowNames[slug] || slug;
+function rowLabel(entry: TraceSelection, rowNames: Record<string, string>): ReactNode {
+  return (
+    <RowName
+      name={rowNames[entry.row] || entry.row}
+      libraryName={entry.library}
+    />
+  );
 }
 
 /** What the release-date weight and the pool cap did to this library's shortlist. */
@@ -394,13 +447,13 @@ function shortlistBody(
       {entries.map((entry) => (
         <li key={entry.row} className="space-y-1 text-sm">
           <p>
-            <span className="font-medium">{rowLabel(entry.row, rowNames)}</span>
+            {rowLabel(entry, rowNames)}
             {entry.candidates != null && (
               <>
                 {" — "}
-                {entry.candidates} candidates survived filtering
+                {plural(entry.candidates, "title")} made the shortlist here
                 {entry.cut_cap
-                  ? `, and the strongest ${entry.cut_cap} per media type were kept. Anything below that line could not reach the row.`
+                  ? `: what survived filtering, cut to at most ${entry.cut_cap} per media type, strongest first. Anything below that line could not reach the row.`
                   : "."}
               </>
             )}
@@ -428,7 +481,7 @@ function deliveryNote(
     <ul className="mb-3 space-y-1.5 text-sm">
       {entries.map((entry) => (
         <li key={entry.row}>
-          <span className="font-medium">{rowLabel(entry.row, rowNames)}</span>{" "}
+          {rowLabel(entry, rowNames)}{" "}
           <span
             className={
               entry.decision === "carried_forward" ||
@@ -467,22 +520,26 @@ function cadenceLine(entry: TraceSelection): string {
   switch (entry.decision) {
     case "carried_forward":
       return `— not re-picked tonight; last run's titles were redelivered unchanged${
-        every ? `. This row rebuilds every ${every} days` : ""
-      }. Lower “How often rows rebuild”, or change a setting that decides its titles, to rebuild it sooner.`;
+        every ? `. This row's titles refresh every ${every} days` : ""
+      }. Lower “Titles refresh every”, or change a setting that decides its titles, to refresh it sooner.`;
     case "held_idle":
-      return `— it was this row's night to rebuild, but they haven't watched anything since it was built, so it was left alone${
+      return `— it was this row's night to refresh, but they haven't watched anything since it was built, so it was left alone${
         entry.idle_hold_days
-          ? `. It rebuilds anyway once it is ${entry.idle_hold_days} days old`
+          ? `. It refreshes anyway once it is ${entry.idle_hold_days} days old`
           : ""
-      }. Turn down “Hold rows for inactive viewers” to rebuild it regardless.`;
+      }. Turn down “Hold rows for inactive viewers” to refresh it regardless.`;
     case "settings_changed":
       return "— rebuilt now because a setting that decides its titles changed.";
+    case "seed_moved":
+      return "— rebuilt from scratch because the watch it was named after changed.";
     case "refreshed":
       return "— refresh night: the strongest picks stayed, the weakest were swapped for new ones.";
     case "cold_start":
       return entry.rewatch
         ? "— too little watch history to search from, so the server's top-rated titles stand in for new suggestions."
         : "— too little watch history, so it was filled from the server's top-rated titles.";
+    case "requests":
+      return "— their own requests that have landed, newest first; nothing is searched for or ranked. “What they asked for” above lists every one.";
     default:
       return "— built fresh.";
   }
@@ -544,6 +601,17 @@ function LibraryTabs({
             type="button"
             role="tab"
             aria-selected={selected}
+            tabIndex={selected ? 0 : -1}
+            onKeyDown={(event) => {
+              if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+              event.preventDefault();
+              const index = libraries.findIndex((item) => item.key === lib.key);
+              const next = event.key === "Home" ? 0 : event.key === "End" ? libraries.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + libraries.length) % libraries.length;
+              const target = libraries[next];
+              if (target) onSelect(target.key);
+              const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role=tab]");
+              buttons?.[next]?.focus();
+            }}
             onClick={() => onSelect(lib.key)}
             className={cn(
               "-mb-px flex items-center gap-2 rounded-t-md border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -557,7 +625,7 @@ function LibraryTabs({
               className={cn(
                 "rounded-full px-1.5 py-0.5 text-xs font-medium tabular-nums",
                 selected
-                  ? "bg-primary/10 text-primary"
+                  ? "bg-raised text-foreground"
                   : "bg-muted text-muted-foreground",
               )}
             >
@@ -581,9 +649,24 @@ interface FlowStepDef {
   rail: string;
   /** A count shown as a chip next to the rail label and step title (omit to hide). */
   count?: number;
+  /** What `count` counts, singular then plural. Every chip names its unit: the stages count seeds,
+   *  searches and titles, and a bare "6" beside a title count read as six titles found. */
+  unit?: readonly [string, string];
   title: string;
   subtitle?: string;
   body: ReactNode;
+}
+
+const TITLES = ["title", "titles"] as const;
+
+/** A stage's count and its unit. (`Pick` here is the delivered-pick type, so not the utility.) */
+type StepCount = { count?: number; unit?: readonly [string, string] };
+
+/** "6 searches", "1 title" — a chip's count with its unit. */
+function countLabel(step: StepCount): string {
+  const n = step.count ?? 0;
+  if (!step.unit) return String(n);
+  return `${n} ${n === 1 ? step.unit[0] : step.unit[1]}`;
 }
 
 function LibraryFlow({
@@ -592,12 +675,14 @@ function LibraryFlow({
   ratings,
   selection = [],
   rowNames = {},
+  rowWindows = {},
   sharedRow = false,
 }: {
   lib: LibraryView;
   userId?: number;
   ratings?: TraceRatings;
   selection?: TraceSelection[];
+  rowWindows?: Record<string, number>;
   /** Row slug → the row's configured name, so the shortlist and delivery lines can name a row the
    *  way the owner does rather than by its slug. Empty is safe: the slug is the fallback. */
   rowNames?: Record<string, string>;
@@ -614,6 +699,51 @@ function LibraryFlow({
   // no taste-based ranking to explain — the flow says that plainly instead of implying a search that
   // never ran. Detected from the only source being `cold_start`.
   const isCold = lib.sources.some((s) => s.source === "cold_start");
+  // A Your requests row searches nothing: its titles are whatever they asked for that has landed. So
+  // it gets one step of its own, and when it is the ONLY row in this library the watched/searched/
+  // shortlisted/ordered steps are dropped — they would narrate a search that never ran. A library
+  // holding both kinds keeps the full flow and adds the requests step before delivery.
+  const requestEntries = selection.filter((e) => e.decision === "requests");
+  const pickEntries = selection.filter((e) => e.decision !== "requests");
+  const requestsOnly = requestEntries.length > 0 && pickEntries.length === 0;
+  // The shortlist each row was picked from tonight, summed across this library's rows — the same
+  // per-row sum the delivered count is, so the two can be read as one funnel. `candidates` is what
+  // the pre-rank cut LEFT (engine: `len(sub)` of the cut pool), not what survived filtering before it.
+  const shortlisted = pickEntries.some((e) => e.candidates != null)
+    ? pickEntries.reduce((n, e) => n + (e.candidates ?? 0), 0)
+    : undefined;
+  // Seeds when the run resolved any; otherwise the watched total. Never one quantity under another's
+  // name: the unit says which this is.
+  const watchedCount: StepCount =
+    lib.seeds.length > 0
+      ? { count: lib.seeds.length, unit: ["seed", "seeds"] }
+      : totalWatched > 0
+        ? { count: totalWatched, unit: ["title watched", "titles watched"] }
+        : { count: lib.watched.length, unit: ["recent watch", "recent watches"] };
+  const searches = searchesRun(lib);
+  const searchedCount: StepCount = isCold
+    ? { count: deliveredCount, unit: TITLES }
+    : searches > 0
+      ? { count: searches, unit: ["search", "searches"] }
+      : { count: placesSearched, unit: ["place", "places"] };
+  const requestSteps: Omit<FlowStepDef, "n">[] = requestEntries.map(
+    (entry) => ({
+      id: `${lib.key}-requests-${entry.row}`,
+      icon: Inbox,
+      rail: "Asked for",
+      count: entry.delivered,
+      unit: TITLES,
+      title: "What they asked for",
+      subtitle: `${plural(entry.candidates ?? entry.requests?.length ?? 0, "request")} looked at`,
+      body: (
+        <RequestsTable
+          requests={entry.requests ?? []}
+          // The run's own setting first: the row may have been edited since that night.
+          windowDays={entry.requests_window_days ?? rowWindows[entry.row]}
+        />
+      ),
+    }),
+  );
   // Seeds are now pure-recency: the distinct titles someone watched most recently, newest first —
   // which is exactly what the old "what they watched" panel showed. So the two panels were identical
   // and are merged into one. Seeds are the richer object (they carry recency + drive the search), so
@@ -638,14 +768,31 @@ function LibraryFlow({
       <RatedOutList watched={lib.watched} ratings={ratings} />
     </>
   );
+  const deliveredStep: Omit<FlowStepDef, "n"> = {
+    id: `${lib.key}-delivered`,
+    icon: ArrowRight,
+    rail: "Delivered",
+    count: deliveredCount,
+    unit: TITLES,
+    title: `What we put in ${lib.label}, and why`,
+    body:
+      lib.delivered.length > 0 ? (
+        <>
+          {deliveryNote(selection, rowNames)}
+          <DeliveredList delivered={lib.delivered} />
+        </>
+      ) : (
+        <Muted>Nothing was delivered to this library this run.</Muted>
+      ),
+  };
   // Steps are numbered by position so the ranking step can be omitted for cold start without leaving a
   // gap in the sequence.
-  const defs: Omit<FlowStepDef, "n">[] = [
+  const pickSteps: Omit<FlowStepDef, "n">[] = [
     {
       id: `${lib.key}-watched`,
       icon: History,
       rail: "Watched recently",
-      count: lib.seeds.length || totalWatched || lib.watched.length,
+      ...watchedCount,
       title: sharedRow
         ? `What the server watched in ${lib.label}`
         : `What they watched recently in ${lib.label}`,
@@ -662,7 +809,7 @@ function LibraryFlow({
       id: `${lib.key}-searched`,
       icon: Search,
       rail: isCold ? "Popular titles" : "Searched",
-      count: isCold ? deliveredCount : searchesRun(lib) || placesSearched,
+      ...searchedCount,
       title: isCold
         ? `What we pulled for ${lib.label}`
         : "Where we searched, and every title in and out",
@@ -670,7 +817,7 @@ function LibraryFlow({
         ? "With too little history to search from, we pulled the highest-rated titles on this server."
         : lib.sharedSearch
           ? `Each title above fans out to every place we look for ${searchNoun}s. We search by taste, not by library, so these results are shared across your ${searchNoun} libraries — each title shows whether it made this library's shortlist or why it fell out.`
-          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.${
+          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the cut or the reason it didn't.${
               searchesSampled(lib)
                 ? " The per-search detail below is a sample; the count above is every search that ran."
                 : ""
@@ -686,20 +833,21 @@ function LibraryFlow({
     },
     // What SURVIVED, and what the release-date weight did to it. Between search and order because
     // that is where it happens: filtering and the pool cut decide what can be ordered at all.
-    ...(isCold || selection.length === 0
+    ...(isCold || pickEntries.length === 0
       ? []
       : [
           {
             id: `${lib.key}-shortlisted`,
             icon: Filter,
             rail: "Shortlisted",
-            count: selection[0]?.candidates,
+            count: shortlisted,
+            unit: TITLES,
             title: "What survived, and what release date did to it",
             subtitle:
               "Everything found above is filtered (already watched, wrong library, excluded genres) and then cut to the strongest few per media type. Release date is part of that cut, not applied after it.",
             body: (
               <>
-                {shortlistBody(selection, rowNames)}
+                {shortlistBody(pickEntries, rowNames)}
                 <ShortlistTitles lib={lib} />
               </>
             ),
@@ -714,35 +862,62 @@ function LibraryFlow({
             id: `${lib.key}-ranked`,
             icon: ListOrdered,
             rail: "Ordered",
+            // Ordering scores the whole shortlist and drops nothing; the row then takes the top few.
+            count: shortlisted,
+            unit: TITLES,
             title: "How we ordered the shortlist",
             subtitle:
               "Everything that made the shortlist above is scored and ordered in plain code — no AI decides the order. Here's exactly how.",
             body: <RankingExplainer lib={lib} />,
           },
         ]),
-    {
-      id: `${lib.key}-delivered`,
-      icon: ArrowRight,
-      rail: "Delivered",
-      count: deliveredCount,
-      title: `What we put in ${lib.label}, and why`,
-      body:
-        lib.delivered.length > 0 ? (
-          <>
-            {deliveryNote(selection, rowNames)}
-            <DeliveredList delivered={lib.delivered} />
-          </>
-        ) : (
-          <Muted>Nothing was delivered to this library this run.</Muted>
-        ),
-    },
   ];
+  const defs: Omit<FlowStepDef, "n">[] = requestsOnly
+    ? [...requestSteps, deliveredStep]
+    : [...pickSteps, ...requestSteps, deliveredStep];
   const steps: FlowStepDef[] = defs.map((def, i) => ({ ...def, n: i + 1 }));
 
-  const active = useScrollSpy(steps.map((s) => s.id));
+  const stepPicker = useRef<HTMLLabelElement>(null);
+  const active = useScrollSpy(steps.map((s) => s.id), stepPicker);
+  const highlight = useRef<{ section: HTMLElement; timer: ReturnType<typeof setTimeout> } | null>(null);
+  useEffect(() => () => {
+    if (highlight.current) {
+      clearTimeout(highlight.current.timer);
+      delete highlight.current.section.dataset.navigationHighlight;
+      highlight.current = null;
+    }
+  }, [lib.key]);
+
+  const jumpToStep = (id: string) => {
+    const section = document.getElementById(id);
+    const picker = stepPicker.current;
+    if (!section || !picker) return;
+    // The picker sticks below the app header. Measure it so wrapped labels and zoom do not
+    // put the destination heading underneath either bar.
+    const offset = traceReadingLine(picker);
+    section.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    window.scrollTo({
+      top: Math.max(0, window.scrollY + section.getBoundingClientRect().top - offset),
+      behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+    });
+    if (highlight.current) {
+      clearTimeout(highlight.current.timer);
+      delete highlight.current.section.dataset.navigationHighlight;
+    }
+    section.dataset.navigationHighlight = "true";
+    highlight.current = { section, timer: setTimeout(() => {
+      delete section.dataset.navigationHighlight;
+      highlight.current = null;
+    }, 1400) };
+  };
 
   return (
-    <div className="flex gap-6">
+    <div className="flex flex-col gap-4 md:flex-row md:gap-6">
+      <label ref={stepPicker} className="sticky top-16 z-10 flex items-center gap-3 rounded-md border bg-background p-2 text-sm md:hidden">Jump to step
+        <select aria-label="Trace step" value={active || steps[0]?.id} className="min-w-0 flex-1 rounded border bg-card p-2" onChange={(event) => jumpToStep(event.target.value)}>
+          {steps.map((step) => <option key={step.id} value={step.id}>{step.n}. {step.rail}</option>)}
+        </select>
+      </label>
       <StepRail steps={steps} active={active} />
       <div className="min-w-0 flex-1 space-y-4">
         {steps.map((step) => (
@@ -788,9 +963,9 @@ function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
                 className={cn(
                   "z-10 flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
                   on
-                    ? "border-primary bg-primary text-primary-foreground"
+                    ? "border-primary bg-raised text-foreground"
                     : done
-                      ? "border-primary/40 bg-primary/10 text-primary"
+                      ? "border-border-strong bg-elevated text-foreground"
                       : "border-border bg-background text-muted-foreground group-hover:border-primary/40 group-hover:text-foreground",
                 )}
               >
@@ -800,16 +975,16 @@ function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
             <div className="min-w-0 flex-1 py-1">
               <span
                 className={cn(
-                  "flex items-center gap-1.5 text-sm transition-colors",
+                  "flex flex-wrap items-baseline gap-x-1.5 text-sm transition-colors",
                   on
                     ? "font-medium text-foreground"
                     : "text-muted-foreground group-hover:text-foreground",
                 )}
               >
-                {step.rail}
+                <span data-rail-label>{step.rail}</span>
                 {step.count !== undefined && step.count > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {step.count}
+                  <span data-rail-count className="whitespace-nowrap text-xs text-muted-foreground">
+                    {countLabel(step)}
                   </span>
                 )}
               </span>
@@ -823,22 +998,18 @@ function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
 
 /** One numbered stage in the vertical flow. Its `id` anchors the rail's scroll-spy + jump links. */
 function FlowStep({ step }: { step: FlowStepDef }) {
-  const Icon = step.icon;
   return (
     <section
       id={step.id}
-      className="scroll-mt-6 rounded-xl border bg-card p-5 shadow-sm transition-shadow target:ring-2 target:ring-primary/40 hover:shadow-md"
+      className="scroll-mt-6 rounded-xl border bg-card p-5 shadow-sm motion-safe:transition-shadow target:ring-2 target:ring-primary/40 data-[navigation-highlight=true]:ring-2 data-[navigation-highlight=true]:ring-primary/50 hover:shadow-md"
     >
       <div className="mb-4 flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-inset ring-primary/20">
-          <Icon className="h-4 w-4" aria-hidden={true} />
-        </span>
         <div className="min-w-0 flex-1 space-y-1">
-          <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+          <h2 tabIndex={-1} className="flex items-center gap-2 rounded-sm text-base font-semibold tracking-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {step.title}
             {step.count !== undefined && step.count > 0 && (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
-                {step.count}
+              <span className="whitespace-nowrap rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+                {countLabel(step)}
               </span>
             )}
           </h2>
@@ -849,13 +1020,76 @@ function FlowStep({ step }: { step: FlowStepDef }) {
           )}
         </div>
       </div>
-      <div className="sm:pl-12">{step.body}</div>
+      <div>{step.body}</div>
     </section>
   );
 }
 
 function Muted({ children }: { children: ReactNode }) {
   return <p className="text-sm text-muted-foreground">{children}</p>;
+}
+
+// ── A Your requests row: every request looked at, and what became of each ─────
+
+/** Every request the row considered for this library, in the order the engine recorded them (the
+ *  ones in the row first, newest landed first). Dates are day-only: "when did they ask" is a
+ *  calendar question, and a time of day would dress an estimate up as a timestamp. */
+function RequestsTable({
+  requests,
+  windowDays,
+}: {
+  requests: TraceRequest[];
+  /** The row's `requests_window_days`, when known — names the window in a `too_old` verdict. */
+  windowDays?: number;
+}) {
+  if (requests.length === 0) {
+    return (
+      <Muted>
+        Nothing of theirs was found in Overseerr or by their tag, so there was
+        nothing to put in the row.
+      </Muted>
+    );
+  }
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          <TableHead>Title</TableHead>
+          <TableHead>Asked for</TableHead>
+          <TableHead>Landed</TableHead>
+          <TableHead>Found in</TableHead>
+          <TableHead>Result</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {requests.map((request) => (
+          <TableRow key={`${request.tmdb_id}:${request.media_type}`}>
+            <TableCell className="font-medium">{request.title}</TableCell>
+            {/* A date stays on one line: at phone width the table's own container scrolls, which
+                reads better than "Sep / 16, / 2026" stacked three high. */}
+            <TableCell className="whitespace-nowrap text-muted-foreground">
+              {formatDate(request.asked_at, { dateOnly: true })}
+            </TableCell>
+            <TableCell className="whitespace-nowrap text-muted-foreground">
+              {formatDate(request.landed_at, { dateOnly: true })}
+            </TableCell>
+            <TableCell className="text-muted-foreground">
+              {requestFoundInLabel(request.found_in)}
+            </TableCell>
+            <TableCell
+              className={cn(
+                request.result === "in_row"
+                  ? "text-success"
+                  : "text-muted-foreground",
+              )}
+            >
+              {requestResultLabel(request.result, windowDays) || request.result}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
 }
 
 // ── Stage 1: recent watches, newest first (the seeds we search from) ───────────
@@ -877,52 +1111,69 @@ function BlockSeedButton({
   userId: number;
 }) {
   const block = useBlockSeed(userId);
+  const submit = () => block.mutate({
+    tmdbId: seed.tmdb_id,
+    title: seed.title,
+    mediaType: seed.media === "show" ? "show" : "movie",
+  });
   return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="h-6 px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
-      disabled={block.isPending}
-      title={`Stop "${seed.title}" shaping this person's picks. It stays in their history — it just stops being a seed.`}
-      onClick={() =>
-        block.mutate({
-          tmdbId: seed.tmdb_id,
-          title: seed.title,
-          mediaType: seed.media === "show" ? "show" : "movie",
-        })
-      }
-    >
-      <Ban className="h-3 w-3" aria-hidden />
-      Don&rsquo;t seed
-    </Button>
+    <div className="min-w-0 space-y-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-6 px-1.5 text-xs text-muted-foreground"
+        disabled={block.isPending || block.isSuccess}
+        title={`Stop "${seed.title}" shaping this person's picks. It stays in their history — it just stops being a seed.`}
+        onClick={submit}
+      >
+        {block.isSuccess ? <Check className="h-3 w-3" aria-hidden /> : <Ban className="h-3 w-3" aria-hidden />}
+        {block.isSuccess ? "Seed blocked" : block.isPending ? "Blocking…" : "Don’t seed"}
+      </Button>
+      {block.isError && <MutationAlert error={block.error} fallback="Couldn’t block this seed." onRetry={submit} retryDisabled={block.isPending} />}
+    </div>
   );
+}
+
+/** Seeds in runs that share one recency label, newest first. The label heads its run once: a person
+ *  who watched eight things on their latest day read "watched most recently" eight times. */
+function seedGroups(seeds: TraceSeed[]): { label: string; seeds: TraceSeed[] }[] {
+  const groups: { label: string; seeds: TraceSeed[] }[] = [];
+  for (const seed of seeds) {
+    const label = seedWhy(seed);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.seeds.push(seed);
+    else groups.push({ label, seeds: [seed] });
+  }
+  return groups;
 }
 
 function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
   return (
-    <ol className="space-y-1.5">
-      {seeds.map((s) => (
-        <li
-          key={`${s.media}-${s.tmdb_id}`}
-          className="group flex items-baseline justify-between gap-3"
-        >
-          <span className="truncate text-sm font-medium">{s.title}</span>
-          <span className="flex shrink-0 items-baseline gap-2">
-            {seedWhy(s) && (
-              <span className="text-xs text-muted-foreground">
-                {seedWhy(s)}
-              </span>
-            )}
-            {/* This is where a bad seed is actually noticed — the page that says "these are the
-                watches your picks came from". Blocking anywhere else means remembering a title and
-                going to find it. */}
-            {userId !== undefined && (
-              <BlockSeedButton seed={s} userId={userId} />
-            )}
-          </span>
-        </li>
+    <div className="space-y-3">
+      {seedGroups(seeds).map((group, i) => (
+        <div key={`${group.label}-${i}`} className="space-y-1.5">
+          {group.label && (
+            <p className="text-xs text-muted-foreground">{group.label}</p>
+          )}
+          <ol className="space-y-1.5">
+            {group.seeds.map((s) => (
+              <li
+                key={`${s.media}-${s.tmdb_id}`}
+                className="group flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3"
+              >
+                <span className="min-w-0 break-words text-sm font-medium">{s.title}</span>
+                {/* This is where a bad seed is actually noticed — the page that says "these are the
+                    watches your picks came from". Blocking anywhere else means remembering a title and
+                    going to find it. */}
+                {userId !== undefined && (
+                  <BlockSeedButton seed={s} userId={userId} />
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
       ))}
-    </ol>
+    </div>
   );
 }
 
@@ -1076,15 +1327,15 @@ function SourcesFlow({
         </span>
       </div>
       {/* The branch: a vertical spine down the left with each place tee'd off it. */}
-      <ul className="relative space-y-3 border-l-2 border-dashed border-border pl-5">
+      <ul className="relative divide-y border-l-2 border-dashed border-border pl-5">
         {sources.map((src) => (
-          <li key={src.source} className="relative">
+          <li key={src.source} className="relative py-3">
             <BranchConnector />
             <SourceCard src={src} discoverGenres={discoverGenres} />
           </li>
         ))}
         {(web || webSource) && (
-          <li className="relative">
+          <li className="relative py-3">
             <BranchConnector />
             <WebSourceCard web={web} source={webSource} />
           </li>
@@ -1094,12 +1345,12 @@ function SourcesFlow({
   );
 }
 
-/** The short horizontal elbow that ties a branch card back to the spine on its left. */
+/** The short horizontal elbow that ties a place back to the spine on its left, level with its name. */
 function BranchConnector() {
   return (
     <span
       aria-hidden="true"
-      className="absolute -left-5 top-6 h-px w-5 bg-border"
+      className="absolute -left-5 top-[1.375rem] h-px w-3 bg-border"
     />
   );
 }
@@ -1145,8 +1396,8 @@ function SourceCard({
     .reduce((n, [, c]) => n + c, 0);
 
   return (
-    <div className="overflow-hidden rounded-lg border bg-background">
-      <div className="flex items-start justify-between gap-3 p-3">
+    <div>
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 space-y-1.5">
           <p className="text-sm font-medium">{sourceLabel(src.source)}</p>
           {failed ? (
@@ -1177,7 +1428,7 @@ function SourceCard({
                   <p className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span className="inline-flex items-center gap-1 text-success">
                       <Check className="h-3 w-3" aria-hidden="true" />
-                      {kept} made the shortlist
+                      {kept} made the cut
                     </span>
                     <span aria-hidden="true">·</span>
                     <span>{droppedCount} dropped (see below)</span>
@@ -1197,21 +1448,21 @@ function SourceCard({
 
       {src.source === "tmdb_discover" &&
         Object.keys(discoverGenres).length > 0 && (
-          <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+          <p className="mt-2 text-xs text-muted-foreground">
             {discoverGenreSentence(discoverGenres)}
           </p>
         )}
 
       {queries.length > 0 && (
-        <details className="group border-t">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <details className="group mt-2">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
             <ChevronRight
               className="h-3.5 w-3.5 transition-transform group-open:rotate-90"
               aria-hidden="true"
             />
             Follow it title by title
           </summary>
-          <ul className="space-y-3 border-t px-3 py-3">
+          <ul className="space-y-3 pb-1 pt-2">
             {queries.map((q, i) => (
               <SeedQueryRow
                 key={`${q.seed}-${i}`}
@@ -1235,9 +1486,10 @@ function SeedQueryRow({
 }) {
   // tmdb_discover queries by GENRE, not by a watched title — so it reads "In your genres · Crime,
   // Comedy" rather than "Searched from <a title>". The season source searches nothing at all: it is the
-  // season's own list. Every other source is seeded from a watch.
+  // season's own list, and an AI row's theme source reads the same way. Every other source is seeded
+  // from a watch.
   const isGenre = source === "tmdb_discover";
-  const isSeason = source === "season";
+  const isSeason = source === "season" || source === "theme";
   return (
     <li className="text-sm">
       <div className="flex items-center gap-1.5">
@@ -1456,8 +1708,8 @@ function WebSourceCard({
   const freshCount = searches.length - cachedCount;
 
   return (
-    <div className="overflow-hidden rounded-lg border">
-      <div className="flex items-start gap-2 p-3">
+    <div>
+      <div className="flex items-start gap-2">
         <Globe
           className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
           aria-hidden="true"
@@ -1480,12 +1732,12 @@ function WebSourceCard({
       </div>
 
       {failed && source?.detail && (
-        <p className="border-t px-3 py-2 text-xs text-destructive-text">
+        <p className="mt-2 text-xs text-destructive-text">
           Couldn’t reach it — {source.detail}
         </p>
       )}
 
-      <div className="space-y-4 border-t p-3">
+      <div className="mt-3 space-y-4">
         {searches.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-xs font-medium">
@@ -1504,20 +1756,22 @@ function WebSourceCard({
             <ul className="space-y-1.5">
               {searches.map((s, i) => (
                 <li key={i} className="text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-start gap-2">
                     <Search
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                      className="mt-[3px] h-3.5 w-3.5 shrink-0 text-muted-foreground"
                       aria-hidden="true"
                     />
-                    <span className="italic">“{s.query}”</span>
-                    {s.cached && (
-                      <Badge
-                        variant="secondary"
-                        className="shrink-0 text-[10px]"
-                      >
-                        reused an earlier search
-                      </Badge>
-                    )}
+                    <span className="min-w-0">
+                      <span className="italic">“{s.query}”</span>
+                      {s.cached && (
+                        <Badge
+                          variant="secondary"
+                          className="ml-2 whitespace-nowrap align-middle text-xs"
+                        >
+                          reused an earlier search
+                        </Badge>
+                      )}
+                    </span>
                   </div>
                   {s.returned.length > 0 && (
                     <span className="mt-0.5 block pl-5 text-xs text-muted-foreground">
@@ -1588,18 +1842,22 @@ function WebSourceCard({
         )}
 
         {web?.rag_user && (
-          <details className="rounded-lg border bg-muted/20 p-3 text-sm">
-            <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground">
+          <details className="group text-sm">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronRight
+                aria-hidden="true"
+                className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90"
+              />
               {searches.length > 0
                 ? "See the exact prompt the AI got in step 2"
                 : "See the exact prompt the AI was given"}
             </summary>
             {web.rag_system && (
-              <pre className="mt-3 whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
+              <pre className="mt-3 whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-xs leading-relaxed">
                 {web.rag_system}
               </pre>
             )}
-            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
+            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-xs leading-relaxed">
               {web.rag_user}
             </pre>
           </details>
@@ -1699,11 +1957,15 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
       .filter((t): t is string => Boolean(t)),
   );
   return (
-    <details className="rounded-md border bg-muted/30 px-3 py-2">
-      <summary className="cursor-pointer text-sm font-medium">
+    <details className="group border-t pt-3">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+        />
         The order it produced for {entry.row_title} — {rows.length} picks
       </summary>
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="mt-2 pl-5 text-xs text-muted-foreground">
         These {rows.length} picks came from{" "}
         <span className="font-medium text-foreground">
           {sources.size} source{sources.size === 1 ? "" : "s"}
@@ -1715,7 +1977,7 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
         </span>{" "}
         — spread across your tastes, not stacked on one.
       </p>
-      <ol className="mt-2 space-y-0.5">
+      <ol className="mt-2 space-y-0.5 pl-5">
         {rows.map(({ pick, newSource, newSeed }) => (
           <li
             key={pick.rank}
@@ -1768,7 +2030,7 @@ function DeliveredList({ delivered }: { delivered: RunLibraryBreakdown[] }) {
           {delivered.length > 1 && (
             <p className="text-sm font-medium">{b.row_title}</p>
           )}
-          <ol className="divide-y rounded-lg border bg-background">
+          <ol className="divide-y border-t">
             {b.picks.map((p) => (
               <DeliveredPick key={p.rank} pick={p} />
             ))}
@@ -1782,8 +2044,8 @@ function DeliveredList({ delivered }: { delivered: RunLibraryBreakdown[] }) {
 function DeliveredPick({ pick }: { pick: Pick }) {
   const prov = provenanceLabel(pick);
   return (
-    <li className="flex items-start gap-3 p-3 text-sm">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary">
+    <li className="flex items-start gap-3 py-3 text-sm">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-elevated text-xs font-semibold tabular-nums text-muted-foreground ring-1 ring-inset ring-border-strong">
         {pick.rank}
       </span>
       <div className="min-w-0 flex-1 space-y-0.5">

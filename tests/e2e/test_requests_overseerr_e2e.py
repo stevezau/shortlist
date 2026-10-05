@@ -23,6 +23,11 @@ pytestmark = pytest.mark.e2e
 LOAD = 15_000
 
 
+def _save_bar(page: Page):
+    """The Defaults tab's one save readout (its live region), which every section reports to."""
+    return page.locator("[aria-live=polite]")
+
+
 def _panel(page: Page):
     """The Requests panel alone.
 
@@ -31,7 +36,7 @@ def _panel(page: Page):
     connection card as well as the control under test — "Overseerr / Jellyseerr" resolves to two
     buttons, and "Radarr" is present no matter what the target is set to.
     """
-    return page.locator("section[aria-labelledby='requests-heading']")
+    return page.locator("section#requests")
 
 
 def _connect_overseerr(app: ShortlistApp) -> None:
@@ -51,7 +56,7 @@ def _connect_overseerr(app: ShortlistApp) -> None:
 
 def test_switching_the_target_saves_and_survives_a_reload(page: Page, app: ShortlistApp):
     _connect_overseerr(app)
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     expect(_panel(page).get_by_role("button", name="Radarr & Sonarr")).to_have_attribute(
         "aria-pressed", "true", timeout=LOAD
@@ -59,7 +64,8 @@ def test_switching_the_target_saves_and_survives_a_reload(page: Page, app: Short
     _panel(page).get_by_role("button", name="Overseerr / Jellyseerr", exact=True).click()
 
     # Autosave has no button; wait for the value to reach the API rather than a fixed sleep.
-    expect(_panel(page).get_by_text(re.compile("Saved|Saving", re.I)).first).to_be_visible(timeout=LOAD)
+    # The Defaults tab reports every section's autosave in one save bar at its foot, not per card.
+    expect(_save_bar(page).get_by_text(re.compile("^Saved|^Saving", re.I)).first).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(2000)
 
     assert app.api("GET", "/api/settings").json()["requests.target"] == "overseerr"
@@ -73,7 +79,7 @@ def test_switching_the_target_saves_and_survives_a_reload(page: Page, app: Short
 def test_the_overseerr_card_replaces_the_two_arr_cards(page: Page, app: ShortlistApp):
     _connect_overseerr(app)
     app.api("PUT", "/api/settings", json={"values": {"requests.target": "overseerr"}})
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     expect(_panel(page).get_by_label("Request as")).to_be_visible(timeout=LOAD)
     expect(_panel(page).get_by_text("Radarr", exact=True)).to_have_count(0)
@@ -86,7 +92,7 @@ def test_the_tag_fields_are_gone_because_overseerr_cannot_carry_them(page: Page,
     """Overseerr's POST /request body has no tags field, so offering the setting would be a lie."""
     _connect_overseerr(app)
     app.api("PUT", "/api/settings", json={"values": {"requests.target": "overseerr"}})
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     expect(_panel(page).get_by_label("Request as")).to_be_visible(timeout=LOAD)
     expect(_panel(page).get_by_label("Tag added items")).to_have_count(0)
@@ -96,7 +102,7 @@ def test_the_tag_fields_are_gone_because_overseerr_cannot_carry_them(page: Page,
 def test_the_default_route_still_shows_radarr_and_sonarr(page: Page, app: ShortlistApp):
     """The control case. Adding a second route must not change what an existing install sees."""
     app.api("PUT", "/api/settings", json={"values": {"requests.enabled": True}})
-    page.goto("/settings")
+    page.goto("/settings#requests")
 
     expect(_panel(page).get_by_text("Radarr", exact=True).first).to_be_visible(timeout=LOAD)
     expect(_panel(page).get_by_text("Sonarr", exact=True).first).to_be_visible()

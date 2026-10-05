@@ -8,6 +8,38 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rolldownOptions: {
+      output: {
+        // Vendors that change rarely get their own long-cached chunks; every page is already its own
+        // chunk via `React.lazy` in App.tsx. `codeSplitting` is rolldown's replacement for Rollup's
+        // `manualChunks`, which it still accepts but has deprecated.
+        codeSplitting: {
+          groups: [
+            { name: "react", test: /[\\/]node_modules[\\/](react|react-dom|scheduler|react-router)[\\/]/ },
+            { name: "query", test: /[\\/]node_modules[\\/]@tanstack[\\/]/ },
+            { name: "icons", test: /[\\/]node_modules[\\/]lucide-react[\\/]/ },
+            {
+              name: "markdown",
+              test: /[\\/]node_modules[\\/](react-markdown|remark-[^\\/]+|micromark[^\\/]*|mdast-[^\\/]+|hast-[^\\/]+|unist-[^\\/]+|unified|vfile[^\\/]*)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
+  },
+  experimental: {
+    // URLs INSIDE the bundle are relative; only index.html names `/assets/...` absolutely.
+    //
+    // Behind APP_BASE_PATH the server rewrites `="/assets/` in index.html and nothing else
+    // (`shortlist/server/base_path.py::render_shell`). Lazy routes and the self-hosted fonts make
+    // Vite write asset URLs into the JS (the dynamic-import preload list) and the CSS (`url()` for
+    // each .woff2); left absolute, those would load from the proxy's root and the app would break
+    // under a prefix as a blank page. Relative, they resolve against the file that names them, which
+    // the rewritten shell already loaded from the right place. index.html itself must stay absolute:
+    // it is served for every deep link (`/runs/12`), where a relative `assets/` would miss.
+    renderBuiltUrl: (_filename, { hostType }) => (hostType === "html" ? undefined : { relative: true }),
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

@@ -2,12 +2,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 
 {% seo %}
+{%- comment -%} The earlier Search Console token, kept so the property it verified stays verified; jekyll-seo-tag emits only the one in _config.yml. {%- endcomment %}
+<meta name="google-site-verification" content="cqlqedFcoobifs1lLaDIdbBPCPurJ-JlDAIVOTs_02k" />
 
 <link rel="icon" href="{{ '/assets/img/favicon.svg' | relative_url }}" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{{ '/assets/img/favicon.svg' | relative_url }}">
+<link rel="preload" href="{{ '/assets/fonts/source-sans-3-latin-wght-normal.woff2' | relative_url }}" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="{{ '/assets/css/main.css' | relative_url }}">
 <meta name="theme-color" content="#08080a" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+<link rel="alternate" type="application/atom+xml" title="Shortlist releases" href="{{ '/feed.xml' | absolute_url }}">
+{%- comment -%}
+Analytics only when _config.yml names a GoatCounter site. GoatCounter sets no cookies and collects no
+personal data; an empty `goatcounter:` ships no tag at all.
+{%- endcomment -%}
+{%- if site.goatcounter and site.goatcounter != "" %}
+<script data-goatcounter="https://{{ site.goatcounter }}.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+{%- endif %}
 
 {%- comment -%}
 Set the theme before first paint. A class-swap in the body would flash the wrong
@@ -48,7 +59,7 @@ what this software is and who it's for — which is the whole reason it's here.
   "softwareRequirements": "Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin account, a free TMDB API key",
   "featureList": [
     "Per-user movie and TV recommendations built from each Plex user's own watch history",
-    "A private \"Picked for You\" row on each user's Plex home screen, visible only to them",
+    "Private recommendation rows (Picked for You, Because you watched, seasonal and more) on each user's Plex home screen, using Plex sharing filters",
     "Works with no AI at all, or with Claude, GPT, Gemini or a local Ollama model",
     "Explains every pick with \"Because you watched...\"",
     "Optional Radarr and Sonarr requests for picks missing from the library",

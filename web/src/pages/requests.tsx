@@ -1,5 +1,6 @@
 import {
   ArrowUpDown,
+  ChevronRight,
   Clapperboard,
   ExternalLink,
   Inbox,
@@ -25,7 +26,6 @@ import {
 } from "@/components/brand-glyphs";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
-import { Segmented } from "@/components/segmented";
 import { TitlePoster } from "@/components/title-poster";
 import { Why } from "@/components/why";
 import { Badge } from "@/components/ui/badge";
@@ -286,17 +286,11 @@ function TitleMeta({
   );
 }
 
-/** TMDB's synopsis, clamped to three lines — enough to decide on a title you've never heard of,
- *  which is the whole reason it's here (discussion #87). No expander: if three lines don't settle
- *  it, the TMDB link directly below is the better next step than more text in a triage list.
- *
- *  Renders nothing at all when there's no synopsis (a pre-0071 row awaiting its next run, or a
- *  title TMDB has none for) — an empty paragraph would leave a gap that reads like a loading state.
- */
+/** Full synopsis inside the title's disclosure; older candidates may not have one recorded. */
 function Synopsis({ text }: { text: string }) {
   if (!text.trim()) return null;
   return (
-    <p className="line-clamp-3 text-sm text-muted-foreground" title={text}>
+    <p className="text-sm leading-relaxed text-muted-foreground" title={text}>
       {text}
     </p>
   );
@@ -478,12 +472,12 @@ function PendingRow({
     // and expander added to this card later would each have to remember to opt out.
     <div
       onClick={(e) => {
-        if ((e.target as HTMLElement).closest("a,button,input,select,textarea"))
+        if ((e.target as HTMLElement).closest("a,button,input,select,textarea,summary,details"))
           return;
         if (!disabled) onToggle(item.id);
       }}
       className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+        "flex cursor-pointer items-start gap-3 rounded-xl border bg-card px-4 py-4 transition-colors",
         // Selection is what the whole toolbar acts on, so a picked card says so on the card itself —
         // a 4px checkbox was the only difference between "will be sent" and "won't".
         checked
@@ -499,8 +493,9 @@ function PendingRow({
         onChange={() => onToggle(item.id)}
         className="mt-1.5 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <TitlePoster posterPath={item.poster_path} />
-      <div className="min-w-0 flex-1 space-y-2">
+      <TitlePoster posterPath={item.poster_path} className="sm:h-20 sm:w-[54px]" />
+      <div className="grid min-w-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="min-w-0 space-y-2">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <p className="text-base font-semibold leading-tight">{item.title}</p>
           <ArrStatusBadge view={arrView} />
@@ -512,16 +507,21 @@ function PendingRow({
           preferredLanguages={preferredLanguages}
           languageModeOn={languageModeOn}
         />
-        <Synopsis text={item.overview} />
-        <WhyBreakdown why={item.why} nameOf={nameOf} />
-        <ExternalLinks item={item} />
+        </div>
+        <details className="group order-3 sm:col-span-2">
+          <summary className="flex w-fit cursor-pointer items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />Details & title links</summary>
+          <div className="mt-3 grid gap-5 border-t pt-4 sm:grid-cols-[minmax(0,1fr)_15rem]">
+            <div className="space-y-3"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">The story</p><Synopsis text={item.overview} /><ExternalLinks item={item} /></div>
+            <div className="space-y-3 sm:border-l sm:pl-5"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Why it’s here</p><WhyBreakdown why={item.why} nameOf={nameOf} />{item.detail && <p className="text-xs text-muted-foreground">Last recorded reason: {item.detail}</p>}</div>
+          </div>
+        </details>
         {/* Deliberately does NOT promise the row disappears next run: the tidy-up matches shows by
             the TMDB id Sonarr v4 reports, and Sonarr v3 doesn't report one at all (`_apply_arr_state`,
             `arr_present`), so on v3 a show sitting in Sonarr stays in this list. */}
         {/* Only for a real status — "checking" and "couldn't reach it" are not evidence the title
             is already there, and this sentence tells you not to send it. */}
         {arrView.kind === "status" ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="order-4 text-xs text-muted-foreground sm:col-span-2">
             Already in {app} &mdash; it was added there after it landed here, so
             you don&rsquo;t need to send it again.
           </p>
@@ -529,7 +529,7 @@ function PendingRow({
         {/* Weaker than it used to be, on purpose: nothing here proves the Arr refuses a hand-made
             add, only that `request_missing` never auto-sends an excluded title. */}
         {item.excluded ? (
-          <p className="text-xs text-warning">
+          <p className="order-4 text-xs text-warning sm:col-span-2">
             {app} was told never to fetch this again &mdash; usually left behind
             by deleting it there ({app} calls it {viaSeerr ? "a" : "an"}{" "}
             {/* The CONCEPT is route-aware too, not just the app's name. Naming Overseerr and then
@@ -539,15 +539,6 @@ function PendingRow({
             sends it for you; clear it in {app} if you want it back.
           </p>
         ) : null}
-        {item.detail ? (
-          // This component only ever renders PENDING rows, so there is no "last attempt" branch to
-          // take. The detail holds either the threshold keeping a title waiting or the failure of a
-          // send that was tried — "last recorded reason" is true of both, and does not assert that a
-          // stale failure is still the current cause.
-          <p className="text-xs text-muted-foreground">
-            Last recorded reason: {item.detail}
-          </p>
-        ) : null}
         {/* Decide this title on its own. The toolbar above still handles batches — these exist for
             the other way through the list, one unfamiliar title at a time, which is what the inbox
             actually looks like on most nights. Same variants and the same dividing rule as the
@@ -555,11 +546,12 @@ function PendingRow({
         <div
           role="group"
           aria-label={`Actions for ${item.title}`}
-          className="flex flex-wrap items-center justify-end gap-1 pt-1"
+          className="order-2 flex flex-wrap items-center gap-1 self-center sm:col-start-2 sm:row-start-1 sm:justify-end"
         >
           <Button
             size="sm"
             variant="outline"
+            className="border-primary/30 bg-primary/5 text-primary"
             loading={sending}
             disabled={disabled || busy}
             onClick={() => onSend(item.id)}
@@ -568,10 +560,10 @@ function PendingRow({
             {!sending && <Send aria-hidden="true" />}
             Send
           </Button>
-          <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
           <Button
             size="sm"
             variant="ghost"
+            className="px-2 text-muted-foreground"
             disabled={disabled || busy}
             onClick={() => onDelete(item.id)}
             title="Take this off the list for now. If a later run turns it up again, it comes back."
@@ -582,6 +574,7 @@ function PendingRow({
           <Button
             size="sm"
             variant="ghost"
+            className="px-2 text-muted-foreground"
             disabled={disabled || busy}
             onClick={() => onReject(item.id)}
             title={`Never ask ${app} for this again. It won't come back to this list.`}
@@ -882,7 +875,7 @@ function RequestTabs({
               <span
                 className={cn(
                   "rounded-full px-2 text-xs tabular-nums",
-                  selected ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
+                  selected ? "bg-raised text-foreground" : "bg-muted text-muted-foreground",
                 )}
               >
                 {tab.count}
@@ -906,7 +899,7 @@ function FilterChip({
   onRemove: () => void;
 }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 py-0.5 pl-2.5 pr-1 text-xs font-medium text-primary">
+    <span className="inline-flex items-center gap-1 rounded-full border border-border-strong bg-raised py-0.5 pl-2.5 pr-1 text-xs font-medium text-foreground">
       {label}
       <button
         type="button"
@@ -1018,7 +1011,7 @@ function PeopleFilter({
     // One search for the two things people look for: a title by its name, or the titles someone
     // wanted. Typing narrows the list at once (see `applyQuery`); picking a name from the list makes it
     // a chip, which asks the SERVER for every title of theirs rather than only this loaded page.
-    <div className="relative min-w-[12rem] flex-1">
+    <div className="relative order-first w-full min-w-[12rem] sm:mr-auto sm:max-w-sm sm:flex-1">
       <span id={labelId} className="sr-only">
         Search titles, or pick who wanted them
       </span>
@@ -1470,11 +1463,8 @@ export function RequestsPage() {
   return (
     <div>
       <PageHeader
-        icon={Inbox}
         title="Requests"
-        // Names no app: this renders OUTSIDE the settings boundary, so the route is not known yet and
-        // naming one would flash the wrong answer on every load. The Send button below, which is
-        // inside the boundary, says where they are actually going.
+        actions={settingsQuery.data ? <div className="text-left text-xs sm:text-right"><p className="font-medium text-foreground">Destination · {settingString(settingsQuery.data, "requests.target", "arr") === "overseerr" ? "Overseerr" : "Radarr & Sonarr"}</p><p className="mt-1 text-muted-foreground">{settingBool(settingsQuery.data, "requests.enabled") ? `Global auto-send is ${settingBool(settingsQuery.data, "requests.auto_send") ? "on" : "off"}` : "Requests disabled"} · <Link className="text-primary hover:underline" to={SETTINGS_LINK}>Settings</Link></p></div> : undefined}
         subtitle="Titles your people wanted that aren’t in your library yet. Send the ones you want, reject the rest."
       />
 
@@ -1626,16 +1616,7 @@ export function RequestsPage() {
                       {(showMediaFilter || activeFull.length > 1) && (
                         <div className="flex flex-wrap items-center gap-2">
                           {showMediaFilter && (
-                            <Segmented
-                              value={media}
-                              onChange={setMedia}
-                              ariaLabel="Filter by library"
-                              options={[
-                                { value: "all", label: `All (${activeFull.length})` },
-                                { value: "movie", label: `Movies (${movieCount})` },
-                                { value: "show", label: `Shows (${showCount})` },
-                              ]}
-                            />
+                            <select aria-label="Filter by library" value={media} onChange={(event) => setMedia(event.target.value as MediaFilter)} className="h-9 rounded-md border bg-background px-3 text-xs"><option value="all">All types ({activeFull.length})</option><option value="movie">Movies ({movieCount})</option><option value="show">Shows ({showCount})</option></select>
                           )}
                           {activeFull.length > 1 && (
                             <>
@@ -1649,22 +1630,6 @@ export function RequestsPage() {
                                 // not offered — the search still finds titles.
                                 offerPeople={peopleOptions.length > 1}
                               />
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-9"
-                                aria-expanded={filtersOpen}
-                                aria-controls={filtersId}
-                                onClick={() => setFiltersOpen((open) => !open)}
-                              >
-                                <SlidersHorizontal aria-hidden="true" />
-                                Filters
-                                {menuFiltersSet > 0 && (
-                                  <span className="rounded-full bg-primary px-1.5 text-[11px] font-bold tabular-nums text-primary-foreground">
-                                    {menuFiltersSet}
-                                  </span>
-                                )}
-                              </Button>
                               <span className="relative inline-flex items-center">
                                 <ArrowUpDown
                                   className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-muted-foreground"
@@ -1686,6 +1651,23 @@ export function RequestsPage() {
                             </>
                           )}
                         </div>
+                      )}
+                      {activeFull.length > 1 && (                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="mt-1 h-10 w-full justify-between border-border bg-card text-xs text-muted-foreground"
+                                aria-expanded={filtersOpen}
+                                aria-controls={filtersId}
+                                onClick={() => setFiltersOpen((open) => !open)}
+                              >
+                                <SlidersHorizontal aria-hidden="true" />
+                                Filters <span className="ml-auto font-normal">Rating · votes · language</span>
+                                {menuFiltersSet > 0 && (
+                                  <span className="rounded-full bg-raised px-1.5 text-xs font-bold tabular-nums text-foreground">
+                                    {menuFiltersSet}
+                                  </span>
+                                )}
+                              </Button>
                       )}
                       {filtersOpen && activeFull.length > 1 && (
                         <div
@@ -1784,10 +1766,10 @@ export function RequestsPage() {
                               so it must never be a guess or hover-only. */}
                           <div
                             className={cn(
-                              "flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2",
+                              "flex flex-wrap items-center gap-x-3 gap-y-2 px-1 py-2",
                               selectedPending.length > 0
-                                ? "border-primary/45 bg-primary/10"
-                                : "bg-card",
+                                ? "rounded-lg border border-border-strong bg-elevated px-3"
+                                : "",
                             )}
                           >
                             <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
@@ -1816,7 +1798,7 @@ export function RequestsPage() {
                             <div
                               role="group"
                               aria-label="Actions for the selected titles"
-                              className="flex flex-wrap items-center gap-2"
+                              className={selectedPending.length > 0 ? "flex flex-wrap items-center gap-2" : "hidden"}
                             >
                               <Button
                                 size="sm"
@@ -1877,12 +1859,12 @@ export function RequestsPage() {
                                 Reject
                               </Button>
                             </div>
-                            <p className="ml-auto text-xs text-muted-foreground">
+                            <details className="group ml-auto text-xs text-muted-foreground"><summary className="flex cursor-pointer items-center gap-1.5 list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />Delete or Reject?</summary><p className="max-w-md pt-2">
                               <strong className="font-medium text-foreground">Delete</strong>{" "}
                               can come back on a later run &middot;{" "}
                               <strong className="font-medium text-foreground">Reject</strong>{" "}
                               blocks it for good
-                            </p>
+                            </p></details>
                             {selectedPending.length > 0 && (
                               <Button
                                 variant="ghost"

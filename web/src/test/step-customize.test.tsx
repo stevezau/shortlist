@@ -32,7 +32,7 @@ const SAVED = {
   "row.size": 25,
 };
 
-function renderStep() {
+function renderStep(back = vi.fn()) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -43,6 +43,7 @@ function renderStep() {
         update={vi.fn()}
         next={vi.fn()}
         complete={vi.fn()}
+        back={back}
       />
     </QueryClientProvider>,
   );
@@ -61,6 +62,28 @@ beforeEach(() => {
 });
 
 describe("StepCustomize seeds from what is already saved", () => {
+  it("returns to the previous step without saving the current draft", async () => {
+    const back = vi.fn();
+    renderStep(back);
+    await userEvent.click(await screen.findByRole("button", { name: "Back" }));
+    expect(back).toHaveBeenCalledOnce();
+    expect(putSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps arbitrary row sizes available beside the preset shortcuts", async () => {
+    renderStep();
+    await screen.findByDisplayValue("25");
+    await userEvent.click(screen.getByRole("button", { name: "10 titles" }));
+    const size = screen.getByLabelText("How many titles");
+    expect(size).toHaveValue(10);
+    await userEvent.clear(size);
+    await userEvent.type(size, "17");
+    await userEvent.tab();
+    await userEvent.click(screen.getByRole("button", { name: "Save & continue" }));
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(firstSave()["row.size"]).toBe(17);
+  });
+
   it("does not overwrite a custom row name when the owner presses Save", async () => {
     renderStep();
     await waitFor(() => expect(getSettings).toHaveBeenCalled());
@@ -76,21 +99,10 @@ describe("StepCustomize seeds from what is already saved", () => {
     });
   });
 
-  it("does not overwrite a custom row name via Skip either", async () => {
-    // "Skip for now — you can change this later" is the same mutation. A control whose label
-    // promises nothing changes must not be the one that clobbers the row name.
+  it("offers one clearly labelled save, with no misleading Skip alias", async () => {
     renderStep();
-    await waitFor(() => expect(getSettings).toHaveBeenCalled());
-
-    await userEvent.click(
-      await screen.findByRole("button", { name: /skip for now/i }),
-    );
-
-    await waitFor(() => expect(putSettings).toHaveBeenCalled());
-    expect(firstSave()).toMatchObject({
-      "row.name_template": "🔥 My Own Row Name",
-      "row.size": 25,
-    });
+    expect(await screen.findByRole("button", { name: /^save/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /skip for now/i })).not.toBeInTheDocument();
   });
 
   it("still saves the defaults on a fresh install with nothing stored", async () => {

@@ -1,0 +1,62 @@
+{
+ "_provenance": "Seerr 3.4.1 GET /api/v1/settings/radarr and /settings/sonarr, recorded 2026-09-28. Hostnames, keys, names and folders neutralised; every other key verbatim.",
+ "_what_the_live_response_settled": {
+  "tagRequests_is_a_real_key": true,
+  "tagRequests_absent_from_published_RadarrSettings_schema": true,
+  "tags_is_a_list_of_arr_tag_ids": true,
+  "why_it_matters": "`tagRequests` is what makes Seerr stamp `<seerrUserId>-<username>` on each Radarr/Sonarr item it sends (MediaRequestSubscriber, `radarrSettings.tagRequests`). It is readable, so Shortlist can tell the owner which server has it off instead of silently finding no tags. The published OpenAPI schema omits the key."
+ },
+ "radarr": [
+  {
+   "name": "example",
+   "hostname": "host.example.test",
+   "port": 443,
+   "apiKey": "REDACTED",
+   "useSsl": true,
+   "baseUrl": "",
+   "activeProfileId": 10,
+   "activeProfileName": "example",
+   "activeDirectory": "example",
+   "is4k": false,
+   "minimumAvailability": "released",
+   "tags": [
+    3
+   ],
+   "isDefault": true,
+   "syncEnabled": true,
+   "preventSearch": false,
+   "tagRequests": true,
+   "id": 0,
+   "externalUrl": null
+  }
+ ],
+ "sonarr": [
+  {
+   "name": "example",
+   "hostname": "host.example.test",
+   "port": 443,
+   "apiKey": "REDACTED",
+   "useSsl": true,
+   "activeProfileId": 9,
+   "activeLanguageProfileId": 1,
+   "activeProfileName": "example",
+   "activeDirectory": "example",
+   "tags": [
+    33
+   ],
+   "animeTags": [
+    33
+   ],
+   "is4k": false,
+   "isDefault": true,
+   "enableSeasonFolders": true,
+   "syncEnabled": true,
+   "preventSearch": false,
+   "tagRequests": true,
+   "monitorNewItems": "all",
+   "id": 0,
+   "externalUrl": null,
+   "baseUrl": ""
+  }
+ ]
+}

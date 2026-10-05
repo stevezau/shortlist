@@ -7,7 +7,7 @@ never reads a clock.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -26,6 +26,7 @@ from shortlist.engine.delivery import (
 from shortlist.engine.models import CollectionDiff, EngineConfig, MediaType, Pick, RowSeason, RowSpec, Seed, UserType
 from shortlist.engine.placeholders import uses_season
 from shortlist.engine.rows import effective_row_sources, row_recipe
+from shortlist.engine.seasons import BUILTIN_SEASONS
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 CHRISTMAS = RowSeason(slug="christmas", name="Christmas", emoji="🎄", anchor=date(2026, 12, 25))
@@ -92,13 +93,37 @@ class TestOtherRowsClaimEverySeasonsTitle:
 
         section = SimpleNamespace(title="Movies", key="1", type="movie")
         claimed = titles_other_rows_build(
-            [section], make_profile("sarah"), EngineConfig(), [seasonal_spec(season=None)], slug="plain"
+            [section],
+            make_profile("sarah"),
+            EngineConfig(seasons=dict(BUILTIN_SEASONS)),
+            [seasonal_spec(season=None)],
+            slug="plain",
         )
         assert claimed == {
             ("1", "🎃 Halloween picks"),
             ("1", "🎄 Christmas picks"),
             ("1", "💘 Valentine's Day picks"),
         }
+
+    def test_a_config_without_a_catalogue_refuses_rather_than_claiming_nothing(self):
+        """An empty default once made this claim silently empty, so a plain row's removal could take a seasonal
+        row's collection (#137). A config nobody gave a catalogue says so instead."""
+        from shortlist.engine.delivery import titles_other_rows_build
+
+        section = SimpleNamespace(title="Movies", key="1", type="movie")
+        with pytest.raises(RuntimeError, match=r"EngineConfig\.seasons was not set"):
+            titles_other_rows_build(
+                [section], make_profile("sarah"), EngineConfig(), [seasonal_spec(season=None)], slug="plain"
+            )
+
+    def test_a_config_without_a_catalogue_still_claims_plain_titles(self):
+        """Only a name that uses the season needs the catalogue; every other caller keeps working without one."""
+        from shortlist.engine.delivery import titles_other_rows_build
+
+        section = SimpleNamespace(title="Movies", key="1", type="movie")
+        plain = RowSpec(slug="friday", name_template="Friday", size=5, media="movie")
+        claimed = titles_other_rows_build([section], make_profile("sarah"), EngineConfig(), [plain], slug="plain")
+        assert claimed == {("1", "Friday")}
 
 
 class TestRemovingASeasonalRow:
@@ -310,6 +335,7 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
 
     mock_plextv.update_user_filters.side_effect = put
     mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+    engine_config.seasons = dict(BUILTIN_SEASONS)
     return EngineContext(
         config=engine_config,
         plex=plex,
@@ -506,6 +532,18 @@ class TestADormantRow:
 
         ctx.plex.promote.assert_any_call(halloween_copy, shared=False, home=False, recommended=False)
 
+    def test_a_failed_list_keeps_any_credential_out_of_the_saved_error(self, ctx):
+        ctx.tmdb.discover_all.side_effect = RuntimeError(
+            "GET https://api.themoviedb.org/3/discover/movie?api_key=SECRETKEY failed"
+        )
+        ctx.config.rows = [seasonal_spec()]
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert "Christmas list could not be read" in (sarah.error or "")
+        assert "SECRETKEY" not in (sarah.error or "") and "SECRETKEY" not in ctx.season_failures["christmas"]
+
     @pytest.mark.parametrize("thin_history", [False, True], ids=["enough_history", "cold_start"])
     def test_it_is_still_hidden_when_every_row_due_tonight_has_nothing_to_build_from(self, ctx, thin_history):
         """Halloween is over and the Christmas list cannot be read. Failing the person used to take them out of
@@ -547,6 +585,54 @@ class TestADormantRow:
         pipeline_mod.run(ctx, [])
         assert ctx.tmdb.discover_all.called is False
 
+    def test_a_run_given_no_catalogue_refuses_to_build_a_seasonal_row(self, ctx):
+        """With an empty default every season read as unknown and every seasonal row quietly kept last night's
+        picks (#137). A caller that forgot the catalogue is a bug, so it fails loudly."""
+        ctx.config.seasons = None
+        ctx.config.rows = [seasonal_spec()]
+        with pytest.raises(RuntimeError, match=r"EngineConfig\.seasons was not set"):
+            pipeline_mod._load_season_titles(ctx, _people(), {})
+
+    def test_a_run_given_no_catalogue_reads_nothing_when_no_row_is_in_season(self, ctx):
+        ctx.config.seasons = None
+        ctx.config.rows = [seasonal_spec(season=None)]
+        pipeline_mod._load_season_titles(ctx, _people(), {})
+        assert ctx.season_titles == {} and ctx.season_failures == {}
+
+    def test_a_custom_seasons_collection_missing_tonight_is_logged_and_the_season_still_builds(self, ctx):
+        """Kometa deletes its seasonal collections out of season (#137 D5). The run reads the collection from
+        the server's own Plex, says it was missing, and builds the season from its picks."""
+        from loguru import logger
+
+        from shortlist.engine.seasons import CollectionRef, DateRule, Season
+
+        pat = Season(
+            slug="pat",
+            name="St Patrick's Day",
+            emoji="☘️",
+            rule=DateRule("fixed", month=3, day=17),
+            description="",
+            collections=(CollectionRef("1", "St Patrick's Movies"),),
+            picks=((30, MediaType.MOVIE),),
+        )
+        ctx.config.seasons = {**BUILTIN_SEASONS, "pat": pat}
+        ctx.config.rows = [
+            seasonal_spec(seasons=["pat"], season=RowSeason("pat", pat.name, pat.emoji, date(2027, 3, 17)))
+        ]
+        ctx.plex.collection_members.return_value = None
+        ctx.tmdb.list_item.side_effect = lambda tmdb_id, media_type: {"id": tmdb_id, "title": "Brooklyn"}
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{message}")
+        try:
+            pipeline_mod._load_season_titles(ctx, _people(), {MediaType.MOVIE: {30: 1030}, MediaType.SHOW: {}})
+        finally:
+            logger.remove(sink)
+
+        ctx.plex.collection_members.assert_called_once_with("1", "St Patrick's Movies")
+        assert ctx.season_failures == {}
+        assert ctx.season_titles["pat"].contains(30, MediaType.MOVIE)
+        assert any("St Patrick's Day list: built without “St Patrick's Movies”" in line for line in lines)
+
 
 class TestWhatDecidesARebuild:
     def _policy(self, ctx, spec: RowSpec):
@@ -575,6 +661,17 @@ class TestWhatDecidesARebuild:
         shipped — the churn the cadence exists to prevent."""
         plain = RowSpec(slug="plain", name_template="Plain", size=5)
         assert "season" not in row_recipe(self._policy(ctx, plain), plain)
+
+    def test_recipe_carries_the_hash_for_custom_seasons_only(self, ctx):
+        """A custom season's sources are in its hash, so editing them rebuilds its rows (#137 D11). A built-in's
+        recipe part stays exactly what it was before custom seasons, so no existing row rebuilds (D2)."""
+        built_in = seasonal_spec()
+        custom = seasonal_spec(
+            seasons=["pat"],
+            season=RowSeason("pat", "St Patrick's Day", "☘️", date(2027, 3, 17), content_hash="abc"),
+        )
+        assert row_recipe(self._policy(ctx, built_in), built_in).endswith("season=christmas@2026-12-25")
+        assert "season=pat@2027-03-17#abc" in row_recipe(self._policy(ctx, custom), custom)
 
     def test_rows_following_different_seasons_never_share_a_pool(self, ctx):
         christmas = seasonal_spec()
@@ -753,7 +850,11 @@ class TestASharedSeasonalRow:
 
         shared = next(u for u in report.users if u.slug == "shared_season-shared")
         assert shared.status == "skipped"
-        assert "Christmas" in shared.reason
+        # A Plex collection a custom season names can fail it too, so the owner is not told TMDB failed.
+        assert shared.reason == (
+            "The Christmas films could not be read tonight, so this seasonal row was left as it was. "
+            "It rebuilds on the next run that can read them."
+        )
 
     def test_out_of_season_it_is_hidden_not_built(self, ctx):
         collection = SimpleNamespace(title="🎃 Halloween picks" + row_marker(0), ratingKey=5151, labels=[])
@@ -767,6 +868,405 @@ class TestASharedSeasonalRow:
         assert not any(u.slug == "shared_season-shared" and u.picks for u in report.users)
         assert ctx.tmdb.discover_all.called is False
         ctx.plex.promote.assert_any_call(collection, shared=False, home=False, recommended=False)
+
+
+#: As `row_season_on` resolves it with the season's own 7-day lead: shown 10-17 March 2027.
+PAT = RowSeason(
+    slug="pat",
+    name="St Patrick's Day",
+    emoji="☘️",
+    anchor=date(2027, 3, 17),
+    content_hash="abc",
+    starts=date(2027, 3, 10),
+    ends=date(2027, 3, 17),
+)
+
+
+class TestLastSeasonsCollection:
+    """A seasonal row with nothing for its new season in a library keeps last season's collection there, under
+    last season's title and with last season's films. Promoting it would put "🎄 Christmas picks" on people's
+    Home in March, so it is kept hidden like a dormant row until a run builds the new season into it (#137 C-1).
+    Hiding is the only write: delivery leaves an empty library alone, and nothing here deletes."""
+
+    @staticmethod
+    def _christmas_copy(account: int = 100) -> SimpleNamespace:
+        return SimpleNamespace(title="🎄 Christmas picks" + row_marker(account), ratingKey=4242, labels=[])
+
+    def _in_march(self, ctx, collection) -> None:
+        """Sarah's row follows St Patrick's Day (with no titles in the library) and Christmas; tonight is St
+        Patrick's, and her library still holds the Christmas collection the row last built."""
+        from shortlist.engine.seasons import DateRule, Season
+
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: (
+            [collection] if label.lower() == "shortlist_sarah" else []
+        )
+        ctx.delivered_keys = {("sarah", "seasonal", "1"): 4242}
+        pat = Season(
+            slug="pat",
+            name=PAT.name,
+            emoji=PAT.emoji,
+            rule=DateRule("fixed", month=3, day=17),
+            description="",
+            keywords=(209352,),
+            lead_days=7,
+            after_days=0,
+            content_hash="abc",
+        )
+        ctx.config.seasons = {**BUILTIN_SEASONS, "pat": pat}
+        ctx.config.rows = [seasonal_spec(seasons=["pat", "christmas"], season=PAT)]
+
+    @staticmethod
+    def _midnight(ctx) -> None:
+        """What `rows.visibility` does on the season's first day: promote one row by its ledger key."""
+        pipeline_mod.promote_user_rows(
+            ctx,
+            _people()[0],
+            {},
+            placement_keys={4242: "seasonal"},
+            skip_unmatched=True,
+            only_row="seasonal",
+            built_for=pipeline_mod.built_seasons(ctx),
+        )
+
+    def test_the_midnight_pass_keeps_it_hidden(self, ctx):
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "christmas@2026-12-25"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_last_years_collection_of_the_same_season_is_kept_hidden_too(self, ctx):
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "pat@2026-03-17"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    @pytest.mark.parametrize("record", ["ledger", "recipe"])
+    def test_a_date_moved_within_the_year_is_still_shown(self, ctx, record):
+        """The owner moved St Patrick's from the 14th to the 17th while it was showing. The films were chosen for
+        this year's St Patrick's, so the collection is the right one; hiding it until its next build would take
+        a correct row off Home. The recipe keeps the full date, so the next run still rebuilds it."""
+        fresh = SimpleNamespace(title="☘️ St Patrick's Day picks" + row_marker(100), ratingKey=4242, labels=[])
+        self._in_march(ctx, fresh)
+        if record == "ledger":
+            ctx.delivered_seasons = {("sarah", "seasonal", "1"): "pat@2027-03-14"}
+        else:
+            ctx.previous_recipes = {("sarah", "seasonal", "1"): "movie|season=pat@2027-03-14#abc"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(fresh, shared=True, home=False, recommended=True)
+
+    def test_one_built_for_tonights_season_is_promoted(self, ctx):
+        fresh = SimpleNamespace(title="☘️ St Patrick's Day picks" + row_marker(100), ratingKey=4242, labels=[])
+        self._in_march(ctx, fresh)
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "pat@2027-03-17"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(fresh, shared=True, home=False, recommended=True)
+
+    def test_with_no_ledger_record_its_picks_recipe_decides(self, ctx):
+        """Every collection delivered before the ledger recorded seasons has no record there. The picks it was
+        built from still name their season, so last season's collection is not shown on the deploy night."""
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+        ctx.previous_recipes = {
+            ("sarah", "seasonal", "1"): "movie|||||False|False|5|1|similar|season=christmas@2026-12-25"
+        }
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_a_recipe_for_tonights_custom_season_ignores_its_source_hash(self, ctx):
+        fresh = SimpleNamespace(title="☘️ St Patrick's Day picks" + row_marker(100), ratingKey=4242, labels=[])
+        self._in_march(ctx, fresh)
+        ctx.previous_recipes = {
+            ("sarah", "seasonal", "1"): "movie|||||False|False|5|1|similar|season=pat@2027-03-17#old"
+        }
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(fresh, shared=True, home=False, recommended=True)
+
+    def test_a_collection_built_before_the_row_followed_seasons_is_kept_hidden(self, ctx):
+        """Its recipe has no season at all, so its films were not chosen for this one."""
+        stale = SimpleNamespace(title="Plain picks" + row_marker(100), ratingKey=4242, labels=[])
+        self._in_march(ctx, stale)
+        ctx.previous_recipes = {("sarah", "seasonal", "1"): "movie|||||False|False|5|1|similar"}
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_with_no_record_at_all_it_is_promoted_as_before(self, ctx):
+        """Nothing says what it holds, so nothing proves it stale: a row must not lose its place on the night
+        this ships just because the ledger never recorded a season."""
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+
+        self._midnight(ctx)
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=True, home=False, recommended=True)
+
+    def test_a_run_that_finds_nothing_for_the_new_season_hides_it(self, ctx):
+        """Someone whose only row found nothing tonight delivers nothing, and a person who delivers nothing was
+        never promoted: last season's collection kept whatever flags it had (a Halloween row handing over to
+        Christmas stayed on Home all through Christmas)."""
+        stale = self._christmas_copy()
+        self._in_march(ctx, stale)
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "christmas@2026-12-25"}
+
+        report = pipeline_mod.run(ctx, _people())
+
+        assert _picks(report, "sarah", "seasonal") == []
+        ctx.plex.promote.assert_any_call(stale, shared=False, home=False, recommended=False)
+        assert not [c for c in ctx.plex.promote.call_args_list if c.args[0] is stale and any(c.kwargs.values())]
+
+    def test_a_run_that_builds_the_new_season_shows_what_it_built(self, ctx):
+        """The ledger the run starts from still names last season; what the run delivers tonight is what counts."""
+        built = MagicMock(ratingKey=5555, labels=[])
+        built.title = "🎄 Christmas picks" + row_marker(100)
+        ctx.plex.create_collection.return_value = built
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: (
+            [built] if label.lower() == "shortlist_sarah" and ctx.plex.create_collection.called else []
+        )
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "halloween@2026-10-31"}
+        ctx.config.rows = [seasonal_spec()]
+
+        report = pipeline_mod.run(ctx, _people()[:1])
+
+        assert _picks(report, "sarah", "seasonal") != []
+        ctx.plex.promote.assert_any_call(built, shared=True, home=False, recommended=True)
+
+    def test_a_shared_rows_last_season_is_kept_hidden(self, ctx):
+        stale = SimpleNamespace(title="🎄 Christmas picks" + row_marker(0), ratingKey=5151, labels=[])
+        ctx.plex.find_owned_collections.side_effect = lambda section, label: (
+            [stale] if label == "shortlist__shared_season-shared" else []
+        )
+        ctx.delivered_seasons = {("shared_season-shared", "season-shared", "1"): "christmas@2026-12-25"}
+        spec = seasonal_spec(slug="season-shared", shared=True, seasons=["pat", "christmas"], season=PAT)
+
+        pipeline_mod.promote_shared_row(ctx, spec, into=set(), built_for=pipeline_mod.built_seasons(ctx))
+
+        ctx.plex.promote.assert_called_once_with(stale, shared=False, home=False, recommended=False)
+
+    def test_what_a_run_delivers_or_removes_replaces_the_ledgers_record(self, ctx):
+        from shortlist.engine.models import RunReport, UserRunReport
+
+        ctx.delivered_seasons = {("sarah", "seasonal", "1"): "halloween@2026-10-31", ("sarah", "gone", "1"): "x@1"}
+        ctx.previous_recipes = {("mike", "seasonal", "1"): "movie|season=halloween@2026-10-31#h"}
+        sarah = UserRunReport(username="sarah", slug="sarah")
+        sarah.breakdown = [
+            {"row_slug": "seasonal", "library_key": "1", "rating_key": 1, "season": "christmas@2026-12-25"},
+            {"row_slug": "plain", "library_key": "1", "rating_key": 2, "season": ""},
+        ]
+        sarah.removed_deliveries = [{"row_slug": "gone", "library_key": "1"}]
+        report = RunReport(started_at=datetime(2026, 12, 1, tzinfo=UTC), users=[sarah])
+
+        assert pipeline_mod.built_seasons(ctx, report) == {
+            ("sarah", "seasonal", "1"): "christmas@2026-12-25",
+            ("sarah", "plain", "1"): "",
+            ("mike", "seasonal", "1"): "halloween@2026-10-31",
+        }
+
+
+def _custom(slug: str, month: int, day: int, *, lead: int, after: int = 0):
+    from shortlist.engine.seasons import DateRule, Season
+
+    return Season(
+        slug=slug,
+        name=slug.title(),
+        emoji="🗓️",
+        rule=DateRule("fixed", month=month, day=day),
+        description="",
+        keywords=(1,),
+        lead_days=lead,
+        after_days=after,
+    )
+
+
+class TestWhichCollectionIsTonightsSeason:
+    """#137 C-1, round 3: a collection is built for tonight's season only when its record names the same season
+    AND a day inside tonight's window (from the day before it opens to the day it closes). A slug-and-year
+    comparison let an earlier date of the same year through: Diwali moved from March to November showed March's
+    collection all of November. Every case resolves tonight's season with the real `row_season_on` and asks the
+    real guard, `pipeline._unless_built_for_another_season`."""
+
+    @staticmethod
+    def _shown(
+        day: date, built: str | None, seasons: dict, *, slugs: list[str], lead: int = 30, after: int = 0
+    ) -> bool:
+        from shortlist.engine.seasons import row_season_on
+
+        catalogue = {**BUILTIN_SEASONS, **seasons}
+        tonight = row_season_on(slugs, lead, after, day, catalogue=catalogue)
+        assert tonight is not None, "the row is in season on that day"
+        spec = seasonal_spec(seasons=slugs, season=tonight)
+        guarded = pipeline_mod._unless_built_for_another_season(spec, built, SimpleNamespace(title="row"))
+        return not guarded.dormant
+
+    @pytest.mark.parametrize(
+        ("day", "built", "season"),
+        [
+            (date(2026, 10, 30), "diwali@2026-03-01", _custom("diwali", 11, 8, lead=14, after=3)),
+            (date(2026, 12, 20), "hols@2026-01-01", _custom("hols", 12, 31, lead=14)),
+            # Deleted on 1 Oct and made again under the same slug for 8 Nov: DELETE leaves the ledger's record.
+            (date(2026, 10, 30), "diwali@2026-10-01", _custom("diwali", 11, 8, lead=14, after=3)),
+        ],
+        ids=["march_moved_to_november", "january_moved_to_december", "deleted_and_made_again_for_another_day"],
+    )
+    def test_an_earlier_day_of_the_same_season_and_year_is_kept_hidden(self, day, built, season):
+        # The season alone, so nothing but its own day can hide it: beside Christmas, 20 December would show
+        # Christmas and hide the row for the wrong reason.
+        assert self._shown(day, built, {season.slug: season}, slugs=[season.slug]) is False
+
+    @pytest.mark.parametrize(
+        ("day", "built", "season"),
+        [
+            (date(2027, 3, 12), "pat@2027-03-14", _custom("pat", 3, 17, lead=7)),
+            (date(2026, 12, 30), "ny@2026-12-28", _custom("ny", 1, 5, lead=7, after=3)),
+        ],
+        ids=["14_moved_to_17_march", "28_december_moved_to_5_january"],
+    )
+    def test_a_day_moved_within_the_window_is_still_shown(self, day, built, season):
+        """The films were chosen for this showing of the season; the recipe's full day rebuilds it next run."""
+        assert self._shown(day, built, {season.slug: season}, slugs=[season.slug]) is True
+
+    @pytest.mark.parametrize(
+        ("day", "built", "season"),
+        [
+            (date(2027, 3, 12), "pat@2027-03-17", _custom("pat", 3, 16, lead=7)),
+            (date(2027, 6, 13), "june@2027-06-10", _custom("june", 6, 19, lead=7, after=3)),
+            (date(2026, 12, 30), "ny@2026-12-28", _custom("ny", 1, 6, lead=7, after=3)),
+        ],
+        ids=["17_moved_back_to_16_march", "10_moved_to_19_june", "28_december_moved_to_6_january"],
+    )
+    def test_a_day_moved_by_no_more_than_the_windows_width_is_still_shown(self, day, built, season):
+        """Round 4: the record is held when it is within the window's width (lead + after) of tonight's day, either
+        side. The one-sided "day before it opens to the day it closes" hid a row moved a day EARLIER when it had
+        no days after (the default), and one moved later by more than lead + 1."""
+        assert self._shown(day, built, {season.slug: season}, slugs=[season.slug]) is True
+
+    @pytest.mark.parametrize("day", [date(2027, 1, 1), date(2027, 1, 2)], ids=["1_january", "2_january"])
+    def test_new_years_eve_staying_into_january_shows_its_own_collection_and_hides_last_years(self, day):
+        """The window crosses New Year: neither tonight's year nor the record's year alone can decide it."""
+        nye = {"nye": _custom("nye", 12, 31, lead=7, after=2)}
+        assert self._shown(day, "nye@2026-12-31", nye, slugs=["nye"]) is True
+        assert self._shown(day, "nye@2025-12-31", nye, slugs=["nye"]) is False
+
+    def test_valentines_shown_from_december_shows_its_own_collection_and_hides_last_years(self):
+        """A 90-day lead opens February's season in November of the year before."""
+        day = date(2026, 12, 20)
+        assert self._shown(day, "valentines@2027-02-14", {}, slugs=["valentines"], lead=90) is True
+        assert self._shown(day, "valentines@2026-02-14", {}, slugs=["valentines"], lead=90) is False
+
+    @pytest.mark.parametrize(
+        ("built", "shown"),
+        [(None, True), ("", False), ("pat@", False), ("pat", False), ("christmas@2027-03-17", False)],
+        ids=["no_record", "built_while_not_seasonal", "no_date", "no_anchor_at_all", "another_season"],
+    )
+    def test_a_record_that_names_no_day_of_this_season_keeps_todays_answer(self, built, shown):
+        """No record is promoted as it always was; anything else that names no day of tonight's season is not."""
+        pat = {"pat": _custom("pat", 3, 17, lead=7)}
+        assert self._shown(date(2027, 3, 12), built, pat, slugs=["pat"]) is shown
+
+
+class TestWhyASeasonalRowBuiltNothing:
+    """A seasonal row that builds nothing used to report `ok` with no reason (a real run: a shared New Year's Eve
+    row whose audience had watched none of its films together). Thin seasons make it common — Easter holds 5
+    films on a 10,000-film server, Mother's Day 2 — so the run report says why, naming the season. Nothing about
+    what is built or promoted changes."""
+
+    def _row_alone(self, ctx, **overrides) -> None:
+        ctx.config.rows = [seasonal_spec(**overrides)]
+
+    def test_a_season_with_nothing_in_this_rows_libraries_says_so(self, ctx):
+        ctx.tmdb.discover_all.side_effect = lambda media_type, params: (
+            [{"id": 77, "title": "Not On This Server", "genre_ids": [28], "vote_average": 8.0}]
+            if media_type is MediaType.MOVIE and params.get("with_keywords") == CHRISTMAS_KEYWORDS
+            else []
+        )
+        self._row_alone(ctx)
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert _picks(report, "sarah", "seasonal") == []
+        assert sarah.reason == "No 🎄 Christmas films are in this row's libraries, so it had nothing to show tonight."
+
+    def test_a_season_they_have_seen_all_of_says_so(self, ctx):
+        ctx.history_source.fetch.return_value = [
+            make_watched("Die Hard", days_ago=1, rating_key=999),
+            make_watched("Die Hard 2", days_ago=2, rating_key=1020, tmdb_id=20),
+            make_watched("Elf", days_ago=3, rating_key=1030, tmdb_id=30),
+            make_watched("Violent Night", days_ago=4, rating_key=1031, tmdb_id=31),
+        ]
+        self._row_alone(ctx)
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert _picks(report, "sarah", "seasonal") == []
+        assert sarah.reason == "No 🎄 Christmas films are left for them — they've seen all 3."
+
+    def test_a_shared_row_no_season_film_was_watched_by_enough_of_says_so(self, ctx):
+        elf = make_watched("Elf", days_ago=2, rating_key=1030, tmdb_id=30)
+        violent = make_watched("Violent Night", days_ago=2, rating_key=1031, tmdb_id=31)
+        other = make_watched("Not Christmas", days_ago=2, rating_key=1010, tmdb_id=10)
+        people = _shared_people(ctx)
+        for person, history in zip(people, ([elf, other], [violent, other], [other]), strict=True):
+            person.history = history
+        ctx.config.rows = [seasonal_spec(slug="season-shared", shared=True, min_watchers=2)]
+
+        report = pipeline_mod.run(ctx, people)
+
+        shared = next(u for u in report.users if u.slug == "shared_season-shared")
+        assert shared.picks == []
+        assert shared.reason == (
+            "No 🎄 Christmas film in this row's libraries has been watched by 2 or more of the 3 people in its "
+            "audience yet, so it had nothing to show tonight."
+        )
+
+    def test_someone_whose_other_row_built_picks_gets_no_reason(self, ctx):
+        """The person's reason is read as "why they got nothing": the Runs page shows it in place of their pick
+        counts. Their seasonal row being empty beside a row that delivered is not that."""
+        ctx.tmdb.discover_all.side_effect = lambda media_type, params: []
+        ctx.config.rows = [seasonal_spec(), RowSpec(slug="plain", name_template="Plain picks", size=5)]
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert _picks(report, "sarah", "seasonal") == [] and _picks(report, "sarah", "plain") != []
+        assert sarah.reason is None
+
+    def test_two_empty_seasonal_rows_each_name_their_own_season(self, ctx):
+        """Joined, two sentences that both said "this row's libraries" could not be told apart."""
+        ctx.tmdb.discover_all.side_effect = lambda media_type, params: []
+        ctx.config.rows = [seasonal_spec(), seasonal_spec(slug="spooky", season=HALLOWEEN)]
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert sarah.reason == (
+            "No 🎄 Christmas films are in the Christmas row's libraries, so it had nothing to show tonight. "
+            "No 🎃 Halloween films are in the Halloween row's libraries, so it had nothing to show tonight."
+        )
+
+    def test_a_row_that_built_something_gets_no_such_reason(self, ctx):
+        self._row_alone(ctx)
+
+        report = pipeline_mod.run(ctx, _people())
+
+        sarah = next(u for u in report.users if u.username == "sarah")
+        assert _picks(report, "sarah", "seasonal") != []
+        assert sarah.reason is None
 
 
 class TestSeasonInTheDescriptionAndPoster:

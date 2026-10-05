@@ -1,0 +1,279 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef } from "react";
+
+import { api } from "@/lib/api";
+import { queryKeys } from "@/lib/queries";
+import type {
+  AiInstructions,
+  Theme,
+  ThemePreview,
+  ThemePreviewInput,
+  ThemeSaveInput,
+  ThemeStats,
+} from "@/lib/types";
+
+/**
+ * The AI row's theme (#138): query and mutation hooks, and the small pure helpers the editor's AI
+ * sections share. The theme is written by ONE AI call per build and then stored; nothing here ever
+ * asks the AI on its own, because every call spends the owner's tokens.
+ */
+
+/** A theme the owner has built or edited in this editor session and not saved yet. */
+export interface PendingTheme {
+  draft: Theme;
+  /** The preview's counts, kept with the theme once saved. Absent for a hand edit. */
+  stats: ThemeStats | null;
+  /** Whether an AI call wrote it (`ai`) or the owner edited it by hand (`manual`). */
+  origin: "ai" | "manual";
+}
+
+export function useThemeCapabilities() {
+  return useQuery({
+    queryKey: queryKeys.themeCapabilities,
+    queryFn: () => api.getThemeCapabilities(),
+    staleTime: 60_000,
+  });
+}
+
+export function useThemePrompts() {
+  return useQuery({
+    queryKey: queryKeys.themePrompts,
+    queryFn: () => api.getThemePrompts(),
+    staleTime: Infinity,
+  });
+}
+
+/** The stored theme an AI row follows; `null` for a row with no theme yet (nothing is fetched). */
+export function useTheme(id: number | null) {
+  return useQuery({
+    queryKey: queryKeys.theme(id ?? 0),
+    queryFn: () => api.getTheme(id as number),
+    enabled: id !== null,
+  });
+}
+
+/** Everything that decides what a preview says, in one string: the same request is the same answer. */
+function previewKey(input: ThemePreviewInput, salt: string): string {
+  return JSON.stringify([
+    (input.brief ?? "").trim(),
+    (input.change ?? "").trim(),
+    input.media ?? "both",
+    input.current_theme_id ?? null,
+    input.current_draft ?? null,
+    input.collection_id ?? null,
+    (input.guidance ?? "").trim(),
+    salt,
+  ]);
+}
+
+export interface BuiltTheme {
+  preview: ThemePreview;
+  /** True when the owner asked the same question again, so no AI call was made and nothing was spent. */
+  cached: boolean;
+}
+
+/**
+ * Write or refine a theme with one AI call. The same request, asked again, is answered from what the
+ * last call returned instead of spending tokens a second time — a double-click, or pressing Build on
+ * an unchanged brief, costs nothing.
+ *
+ * `salt` is anything else the answer depends on that the request does not carry, such as the stored
+ * theme's content hash: a refinement asked after the theme changed is a new question.
+ */
+export function useThemePreview() {
+  const answers = useRef(new Map<string, ThemePreview>());
+  const mutation = useMutation({
+    mutationFn: async ({ input, salt }: { input: ThemePreviewInput; salt: string }): Promise<BuiltTheme> => {
+      const key = previewKey(input, salt);
+      const known = answers.current.get(key);
+      if (known) return { preview: known, cached: true };
+      const preview = await api.previewTheme({
+        ...input,
+        ...(input.brief !== undefined ? { brief: input.brief.trim() } : {}),
+        ...(input.change !== undefined ? { change: input.change.trim() } : {}),
+      });
+      answers.current.set(key, preview);
+      return { preview, cached: false };
+    },
+  });
+  return {
+    build: (input: ThemePreviewInput, salt = "") => mutation.mutateAsync({ input, salt }),
+    isPending: mutation.isPending,
+    isError: mutation.isError,
+    error: mutation.error,
+    reset: mutation.reset,
+  };
+}
+
+/** Save a theme: a new one (`id` null) or an existing one's replacement contents. */
+export function useSaveTheme() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number | null; body: ThemeSaveInput }) =>
+      id === null ? api.createTheme(body) : api.updateTheme(id, body),
+    onSuccess: (theme) => {
+      if (theme.id !== null) queryClient.setQueryData(queryKeys.theme(theme.id), theme);
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+    },
+  });
+}
+
+/** Each person's Explore rotation on an AI row: current theme, Up next, and recent themes. */
+export function useThemeRotation(collectionId: number | null) {
+  return useQuery({
+    queryKey: queryKeys.themeRotation(collectionId ?? 0),
+    queryFn: () => api.getThemeRotation(collectionId as number),
+    enabled: collectionId !== null,
+  });
+}
+
+/** Point one person's Up next at a saved theme. Spends nothing and changes nothing on Plex. */
+export function useSetUpNext() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ collectionId, userId, themeId }: { collectionId: number; userId: number; themeId: number }) =>
+      api.setUpNext(collectionId, userId, themeId),
+    onSuccess: (_ref, { collectionId }) =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.themeRotation(collectionId) }),
+  });
+}
+
+/** Have the AI write a new Up next theme for one person now. One AI call, so it spends tokens. */
+export function useRegenerateUpNext() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ collectionId, userId }: { collectionId: number; userId: number }) =>
+      api.regenerateUpNext(collectionId, userId),
+    onSuccess: (_ref, { collectionId }) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.themeRotation(collectionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+    },
+  });
+}
+
+/** Pause or resume an AI row's AI. It takes effect at once, apart from Save changes. */
+export function useSetAiPause() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ collectionId, paused }: { collectionId: number; paused: boolean }) =>
+      api.setAiPause(collectionId, paused),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
+  });
+}
+
+/**
+ * The guidance to send "Write the list" for a row's AI instructions: nothing for the default (the
+ * server then uses its own wording), the owner's text for "own", and the default followed by the
+ * owner's text for "add". The mechanics are never part of it.
+ */
+export function themeGuidance(instructions: AiInstructions, defaultGuidance: string): string {
+  const text = instructions.text.trim();
+  if (instructions.mode === "own") return text;
+  if (instructions.mode === "add" && text) return `${defaultGuidance.trim()} ${text}`;
+  return "";
+}
+
+/** The system prompt "Write the list" sends, joined the way the server joins it. */
+export function buildPrompt(guidance: string, defaultGuidance: string, mechanics: string): string {
+  return `${guidance.trim() || defaultGuidance.trim()} ${mechanics}`;
+}
+
+/** How many titles the AI named that the server doesn't have (found on TMDB, absent from the libraries). */
+export function missingFromServer(stats: Pick<ThemeStats, "resolved" | "in_library">): number {
+  return Math.max(0, stats.resolved - stats.in_library);
+}
+
+/** Whether a theme would select nothing: the server refuses it, so the editor says so first. */
+export function selectsNothing(theme: Pick<Theme, "tags" | "genres" | "collections" | "picks">): boolean {
+  return (
+    theme.tags.length === 0 &&
+    theme.genres.length === 0 &&
+    theme.collections.length === 0 &&
+    theme.picks.length === 0
+  );
+}
+
+/** A theme's content as the API takes it, for a save or to refine an unsaved list. No hash or slug. */
+export function toThemeIn(pending: PendingTheme): ThemeSaveInput["draft"] {
+  const { draft } = pending;
+  return {
+    name: draft.name,
+    emoji: draft.emoji,
+    brief: draft.brief,
+    origin: pending.origin,
+    media: draft.media.filter((m): m is "movie" | "show" => m === "movie" || m === "show"),
+    tags: draft.tags,
+    genres: draft.genres,
+    excluded_genres: draft.excluded_genres,
+    collections: draft.collections,
+    picks: draft.picks,
+    rules: draft.rules,
+  };
+}
+
+/** A theme as the save endpoint takes it. The hash and slug are never sent: the server works them out. */
+export function toSaveBody(
+  pending: PendingTheme,
+  { tokens, collectionId }: { tokens: number; collectionId: number | null },
+): ThemeSaveInput {
+  const stats = pending.stats
+    ? {
+        named: pending.stats.named,
+        resolved: pending.stats.resolved,
+        in_library: pending.stats.in_library,
+        after_rules: pending.stats.after_rules,
+        ai_kept: pending.stats.ai_kept,
+      }
+    : undefined;
+  return {
+    draft: toThemeIn(pending),
+    tokens,
+    collection_id: collectionId,
+    ...(stats ? { stats } : {}),
+  };
+}
+
+type RuleKey = keyof Theme["rules"];
+
+/** One hard limit in words, and the rule fields that go when it is removed. */
+export interface RuleChip {
+  label: string;
+  keys: RuleKey[];
+}
+
+/** A theme's hard limits, one chip each; none for a limit that is not set. The two years are one chip. */
+export function ruleChips(rules: Theme["rules"]): RuleChip[] {
+  const chips: RuleChip[] = [];
+  if (rules.max_runtime != null) chips.push({ label: `Up to ${rules.max_runtime} min`, keys: ["max_runtime"] });
+  const { min_year: from, max_year: to } = rules;
+  if (from != null && to != null) chips.push({ label: `Released ${from}–${to}`, keys: ["min_year", "max_year"] });
+  else if (from != null) chips.push({ label: `Released ${from} or later`, keys: ["min_year"] });
+  else if (to != null) chips.push({ label: `Released ${to} or earlier`, keys: ["max_year"] });
+  if (rules.min_rating != null) chips.push({ label: `Rating ${rules.min_rating}+`, keys: ["min_rating"] });
+  if (rules.min_votes != null) {
+    chips.push({ label: `At least ${rules.min_votes.toLocaleString()} votes`, keys: ["min_votes"] });
+  }
+  return chips;
+}
+
+/** A theme's hard limits in words, one short phrase each; none for a limit that is not set. */
+export function rulesSummary(rules: Theme["rules"]): string[] {
+  return ruleChips(rules).map((chip) => chip.label);
+}
+
+/** The rules with one chip's fields left out, so a saved theme has no such limit. */
+export function withoutRule(rules: Theme["rules"], chip: RuleChip): Theme["rules"] {
+  return Object.fromEntries(Object.entries(rules).filter(([key]) => !chip.keys.includes(key as RuleKey)));
+}
+
+/** The counts a saved theme kept from the build that wrote it, or null when it has none (a hand edit). */
+export function savedStats(
+  theme: Pick<Theme, "stats">,
+): (Pick<ThemeStats, "named" | "resolved" | "in_library" | "after_rules"> & { ai_kept?: number }) | null {
+  const { named, resolved, in_library, after_rules, ai_kept } = theme.stats;
+  if (named === undefined || resolved === undefined || in_library === undefined || after_rules === undefined) {
+    return null;
+  }
+  // A list saved before the AI's own count existed has none, and says so rather than showing 0.
+  return { named, resolved, in_library, after_rules, ...(ai_kept === undefined ? {} : { ai_kept }) };
+}

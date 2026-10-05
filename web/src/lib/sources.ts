@@ -4,7 +4,7 @@ import { settingString } from "@/lib/format";
 /**
  * The candidate sources the engine knows how to run. Shortlist pools every enabled source, keeps
  * only what's already in the library, then ranks them in code. Enabled globally in Settings →
- * Finding titles, or overridden per row in the row editor. Mirrors engine `KNOWN_SOURCES`.
+ * Defaults → Title sources, or overridden per row in the row editor. Mirrors engine `KNOWN_SOURCES`.
  */
 export interface SourceInfo {
   id: string;
@@ -43,7 +43,7 @@ export const SOURCES: readonly SourceInfo[] = [
     id: "llm_web",
     label: "Web search — what to watch next",
     short: "AI web search",
-    desc: "Searches the live web for well-reviewed titles to watch next, then keeps only the ones already in your library. Claude, GPT and Gemini do the searching themselves; any other provider searches through Exa or your own self-hosted SearXNG. Pick which in Settings → Finding titles.",
+    desc: "Searches the live web for well-reviewed titles to watch next, then keeps only the ones already in your library. Claude, GPT and Gemini do the searching themselves; any other provider searches through Exa or your own self-hosted SearXNG. Pick which in Settings → Connections → AI & Web search.",
     requires: "web_search",
   },
 ];
@@ -82,6 +82,21 @@ export function hasNativeWebSearch(settings: Settings): boolean {
   return NATIVE_WEB_SEARCH_PROVIDERS.includes(
     settingString(settings, "curator.provider"),
   );
+}
+
+/** Why a row's AI instructions would have no effect, or null when the AI reads them. */
+export type AiInstructionsInert = "no_provider" | "no_native_search" | null;
+
+/**
+ * Whether anything reads a row's AI instructions. With no AI provider nothing does: Exa's titles are
+ * kept as found and native and SearXNG search don't run. Native search also needs a provider with its
+ * own search tool. Mirrors `inert` in the server's prompt preview (`api/ai.py`); the two must agree.
+ */
+export function aiInstructionsInert(settings: Settings): AiInstructionsInert {
+  if (!hasCurator(settings)) return "no_provider";
+  const backend = webSearchProvider(settings);
+  const external = backend === "exa" || backend === "searxng";
+  return external || hasNativeWebSearch(settings) ? null : "no_native_search";
 }
 
 /** Whether an Exa web-search key is on file (a universal search backend — works for any provider). */

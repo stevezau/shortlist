@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import type { LogLine, LogPage } from "@/lib/types";
-import { LogsPage } from "@/pages/logs";
+import { LogsPanel } from "@/pages/logs";
 
 const { getLogs } = vi.hoisted(() => ({ getLogs: vi.fn() }));
 
@@ -49,7 +49,7 @@ function renderPage() {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <LogsPage />
+        <LogsPanel />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -57,6 +57,18 @@ function renderPage() {
 
 describe("LogsPage", () => {
   beforeEach(() => getLogs.mockReset());
+
+  it("pauses following when the reader scrolls up and resumes at the latest line", async () => {
+    getLogs.mockResolvedValue(page([line()]));
+    renderPage();
+    await screen.findByText("shortlist server up");
+    const log = screen.getByRole("log", { name: /Application logs/i });
+    Object.defineProperties(log, { scrollHeight: { value: 1000 }, clientHeight: { value: 300 }, scrollTop: { value: 100, writable: true } });
+    fireEvent.scroll(log);
+    expect(screen.getByRole("switch", { name: "Follow new log lines" })).not.toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+    expect(screen.getByRole("switch", { name: "Follow new log lines" })).toBeChecked();
+  });
 
   it("shows log lines with their level and message", async () => {
     getLogs.mockResolvedValue(

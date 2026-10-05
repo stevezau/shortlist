@@ -1,9 +1,10 @@
 import { AlertTriangle, CheckCircle2 } from "lucide-react";
 
+import { panelRowClass, ReportPanel } from "@/components/dashboard/report-panel";
 import { QueryBoundary } from "@/components/query-boundary";
 import { Why } from "@/components/why";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import { useEngagement } from "@/lib/queries";
 import type {
   EffectivenessReport,
@@ -175,22 +176,18 @@ export function NeedsALook({
 }) {
   const engagement = useEngagement(reportWindow);
   return (
-    <Card className="min-w-0">
-      <CardContent className="pt-6">
-        <h2 className="text-sm font-medium text-muted-foreground">
-          Worth a look
-        </h2>
-        {/* Covers BOTH halves of the list, which "Where the picks are not landing" did not. Three of
-            the four item kinds here are picks nobody started — idle people, dead rows, unfetched
-            requests. The fourth is the opposite: somebody DID start it. A partial watch is the pick
-            landing and then losing them, which is a different fact and not a failure to land, and
-            calling it one told the owner something untrue about their own server. */}
-        <p className="mt-0.5 text-xs text-muted-foreground/80">
-          Picks nobody started, and ones they started but didn&rsquo;t finish.
-        </p>
+    <ReportPanel
+      title="Worth a look"
+      // Covers BOTH halves of the list, which "Where the picks are not landing" did not. Three of the
+      // four item kinds here are picks nobody started — idle people, dead rows, unfetched requests.
+      // The fourth is the opposite: somebody DID start it. A partial watch is the pick landing and
+      // then losing them, which is a different fact and not a failure to land.
+      hint={<>Picks nobody started, and ones they started but didn&rsquo;t finish.</>}
+      flush
+    >
         <QueryBoundary
           query={engagement}
-          skeleton={<Skeleton className="mt-3 h-16 w-full" />}
+          skeleton={<Skeleton className="m-4 h-16 sm:mx-5" />}
         >
           {(data) => {
             // A maturity gate. `landing.rate === null` is the server saying no pick has had its full N
@@ -217,8 +214,10 @@ export function NeedsALook({
               unwatchedRequests(report.requests),
               ...gaveUp(data.people),
             ].filter((p): p is Problem => p !== null);
+            // The same size as every other panel's body text: a quieter note read as a footnote to a
+            // list that was not there.
             const tooEarlyNote = tooEarly ? (
-              <p className="mt-3 text-xs text-muted-foreground">
+              <p className={cn("text-sm text-muted-foreground", panelRowClass, problems.length > 0 && "border-t")}>
                 Too early to say who isn&rsquo;t watching: a pick gets{" "}
                 {report.overall.landing?.matured_days ?? 30} days before it
                 counts.
@@ -233,7 +232,7 @@ export function NeedsALook({
               const onlyBounces =
                 report.overall.dropped === 0 && report.overall.bounced > 0;
               return (
-                <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+                <p className={cn("flex items-center gap-2 text-sm text-muted-foreground", panelRowClass)}>
                   <CheckCircle2
                     className="h-4 w-4 shrink-0 text-success"
                     aria-hidden="true"
@@ -248,9 +247,9 @@ export function NeedsALook({
             }
             return (
               <>
-                <ul className="mt-3 space-y-2">
+                <ul className="divide-y">
                   {problems.map((problem) => (
-                    <li key={problem.key} className="flex items-start gap-2.5">
+                    <li key={problem.key} className={cn("flex items-start gap-2.5", panelRowClass)}>
                       <AlertTriangle
                         className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70"
                         aria-hidden="true"
@@ -269,7 +268,6 @@ export function NeedsALook({
             );
           }}
         </QueryBoundary>
-      </CardContent>
-    </Card>
+    </ReportPanel>
   );
 }

@@ -1,6 +1,7 @@
 import { useId, useState } from "react";
 
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { ROW_SIZE_MAX, ROW_SIZE_MIN, clampRowSize } from "@/lib/constants";
 
@@ -15,11 +16,14 @@ export function RowSizeField({
   onChange,
   label = "How many titles",
   hint = `Any number of titles from ${ROW_SIZE_MIN} to ${ROW_SIZE_MAX}.`,
+  presets,
 }: {
   value: number;
   onChange: (size: number) => void;
   label?: string;
   hint?: string;
+  /** Optional quick choices; the free number field always remains available. */
+  presets?: readonly number[];
 }) {
   const id = useId();
   const [text, setText] = useState(String(value));
@@ -42,7 +46,12 @@ export function RowSizeField({
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {presets?.map((size) => (
+          <Button key={size} type="button" variant={value === size ? "default" : "outline"}
+            aria-label={`${size} titles`} aria-pressed={value === size}
+            className="min-w-12" onClick={() => onChange(size)}>{size}</Button>
+        ))}
         <Input
           id={id}
           type="number"

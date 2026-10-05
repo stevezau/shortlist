@@ -16,7 +16,7 @@ const MODES: { value: Mode; label: string }[] = [
 ];
 
 /**
- * When THIS row rebuilds on its own — a nightly/weekly preset, a raw cron, or Off (never runs on a
+ * When THIS row runs on its own — a nightly/weekly preset, a raw cron, or Off (never runs on a
  * schedule). Controlled: emits the cron string, or "" for Off. There is no global schedule; every
  * row carries its own.
  */
@@ -51,15 +51,13 @@ export function RowScheduleField({
   };
 
   return (
-    <div className="space-y-3 border-t pt-4">
-      <Label>Schedule</Label>
-      <p className="text-sm text-muted-foreground">
-        When this row rebuilds on its own. Every row runs on its own schedule —
-        set it <strong>Off</strong> to only run it by hand.
-      </p>
+    <div className="space-y-3">
+      {/* "Runs on…", never "rebuilds": the titles' own cadence is "Titles refresh every…" just
+          below, and one word for both read as one setting. */}
+      <Label>Runs on…</Label>
       <div className="flex flex-wrap items-end gap-4">
         <Segmented
-          legend="Cadence"
+          ariaLabel="Runs on"
           value={mode}
           options={MODES}
           onChange={(next) => apply(next, time, cronText)}
@@ -100,16 +98,16 @@ export function RowScheduleField({
 
       {mode === "off" && (
         <p className="text-sm text-muted-foreground">
-          This row won&rsquo;t run on a schedule — only when you trigger a run
-          yourself.
+          This row won&rsquo;t run on a schedule — only when you press Run
+          now.
         </p>
       )}
 
       {(mode === "nightly" || mode === "weekly") && (
         <p className="text-sm text-muted-foreground">
           {mode === "weekly"
-            ? `Rebuilds every Sunday at ${time}, Shortlist's clock.`
-            : `Rebuilds nightly at ${time}, Shortlist's clock.`}
+            ? `Runs every Sunday at ${time}, Shortlist's clock.`
+            : `Runs every night at ${time}, Shortlist's clock.`}
         </p>
       )}
     </div>

@@ -2,8 +2,8 @@ title: Shortlist
 tagline: Per-user Plex recommendations, built from each person's own watch history
 description: >-
   Give every user on your Plex server their own recommendations, based on what
-  they actually watched. Shortlist builds a private "Picked for You" row on each
-  person's Plex home screen — visible only to them. Self-hosted, one Docker
+  they actually watched. Shortlist builds private rows ("Picked for You",
+  "Because you watched" and more) on each person's Plex home screen, using Plex sharing filters. Self-hosted, one Docker
   container, no AI key required.
 
 # Where the site lives. Every page derives its links from these two through
@@ -29,6 +29,16 @@ url: https://shortlistapp.dev
 baseurl: ""
 
 repo: https://github.com/stevezau/shortlist
+
+# Update both when a stable release is published; previews remain explicitly marked. The landing
+# page's status line renders them as "v1.9.3 · released 27 Sep 2026".
+stable_version: 1.9.3
+stable_released: 2026-09-27
+
+# GoatCounter site code (the part before .goatcounter.com). Empty means no analytics tag at all:
+# head.html emits the script only when this is set. The install include's Copy button also counts
+# an "install-copy" event when the script is present.
+goatcounter: "shortlist"
 
 # The host shown in the landing page's fake address bars. A `.local` name says
 # "this runs on your own network" without a sentence about it, and 5959 is the
@@ -63,7 +73,7 @@ defaults:
 
 # Ownership proof for Google Search Console (where the sitemap is submitted).
 # Public by design — it's served as a meta tag on every page.
-google_site_verification: cqlqedFcoobifs1lLaDIdbBPCPurJ-JlDAIVOTs_02k
+google_site_verification: _1uUI3TfHE0na5iN59RQClU0s5ToExFOT_goS8f0dyk
 
 # The docs sidebar, in reading order. `nav` drives both the sidebar and the
 # prev/next links at the foot of every page, so this list is the single place
@@ -78,8 +88,21 @@ nav:
     children:
       - title: The web interface
         url: /guides/interface/
+      - title: People and sharing
+        url: /guides/people-and-sharing/
       - title: Rows and templates
         url: /guides/rows/
+      # `group` indents a page under the one it names, in the sidebar and the breadcrumb. The rows
+      # guide was one 700-line page until October 2026; site.js sends its old anchors here.
+      - title: How a row is filled
+        url: /guides/rows/what-goes-in/
+        group: /guides/rows/
+      - title: Seasonal rows
+        url: /guides/rows/seasonal/
+        group: /guides/rows/
+      - title: Where a row shows
+        url: /guides/rows/placement/
+        group: /guides/rows/
       - title: What goes in a row
         url: /guides/picks/
       - title: Schedules and runs
@@ -98,8 +121,10 @@ nav:
     url: /reference/
     blurb: Settings, API, env vars
     children:
-      - title: Settings and env vars
+      - title: Settings
         url: /reference/settings/
+      - title: Environment and files
+        url: /reference/environment/
       - title: The API
         url: /reference/api/
       - title: How Shortlist decides things
@@ -115,20 +140,20 @@ nav:
         url: /improve-plex-recommendations/
       - title: Recommendations from watch history
         url: /plex-recommendations-watch-history/
-      - title: A home screen per user
-        url: /plex-per-user-home-screen/
       - title: Per-user collections
         url: /plex-per-user-collections/
-      - title: Netflix-style rows
-        url: /plex-netflix-style-recommendations/
       - title: AI recommendations
         url: /plex-ai-recommendations/
       - title: Tools compared
         url: /plex-recommendation-tools/
 
+# jekyll-redirect-from keeps the URLs of merged pages working: a page's `redirect_from:` front matter
+# publishes a small redirect page at each old address. It is on the GitHub Pages allow-list.
+#
 # theme: none — the site ships its own layouts. Cayman was the stock GitHub Pages
 # theme and looked nothing like the app it documents.
 plugins:
+  - jekyll-redirect-from
   - jekyll-relative-links
   - jekyll-seo-tag
   - jekyll-sitemap

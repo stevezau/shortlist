@@ -228,9 +228,9 @@ describe("ImpactReport", () => {
   it("shows the headline metrics, breakdowns, requests, and recent-watches feed", async () => {
     renderReport();
 
-    expect(await screen.findByText(/watched · the last/i)).toBeTruthy();
+    expect(await screen.findByTestId("verdict-watched")).toBeTruthy();
     expect(screen.getByText("People who watched a pick")).toBeTruthy();
-    expect(screen.getByText("1 of 2")).toBeTruthy();
+    expect(screen.getByTestId("verdict-reach")).toHaveTextContent("1 of 2");
     // Each requests figure in its OWN slot. `/sent ·/` matched the label regardless of which number
     // sat beside it, and the fixture had two of the three equal — so any figure could appear in any
     // slot (mutation audit 2026-08-25). The three are now distinct and each is named.
@@ -279,9 +279,7 @@ describe("ImpactReport", () => {
     // about whether anyone saw a thing out. Both numbers have to be on the page for that to read.
     renderReport();
 
-    const card = (await screen.findByText(/watched · the last/i)).closest(
-      "div[class*='pt-6']",
-    )!;
+    const card = await screen.findByTestId("verdict");
     // Read through the TEST IDS, not by hunting the card's text. `toContain("4")` was satisfied by
     // the "4 of 10" in the landing detail inside this same card, so the 4xl headline — the biggest
     // number on the dashboard — could render ANY other figure in the payload and this still passed
@@ -291,7 +289,7 @@ describe("ImpactReport", () => {
     // And both inside the SAME card, so the verdict still has to read as one sentence.
     expect(card).toContainElement(screen.getByTestId("verdict-watched"));
     expect(card).toContainElement(screen.getByTestId("verdict-finished"));
-    expect(card.textContent).toMatch(/32\s*finished them/);
+    expect(card.textContent).toMatch(/Finished\s*32/);
     // NO "N picks delivered". `watched` is windowed on when the watch happened and `delivered` on
     // when the pick was created, so the ratio that sentence invited was never a rate of anything —
     // and the correctly matched cohort is already rendered below it.
@@ -303,7 +301,7 @@ describe("ImpactReport", () => {
     // while the movie row finished all 4 it landed. Before the split these rendered identically.
     // Asserted against the rendered text because the count and its word are separate elements.
     renderReport();
-    await screen.findByText(/watched · the last/i);
+    await screen.findByTestId("verdict-watched");
 
     const page = document.body.textContent ?? "";
     expect(page).toContain("4 watched · 4 finished");
@@ -312,7 +310,7 @@ describe("ImpactReport", () => {
 
   it("defaults to the 30-day window and refetches when it changes", async () => {
     renderReport();
-    await screen.findByText(/watched · the last/i);
+    await screen.findByTestId("verdict-watched");
 
     expect(getReport).toHaveBeenCalledWith("30");
 
@@ -361,16 +359,12 @@ describe("ImpactReport", () => {
     expect(screen.queryByText("Live tracking on")).toBeNull();
   });
 
-  it("reports a clean run and a synced watch status, with a healthy dot", async () => {
-    // The default fixture has `last_finished: null` and `sync.last: null`, so the REAL branches of
-    // this line never rendered and "with errors" / ", no errors" could be swapped freely.
+  it("reports a synced watch status", async () => {
+    // The default fixture has `sync.last: null`, so the synced branch never rendered.
+    // (The last run's outcome used to sit on this line too. It moved to the dashboard's status strip,
+    // which already reported the same run — its three tiers are tested in dashboard.test.tsx.)
     getReport.mockResolvedValue({
       ...REPORT,
-      runs: {
-        ...REPORT.runs,
-        last_finished: new Date(Date.now() - 3600_000).toISOString(),
-        errors_last: 0,
-      },
       watch_sync: {
         ...REPORT.watch_sync,
         last: new Date(Date.now() - 7200_000).toISOString(),
@@ -378,88 +372,19 @@ describe("ImpactReport", () => {
     });
     renderReport();
 
-    expect(await screen.findByText(/Last run 1h ago, no errors/)).toBeTruthy();
-    expect(screen.getByText(/Watch status synced 2h ago/)).toBeTruthy();
+    expect(await screen.findByText(/Synced 2h ago/)).toBeTruthy();
+    expect(screen.queryByText(/Not synced yet/)).toBeNull();
   });
 
-  // The three tiers of "how did the last run go" are the same three `notifications.py` already
-  // draws (`_last_run_problem`: whole-run `error` vs. per-user `warning`). A binary red/green dot
-  // reported a run that finished with two people un-rebuilt identically to a run that died — while
-  // the bell, on the same screen, called it a warning.
-  it("colours the dot amber and counts the people when the run itself succeeded", async () => {
+  it("leaves the last run's outcome to the status strip, which already reports it", async () => {
     getReport.mockResolvedValue({
       ...REPORT,
-      runs: {
-        ...REPORT.runs,
-        last_status: "ok",
-        last_finished: new Date(Date.now() - 3600_000).toISOString(),
-        errors_last: 2,
-      },
+      runs: { ...REPORT.runs, last_finished: new Date(Date.now() - 3600_000).toISOString(), errors_last: 2 },
     });
     renderReport();
 
-    const line = await screen.findByText(/Last run 1h ago, 2 people failed/);
-    const dot = line.querySelector("span[class*='rounded-full']");
-    expect(dot?.className).toMatch(/warning/);
-    expect(dot?.className).not.toMatch(/destructive/);
-    expect(dot?.className).not.toMatch(/success/);
-  });
-
-  it("says one person, not 1 people", async () => {
-    getReport.mockResolvedValue({
-      ...REPORT,
-      runs: {
-        ...REPORT.runs,
-        last_status: "ok",
-        last_finished: new Date(Date.now() - 3600_000).toISOString(),
-        errors_last: 1,
-      },
-    });
-    renderReport();
-
-    expect(
-      await screen.findByText(/Last run 1h ago, 1 person failed/),
-    ).toBeTruthy();
-  });
-
-  it("colours the dot destructive when the RUN failed, with nobody's row attempted", async () => {
-    getReport.mockResolvedValue({
-      ...REPORT,
-      runs: {
-        ...REPORT.runs,
-        last_status: "error",
-        last_finished: new Date(Date.now() - 3600_000).toISOString(),
-        errors_last: 0,
-      },
-    });
-    renderReport();
-
-    const line = await screen.findByText(/Last run 1h ago, the run failed/);
-    const dot = line.querySelector("span[class*='rounded-full']");
-    expect(dot?.className).toMatch(/destructive/);
-    expect(dot?.className).not.toMatch(/warning/);
-    // "0 people failed" is the sentence a count-first implementation writes here.
-    expect(screen.queryByText(/0 people failed/)).toBeNull();
-  });
-
-  it("still reads as a failure when the run died AFTER some people had already errored", async () => {
-    // The ordering guard: checking `errors_last` before `last_status` downgrades a dead run to
-    // amber the moment anyone errored on the way down, which is the common shape of a real failure.
-    getReport.mockResolvedValue({
-      ...REPORT,
-      runs: {
-        ...REPORT.runs,
-        last_status: "error",
-        last_finished: new Date(Date.now() - 3600_000).toISOString(),
-        errors_last: 3,
-      },
-    });
-    renderReport();
-
-    const line = await screen.findByText(/Last run 1h ago, the run failed/);
-    const dot = line.querySelector("span[class*='rounded-full']");
-    expect(dot?.className).toMatch(/destructive/);
-    expect(dot?.className).not.toMatch(/warning/);
+    await screen.findByTestId("verdict-watched");
+    expect(screen.queryByText(/Last run/)).toBeNull();
   });
 
   it("draws a gain as a gain and a loss as a loss", async () => {
@@ -793,9 +718,7 @@ describe("ImpactReport", () => {
     });
     renderReport();
 
-    const card = (await screen.findByText(/watched · the last/i)).closest(
-      "div[class*='pt-6']",
-    )!;
+    const card = await screen.findByTestId("verdict");
     expect(card.textContent).toContain("0");
     expect(card.textContent).not.toMatch(/of 0 watched/);
   });
@@ -817,7 +740,7 @@ describe("ImpactReport", () => {
       ],
     });
     renderReport();
-    await screen.findByText(/watched · the last/i);
+    await screen.findByTestId("verdict-watched");
 
     const columns = document.querySelectorAll('[data-testid="trend-week"]');
     expect(columns.length).toBeGreaterThan(0);
@@ -883,7 +806,7 @@ describe("Sync now", () => {
         }),
     );
     renderReport();
-    await screen.findByText(/watched · the last/i);
+    await screen.findByTestId("verdict-watched");
 
     await userEvent.click(screen.getByRole("button", { name: /Sync now/i }));
     expect(
@@ -901,7 +824,7 @@ describe("Sync now", () => {
     // having happened.
     syncWatched.mockRejectedValueOnce(new Error("boom"));
     renderReport();
-    await screen.findByText(/watched · the last/i);
+    await screen.findByTestId("verdict-watched");
 
     await userEvent.click(screen.getByRole("button", { name: /Sync now/i }));
 
@@ -943,7 +866,7 @@ describe("the window selector on a young install", () => {
     });
     renderReport();
 
-    await screen.findByText(/watched · the last/i);
+    await screen.findByTestId("verdict-watched");
     expect(screen.queryByText(/only been recording since/i)).toBeNull();
   });
 
@@ -956,7 +879,7 @@ describe("the window selector on a young install", () => {
     });
     renderReport();
 
-    await screen.findByText(/watched · the last/i);
+    await screen.findByTestId("verdict-watched");
     expect(screen.queryByText(/only been recording since/i)).toBeNull();
   });
 });
@@ -1167,9 +1090,7 @@ describe("ImpactReport — the engagement split", () => {
     getReport.mockResolvedValue(REPORT);
     renderReport();
 
-    const card = (await screen.findByText(/watched · the last/i)).closest(
-      "div[class*='pt-6']",
-    )!;
+    const card = await screen.findByTestId("verdict");
     expect(card.textContent).toMatch(/3\s*gave up part-way/);
   });
 
@@ -1182,7 +1103,7 @@ describe("ImpactReport — the engagement split", () => {
     });
     renderReport();
 
-    await screen.findByText(/watched · the last/i);
+    await screen.findByTestId("verdict-watched");
     expect(screen.queryByText(/gave up part-way/)).toBeNull();
   });
 
@@ -1192,7 +1113,7 @@ describe("ImpactReport — the engagement split", () => {
     renderReport();
 
     expect(await screen.findByText("15.3%")).toBeTruthy();
-    expect(screen.getByText("Watched from Shortlist rows")).toBeTruthy();
+    expect(screen.getByText("Share of all viewing")).toBeTruthy();
     expect(
       screen.getByText("82 of the 537 titles people watched were in their rows · the last 30 days"),
     ).toBeTruthy();
@@ -1241,5 +1162,97 @@ describe("ImpactReport — the engagement split", () => {
     expect(await screen.findByText(/Nothing to count yet/i)).toBeTruthy();
     expect(screen.queryByText(/has watched anything/i)).toBeNull();
     expect(screen.queryByText("<0.1%")).toBeNull();
+  });
+});
+
+describe("ImpactReport — loading and updating", () => {
+  beforeEach(() => {
+    getReport.mockReset();
+    getDeletedRows.mockReset();
+    getDeletedRows.mockResolvedValue([]);
+  });
+
+  it("shows the labelled skeleton while nothing is cached", () => {
+    getReport.mockReturnValue(new Promise(() => {}));
+
+    renderReport();
+
+    expect(screen.getByRole("status", { name: "Loading the impact report" })).toBeInTheDocument();
+    expect(screen.queryByText("Updating…")).not.toBeInTheDocument();
+  });
+
+  it("shows the remembered report immediately, with Updating… until the fetch lands", async () => {
+    localStorage.setItem("shortlist.report.v1.30", JSON.stringify(REPORT));
+    let resolve!: (value: EffectivenessReport) => void;
+    getReport.mockReturnValue(new Promise<EffectivenessReport>((r) => (resolve = r)));
+
+    renderReport();
+
+    expect(await screen.findByTestId("verdict")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading the impact report" })).not.toBeInTheDocument();
+    expect(screen.getByText("Updating…")).toBeInTheDocument();
+
+    resolve(REPORT);
+    await vi.waitFor(() => expect(screen.queryByText("Updating…")).not.toBeInTheDocument());
+    expect(screen.getByTestId("verdict")).toBeInTheDocument();
+  });
+
+  it("keeps the previous window on screen while the next one loads", async () => {
+    getReport.mockImplementation((window: ReportWindow) =>
+      window === "30" ? Promise.resolve(REPORT) : new Promise(() => {}),
+    );
+    renderReport();
+    await screen.findByTestId("verdict");
+    expect(screen.queryByText("Updating…")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "90 days" }));
+
+    expect(await screen.findByText("Updating…")).toBeInTheDocument();
+    expect(screen.getByTestId("verdict")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading the impact report" })).not.toBeInTheDocument();
+  });
+
+  it("does not remember placeholder data under the new window's key", async () => {
+    getReport.mockImplementation((window: ReportWindow) =>
+      window === "30" ? Promise.resolve(REPORT) : new Promise(() => {}),
+    );
+    renderReport();
+    await screen.findByTestId("verdict");
+
+    await userEvent.click(screen.getByRole("button", { name: "90 days" }));
+    await screen.findByText("Updating…");
+
+    expect(localStorage.getItem("shortlist.report.v1.30")).not.toBeNull();
+    expect(localStorage.getItem("shortlist.report.v1.90")).toBeNull();
+  });
+
+  it("shows the remembered report for the selected window over the previous window's", async () => {
+    const cached90 = { ...REPORT, window: "90" as ReportWindow };
+    localStorage.setItem("shortlist.report.v1.90", JSON.stringify(cached90));
+    getReport.mockImplementation((window: ReportWindow) =>
+      window === "30" ? Promise.resolve(REPORT) : new Promise(() => {}),
+    );
+    renderReport();
+    await screen.findByTestId("verdict");
+
+    await userEvent.click(screen.getByRole("button", { name: "90 days" }));
+
+    await screen.findByText("Updating…");
+    expect(screen.getByTestId("verdict").parentElement?.className).not.toContain("opacity-60");
+    expect(screen.getByTestId("verdict").querySelector(".opacity-60")).toBeNull();
+  });
+
+  it("dims the figures while another window's report stands in", async () => {
+    getReport.mockImplementation((window: ReportWindow) =>
+      window === "30" ? Promise.resolve(REPORT) : new Promise(() => {}),
+    );
+    renderReport();
+    await screen.findByTestId("verdict");
+    expect(document.querySelector(".opacity-60")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "90 days" }));
+
+    await screen.findByText("Updating…");
+    expect(document.querySelectorAll(".opacity-60.motion-reduce\\:transition-none").length).toBeGreaterThan(0);
   });
 });

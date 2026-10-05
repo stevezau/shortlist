@@ -9,7 +9,6 @@ import {
   RefreshCw,
   ShieldCheck,
   Users as UsersIcon,
-  Wrench,
 } from "lucide-react";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
@@ -19,9 +18,7 @@ import { ActivityFeed } from "@/components/jobs/activity-feed";
 import { BackupPanel } from "@/components/jobs/backup-panel";
 import { JobRow } from "@/components/jobs/job-row";
 import { MutationAlert } from "@/components/mutation-alert";
-import { PageHeader } from "@/components/page-header";
 import { RowSchedules } from "@/components/jobs/row-schedules";
-import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,6 +34,7 @@ import { api } from "@/lib/api";
 import { queuedReason, useRunActive, useWritesPlex } from "@/lib/job-activity";
 import {
   queryKeys,
+  useBuiltInScheduleLabel,
   useSchedule,
   useSettings,
   useSaveSettings,
@@ -57,6 +55,7 @@ const PENDING_LABELS: Record<string, string> = {
   "privacy.sync": "Privacy sync",
   "backup.take": "Back up the database",
   "maintenance.prune": "Clear out old records",
+  "themes.rotate": "Pick new row themes",
 };
 
 /**
@@ -125,14 +124,14 @@ function GroupHeading({
   return (
     <div className="space-y-1 px-1">
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <h2 className="text-sm font-semibold text-foreground">
           {title}
         </h2>
         {hint && (
-          <span className="text-xs text-muted-foreground">· {hint}</span>
+          <span className="text-sm text-muted-foreground">{hint}</span>
         )}
       </div>
-      {note && <p className="text-xs text-muted-foreground">{note}</p>}
+      {note && <p className="text-sm text-muted-foreground">{note}</p>}
     </div>
   );
 }
@@ -151,6 +150,8 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
   const settings = useSettings();
   const schedule = useSchedule();
   const saveSettings = useSaveSettings();
+  // Blank means the built-in default below, not off, so the blank preset itself says what it runs at.
+  const blankLabel = useBuiltInScheduleLabel(entry.kind);
   if (!entry.schedule_setting) return null;
 
   // `null` is not "blank": it deletes the stored cron, which is the only way to say "use the
@@ -218,7 +219,7 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
   const stored =
     ((settings.data ?? {})[entry.schedule_setting] as string | undefined) ?? "";
 
-  return <CronPicker value={stored} onChange={save} />;
+  return <CronPicker value={stored} onChange={save} blankLabel={blankLabel} />;
 }
 
 // --- live slots: what is happening, or just happened, because you pressed the button -------------
@@ -263,37 +264,69 @@ function Succeeded({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Jobs — every piece of background maintenance Shortlist does.
+ * The job catalogue: every kind, its health, and its next run.
  *
- * Two areas, because they answer different questions. **Jobs** is a compact list: name, health,
- * next run, and the button — a job is a LINE, and its description, settings and history open on
- * demand. **Activity** is every run across every kind, newest first.
- *
- * The previous design gave each job a full card with its paragraph and its controls permanently on
- * screen: nine of those was ~1800px of scrolling, four of them jobs you can never start, and no
- * cross-job feed at all.
+ * Fast while something is in flight, SLOW when idle — never `false`. Stopping altogether meant a job
+ * queued anywhere else (the scheduler firing, another tab, a row edit) never showed up here: the page
+ * that exists to show background work was the one place that didn't know it had started, while the
+ * header's activity icon — which always polls — did.
  */
-type JobsView = "jobs" | "activity";
-
-export function JobsPage() {
-  const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tab = searchParams.get("tab");
-  // `timeline` still resolves — the tab is gone, but /schedule redirects to it and links exist.
-  const view: JobsView = tab === "activity" ? "activity" : "jobs";
-
-  const catalog = useQuery({
+function useJobCatalog() {
+  return useQuery({
     queryKey: queryKeys.jobsCatalog,
     queryFn: api.getJobCatalog,
-    // Fast while something is in flight, SLOW when idle — never `false`. Stopping altogether meant a
-    // job queued anywhere else (the scheduler firing, another tab, a row edit) never showed up here:
-    // the page that exists to show background work was the one place that didn't know it had started,
-    // while the header's activity icon — which always polls — did.
     refetchInterval: (query) =>
       (query.state.data ?? []).some((e) => e.running + e.queued > 0)
         ? 3_000
         : 15_000,
   });
+}
+
+/**
+ * The Job history tab of the Activity page: every job run across every kind, newest first.
+ *
+ * It was the "Activity" half of a "Jobs | Activity" switch inside the Jobs tab — a second row of tabs
+ * under the page's own. Its own tab answers the same question ("what has my server been doing?") with
+ * one level of navigation, and the Jobs tab's "N failed" badge still lands here filtered to failures
+ * (`?tab=history&filter=failed`).
+ */
+export function JobHistoryPanel() {
+  const [searchParams] = useSearchParams();
+  const catalog = useJobCatalog();
+  return (
+    <div className="space-y-3">
+      {catalog.isError && (
+        <MutationAlert
+          error={catalog.error}
+          fallback="Couldn't load the job names, so jobs show by their internal kind."
+          onRetry={() => catalog.refetch()}
+        />
+      )}
+      <ActivityFeed
+        catalog={catalog.data ?? []}
+        initialFilter={searchParams.get("filter") === "failed" ? "failed" : "all"}
+      />
+    </div>
+  );
+}
+
+/**
+ * The Jobs tab of the Activity page (it was the Jobs page until the two merged): every piece of
+ * background maintenance Shortlist does, as a compact list — name, health, next run, and the button.
+ * A job is a LINE, and its description, settings and history open on demand.
+ *
+ * The previous design gave each job a full card with its paragraph and its controls permanently on
+ * screen: nine of those was ~1800px of scrolling, four of them jobs you can never start, and no
+ * cross-job feed at all. That feed is the Job history tab now.
+ */
+export function JobsPanel() {
+  const queryClient = useQueryClient();
+  const [, setSearchParams] = useSearchParams();
+  // `?tab=` belongs to the Activity page this panel sits in; the badges below move it to the history.
+  const showHistory = (filter?: "failed") =>
+    setSearchParams(filter ? { tab: "history", filter } : { tab: "history" }, { replace: true });
+
+  const catalog = useJobCatalog();
 
   // One EventSource for the whole page (rules/frontend.md); the two sync jobs read the slice of
   // `sync.*` events carrying their own `kind`. `null` = idle, so no bar shows until a run starts.
@@ -339,6 +372,8 @@ export function JobsPage() {
   const saveSettings = useSaveSettings();
   const watchCron = ((settings.data ?? {})["sync.watch_cron"] as string) ?? "";
   const usersCron = ((settings.data ?? {})["sync.users_cron"] as string) ?? "";
+  const watchBlankLabel = useBuiltInScheduleLabel("sync.history");
+  const usersBlankLabel = useBuiltInScheduleLabel("sync.users");
 
   // Every job's action lives here rather than inside its panel: the button is on the ROW, which
   // stays visible when the panel is closed.
@@ -420,7 +455,7 @@ export function JobsPage() {
   const active = totals.running + totals.queued;
   // "2 running · 1 queued" rather than "3 in flight": queued and running are different situations —
   // one is working, the other is waiting on the writer lock or a busy queue — and lumping them hides
-  // which. Clicking goes to Activity, where you can see WHICH jobs they are.
+  // which. Clicking goes to the Job history tab, where you can see WHICH jobs they are.
   const activeLabel = [
     totals.running > 0 ? `${totals.running} running` : null,
     totals.queued > 0 ? `${totals.queued} queued` : null,
@@ -488,40 +523,19 @@ export function JobsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <PageHeader
-        icon={Wrench}
-        title="Jobs"
-        // Not "the nightly run": these are five separate jobs on five separate timers, and rows
-        // build on their own schedules again — there is no one nightly thing to wait for.
-        subtitle="Background upkeep, each on its own timer. Press Run to do one now instead."
-      />
-
+      {/* Not "the nightly run": these are five separate jobs on five separate timers, and rows
+          build on their own schedules again — there is no one nightly thing to wait for. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* Three views of one subject: what background work exists, when it runs, and what it did.
-            "Timeline" was its own top-level Schedule page, which listed every job a second time and
-            left each view unable to answer a whole question on its own. */}
-        <Segmented<JobsView>
-          ariaLabel="Jobs view"
-          value={view}
-          onChange={(next) =>
-            setSearchParams(next === "jobs" ? {} : { tab: next }, {
-              replace: true,
-            })
-          }
-          options={[
-            { value: "jobs", label: "Jobs" },
-            { value: "activity", label: "Activity" },
-          ]}
-        />
+        <p className="text-sm text-muted-foreground">
+          Background upkeep, each on its own timer. Press Run to do one now instead.
+        </p>
         {/* Health at a glance, and only when there is something to say — a permanent "0 failed"
             teaches you to stop reading it. */}
         <div className="flex flex-wrap items-center gap-2">
           {active > 0 && (
             <button
               type="button"
-              onClick={() =>
-                setSearchParams({ tab: "activity" }, { replace: true })
-              }
+              onClick={() => showHistory()}
               className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="See which jobs are running"
             >
@@ -537,12 +551,7 @@ export function JobsPage() {
           {totals.failed > 0 && (
             <button
               type="button"
-              onClick={() =>
-                setSearchParams(
-                  { tab: "activity", filter: "failed" },
-                  { replace: true },
-                )
-              }
+              onClick={() => showHistory("failed")}
               className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive-text hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="See what failed, and why"
             >
@@ -565,14 +574,7 @@ export function JobsPage() {
         />
       )}
 
-      {view === "activity" ? (
-        <ActivityFeed
-          catalog={entries}
-          initialFilter={
-            searchParams.get("filter") === "failed" ? "failed" : "all"
-          }
-        />
-      ) : catalog.isPending ? (
+      {catalog.isPending ? (
         <Skeleton className="h-72 w-full" />
       ) : (
         <div className="space-y-5">
@@ -642,6 +644,7 @@ export function JobsPage() {
                 panel={
                   <CronPicker
                     value={usersCron}
+                    blankLabel={usersBlankLabel}
                     onChange={(cron) =>
                       saveSettings.mutate(
                         { "sync.users_cron": cron },
@@ -727,6 +730,7 @@ export function JobsPage() {
                 panel={
                   <CronPicker
                     value={watchCron}
+                    blankLabel={watchBlankLabel}
                     onChange={(cron) =>
                       saveSettings.mutate(
                         { "sync.watch_cron": cron },
@@ -894,10 +898,10 @@ export function JobsPage() {
                             Check the disk has room and that Shortlist can write
                             there — the{" "}
                             <Link
-                              to="/logs"
+                              to="/activity?tab=log"
                               className="font-medium underline underline-offset-2"
                             >
-                              Logs page
+                              Activity log
                             </Link>{" "}
                             has the reason it gave.
                           </p>

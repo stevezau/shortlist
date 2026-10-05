@@ -397,6 +397,47 @@ class TestReconcileRowRemoval:
         with sessions() as session:
             assert [d.library_key for d in session.query(Delivery).filter_by(collection_slug="movienight")] == ["1"]
 
+    @pytest.mark.parametrize(("dry_run", "left"), [(False, ["2"]), (True, ["1", "2"])])
+    def test_a_shared_walk_that_fails_partway_has_already_forgotten_the_libraries_it_finished(
+        self, sessions, dry_run: bool, left: list[str]
+    ):
+        """The shared twin of the per-person case below: forgetting only after every library meant a failure in
+        the second kept the first library's entry for a collection already deleted, until a retry succeeded —
+        and Plex reuses ratingKeys. A dry run deleted nothing, so it forgets nothing either."""
+        with sessions() as session:
+            for library_key, key in (("1", 900), ("2", 902)):
+                session.add(
+                    Delivery(
+                        collection_slug="movienight",
+                        user_slug="shared_movienight",
+                        library_key=library_key,
+                        rating_key=key,
+                        title="x",
+                    )
+                )
+            session.commit()
+        movies = _collection("Movie Night")
+
+        def owned(section, label):
+            if section.key == "2":
+                raise RuntimeError("PMS timed out")
+            return [movies]
+
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies", "1"), _section("TV", "2")]
+        plex.find_owned_collections.side_effect = owned
+        removed: list[str] = []
+
+        with pytest.raises(RuntimeError):
+            rec._reconcile_row_removal(
+                _state(sessions, plex), slug="movienight", build="shared", dry_run=dry_run, removed=removed
+            )
+
+        with sessions() as session:
+            keys = sorted(d.library_key for d in session.query(Delivery).filter_by(collection_slug="movienight"))
+        assert keys == left
+        assert removed == ["Movie Night"], "the library that finished is still reported for the audit"
+
     def test_a_walk_that_fails_partway_has_already_forgotten_the_people_it_finished(self, sessions):
         """The ledger records collections that EXIST. Forgetting only after the whole walk meant a failure on the
         second person kept the first person's entries for collections already deleted — and the nightly sweep
@@ -1465,6 +1506,114 @@ class TestRunRowRenameFromPlexAudit:
         with sessions() as session:
             event = session.query(Event).filter_by(scope="row.rename").one()
         assert "SEKRETVALUE" not in str(event.message)
+
+
+class TestASeasonalSiblingClaimsEverySeasonsTitle:
+    """A seasonal row wears whichever season it was last built for, so it claims the title of EVERY catalogue
+    season (#124) — and the reconciles have to hand the claim the catalogue that says what those are (#137).
+    Without it the claim is empty, and removing or renaming a plain row can take the seasonal row's collection."""
+
+    MARK = row_marker(100)
+
+    def _rows(self, sessions):
+        _add_user(sessions, slug="sarah", account_id=100)
+        with sessions() as session:
+            session.add(Collection(slug="plain", name="Halloween picks", media="movie"))
+            # Follows Christmas alone now, but its collection may still wear the Halloween it was built for.
+            session.add(Collection(slug="seasonal", name="{season} picks", media="movie", seasons=["christmas"]))
+            session.commit()
+
+    def _plex(self, worn: MagicMock) -> MagicMock:
+        movies = _section("Movies", key="1")
+        movies.type = "movie"
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda sec, label: [worn] if label == "shortlist_sarah" else []
+        return plex
+
+    def test_the_claim_covers_every_catalogue_season(self, sessions):
+        self._rows(sessions)
+        with sessions() as session:
+            other_rows = rec._other_rows(session, None, "plain")
+            sarah = next(u for u in rec._users_data(session) if u["slug"] == "sarah")
+        ctx = SimpleNamespace(plex=self._plex(_collection("anything")))
+
+        claimed = rec._claimed_titles(ctx, sarah, other_rows)
+
+        assert {("1", "Valentine's Day picks"), ("1", "Halloween picks"), ("1", "Christmas picks")} <= claimed
+
+    def test_removing_a_plain_row_leaves_the_seasonal_rows_collection_alone(self, sessions):
+        self._rows(sessions)
+        plex = self._plex(_collection("Halloween picks" + self.MARK))
+
+        rec._reconcile_row_removal(_state(sessions, plex), slug="plain", build="per_person", dry_run=False, removed=[])
+
+        plex.delete_owned_collection.assert_not_called()
+
+
+class TestAnExploreSiblingClaimsEachPersonsOwnThemeTitle:
+    """An explore row (#138) titles each person's collection from THAT person's current theme, not the row's own.
+    Claimed from the row's base theme, the title a person's collection actually wears is unclaimed, and removing
+    a plain row that shares it takes the explore row's collection (the #121 class)."""
+
+    MARK = row_marker(100)
+
+    def _rows(self, sessions):
+        from datetime import datetime
+
+        from shortlist.server.db.models import Theme, ThemeHistory
+
+        user_id = _add_user(sessions, slug="sarah", account_id=100)
+        with sessions() as session:
+            starter = Theme(slug="starter", name="Starter", emoji="", media=["movie"], genres=["Drama"])
+            scary = Theme(slug="scary", name="Scary nights", emoji="", media=["movie"], genres=["Horror"])
+            session.add_all([starter, scary])
+            session.flush()
+            session.add(Collection(slug="plain", name="Scary nights", media="movie"))
+            ai = Collection(
+                slug="ai", name="{theme}", media="movie", theme_id=starter.id, theme_mode="explore", enabled=True
+            )
+            session.add(ai)
+            session.flush()
+            session.add(
+                ThemeHistory(
+                    collection_id=ai.id,
+                    user_id=user_id,
+                    theme_id=scary.id,
+                    theme_name="Scary nights",
+                    state="current",
+                    started_at=datetime(2026, 10, 1),
+                )
+            )
+            session.commit()
+
+    def _plex(self, worn: MagicMock) -> MagicMock:
+        movies = _section("Movies", key="1")
+        movies.type = "movie"
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda sec, label: [worn] if label == "shortlist_sarah" else []
+        return plex
+
+    def test_the_claim_is_the_title_the_persons_own_theme_gives(self, sessions):
+        self._rows(sessions)
+        with sessions() as session:
+            other_rows = rec._other_rows(session, None, "plain")
+            sarah = next(u for u in rec._users_data(session) if u["slug"] == "sarah")
+        ctx = SimpleNamespace(plex=self._plex(_collection("anything")))
+
+        claimed = rec._claimed_titles(ctx, sarah, other_rows)
+
+        assert ("1", "Scary nights") in claimed
+        assert ("1", "Starter") not in claimed, "the row's own theme is not what she wears"
+
+    def test_removing_a_plain_row_leaves_the_explore_rows_collection_alone(self, sessions):
+        self._rows(sessions)
+        plex = self._plex(_collection("Scary nights" + self.MARK))
+
+        rec._reconcile_row_removal(_state(sessions, plex), slug="plain", build="per_person", dry_run=False, removed=[])
+
+        plex.delete_owned_collection.assert_not_called()
 
 
 class TestATitleAnotherRowBuildsUnderIsNeverThisRows:

@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { selectedClass, unselectedClass } from "@/lib/selected";
 
 /** One preset chip: the stored number and the label shown on it (e.g. 0 → "All", 45 → "45s"). */
 export interface NumberPreset {
@@ -65,7 +66,8 @@ export function NumberPresets({
             key={preset.value}
             type="button"
             size="sm"
-            variant={!custom && value === preset.value ? "default" : "outline"}
+            variant="outline"
+            className={!custom && value === preset.value ? selectedClass : unselectedClass}
             aria-pressed={!custom && value === preset.value}
             onClick={() => {
               setCustom(false);
@@ -78,7 +80,8 @@ export function NumberPresets({
         <Button
           type="button"
           size="sm"
-          variant={custom ? "default" : "outline"}
+          variant="outline"
+          className={custom ? selectedClass : unselectedClass}
           aria-pressed={custom}
           onClick={() => {
             setDraft(String(value));

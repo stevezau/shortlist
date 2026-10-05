@@ -9,6 +9,7 @@ from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 import shortlist.server.services.context_builder as context_builder_mod
 from shortlist.engine.clients.search import ExaClient, SearxngClient
@@ -17,6 +18,7 @@ from shortlist.engine.models import MediaType
 from shortlist.server.db.models import PickRow, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.context_builder import ContextBuilder, make_search_client
+from shortlist.server.services.plex_reachability import PlexUnreachable
 from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
@@ -165,6 +167,33 @@ class TestBuildContext:
         assert ctx.unmanaged_account_ids == {102}
         assert ctx.disabled_account_ids == {103}
 
+    def test_the_roster_is_everyone_who_could_own_a_tag(self, service, configured, sessions):
+        """The request ledger resolves tags against `ctx.roster`, not the users it builds for: a tag
+        two people share must stay ambiguous whoever is in tonight's run (issue #127). Disabling or
+        pausing one of them takes them OUT of the run, not off the tag — an enabled-only roster let
+        the other person's private row fill with the disabled person's requests. Only someone who
+        has left the server, or whom the owner filed away, is off it."""
+        gone = datetime(2026, 9, 1, tzinfo=UTC)
+        with sessions() as session:
+            session.add_all(
+                [
+                    User(plex_account_id=101, username="sarah", slug="sarah", enabled=True),
+                    User(plex_account_id=102, username="kid", slug="kid", enabled=True, prefs={"paused": True}),
+                    User(plex_account_id=103, username="off", slug="off", enabled=False, requested_by_tag="fam"),
+                    # The roster sweep and "remove" both switch the person off as they stamp them.
+                    User(plex_account_id=104, username="left", slug="left", enabled=False, departed_at=gone),
+                    User(plex_account_id=105, username="filed", slug="filed", enabled=False, removed_at=gone),
+                ]
+            )
+            session.commit()
+            tonight = service.enabled_profiles(session)
+
+        ctx = service.build_context(dry_run=True)
+
+        assert [p.slug for p in tonight] == ["sarah"]
+        assert sorted(p.slug for p in ctx.roster) == ["kid", "off", "sarah"]
+        assert next(p for p in ctx.roster if p.slug == "off").requested_by_tag == "fam"
+
     def test_plex_only_skips_the_clients_a_label_walk_never_touches(self, service, configured, monkeypatch):
         """The reconciles, the pause/disable handlers and the watch sync only ever walk collections
         under a label — but every one of them opened Trakt, Exa, MDBList, the LLM curator and the
@@ -183,6 +212,16 @@ class TestBuildContext:
         assert ctx.curator.name == "none"  # the NullCurator, not whatever provider is configured
         assert ctx.trakt is None and ctx.search is None and ctx.mdblist is None and ctx.poster_artist is None
         assert ctx.config.dry_run is True
+
+    def test_plex_only_carries_the_run_concurrency(self, service, sessions, configured):
+        """The watch sync builds its context here and reads people `ctx.concurrency` at a time; left
+        at the dataclass default of 1, the setting never reached it and 48 people were read serially."""
+        with sessions() as session:
+            SettingsStore(session, configured).set("run.concurrency", 6)
+
+        ctx = service.build_context(dry_run=True, plex_only=True)
+
+        assert ctx.concurrency == 6
 
     def test_plex_only_still_refuses_a_different_server(self, service, sessions, configured):
         from shortlist.server.db.models import Server
@@ -239,6 +278,23 @@ class TestBuildContext:
             SettingsStore(session, configured).set("plex.timeout_s", 90)
         service.build_context(dry_run=True)
         assert captured["timeout"] == 90  # an explicit setting overrides it
+
+    def test_an_unreachable_plex_is_explained_and_points_at_settings(self, service, configured, monkeypatch):
+        # Issue #139: the saved address stopped answering, and the run page showed the Python exception.
+        def _refuse(url, token, timeout=20):
+            raise requests.exceptions.ConnectionError(
+                "HTTPConnectionPool(host='pms', port=32400): Max retries exceeded with url: / "
+                "(Caused by NewConnectionError('[Errno 111] Connection refused'))",
+                request=requests.Request("GET", url).prepare(),
+            )
+
+        monkeypatch.setattr(context_builder_mod, "PlexClient", _refuse)
+
+        with pytest.raises(PlexUnreachable) as raised:
+            service.build_context(dry_run=True)
+
+        assert "could not reach Plex at http://pms:32400" in str(raised.value)
+        assert str(raised.value).endswith(" Change the address under Settings → Connections.")
 
     def test_an_instance_still_stored_as_ollama_keeps_its_url(self):
         """Ollama was merged into the one local/OpenAI-compatible provider. An instance configured
@@ -371,6 +427,37 @@ class TestBuildContext:
         ctx = service.build_context(dry_run=True)
 
         assert ctx.delivered_details == {("sarah", "gems", "2"): WrittenDetails(summary="Hi", title_sort=None)}
+
+    def test_the_season_a_collection_was_built_for_reaches_the_engine_under_the_same_key(
+        self, service, sessions, configured
+    ):
+        """#137 C-1's DB→engine wiring. "" (built while not seasonal) is a record; NULL (delivered before
+        seasons were recorded) is absent, so promotion falls back to the picks' recipe."""
+        from shortlist.server.db.models import Delivery
+
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="sarah", slug="sarah", enabled=True))
+            session.add(
+                Delivery(
+                    collection_slug="seasonal",
+                    user_slug="sarah",
+                    library_key="1",
+                    rating_key=9001,
+                    season="christmas@2026-12-25",
+                )
+            )
+            session.add(
+                Delivery(collection_slug="plain", user_slug="sarah", library_key="1", rating_key=9002, season="")
+            )
+            session.add(Delivery(collection_slug="old", user_slug="sarah", library_key="1", rating_key=9003))
+            session.commit()
+
+        ctx = service.build_context(dry_run=True)
+
+        assert ctx.delivered_seasons == {
+            ("sarah", "seasonal", "1"): "christmas@2026-12-25",
+            ("sarah", "plain", "1"): "",
+        }
 
     def test_a_ratingkey_two_rows_claim_is_dropped_rather_than_arbitrated(self, service, sessions, configured):
         """The safety valve that makes a bad ledger self-heal. Two rows naming one collection is
@@ -726,6 +813,65 @@ class TestBuildRequests:
         assert len(cfg.incomplete_targets) == 1
         assert "Radarr" in cfg.incomplete_targets[0]
         assert "quality profile" in cfg.incomplete_targets[0]
+
+
+class TestBuildRequestSources:
+    """Where a "Your requests" row reads from (issue #127): every app with a URL and key, whatever the
+    request FEATURE says — the owner may send nothing through Shortlist and still want the row."""
+
+    def _store(self, sessions, tmp_path, values: dict):
+        box = SecretBox(tmp_path)
+        with sessions() as session:
+            store = SettingsStore(session, box)
+            for key, value in values.items():
+                store.set(key, value)
+        session = sessions()
+        return SettingsStore(session, box)
+
+    def test_request_sources_are_built_whenever_a_url_and_key_exist(self, sessions, tmp_path):
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": False,
+                "requests.target": "arr",
+                "requests.overseerr.url": "http://s",
+                "requests.overseerr.apikey": "k",
+                "requests.radarr.url": "http://r",
+                "requests.radarr.apikey": "k",
+                "requests.tag": "shortlist",
+            },
+        )
+        src = ContextBuilder._build_request_sources(store)
+        assert src.overseerr.url == "http://s" and src.radarr.url == "http://r" and src.sonarr is None
+        assert src.exclude_seerr_user_id == 0  # requests are off, so no account is Shortlist's
+        assert src.shortlist_tag == "shortlist"
+
+    def test_the_request_as_account_is_excluded_only_when_shortlist_sends_via_overseerr(self, sessions, tmp_path):
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": True,
+                "requests.target": "overseerr",
+                "requests.overseerr.url": "http://s",
+                "requests.overseerr.apikey": "k",
+                "requests.overseerr.request_as_user_id": 7,
+            },
+        )
+        assert ContextBuilder._build_request_sources(store).exclude_seerr_user_id == 7
+
+    def test_no_sources_is_none(self, sessions, tmp_path):
+        assert ContextBuilder._build_request_sources(self._store(sessions, tmp_path, {})) is None
+
+    def test_the_engine_config_carries_the_sources(self, sessions, tmp_path):
+        """`_engine_config` is the seam a forgotten field hides in: the setting saves and the engine
+        never sees it."""
+        store = self._store(sessions, tmp_path, {"requests.radarr.url": "http://r", "requests.radarr.apikey": "k"})
+        builder = ContextBuilder(sessions, SecretBox(tmp_path), EventBus())
+        with sessions() as session:
+            cfg = builder._engine_config(session, store)
+        assert cfg.request_sources is not None and cfg.request_sources.radarr.url == "http://r"
 
 
 class TestRequestTag:

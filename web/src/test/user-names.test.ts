@@ -22,10 +22,12 @@ function user(overrides: Partial<User>): User {
     enabled: true,
     cold_start: false,
     request_tag: "",
+    requested_by_tag: "",
     prefs: {},
     history_depth: 0,
     last_run_at: null,
-    hit_rate: null,
+    picks_watched_30d: null,
+    last_pick_watched_at: null,
     preview_titles: [],
     ...overrides,
   };

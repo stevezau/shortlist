@@ -99,7 +99,7 @@ export function StepCurator({ data, update }: StepProps) {
       if (provider.id === "none")
         return {
           ok: true,
-          message: "Built-in picker ready — no AI, no keys, no cloud.",
+          message: "Built-in picker ready — no AI provider needed.",
         };
       return api.testConnection("llm");
     },
@@ -129,7 +129,7 @@ export function StepCurator({ data, update }: StepProps) {
   return (
     <div className="space-y-6">
       <div className="grid gap-3 sm:grid-cols-2">
-        {CURATOR_PROVIDERS.map((provider) => (
+        {[...CURATOR_PROVIDERS].sort((a, b) => Number(b.id === "none") - Number(a.id === "none")).map((provider) => (
           <button
             key={provider.id}
             type="button"
@@ -141,7 +141,7 @@ export function StepCurator({ data, update }: StepProps) {
             )}
           >
             <Card className="h-full">
-              <CardHeader className="pb-2">
+              <CardHeader className="p-4">
                 <CardTitle className="flex items-center justify-between text-base">
                   {provider.label}
                   {data.curator_provider === provider.id && (

@@ -104,7 +104,7 @@ def _choose_no_curator(page: Page) -> None:
     expect(none_card).to_contain_text("Fully functional")
     none_card.click()
     expect(none_card).to_have_attribute("aria-pressed", "true")
-    expect(page.get_by_text("Built-in picker ready — no AI, no keys, no cloud.")).to_be_visible(timeout=LOAD)
+    expect(page.get_by_text("Built-in picker ready — no AI provider needed.")).to_be_visible(timeout=LOAD)
 
 
 #: Everyone step 4 offers: the three accounts plex.tv shares the server with, plus the owner —
@@ -121,7 +121,7 @@ def _pick_users(page: Page, *usernames: str) -> None:
     # from, and they must learn that here rather than from their own Home screen tonight.
     expect(page.get_by_text("Heads up, server owner")).to_be_visible()
     expect(
-        page.get_by_text(re.compile("keep .*other.* people.s rows out of the library.s Collections tab"))
+        page.get_by_text(re.compile("cannot hide other people.s rows from you in a library.s Collections tab"))
     ).to_be_visible()
 
     for username in WIZARD_USERS:
@@ -183,14 +183,13 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     expect(page.get_by_text("Rows are live on Plex")).to_be_visible(timeout=SLOW)
     expect(page.get_by_text("run ok")).to_be_visible()
 
-    # Per-user progress must have STREAMED: each card ends on its terminal STREAMED detail
-    # ("row built — N picks"), which only renders from the run.user.stage 'done' event. Without SSE
-    # a card falls back to a bare "done" with no counts. Asserting the streamed detail (not a
-    # mid-run stage) is race-free — the earlier "parked on delivering" check flaked because the run
-    # completes and transitions the card to done before the assertion runs.
+    # Every person's final counts remain visible, including the cold-start picks. A candidate set
+    # is not proof of delivery: Jess has no watched seed for this row's name, so the existing Plex
+    # assertions below require that only Sarah and Mike receive rows.
     for username in ("sarah", "mike", "jess"):
         expect(page.get_by_text(username, exact=True)).to_be_visible()
-    expect(page.get_by_text(re.compile(r"^row built — \d+ picks"))).to_have_count(3)
+    expect(page.get_by_text(re.compile(r"^row built — \d+ picks"))).to_have_count(2)
+    expect(page.get_by_text(re.compile(r"^popular-title picks — 20 found"))).to_have_count(1)
 
     page.get_by_role("button", name="Finish setup").click()
     expect(page.get_by_role("heading", name="Dashboard")).to_be_visible(timeout=LOAD)

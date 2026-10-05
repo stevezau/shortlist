@@ -59,6 +59,18 @@ def test_no_unrendered_liquid_reaches_the_reader(built: str) -> None:
     assert not leaked, f"unrendered Liquid in llms-full.txt: {leaked[:3]}"
 
 
+@pytest.mark.parametrize(
+    "expression",
+    ["{{site.stable_version}}", "{{ site.stable_version }}", "{{ site.stable_version | escape }}"],
+)
+def test_site_version_is_rendered_with_optional_whitespace(expression: str) -> None:
+    builder = _load_builder()
+    actual = builder._render(
+        f"Install stable {expression}.", {}, {"stable_version": "1.9.3"}, DOCS / "getting-started.md"
+    )
+    assert actual == "Install stable 1.9.3."
+
+
 def test_every_published_page_is_included(built: str) -> None:
     """A page missing from `_config.yml` nav would be silently dropped from the corpus.
 

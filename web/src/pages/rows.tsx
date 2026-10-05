@@ -1,5 +1,5 @@
-import { Rows3 } from "lucide-react";
-import { useState } from "react";
+import { Plus, Rows3 } from "lucide-react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { PageHeader } from "@/components/page-header";
@@ -27,8 +27,8 @@ function RowsSkeleton() {
  * A row name is a template, and the card marks each `{placeholder}` as a chip rather than printing
  * the braces — but nothing said what a chip WAS, so "✨ [library name] Picked for You" read as a
  * stray tag someone had attached to the row. The row editor answers this with a worked example
- * ("ON PLEX IT READS ✨ Movies Picked for You — Example only…"); this is that example, once, under
- * the list, and only when a row on screen actually has a chip in it.
+ * ("ON PLEX IT READS ✨ Movies Picked for You — Example only…"); this is that example, once, as a
+ * note under the page header, and only when a row on screen actually has a chip in it.
  */
 function RowNameChipLegend({ rows }: { rows: Collection[] }) {
   if (!rows.some((row) => hasRowNameToken(row.name))) return null;
@@ -36,7 +36,7 @@ function RowNameChipLegend({ rows }: { rows: Collection[] }) {
   // named "🎯 Because you watched {top_seed}" on a library called "4K Films" would otherwise be
   // told it reads "✨ Movies Picked for You", which is true of neither half.
   return (
-    <p className="px-1 pt-1 text-xs text-muted-foreground">
+    <p className="rounded-md border bg-elevated px-3 py-2 text-sm text-muted-foreground">
       Grey chips like{" "}
       <span className="rounded bg-muted px-1 py-0.5 font-normal">
         library name
@@ -59,22 +59,22 @@ export function RowsPage() {
   const navigate = useNavigate();
   // Adding goes through the gallery first — a blank 17-field form only ever helped someone who
   // already knew what they wanted to build.
+  const templateTrigger = useRef<HTMLButtonElement | null>(null);
   const [pickingTemplate, setPickingTemplate] = useState(false);
-  // When set, the matching RowCard opens its rename dialog on mount.
 
   return (
     <div>
       <PageHeader
-        icon={Rows3}
         title="Rows"
         subtitle="The strips Shortlist builds on your users’ Plex home screens."
         actions={
           <Button
-            onClick={() => setPickingTemplate(true)}
+            onClick={(event) => { templateTrigger.current = event.currentTarget; setPickingTemplate(true); }}
             // Without the user list, the editor's audience picker would offer nobody to choose —
             // and an owner could save "chosen people: none" believing they'd picked everyone.
             disabled={!usersQuery.isSuccess}
           >
+            <Plus aria-hidden="true" />
             Add a row
           </Button>
         }
@@ -96,7 +96,8 @@ export function RowsPage() {
                   title="No rows yet"
                   hint="Add a row to start building recommendations. The default “Picked for You” usually seeds itself."
                   action={
-                    <Button onClick={() => setPickingTemplate(true)}>
+                    // Outline: the header's "Add a row" is already this screen's one primary.
+                    <Button variant="outline" onClick={(event) => { templateTrigger.current = event.currentTarget; setPickingTemplate(true); }}>
                       Add a row
                     </Button>
                   }
@@ -105,6 +106,7 @@ export function RowsPage() {
             >
               {(rows) => (
                 <div className="space-y-3">
+                  <RowNameChipLegend rows={rows} />
                   {rows.map((collection) => (
                     <RowCard
                       key={collection.id}
@@ -113,7 +115,6 @@ export function RowsPage() {
                       onEdit={() => navigate(`/rows/${collection.id}`)}
                     />
                   ))}
-                  <RowNameChipLegend rows={rows} />
                 </div>
               )}
             </QueryBoundary>
@@ -121,6 +122,7 @@ export function RowsPage() {
             <RowTemplateGallery
               open={pickingTemplate}
               onClose={() => setPickingTemplate(false)}
+              onReturnFocus={() => templateTrigger.current?.focus()}
               onPick={(template) => {
                 setPickingTemplate(false);
                 // null = "start from scratch" — the gallery's last tile.

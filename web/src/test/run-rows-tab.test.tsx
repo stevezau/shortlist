@@ -123,6 +123,16 @@ describe("RunRowsTab", () => {
     expect(screen.getByText(/1 row wasn.t in this run/i)).toBeInTheDocument();
   });
 
+  it("marks {library_name} in the row header as a placeholder, the way the Rows page does", () => {
+    // The header spans every library the row built, so no one library's name can fill the token —
+    // and silently dropping it turned "📬 {library_name} you asked for" into "📬 you asked for".
+    renderTab();
+
+    const header = screen.getByRole("button", { name: /Picked for You/ });
+    expect(within(header).getByText("library name")).toBeInTheDocument();
+    expect(within(header).queryByText(/\{library_name\}/)).toBeNull();
+  });
+
   it("says which of the rows left out of the run were out of season", async () => {
     const detail = run();
     detail.users = detail.users.map((u) => ({
@@ -253,6 +263,51 @@ describe("RunRowsTab", () => {
     );
   });
 
+  it("notes a removed duplicate of a shared row quietly, never as a deleted row", () => {
+    renderTab(
+      run({
+        users: [user({ rows_considered: { picked: "not_due" } })],
+        shared_rows: [
+          {
+            collection_slug: "popular",
+            row_title: "👥 Popular Movies on SFLIX",
+            status: "ok",
+            error: null,
+            reason: null,
+            duration_ms: 64000,
+            llm_tokens: 0,
+            llm_tokens_by_step: {},
+            exa_searches: 0,
+            diff: { duplicates_removed: ["👥 Popular Movies on SFLIX"] },
+            picks: [pick(1, "Dune")],
+            breakdown: [
+              {
+                row_slug: "popular",
+                row_title: "👥 Popular Movies on SFLIX",
+                library_key: "1",
+                library_title: "Movies",
+                added: [],
+                removed: [],
+                kept: ["Dune"],
+                deleted: [],
+                duplicates_removed: ["👥 Popular Movies on SFLIX"],
+                created: false,
+                picks: [pick(1, "Dune", "11 people watched it")],
+              },
+            ],
+            has_trace: true,
+          },
+        ],
+      } as unknown as Partial<RunDetail>),
+    );
+
+    const note = screen.getByText(/removed a duplicate copy of this row/i);
+    expect(note).toHaveTextContent("👥 Popular Movies on SFLIX");
+    // The row is still live, with its picks right beside this — so no alarm colour and no "deleted".
+    expect(note).not.toHaveClass("text-destructive-text");
+    expect(screen.queryByText(/deleted/i)).not.toBeInTheDocument();
+  });
+
   it("explains a shared row that built nothing", () => {
     renderTab(
       run({
@@ -335,6 +390,56 @@ describe("RunRowsTab — a run that is still going", () => {
     renderTab(run({ users: [], shared_rows: [] }));
 
     expect(screen.getByText("This run built no rows")).toBeInTheDocument();
+  });
+
+  it("says a run that failed at the start stopped, not that it is too old to show rows", () => {
+    // Issue #139: Plex was unreachable, so the run errored before it knew which rows it would build
+    // — and the page blamed a legacy run for one that had been started a minute earlier.
+    renderTab(
+      run({
+        users: [],
+        shared_rows: [],
+        status: "error",
+        error:
+          "Shortlist could not reach Plex at http://pms:32400: it did not answer in time.",
+      } as unknown as Partial<RunDetail>),
+    );
+
+    expect(
+      screen.getByText("This run stopped before it built any rows"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/The error above says why/)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/before this view existed/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("RunRowsTab — a run cancelled before anyone's turn", () => {
+  it("says it was cancelled, not that it is too old to show rows", () => {
+    // Live run 77: a dry run cancelled before its first person. It has no error and no rows, so it
+    // fell through to the copy meant for runs that predate this view, on the day it was made.
+    renderTab(
+      run({
+        status: "aborted",
+        dry_run: true,
+        shared_rows: [],
+        users: [
+          user({
+            status: "skipped",
+            reason: "The run was cancelled before this person's turn.",
+            rows_considered: {},
+          }),
+        ],
+      } as unknown as Partial<RunDetail>),
+    );
+
+    expect(
+      screen.getByText("This run was cancelled before it built any rows"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/before this view existed/i),
+    ).not.toBeInTheDocument();
   });
 });
 

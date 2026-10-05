@@ -216,6 +216,8 @@ export function sourceRole(source: string): string {
       return "With little history to go on, we pulled the highest-rated titles on this server.";
     case "season":
       return "We took the season's titles in your libraries and weighed each by how well it fits what they watch.";
+    case "theme":
+      return "We took the theme's titles in your libraries and weighed each by how well it fits what they watch.";
     default:
       return "We gathered candidate titles from this source.";
   }
@@ -301,11 +303,46 @@ export function fateLabel(fate: TraceFate): string {
       return "hidden by their Plex restrictions";
     case "not_in_season":
       return "not a film for the season";
+    case "outside_row_limits":
+      return "Outside this row's limits";
     case "not_returned":
       return "found by another source";
     default:
       return "";
   }
+}
+
+/** What became of one request a Your requests row looked at, in plain words. `windowDays` is the
+ *  row's `requests_window_days` when the caller knows it; without it the window is left unnamed. */
+export function requestResultLabel(result: string, windowDays?: number): string {
+  switch (result) {
+    case "in_row":
+      return "In the row";
+    case "not_on_plex":
+      return "Not on Plex yet";
+    case "season_not_landed":
+      return "That season hasn’t landed";
+    case "watched":
+      return "Already watched";
+    case "too_old":
+      return windowDays !== undefined
+        ? `Landed more than ${windowDays} days ago`
+        : "Landed too long ago";
+    case "hidden":
+      return "Hidden by their Plex restrictions";
+    case "over_size":
+      return "Past the row size";
+    default:
+      return "";
+  }
+}
+
+/** Where a request was found — Overseerr, the Radarr/Sonarr tag, or both — Overseerr first. */
+export function requestFoundInLabel(foundIn: string[]): string {
+  const names: string[] = [];
+  if (foundIn.includes("overseerr")) names.push("Overseerr");
+  if (foundIn.includes("tag")) names.push("tag");
+  return names.join(", ");
 }
 
 /** One title as the shortlist step shows it: what it is, and the numbers its verdict rested on. */

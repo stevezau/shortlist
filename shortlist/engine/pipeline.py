@@ -12,7 +12,7 @@ import contextvars
 import json
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -65,6 +65,8 @@ from shortlist.engine.privacy import (
     voids_owner_restriction,
 )
 from shortlist.engine.request_config import resolve_request_config
+from shortlist.engine.requests_row import collect_requests
+from shortlist.engine.themes import ThemeSpec, load_theme
 
 #: How many accounts of one type the filter-enforcement spot-check may try before giving up.
 _ENFORCEMENT_SPOT_CHECK_ATTEMPTS = 3
@@ -150,6 +152,8 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     order_work: list[tuple] = []
 
     _load_season_titles(ctx, users, library_index)
+    _load_theme_titles(ctx, users, library_index)
+    _load_request_ledger(ctx, users)
 
     # Deliver every per-person and shared row UNPROMOTED — nothing is on anyone's Home yet.
     to_promote, shared_to_promote = _deliver_phase(
@@ -409,17 +413,21 @@ def _load_season_titles(
         for spec in ctx.config.rows
         if spec.season is not None and ctx.config.should_build(spec)
     }
+    if not wanted:
+        return
+    catalogue = ctx.config.season_catalogue()
     for slug, season in wanted.items():
-        catalogued = seasons_mod.SEASONS.get(slug)
+        catalogued = catalogue.get(slug)
         if catalogued is None:
             ctx.season_failures[slug] = "it is not a season this version knows"
             continue
         try:
-            ctx.season_titles[slug] = seasons_mod.load_titles(ctx.tmdb, catalogued, library_index)
+            ctx.season_titles[slug] = seasons_mod.load_titles(ctx.tmdb, ctx.plex, catalogued, library_index)
         except Exception as e:
-            ctx.season_failures[slug] = f"{type(e).__name__}: {e}"
+            # Redacted: it reaches the person's saved run error, and a TMDB or Plex error can carry a credential.
+            ctx.season_failures[slug] = redact(f"{type(e).__name__}: {e}")
             logger.warning(
-                "the {} list could not be read from TMDB ({}) — seasonal rows keep what they have tonight",
+                "the {} list could not be read ({}) — seasonal rows keep what they have tonight",
                 season.name,
                 type(e).__name__,
             )
@@ -432,6 +440,126 @@ def _load_season_titles(
             len(titles.ids[MediaType.SHOW]),
             sum(len(items) for items in titles.in_library.values()),
         )
+        if titles.missing_collections:
+            logger.info(
+                "{} list: built without {} — not in your library tonight",
+                season.name,
+                ", ".join(f"“{title}”" for title in titles.missing_collections),
+            )
+
+
+_MAX_PERSON_THEMES = 100  # distinct person themes read from TMDB in one run
+
+
+def _someone_uses_row_theme(spec: RowSpec, users: list[UserProfile]) -> bool:
+    """Whether anyone in this run is built from the row's own theme: an explore row gives each person their own
+    and falls back to its theme only for someone without one, so a row whose whole run has one is not read."""
+    if not spec.person_themes:
+        return True
+    own = {slug for slug, _ in spec.person_themes}
+    return any(u.slug not in own and (spec.audience is None or u.plex_account_id in spec.audience) for u in users)
+
+
+def _scope_person_themes(ctx: EngineContext, users: list[UserProfile], wanted: dict[str, ThemeSpec]) -> None:
+    """Trim every row's per-person themes to the people in THIS run, and to the per-run cap.
+
+    A scoped run reads only its own people's themes. Over the cap, a person's theme is dropped from the row for
+    this run, so they build from the row's own theme (read here too): a row that cannot read a theme must not
+    freeze that person, and ordering by roster would freeze the same people every night.
+    """
+    in_run = {u.slug for u in users}
+    read: set[str] = set()
+    for index, spec in enumerate(ctx.config.rows):
+        if not spec.person_themes or not ctx.config.should_build(spec):
+            continue
+        kept: list[tuple[str, ThemeSpec]] = []
+        for user_slug, person_theme in spec.person_themes:
+            if user_slug not in in_run:
+                continue
+            if person_theme.slug not in wanted and person_theme.slug not in read:
+                if len(read) >= _MAX_PERSON_THEMES:
+                    logger.warning(
+                        "person theme {} not read: over the per-run cap of {}; they build from the row's theme",
+                        person_theme.name,
+                        _MAX_PERSON_THEMES,
+                    )
+                    if spec.theme:
+                        wanted[spec.theme.slug] = spec.theme
+                    continue
+                read.add(person_theme.slug)
+            kept.append((user_slug, person_theme))
+        ctx.config.rows[index] = replace(spec, person_themes=tuple(kept))
+
+
+def _person_themes_to_read(ctx: EngineContext) -> dict[str, ThemeSpec]:
+    return {
+        person_theme.slug: person_theme
+        for spec in ctx.config.rows
+        if ctx.config.should_build(spec)
+        for _, person_theme in spec.person_themes
+    }
+
+
+def _load_theme_titles(
+    ctx: EngineContext, users: list[UserProfile], library_index: dict[MediaType, dict[int, int]]
+) -> None:
+    """Read, once for the whole run, every theme an AI row builds tonight (#138), as seasons are read.
+
+    A theme that cannot be read is recorded, not raised: its rows keep what they have, as a row whose
+    sources are all down does, and every other row still builds. A no-user run reads nothing.
+    """
+    if not users:
+        return
+    wanted: dict[str, ThemeSpec] = {}
+    for spec in ctx.config.rows:
+        if ctx.config.should_build(spec) and spec.theme and _someone_uses_row_theme(spec, users):
+            wanted[spec.theme.slug] = spec.theme
+    _scope_person_themes(ctx, users, wanted)
+    wanted.update(_person_themes_to_read(ctx))
+    for slug, theme in wanted.items():
+        try:
+            ctx.theme_titles[slug] = load_theme(ctx.tmdb, ctx.plex, theme, library_index)
+        except Exception as e:
+            # Redacted: it reaches the person's saved run error, and a TMDB or Plex error can carry a credential.
+            ctx.theme_failures[slug] = redact(f"{type(e).__name__}: {e}")
+            logger.warning(
+                "the {} theme could not be read ({}) — its rows keep what they have tonight",
+                theme.name,
+                type(e).__name__,
+            )
+            continue
+        titles = ctx.theme_titles[slug].titles
+        logger.info(
+            "{} theme: {} films and {} shows, {} of them in your libraries",
+            theme.name,
+            len(titles.ids[MediaType.MOVIE]),
+            len(titles.ids[MediaType.SHOW]),
+            sum(len(items) for items in titles.in_library.values()),
+        )
+
+
+def _load_request_ledger(ctx: EngineContext, users: list[UserProfile]) -> None:
+    """Read who-asked-for-what once per run, shared by every person's requests row (issue #127).
+
+    Built only when a requests row is DUE and a source is configured, so a server without one pays
+    nothing and another row's scoped run reads nothing; and never fatal — an unreadable source leaves
+    ``complete=False``, which stops the row REMOVALS but not the rest of the night. ``users=[]`` is the
+    privacy-sync shape (sweep + merge only): nothing is built for anyone, so nothing is read.
+
+    Resolved against the whole roster (``ctx.roster``), not the scoped ``users``: a tag two people
+    render to is ambiguous whoever is in tonight's run, and a subset would credit the one in scope.
+    Likewise against every ENABLED requests row's pattern, not only the due rows': one row due alone
+    would otherwise hand a tag two rows' patterns name two people for to the one its own names.
+    ``config.rows`` is every enabled row on a scoped run too; only the due rows are built from it.
+    """
+    request_rows = [spec for spec in ctx.config.rows if spec.requests_row]
+    sources = ctx.config.request_sources
+    if not users or not any(map(ctx.config.should_build, request_rows)) or sources is None or not sources.any():
+        return
+    patterns = frozenset(spec.requests_tag_pattern for spec in request_rows if spec.requests_tag_pattern)
+    ctx.request_ledger = collect_requests(sources, ctx.roster or users, patterns=patterns)
+    for problem in ctx.request_ledger.problems:
+        logger.warning("requests row: {}", problem)
 
 
 def _sweep_phase(ctx: EngineContext, report: RunReport) -> bool:
@@ -639,6 +767,10 @@ def _deliver_phase(
         )
         if agg is not None:
             shared_to_promote.append((spec, agg))
+        elif spec.season is not None:
+            # Nothing built for this season anywhere, so each library may still hold LAST season's collection,
+            # promoted. Promotion is where that is hidden (`promote_shared_row`), as for a dormant row.
+            shared_to_promote.append((spec, None))
     return to_promote, shared_to_promote
 
 
@@ -731,13 +863,18 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
     path Plex's own documentation gives) or disable it in Shortlist.
 
     Never raises: this is a diagnostic on top of a sync that already succeeded, and a failed read here
-    must not fail the run. A read that fails is simply not reported as clean.
+    must not fail the run. An account it cannot look through is recorded in `report.privacy_unchecked`,
+    because the run page reads an account it is not told about as hiding every row.
 
     `owned` is this phase's own FRESH PMS enumeration, not `ctx.delivered_keys`. The ledger is loaded
     when the context is built, so on a first run it holds nothing and every account would measure as
     clean — silence indistinguishable from the bug.
     """
-    if ctx.pms_for_user is None or remote is None or not getattr(remote, "restriction_profile", ""):
+    if remote is None or not getattr(remote, "restriction_profile", ""):
+        return
+    if ctx.pms_for_user is None:
+        # No way to read the server as one account (the server always wires one; a bare engine may not).
+        report.privacy_unchecked.append(user.username)
         return
     if not collections_known or not owned:
         # We could not establish which rows exist, so "sees none of ours" would be an artefact of the
@@ -750,6 +887,7 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
             user.username,
             remote.restriction_profile,
         )
+        report.privacy_unchecked.append(user.username)
         return
     try:
         as_them = ctx.pms_for_user(user)
@@ -764,10 +902,12 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
                 user.username,
                 remote.restriction_profile,
             )
+            report.privacy_unchecked.append(user.username)
             return
         exposed = unhidden_rows_visible_to(as_them, owned, user.slug)
     except Exception as e:
         logger.warning("{}: could not check what this account can see ({})", user.username, type(e).__name__)
+        report.privacy_unchecked.append(user.username)
         return
     if not exposed:
         logger.debug("{}: '{}' account, and it sees none of our rows", user.username, remote.restriction_profile)
@@ -1065,6 +1205,7 @@ def _privacy_sync_phase(
             # "Plex refuses to hide these", and reporting a chosen state as a fault would train the
             # owner to ignore the one that is a fault.
             _leave_sharing_alone(ctx, user, roster.get(user.plex_account_id), report)
+            report.privacy_left_alone.append(user.username)
             continue
         try:
             own_slug = own_slugs.get(user.plex_account_id)
@@ -1156,11 +1297,15 @@ def _privacy_sync_phase(
                 # `restricted=0` with a profile set — the endpoint-disagreement case privacy.py
                 # deliberately allows through — which lands here instead, and was the one skip in the
                 # phase that reported nothing at all. (A profile-unknown account early-returns inside
-                # `_record_unhideable`, so this costs nothing for the other arm.)
+                # `_record_unhideable`, so this costs nothing for the other arm — which is why that arm
+                # is recorded here instead: no exclude written and nobody looked.)
                 _record_unhideable(ctx, user, remote_user, owned, collections_known, report)
+                if not remote_user.restriction_profile:
+                    report.privacy_unchecked.append(user.username)
             else:
                 sync_failed = True
                 report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
+                report.privacy_write_failed.append(user.username)
                 logger.error(
                     "{}: plex.tv 422 on an account with NO parental profile — blocking promotion, "
                     "because nothing else would stop their rows going public",
@@ -1174,6 +1319,7 @@ def _privacy_sync_phase(
             # Named, not just counted: this is the reason nothing gets promoted, so it has to reach
             # the operator's screen rather than only the container log.
             report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
+            report.privacy_write_failed.append(user.username)
             if user_report is not None:
                 user_report.status = "error"
                 user_report.error = f"{user_report.error} | {message}" if user_report.error else message
@@ -1264,6 +1410,72 @@ def live_delivered_keys(ctx: EngineContext, report: RunReport) -> dict[tuple[str
     return keys
 
 
+def built_seasons(ctx: EngineContext, report: RunReport | None = None) -> dict[tuple[str, str, str], str]:
+    """``(user_slug, row_slug, library_key) -> the season that collection was last built for``.
+
+    A seasonal row that finds nothing for its new season in a library delivers nothing there, so that library
+    keeps last season's collection — its title and its films (#137 C-1). Promotion hides a collection whose
+    answer here is not tonight's season (`_built_for_another_season`).
+
+    Three sources, later ones winning: the season part of the stored picks' recipe (`rows.recipe_season`),
+    the delivery ledger's record, and — given ``report`` — what THIS run delivered or removed, laid over the
+    ledger in the order `live_delivered_keys` replays it. The recipe covers PER-PERSON collections delivered
+    before the ledger recorded seasons (0096); a shared row stores no picks recipe, so its deliveries from
+    before then have no record at all and are promoted as before. The ledger outlives pruned picks; the run's
+    own deliveries are newer than both.
+
+    A key absent from all three is a collection nothing describes. It is promoted exactly as before, so no
+    row loses its place on the night the record starts being kept.
+
+    Args:
+        ctx: The engine context: ``previous_recipes`` and ``delivered_seasons``.
+        report: The run in progress, or None outside a run (`rows.visibility`, `user.restore`).
+
+    Returns:
+        ``slug@anchor`` per collection, or "" for one built while its row followed no season.
+    """
+    built = {key: rows.recipe_season(recipe) for key, recipe in ctx.previous_recipes.items()}
+    built.update(ctx.delivered_seasons)
+    for user in report.users if report is not None else []:
+        for entry in user.removed_deliveries or []:
+            built.pop((user.slug, entry.get("row_slug") or "", str(entry.get("library_key") or "")), None)
+    for user in report.users if report is not None else []:
+        for entry in user.breakdown or []:
+            row_slug, library_key = entry.get("row_slug") or "", str(entry.get("library_key") or "")
+            if int(entry.get("rating_key") or 0) and row_slug and library_key and "season" in entry:
+                built[(user.slug, row_slug, library_key)] = entry["season"]
+    return built
+
+
+def _unless_built_for_another_season(spec: RowSpec | None, built: str | None, collection) -> RowSpec | None:
+    """``spec``, or the same row out of season when this collection was built for another season or year.
+
+    Judged by `RowSeason.holds`: the same season, recorded for a day no further from tonight's than the window
+    is wide. A season whose date the owner moved by no more than that still holds this showing's films, so its
+    collection stays shown.
+
+    Out of season is DORMANT, which `_promote_one` hides whatever the placement says: last season's
+    collection is treated exactly like a row between seasons until a run builds tonight's season into it.
+    Hiding is the only write this leads to.
+
+    Args:
+        spec: The row the collection was matched to, or None.
+        built: Its `built_seasons` record. None — nothing records what it holds — is never a mismatch, so
+            such a collection is promoted as it always was.
+        collection: For the log line.
+    """
+    if spec is None or spec.season is None or built is None or spec.season.holds(built):
+        return spec
+    logger.info(
+        "{}: built for {}, not tonight's {} — kept hidden until a run builds {} into it",
+        log_title(collection.title),
+        built or "no season",
+        spec.season.built_for,
+        spec.season.name,
+    )
+    return replace(spec, season=None)
+
+
 def identity_map(keys: dict[tuple[str, str, str], int]) -> dict[str, dict[int, str]]:
     """Ledger tuples -> ``{user_slug: {ratingKey: row_slug}}``, dropping anything ambiguous.
 
@@ -1310,6 +1522,9 @@ def _promote_phase(
     A collection skipped by an exception mid-loop is correctly absent, so converge picks it up."""
     promoted: set[int] = set()
     ledger = identity_map(live_delivered_keys(ctx, report))
+    # With this run's deliveries over the ledger: a row the run just built for a new season is promoted,
+    # while the ledger it started from still names the last one.
+    built_for = built_seasons(ctx, report)
     # When SOME row is hidden today, an unidentifiable collection might BE that row — and promotion's
     # no-spec fallback shows what it cannot identify, which would undo the midnight schedule for the
     # rest of the day. So the run stops guessing exactly when guessing could over-show, and keeps the
@@ -1347,6 +1562,7 @@ def _promote_phase(
                 placement_keys=ledger.get(user.slug, {}),
                 into=promoted,
                 skip_unmatched=hidden_today,
+                built_for=built_for,
             )
         except Exception as e:
             if user_report is not None:
@@ -1358,7 +1574,7 @@ def _promote_phase(
     for spec, _agg in shared_to_promote if not ctx.config.dry_run and filters_ok else []:
         shared_report = next((r for r in report.users if r.slug == f"{SHARED_SLUG_PREFIX}_{spec.slug}"), None)
         try:
-            promote_shared_row(ctx, spec, into=promoted)
+            promote_shared_row(ctx, spec, into=promoted, built_for=built_for)
         except Exception as e:
             if shared_report is not None:
                 shared_report.status = "error"
@@ -1368,8 +1584,12 @@ def _promote_phase(
     return promoted
 
 
-def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int]) -> None:
+def promote_shared_row(
+    ctx: EngineContext, spec: RowSpec, *, into: set[int], built_for: Mapping[tuple[str, str, str], str]
+) -> None:
     """Put a SHARED row's one public collection on the surfaces its placement asks for.
+
+    ``built_for`` is `built_seasons`: a seasonal row's collection built for another season is kept hidden.
 
     Every library, not just the first: a shared row whose ``library_keys`` narrowed leaves its
     collection in the library it walked away from, which promotion would otherwise never revisit.
@@ -1392,7 +1612,8 @@ def promote_shared_row(ctx: EngineContext, spec: RowSpec, *, into: set[int]) -> 
                 # second caller of `promote_user_rows`. This function is written to be reused.
                 logger.info("[dry-run] {}: would promote shared row '{}'", collection.title, spec.slug)
                 continue
-            _promote_one(ctx, collection, spec)
+            built = built_for.get((f"{SHARED_SLUG_PREFIX}_{spec.slug}", spec.slug, str(section.key)))
+            _promote_one(ctx, collection, _unless_built_for_another_season(spec, built, collection))
             into.add(int(collection.ratingKey))
 
 
@@ -1423,6 +1644,7 @@ def promote_user_rows(
     into: set[int] | None = None,
     skip_unmatched: bool = False,
     only_row: str | None = None,
+    built_for: Mapping[tuple[str, str, str], str],
 ) -> set[int]:
     """Put every collection under one user's label onto the surfaces its row asks for.
 
@@ -1449,6 +1671,10 @@ def promote_user_rows(
     ``only_row`` narrows the pass to one row's collections: every other one, unidentified ones included,
     is left exactly as it is. ``rows.visibility`` sets it when the row editor queued it for one row.
 
+    ``built_for`` is `built_seasons`, with the run's own deliveries laid over it when a run calls this. A
+    seasonal row's collection built for another season is hidden rather than promoted (#137 C-1). Required,
+    with no default: a run that forgot its overlay would hide every row it had just rebuilt for a new season.
+
     Returns the ratingKeys touched, and writes them into ``into`` as it goes when given one — so a
     caller that catches a mid-loop PMS failure still knows which collections were already set. Raises
     on a PMS failure; the caller owns how that is reported.
@@ -1460,7 +1686,8 @@ def promote_user_rows(
     # spec, which is what every other phase builds from (_build_indexes, delivery). Reading the raw
     # list here meant an unmanaged-rows config had an EMPTY map, so every title lookup missed and every
     # collection fell to the no-spec fallback — placement silently ignored.
-    effective_rows = ctx.config.per_person_rows()
+    # As this person sees them: an explore row's title follows THEIR theme, as delivery rendered it.
+    effective_rows = [spec.for_person(user.slug) for spec in ctx.config.per_person_rows()]
     spec_by_slug = {spec.slug: spec for spec in effective_rows}
     # Keyed (section key, title), never title alone: two of one person's rows may share a title when they
     # build in different libraries (issue #121), and a title-only map handed one of them both collections.
@@ -1567,9 +1794,30 @@ def promote_user_rows(
                     log_title(collection.title),
                 )
                 continue
+            if spec is not None:
+                built = built_for.get((user.slug, spec.slug, str(section.key)))
+                spec = _unless_built_for_another_season(spec, built, collection)
             _promote_one(ctx, collection, spec, user.user_type)
             promoted.add(int(collection.ratingKey))
     return promoted
+
+
+def _converged_row(section, collection, label: str, reason: str | None = None) -> dict:
+    """One `RunReport.converge_demotions` / `orphan_deletions` entry: what converge acted on, and where.
+
+    Read from objects the walk already holds, so recording costs no PMS request. A deletion has no
+    `reason` — every orphan is deleted for the same one.
+    """
+    entry = {
+        "label": label,
+        "title": collection.title,
+        "rating_key": int(collection.ratingKey),
+        "library_key": str(section.key),
+        "library": section.title,
+    }
+    if reason is not None:
+        entry["reason"] = reason
+    return entry
 
 
 def _converge_phase(
@@ -1640,6 +1888,7 @@ def _converge_phase(
                 # everyone else's exclude still matches and unpausing is a re-promote, not a rebuild.
                 if label.lower() in paused_labels or retired_shared:
                     reason = "row switched off" if retired_shared else "paused"
+                    why = "shared_row_switched_off" if retired_shared else "paused"
                     # Read first, exactly as the own-home branch does: a preview must list what would
                     # actually change, not every candidate considered.
                     if not ctx.plex.claims_any_surface(collection):
@@ -1647,10 +1896,12 @@ def _converge_phase(
                     if ctx.config.dry_run:
                         logger.info("[dry-run] {}: would take off every surface", collection.title)
                         demoted.append(label)
+                        report.converge_demotions.append(_converged_row(section, collection, label, reason=why))
                         continue
                     with ctx.write_lock:
                         if ctx.plex.demote_all(collection, reason=reason):
                             demoted.append(label)
+                            report.converge_demotions.append(_converged_row(section, collection, label, reason=why))
                     continue
 
                 # ORPHAN: a per-person label whose user Shortlist no longer knows. Deleting is what
@@ -1681,15 +1932,22 @@ def _converge_phase(
                         wrote = ctx.config.dry_run or ctx.plex.demote_all(collection, reason="unknown owner")
                         if wrote:
                             demoted.append(label)
+                            report.converge_demotions.append(
+                                _converged_row(section, collection, label, reason="unknown_owner")
+                            )
                     continue
 
                 if is_orphan:
+                    # Read before deleting, as the sweep does: afterwards the object refers to nothing on
+                    # the server.
+                    deletion = _converged_row(section, collection, label)
                     if ctx.config.dry_run:
                         logger.info("[dry-run] {}: would DELETE (no such user)", collection.title)
                     else:
                         with ctx.write_lock:
                             ctx.plex.delete_owned_collection(collection, LABEL_PREFIX)
                     deleted.append(label)
+                    report.orphan_deletions.append(deletion)
                     continue
 
                 if label.lower() in allowed:
@@ -1701,10 +1959,14 @@ def _converge_phase(
                 if ctx.config.dry_run:
                     logger.info("[dry-run] {}: would demote off the owner's Home (converge)", collection.title)
                     demoted.append(label)
+                    report.converge_demotions.append(_converged_row(section, collection, label, reason="on_owner_home"))
                     continue
                 with ctx.write_lock:
                     if ctx.plex.demote_own_home(collection):
                         demoted.append(label)
+                        report.converge_demotions.append(
+                            _converged_row(section, collection, label, reason="on_owner_home")
+                        )
     except Exception:
         # Best-effort: the run's real work is already done and this only ever removes visibility, so a
         # PMS wobble here must not fail the run. Next run converges again.

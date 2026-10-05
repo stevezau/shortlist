@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING, Any
+
+from shortlist.engine.web_guidance import AiInstructions
+
+if TYPE_CHECKING:
+    from shortlist.engine.themes import ThemeSpec
 
 
 class MediaType(StrEnum):
@@ -187,6 +193,39 @@ class Attribution:
     detail: str = ""  # the shared actor's name, or the franchise's
 
 
+TitleKey = tuple[MediaType, int]  # (media, tmdb_id)
+
+_KEEP_FRACTION = 2 / 3  # on a refresh night, keep the strongest ~two-thirds; swap the weakest third
+
+
+@dataclass(frozen=True)
+class OverTime:
+    """How an AI row changes from night to night (#138): all three unset is the behaviour before they existed."""
+
+    refresh_share: float | None = None
+    repeat_cooldown_days: int | None = None
+    avoid_rows: tuple[str, ...] = ()
+
+    @property
+    def active(self) -> bool:
+        return self.refresh_share is not None or self.repeat_cooldown_days is not None or bool(self.avoid_rows)
+
+    def fingerprint(self) -> str:
+        """Set parts only, fixed order, avoid sorted: "share=0.5;cooldown=30;avoid=a,b"."""
+        parts = []
+        if self.refresh_share is not None:
+            parts.append(f"share={self.refresh_share:g}")
+        if self.repeat_cooldown_days is not None:
+            parts.append(f"cooldown={self.repeat_cooldown_days}")
+        if self.avoid_rows:
+            parts.append(f"avoid={','.join(sorted(self.avoid_rows))}")
+        return ";".join(parts)
+
+    def keep_fraction(self) -> float:
+        """The share of a row kept on a refresh night; the pre-existing two-thirds when unset."""
+        return _KEEP_FRACTION if self.refresh_share is None else 1 - min(1.0, max(0.0, self.refresh_share))
+
+
 @dataclass
 class Candidate:
     """A TMDB-suggested title, later intersected with the library."""
@@ -284,6 +323,12 @@ class Pick:
     # candidate pool already holds, so ordering by them costs no extra lookups.
     rating: float = 0.0
     year: int | None = None
+    # The score the row was actually SORTED on when the owner picked a non-TMDB rating source, and that
+    # source's name. Display only: never persisted (tonight's lookup is stamped on the delivered picks
+    # each run, carried-forward ones included) and never read by ranking, so `rating` stays TMDB's.
+    # None = the row was not sorted on another service's score.
+    order_rating: float | None = None
+    order_rating_source: str | None = None
     # The `row_recipe` this pick was built under. Compared against tonight's on the next run: a
     # mismatch means the owner changed a setting that decides row contents, so the row rebuilds
     # instead of waiting for its refresh cadence.
@@ -338,6 +383,8 @@ class UserProfile:
     request_tag: str = ""  # tag added to titles requested for this user (layered onto global + row tags)
     # Per-row overrides keyed by collection slug; a slug absent here uses the row's own settings.
     row_overrides: dict[str, RowOverride] = field(default_factory=dict)
+    # A Radarr/Sonarr tag that marks THIS person's requests when it fits no pattern (set on their Users page).
+    requested_by_tag: str = ""
 
     def __post_init__(self) -> None:
         if not self.slug:
@@ -391,6 +438,80 @@ class RowSeason:
     name: str
     emoji: str
     anchor: date
+    #: The custom season's source fingerprint (issue #137), so editing its sources rebuilds the row. Empty
+    #: for a built-in, which keeps its recipe byte-identical to before custom seasons existed.
+    content_hash: str = ""
+
+    #: The window tonight's season shows in (`seasons.row_season_on` sets it): from ``starts`` to ``ends``. Left
+    #: out of equality, since it follows from the season, its day and the row's timing. None on a season built
+    #: by hand, which then counts as showing on its day alone.
+    starts: date | None = field(default=None, compare=False)
+    ends: date | None = field(default=None, compare=False)
+
+    @property
+    def built_for(self) -> str:
+        """``slug@anchor``: the season, and the exact day of it, a collection built tonight was built for.
+
+        The recipe's season part and the delivery ledger's record both use it. The recipe needs the full day, so
+        moving a season's date rebuilds its rows; whether a collection is SHOWN for tonight is `holds`.
+        """
+        return f"{self.slug}@{self.anchor.isoformat()}"
+
+    def holds(self, built: str) -> bool:
+        """Whether a collection recorded as built for ``built`` holds this season, so it may be shown tonight.
+
+        True only for this season's slug with a recorded day no further from tonight's day, either side, than
+        tonight's window is wide (lead + after): the showing it was built for overlaps this one (#137 C-1).
+        Another season, another year's showing (365 days off against a window of at most 120), or a day of this
+        year that the owner has since moved the season far from, is a collection built for something else. A
+        day moved by no more than that is not: its films were chosen for this showing, and the recipe's full day
+        rebuilds the row at its next run. Symmetric on purpose: a one-sided "day before it opens to the day it
+        closes" hid a row moved one day EARLIER with no days after (the default), and one moved later by more
+        than lead + 1.
+
+        Args:
+            built: The record, ``slug@YYYY-MM-DD`` as `built_for` writes it. "" (built while the row followed no
+                season) and a record with no readable day are never this season. A season with no window (built
+                by hand, not by `seasons.row_season_on`) holds only its own day.
+        """
+        slug, at, day = built.rpartition("@")
+        if not at or slug != self.slug:
+            return False
+        try:
+            recorded = date.fromisoformat(day)
+        except ValueError:
+            return False
+        width = (self.ends - self.starts).days if self.starts is not None and self.ends is not None else 0
+        return abs((recorded - self.anchor).days) <= width
+
+
+@dataclass(frozen=True)
+class RowLimits:
+    """What a row may hold. ``None`` on every field means no limit, which is today's behaviour."""
+
+    max_runtime: int | None = None  # minutes
+    min_year: int | None = None
+    max_year: int | None = None
+    min_rating: float | None = None  # TMDB vote_average, 0..10
+
+    @property
+    def active(self) -> bool:
+        return any(v is not None for v in (self.max_runtime, self.min_year, self.max_year)) or self.rating_limited
+
+    @property
+    def rating_limited(self) -> bool:
+        # 0 or less excludes nothing, so it means "no limit" — it must not change the recipe.
+        return self.min_rating is not None and self.min_rating > 0
+
+    def fingerprint(self) -> str:
+        """The set limits in a fixed order, e.g. ``rt<=120;y>=1990;y<=2010;r>=7.0``."""
+        parts = [
+            f"rt<={self.max_runtime}" if self.max_runtime is not None else "",
+            f"y>={self.min_year}" if self.min_year is not None else "",
+            f"y<={self.max_year}" if self.max_year is not None else "",
+            f"r>={self.min_rating}" if self.rating_limited else "",
+        ]
+        return ";".join(p for p in parts if p)
 
 
 @dataclass
@@ -474,6 +595,11 @@ class RowSpec:
     # actually watched, which is what a `{top_seed}` ("Because you watched X") title claims; the default
     # blends the whole recent history. None -> inherit EngineConfig.max_seeds.
     max_seeds: int | None = None
+    # Optional limits on what the row may hold (#138). None = no limit.
+    max_runtime: int | None = None  # minutes; a show's is its typical episode
+    min_year: int | None = None
+    max_year: int | None = None
+    min_rating: float | None = None  # TMDB vote_average, 0..10
     # What this row does for someone with too little history to recommend from ("popular" = the
     # cold-start fallback of top-rated titles, "skip" = don't build it for them at all).
     # None -> inherit EngineConfig.cold_start.
@@ -566,6 +692,31 @@ class RowSpec:
     # clock). None on a seasonal row means it is between seasons: DORMANT — not gathered, not built, and
     # its collection kept hidden until its next season.
     season: RowSeason | None = None
+    # A "Your requests" row (issue #127): built from the person's Overseerr requests and Radarr/Sonarr
+    # requester tags, never from the candidate pool. `requests_window_days` 0 = keep until watched.
+    requests_row: bool = False
+    requests_window_days: int = 90
+    # Owner's own tag format for hand-managed Radarr/Sonarr setups, e.g. "req-{username}". "" = off.
+    requests_tag_pattern: str = ""
+    # Owner-written instructions for AI web search on this row (#138); None = use the server's.
+    ai_instructions: AiInstructions | None = None
+    # An AI row (#138): its titles are a theme's, read once per run and ranked per person in code. None on
+    # every other row.
+    theme: ThemeSpec | None = None
+    # Night-to-night controls for an AI row (#138); the default changes nothing.
+    over_time: OverTime = field(default_factory=OverTime)
+    # Per-person themes (#138): (user slug, that person's theme). A person absent here gets ``theme``.
+    person_themes: tuple[tuple[str, ThemeSpec], ...] = ()
+
+    def for_person(self, user_slug: str) -> RowSpec:
+        """This row as ``user_slug`` sees it: with their own theme when they have one."""
+        for slug, person_theme in self.person_themes:
+            if slug == user_slug:
+                return replace(self, theme=person_theme)
+        return self
+
+    def limits(self) -> RowLimits:
+        return RowLimits(self.max_runtime, self.min_year, self.max_year, self.min_rating)
 
     @property
     def dormant(self) -> bool:
@@ -758,6 +909,25 @@ class SeerrTarget:
     #: own the request, which normally means auto-approved (that account is an admin). Pointing this
     #: at a non-auto-approve account is how the owner gets a second approval gate in the *seerr.
     request_as_user_id: int = 0
+
+
+@dataclass(frozen=True)
+class RequestSources:
+    """Where a "Your requests" row reads who asked for what. Independent of the request FEATURE:
+    the owner may send nothing through Shortlist and still want this row, so this is built whenever
+    a URL + key exist, whatever `requests.enabled` / `requests.target` say."""
+
+    overseerr: SeerrTarget | None = None
+    radarr: ArrTarget | None = None
+    sonarr: ArrTarget | None = None
+    # Requests Shortlist itself files via Overseerr land on this account; they are recommendations,
+    # not something the person asked for, so that account never gets a row from them.
+    exclude_seerr_user_id: int = 0
+    # Shortlist's own Radarr/Sonarr tag: an item carrying it never matches an own-pattern tag.
+    shortlist_tag: str = ""
+
+    def any(self) -> bool:
+        return bool(self.overseerr or self.radarr or self.sonarr)
 
 
 #: The two places a request can be filed. ``arr`` posts to Radarr/Sonarr directly (the original, and
@@ -1186,7 +1356,7 @@ class EngineConfig:
     # every stored value through that same curve, so no row's cadence moved.
     #
     # It sets HOW OFTEN a row rebuilds, never how much of it turns over: a refresh keeps the strongest
-    # ~two-thirds and swaps the weakest third (`_KEEP_FRACTION`, rows.py), at every cadence including
+    # ~two-thirds and swaps the weakest third (`_KEEP_FRACTION`, above), at every cadence including
     # nightly. The old name promised "rotate the whole row daily and reach deep down the ranked list",
     # a magnitude nothing implements — and folding turnover in here would tie more variety to worse
     # picks, since the only way to swap more of a row is to reach further down the ranked list.
@@ -1215,6 +1385,8 @@ class EngineConfig:
     # web-search tool, Claude/GPT/Gemini only), 'exa', or 'searxng'. Either external is the only path
     # for a local Ollama model. ('auto', which unioned native with an external, was removed in 1.3.)
     web_search_provider: str = "native"
+    # Server-wide AI web search instructions (#138); "" = Shortlist's built-in guidance.
+    web_instructions: str = ""
     # Master switch for touching the Recommended-shelf ORDER. False -> Shortlist never reorders the
     # shelf (skips the whole order phase), so a co-managing tool (agregarr/Kometa) owns the order and
     # the two don't fight. True (default) -> apply the configured anchors. Independent of delivery and
@@ -1271,6 +1443,26 @@ class EngineConfig:
     # never build" about a perfectly healthy 10-person row. Default False = "this IS the roster",
     # the honest reading for a direct library caller.
     users_scoped: bool = False
+    # Where a "Your requests" row reads from (issue #127). None -> no requests row can build; the
+    # server adapter fills it whenever an Overseerr/Radarr/Sonarr URL + key exist, regardless of
+    # `requests` — the row and the request feature are independent.
+    request_sources: RequestSources | None = None
+    # Every season a row may follow, built-ins and the owner's own (issue #137), by slug — what this run
+    # reads a seasonal row's titles from, and what a seasonal row's every possible title is rendered from.
+    # None, NOT an empty default: an empty catalogue read as "no such season" everywhere, which silently
+    # emptied the #121 title claim. Read it through `season_catalogue`, which refuses a missing one.
+    seasons: Mapping[str, Any] | None = None  # seasons.Catalogue; Any avoids an import cycle
+
+    def season_catalogue(self) -> Mapping[str, Any]:
+        """The season catalogue, for a reader that needs one: a row in season, or a name using the season.
+
+        Raises:
+            RuntimeError: when the caller never passed one. That is a bug in the caller, and failing loudly
+                beats every season reading as unknown.
+        """
+        if self.seasons is None:
+            raise RuntimeError("EngineConfig.seasons was not set — the server must pass the season catalogue")
+        return self.seasons
 
     def should_build(self, spec: RowSpec) -> bool:
         """Whether this run rebuilds ``spec`` (scoped run) or every row (full run)."""
@@ -1328,6 +1520,9 @@ class CollectionDiff:
     removed: list[str] = field(default_factory=list)
     kept: list[str] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)  # rows destroyed this run (swept, or rebuilt)
+    # Leftover copies of a shared row deleted beside the live one. Not `deleted`: the row itself is still
+    # live, and the run page reads `deleted` as "this person no longer gets this row".
+    duplicates_removed: list[str] = field(default_factory=list)
     collection_title: str = ""
     created: bool = False
     # The Plex ratingKey of the collection this landed in. The delivery LEDGER's whole point: it is
@@ -1421,6 +1616,9 @@ class UserRunReport:
     # `status` says what became of it. Naming it "built" would claim a success that a later error in
     # the pipeline can still take away. {} on a cold-start skip, which never reaches the decision.
     rows_considered: dict[str, str] = field(default_factory=dict)
+    # Row slugs whose no-repeat / keep-out exclusions were ignored tonight because they would have left
+    # the row empty (#138). The adapter persists each as an event; the engine cannot write events.
+    exclusions_skipped: list[str] = field(default_factory=list)
     # Seconds spent on work EVERY row shares — the watch-history fetch and the candidate gather.
     # All AI spend happens here (see `pool_costs`), so on a typical person this dwarfs the rows.
     # Reported as its own line rather than divided between rows, which would invent a split.
@@ -1459,6 +1657,15 @@ class RunReport:
     # Separate from `converged` because this is the one irreversible action converge takes, and
     # "what was destroyed at 03:31" must be answerable on its own (plex-safety rule 10).
     orphans_removed: list[str] = field(default_factory=list)
+    # The same two outcomes as entries an audit event can be built from — the two lists above are bare
+    # labels, which name neither the collection nor its library nor why (plex-safety rule 10). In walk
+    # order, filled (and in a dry run, filled with what WOULD happen) exactly where those two are:
+    #   converge_demotions: {"label", "title", "rating_key", "library_key", "library", "reason"}, where
+    #     `reason` is "paused" | "shared_row_switched_off" | "unknown_owner" (off every surface) or
+    #     "on_owner_home" (off the owner's Home only);
+    #   orphan_deletions: {"label", "title", "rating_key", "library_key", "library"}.
+    converge_demotions: list[dict] = field(default_factory=list)
+    orphan_deletions: list[dict] = field(default_factory=list)
     # Share filters we changed, keyed by plex account id. Editing someone's Plex share permissions
     # is the most sensitive write Shortlist makes, and most of the accounts we write to are not in
     # any run's user list — so without this, "what changed on whose share at 03:31" would have no
@@ -1528,6 +1735,18 @@ class RunReport:
     # that failed early cleared a live exposure alert and every "Sees N rows of others'" badge while
     # the exposure was untouched, which is the exact silence the check exists to end.
     unhideable_measured: bool = False
+    # Accounts the privacy loop could NOT vouch for, by username. Read beside `unhideable_measured`. The
+    # run page counts every account it is not told about as hiding every row, so silence here printed a
+    # green "2 of 2" over a run whose own log said it "reports nothing rather than a false all-clear".
+    #   privacy_unchecked: a profiled account `_record_unhideable` could not look through (no token, no
+    #     usable collections read, a read that raised), or one whose 422 was skipped with its profile
+    #     unknown — no exclude written and nobody looked.
+    #   privacy_write_failed: its share-filter write failed — the named half of `promotion_blockers`.
+    #   privacy_left_alone: the owner chose to leave its sharing alone (`users.manage_sharing=0`), so it
+    #     keeps none of our excludes and sees every row, by design.
+    privacy_unchecked: list[str] = field(default_factory=list)
+    privacy_write_failed: list[str] = field(default_factory=list)
+    privacy_left_alone: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:

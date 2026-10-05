@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 import stat
+import threading
 from pathlib import Path
 
 import pytest
+from starlette.testclient import TestClient
 
 from shortlist.server.db.models import Setting, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
+from shortlist.server.main import create_app
 from shortlist.server.services.secrets import SecretBox
-from shortlist.server.services.sse import EventBus
+from shortlist.server.services.sse import EventBus, close_on_stop_signals
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -108,6 +112,205 @@ class TestEventBus:
             await stream.aclose()
 
         asyncio.run(scenario())
+
+    def test_close_ends_an_open_stream_normally_when_it_is_waiting(self):
+        """A stopping uvicorn waits for every open connection; a stream that never ends held it for ever."""
+
+        async def scenario():
+            bus = EventBus()
+            stream = bus.stream()
+            await stream.__anext__()  # hello
+            rest = asyncio.create_task(_drain(stream))
+            await asyncio.sleep(0.05)  # parked on its empty queue, as an idle tab is
+            assert not rest.done()
+
+            bus.close()
+
+            assert await asyncio.wait_for(rest, timeout=1) == []
+            assert not rest.cancelled()
+
+        asyncio.run(scenario())
+
+    def test_close_delivers_frames_already_published_in_order_when_closing(self):
+        async def scenario():
+            bus = EventBus()
+            stream = bus.stream()
+            await stream.__anext__()  # hello
+            bus.publish("run.progress", {"n": 1})
+            bus.publish("run.finished", {"n": 2})
+
+            bus.close()
+
+            frames = await asyncio.wait_for(_drain(stream), timeout=1)
+            assert [frame.splitlines()[0] for frame in frames] == ["event: run.progress", "event: run.finished"]
+
+        asyncio.run(scenario())
+
+    def test_close_ends_a_stream_publish_already_dropped_when_its_queue_overflowed(self):
+        """`publish` stops feeding a subscriber whose queue is full, but its stream stays open — close must reach it."""
+
+        async def scenario():
+            bus = EventBus(max_queue=1)
+            stream = bus.stream()
+            await stream.__anext__()  # hello
+            bus.publish("run.progress", {"n": 1})
+            bus.publish("run.progress", {"n": 2})  # queue full: dropped from publishing
+            rest = asyncio.create_task(_drain(stream))
+            await asyncio.sleep(0.05)
+
+            bus.close()
+
+            frames = await asyncio.wait_for(rest, timeout=1)
+            assert frames == ['event: run.progress\ndata: {"n": 1}\n\n']
+
+        asyncio.run(scenario())
+
+    def test_a_stream_opened_after_close_ends_immediately_when_closed(self):
+        """uvicorn keeps accepting for up to a tick after the signal — a stream started then must not hold it."""
+
+        async def scenario():
+            bus = EventBus()
+            bus.close()
+
+            assert await asyncio.wait_for(_drain(bus.stream()), timeout=1) == []
+
+        asyncio.run(scenario())
+
+    def test_close_is_harmless_when_called_twice(self):
+        async def scenario():
+            bus = EventBus()
+            stream = bus.stream()
+            await stream.__anext__()  # hello
+
+            bus.close()
+            bus.close()
+
+            assert await asyncio.wait_for(_drain(stream), timeout=1) == []
+            bus.publish("run.finished", {})  # reaches nobody, raises nothing
+
+        asyncio.run(scenario())
+
+
+async def _drain(stream) -> list[str]:
+    return [frame async for frame in stream]
+
+
+class _RecordingHandler:
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, object]] = []
+
+    def __call__(self, signum: int, frame: object) -> None:
+        self.calls.append((signum, frame))
+
+
+@pytest.fixture
+def restore_stop_handlers():
+    saved = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+    yield
+    for sig, handler in saved.items():
+        signal.signal(sig, handler)
+
+
+@pytest.mark.usefixtures("restore_stop_handlers")
+class TestCloseOnStopSignals:
+    """uvicorn's own SIGTERM/SIGINT handler only sets a flag; it never ends the event streams it then waits on."""
+
+    @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+    def test_a_stop_signal_closes_the_bus_and_reaches_the_previous_handler_when_one_is_installed(self, sig):
+        previous = _RecordingHandler()
+        signal.signal(sig, previous)
+        frame = object()
+
+        async def scenario():
+            bus = EventBus()
+            stream = bus.stream()
+            await stream.__anext__()  # hello
+            rest = asyncio.create_task(_drain(stream))
+            await asyncio.sleep(0.05)
+
+            chained = close_on_stop_signals(bus, asyncio.get_running_loop())
+            signal.getsignal(sig)(sig, frame)
+
+            assert sig in chained
+            assert previous.calls == [(sig, frame)]
+            assert await asyncio.wait_for(rest, timeout=1) == []
+
+        asyncio.run(scenario())
+
+    def test_a_real_signal_reaches_both_when_it_is_delivered(self):
+        previous = _RecordingHandler()
+        signal.signal(signal.SIGTERM, previous)
+
+        async def scenario():
+            bus = EventBus()
+            close_on_stop_signals(bus, asyncio.get_running_loop())
+
+            signal.raise_signal(signal.SIGTERM)
+            await asyncio.sleep(0)
+
+            assert [signum for signum, _ in previous.calls] == [signal.SIGTERM]
+            assert await asyncio.wait_for(_drain(bus.stream()), timeout=1) == []
+
+        asyncio.run(scenario())
+
+    def test_the_previous_handler_still_runs_when_the_loop_is_closed(self):
+        """uvicorn restores its predecessors before the loop closes, but a late signal must stay harmless."""
+        previous = _RecordingHandler()
+        signal.signal(signal.SIGTERM, previous)
+        loop = asyncio.new_event_loop()
+        close_on_stop_signals(EventBus(), loop)
+        loop.close()
+
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+
+        assert previous.calls == [(signal.SIGTERM, None)]
+
+    @pytest.mark.parametrize("disposition", [signal.SIG_DFL, signal.SIG_IGN])
+    def test_nothing_is_installed_when_no_python_handler_is_there_to_chain(self, disposition):
+        signal.signal(signal.SIGTERM, disposition)
+        signal.signal(signal.SIGINT, disposition)
+        loop = asyncio.new_event_loop()
+        try:
+            chained = close_on_stop_signals(EventBus(), loop)
+        finally:
+            loop.close()
+
+        assert chained == []
+        assert signal.getsignal(signal.SIGTERM) == disposition
+        assert signal.getsignal(signal.SIGINT) == disposition
+
+    def test_nothing_is_installed_and_nothing_raises_when_off_the_main_thread(self):
+        """Starlette's TestClient runs the lifespan in a worker thread, where `signal.signal` raises."""
+        previous = _RecordingHandler()
+        signal.signal(signal.SIGTERM, previous)
+        loop = asyncio.new_event_loop()
+        outcome: list[object] = []
+
+        def boot() -> None:
+            try:
+                outcome.append(close_on_stop_signals(EventBus(), loop))
+            except Exception as exc:  # the assertion below reports it
+                outcome.append(exc)
+
+        worker = threading.Thread(target=boot)
+        worker.start()
+        worker.join(5)
+        loop.close()
+
+        assert outcome == [[]]
+        assert signal.getsignal(signal.SIGTERM) is previous
+
+
+@pytest.mark.integration
+def test_the_lifespan_shutdown_closes_the_event_bus_when_no_signal_was_sent(tmp_path: Path):
+    """Tests and in-process servers shut down with no signal; the streams must end there too."""
+    with TestClient(create_app(config_dir=tmp_path)) as client:
+        bus = client.app.state.bus
+
+    async def scenario():
+        assert await asyncio.wait_for(_drain(bus.stream()), timeout=1) == []
+
+    asyncio.run(scenario())
 
 
 class TestSecurityHeaders:

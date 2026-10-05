@@ -2,6 +2,7 @@
 title: What Shortlist works with
 description: Every service Shortlist can talk to — Plex, TMDB, Sonarr, Radarr, Overseerr, Jellyseerr, Trakt, MDBList, Exa, SearXNG, Tautulli and the AI providers — what each one adds, and which are actually required.
 heading: What it works with
+updated: 2026-10-03
 ---
 
 **Two things are required: Plex, and a free TMDB key.** Everything below that is optional, and
@@ -56,6 +57,10 @@ When a row wants something the server doesn't have, Shortlist can ask for it. Pi
 Overseerr and Jellyseerr are the same integration; Jellyseerr is a fork and speaks the same API.
 Use one route or the other, not both. [Set it up →](/guides/requests/)
 
+Overseerr is also read the other way round: a **Your requests** row shows each person the titles
+they asked for in Overseerr (or that carry their requester tag in Radarr/Sonarr) once they're on Plex,
+until they've watched them. [How the row works →](/guides/requests/#your-requests-rows)
+
 ## Everything else
 
 | Service       | What it does                                                                    |
@@ -65,7 +70,7 @@ Use one route or the other, not both. [Set it up →](/guides/requests/)
 
 The webhook is a JSON POST that works with Discord, Slack, Home Assistant, n8n or anything that
 accepts one. Add its address on the **Webhook** card in Settings → Connections, then turn it on and
-tick what to send in Settings → Notifications: runs starting, finishing or failing, jobs starting,
+tick what to send in Settings → Connections → Webhook: runs starting, finishing or failing, jobs starting,
 finishing or failing, someone able to see a row that isn't theirs, titles waiting for your approval,
 and new versions. A failed run and a privacy problem are ticked to begin with. No message names
 anybody.

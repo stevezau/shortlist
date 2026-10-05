@@ -1,3 +1,4 @@
+import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -10,9 +11,19 @@ import { IdleHoldField } from "@/components/settings/idle-hold-field";
 import { InlineKeyField } from "@/components/settings/inline-key-field";
 import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { SettingDisclosure } from "@/components/settings/setting-disclosure";
+import { SettingsNumberField } from "@/components/settings/number-field";
+import { useSaveBarReport } from "@/components/settings/save-bar-context";
+import {
+  SettingBlock,
+  SettingRow,
+  SettingsPanel,
+  SettingsSection,
+} from "@/components/settings/section-layout";
+import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import type { ColdStart } from "@/lib/cold-start";
 import {
@@ -27,6 +38,7 @@ import {
   RATING_LABELS,
   RATING_SOURCES,
 } from "@/lib/rating-sources";
+import { api } from "@/lib/api";
 import { useAutosavedSettings } from "@/lib/autosave";
 import {
   IDLE_HOLD_DAYS_DEFAULT,
@@ -35,7 +47,7 @@ import {
   WATCHED_PCT_DEFAULT,
 } from "@/lib/constants";
 import { hasTrakt, SOURCES } from "@/lib/sources";
-import type { Settings } from "@/lib/types";
+import type { Settings, WebPromptPreview } from "@/lib/types";
 
 // Every source except AI web search — that one gets its own card (its toggle plus what it costs;
 // the backend it searches with lives on the Connections card).
@@ -67,6 +79,15 @@ function readWholeNumber(
 ): number {
   const value = Number(settings[key]);
   return Number.isFinite(value) ? Math.round(value) : fallback;
+}
+
+/**
+ * The `llm_web.instructions` to store. Blank, or Shortlist's own template untouched, is "" — it IS the
+ * default — so typing nothing or clicking Write your own and walking away changes no row's recipe.
+ */
+function storedInstructions(text: string, builtinTemplate: string): string {
+  const trimmed = text.trim();
+  return trimmed === "" || trimmed === builtinTemplate.trim() ? "" : text;
 }
 
 /** When an enabled source is missing its dependency, show how to satisfy it RIGHT HERE. */
@@ -141,10 +162,23 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     return Number.isFinite(value) ? Math.min(6, Math.max(0, value)) : 2;
   });
 
+  const [aiInstructions, setAiInstructions] = useState<string>(() =>
+    String(settings["llm_web.instructions"] ?? ""),
+  );
+
   const toggle = (id: string) =>
     setEnabled((current) =>
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
     );
+
+  const webSearchOn = enabled.includes("llm_web");
+  // Shortlist's built-in guidance: shown until the owner writes their own, and the template (placeholders
+  // unfilled) that "Write your own" starts from and that saving compares against.
+  const builtin = useQuery({
+    queryKey: ["web-prompt-preview", "builtin", String(settings["llm_web.search_provider"] || "native")],
+    queryFn: () => api.previewWebPrompt({}),
+    enabled: webSearchOn,
+  });
 
   // Persist the owner's INTENT (the enabled set as chosen). A source whose dependency isn't met yet
   // no-ops safely in the engine and shows an inline "here's what's needed" prompt — never a silent lie.
@@ -162,6 +196,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       coldStart,
       usePlexRatings,
       dislikeThreshold,
+      aiInstructions,
     },
     () => ({
       "candidates.sources": enabled,
@@ -176,132 +211,63 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       "recommendations.recent_count": recentCount,
       "recommendations.max_seeds": maxSeeds,
       "recommendations.rating_source": ratingSource,
+      "llm_web.instructions": storedInstructions(aiInstructions, builtin.data?.builtin_template ?? ""),
     }),
   );
 
+  const inSaveBar = useSaveBarReport("recommendations", save);
+
   return (
-    <section aria-labelledby="recs-heading" className="space-y-6">
-      <header className="space-y-1 border-b pb-4">
-        <h2 id="recs-heading" className="text-lg font-semibold">
-          Finding titles
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Where Shortlist looks for titles to suggest, and how AI enhances the
-          search. This is the <strong>default every row inherits</strong> — any
-          row can override in its editor.
-        </p>
-      </header>
+    <>
+      <SettingsSection
+        id="sources"
+        title="Title sources"
+        description="Where each person’s candidates come from before they’re ranked. These are defaults; each row can override them in its editor."
+      >
+        {!inSaveBar && <SaveStatus isPending={save.isPending} isError={save.isError} error={save.error} saved={save.saved} onRetry={save.retry} />}
+        <SettingsPanel>
+          {SIMPLE_SOURCES.map((source) => (
+            <SettingRow
+              key={source.id}
+              title={source.label}
+              description={source.desc}
+              control={<Switch checked={enabled.includes(source.id)} onCheckedChange={() => toggle(source.id)} aria-label={`Enable ${source.label}`} />}
+            >
+              {enabled.includes(source.id) && <InlineFix sourceId={source.id} settings={settings} />}
+            </SettingRow>
+          ))}
+          {enabled.length === 0 && <p role="status" className="px-4 py-3 text-sm text-warning sm:px-5">Nothing enabled — Shortlist falls back to its defaults (TMDB similar + discover). Turn on at least one source to choose your own.</p>}
+          <SettingDisclosure title="Web search" value={webSearchOn ? "On" : "Off"} description="Discovery beyond the usual sources, through AI & web search." defaultOpen={webSearchOn}>
+            <p className="text-sm text-muted-foreground">The TMDB sources find titles without AI. Set the provider to <strong>None</strong> in <Link to="/settings/connections#connection-llm" className="font-medium text-primary hover:underline">Connections</Link> and you still get full rows, ranked by score with plain reasons.</p>
+            <AiWebSearchCard settings={settings} enabled={webSearchOn} onToggle={() => toggle("llm_web")} />
+            <AiInstructionsDefault value={aiInstructions} onChange={setAiInstructions} webSearchOn={webSearchOn} builtin={builtin} />
+          </SettingDisclosure>
+        </SettingsPanel>
+      </SettingsSection>
 
-      {/* Each sub-heading hugs the card it labels (tight gap inside, wide gap between), and sits a
-          clear rank below the section title — three same-weight headings under one h2 read as three
-          separate sections rather than as the parts of this one. */}
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Title sources
-        </h3>
-        <Card>
-          <CardContent className="space-y-4 pt-6">
-            <p className="text-sm text-muted-foreground">
-              Shortlist gathers from every source you enable, keeps only titles
-              already in your library, then ranks them. More sources → wider
-              reach.
-            </p>
-            {SIMPLE_SOURCES.map((source) => (
-              <div key={source.id} className="space-y-2">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-medium">{source.label}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {source.desc}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={enabled.includes(source.id)}
-                    onCheckedChange={() => toggle(source.id)}
-                    aria-label={`Enable ${source.label}`}
-                  />
-                </div>
-                {enabled.includes(source.id) && (
-                  <InlineFix sourceId={source.id} settings={settings} />
-                )}
-              </div>
-            ))}
-            {enabled.length === 0 && (
-              // Empty isn't "no discovery" — the engine floors it to its defaults, so say so out loud
-              // (the setting must never read as fully off while a run still uses two sources). It's an
-              // advisory, not an error, so it's role="status".
-              <p role="status" className="text-sm text-warning">
-                Nothing enabled — Shortlist falls back to its defaults (TMDB
-                similar + discover). Turn on at least one source to choose your
-                own.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          AI enhancement
-        </h3>
-        {/* Three paragraphs became one line. The point a reader needs here is that AI is optional
-            and what turning it off costs — not a walk through which source uses which key. */}
-        <p className="text-sm text-muted-foreground">
-          Optional. The TMDB sources above find most titles with no AI at all;
-          this searches the web for the ones they miss. Set the provider to{" "}
-          <strong>None</strong> in{" "}
-          <Link to="/settings#connections" className="font-medium underline">
-            Connections
-          </Link>{" "}
-          and you still get full rows, ranked by score with plain reasons.
-        </p>
-
-        <AiWebSearchCard
-          settings={settings}
-          enabled={enabled.includes("llm_web")}
-          onToggle={() => toggle("llm_web")}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Row behavior
-        </h3>
-        <Card>
-          <CardContent className="space-y-4 pt-6">
-            <div className="space-y-2">
-              <Label htmlFor="watched-pct">Already-watched titles</Label>
-              <p className="text-sm text-muted-foreground">
-                How much of a row may be things a person has already finished.
-              </p>
-              <WatchedSlider
-                id="watched-pct"
-                value={watchedPct}
-                onChange={setWatchedPct}
-              />
-            </div>
-            <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="refresh-days">How often rows rebuild</Label>
-              <p className="text-sm text-muted-foreground">
-                How often a row swaps in new titles; in between, it is left
-                exactly as it is. Longer = stickier and cheaper, shorter =
-                fresher. Decides <strong>which</strong> titles a row holds, not
-                the order they appear in — that is the row’s own{" "}
-                <strong>Order</strong> setting.
-              </p>
-              <RefreshDaysField
-                id="refresh-days"
-                value={refreshDays}
-                onChange={setRefreshDays}
-              />
-            </div>
+      <SettingsSection id="refresh" title="Refresh & variety" description="When a row changes, and how much of it may be familiar.">
+        <SettingsPanel>
+          <SettingBlock
+            title="Titles refresh every"
+            htmlFor="refresh-days"
+            description="Longer is stickier and cheaper, shorter is fresher. Each row keeps its own schedule; its Order setting decides the order."
+          >
+            <RefreshDaysField id="refresh-days" value={refreshDays} onChange={setRefreshDays} />
+          </SettingBlock>
+          <SettingBlock title="Already-watched titles" htmlFor="watched-pct" description="How much of a row may be familiar." value={`Up to ${watchedPct}%`}>
+            <WatchedSlider id="watched-pct" value={watchedPct} onChange={setWatchedPct} />
+          </SettingBlock>
+          <SettingBlock title="Recent releases" htmlFor="recency" description="Give newer titles more weight without filtering older ones out." value={`${recency}% preference`}>
+            <RecencySlider id="recency" value={recency} onChange={setRecency} />
+          </SettingBlock>
+          <SettingDisclosure title="More recommendation controls" value="Show" description="Watch history, ratings and inactive viewers. Plex ratings are server-wide and do not change shared rows.">
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="idle-hold-days">
                 Hold rows for inactive viewers
               </Label>
               <p className="text-sm text-muted-foreground">
                 Someone who hasn&rsquo;t watched anything since their row was
-                built has nothing new to base a rebuild on, so the row can wait
+                built has nothing new to base fresh picks on, so the row can wait
                 — which also saves a write to Plex for every row held. Off by
                 default.
               </p>
@@ -314,26 +280,6 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               />
             </div>
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="recency">Recent releases</Label>
-              <p className="text-sm text-muted-foreground">
-                How much a title’s <strong>release date</strong> counts when
-                ranking it. A preference, not a filter — older titles still
-                reach rows, they just have to be a better match.
-              </p>
-              <RecencySlider
-                id="recency"
-                value={recency}
-                onChange={setRecency}
-              />
-            </div>
-            {/* The narrower knob is NESTED inside the broader one, the way "Treat as didn't like
-                it" nests under "Respect Plex ratings" — because it is not a peer of it: it is a
-                slice of the very list above (`candidates.py` searches `seeds[:recent_count]`).
-                Side by side, the only clue to that was word order, and the sub-field had to spend
-                a whole paragraph explaining the setting above it. Both labels are imported, not
-                retyped: they are shared with the row editor, and a setting that goes by two names
-                across two screens is the bug this pairing already shipped once. */}
-            <div className="space-y-2 border-t pt-4">
               <Label htmlFor="max-seeds">{MAX_SEEDS_LABEL}</Label>
               <p className="text-sm text-muted-foreground">
                 How far back Shortlist looks when working out someone&rsquo;s
@@ -341,17 +287,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 more about a couple of things; more covers more of their taste.
               </p>
               <div className="flex items-center gap-2">
-                <Input
+                <SettingsNumberField
                   id="max-seeds"
-                  type="number"
+
                   min={5}
                   max={100}
                   value={maxSeeds}
-                  onChange={(e) =>
-                    setMaxSeeds(
-                      Math.max(5, Math.min(100, Number(e.target.value) || 5)),
-                    )
-                  }
+                  onCommit={setMaxSeeds}
                   className="w-24"
                 />
                 <span className="text-sm text-muted-foreground">watches</span>
@@ -366,18 +308,14 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                   than the number above changes nothing.
                 </p>
                 <div className="flex items-center gap-2">
-                  <Input
+                  <SettingsNumberField
                     id="recent-count"
-                    type="number"
+
                     min={1}
                     max={25}
                     value={recentCount}
-                    onChange={(e) =>
-                      setRecentCount(
-                        Math.max(1, Math.min(25, Number(e.target.value) || 1)),
-                      )
-                    }
-                    className="w-24"
+                    onCommit={setRecentCount}
+                  className="w-24"
                   />
                   <span className="text-sm text-muted-foreground">watches</span>
                 </div>
@@ -417,9 +355,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                     A thumbs-down in Plex counts as 1 star.
                   </p>
                   <div className="flex items-center gap-2">
-                    <Input
+                    <SettingsNumberField
                       id="dislike-threshold"
-                      type="number"
+
                       min={0.5}
                       max={3}
                       step={0.5}
@@ -427,15 +365,8 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                       // in Plex. Halving/doubling here rather than storing stars keeps the setting in
                       // the same units as the raw `userRating` every comparison uses.
                       value={dislikeThreshold / 2}
-                      onChange={(e) =>
-                        setDislikeThreshold(
-                          Math.max(
-                            1,
-                            Math.min(6, (Number(e.target.value) || 1) * 2),
-                          ),
-                        )
-                      }
-                      className="w-24"
+                      onCommit={(value) => setDislikeThreshold(value * 2)}
+                  className="w-24"
                     />
                     <span className="text-sm text-muted-foreground">
                       stars and below
@@ -454,17 +385,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 whatever you choose next.
               </p>
               <div className="flex items-center gap-2">
-                <Input
+                <SettingsNumberField
                   id="min-history"
-                  type="number"
+
                   min={1}
                   max={100}
                   value={minHistory}
-                  onChange={(e) =>
-                    setMinHistory(
-                      Math.max(1, Math.min(100, Number(e.target.value) || 1)),
-                    )
-                  }
+                  onCommit={setMinHistory}
                   className="w-24"
                 />
                 <span className="text-sm text-muted-foreground">
@@ -504,7 +431,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 Which score a row set to <strong>Highest rated</strong> sorts
                 on. Anything but TMDB needs an MDBList key in{" "}
                 <Link
-                  to="/settings#connections"
+                  to="/settings/connections#connection-mdblist"
                   className="font-medium underline"
                 >
                   Connections
@@ -526,18 +453,100 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 ))}
               </select>
             </div>
-            <div className="pt-1">
-              <SaveStatus
-                isPending={save.isPending}
-                isError={save.isError}
-                error={save.error}
-                saved={save.saved}
-                onRetry={save.retry}
-              />
+          </SettingDisclosure>
+        </SettingsPanel>
+      </SettingsSection>
+    </>
+  );
+}
+
+const AI_INSTRUCTIONS_MAX = 2000;
+
+/** The server-wide AI web search instructions (#138): Shortlist's built-in wording until the owner writes their own. */
+function AiInstructionsDefault({
+  value,
+  onChange,
+  webSearchOn,
+  builtin,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  webSearchOn: boolean;
+  /** The built-in prompt preview, which only loads while web search is on. */
+  builtin: UseQueryResult<WebPromptPreview>;
+}) {
+  // Editing starts with "Write your own" (or a saved text) and ends only with Reset, so clearing the
+  // box mid-edit keeps the textarea, and its focus, rather than swapping it for the built-in block.
+  const [editing, setEditing] = useState(() => value.trim() !== "");
+  // The server reads blank text as "use the built-in wording", so that is what an empty box shows.
+  const builtinText = builtin.data?.builtin_guidance ?? "";
+  const builtinTemplate = builtin.data?.builtin_template ?? "";
+
+  return (
+    <div className="space-y-2 border-t pt-4">
+      {editing ? (
+        <Label htmlFor="ai-instructions">AI instructions</Label>
+      ) : (
+        <p id="ai-instructions-label" className="text-sm font-medium leading-none">AI instructions</p>
+      )}
+      <p className="text-sm text-muted-foreground">
+        What the AI looks for, on every row that doesn&rsquo;t have its own. A row can add to these or replace them in its editor, under What goes in.
+      </p>
+      {editing ? (
+        <>
+          <Textarea
+            id="ai-instructions"
+            rows={6}
+            value={value}
+            maxLength={AI_INSTRUCTIONS_MAX}
+            onChange={(event) => onChange(event.target.value)}
+          />
+          <p className="text-sm text-muted-foreground">You can use {"{count}"}, {"{year}"} and {"{last_year}"}.</p>
+          <Button type="button" variant="ghost" size="sm" onClick={() => {
+            setEditing(false);
+            onChange("");
+          }}>
+            Reset to Shortlist&apos;s default
+          </Button>
+          <div className="space-y-1 rounded-md border border-dashed p-3">
+            <p className="text-sm font-medium">Shortlist always adds these</p>
+            <p className="text-sm text-muted-foreground">
+              Today&apos;s year, and that the AI must search rather than answer from memory. The exact
+              title and release year for every pick, so it can be found in your library. Only titles
+              already out. The reply format.
+            </p>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            A change here rebuilds every row that uses AI web search, on that row&rsquo;s next run.
+          </p>
+        </>
+      ) : !webSearchOn ? (
+        // The built-in wording comes from the server, which is only asked while web search is on.
+        <p className="text-sm text-muted-foreground">Turn on web search to set these.</p>
+      ) : (
+        <>
+          {builtin.isError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-3">
+              <p className="text-sm text-destructive-text">Couldn&apos;t load Shortlist&apos;s default instructions.</p>
+              <Button type="button" variant="outline" size="sm" onClick={() => void builtin.refetch()}>
+                Retry
+              </Button>
             </div>
-          </CardContent>
-        </Card>
-      </div>
-    </section>
+          ) : builtin.isPending ? (
+            <Skeleton className="h-16 w-full" />
+          ) : (
+            <pre aria-labelledby="ai-instructions-label" className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs">
+              {builtinText}
+            </pre>
+          )}
+          <Button type="button" variant="outline" size="sm" disabled={!builtinTemplate} onClick={() => {
+              setEditing(true);
+              onChange(builtinTemplate);
+            }}>
+            Write your own
+          </Button>
+        </>
+      )}
+    </div>
   );
 }

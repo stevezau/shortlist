@@ -78,7 +78,7 @@ export function refreshDaysGlobal(
 export function idleHoldGlobal(settings: Settings | undefined): string | null {
   const days = num(settings, "recommendations.idle_hold_days");
   if (days === null) return null;
-  if (days <= 0) return "off — rebuild whatever they watched";
+  if (days <= 0) return "off — titles refresh whatever they watched";
   return `held up to ${days} days`;
 }
 

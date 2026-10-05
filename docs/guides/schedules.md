@@ -7,7 +7,7 @@ nav_order: 4
 
 ## Schedules
 
-**The Jobs page** lists everything on a timer. Each job carries its own next run on its line, and
+**Activity → Jobs** lists everything on a timer. Each job carries its own next run on its line, and
 opening one reveals its frequency picker; underneath, **Rows** lists the rows that build on a
 schedule, grouped by the cron they share. Three rows on the same schedule are one trigger that
 builds all three, not three timers. That list is read-only: a row's schedule is edited in the row
@@ -49,6 +49,11 @@ and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run tim
 anything else, or **Off** to only run that row by hand. New rows default to nightly at 03:30 server-local;
 on upgrade, existing rows keep whatever your old global schedule was. Rows that share a cron run
 together. To skip a person entirely, pause them on their detail page.
+
+**A row run is never skipped for starting late.** If Shortlist is busy at the moment a row is due, the run
+starts when it can. The other timers on Jobs are different: one that starts more than 30 seconds late is
+skipped until its next time, and the bell says "A scheduled job didn't run". A run that was due while
+Shortlist was stopped is not replayed when it starts again.
 
 **A scheduled run cut short by a restart is finished once.** If the container restarts part-way
 through a scheduled run (an auto-updater such as Watchtower replacing it, a host reboot), Shortlist

@@ -16,8 +16,9 @@ from shortlist.engine.candidates import (
 )
 from shortlist.engine.clients.search import SearchResult, TitleCandidate
 from shortlist.engine.curator import NullCurator
-from shortlist.engine.curator.base import parse_web_titles
+from shortlist.engine.curator.base import parse_web_titles, try_parse_web_titles
 from shortlist.engine.models import MediaType, Pick, Seed
+from shortlist.engine.web_guidance import Guidance
 from tests.conftest import make_candidate
 
 
@@ -142,7 +143,7 @@ class TestGatherCandidates:
         class _WebCurator:
             supports_native_web_search = True
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 return [{"title": "Both", "year": 2020, "media": "movie"}]
 
         pool = gather_candidates(
@@ -243,7 +244,7 @@ class TestGatherCandidates:
         class _WebCurator:
             supports_native_web_search = True
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 return [
                     {"title": "Real Film", "year": 2022, "media": "movie"},
                     {"title": "Real Show", "year": 2019, "media": "show"},
@@ -276,7 +277,7 @@ class TestGatherCandidates:
         class _Boom:
             supports_native_web_search = True
 
-            def recommend_web(self, *a):
+            def recommend_web(self, *a, **kw):
                 raise RuntimeError("web search down")
 
         pool = gather_candidates(
@@ -330,9 +331,11 @@ class _NonNativeCurator:
         self._reply = reply
         self.complete_calls = 0
         self.last_user = ""  # the RAG prompt, so a test can assert what the curator was actually shown
+        self.last_system = ""
 
     def complete(self, system, user):
         self.complete_calls += 1
+        self.last_system = system
         self.last_user = user
         return self._reply
 
@@ -345,9 +348,11 @@ class _NativeCurator:
     def __init__(self):
         self.recommend_calls = 0
         self.complete_calls = 0
+        self.last_guidance = None
 
-    def recommend_web(self, profile, seeds, k):
+    def recommend_web(self, profile, seeds, k, *, guidance=None):
         self.recommend_calls += 1
+        self.last_guidance = guidance
         return [{"title": "Native Pick", "year": 2020, "media": "movie"}]
 
     def complete(self, system, user):
@@ -445,6 +450,58 @@ class TestLlmWebBackends:
         )
         assert {c.tmdb_id for c in pool} == {88}
         assert curator.recommend_calls == 0 and curator.complete_calls == 1  # forced onto the external path
+
+    def test_a_rows_guidance_reaches_the_exa_pick_prompt(self, mock_tmdb):
+        self._tmdb(mock_tmdb, {"Dune": {"id": 55, "title": "Dune", "genre_ids": [], "vote_average": 8.0}})
+        curator = _NonNativeCurator(reply='[{"title": "Dune", "year": 2021, "media": "movie"}]')
+        gather_candidates(
+            mock_tmdb,
+            [seed(1, "Arrival")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=_FakeExtractingSearch(
+                [make_result("a", "b")], [TitleCandidate(title="Dune", year=2021, media="movie")]
+            ),
+            web_search_mode="exa",
+            web_search_cache=_DictCache(),
+            web_guidance=Guidance(extra="Nothing aimed at kids."),
+        )
+        assert "The server owner adds, for this row: Nothing aimed at kids." in curator.last_system
+
+    def test_a_rows_guidance_reaches_the_searxng_prompt(self, mock_tmdb):
+        """SearXNG extracts nothing, so the model reads snippets through the RAG prompt — the third shape."""
+        self._tmdb(mock_tmdb, {"Dune": {"id": 55, "title": "Dune", "genre_ids": [], "vote_average": 8.0}})
+        curator = _NonNativeCurator(reply='[{"title": "Dune", "year": 2021, "media": "movie"}]')
+        gather_candidates(
+            mock_tmdb,
+            [seed(1, "Arrival")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=_FakeSearch([make_result("Best of 2021", "Dune is great")], name="searxng"),
+            web_search_mode="searxng",
+            web_search_cache=_DictCache(),
+            web_guidance=Guidance(extra="Nothing aimed at kids."),
+        )
+        assert "excerpts from recent web articles" in curator.last_system  # the RAG prompt, not the pick one
+        assert "The server owner adds, for this row: Nothing aimed at kids." in curator.last_system
+
+    def test_native_search_is_handed_the_rows_guidance(self, mock_tmdb):
+        self._tmdb(mock_tmdb, {"Native Pick": {"id": 77, "title": "Native Pick", "genre_ids": [], "vote_average": 8.0}})
+        curator = _NativeCurator()
+        g = Guidance(replace="Any decade.")
+        gather_candidates(
+            mock_tmdb,
+            [seed(1)],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=None,
+            web_search_mode="native",
+            web_guidance=g,
+        )
+        assert curator.last_guidance == g
 
     def test_native_mode_without_a_native_provider_is_a_noop_not_a_failure(self, mock_tmdb):
         """web_search_mode=native + Ollama: the source can't run, so it's skipped — the OTHER source
@@ -620,6 +677,34 @@ class TestWebSearchWithoutAnLlm:
         )
 
         assert calls == []
+
+    def test_a_rows_guidance_does_not_wake_a_missing_model(self, mock_tmdb):
+        """Instructions are words for a model. With none configured, Exa's own titles still fill the row and
+        nothing is asked — the guidance has nobody to reach."""
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
+        mock_tmdb.genre_names.return_value = {}
+        mock_tmdb.search.side_effect = lambda title, mt, year=None: (
+            {"id": 9001, "name": "Andor", "first_air_date": "2022-09-21", "genre_ids": []} if title == "Andor" else None
+        )
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        curator = NullCurator()
+        calls = []
+        curator.complete = lambda system, user: calls.append(1) or ""
+
+        pool = gather_candidates(
+            mock_tmdb,
+            [seed(1, "Dune")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_mode="exa",
+            web_search_cache=_DictCache(),
+            web_guidance=Guidance(extra="Nothing aimed at kids."),
+        )
+
+        assert [c.title for c in pool] == ["Andor"]
+        assert len(calls) == 0
 
     def test_the_fallback_respects_k(self):
         search = _FakeExtractingSearch([make_result("a", "b")], self._titles("A", "B", "C", "D", "E"))
@@ -937,6 +1022,44 @@ class TestParseWebTitles:
     def test_unparseable_reply_yields_empty(self):
         assert parse_web_titles("the model refused to answer", 10) == []
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("[]", []),
+            ("", []),
+            ("I cannot help with that.", []),
+            ('[{"title": "A"}, {"title": "B"}]', ["A", "B"]),
+            ('```json\n[{"title": "A"}]\n```', ["A"]),
+            ('```json\n[{"title": "A"}]\n```\nNotes [1] and [see above].', ["A"]),
+            ('As in [the list below]:\n```json\n[{"title": "A"}]\n```', ["A"]),
+            ('As in [1]:\n```json\n[{"title": "A"}]\n```', ["A"]),
+            ('[{"title": "A"}] and also [{"title": "B"}]', ["A"]),
+            ('[{"title": "Se7en [Director\'s Cut]"}] done [x]', ["Se7en [Director's Cut]"]),
+            ('[{"title": "A"}, {"title": "B', ["A"]),
+            ('[{"title": "Se7en [Director\'s Cut]"}, {"ti', ["Se7en [Director's Cut]"]),
+        ],
+        ids=[
+            "empty-array",
+            "empty-reply",
+            "non-json",
+            "plain",
+            "fenced",
+            "fenced-trailing-bracket-prose",
+            "bracket-prose-before-fence",
+            "valid-json-prose-before-fence",
+            "two-arrays-first-wins",
+            "nested-brackets-in-title",
+            "truncated-keeps-complete-entries",
+            "truncated-with-nested-brackets-keeps-complete-entries",
+        ],
+    )
+    def test_title_array_extraction_matrix(self, text, expected):
+        assert [it["title"] for it in parse_web_titles(text, 10)] == expected
+
+    def test_unparseable_reply_is_none_but_empty_array_is_not(self):
+        assert try_parse_web_titles("nothing usable [oops", 10) is None
+        assert try_parse_web_titles("```json\n[]\n```\nnothing fits [sorry]", 10) == []
+
     def test_skips_non_dict_items_and_caps_at_limit(self):
         text = '[1, "junk", {"title": "A"}, {"title": "B"}, {"title": "C"}]'
         out = parse_web_titles(text, 2)
@@ -946,6 +1069,101 @@ class TestParseWebTitles:
         # A string/float year from a chatty model must not leak a bad type downstream.
         out = parse_web_titles('[{"title": "A", "year": "2021", "media": "movie"}]', 5)
         assert out == [{"title": "A", "year": None, "media": "movie"}]
+
+
+class TestMalformedEntriesAreSalvaged:
+    """Runs 76 and 103 on the owner's server: the model wrote a bare `null` where a key belongs, and
+    the one bad entry threw away the other ~40."""
+
+    @staticmethod
+    def _warnings(fn) -> str:
+        from loguru import logger
+
+        seen: list[str] = []
+        sink = logger.add(seen.append, level="WARNING")
+        try:
+            fn()
+        finally:
+            logger.remove(sink)
+        return "".join(seen)
+
+    def test_a_bare_null_costs_only_the_year_of_its_own_entry(self):
+        reply = (
+            "```json\n[\n"
+            '  {"title": "Dune", "year": 2021, "media": "movie"},\n'
+            '  {"title": "You", null, "media": "show"},\n'
+            '  {"title": "Andor", "year": 2022, "media": "show"},\n'
+            '  {"title": "John Wick", null, "media": "movie"},\n'
+            '  {"title": "Sicario", "year": 2015, "media": "movie"}\n'
+            "]\n```"
+        )
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert out == [
+            {"title": "Dune", "year": 2021, "media": "movie"},
+            {"title": "You", "year": None, "media": "show"},
+            {"title": "Andor", "year": 2022, "media": "show"},
+            {"title": "John Wick", "year": None, "media": "movie"},
+            {"title": "Sicario", "year": 2015, "media": "movie"},
+        ]
+        assert "salvaged 5 of 5 entries" in text and "decode error" in text
+
+    def test_a_reply_cut_off_mid_entry_keeps_every_complete_entry(self):
+        reply = (
+            '[{"title": "Dune", "year": 2021, "media": "movie"}, {"title": "Andor", "media": "show"}, {"title": "Sic'
+        )
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert [it["title"] for it in out] == ["Dune", "Andor"]
+        assert "salvaged 2 of 2 entries" in text
+
+    _MALFORMED_FENCE = (
+        '```json\n[{"title": "Dune", "year": 2021, "media": "movie"}, '
+        '{"title": "You", null, "media": "show"}, {"title": "Andor", "year": 2022, "media": "show"}]\n```'
+    )
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            pytest.param("Sources [1]\n" + _MALFORMED_FENCE, id="citation-before-fence"),
+            pytest.param(_MALFORMED_FENCE + "\nSources [1]", id="citation-after-fence"),
+        ],
+    )
+    def test_a_citation_does_not_mask_a_malformed_title_array(self, reply):
+        """A non-object array like `[1]` wins only when no `[{` array failed to decode."""
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert [it["title"] for it in out] == ["Dune", "You", "Andor"]
+        assert "salvaged 3 of 3 entries" in text and "decode error" in text
+
+    def test_a_citation_beside_an_unsalvageable_title_array_logs_the_failure(self):
+        reply = 'Sources [1]\n[{"title": "Dune", "year": 20'
+        text = self._warnings(lambda: parse_web_titles(reply, 10))
+        assert try_parse_web_titles(reply, 10) is None
+        assert "could not parse" in text and "decode error" in text
+
+    def test_a_citation_alone_still_yields_nothing_without_a_failure(self):
+        assert parse_web_titles("See [1] and [2].", 10) == []
+
+    def test_a_refusal_is_still_unparseable(self):
+        reply = "I can't help with that"
+        assert try_parse_web_titles(reply, 10) is None
+        text = self._warnings(lambda: try_parse_web_titles(reply, 10))
+        assert "could not parse" in text and "salvaged" not in text
+
+    def test_a_valid_array_logs_nothing(self):
+        reply = '[{"title": "Dune", "year": 2021, "media": "movie"}]'
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert out == [{"title": "Dune", "year": 2021, "media": "movie"}]
+        assert text == ""
+
+    def test_the_schemad_titles_wrapper_is_unchanged(self):
+        reply = '{"titles": [{"title": "Dune", "year": 2021, "media": "movie"}]}'
+        out: list[dict] = []
+        text = self._warnings(lambda: out.extend(parse_web_titles(reply, 10)))
+        assert out == [{"title": "Dune", "year": 2021, "media": "movie"}]
+        assert text == ""
 
 
 class TestBuildWebQueryForTitle:
@@ -1049,7 +1267,7 @@ class TestGatherStats:
             supports_native_web_search = True
             last_tokens = 0
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 self.last_tokens = 321
                 self.last_output_tokens = 21
                 return [{"title": "Native Pick", "year": 2020, "media": "movie"}]
@@ -1107,7 +1325,7 @@ class TestGatherStats:
             last_tokens = 7800
             last_output_tokens = 600
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 return []  # the provider's own degrade-on-error shape
 
         stats = GatherStats()
@@ -1400,7 +1618,7 @@ class TestTheWebSourceCanFillTheLargestRow:
             supports_native_web_search = True
             last_tokens = 0
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 seen["k"] = k
                 return []
 
@@ -1678,7 +1896,7 @@ class TestStructuredExtractionPath:
             supports_native_web_search = True
             last_tokens = 0
 
-            def recommend_web(self, profile, seeds, k):
+            def recommend_web(self, profile, seeds, k, *, guidance=None):
                 return [
                     {"title": "Dune", "year": 2021, "media": "movie"},
                     {"title": "Mr. Robot", "year": 2015, "media": "show"},
@@ -1734,3 +1952,113 @@ class TestAnUnparseableReplyIsDiagnosable:
         text = self._warnings(lambda: parse_web_titles("z" * 5000, 10))
         assert "\u2026" in text
         assert len(text) < 2000
+
+    @staticmethod
+    def _fenced_array_then_bracketed_prose() -> str:
+        items = ",\n".join(f'  {{"title": "Synthetic Title {n}", "year": 2020, "media": "movie"}}' for n in range(40))
+        return f"```json\n[\n{items}\n]\n```\nNote: Example Title (2020) [movie] was left out."
+
+    @staticmethod
+    def _unescaped_quote() -> str:
+        # Bare strings, not objects: nothing in it is a flat `{...}` entry, so salvage recovers nothing.
+        items = ",\n".join(f'  "Synthetic Title {n} (2020)"' for n in range(40))
+        return f'[\n{items},\n  "The "Quoted" One (2020)"\n]'
+
+    def test_a_fenced_array_followed_by_bracketed_prose_parses(self):
+        """The hypothesised production defect: the old first-`[` to last-`]` slice swallowed the prose."""
+        out = parse_web_titles(self._fenced_array_then_bracketed_prose(), 100)
+        assert len(out) == 40
+        assert out[0]["title"] == "Synthetic Title 0"
+
+    def test_the_bracket_prose_input_is_salvaged_entry_by_entry(self):
+        """The slice runs from the first `[` to the LAST `]`, which is the one in `[movie]`, so the
+        prose is inside the slice and the whole-array decode fails; the 40 entries still come back."""
+        out = parse_web_titles(self._fenced_array_then_bracketed_prose(), 100)
+        assert [it["title"] for it in out] == [f"Synthetic Title {n}" for n in range(40)]
+
+    def test_the_log_shows_the_tail_and_the_decode_error_position_when_parsing_fails(self):
+        import json
+
+        reply = self._unescaped_quote()
+        with pytest.raises(json.JSONDecodeError) as expected:
+            json.loads(reply)
+        text = self._warnings(lambda: parse_web_titles(reply, 100))
+
+        assert "could not parse" in text and repr(reply[:50])[1:-1] in text, "the existing preview stays"
+        assert f"{len(reply)} chars" in text
+        assert f"char {expected.value.pos}" in text
+        assert expected.value.msg in text
+        assert reply[-200:] in text or repr(reply[-200:])[1:-1] in text, "the tail is where the defect hides"
+        assert "Quoted" in text, "the context around the error position is shown"
+
+    def test_a_broken_array_followed_by_bracketed_prose_reports_the_arrays_error(self):
+        import json
+
+        broken = self._unescaped_quote()
+        reply = f"```json\n{broken}\n```\nNote: Example Title (2020) [movie] was left out."
+        with pytest.raises(json.JSONDecodeError) as expected:
+            json.loads(broken)
+        text = self._warnings(lambda: parse_web_titles(reply, 100))
+
+        assert "could not parse" in text
+        assert f"char {expected.value.pos + len('```json' + chr(10))} of" in text
+        assert "was left out." in text
+
+    def test_the_unparsed_reply_is_kept_in_the_trace_when_parsing_fails(self):
+        reply = self._unescaped_quote()
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor", "Shogun"))
+        stats = GatherStats()
+
+        out = web_recommendations(
+            _NonNativeCurator(reply), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert stats.trace["web"]["unparsed_reply"] == reply
+        assert stats.trace["web"]["unpicked"] == "the model returned no usable titles"
+        assert out == [
+            {"title": "Andor", "year": 2020, "media": "movie"},
+            {"title": "Shogun", "year": 2020, "media": "movie"},
+        ]
+
+    def test_a_huge_unparsed_reply_is_kept_capped_with_its_original_length(self):
+        reply = "z" * 50_000
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            _NonNativeCurator(reply), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        kept = stats.trace["web"]["unparsed_reply"]
+        assert kept.startswith("z" * 20_000)
+        assert kept[20_000:] == "\n… [truncated; reply was 50000 characters]"
+
+    def test_a_parsed_reply_leaves_no_unparsed_reply_in_the_trace(self):
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            _NonNativeCurator('[{"title": "Shogun", "year": 2024, "media": "show"}]'),
+            search,
+            "exa",
+            web_profile(),
+            [seed(1, "Dune")],
+            5,
+            stats,
+            cache=_DictCache(),
+        )
+
+        assert "unparsed_reply" not in stats.trace["web"]
+
+    def test_a_legitimately_empty_list_is_not_recorded_as_unparsed(self):
+        search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        stats = GatherStats()
+
+        web_recommendations(
+            _NonNativeCurator("[]"), search, "exa", web_profile(), [seed(1, "Dune")], 5, stats, cache=_DictCache()
+        )
+
+        assert "unparsed_reply" not in stats.trace["web"]
+
+    def _titles(self, *names):
+        return [TitleCandidate(title=n, year=2020, media="movie") for n in names]

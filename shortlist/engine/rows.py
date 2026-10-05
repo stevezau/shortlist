@@ -7,6 +7,7 @@ only builds and delivers collections, always UNPROMOTED.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import time
 import zlib
@@ -19,6 +20,7 @@ from functools import cached_property
 from loguru import logger
 
 from shortlist.engine import candidates as candidates_mod
+from shortlist.engine import limits as limits_mod
 from shortlist.engine import picker, placeholders, ranking
 from shortlist.engine import requests as requests_mod
 from shortlist.engine import seasons as seasons_mod
@@ -38,6 +40,7 @@ from shortlist.engine.delivery import (
     target_sections,
 )
 from shortlist.engine.history import RatingsPolicy, derive_seeds, ratings_policy
+from shortlist.engine.models import _KEEP_FRACTION as _KEEP_FRACTION
 from shortlist.engine.models import (
     SHARED_SLUG_PREFIX,
     Candidate,
@@ -46,6 +49,7 @@ from shortlist.engine.models import (
     MediaType,
     Pick,
     RequestWhy,
+    RowLimits,
     RowSpec,
     Seed,
     UserProfile,
@@ -54,7 +58,11 @@ from shortlist.engine.models import (
     WatchedItem,
     WrittenDetails,
 )
-from shortlist.engine.placeholders import names_a_seed
+from shortlist.engine.over_time import apply_exclusions, excluded_titles
+from shortlist.engine.placeholders import fill_season, fill_theme, names_a_seed
+from shortlist.engine.requests_row import build_requests_picks
+from shortlist.engine.themes import theme_content_hash
+from shortlist.engine.web_guidance import BUILTIN, Guidance, resolve_guidance
 
 
 def effective_row_sources(spec: RowSpec, default_sources: list[str]) -> tuple[str, ...]:
@@ -69,7 +77,8 @@ def effective_row_sources(spec: RowSpec, default_sources: list[str]) -> tuple[st
     sources list — remove it there to control the per-person Exa/LLM cost.
     """
     sources = spec.candidate_sources or default_sources
-    if spec.seasons:
+    if spec.seasons or spec.theme is not None:
+        # An AI row (#138) is filled from its theme in code, so it never pays for a web search either.
         # Not on a seasonal row (discussion #124). Web search asks "what to watch if you liked X" per
         # watched title, which is not seasonal, so nearly everything it proposed — and was paid for —
         # would be filtered out of the season. The row editor says so beside the sources.
@@ -126,6 +135,8 @@ def row_shown_today(
     lead_days: int,
     after_days: int,
     now: datetime,
+    *,
+    catalogue: seasons_mod.Catalogue,
 ) -> bool:
     """Is a row on its surfaces on ``now``'s date, by its day schedule AND its seasons? (#102, #124)
 
@@ -135,7 +146,10 @@ def row_shown_today(
     """
     if not row_is_shown(show_days, now):
         return False
-    return not season_slugs or seasons_mod.shown_on(season_slugs, lead_days, after_days, now.date()) is not None
+    return (
+        not season_slugs
+        or seasons_mod.shown_on(season_slugs, lead_days, after_days, now.date(), catalogue=catalogue) is not None
+    )
 
 
 def effective_seed_window(spec: RowSpec) -> int:
@@ -514,6 +528,7 @@ def _rewatch_candidates(
     taste: set[tuple[int, MediaType]],
     limit: int,
     season: seasons_mod.SeasonTitles | None = None,
+    limits: RowLimits | None = None,
 ) -> tuple[list[Candidate], dict[tuple[int, MediaType], str]]:
     """What a rewatch row is made of: this library's finished titles, best first, plus each one's reason.
 
@@ -527,6 +542,10 @@ def _rewatch_candidates(
     Out: titles finished inside the row's cooldown (``cooling``), titles they rated low, their excluded
     genres, and anything this library does not hold. Sorted BEFORE the genre check and stopped at
     ``limit``, because that check costs a TMDB call per title and a row only ever uses a few.
+
+    The row's ``limits`` (#138) apply here too, because these titles never pass through the candidate pool
+    that applies them to everything else. They are judged in batches as ``out`` fills, so a title outside
+    them makes room for the next one down rather than leaving the row short.
 
     Each candidate is its own seed, for two reasons. It is a title they watched, so "Because you watched
     {top_seed}" stays true on a rewatch row — a seedless pick renders no name for that template, which
@@ -554,23 +573,37 @@ def _rewatch_candidates(
 
     out: list[Candidate] = []
     reasons: dict[tuple[int, MediaType], str] = {}
+    limited = limits is not None and limits.active
+    unjudged: list[Candidate] = []
     for _order, (tid, media), f in eligible:
         if len(out) >= limit:
             break
+        candidate = Candidate(
+            tmdb_id=tid,
+            title=f.title,
+            media_type=media,
+            year=f.year,
+            rating_key=sec_idx[tid],
+            seeds=[Seed(tmdb_id=tid, title=f.title, media_type=media)],
+            sources={"history"},
+        )
+        # The free year check first: the genre check below can cost a TMDB call.
+        if limited and not limits_mod.passes_year_and_rating(candidate, limits):
+            continue
         if _in_excluded_genre(policy, tid, kind):
             continue
-        out.append(
-            Candidate(
-                tmdb_id=tid,
-                title=f.title,
-                media_type=media,
-                year=f.year,
-                rating_key=sec_idx[tid],
-                seeds=[Seed(tmdb_id=tid, title=f.title, media_type=media)],
-                sources={"history"},
-            )
-        )
         reasons[(tid, media)] = _rewatch_reason(f, (tid, media) in taste)
+        if not limited:
+            out.append(candidate)
+            continue
+        unjudged.append(candidate)
+        if len(out) + len(unjudged) >= limit:
+            out.extend(limits_mod.apply_limits(unjudged, limits, policy.ctx.tmdb).kept)
+            unjudged = []
+    if unjudged:
+        out.extend(limits_mod.apply_limits(unjudged, limits, policy.ctx.tmdb).kept)
+    if limited:
+        reasons = {(c.tmdb_id, c.media_type): reasons[(c.tmdb_id, c.media_type)] for c in out}
     return out, reasons
 
 
@@ -581,9 +614,6 @@ def _started_shows(watched_shows: dict[int, tuple[int, int | None]]) -> set[tupl
     three episodes into passes. Here a single viewed episode disqualifies it.
     """
     return {(tid, MediaType.SHOW) for tid, (viewed, _total) in watched_shows.items() if viewed and viewed > 0}
-
-
-_KEEP_FRACTION = 2 / 3  # on a refresh night, keep the strongest ~two-thirds; swap the weakest third
 
 
 def _is_refresh_night(row_slug: str, owner_slug: str, run_day: int, refresh_days: int) -> bool:
@@ -944,6 +974,13 @@ def _shuffle_key(row_slug: str, user_slug: str, run_day: int, tmdb_id: int) -> i
     return int.from_bytes(digest, "big")
 
 
+#: How `row_recipe` starts its season part.
+_RECIPE_SEASON = "season="
+#: How `row_recipe` starts its theme part.
+_RECIPE_THEME = "theme="
+_RECIPE_OVER_TIME = "over_time="
+
+
 def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
     """A fingerprint of the settings that decide a row's CONTENTS, for change detection.
 
@@ -1002,10 +1039,48 @@ def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
             *((f"cooldown={spec.rewatch_cooldown_days}",) if spec.rewatch else ()),
             # Seasonal rows only, again so no other row's recipe changes. The season's DAY is in it, so a
             # new season — or next year's Christmas — rebuilds the row rather than carrying last one's
-            # picks forward, cadence and idle hold notwithstanding.
-            *((f"season={spec.season.slug}@{spec.season.anchor.isoformat()}",) if spec.season else ()),
+            # picks forward, cadence and idle hold notwithstanding. A custom season adds its sources'
+            # hash (#137), so editing them rebuilds its rows; a built-in has none, so its part is unchanged.
+            *(
+                (
+                    f"{_RECIPE_SEASON}{spec.season.built_for}"
+                    + (f"#{spec.season.content_hash}" if spec.season.content_hash else ""),
+                )
+                if spec.season
+                else ()
+            ),
+            # AI web search rows with instructions only, so no other row's recipe changes (#138). Editing
+            # the instructions, or the server-wide text a row inherits, rebuilds that row.
+            *(
+                (f"guide={policy.effective_guidance(spec).fingerprint()}",)
+                if not policy.effective_guidance(spec).is_builtin
+                else ()
+            ),
+            # Rows with a length, year or rating limit only, so no other row's recipe changes (#138).
+            *((f"limits={spec.limits().fingerprint()}",) if spec.limits().active else ()),
+            # AI rows only (#138): the theme's contents, so editing them rebuilds the row while renaming it
+            # only renames it.
+            *((f"{_RECIPE_THEME}{spec.theme.slug}#{theme_content_hash(spec.theme)}",) if spec.theme else ()),
+            # Only when a control is set (#138): rows without one keep their recipe byte for byte.
+            *((f"{_RECIPE_OVER_TIME}{spec.over_time.fingerprint()}",) if spec.over_time.active else ()),
         )
     )
+
+
+def recipe_season(recipe: str) -> str:
+    """The season a stored recipe's picks were built for, as `RowSeason.built_for` renders it.
+
+    Args:
+        recipe: A `row_recipe` fingerprint as stored with the picks.
+
+    Returns:
+        ``slug@anchor`` without the custom season's source hash, or "" when the recipe names no season (the
+        row was not seasonal when it was built).
+    """
+    for part in recipe.split("|"):
+        if part.startswith(_RECIPE_SEASON):
+            return part.removeprefix(_RECIPE_SEASON).split("#", 1)[0]
+    return ""
 
 
 def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
@@ -1030,6 +1105,31 @@ def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
     """
     order = {(c.tmdb_id, c.media_type): i for i, c in enumerate(sub)}
     return sorted(picks, key=lambda p: order.get((p.tmdb_id, p.media_type), len(order)))
+
+
+def _reseed_survivors(kept: list[Pick], sub: list[Candidate], seeds: list[Seed]) -> list[Pick]:
+    """A named row's refresh survivors, each attributed only to a watch in tonight's seed set.
+
+    A carried pick keeps the seed it was found through, and a `{top_seed}` title names the best-ranked
+    pick that has one (`delivery.named_seed_pick`). Above one seed per library, a survivor whose seed has
+    since left the set (un-watched, or pushed out by newer watches) can be re-ranked to the head of the
+    row by `_rank_against_pool` while `_seed_moved` passes — so the row was renamed after a watch it is no
+    longer built from, until the next night's check read that name back and rebuilt the whole row.
+
+    The pick stays; only its attribution changes, to what tonight's pool says (its candidate's
+    `top_seed`, or no seed when no live watch vouches for it) — what a newcomer of the same title would
+    carry. `reason` is left alone: it says how the pick was found, which is still true.
+    """
+    live = {(s.tmdb_id, s.media_type) for s in seeds}
+    tonight = {(c.tmdb_id, c.media_type): c.top_seed for c in sub}
+    out: list[Pick] = []
+    for p in kept:
+        if p.seed_tmdb_id is None or (p.seed_tmdb_id, p.media_type) in live:
+            out.append(p)
+            continue
+        seed = tonight.get((p.tmdb_id, p.media_type))
+        out.append(replace(p, seed_tmdb_id=seed.tmdb_id if seed else None, seed_title=seed.title if seed else None))
+    return out
 
 
 def _rating_key_resolver(seed_index: dict[int, int]) -> Callable[[WatchedItem], int | None]:
@@ -1204,7 +1304,34 @@ def _visible_candidates(
     return kept, hidden
 
 
-def _candidate_pool(
+@dataclass
+class _Gathered:
+    """A pool's expensive half: what the sources returned, narrowed to what this person can be offered.
+
+    Shared by every row whose ``RowPolicy.pool_key`` matches, limits or not — a limit only ever removes
+    titles from ``in_library``, so a limited row can start from a sibling's gather instead of paying for its
+    own (an AI web search has no cache of its own).
+    """
+
+    pool: list[Candidate]
+    in_library: list[Candidate]
+    dropped: list[tuple[Candidate, str]]
+    stats: candidates_mod.GatherStats
+    # The trace as the gather left it. Ranking stamps each title's fate onto the trace, so every ranking
+    # after the first starts from this copy rather than from the first one's stamps.
+    trace_at_gather: dict = field(default_factory=dict)
+    paid: bool = False
+
+    def stats_for_ranking(self) -> candidates_mod.GatherStats:
+        """The stats the next ranking of this gather writes to: the real ones the first time, which carry the
+        AI cost, and a free copy every time after, so a shared gather is billed once."""
+        if not self.paid:
+            self.paid = True
+            return self.stats
+        return candidates_mod.GatherStats(trace=copy.deepcopy(self.trace_at_gather))
+
+
+def _gather_pool(
     ctx: EngineContext,
     seeds: list,
     library_index: dict[MediaType, dict[int, int]],
@@ -1215,27 +1342,12 @@ def _candidate_pool(
     media: str = "both",
     watched_exclusions: set[tuple[int, MediaType]] | None = None,
     recent_count: int | None = None,
-    recency: float = 0.0,
     visible: Callable[[list[int]], set[int] | None] | None = None,
     season: seasons_mod.SeasonTitles | None = None,
-) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
-    """Gather TMDB candidates for ``seeds`` and intersect them with the library.
-
-    Returns ``((pool, in_library, ranked), gather_stats)`` — the 3-tuple of candidate lists, plus the
-    AI token/Exa spend the gather incurred (for per-run cost accounting):
-
-    * ``pool`` — every pooled candidate (used for request-demand bookkeeping before narrowing).
-    * ``in_library`` — the ones the delivery libraries actually hold and this user may still see.
-    * ``ranked`` — the pre-ranked candidates the curator chooses from.
-
-    ``media`` narrows the pool BEFORE the pre-rank truncation. Filtering after it meant a
-    movie-heavy watcher's shows-only row could lose every show to the 40-candidate cut and deliver
-    nothing — a dead row on a green run. Identity is (tmdb_id, media_type), never the bare id — movie
-    1399 and TV 1399 are different titles.
-
-    (No staleness partition anymore: rows now carry their prior picks forward on non-refresh nights,
-    so there's nothing to "hold back" — see ``_reusable_prior`` / ``_is_refresh_night``.)
-    """
+    season_source: str = "season",
+    guidance: Guidance | None = None,
+) -> _Gathered:
+    """The first half of ``_candidate_pool``: gather, then keep what the libraries hold and this person may see."""
     # The titles this person has already watched (per the row's policy), not just the ~30 seeds — a
     # recommendation you've finished is the exact thing the row shouldn't surface. Falls back to the
     # seed set when the row has no exclusion rule (see `RowPolicy.pool_exclusions` for the None sentinel).
@@ -1264,6 +1376,8 @@ def _candidate_pool(
             if season is not None
             else None
         ),
+        season_source=season_source,
+        web_guidance=guidance,
     )
     # `dropped` collects (candidate, reason) as filter_candidates works — observation only, it does
     # not change which candidates are kept.
@@ -1289,7 +1403,9 @@ def _candidate_pool(
     if visible is not None and in_library:
         in_library, hidden = _visible_candidates(ctx, in_library, visible)
         dropped.extend((c, "hidden_by_their_restrictions") for c in hidden)
-    # Measure genre avoidance BEFORE the cut, so the dial can rescue or demote a title across the
+    # Stamped here, not per ranking: neither depends on a row's limits, and the candidates are shared by every
+    # row on this gather, so a second stamp would stack a second franchise reason on each of them.
+    # Measure genre avoidance BEFORE any cut, so the dial can rescue or demote a title across the
     # truncation boundary rather than only reordering whatever already survived — the same reason
     # `recency` participates in the cut. A no-op unless the owner turned the dial up, and the
     # library tally is empty in that case, so nothing is computed either.
@@ -1298,6 +1414,37 @@ def _candidate_pool(
     # the cut, where it can still rescue a sequel that would otherwise fall below the cap.
     if ctx.config.franchise > 0:
         candidates_mod.mark_franchise_members(in_library, ctx.tmdb)
+    return _Gathered(
+        pool=pool,
+        in_library=in_library,
+        dropped=dropped,
+        stats=gather_stats,
+        trace_at_gather=copy.deepcopy(gather_stats.trace),
+    )
+
+
+def _rank_pool(
+    ctx: EngineContext,
+    gathered: _Gathered,
+    seeds: list,
+    *,
+    media: str,
+    recency: float,
+    limits: RowLimits | None,
+    gather_stats: candidates_mod.GatherStats,
+    who: str,
+    named: frozenset[tuple[MediaType, int]] = frozenset(),
+) -> tuple[Pool, candidates_mod.GatherStats]:
+    """The second half of ``_candidate_pool``: the row's limits, then the pre-rank cut. ``who`` names the
+    person and row in the log."""
+    pool, in_library, dropped = gathered.pool, gathered.in_library, list(gathered.dropped)
+    if limits is not None and limits.active:
+        limited = limits_mod.apply_limits(in_library, limits, ctx.tmdb)
+        logger.info(
+            "{}: limits: kept={} dropped={} unknown={}", who, len(limited.kept), limited.dropped, limited.unknown
+        )
+        dropped.extend((c, "outside_row_limits") for c in limited.dropped_candidates)
+        in_library = limited.kept
     # Pre-rank EACH media type to its own cap, not the mixed pool to one cap — otherwise a 'both'
     # row whose pool skews one way (a mostly-TV watcher) truncates the other type away before the
     # per-media curate ever sees it, and that library's collection comes up empty.
@@ -1305,6 +1452,9 @@ def _candidate_pool(
     cap = ctx.config.candidates_pre_rank
     # `recency` is the weight the CALLER resolved, not `ctx.config.recency`: the server's value, so every
     # row that inherits it shares one cached cut, and a row that overrides it re-cuts (`cut_at_recency`).
+    # The cast dial is 0.0 for this first cut, as in `cut_at_recency`: cast overlap is stamped on a cut's
+    # survivors, and candidates are shared with every row on this gather, so a sibling's stamps must not
+    # lean this row's cut. (cast_factor is exactly 1.0 at 0.0, which is what a fresh candidate scores.)
     ranked = ranking.cut_for_recency(
         in_library,
         kinds,
@@ -1313,7 +1463,8 @@ def _candidate_pool(
         _run_year(ctx.run_day),
         ctx.config.genre_avoidance,
         ctx.config.franchise,
-        ctx.config.cast,
+        0.0,
+        named,
     )
     # AFTER the cut, unlike the other two: cast overlap needs both sides' cast lists, so it is
     # the one signal whose cost scales with the pool. Bounded here to `candidates_pre_rank`
@@ -1329,6 +1480,7 @@ def _candidate_pool(
             ctx.config.genre_avoidance,
             ctx.config.franchise,
             ctx.config.cast,
+            named,
         )
     # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
     # entirely from the lists selection already produced above — so the trace can follow every title
@@ -1342,6 +1494,66 @@ def _candidate_pool(
         year_now=_run_year(ctx.run_day),
     )
     return (pool, in_library, ranked), gather_stats
+
+
+def _candidate_pool(
+    ctx: EngineContext,
+    seeds: list,
+    library_index: dict[MediaType, dict[int, int]],
+    *,
+    excluded_genres: set[str],
+    profile=None,
+    sources: list[str] | None = None,
+    media: str = "both",
+    watched_exclusions: set[tuple[int, MediaType]] | None = None,
+    recent_count: int | None = None,
+    recency: float = 0.0,
+    visible: Callable[[list[int]], set[int] | None] | None = None,
+    season: seasons_mod.SeasonTitles | None = None,
+    guidance: Guidance | None = None,
+    limits: RowLimits | None = None,
+) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
+    """Gather TMDB candidates for ``seeds`` and intersect them with the library.
+
+    Returns ``((pool, in_library, ranked), gather_stats)`` — the 3-tuple of candidate lists, plus the
+    AI token/Exa spend the gather incurred (for per-run cost accounting):
+
+    * ``pool`` — every pooled candidate (used for request-demand bookkeeping before narrowing).
+    * ``in_library`` — the ones the delivery libraries actually hold and this user may still see.
+    * ``ranked`` — the pre-ranked candidates the curator chooses from.
+
+    ``media`` narrows the pool BEFORE the pre-rank truncation. Filtering after it meant a
+    movie-heavy watcher's shows-only row could lose every show to the 40-candidate cut and deliver
+    nothing — a dead row on a green run. Identity is (tmdb_id, media_type), never the bare id — movie
+    1399 and TV 1399 are different titles.
+
+    (No staleness partition anymore: rows now carry their prior picks forward on non-refresh nights,
+    so there's nothing to "hold back" — see ``_reusable_prior`` / ``_is_refresh_night``.)
+    """
+    gathered = _gather_pool(
+        ctx,
+        seeds,
+        library_index,
+        excluded_genres=excluded_genres,
+        profile=profile,
+        sources=sources,
+        media=media,
+        watched_exclusions=watched_exclusions,
+        recent_count=recent_count,
+        visible=visible,
+        season=season,
+        guidance=guidance,
+    )
+    return _rank_pool(
+        ctx,
+        gathered,
+        seeds,
+        media=media,
+        recency=recency,
+        limits=limits,
+        gather_stats=gathered.stats_for_ranking(),
+        who="candidate pool",
+    )
 
 
 def _add_step_tokens(report: UserRunReport, step: str, n: int) -> None:
@@ -1589,6 +1801,30 @@ def _in_audience(user: UserProfile, spec: RowSpec) -> bool:
     return spec.audience is None or user.plex_account_id in spec.audience
 
 
+def _kept_and_fresh(
+    policy: RowPolicy,
+    spec: RowSpec,
+    user: UserProfile,
+    prior_valid: list[Pick],
+    prior_ids: set,
+    sub: list[Candidate],
+    keep_n: int,
+) -> tuple[list[Pick], list[Candidate]]:
+    """A refresh night's split: the strongest ``keep_n`` of last night's picks, and the candidates not already
+    in the row that may replace the rest."""
+    kept = prior_valid[:keep_n]
+    if _names_a_seed(spec, user, policy.cfg):
+        kept = _reseed_survivors(kept, sub, policy.seeds_for(spec))
+    fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
+    fresh_pool = _without_excluded(policy, spec, fresh_pool, spare={(p.media_type, p.tmdb_id) for p in kept})
+    return kept, fresh_pool
+
+
+def _rows_as_seen_by(cfg: EngineConfig, user: UserProfile) -> list[RowSpec]:
+    """Every per-person row with this person's own theme, so a sibling row claims the title it really wears (#121)."""
+    return [spec.for_person(user.slug) for spec in cfg.per_person_rows()]
+
+
 def _is_muted(user: UserProfile, spec: RowSpec) -> bool:
     override = user.row_overrides.get(spec.slug)
     return bool(override and override.muted)
@@ -1681,6 +1917,69 @@ def _why_nothing_rebuilt(selection: list[dict]) -> str | None:
     )
 
 
+#: What a row's titles are called, one and many, by its ``media``.
+_TITLE_NOUNS = {"movie": ("film", "films"), "show": ("show", "shows"), "both": ("title", "titles")}
+
+
+def _list_titles(ctx: EngineContext, spec: RowSpec) -> seasons_mod.SeasonTitles | None:
+    """The titles a seasonal or AI row builds from, as read tonight; None when they could not be read."""
+    if spec.theme is not None:
+        found = ctx.theme_titles.get(spec.theme.slug)
+        return found.titles if found is not None else None
+    return ctx.season_titles.get(spec.season.slug) if spec.season is not None else None
+
+
+def _season_in_row_libraries(ctx: EngineContext, spec: RowSpec) -> set[tuple[int, MediaType]]:
+    """Tonight's season's (or theme's) titles that this row's own libraries hold, of the kinds each library holds."""
+    season = _list_titles(ctx, spec)
+    held: set[tuple[int, MediaType]] = set()
+    for section in target_sections(ctx.delivery_sections, spec) if season is not None else []:
+        kind = section_kind(section)
+        index = ctx.section_index.get(section.key, {})
+        held |= {(tmdb_id, kind) for tmdb_id in season.ids.get(kind, frozenset()) if tmdb_id in index}
+    return held
+
+
+def _why_season_row_empty(
+    ctx: EngineContext,
+    spec: RowSpec,
+    *,
+    seen: set[tuple[int, MediaType]] | None = None,
+    audience: str = "",
+    several: bool = False,
+) -> str | None:
+    """Plain-English reason a seasonal row built nothing tonight, naming the season — for the same reason
+    `_why_no_rows` exists: an empty row reported `ok` reads as a bug, and thin seasons (Mother's Day holds 2
+    films on a 10,000-film server) make it routine (#137).
+
+    Args:
+        ctx: The run, for tonight's season titles and this row's libraries.
+        spec: A seasonal row that ended with no picks.
+        seen: A per-person row's: what this person has already watched (`zero_pct_exclusions`).
+        audience: A shared row's: why its audience gave it nothing, completing "has been watched by …".
+        several: This sentence is joined to another empty seasonal row's, so "this row" would not say which:
+            the row is named by its season instead.
+
+    Returns:
+        The sentence, or None for a season that could not be read tonight, which is reported as that.
+    """
+    if (spec.season is None and spec.theme is None) or _list_titles(ctx, spec) is None:
+        return None
+    # An AI row (#138) reads the same way, from its theme: its empty night is not the rebuild schedule's doing.
+    named = spec.theme if spec.theme is not None else spec.season
+    season = f"{named.emoji or ''} {named.name}".strip()
+    one, many = _TITLE_NOUNS.get(spec.media, _TITLE_NOUNS["both"])
+    libraries = f"the {named.name} row's libraries" if several else "this row's libraries"
+    held = _season_in_row_libraries(ctx, spec)
+    if not held:
+        return f"No {season} {many} are in {libraries}, so it had nothing to show tonight."
+    if audience:
+        return f"No {season} {one} in {libraries} {audience}, so it had nothing to show tonight."
+    if seen is not None and held <= seen:
+        return f"No {season} {many} are left for them — they've seen {f'all {len(held)}' if len(held) > 1 else 'it'}."
+    return f"None of the {len(held)} {season} {many} in {libraries} could be picked for them tonight."
+
+
 def _why_cold_skipped(user: UserProfile, cfg: EngineConfig, specs: list[RowSpec], removed: int) -> str:
     """Plain-English reason a cold-start user got no row, for the same reason `_why_no_rows` exists:
     a bare status word reads as a failure, and this one is a deliberate setting.
@@ -1724,6 +2023,75 @@ def _ledger_keys(ctx: EngineContext, user: UserProfile, spec: RowSpec) -> dict[s
     }
 
 
+def _own_titles_tonight(ctx: EngineContext, spec: RowSpec) -> frozenset[tuple[MediaType, int]]:
+    """The theme's own titles as loaded tonight; empty when it names none, could not be read, or lost a collection.
+
+    Empty means "judge by kind only": a collection missing tonight (Kometa churn) drops its members from the
+    list, and a read we cannot vouch for never authorises a delete.
+    """
+    found = ctx.theme_titles.get(spec.theme.slug)
+    return found.own if found is not None and found.own_complete else frozenset()
+
+
+def _holds_any(ctx: EngineContext, section, titles: frozenset[tuple[MediaType, int]]) -> bool:
+    index = ctx.section_index.get(section.key, {})
+    # An empty index (an unmounted share, a library whose agent lost its ids) is a read we cannot vouch for.
+    # Known gap, accepted: a library whose only own title is deleted or re-matched flips to "holds none".
+    if not index:
+        return True
+    kind = section_kind(section)
+    return any(media == kind and tmdb_id in index for media, tmdb_id in titles)
+
+
+def _leave_uncovered_libraries(
+    ctx: EngineContext,
+    user: UserProfile,
+    cfg: EngineConfig,
+    spec: RowSpec,
+    targets: list,
+    report: UserRunReport,
+) -> list:
+    """The libraries an AI row still builds in, after removing its copy from those its theme dropped.
+
+    A theme covers only the kinds of title the AI named, so a row that once filled a TV library can lose
+    it. So can a library that holds none of the theme's own titles (its picks and collection members): a
+    heist list would otherwise fill a Sports library from genre matches alone. Delivery skips a library
+    with no picks, which would leave the old collection frozen with stale titles; the guarded
+    ``remove_row`` takes it out, and only where the delivery ledger says this row wrote one.
+    """
+    own = _own_titles_tonight(ctx, spec)
+    covered = [s for s in targets if section_kind(s) in spec.theme.media and (not own or _holds_any(ctx, s, own))]
+    uncovered = [s for s in targets if s not in covered]
+    ledger = _ledger_keys(ctx, user, spec)
+    for section in uncovered:
+        if str(section.key) not in ledger:
+            continue
+        diff = report.diff if report.diff is not None else CollectionDiff()
+        report.diff = diff
+        with ctx.write_lock:
+            removed_in = remove_row(
+                ctx.plex,
+                user,
+                cfg,
+                spec,
+                dry_run=cfg.dry_run,
+                diff=diff,
+                sections=[section],
+                delivered_keys=ledger,
+                other_rows=_rows_as_seen_by(cfg, user),
+            )
+        _forget(report, spec, removed_in)
+        if removed_in:
+            logger.info(
+                "{}{}: AI row '{}' left '{}' — its theme has no titles there",
+                "[dry-run] " if cfg.dry_run else "",
+                user.slug,
+                spec.slug,
+                getattr(section, "title", "") or section.key,
+            )
+    return covered
+
+
 def _drop_cold_skipped_rows(
     ctx: EngineContext,
     user: UserProfile,
@@ -1742,6 +2110,11 @@ def _drop_cold_skipped_rows(
     """
     keep: list[RowSpec] = []
     for spec in specs:
+        if spec.requests_row:
+            # A requests row needs no history depth — it is built from what they asked for, not what
+            # they watched.
+            keep.append(spec)
+            continue
         if effective_cold_start(spec, cfg) != "skip":
             keep.append(spec)
             continue
@@ -1767,7 +2140,7 @@ def _drop_cold_skipped_rows(
                 delivered_keys=_ledger_keys(ctx, user, spec),
                 # Every library is scanned, so a title another row builds under must not be taken for
                 # this one's (issue #121).
-                other_rows=cfg.per_person_rows(),
+                other_rows=_rows_as_seen_by(cfg, user),
             )
         _forget(report, spec, removed_in)
     return keep
@@ -1815,7 +2188,7 @@ def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: Engine
                 delivered_keys=_ledger_keys(ctx, user, spec),
                 # Scanning every library means meeting other rows' collections: a title one of them
                 # builds under in a library is that row's, not a stale copy of this one (issue #121).
-                other_rows=cfg.per_person_rows(),
+                other_rows=_rows_as_seen_by(cfg, user),
             )
         _forget(report, spec, removed_in)
 
@@ -1860,6 +2233,9 @@ class RowPolicy:
     # cold-start history.
     watched_movies: set[int] = field(default_factory=set)
     watched_shows: dict[int, tuple[int, int | None]] = field(default_factory=dict)
+    # (tmdb_id, media_type) -> release year, as Plex reported it for a cold-start filler. Only read by a
+    # row's year limit; see `_cold_start_picks`.
+    cold_years: dict[tuple[int, MediaType], int] = field(default_factory=dict)
     # The FINISHED (tmdb_id, media_type) titles derived from that breakdown: read by `pools_for` (a
     # 0% row hard-excludes them) and by the per-row watched cap (>0). Left empty on the cold path,
     # which builds no pool and applies no cap.
@@ -1869,6 +2245,11 @@ class RowPolicy:
     # sources (the common case — every row inheriting the global set) reuse one pool; a row that
     # picks its own sources gets its own. Keyed by `pool_key`, memoised across the user.
     pool_cache: dict[tuple, Pool] = field(default_factory=dict)
+    # pool_key -> that pool's gather, before any row's limits. A limited row ranks its own cut of it
+    # (`pool_cache` is keyed by `pool_slot`), so the expensive part is paid once per `pool_key`.
+    gathers: dict[tuple, _Gathered] = field(default_factory=dict)
+    # pool_key -> the `report.pool_costs` entry recorded for that gather, which later rankings of it join.
+    gather_costs: dict[tuple, dict] = field(default_factory=dict)
     # pool_key -> that pool's `report.pool_costs` entry, so a later row hitting the SAME cached pool
     # (never re-gathered) can still append its slug to `entry["rows"]` — the only way a cache hit
     # attributes its row to the cost it shared rather than paid for.
@@ -2103,7 +2484,7 @@ class RowPolicy:
         be added here too**, or two rows that disagree about it will collide on one memoised cut and
         the second row will silently get the first row's ranking.
         """
-        key = (self.pool_key(spec), recency)
+        key = (self.pool_slot(spec), recency)
         if key not in self.recency_cuts:
             kinds = [MediaType.MOVIE, MediaType.SHOW] if spec.media == "both" else [MediaType(spec.media)]
             year_now = _run_year(self.ctx.run_day)
@@ -2121,6 +2502,7 @@ class RowPolicy:
                     self.cfg.genre_avoidance,
                     self.cfg.franchise,
                     cast,
+                    _named_titles(spec),
                 )
 
             # `cast` is deliberately 0.0 for the FIRST cut, and this is not a shortcut.
@@ -2153,8 +2535,12 @@ class RowPolicy:
         return effective_recent_count(spec, self.cfg)
 
     def season_titles(self, spec: RowSpec) -> seasons_mod.SeasonTitles | None:
-        """This seasonal row's season as read tonight; None for a row that is not seasonal, or whose list
-        could not be read (``ctx.season_failures`` says why)."""
+        """This row's season as read tonight; None for a row that is not seasonal, or whose list
+        could not be read (``ctx.season_failures`` says why). An AI row's theme is read the same way, so it
+        answers here too (``ctx.theme_failures``)."""
+        if spec.theme is not None:
+            found = self.ctx.theme_titles.get(spec.theme.slug)
+            return found.titles if found is not None else None
         return self.ctx.season_titles.get(spec.season.slug) if spec.season is not None else None
 
     def effective_sources(self, spec: RowSpec) -> tuple[str, ...]:
@@ -2162,6 +2548,12 @@ class RowPolicy:
         # set-based) — otherwise they'd each rebuild it, re-hitting rate-limited/LLM sources and, for
         # the non-deterministic llm_* sources, possibly diverging despite identical configuration.
         return effective_row_sources(spec, self.cfg.candidate_sources)
+
+    def effective_guidance(self, spec: RowSpec) -> Guidance:
+        """This row's AI web search guidance; built-in when the row does not use AI web search (#138)."""
+        if "llm_web" not in self.effective_sources(spec):
+            return BUILTIN
+        return resolve_guidance(spec.ai_instructions, self.cfg.web_instructions)
 
     def seeds_for(self, spec: RowSpec) -> list:
         """This row's seeds, from the watches its own libraries hold. Memoised per (media,
@@ -2199,6 +2591,11 @@ class RowPolicy:
                 disliked=self.disliked,
             )
         return self.seed_cache[key]
+
+    def gathered_specs(self) -> list[RowSpec]:
+        """The rows built from a candidate pool — every row of theirs except a requests row, which is
+        built from the request ledger and must never cost a seed derivation or a TMDB/LLM gather."""
+        return [spec for spec in self.specs if not spec.requests_row]
 
     def pool_key(self, spec: RowSpec) -> tuple:
         # Sources alone is not enough. A row's media and its libraries both change which candidates
@@ -2247,7 +2644,21 @@ class RowPolicy:
             # A seasonal row's pool is its season's titles and nothing else, so it shares a gather with no
             # other kind of row — nor with a row following a different season.
             spec.season.slug if spec.season is not None else "",
+            # Rows with different AI instructions must not share an AI web search (#138); "" otherwise,
+            # which every row without instructions shares, so no pool splits on the night this ships.
+            self.effective_guidance(spec).fingerprint(),
+            # An AI row's pool is its theme's titles, so two themes — or one theme's contents before and after
+            # an edit — never share a gather (#138). Nothing is added for any other row, so no key changes.
+            *((spec.theme.slug, theme_content_hash(spec.theme)) if spec.theme is not None else ()),
         )
+
+    def pool_slot(self, spec: RowSpec) -> tuple:
+        """Which ranked pool this row reads: its gather (``pool_key``) plus its limits (#138).
+
+        Limits are not in ``pool_key``: they only remove titles from what the gather found, so rows that
+        differ only in them share one gather and each ranks its own cut of it.
+        """
+        return (self.pool_key(spec), spec.limits().fingerprint())
 
     def pools_for(self, spec: RowSpec) -> Pool | None:
         """This row's pool, or None when every source it uses is down.
@@ -2256,37 +2667,60 @@ class RowPolicy:
         must not take the person's other rows down with it — those rows have working sources and a
         row they can still fill.
         """
-        key = self.pool_key(spec)
-        if key in self.pool_failures:
+        gather_key = self.pool_key(spec)
+        key = self.pool_slot(spec)
+        if gather_key in self.pool_failures or key in self.pool_failures:
             return None
         if key not in self.pool_cache:
             gather_started = time.monotonic()
+            guidance = self.effective_guidance(spec)
+            limits = spec.limits()
+            gathering = gather_key not in self.gathers
             try:
-                season = None
-                if spec.season is not None:
-                    season = self.ctx.season_titles.get(spec.season.slug)
-                    if season is None:
-                        # The season's list could not be read tonight. Failing the pool keeps the row as
-                        # it is, exactly like a row whose every source is down; its siblings still build.
-                        raise RuntimeError(_unreadable_season(self.ctx, spec))
-                self.pool_cache[key], gather_stats = _candidate_pool(
+                if gathering:
+                    season = None
+                    if spec.season is not None or spec.theme is not None:
+                        season = self.season_titles(spec)
+                        if season is None:
+                            # The season's list could not be read tonight. Failing the pool keeps the row as
+                            # it is, exactly like a row whose every source is down; its siblings still build.
+                            raise RuntimeError(_unreadable_season(self.ctx, spec))
+                    self.gathers[gather_key] = _gather_pool(
+                        self.ctx,
+                        self.seeds_for(spec),
+                        row_library_index(self.ctx, spec, self.library_index),
+                        excluded_genres=self.user.excluded_genres,
+                        profile=self.user,
+                        sources=list(gather_key[0]),
+                        recent_count=self.effective_recent_count(spec),
+                        media=spec.media,
+                        # See `pool_exclusions` for the full rules (0% vs >0, rewatch, unstarted-only) and
+                        # for what the None sentinel means here.
+                        watched_exclusions=self.pool_exclusions(spec),
+                        visible=self.visible,
+                        season=season,
+                        season_source="theme" if spec.theme is not None else "season",
+                        guidance=guidance,
+                    )
+            except Exception as e:
+                self.pool_failures[gather_key] = f"{type(e).__name__}: {e}"
+                logger.warning("{}: row '{}' has no working candidate source ({})", self.user.username, spec.slug, e)
+                return None
+            gathered = self.gathers[gather_key]
+            try:
+                self.pool_cache[key], gather_stats = _rank_pool(
                     self.ctx,
+                    gathered,
                     self.seeds_for(spec),
-                    row_library_index(self.ctx, spec, self.library_index),
-                    excluded_genres=self.user.excluded_genres,
-                    profile=self.user,
-                    sources=list(key[0]),
-                    recent_count=self.effective_recent_count(spec),
                     media=spec.media,
-                    # See `pool_exclusions` for the full rules (0% vs >0, rewatch, unstarted-only) and
-                    # for what the None sentinel means here.
-                    watched_exclusions=self.pool_exclusions(spec),
                     # The SERVER's value, deliberately: this pool is shared between rows (`pool_key`
                     # does not split on recency, so the gather is paid for once), and a row that
                     # overrides it re-cuts the cached `in_library` in `cut_at_recency`.
                     recency=self.cfg.recency,
-                    visible=self.visible,
-                    season=season,
+                    limits=limits,
+                    gather_stats=gathered.stats_for_ranking(),
+                    who=f"{self.user.username}/{spec.slug}",
+                    named=_named_titles(spec),
                 )
             except Exception as e:
                 self.pool_failures[key] = f"{type(e).__name__}: {e}"
@@ -2301,16 +2735,28 @@ class RowPolicy:
             # screen until that page grows a per-row axis. The media prefix must stay first —
             # `poolCoversMedia` splits on " · " to decide which library a gather belongs to.
             seed_n = len(self.seeds_for(spec))
-            pool_label = f"{spec.media} · {', '.join(key[0])}"
-            if any(len(self.seeds_for(other)) != seed_n for other in self.specs):
+            pool_label = f"{spec.media} · {', '.join(gather_key[0])}"
+            if any(len(self.seeds_for(other)) != seed_n for other in self.gathered_specs()):
                 pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
-            _record_gather(
-                self.report,
-                gather_stats,
-                pool_label=pool_label,
-                duration_s=time.monotonic() - gather_started,
-            )
-            self.pool_rows[key] = self.report.pool_costs[-1]
+            if not guidance.is_builtin:
+                pool_label += " · own AI instructions"
+            if limits.active:
+                pool_label += " · limits"
+            if gather_key in self.gather_costs:
+                # A ranking of a gather another row already paid for and traced: it adds nothing to either,
+                # and a second copy of the queries would show every one twice. It joins that entry, which
+                # then no longer describes a limited pool alone.
+                entry = self.gather_costs[gather_key]
+                entry["label"] = entry["label"].removesuffix(" · limits") if not limits.active else entry["label"]
+                self.pool_rows[key] = entry
+            else:
+                _record_gather(
+                    self.report,
+                    gather_stats,
+                    pool_label=pool_label,
+                    duration_s=time.monotonic() - gather_started,
+                )
+                self.pool_rows[key] = self.gather_costs[gather_key] = self.report.pool_costs[-1]
         # Hit or miss: a cache hit is the case that proves this row SHARED an existing gather.
         entry = self.pool_rows.get(key)
         if entry is not None and spec.slug not in entry["rows"]:
@@ -2323,8 +2769,33 @@ class NothingToBuildFrom(RuntimeError):
     owes nothing: an out-of-season row of theirs still has to come off their Home."""
 
 
+def _row_log_name(spec: RowSpec) -> str:
+    """The row's name as the run log shows it: its template with the season or theme filled in."""
+    return fill_theme(fill_season(spec.name_template, spec.season), spec.theme) or spec.slug
+
+
+def _named_titles(spec: RowSpec) -> frozenset[tuple[MediaType, int]]:
+    """The titles an AI row's theme names (the AI's or the owner's picks): they lead the row. Empty otherwise."""
+    return frozenset((pick.media, pick.tmdb_id) for pick in spec.theme.picks) if spec.theme is not None else frozenset()
+
+
+def _theme_reason_args(ctx: EngineContext, spec: RowSpec) -> dict:
+    """The keywords `picker.build_picks` takes to word an AI row's picks; empty for any other row."""
+    if spec.theme is None:
+        return {}
+    found = ctx.theme_titles.get(spec.theme.slug)
+    return {
+        "theme_name": spec.theme.name,
+        "theme_reasons": found.reasons if found is not None else {},
+        "theme_named": _named_titles(spec),
+    }
+
+
 def _unreadable_season(ctx: EngineContext, spec: RowSpec) -> str:
-    """Why a seasonal row has nothing to build from tonight, in the words both build paths report."""
+    """Why a seasonal or AI row has nothing to build from tonight, in the words both build paths report."""
+    if spec.theme is not None:
+        why = ctx.theme_failures.get(spec.theme.slug, "it was not loaded")
+        return f"the {spec.theme.name} theme could not be read ({why})"
     why = ctx.season_failures.get(spec.season.slug, "it was not loaded")
     return f"the {spec.season.name} list could not be read ({why})"
 
@@ -2337,15 +2808,20 @@ def _cold_start(
     """Popular-on-this-server picks for someone whose history is too thin to seed from, plus the
     trace that keeps them from reading as skipped. Returns the base picks each row then slices."""
     ctx, user, report = policy.ctx, policy.user, policy.report
+    specs = policy.gathered_specs()
     # The rule `_warm_start` applies: a season list that could not be read is a row whose every source is
     # down, and a person whose EVERY row is down is a failed user, not a quiet cold start.
-    unreadable = [spec for spec in policy.specs if spec.season is not None and policy.season_titles(spec) is None]
-    if unreadable and len(unreadable) == len(policy.specs):
+    unreadable = [
+        spec
+        for spec in specs
+        if (spec.season is not None or spec.theme is not None) and policy.season_titles(spec) is None
+    ]
+    if unreadable and len(unreadable) == len(specs):
         raise NothingToBuildFrom("; ".join(sorted(_unreadable_season(ctx, spec) for spec in unreadable)))
     # A rewatch row is still built from what they finished, however little that is.
     policy.mark_finished_titles()
     # Enough picks for the LARGEST row this user is in; each row then takes its own k.
-    base_cold = _cold_start_picks(ctx, user, policy.cfg, k=max(spec.size for spec in policy.specs))
+    base_cold = _cold_start_picks(ctx, user, policy.cfg, k=max(spec.size for spec in specs), years=policy.cold_years)
     report.status = "cold_start"
     # File the trace even though no TMDB/Trakt search ran: their (thin) watches as the first stage —
     # NO seeds, because nothing was searched from them (the point of cold start) — and a synthetic
@@ -2378,7 +2854,7 @@ def _warm_start(
 
     Raises when EVERY row's sources are down — that is a failed user, not a quiet "ok".
     """
-    ctx, user, specs, report = policy.ctx, policy.user, policy.specs, policy.report
+    ctx, user, specs, report = policy.ctx, policy.user, policy.gathered_specs(), policy.report
     # Reported as the widest seed set any of this person's rows uses — the "both media, every
     # library" case when they have one, so the number still means "how much of their history fed
     # tonight's rows" rather than one arbitrary row's slice.
@@ -2443,7 +2919,10 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
     first_seen: dict[str, dict[tuple[int, MediaType], Candidate]] = {}
     title_tags: dict[str, dict[tuple[int, MediaType], set[str]]] = {}
     title_why: dict[str, dict[tuple[int, MediaType], list[RequestWhy]]] = {}
-    for spec in policy.specs:
+    for spec in policy.gathered_specs():
+        if spec.theme is not None:
+            # An AI row (#138) is library-only: titles it names that the server lacks are never requested.
+            continue
         pools = policy.pools_for(spec)
         if pools is None:
             continue
@@ -2461,7 +2940,13 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         row_seen = first_seen.setdefault(spec.slug, {})
         row_tags = title_tags.setdefault(spec.slug, {})
         row_why = title_why.setdefault(spec.slug, {})
-        for c in requests_mod.collect_missing(pools[0], policy.library_index):
+        limits = spec.limits()
+        missing = requests_mod.collect_missing(pools[0], policy.library_index)
+        if limits.active:
+            # A title the row's limits would never show is not this row's to ask for. Year and rating only:
+            # runtime needs a TMDB lookup per title, and a missing title is not worth one.
+            missing = [c for c in missing if limits_mod.passes_year_and_rating(c, limits)]
+        for c in missing:
             key = (c.tmdb_id, c.media_type)
             row_seen.setdefault(key, c)
             tags = row_tags.setdefault(key, set())
@@ -2508,23 +2993,103 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
                 )
 
 
-def _season_cold_picks(season: seasons_mod.SeasonTitles, kind: MediaType, sec_idx: dict[int, int]) -> list[Pick]:
+def _plex_year(item: object) -> int | None:
+    year = getattr(item, "year", None)
+    return year if isinstance(year, int) else None
+
+
+def _within_limits(policy: RowPolicy, spec: RowSpec, picks: list[Pick]) -> list[Pick]:
+    """The cold-start ``picks`` that sit inside the row's limits (#138). Picks built outside the candidate
+    pool never met them there. Unchanged, and no TMDB call, when the row has none."""
+    limits = spec.limits()
+    if not limits.active or not picks:
+        return picks
+    candidates = [
+        Candidate(
+            tmdb_id=p.tmdb_id,
+            title=p.title,
+            media_type=p.media_type,
+            year=policy.cold_years.get((p.tmdb_id, p.media_type)),
+            rating_key=p.rating_key,
+        )
+        for p in picks
+    ]
+    kept = {(c.tmdb_id, c.media_type) for c in limits_mod.apply_limits(candidates, limits, policy.ctx.tmdb).kept}
+    return [p for p in picks if (p.tmdb_id, p.media_type) in kept]
+
+
+def _season_cold_picks(
+    season: seasons_mod.SeasonTitles,
+    kind: MediaType,
+    sec_idx: dict[int, int],
+    *,
+    theme_name: str | None = None,
+    theme_reasons: dict[tuple[MediaType, int], str] | None = None,
+    theme_named: frozenset[tuple[MediaType, int]] = frozenset(),
+) -> list[Pick]:
     """A seasonal row's fill for someone with too little history: the season's titles in this library, best
-    rated first. The server's top-rated films are almost never Christmas films."""
+    rated first (an AI row's named titles ahead of the rest). The server's top-rated films are almost never
+    Christmas films."""
     held = [item for item in season.in_library.get(kind, []) if int(item["id"]) in sec_idx]
-    held.sort(key=lambda item: (-float(item.get("vote_average") or 0.0), item.get("title") or item.get("name") or ""))
+    held.sort(
+        key=lambda item: (
+            (kind, int(item["id"])) not in theme_named,
+            -float(item.get("vote_average") or 0.0),
+            item.get("title") or item.get("name") or "",
+        )
+    )
     return [
         Pick(
             tmdb_id=int(item["id"]),
             rating_key=sec_idx[int(item["id"])],
             title=item.get("title") or item.get("name") or "",
             rank=i + 1,
-            reason="Well rated for the season",
+            # No watch to name: an AI row's cold pick is worded like its seedless one.
+            reason=(
+                picker.theme_reason(
+                    None,
+                    theme_name,
+                    (theme_reasons or {}).get((kind, int(item["id"]))),
+                    named=(kind, int(item["id"])) in theme_named,
+                )
+                if theme_name
+                else "Well rated for the season"
+            ),
             media_type=kind,
-            sources=["season"],
+            sources=(
+                ["theme", *(["theme_named"] if (kind, int(item["id"])) in theme_named else [])]
+                if theme_name
+                else ["season"]
+            ),
         )
         for i, item in enumerate(held)
     ]
+
+
+def _without_excluded(
+    policy: RowPolicy, spec: RowSpec, candidates: list[Candidate], *, spare: set[tuple[MediaType, int]]
+) -> list[Candidate]:
+    """``candidates`` minus what this AI row's no-repeat and keep-out controls rule out (#138).
+
+    Applied to NEW candidates only: picks the row already carries are never touched. When the controls
+    would leave nothing to pick from they are ignored for the night and the row says so on the report.
+    """
+    ctx = policy.ctx
+    if not spec.over_time.active:
+        return candidates
+    excluded = excluded_titles(
+        spec.over_time,
+        user_slug=policy.user.slug,
+        row_slug=spec.slug,
+        today=(_utc(ctx.run_at) or datetime.now(UTC)).date(),
+        history=ctx.pick_history,
+        built_this_run=ctx.built_this_run,
+        spare=spare,
+    )
+    result = apply_exclusions(candidates, excluded)
+    if result.skipped and spec.slug not in policy.report.exclusions_skipped:
+        policy.report.exclusions_skipped.append(spec.slug)
+    return result.kept
 
 
 def _build_section_picks(
@@ -2572,7 +3137,7 @@ def _build_section_picks(
             #     at all, reported as a green run.
             #
             # `targets` already honours `library_keys`, so taking `k` from `section` fixes both.
-            if spec.season is not None:
+            if spec.season is not None or spec.theme is not None:
                 season = policy.season_titles(spec)
                 if season is None:
                     # Warned like the warm path's dead pool: this row keeps what it has, its siblings build.
@@ -2583,8 +3148,17 @@ def _build_section_picks(
                         _unreadable_season(ctx, spec),
                     )
                     continue
-                cands = _season_cold_picks(season, kind, ctx.section_index.get(section.key, {}))
+                cands = _season_cold_picks(
+                    season, kind, ctx.section_index.get(section.key, {}), **_theme_reason_args(ctx, spec)
+                )
             else:
+                # Three times the row when this person's restrictions can be checked, so the titles
+                # they cannot see (#115) are replaced rather than leaving the row short. The same when the
+                # row has limits: they thin the list the same way.
+                top = ctx.plex.top_rated(section, k * 3 if policy.can_check_visibility or spec.limits().active else k)
+                for tmdb_id, item in top:
+                    if (year := _plex_year(item)) is not None:
+                        policy.cold_years[(tmdb_id, kind)] = year
                 cands = [
                     Pick(
                         tmdb_id=tmdb_id,
@@ -2595,16 +3169,13 @@ def _build_section_picks(
                         media_type=kind,
                         sources=["cold_start"],  # no history to work from — say so rather than imply a match
                     )
-                    # Three times the row when this person's restrictions can be checked, so the titles
-                    # they cannot see (#115) are replaced rather than leaving the row short.
-                    for i, (tmdb_id, item) in enumerate(
-                        ctx.plex.top_rated(section, k * 3 if policy.can_check_visibility else k)
-                    )
+                    for i, (tmdb_id, item) in enumerate(top)
                 ]
             # A library with nothing rated falls back to the per-user pull — never for a seasonal row,
             # whose fallback would be the server's top-rated films, not its season.
-            if not cands and spec.season is None:
+            if not cands and spec.season is None and spec.theme is None:
                 cands = [p for p in base_cold if p.media_type is kind]
+            cands = _within_limits(policy, spec, cands)
             # Checked on THIS library's copy: the fallback's keys come from another library, and a
             # person not shared that one would read every title as hidden.
             cold_copy = ctx.section_index.get(section.key, {})
@@ -2619,7 +3190,15 @@ def _build_section_picks(
                 # so what they did finish leads and the popular titles only fill what's left.
                 cold_idx = ctx.section_index.get(section.key, {})
                 history, reasons = _rewatch_candidates(
-                    policy, finished, cooling, kind, cold_idx, taste=set(), limit=k, season=policy.season_titles(spec)
+                    policy,
+                    finished,
+                    cooling,
+                    kind,
+                    cold_idx,
+                    taste=set(),
+                    limit=k,
+                    season=policy.season_titles(spec),
+                    limits=spec.limits(),
                 )
                 library_cooling = sum(1 for tid, media in cooling if media is kind and tid in cold_idx)
                 led = [
@@ -2677,7 +3256,14 @@ def _build_section_picks(
             continue
         sec_idx = ctx.section_index.get(section.key, {})
         pct = policy.effective_watched_pct(spec)
+        theme_reasons = _theme_reason_args(ctx, spec)
         sub = [c for c in pool_for_row if c.media_type is kind and c.tmdb_id in sec_idx]
+        if theme_reasons:
+            # The theme's named titles lead the pool, so every ordering below agrees with the picker's choice.
+            named = theme_reasons["theme_named"]
+            sub = [c for c in sub if (c.media_type, c.tmdb_id) in named] + [
+                c for c in sub if (c.media_type, c.tmdb_id) not in named
+            ]
         # The watch this library's row is built from, for a row NAMED after one: its title falls back to
         # it when no pick carries a seed of its own, which is every pick discover and web search make.
         lead = (
@@ -2699,6 +3285,7 @@ def _build_section_picks(
                 taste=taste or set(),
                 limit=_REWATCH_SPARES_PER_SLOT * k,
                 season=policy.season_titles(spec),
+                limits=spec.limits(),
             )
             history_keys = {(c.tmdb_id, c.media_type) for c in history}
             sub = [*history, *(c for c in sub if (c.tmdb_id, c.media_type) not in history_keys)]
@@ -2744,10 +3331,11 @@ def _build_section_picks(
         # BACKWARDS onto an older watch, which reads as idle — and `_seed_moved` is otherwise only
         # consulted on the refresh branch, so the row would keep claiming "Because you watched X"
         # about a title the owner un-watched, for up to the ceiling.
+        seed_moved = _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id)
         held = (
             due
             and not recipe_changed
-            and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id)
+            and not seed_moved
             and _held_for_idle(prior_valid, policy.last_watch_at, ctx.run_at, hold_days)
         )
         refresh = due and not held
@@ -2781,6 +3369,8 @@ def _build_section_picks(
             decision = "held_idle"
         elif not refresh:
             decision = "carried_forward"
+        elif seed_moved:
+            decision = "seed_moved"
         else:
             decision = "refreshed"
         if held:
@@ -2822,17 +3412,24 @@ def _build_section_picks(
             # a night; tomorrow's fill closes it.
             spares, reselect = ([] if genre_hold else sub), False
             if len(sec_picks) < k and sub and not genre_hold:
-                sec_picks = _pad_picks(sec_picks, sub, k)
-        elif prior_valid and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg, lead_tmdb_id):
+                sec_picks = _pad_picks(sec_picks, sub, k, **theme_reasons)
+        elif prior_valid and not seed_moved:
             # Refresh night: keep the strongest ~two-thirds by RANK (match quality — `prior_valid` is
             # ordered by the persisted rank column, not by how the row was displayed), and swap the
             # rest for genuinely-new titles.
             # Pick only from candidates NOT already in the row so a just-rotated-out title can't
             # bounce straight back — the internal anti-immediate-repeat guard that replaced staleness_runs.
-            keep_n = min(len(prior_valid), round(_KEEP_FRACTION * k))
-            kept = prior_valid[:keep_n]
-            fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
-            new_picks = picker.build_picks(fresh_pool, k)
+            keep_n = min(len(prior_valid), round(spec.over_time.keep_fraction() * k))
+            if spec.over_time.refresh_share is not None and spec.over_time.keep_fraction() < 1 and k > 1:
+                keep_n = min(keep_n, k - 1)  # a share above zero always swaps at least one pick
+
+            kept, fresh_pool = _kept_and_fresh(policy, spec, user, prior_valid, prior_ids, sub, keep_n)
+            if spec.over_time.refresh_share is not None and keep_n < min(len(prior_valid), k - len(fresh_pool)):
+                # A high share on a small pool: the new titles cannot fill the room the swap makes, so keep as
+                # many of last night's as the row needs rather than deliver it short. Only with the share set.
+                keep_n = min(len(prior_valid), k - len(fresh_pool))
+                kept, fresh_pool = _kept_and_fresh(policy, spec, user, prior_valid, prior_ids, sub, keep_n)
+            new_picks = picker.build_picks(fresh_pool, k, **theme_reasons)
             newcomers = [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
             # Take only what there is ROOM for, before ordering. Handing the whole merged list to
             # `_rank_against_pool` and truncating there let pool order — pure score — decide who
@@ -2843,15 +3440,13 @@ def _build_section_picks(
             # and stayed there — the collapsed row is what carries forward to the next one.
             sec_picks = _rank_against_pool(kept + newcomers[: max(0, k - len(kept))], sub)
             if len(sec_picks) < k:
-                sec_picks = _pad_picks(sec_picks, fresh_pool, k)
+                sec_picks = _pad_picks(sec_picks, fresh_pool, k, **theme_reasons)
             spares, reselect = fresh_pool, True
             # `_seed_moved` above asked whether the POOL still leads with the seed this row is named
-            # after. That is not quite the question the title asks: the name renders from the
-            # best-matching DELIVERED pick, and re-ranking survivors against newcomers can put a
-            # differently-seeded newcomer first even when the pool's own top seed never moved. Left
-            # here, the row would rename itself while still carrying the old seed's picks — the exact
-            # stale claim `_seed_moved` exists to prevent. Only reachable above one seed, which is
-            # why the single-seed tests never saw it.
+            # after; the name renders from the best-matching DELIVERED pick. Re-ranking can put a
+            # differently-seeded pick first while the pool's top seed never moved, and the title then
+            # follows its new lead — a watch still in the seed set, because `_reseed_survivors` left no
+            # survivor claiming one that has gone. Only reachable above one seed.
         else:
             # Bootstrap: this row+library has never been built (or its picks predate row/library
             # stamping) — build a fresh full row, exactly like a first run. Also reached on a refresh
@@ -2871,10 +3466,11 @@ def _build_section_picks(
                     getattr(section, "title", section.key),
                 )
                 continue
-            sec_picks = picker.build_picks(sub, k)
+            fresh_pool = _without_excluded(policy, spec, sub, spare=set())
+            sec_picks = picker.build_picks(fresh_pool, k, **theme_reasons)
             if len(sec_picks) < k:
-                sec_picks = _pad_picks(sec_picks, sub, k)
-            spares, reselect = sub, True
+                sec_picks = _pad_picks(sec_picks, fresh_pool, k, **theme_reasons)
+            spares, reselect = fresh_pool, True
 
         if spec.rewatch:
             # A rewatch row wants the opposite of the cap: finished titles FIRST. Checked before
@@ -2925,6 +3521,7 @@ def _build_section_picks(
         ]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
+        ctx.built_this_run.setdefault((user.slug, spec.slug), set()).update((p.media_type, p.tmdb_id) for p in ranked)
         # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the
         # watched cap and the rewatch reordering above can both backfill titles from `sub` that the
         # branch never saw — those are new to the row too, and `new_first` has to lead with them.
@@ -2969,7 +3566,7 @@ def _build_section_picks(
         )
         # "best" is a no-op, which is what keeps the rewatch/watched-cap orderings above intact
         # unless the owner explicitly asked for a different one.
-        section_picks[section.key] = _apply_order(
+        ordered = _apply_order(
             ranked,
             spec.pick_order,
             row_slug=spec.slug,
@@ -2978,6 +3575,17 @@ def _build_section_picks(
             ratings=ratings,
             new_keys=new_keys,
         )
+        if ratings is not None:
+            # So the run page can show the number the row was sorted on, not TMDB's.
+            ordered = [
+                replace(
+                    p,
+                    order_rating=ratings.get((p.tmdb_id, p.media_type), 0.0),
+                    order_rating_source=ctx.config.rating_source,
+                )
+                for p in ordered
+            ]
+        section_picks[section.key] = ordered
         _log_row_provenance(user, spec, section, section_picks[section.key], sub, k)
     return section_picks
 
@@ -3128,7 +3736,7 @@ def _run_user(
     """Deliver every per-person row this user is in the audience of. Candidates are computed once
     and reused across rows; each row curates and delivers with its own size/media/recipe. Returns
     True when this person is a candidate for promotion: at least one row was delivered, or a row this
-    run covers is out of season and its collection needs hiding.
+    run covers is out of season, or seasonal and in season, and its collection may need hiding.
 
     When ``demand`` is provided (requests are on), the candidates this user wanted but no delivery
     library holds are folded into it, so the run-wide request pass can ask Sonarr/Radarr for them.
@@ -3162,6 +3770,8 @@ def _run_user(
     #     re-opens the same takeover through a different door.
     owned = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec)]
     specs = [s for s in owned if not _is_muted(user, s) and cfg.should_build(s) and not s.dormant]
+    # Each AI row as THIS person sees it, so the recipe, pool key and theme reads all see their theme (#138).
+    specs = [s.for_person(user.slug) for s in specs]
     # Rows out of season (discussion #124) build nothing, but their collections still have to be HIDDEN,
     # and promotion is where a row's `off` placement is applied — to people this returns True for. So
     # someone whose only row is out of season is still a promotion candidate; otherwise the row they had
@@ -3169,6 +3779,10 @@ def _run_user(
     # scoped to another row must not make this person a candidate and re-place every row they have.
     # The midnight `rows.visibility` pass hides it on the day it turns over whatever runs that night.
     dormant = [s for s in owned if not _is_muted(user, s) and s.dormant and cfg.should_build(s)]
+    # A seasonal row building tonight is owed the same pass: in a library where it finds nothing for this
+    # season it delivers nothing, so that library keeps LAST season's collection, possibly promoted. Promotion
+    # hides it (`pipeline.built_seasons`), but only for a person it reaches (#137 C-1).
+    owes_hiding = bool(dormant) or any(s.season is not None for s in specs)
     # The same three conditions, recorded per row rather than collapsed into one sentence. `reason`
     # explains the person; this attributes the decision to the ROW, which is what a rows-first run
     # view needs to place someone under the rows they were skipped for. Written on every path — a
@@ -3193,7 +3807,7 @@ def _run_user(
         # mid-run forever.
         user_report.status = "skipped"
         user_report.reason = _why_no_rows(user, cfg)
-        return bool(dormant)
+        return owes_hiding
     _emit(ctx, user.slug, "history", {})
     # Reuse a history the CALLER already filled, exactly as the shared-row path does. The server
     # pre-fills it from its watched-title cache, which turns the run's second complete per-user read
@@ -3219,7 +3833,9 @@ def _run_user(
             user_report.status = "cold_start"
             deleted_now = len(user_report.diff.deleted) if user_report.diff else 0
             user_report.reason = _why_cold_skipped(user, cfg, due, deleted_now - deleted_before)
-            return bool(dormant)  # nothing built, but an out-of-season row of theirs still needs hiding
+            # Nothing built, but a row of theirs out of season, or in season with last season's collection,
+            # may still need hiding.
+            return owes_hiding
 
     policy = RowPolicy(
         ctx=ctx,
@@ -3235,7 +3851,11 @@ def _run_user(
 
     base_cold: list[Pick] = []
     try:
-        if cold:
+        if all(spec.requests_row for spec in specs):
+            # A requests row is built from the ledger, not a pool: no seeds, no TMDB, no cold-start
+            # fallback. A person whose only rows are requests rows gathers nothing at all.
+            user_report.status = "cold_start" if cold else "ok"
+        elif cold:
             base_cold = _cold_start(policy, library_of_watch, library_of_seed)
         else:
             _warm_start(policy, demand, library_of_watch, library_of_seed)
@@ -3245,7 +3865,7 @@ def _run_user(
         user_report.status = "error"
         user_report.error = f"RuntimeError: {e}"
         logger.error("{}: pipeline failed ({})", user.username, e)
-        return bool(dormant)
+        return owes_hiding
 
     # Everything above is shared by every row this person has — the history read and the candidate
     # gather, which is where all AI spend happens. Closed here, before the first row is touched.
@@ -3285,30 +3905,62 @@ def _run_user(
             override = user.row_overrides.get(spec.slug)
             k = (override.size if override and override.size else None) or spec.size or cfg.row_size
             targets = target_sections(ctx.delivery_sections, spec)
-            pool_for_row: list[Candidate] = []
-            taste: set[tuple[int, MediaType]] = set()
-            if not cold:
-                # This row's own pool: its sources, its media and its libraries — already narrowed to
-                # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
-                # candidates it could never show.
-                pools = policy.pools_for(spec)
-                if pools is None:
-                    continue  # every source this row uses is down; its siblings still deliver
-                gathered, in_library, pool_for_row = pools
-                taste = {(c.tmdb_id, c.media_type) for c in gathered} if spec.rewatch else set()
-                # A row that overrides the server's release-date weight needs its OWN truncation, not
-                # just its own ordering: the cut decides which candidates a row may select from at all,
-                # so re-ordering what the global's cut left would cap the setting at whatever survived
-                # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
-                # another gather. A row that inherits reuses the pool's cut untouched.
-                recency = policy.effective_recency(spec)
-                if recency != ctx.config.recency:
-                    pool_for_row = policy.cut_at_recency(spec, in_library, recency)
-                row_label = spec.name_template or spec.slug
-                _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
-            section_picks = _build_section_picks(
-                policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
-            )
+            if spec.theme is not None:
+                targets = _leave_uncovered_libraries(ctx, user, cfg, spec, targets, user_report)
+            if spec.requests_row:
+                ledger = ctx.request_ledger
+                if ledger is None:
+                    continue  # no source configured — the Rows page says so; nothing to build or remove
+                section_picks = build_requests_picks(policy, spec, targets, k, ledger, now=datetime.now(UTC))
+                if ledger.complete:
+                    # The one row kind that REMOVES its collection when it has nothing to show: leaving it
+                    # would keep watched titles sitting in it. Only on a COMPLETE read — a source outage
+                    # reads as "nothing requested" for everyone, and must never take everyone's row down.
+                    diff = user_report.diff if user_report.diff is not None else CollectionDiff()
+                    user_report.diff = diff
+                    for section in targets:
+                        if section_picks.get(section.key):
+                            continue
+                        with ctx.write_lock:
+                            removed_in = remove_row(
+                                ctx.plex,
+                                user,
+                                cfg,
+                                spec,
+                                dry_run=cfg.dry_run,
+                                diff=diff,
+                                sections=[section],
+                                delivered_keys=_ledger_keys(ctx, user, spec),
+                                other_rows=_rows_as_seen_by(cfg, user),
+                            )
+                        _forget(user_report, spec, removed_in)
+                if not any(section_picks.values()):
+                    continue
+            else:
+                pool_for_row: list[Candidate] = []
+                taste: set[tuple[int, MediaType]] = set()
+                if not cold:
+                    # This row's own pool: its sources, its media and its libraries — already narrowed to
+                    # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
+                    # candidates it could never show.
+                    pools = policy.pools_for(spec)
+                    if pools is None:
+                        continue  # every source this row uses is down; its siblings still deliver
+                    gathered, in_library, pool_for_row = pools
+                    taste = {(c.tmdb_id, c.media_type) for c in gathered} if spec.rewatch else set()
+                    # A row that overrides the server's release-date weight needs its OWN truncation, not
+                    # just its own ordering: the cut decides which candidates a row may select from at all,
+                    # so re-ordering what the global's cut left would cap the setting at whatever survived
+                    # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
+                    # another gather. A row that inherits reuses the pool's cut untouched.
+                    recency = policy.effective_recency(spec)
+                    if recency != ctx.config.recency:
+                        pool_for_row = policy.cut_at_recency(spec, in_library, recency)
+                    row_label = _row_log_name(spec)
+                    _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
+                section_picks = _build_section_picks(
+                    policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
+                )
             # Stamp each pick with the row AND the library it belongs to, so the user page can group picks
             # per row and the effectiveness report can split a multi-library row into one line per library.
             library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
@@ -3387,7 +4039,7 @@ def _run_user(
                     "{}: cancelled — stopping before '{}', rows already written are intact", user.slug, spec.slug
                 )
                 break
-            _emit(ctx, user.slug, "delivering", {"row": spec.name_template or spec.slug, "picks": len(picks)})
+            _emit(ctx, user.slug, "delivering", {"row": _row_log_name(spec), "picks": len(picks)})
             if not _deliver_row(
                 policy,
                 spec,
@@ -3421,7 +4073,17 @@ def _run_user(
     user_report.picks = all_picks
     user_report.counts.picks = len(all_picks)
     # Only when nothing else already explains this person: the skip and cancellation reasons are more
-    # specific than anything this can say, and they are set before the rows are walked.
+    # specific than anything this can say, and they are set before the rows are walked. A seasonal row that
+    # built nothing comes first: it leaves no selection entry, so the sentence below cannot see it. Only for a
+    # person who got NOTHING: the Runs page reads this reason as "why they got nothing", in place of their pick
+    # counts (`recent-runs.tsx`, `user-panel.tsx`, `run-user-trace.tsx`), so an empty seasonal row beside a row
+    # that delivered must not set it.
+    if user_report.reason is None and not all_picks:
+        empty = [spec for spec in specs if spec.season is not None or spec.theme is not None]
+        seen = policy.zero_pct_exclusions() if empty else set()
+        several = len(empty) > 1
+        reasons = [why for spec in empty if (why := _why_season_row_empty(ctx, spec, seen=seen, several=several))]
+        user_report.reason = " ".join(dict.fromkeys(reasons)) or None
     if user_report.reason is None:
         user_report.reason = _why_nothing_rebuilt(user_report.trace.get("selection") or [])
     if not all_picks:
@@ -3430,17 +4092,25 @@ def _run_user(
         # candidates from the sources, or nothing of the candidates actually in their libraries.
         # Without the counts this line said only that it happened, sending the operator to the trace.
         counts = user_report.counts
+        # The removal paths above record into `diff.deleted` (a dry run too, where it is a preview),
+        # so "left as they are" is only true when this run removed nothing for the person.
+        removed = len(user_report.diff.deleted) if user_report.diff else 0
+        if removed:
+            verb = "would remove" if cfg.dry_run else "removed"
+            outcome = f"{verb} {removed} row(s) this run; any other rows are left as they are"
+        else:
+            outcome = "existing rows are left as they are"
         logger.warning(
-            "{}: no picks produced — existing rows are left as they are "
-            "(history={} seeds={} candidates={} in_library={}){}",
+            "{}: no picks produced — {} (history={} seeds={} candidates={} in_library={}){}",
             user.username,
+            outcome,
             counts.history,
             counts.seeds,
             counts.candidates,
             counts.in_library,
             f" — {user_report.reason}" if user_report.reason else "",
         )
-    return delivered_any or bool(dormant)  # nothing delivered and nothing to hide -> nothing to promote
+    return delivered_any or owes_hiding  # nothing delivered and nothing to hide -> nothing to promote
 
 
 def _claimed_this_run(user_report) -> set[tuple[str, int]]:
@@ -3515,10 +4185,17 @@ def _shared_row(
 ) -> UserProfile | None:
     """Build and deliver the shared row's picks (the body ``_run_shared`` guards).
 
+    A row with a theme is per-person only (#138): it is skipped here, never built as an ordinary shared row.
+
     A title only qualifies once at least ``spec.min_watchers`` distinct people in the audience have
     watched it, so no single person's viewing can reach a public row. Reasons are aggregate-framed —
     never "because you watched X", since there is no single "you".
     """
+    if spec.theme is not None:
+        logger.warning("shared row '{}' has a theme, which only a per-person row can follow; skipped", spec.slug)
+        user_report.status = "skipped"
+        user_report.reason = "An AI row can't be shared: it is built per person. Make it a per-person row."
+        return None
     cfg = ctx.config
     audience = [u for u in users if spec.audience is None or u.plex_account_id in spec.audience]
     if not audience:
@@ -3608,8 +4285,8 @@ def _shared_row(
     if spec.season is not None and season is None:
         user_report.status = "skipped"
         user_report.reason = (
-            f"The {spec.season.name} list could not be read from TMDB tonight, so this seasonal row was left "
-            "as it was. It rebuilds on the next run that can read it."
+            f"The {spec.season.name} films could not be read tonight, so this seasonal row was left as it was. "
+            "It rebuilds on the next run that can read them."
         )
         return None
     ranked_titles = sorted(
@@ -3700,6 +4377,11 @@ def _shared_row(
     user_report.picks = picks
     user_report.counts.picks = len(picks)
     user_report.status = "ok"
+    if spec.season is not None and not picks:
+        who = f"{len(audience)} {'person' if len(audience) == 1 else 'people'}"
+        user_report.reason = _why_season_row_empty(
+            ctx, spec, audience=f"has been watched by {threshold} or more of the {who} in its audience yet"
+        )
     user_report.diff = CollectionDiff()
     _emit(ctx, slug, "delivering", {"picks": len(picks)})
     deliver_rows(
@@ -3774,7 +4456,15 @@ def _log_row_provenance(
         )
 
 
-def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]:
+def _pad_picks(
+    picks: list[Pick],
+    ranked: list[Candidate],
+    k: int,
+    *,
+    theme_name: str | None = None,
+    theme_reasons: dict[tuple[MediaType, int], str] | None = None,
+    theme_named: frozenset[tuple[MediaType, int]] = frozenset(),
+) -> list[Pick]:
     """Top up a short row from the ranked pool (never invents titles).
 
     Only from candidates whose source actually vouched for them: padding is where a weak association
@@ -3788,20 +4478,35 @@ def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]
             len(ranked) - len(worth_it),
             len(ranked),
         )
-    fillers = picker.build_picks([c for c in worth_it if (c.tmdb_id, c.media_type) not in have], k - len(picks))
+    fillers = picker.build_picks(
+        [c for c in worth_it if (c.tmdb_id, c.media_type) not in have],
+        k - len(picks),
+        theme_name=theme_name,
+        theme_reasons=theme_reasons,
+        theme_named=theme_named,
+    )
     out = list(picks)
     for f in fillers:
         out.append(replace(f, rank=len(out) + 1))
     return out
 
 
-def _cold_start_picks(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, k: int = 0) -> list[Pick]:
+def _cold_start_picks(
+    ctx: EngineContext,
+    user: UserProfile,
+    cfg: EngineConfig,
+    k: int = 0,
+    years: dict[tuple[int, MediaType], int] | None = None,
+) -> list[Pick]:
     """ "Popular on <server>" fallback for a user with thin history: top-rated titles.
 
     Splits the picks across ``sections_by_type()`` — one representative library per media type, not
     every library on the server — so a movies-only cold start doesn't hand delivery a pick list with
     no shows in it, leaving a TV watcher with a row of films they never asked for on a thin-history
     night (a Tautulli outage is enough).
+
+    ``years`` collects each pick's release year as Plex reports it, for a row's year limit: a ``Pick`` carries
+    none here, and giving it one would change how a row ordered by year sorts these.
     """
     sections = ctx.plex.sections_by_type()
     if not sections:
@@ -3816,6 +4521,8 @@ def _cold_start_picks(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, 
         if wanted <= 0:
             break
         for tmdb_id, item in ctx.plex.top_rated(section, wanted):
+            if years is not None and (year := _plex_year(item)) is not None:
+                years[(tmdb_id, kind)] = year
             picks.append(
                 Pick(
                     tmdb_id=tmdb_id,

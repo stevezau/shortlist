@@ -706,7 +706,7 @@ describe("IssuePage — a problem runs every check it promises", () => {
 
     for (const heading of [
       /is background work stuck/i,
-      /when does each row next rebuild/i,
+      /when do each row.s titles next refresh/i,
       /are the clocks right/i,
     ]) {
       expect(
@@ -1083,4 +1083,15 @@ describe("IssuePage — the surfaces verdict cannot say all-clear over a real fi
       await screen.findByText(/showing exactly where it should/i),
     ).toBeTruthy();
   });
+});
+
+
+it("filters the check catalogue without running a check", async () => {
+  supportStatus.mockResolvedValue(ON);
+  renderPage();
+  await userEvent.click(await screen.findByRole("button", { name: /Show all .* checks/ }));
+  const healthReads = supportHealth.mock.calls.length;
+  await userEvent.type(screen.getByRole("searchbox", { name: "Search diagnostic checks" }), "zzznomatch");
+  expect(screen.getByText("No checks match that search.")).toBeInTheDocument();
+  expect(supportHealth).toHaveBeenCalledTimes(healthReads);
 });

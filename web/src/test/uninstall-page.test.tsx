@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +23,29 @@ class FakeEventSource {
 }
 vi.stubGlobal("EventSource", FakeEventSource);
 
+const PREVIEW = {
+  filters_restored: 48,
+  filters_skipped: [],
+  filters_unreachable: [],
+  filters_failed: [],
+  collections_deleted: ["✨ Movies Picked for You", "✨ TV Shows Picked for You"],
+  rows_disabled: 3,
+  dry_run: true,
+  message: "Preview only — nothing was changed.",
+};
+
+/** The page asks for the dry run on mount and the real run on confirm; answer each with its own result. */
+function answer(preview: unknown, real: unknown = preview) {
+  uninstall.mockImplementation((dry: boolean) => Promise.resolve(dry ? preview : real));
+}
+
+async function confirmAndUninstall() {
+  // The confirm button is locked until the preview has loaded, so wait for its counts first.
+  await screen.findByText(/^Restores /);
+  await userEvent.type(screen.getByLabelText(/type/i), "uninstall shortlist");
+  await userEvent.click(screen.getByRole("button", { name: /uninstall and restore server/i }));
+}
+
 function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -37,10 +60,24 @@ function renderPage() {
 }
 
 describe("UninstallPage", () => {
-  beforeEach(() => uninstall.mockReset());
+  beforeEach(() => { uninstall.mockReset(); });
+
+  it("explains a failed preview, keeps the uninstall locked, and lets the owner retry the preview", async () => {
+    uninstall.mockRejectedValue(new Error("Preview unavailable"));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/preview/i);
+    await userEvent.type(screen.getByLabelText(/type/i), "uninstall shortlist");
+    expect(screen.getByRole("button", { name: /uninstall and restore server/i })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(uninstall).toHaveBeenCalledTimes(2);
+    expect(uninstall).toHaveBeenLastCalledWith(true);
+  });
 
   it("gates the destructive action behind the exact confirm phrase", async () => {
+    answer(PREVIEW);
     renderPage();
+    await screen.findByText(/^Restores /);
     const button = screen.getByRole("button", {
       name: /uninstall and restore server/i,
     });
@@ -50,24 +87,43 @@ describe("UninstallPage", () => {
     expect(button).toBeEnabled();
   });
 
-  it("previews the plan with a dry run", async () => {
-    uninstall.mockResolvedValue({
-      filters_restored: 48,
-      filters_skipped: [],
-      filters_unreachable: [],
-      filters_failed: [],
-      collections_deleted: ["✨ Picked for You"],
-      rows_disabled: 1,
-      dry_run: true,
-      message: "Preview only — nothing was changed.",
-    });
+  it("keeps the confirm button disabled until the preview has loaded", async () => {
+    let resolvePreview: (value: unknown) => void = () => {};
+    uninstall.mockImplementation(() => new Promise((resolve) => { resolvePreview = resolve; }));
     renderPage();
 
-    await userEvent.click(screen.getByRole("button", { name: /preview/i }));
+    await userEvent.type(screen.getByLabelText(/type/i), "uninstall shortlist");
+    const button = screen.getByRole("button", { name: /uninstall and restore server/i });
+    expect(button).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(/working out what uninstall will change/i);
+
+    resolvePreview(PREVIEW);
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it("previews the plan with a dry run on arrival, counts first, with no button to press", async () => {
+    answer(PREVIEW);
+    renderPage();
 
     expect(uninstall).toHaveBeenCalledWith(true);
-    expect(await screen.findByText(/Preview only/i)).toBeInTheDocument();
-    expect(screen.getByText(/1 row/)).toBeInTheDocument(); // the new rows count is surfaced
+    expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
+    const counts = await screen.findByText(/^Restores /);
+    expect(counts).toHaveTextContent(
+      "Restores 48 share filters from their snapshots, deletes 2 collections and switches off 3 rows.",
+    );
+    expect(screen.getByText(/Preview only/i)).toBeInTheDocument();
+    // The counts come before the controls that act on them.
+    const confirm = screen.getByLabelText(/type/i);
+    expect(counts.compareDocumentPosition(confirm) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("uses singular words for a count of one", async () => {
+    answer({ ...PREVIEW, filters_restored: 1, collections_deleted: ["✨ Picked for You"], rows_disabled: 1 });
+    renderPage();
+
+    expect(await screen.findByText(/^Restores /)).toHaveTextContent(
+      "Restores 1 share filter from its snapshot, deletes 1 collection and switches off 1 row.",
+    );
   });
 
   it("shows a completion summary of what it did when the uninstall finishes", async () => {
@@ -83,10 +139,7 @@ describe("UninstallPage", () => {
     });
     renderPage();
 
-    await userEvent.type(screen.getByLabelText(/type/i), "uninstall shortlist");
-    await userEvent.click(
-      screen.getByRole("button", { name: /uninstall and restore server/i }),
-    );
+    await confirmAndUninstall();
 
     expect(await screen.findByText(/Uninstall complete/i)).toBeInTheDocument();
     // The three counts of what actually happened are surfaced.
@@ -118,10 +171,7 @@ describe("UninstallPage", () => {
     });
     renderPage();
 
-    await userEvent.type(screen.getByLabelText(/type/i), "uninstall shortlist");
-    await userEvent.click(
-      screen.getByRole("button", { name: /uninstall and restore server/i }),
-    );
+    await confirmAndUninstall();
 
     expect(await screen.findByText(/left to retry/i)).toBeInTheDocument();
     expect(screen.queryByText(/Uninstall complete/i)).not.toBeInTheDocument();
@@ -153,10 +203,7 @@ describe("UninstallPage", () => {
     });
     renderPage();
 
-    await userEvent.type(screen.getByLabelText(/type/i), "uninstall shortlist");
-    await userEvent.click(
-      screen.getByRole("button", { name: /uninstall and restore server/i }),
-    );
+    await confirmAndUninstall();
 
     expect(await screen.findByText(/Uninstall complete/i)).toBeInTheDocument();
     expect(
@@ -187,8 +234,6 @@ describe("UninstallPage", () => {
         "Preview only — nothing was changed. plex.tv listed none of the 1 account on file.",
     });
     renderPage();
-
-    await userEvent.click(screen.getByRole("button", { name: /preview/i }));
 
     expect(await screen.findByText(/Preview only/i)).toBeInTheDocument();
     expect(screen.getAllByText(/didn.t list/i).length).toBeGreaterThan(0);
@@ -221,10 +266,7 @@ describe("UninstallPage", () => {
     });
     renderPage();
 
-    await userEvent.type(screen.getByLabelText(/type/i), "uninstall shortlist");
-    await userEvent.click(
-      screen.getByRole("button", { name: /uninstall and restore server/i }),
-    );
+    await confirmAndUninstall();
 
     expect(await screen.findByText(/left to retry/i)).toBeInTheDocument();
     expect(screen.queryByText(/Uninstall complete/i)).not.toBeInTheDocument();

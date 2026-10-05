@@ -1,17 +1,17 @@
-import { useMutation } from "@tanstack/react-query";
-import { Check, Loader2 } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, ArrowRight, Loader2, ShieldCheck } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
+import { ErrorState } from "@/components/query-boundary";
 import { FakePlexRow } from "@/components/fake-plex-row";
 import { RowSizeField } from "@/components/row-size-field";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, apiErrorMessage } from "@/lib/api";
 import { ROW_SIZE_DEFAULT } from "@/lib/constants";
 import { renderRowName, settingString } from "@/lib/format";
-import { useSettings } from "@/lib/queries";
+import { queryKeys, useSettings } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 import type { StepProps } from "./step-props";
@@ -26,7 +26,8 @@ type TemplateChoice = "static" | "dynamic" | "custom";
  * Step 6 — row name template with a live fake-Plex-row preview, row size,
  * and the schedule time (design doc §3 step 6). Writes settings on save.
  */
-export function StepCustomize({ update, next }: StepProps) {
+export function StepCustomize({ update, next, back }: StepProps) {
+  const queryClient = useQueryClient();
   const [choice, setChoice] = useState<TemplateChoice>("static");
   const [customTpl, setCustomTpl] = useState("✨ Fresh picks");
   const [rowSize, setRowSize] = useState(ROW_SIZE_DEFAULT);
@@ -88,6 +89,7 @@ export function StepCustomize({ update, next }: StepProps) {
         "row.size": rowSize,
       }),
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.settings });
       update({ customized: true });
       next();
     },
@@ -111,10 +113,13 @@ export function StepCustomize({ update, next }: StepProps) {
     ];
 
   return (
-    <div className="space-y-6">
-      <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Row name</legend>
-        <div className="grid gap-2 sm:grid-cols-3">
+    <div className="space-y-8">
+    <div className="grid grid-cols-1 items-start gap-7 md:grid-cols-[minmax(0,.95fr)_minmax(0,1.05fr)] md:gap-9">
+      <div className="min-w-0 space-y-6">
+      {settings.isError && <ErrorState error={settings.error} onRetry={() => void settings.refetch()} />}
+      <fieldset className="space-y-3">
+        <legend className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Row name</legend>
+        <div className="grid gap-2">
           {templateOptions.map((option) => (
             <button
               key={option.id}
@@ -122,24 +127,20 @@ export function StepCustomize({ update, next }: StepProps) {
               onClick={() => setChoice(option.id)}
               aria-pressed={choice === option.id}
               className={cn(
-                "rounded-lg text-left",
-                choice === option.id && "ring-2 ring-primary",
+                "flex min-h-18 items-start gap-3 rounded-lg border bg-card p-3.5 text-left transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                choice === option.id && "border-primary/60 bg-gradient-to-r from-primary/15 to-primary/5",
               )}
             >
-              <Card className="h-full">
-                <CardContent className="space-y-1 p-4">
-                  <p className="flex items-center justify-between text-sm font-medium">
+              <span aria-hidden="true" className={cn("mt-1 grid size-4 shrink-0 place-items-center rounded-full border", choice === option.id ? "border-primary" : "border-muted-foreground/50")}>
+                {choice === option.id && <span className="size-2 rounded-full bg-primary" />}
+              </span>
+              <div className="min-w-0 flex-1 space-y-1">
+                  <p className="text-sm font-medium leading-snug">
                     {option.label}
-                    {choice === option.id && (
-                      <Check
-                        className="h-4 w-4 text-primary"
-                        aria-hidden="true"
-                      />
-                    )}
                   </p>
                   <p className="text-xs text-muted-foreground">{option.hint}</p>
-                </CardContent>
-              </Card>
+              </div>
+              {option.id === "static" && <span className="pt-1 text-[9px] font-medium uppercase tracking-wide text-primary/80">Classic</span>}
             </button>
           ))}
         </div>
@@ -153,7 +154,7 @@ export function StepCustomize({ update, next }: StepProps) {
             value={customTpl}
             onChange={(event) => setCustomTpl(event.target.value)}
           />
-          <div className="flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {EMOJI_CHOICES.map((emoji) => (
               <Button
                 key={emoji}
@@ -177,55 +178,47 @@ export function StepCustomize({ update, next }: StepProps) {
         </div>
       )}
 
-      <div className="rounded-lg border bg-black/40 p-5">
-        <p className="mb-3 text-xs uppercase tracking-widest text-muted-foreground">
-          Live preview
-        </p>
+      <RowSizeField value={rowSize} onChange={setRowSize} presets={[10, 15, 20]} />
+
+      <p className="hidden text-xs leading-relaxed text-muted-foreground md:block">
+        Starts with a nightly refresh. Change the name and size later in Settings,
+        or change the schedule and switch the row off in its editor.
+      </p>
+      <p className="text-xs text-muted-foreground md:hidden">You can change these choices later in Settings.</p>
+      </div>
+      <div className="min-w-0 space-y-4 md:sticky md:top-8">
+      <section aria-label="Preview on Plex" className="overflow-hidden rounded-xl border bg-gradient-to-br from-primary/5 via-card to-background">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Live preview</p>
+          <span className="text-xs text-primary/75">On Plex</span>
+        </div>
+        <div className="space-y-3 px-5 pb-5 pt-6">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Home · Movies</p>
         <FakePlexRow
           title={renderRowName(template) || STATIC_TPL}
-          posters={Math.min(rowSize, 8)}
-          highlight
+          illustrative
         />
-        <p className="mt-3 text-xs text-muted-foreground">
-          This previews the row&rsquo;s <em>title</em> as it&rsquo;ll appear on
-          Plex &mdash; the &ldquo;Because you watched&hellip;&rdquo; option even
-          fills in a real example. The tiles are placeholders: the real posters
-          come from each person&rsquo;s own library once Shortlist builds the
-          rows, on the last screen of this setup.
+        <div className="flex justify-between gap-3 text-[10px] text-muted-foreground"><span>Showing 4 of {rowSize} titles</span><span>Illustrative picks</span></div>
+        </div>
+        <p className="border-t bg-background/60 px-5 py-4 text-xs leading-relaxed text-muted-foreground">
+          Each person gets their own recommendations. This example previews the name;
+          real artwork and picks come from their library after the first run.
+          <span className="md:hidden"> Starts nightly; change the schedule or switch the row off later in its editor.</span>
         </p>
+      </section>
+      <p className="flex items-start gap-2 text-xs leading-relaxed text-muted-foreground"><ShieldCheck aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />Row names do not change your Plex sharing settings.</p>
       </div>
-
-      <RowSizeField value={rowSize} onChange={setRowSize} />
-
-      <p className="text-sm text-muted-foreground">
-        This row refreshes nightly to start with. Each row keeps its own
-        schedule &mdash; change how often it refreshes, or switch it off
-        altogether, in the row&rsquo;s editor once you&rsquo;re set up.
-      </p>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={() => save.mutate()} disabled={save.isPending}>
-          {save.isPending && (
-            <Loader2 className="animate-spin" aria-hidden="true" />
-          )}
-          Save & continue
-        </Button>
-        {/* Skip also SAVES the current values (they're always valid — every field is pre-filled), so a
-            name or size the user typed is never silently dropped by taking the quick path out. It's a
-            softer-worded alias for the same save; everything can still be changed later in Settings. */}
-        <Button
-          variant="ghost"
-          onClick={() => save.mutate()}
-          disabled={save.isPending}
-        >
-          Skip for now — you can change this later
+    </div>
+    <footer className="sticky bottom-0 z-10 space-y-2 border-t bg-background/95 py-4 backdrop-blur-sm md:static md:pt-5">
+      <div className="flex items-center justify-between gap-3">
+        {back ? <Button variant="ghost" onClick={back}><ArrowLeft aria-hidden="true" />Back</Button> : <span />}
+        <Button onClick={() => save.mutate()} disabled={save.isPending || settings.isPending || settings.isError}>
+          {save.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+          Save & continue<ArrowRight aria-hidden="true" className="ml-3" />
         </Button>
       </div>
-      {save.isError && (
-        <p role="alert" className="text-sm text-destructive-text">
-          {apiErrorMessage(save.error, "Saving failed. Try again.")}
-        </p>
-      )}
+      {save.isError ? <p role="alert" className="text-sm text-destructive-text">{apiErrorMessage(save.error, "Saving failed. Try again.")}</p> : <p className="text-right text-xs text-muted-foreground">Saves these choices, then opens your first run.</p>}
+    </footer>
     </div>
   );
 }

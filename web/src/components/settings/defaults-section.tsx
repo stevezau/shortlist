@@ -1,14 +1,18 @@
+import { ChevronRight } from "lucide-react";
 import { useId, useState } from "react";
 
 import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
-import { Card, CardContent } from "@/components/ui/card";
+import { useSaveBarReport } from "@/components/settings/save-bar-context";
+import { SettingsPanel, SettingsSection } from "@/components/settings/section-layout";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { ROW_SIZE_DEFAULT } from "@/lib/constants";
 import { renderRowName, settingNumber, settingString } from "@/lib/format";
+import { unselectedClass } from "@/lib/selected";
 import type { Settings } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 /** The default row name template and row size applied to the "Picked for You" row. */
 export function DefaultsSection({ settings }: { settings: Settings }) {
@@ -29,61 +33,60 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
     "row.size": rowSize,
   }));
 
+  const inSaveBar = useSaveBarReport("row-defaults", save);
+
   return (
-    <section aria-labelledby="defaults-heading" className="space-y-3">
-      <h2 id="defaults-heading" className="text-lg font-semibold">
-        Row defaults
-      </h2>
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="space-y-2">
-            <Label htmlFor={rowNameId}>Row name template</Label>
-            <Input
-              id={rowNameId}
-              value={rowNameTpl}
-              onChange={(event) => setRowNameTpl(event.target.value)}
-            />
-            <p className="text-sm text-muted-foreground">
-              The name each person sees on their row. You can drop in:
-            </p>
-            <ul className="space-y-1 text-sm text-muted-foreground">
-              <li>
-                <span className="font-mono">{"{library_name}"}</span> — the
-                library&rsquo;s name (Movies, TV Shows)
-              </li>
-              <li>
-                <span className="font-mono">{"{user}"}</span> — the
-                person&rsquo;s name
-              </li>
-              <li>
-                <span className="font-mono">{"{top_seed}"}</span> — a title they
-                recently watched
-              </li>
-            </ul>
-            <p className="text-sm text-muted-foreground">
-              Each person&rsquo;s row stays private whether or not their name is
-              in it, so leaving <span className="font-mono">{"{user}"}</span>{" "}
-              out is fine.
-            </p>
-            <div className="rounded-md border bg-card p-3">
-              <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                On Plex this looks like
-              </p>
-              <p className="font-medium text-primary">
-                {renderRowName(rowNameTpl) || "✨ Picked for You"}
-              </p>
-            </div>
-          </div>
-          <RowSizeField value={rowSize} onChange={setRowSize} />
-          <SaveStatus
-            isPending={save.isPending}
-            isError={save.isError}
-            error={save.error}
-            saved={save.saved}
-            onRetry={save.retry}
+    <SettingsSection
+      id="row-defaults"
+      title="Row defaults"
+      description="What a new row is called and how many titles it holds. Existing rows keep their own."
+    >
+      {!inSaveBar && (
+        <SaveStatus
+          isPending={save.isPending}
+          isError={save.isError}
+          error={save.error}
+          saved={save.saved}
+          onRetry={save.retry}
+        />
+      )}
+      <SettingsPanel>
+        <div className="space-y-3 px-4 py-4 sm:px-5">
+          <Label htmlFor={rowNameId}>Row name template</Label>
+          <Input
+            id={rowNameId}
+            value={rowNameTpl}
+            onChange={(event) => setRowNameTpl(event.target.value)}
           />
-        </CardContent>
-      </Card>
-    </section>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" role="group" aria-label="Insert a name variable">
+            <span className="mr-1">Insert</span>
+            {["library_name", "user", "top_seed"].map((token) => (
+              <button
+                key={token}
+                type="button"
+                aria-label={`Insert ${token.replaceAll("_", " ")}`}
+                onClick={() => setRowNameTpl((name) => `${name}${name.endsWith(" ") ? "" : " "}{${token}}`)}
+                className={cn("rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", unselectedClass)}
+              >
+                + {token.replaceAll("_", " ")}
+              </button>
+            ))}
+          </div>
+          <details className="group text-xs text-muted-foreground">
+            <summary className="flex w-fit cursor-pointer items-center gap-1.5 text-accent-foreground underline-offset-2 hover:underline list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />How name variables work</summary>
+            <p className="max-w-prose pt-2 leading-relaxed">Library name becomes Movies or TV Shows; user becomes the person’s name; top seed becomes a title they recently watched. Row names do not change your Plex sharing settings.</p>
+          </details>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-md border bg-elevated px-3 py-2.5">
+            <span className="text-xs text-muted-foreground">On Plex this looks like</span>
+            <span className="font-medium text-foreground [overflow-wrap:anywhere]">
+              {renderRowName(rowNameTpl) || "✨ Picked for You"}
+            </span>
+          </div>
+        </div>
+        <div className="px-4 py-4 sm:px-5">
+          <RowSizeField value={rowSize} onChange={setRowSize} />
+        </div>
+      </SettingsPanel>
+    </SettingsSection>
   );
 }

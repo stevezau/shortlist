@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { Segmented } from "@/components/segmented";
+import { Badge } from "@/components/ui/badge";
 import { UserAvatar } from "@/components/user-avatar";
 import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,8 @@ function UserRow({
   onSelect,
   cost,
   built,
+  added,
+  notPrivate,
 }: {
   result: RunUserResult;
   selected: string;
@@ -41,6 +44,10 @@ function UserRow({
   cost?: RunRowCost | null;
   /** Did this row deliver anything to them? `null`/`undefined` = not recorded, so say nothing. */
   built?: boolean | null;
+  /** Titles THIS row added for them this run; nothing is said when it is zero or unknown. */
+  added?: number;
+  /** This run found their account can see rows that are not theirs. */
+  notPrivate?: boolean;
 }) {
   const failed = result.error !== null;
   const isSelected = result.slug === selected;
@@ -53,13 +60,25 @@ function UserRow({
       className={cn(
         "flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         failed ? "border-l-destructive/70" : "border-l-transparent",
-        isSelected ? "bg-primary/10" : "hover:bg-muted/60",
+        isSelected ? "bg-raised shadow-selected-y" : "hover:bg-muted/60",
       )}
     >
       <UserAvatar name={result.username} size="sm" />
-      <span className="min-w-0 flex-1 truncate font-medium">
-        {result.display_name || result.username}
+      <span className="min-w-0 flex-1">
+        <span className="block break-words font-medium">
+          {result.display_name || result.username}
+        </span>
+        {added !== undefined && added > 0 && (
+          <span className="block text-xs text-muted-foreground tabular-nums">
+            +{added} new
+          </span>
+        )}
       </span>
+      {notPrivate && (
+        <Badge variant="warning" className="shrink-0 border-warning/40 px-2 py-0">
+          not private
+        </Badge>
+      )}
       {failed ? (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive-text">
           <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
@@ -106,6 +125,8 @@ export function UserTabs({
   showSummary = true,
   costBySlug,
   builtBySlug,
+  newBySlug,
+  notPrivate,
 }: {
   results: RunUserResult[];
   selected: string;
@@ -119,6 +140,10 @@ export function UserTabs({
   /** Whether THIS row delivered anything to each person, keyed by slug. Separate from `costBySlug`
    *  because a cost exists for rows that were never written — see `RunRowPerson.built`. */
   builtBySlug?: Map<string, boolean | null>;
+  /** Titles THIS row added for each person, keyed by slug. */
+  newBySlug?: Map<string, number>;
+  /** Lower-cased usernames the run's privacy measurement flagged. */
+  notPrivate?: Set<string>;
 }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
@@ -158,7 +183,18 @@ export function UserTabs({
       .length > 1;
 
   return (
-    <div className="space-y-3" role="tablist" aria-label="Users in this run">
+    <div className="space-y-3" role="tablist" aria-label="Users in this run" aria-orientation="vertical"
+      onKeyDown={(event) => {
+        if (!(event.target instanceof HTMLElement) || event.target.getAttribute("role") !== "tab") return;
+        const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+        const index = tabs.indexOf(event.target as HTMLButtonElement);
+        const next = event.key === "ArrowDown" ? (index + 1) % tabs.length : event.key === "ArrowUp" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+        if (next === null) return;
+        event.preventDefault();
+        tabs[next]?.focus();
+        tabs[next]?.click();
+      }}>
+
       <div className="space-y-2">
         {mixed ? (
           <Segmented<"all" | "failed" | "ok">
@@ -168,7 +204,7 @@ export function UserTabs({
             options={[
               { value: "all", label: `All ${results.length}` },
               { value: "failed", label: `Failed ${failedTotal}` },
-              { value: "ok", label: `OK ${okTotal + skippedTotal}` },
+              { value: "ok", label: `No errors ${results.length - failedTotal}` },
             ]}
           />
         ) : (
@@ -209,7 +245,7 @@ export function UserTabs({
 
       {/* One scannable, scrollable list — failures first, so a partly-failed run opens on what you
           came for. A vertical list reads far better than a wrapped grid of 48 near-identical pills. */}
-      <div className="overflow-hidden rounded-lg border">
+      <div>
         <div className="max-h-96 divide-y divide-border/50 overflow-y-auto">
           {bothGroups && failed.length > 0 && (
             <GroupLabel>Failed · {failed.length}</GroupLabel>
@@ -222,6 +258,8 @@ export function UserTabs({
               onSelect={onSelect}
               cost={costBySlug?.get(result.slug)}
               built={builtBySlug?.get(result.slug)}
+              added={newBySlug?.get(result.slug)}
+              notPrivate={notPrivate?.has(result.username.toLowerCase())}
             />
           ))}
           {bothGroups && ok.length > 0 && (
@@ -235,6 +273,8 @@ export function UserTabs({
               onSelect={onSelect}
               cost={costBySlug?.get(result.slug)}
               built={builtBySlug?.get(result.slug)}
+              added={newBySlug?.get(result.slug)}
+              notPrivate={notPrivate?.has(result.username.toLowerCase())}
             />
           ))}
           {bothGroups && skipped.length > 0 && (
@@ -248,6 +288,8 @@ export function UserTabs({
               onSelect={onSelect}
               cost={costBySlug?.get(result.slug)}
               built={builtBySlug?.get(result.slug)}
+              added={newBySlug?.get(result.slug)}
+              notPrivate={notPrivate?.has(result.username.toLowerCase())}
             />
           ))}
           {pending.length > 0 && (
@@ -261,6 +303,8 @@ export function UserTabs({
               onSelect={onSelect}
               cost={costBySlug?.get(result.slug)}
               built={builtBySlug?.get(result.slug)}
+              added={newBySlug?.get(result.slug)}
+              notPrivate={notPrivate?.has(result.username.toLowerCase())}
             />
           ))}
           {shown.length === 0 && (

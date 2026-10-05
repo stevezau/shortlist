@@ -133,6 +133,26 @@ export function JobRow({
   const [historyOpen, setHistoryOpen] = useState(false);
   const last = entry.last;
 
+  // Next run earns a column only when there IS a schedule — an em-dash in eight rows is noise. But a
+  // job that COULD be scheduled and isn't must say so: rendering nothing left "Sync check" looking
+  // broken next to neighbours that all showed a time, with no way to tell an opt-in schedule from a
+  // missing one.
+  const nextRun =
+    entry.scheduled && entry.next_run ? (
+      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:w-32">
+        <Clock className="size-3 shrink-0" aria-hidden="true" />
+        {timeUntil(entry.next_run)}
+      </span>
+    ) : entry.schedule_optional ? (
+      <span
+        className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:w-32"
+        title="Off by choice, not broken — open this job to give it a schedule."
+      >
+        <Clock className="size-3 shrink-0" aria-hidden="true" />
+        Not scheduled
+      </span>
+    ) : null;
+
   return (
     // An OPEN row is tinted end to end — header included — so the panel reads as belonging to the job
     // above it. Without that the body just ran into the next row and "Back up the database" looked
@@ -144,9 +164,14 @@ export function JobRow({
       )}
       data-testid={`job-${entry.kind}`}
     >
+      {/* Two layouts from one tree. A phone gets a fixed two-line grid — name and status on the first
+          line, next run and tag under the name, the button at the right — so every row puts each
+          piece in the same place; the old wrapping row put status, time and button wherever the
+          name's length left room. From `sm` it is one line again: name, tag, status, next run,
+          button, with `order` restoring that sequence around the phone-only meta wrapper. */}
       <div
         className={cn(
-          "flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5",
+          "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2.5 sm:flex sm:flex-wrap sm:gap-y-2",
           open && "border-b border-border/60",
         )}
       >
@@ -154,10 +179,10 @@ export function JobRow({
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
-          // `min-w-[11rem]`, not `min-w-0`: with the row set to wrap, a floor on the name is what
+          // `sm:min-w-[11rem]`, not `min-w-0`: with the row set to wrap, a floor on the name is what
           // makes the tag/status/time wrap to a second line. Without it the name absorbed every
           // pixel the others wanted and "Check and fix rows on Plex" rendered as "Check…".
-          className="flex min-w-[11rem] flex-1 items-center gap-2.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="col-start-1 row-start-1 flex min-w-0 items-center gap-2.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:order-1 sm:min-w-[11rem] sm:flex-1"
         >
           <ChevronRight
             aria-hidden="true"
@@ -167,43 +192,38 @@ export function JobRow({
             aria-hidden="true"
             className="size-4 shrink-0 text-muted-foreground"
           />
-          {/* Wraps on a phone, truncates from `sm`. At 390 the floor above leaves the name ~207px
-              and the longest job needs 249, so three of them ellipsed into nothing you could tell
-              apart — "Put an un-paused person's ro…", "Remove a row's collections fr…". The row is
-              already `flex-wrap`, so a name on two lines costs a few pixels of height and nothing
-              else; from `sm` there is room for one line and truncation never fires. */}
+          {/* Wraps on a phone, truncates from `sm`. At 390 the longest job needs more than a line,
+              and three of them ellipsed into nothing you could tell apart — "Put an un-paused
+              person's ro…", "Remove a row's collections fr…". A name on two lines costs a few
+              pixels of height and nothing else; from `sm` there is room for one line. */}
           <span className="text-sm font-medium sm:truncate">{entry.label}</span>
         </button>
 
-        {/* Outside the expander button on purpose: it is information about the job, not part of the
-            control's accessible name ("Sync check, Can delete" would be read as the button's name). */}
-        {tag && <EffectTag tag={tag} />}
+        <div className="col-start-2 row-start-1 justify-self-end sm:order-3">
+          <StatusChip entry={entry} queuedTitle={queuedTitle} />
+        </div>
 
-        <StatusChip entry={entry} queuedTitle={queuedTitle} />
-
-        {/* Next run earns a column only when there IS a schedule — an em-dash in eight rows is noise.
-            But a job that COULD be scheduled and isn't must say so: rendering nothing left "Sync
-            check" looking broken next to neighbours that all showed a time, with no way to tell an
-            opt-in schedule from a missing one. */}
-        {entry.scheduled && entry.next_run ? (
-          <span className="hidden w-32 shrink-0 items-center gap-1.5 text-xs text-muted-foreground sm:flex">
-            <Clock className="size-3 shrink-0" aria-hidden="true" />
-            {timeUntil(entry.next_run)}
-          </span>
-        ) : entry.schedule_optional ? (
-          <span
-            className="hidden w-32 shrink-0 items-center gap-1.5 text-xs text-muted-foreground/60 sm:flex"
-            title="Off by choice, not broken — open this job to give it a schedule."
-          >
-            <Clock className="size-3 shrink-0" aria-hidden="true" />
-            Not scheduled
-          </span>
-        ) : null}
+        {(tag || nextRun) && (
+          // Indented to the name: chevron (1rem) + gap (0.625rem) + icon (1rem) + gap (0.625rem).
+          <div className="col-start-1 row-start-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 pl-[3.25rem] sm:contents">
+            {nextRun && <div className="sm:order-4">{nextRun}</div>}
+            {/* Outside the expander button on purpose: it is information about the job, not part of
+                the control's accessible name ("Sync check, Can delete" would be read as its name). */}
+            {tag && (
+              <div className="sm:order-2">
+                <EffectTag tag={tag} />
+              </div>
+            )}
+          </div>
+        )}
 
         {action && (
           <Button
             size="sm"
             variant="outline"
+            // One width for "Run" and "Back up now" alike, so the status and next-run columns
+            // line up down the list on a desktop.
+            className="col-start-2 row-start-2 justify-self-end sm:order-5 sm:min-w-[6.5rem]"
             loading={action.pending}
             onClick={action.run}
             // The visible label is short because five of these stack up, but "Run" five times over
@@ -214,11 +234,13 @@ export function JobRow({
           </Button>
         )}
 
-        {/* `w-full` inside the wrapping flex row, so it takes a line of its own under everything
-            else at every width. A red "Can delete" whose only reassurance is a hover title is not
-            reassurance at all — on a phone there is no hover, and the tag is all that is left. */}
+        {/* A line of its own under everything else at every width, indented to the name it is about.
+            A red "Can delete" whose only reassurance is a hover title is not reassurance at all — on
+            a phone there is no hover, and the tag is all that is left. */}
         {tag?.note && (
-          <p className="w-full text-xs text-muted-foreground">{tag.note}</p>
+          <p className="col-span-2 pl-[3.25rem] text-xs text-muted-foreground sm:order-6 sm:w-full">
+            {tag.note}
+          </p>
         )}
       </div>
 

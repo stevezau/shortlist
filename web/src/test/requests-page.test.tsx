@@ -83,10 +83,12 @@ function person(username: string, displayName: string): User {
     enabled: true,
     cold_start: false,
     request_tag: "",
+    requested_by_tag: "",
     prefs: {},
     history_depth: 0,
     last_run_at: null,
-    hit_rate: null,
+    picks_watched_30d: null,
+    last_pick_watched_at: null,
     preview_titles: [],
   };
 }
@@ -162,7 +164,10 @@ function toolbar() {
 
 /** The action group on one card, which acts on that title alone. */
 function rowActions(title: string) {
-  return within(screen.getByRole("group", { name: `Actions for ${title}` }));
+  const group = screen.getByRole("group", { name: `Actions for ${title}` });
+  const menu = group.querySelector("details");
+  if (menu) menu.open = true;
+  return within(group);
 }
 
 describe("RequestsPage", () => {
@@ -405,10 +410,10 @@ describe("RequestsPage", () => {
     await screen.findByText("Dune");
     expect(screen.getByText("Shogun")).toBeTruthy();
     // The media filter appears (with per-type counts) because the queue mixes both.
-    await userEvent.click(screen.getByRole("button", { name: "Movies (1)" }));
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Filter by library" }), "movie");
     expect(screen.getByText("Dune")).toBeTruthy();
     expect(screen.queryByText("Shogun")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Shows (1)" }));
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Filter by library" }), "show");
     expect(screen.getByText("Shogun")).toBeTruthy();
     expect(screen.queryByText("Dune")).toBeNull();
   });
@@ -816,8 +821,7 @@ describe("RequestsPage", () => {
     renderPage();
     await screen.findByText("Dune");
     // All movies — a Movies/Shows split would be noise, so it isn't rendered.
-    expect(screen.queryByRole("button", { name: /^Movies/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Shows/ })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Filter by library" })).toBeNull();
   });
 
   it("keeps rejected titles on their own tab, offered only once something is rejected", async () => {
@@ -1220,6 +1224,30 @@ describe("RequestsPage", () => {
    * back to the bulk toolbar. The synopsis and the per-row buttons are the two halves of that.
    */
   describe("deciding one title at a time", () => {
+    it("expands request details without selecting the title", async () => {
+      listRequests.mockResolvedValue([candidate({ id: 1, title: "Sinners", overview: "A synopsis to review." })]);
+      renderPage();
+      await screen.findByText("Sinners");
+      const details = screen.getByText("Details & title links").closest("details")!;
+      expect(details).not.toHaveAttribute("open");
+      await userEvent.click(screen.getByText("Details & title links"));
+      expect(details).toHaveAttribute("open");
+      expect(screen.getByRole("checkbox", { name: "Select Sinners" })).not.toBeChecked();
+      expect(within(details).getByRole("link", { name: /Trakt/ })).toHaveAttribute("href", expect.stringContaining("trakt.tv/search/tmdb/"));
+    });
+
+    it("keeps all three labelled title actions visible without opening a menu", async () => {
+      listRequests.mockResolvedValue([candidate({ id: 1, title: "Sinners" })]);
+      renderPage();
+      await screen.findByText("Sinners");
+      const group = screen.getByRole("group", { name: "Actions for Sinners" });
+      expect(group.querySelector("details")).toBeNull();
+      for (const name of ["Send", "Delete", "Reject"]) {
+        expect(within(group).getByRole("button", { name })).toBeVisible();
+      }
+      expect(screen.getByRole("checkbox", { name: "Select Sinners" })).not.toBeChecked();
+    });
+
     it("shows TMDB's synopsis on a waiting title", async () => {
       listRequests.mockResolvedValue([
         candidate({
@@ -1244,7 +1272,7 @@ describe("RequestsPage", () => {
       await screen.findByText("Sinners");
       const card = screen
         .getByRole("group", { name: "Actions for Sinners" })
-        .closest("div[class*='rounded-lg']");
+        .closest("div[class*='rounded-xl']");
       expect(card?.textContent).not.toMatch(/^\s*$/);
       expect(screen.queryByTitle("   ")).toBeNull();
     });

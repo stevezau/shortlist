@@ -11,7 +11,8 @@ to the request.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import date
 
@@ -48,16 +49,22 @@ from shortlist.engine.pipeline import identity_map
 from shortlist.engine.placeholders import (
     catalogue_seasons,
     fill_season,
+    fill_theme,
     names_a_seed,
     needs_a_run,
     season_renderings,
     uses_season,
+    uses_theme,
 )
-from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Run, User
+from shortlist.engine.seasons import Catalogue, Season
+from shortlist.engine.themes import ThemeSpec
+from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Run, Theme, ThemeHistory, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import write_audit
 from shortlist.server.services.context_builder import ContextBuilder
+from shortlist.server.services.season_catalogue import load_catalogue
+from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -109,6 +116,8 @@ class _OtherRows:
     global_template: str
     #: {(user slug, row slug) -> {(library key, title)}} as the delivery ledger last recorded them.
     delivered: dict[tuple[str, str], set[tuple[str, str]]]
+    #: Every season, so a seasonal row claims the title of each one it may be wearing (#124, #137).
+    catalogue: Catalogue
 
 
 def _other_rows(session, secrets, slug: str) -> _OtherRows:
@@ -132,6 +141,11 @@ def _other_rows(session, secrets, slug: str) -> _OtherRows:
             media=other.media,
             library_keys=[str(k) for k in (other.library_keys or [])],
             fallback_name=other.fallback_name or "",
+            # An AI row's title is filled from its theme, and on an explore row from each person's OWN current
+            # theme (#138): claimed from the row's base theme alone, the title a person's collection really
+            # wears is unclaimed and a removal elsewhere can take it (#121).
+            theme=ContextBuilder._theme_spec(session, other),
+            person_themes=ContextBuilder._person_themes(session, other, audience_by_collection),
         )
         for other in session.query(Collection).filter_by(enabled=True, build="per_person")
         if other.slug != slug
@@ -141,7 +155,9 @@ def _other_rows(session, secrets, slug: str) -> _OtherRows:
     for row in session.query(Delivery).filter(Delivery.title != ""):
         if row.collection_slug in slugs:
             delivered.setdefault((row.user_slug, row.collection_slug), set()).add((row.library_key, row.title))
-    return _OtherRows(specs, SettingsStore(session, secrets).get("row.name_template") or "", delivered)
+    return _OtherRows(
+        specs, SettingsStore(session, secrets).get("row.name_template") or "", delivered, load_catalogue(session)
+    )
 
 
 def _claimed_titles(ctx, udata: dict, other_rows: _OtherRows) -> set[tuple[str, str]]:
@@ -152,7 +168,7 @@ def _claimed_titles(ctx, udata: dict, other_rows: _OtherRows) -> set[tuple[str, 
     renamed or reset the other row's collection.
     """
     profile = replace(_profile_of(udata), row_name_template=udata["prefs"].get("row_name_tpl"))
-    config = EngineConfig(row_name_template=other_rows.global_template)
+    config = EngineConfig(row_name_template=other_rows.global_template, seasons=other_rows.catalogue)
     claimed = titles_other_rows_build(ctx.plex.sections(), profile, config, other_rows.specs, slug="")
     # A `{top_seed}` title cannot be rendered without picks, so rendering never claims one — yet two such
     # rows seeded by one watch wear the same title in different libraries. The ledger records what each
@@ -208,24 +224,235 @@ def title_key(template: str) -> str:
     return render_row_name(probe, _PROBE_PROFILE, [], library_name=_PROBE_LIBRARY).casefold()
 
 
-def title_keys(template: str) -> set[str]:
+def _library_pattern(key: str) -> re.Pattern[str] | None:
+    """``key`` with its `{library_name}` standing in for any library name, or None when it has none."""
+    if _PROBE_LIBRARY not in key:
+        return None
+    return re.compile(".+".join(re.escape(part) for part in key.split(_PROBE_LIBRARY)), re.DOTALL)
+
+
+def clashing_keys(mine: Iterable[str], theirs: Iterable[str]) -> list[str]:
+    """The keys in ``mine`` that a key in ``theirs`` collides with: equal, or, when one is a `{library_name}`
+    title, equal in SOME library. "✨ {library_name} Picked for You" renders "✨ Movies Picked for You" in the
+    Movies library, so a row literally named that shares the default row's collection there (#121). Library
+    names are not known here, so any name in the placeholder's place counts: refusing a title too many is
+    recoverable, two rows on one collection is not."""
+    theirs = list(theirs)
+    clashing = []
+    for key in sorted(mine):
+        own = _library_pattern(key)
+        for other in theirs:
+            pattern = _library_pattern(other)
+            # Two `{library_name}` titles are told apart by the text around it; only a literal is matched
+            # against a pattern, or "{library_name} Picks" would swallow "✨ {library_name} Picks".
+            if key == other or (own is not None and pattern is None and own.fullmatch(other)):
+                clashing.append(key)
+                break
+            if pattern is not None and own is None and pattern.fullmatch(key):
+                clashing.append(key)
+                break
+    return clashing
+
+
+def title_keys(template: str, *, catalogue: Catalogue, theme: ThemeSpec | None = None) -> set[str]:
     """Every key ``template`` can collide on: `title_key` itself, plus, for a seasonal name, the title it
     renders to in each season. In December `{season} picks` IS "Christmas picks", so a plain row with that
     name would share its collection. Every catalogue season rather than only the row's own: refusing a
-    few names too many is recoverable, one collection for two rows is not."""
-    keys = {title_key(template)} | {title_key(rendering) for rendering in season_renderings(template or "")}
+    few names too many is recoverable, one collection for two rows is not.
+
+    An AI row's `{theme}` is filled from ITS theme (#138), not probed: two rows on different themes wear
+    different titles, so only a row on the same theme (or a plain row named like it) can clash. A name using
+    `{theme}` with no theme to fill it renders no title at all."""
+    template = template or ""
+    if uses_theme(template):
+        if theme is None:
+            return set()
+        template = fill_theme(template, theme)
+    keys = {title_key(template)} | {title_key(rendering) for rendering in season_renderings(template, catalogue)}
     return {key for key in keys if key}
 
 
-def _title_keys(session, collection: Collection, secrets) -> set[str]:
+def season_title(template: str, season: Season) -> str:
+    """``template`` as a row following ``season`` is titled in it: the one rendering `title_keys` checks per
+    season, for a check about one season — a row newly ticking it, or the season being named (#137 I-2)."""
+    return season_renderings(template or "", {season.slug: season})[0]
+
+
+def _theme_of(session, collection: Collection) -> ThemeSpec | None:
+    """The theme an AI row follows, as the engine reads it, or None."""
+    row = session.get(Theme, collection.theme_id) if collection.theme_id is not None else None
+    return None if row is None else spec_from_row(row)
+
+
+def _title_keys(session, collection: Collection, secrets, *, catalogue: Catalogue) -> set[str]:
     """Every title this row can end up with: from its own template, and from its fallback name.
 
     Both, because a row now has two ways to be named (issue #84) and either can collide. Empties are
     dropped — a `{top_seed}` row with no fallback renders to nothing for a person with no watch, and
     "no title" cannot clash with "no title": neither row is built for them.
     """
-    keys = title_keys(row_template(session, collection.slug, secrets)) | {title_key(collection.fallback_name or "")}
+    template = row_template(session, collection.slug, secrets)
+    keys = title_keys(template, catalogue=catalogue, theme=_theme_of(session, collection)) | {
+        title_key(collection.fallback_name or "")
+    }
+    # An explore row wears each person's OWN theme (#138), so the title a person's collection really has is
+    # not the base theme's. Every person's current and queued theme counts, audience aside: refusing a name
+    # too many is recoverable, two rows on one collection is not (#121).
+    for person_theme in _person_theme_specs(session, collection):
+        keys |= title_keys(template, catalogue=catalogue, theme=person_theme)
     return {k for k in keys if k}
+
+
+def _person_theme_specs(session, collection: Collection) -> list[ThemeSpec]:
+    """The themes people hold on an explore row as `current` or `next`; empty for any other row."""
+    if collection.theme_id is None or collection.theme_mode != "explore":
+        return []
+    themes = (
+        session.query(Theme)
+        .join(ThemeHistory, ThemeHistory.theme_id == Theme.id)
+        .filter(ThemeHistory.collection_id == collection.id, ThemeHistory.state.in_(("current", "next")))
+        .all()
+    )
+    return [spec_from_row(theme) for theme in {t.id: t for t in themes}.values()]
+
+
+@dataclass(frozen=True)
+class RowView:
+    """What decides a row's title for one person, as the row is now or as an edit would leave it."""
+
+    slug: str
+    name: str
+    template: str
+    fallback_name: str
+    media: str
+    library_keys: tuple[str, ...]
+    #: Plex account ids the row builds for; None is everyone.
+    audience: frozenset[int] | None
+    base_theme: ThemeSpec | None
+    explore: bool
+    row_id: int | None
+
+
+def _row_view(session, collection: Collection, secrets, account_by_user, audience_by_collection) -> RowView:
+    return RowView(
+        slug=collection.slug,
+        name=collection.name,
+        template=row_template(session, collection.slug, secrets),
+        fallback_name=collection.fallback_name or "",
+        media=collection.media or "both",
+        library_keys=tuple(str(k) for k in collection.library_keys or []),
+        audience=_frozenset_or_none(
+            ContextBuilder._subset_audience(collection, account_by_user, audience_by_collection)
+        ),
+        base_theme=_theme_of(session, collection),
+        explore=collection.theme_mode == "explore",
+        row_id=collection.id,
+    )
+
+
+def _frozenset_or_none(accounts) -> frozenset[int] | None:
+    return None if accounts is None else frozenset(accounts)
+
+
+def _held_themes(session) -> dict[tuple[int, int], list[ThemeSpec]]:
+    """{(row id, user id) -> the themes that person holds on that row as current or queued next}."""
+    held: dict[tuple[int, int], list[ThemeSpec]] = {}
+    query = session.query(ThemeHistory, Theme).join(Theme, Theme.id == ThemeHistory.theme_id)
+    for entry, theme in query.filter(ThemeHistory.state.in_(("current", "next"))):
+        held.setdefault((entry.collection_id, entry.user_id), []).append(spec_from_row(theme))
+    return held
+
+
+def _titles_for(view: RowView, user: User, held, catalogue: Catalogue) -> dict[str, str]:
+    """{title key -> the title as shown} the row wears for this person: with each theme they hold on it when it
+    explores (none held means the row's own theme), else with the row's theme."""
+    themes: list[ThemeSpec | None] = list(held.get((view.row_id, user.id), [])) if view.explore else []
+    themes = themes or [view.base_theme]
+    titles: dict[str, str] = {}
+    for theme in themes:
+        shown = fill_theme(view.template, theme) if theme is not None else view.template
+        for key in title_keys(view.template, catalogue=catalogue, theme=theme):
+            titles.setdefault(key, shown)
+    # The name for people with nothing watched yet is a real title too (#84).
+    if fallback := title_key(view.fallback_name):
+        titles.setdefault(fallback, view.fallback_name)
+    return titles
+
+
+def person_clashes(session, secrets, edited: RowView) -> dict[tuple[str, int], str]:
+    """{(other row slug, user id) -> the title} where ``edited`` and that other row would wear one title for
+    that person in a library both build in. The edit is judged by comparing this before and after, so only
+    a clash the edit ADDS is refused and a row that already clashes stays editable."""
+    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    others = [
+        _row_view(session, c, secrets, account_by_user, audience_by_collection)
+        for c in session.query(Collection).filter_by(enabled=True, build="per_person")
+        if c.slug != edited.slug
+    ]
+    others = [o for o in others if rows_can_share_a_library(edited.media, edited.library_keys, o.media, o.library_keys)]
+    if not others:
+        return {}
+    catalogue = load_catalogue(session)
+    held = _held_themes(session)
+    found: dict[tuple[str, int], str] = {}
+    users = session.query(User).filter(User.enabled.is_(True), User.departed_at.is_(None), User.removed_at.is_(None))
+    for user in users:
+        if edited.audience is not None and user.plex_account_id not in edited.audience:
+            continue
+        mine = _titles_for(edited, user, held, catalogue)
+        for other in others:
+            if other.audience is not None and user.plex_account_id not in other.audience:
+                continue
+            shared = clashing_keys(mine.keys(), _titles_for(other, user, held, catalogue).keys())
+            if shared:
+                found[(other.slug, user.id)] = mine[shared[0]]
+    return found
+
+
+def new_person_clash(session, secrets, collection: Collection, after: RowView) -> tuple[Collection, User, str] | None:
+    """The first clash for one person that saving ``collection`` as ``after`` would add, or None."""
+    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    before = _row_view(session, collection, secrets, account_by_user, audience_by_collection)
+    existing = person_clashes(session, secrets, before)
+    for (slug, user_id), title in person_clashes(session, secrets, after).items():
+        if (slug, user_id) not in existing:
+            return (
+                session.query(Collection).filter_by(slug=slug).one(),
+                session.get(User, user_id),
+                title,
+            )
+    return None
+
+
+def person_title_clash(session, secrets, collection: Collection, user: User, theme: ThemeSpec) -> Collection | None:
+    """Another row of THIS person's that already wears the title ``theme`` would give ``collection``, or None.
+
+    An explore row is titled from each person's own theme, so no row follows a person's theme as its base and
+    `rows_titled_from` cannot see it (#121 again). The check is that person's: another row counts only if it
+    builds for them, in a library the two could share, under any theme they hold on it, current or queued next.
+    """
+    template = collection.name_template or collection.name
+    if not uses_theme(template):
+        return None
+    catalogue = load_catalogue(session)
+    wanted = title_keys(template, catalogue=catalogue, theme=theme)
+    if not wanted:
+        return None
+    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    held = _held_themes(session)
+    for other in session.query(Collection).filter_by(enabled=True, build="per_person"):
+        if other.slug == collection.slug:
+            continue
+        view = _row_view(session, other, secrets, account_by_user, audience_by_collection)
+        if view.audience is not None and user.plex_account_id not in view.audience:
+            continue
+        if not rows_can_share_a_library(
+            collection.media or "both", collection.library_keys or [], view.media, view.library_keys
+        ):
+            continue
+        if clashing_keys(wanted, _titles_for(view, user, held, catalogue).keys()):
+            return other
+    return None
 
 
 def row_titled_from(
@@ -238,6 +465,7 @@ def row_titled_from(
     fallback_name: str = "",
     media: str = "both",
     library_keys=(),
+    theme: ThemeSpec | None = None,
 ) -> Collection | None:
     """The first of `rows_titled_from`, or None."""
     clashes = rows_titled_from(
@@ -249,6 +477,7 @@ def row_titled_from(
         fallback_name=fallback_name,
         media=media,
         library_keys=library_keys,
+        theme=theme,
     )
     return clashes[0] if clashes else None
 
@@ -263,6 +492,7 @@ def rows_titled_from(
     fallback_name: str = "",
     media: str = "both",
     library_keys=(),
+    theme: ThemeSpec | None = None,
 ) -> list[Collection]:
     """The rows whose collections are ALREADY titled from ``template`` in a library this row could reach.
 
@@ -280,6 +510,8 @@ def rows_titled_from(
     and the two silently shared one collection per user per library.
 
     ``exclude_slug`` is the row being edited, which must not clash with itself.
+
+    ``theme`` is the incoming row's theme, which fills its `{theme}` (#138).
 
     ``media`` and ``library_keys`` are where the incoming row builds; a row that can never build in any
     of the same libraries is skipped (issue #121). A title identifies a per-person row only within one
@@ -303,7 +535,8 @@ def rows_titled_from(
     check.
     """
     # Both of the incoming row's possible titles, for the same reason `_title_keys` collects both.
-    wanted_keys = title_keys(template) | {k for k in (title_key(fallback_name),) if k}
+    catalogue = load_catalogue(session)
+    wanted_keys = title_keys(template, catalogue=catalogue, theme=theme) | {k for k in (title_key(fallback_name),) if k}
     # An unrenderable template has no title to collide on. Since issue #84 that includes every
     # `{top_seed}` template, which renders to "" without picks — an improvement: they all used to
     # render the same substitute name and so were refused against each other and against any row
@@ -319,7 +552,7 @@ def rows_titled_from(
             continue
         if not rows_can_share_a_library(media, library_keys, other.media or "both", other.library_keys or []):
             continue
-        if _title_keys(session, other, secrets) & wanted_keys:
+        if clashing_keys(wanted_keys, _title_keys(session, other, secrets, catalogue=catalogue)):
             clashes.append(other)
     return clashes
 
@@ -554,23 +787,36 @@ def _reconcile_row_removal(
         # A shared row is one collection for everyone; who SEES it is a share-filter concern handled
         # by the privacy pass the caller queues, not a per-user collection to remove here.
         if only_user_ids is None:
-            removed.extend(
-                remove_row_collections(
-                    ctx.plex,
-                    ctx.config,
-                    label=f"{SHARED_LABEL_PREFIX}{slug}",
-                    displays=None,
-                    dry_run=dry_run,
-                    in_sections=in_sections,
-                )
-            )
+            ledger_slug = f"{SHARED_SLUG_PREFIX}_{slug}"
             # The ledger records collections that EXIST, as the per-person branch below keeps it — and only after
             # a real removal. A kept key is handed dead to the row's next delivery, credits plays to a collection
             # that is gone (`watch_events._shared_on_plex`), and, once Plex reuses it, makes another row's key
-            # ambiguous so that row loses its handle too.
+            # ambiguous so that row loses its handle too. So one library at a time, each forgotten as soon as its
+            # removal returns: a PMS failure in a later library must not keep the key of one already deleted.
+            # `sections()` is cached on the client, so walking it here costs no extra reads.
+            for section in ctx.plex.sections():
+                section_key = str(section.key)
+                if in_sections is not None and section_key not in in_sections:
+                    continue
+                removed.extend(
+                    remove_row_collections(
+                        ctx.plex,
+                        ctx.config,
+                        label=f"{SHARED_LABEL_PREFIX}{slug}",
+                        displays=None,
+                        dry_run=dry_run,
+                        in_sections={section_key},
+                    )
+                )
+                if not dry_run:
+                    with state.sessions() as session:
+                        _forget_deliveries(session, slug, {ledger_slug}, {section_key})
+                        session.commit()
+            # And the whole scope once every library is done, for an entry naming a library Plex no longer lists:
+            # no collection can exist there, and no walk above reaches it.
             if not dry_run:
                 with state.sessions() as session:
-                    _forget_deliveries(session, slug, {f"{SHARED_SLUG_PREFIX}_{slug}"}, in_sections)
+                    _forget_deliveries(session, slug, {ledger_slug}, in_sections)
                     session.commit()
         return dry_run
     with state.sessions() as session:
@@ -734,7 +980,8 @@ async def preview_row_removal(
 
     Runs the walk in an executor because it is blocking Plex I/O across every library. It takes no
     lock, and needs none: ``jobs.plex_writer_lock`` serialises Plex WRITES and is held AROUND
-    `_reconcile_row_removal` by the job worker rather than inside it, so a preview can neither
+    `_reconcile_row_removal` by its writers (the job worker, the cleanup endpoint) rather than inside it, so a
+    preview can neither
     deadlock against a live run nor perform the writes that lock exists to order.
 
     Args:
@@ -833,7 +1080,14 @@ def reconcile_row_rename_iter(
             # The label alone identifies a shared row's collection, so a plain name needs no old title. A
             # seasonal one does: it is the only way to know which season the collection wears.
             renamed = (
-                _renamed_titles(old_template or "", new_template, _shared_profile(), _shared_profile(), lib_name)
+                _renamed_titles(
+                    old_template or "",
+                    new_template,
+                    _shared_profile(),
+                    _shared_profile(),
+                    lib_name,
+                    catalogue=other_rows.catalogue,
+                )
                 if seasonal
                 else None
             )
@@ -939,6 +1193,7 @@ def reconcile_row_rename_iter(
                 old_profile,
                 profile,
                 lib_name,
+                catalogue=other_rows.catalogue,
                 recorded=ledger_titles.get((udata["slug"], str(section.key))),
             )
             if not renamed:  # unnameable — see render_row_name and `_renamed_titles`
@@ -1034,6 +1289,7 @@ def _renamed_titles(
     profile: UserProfile,
     library_name: str,
     *,
+    catalogue: Catalogue,
     recorded: str | None = None,
 ) -> dict[str, str | None]:
     """{title the row may be wearing -> the title it takes}, for one library. None: the next run names it.
@@ -1051,7 +1307,7 @@ def _renamed_titles(
     seeded = names_a_seed(new_template)
     if seeded and old_template == new_template and old_profile.display_name == profile.display_name:
         return {}  # renders exactly as before, so nothing is taking a new name
-    seasons = catalogue_seasons() if uses_season(old_template) else [None]
+    seasons = catalogue_seasons(catalogue) if uses_season(old_template) else [None]
     pairs: dict[str, str | None] = {}
     for season in seasons:
         old = render_row_name(fill_season(old_template, season), old_profile, [], library_name=library_name)

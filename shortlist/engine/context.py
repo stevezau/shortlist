@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -24,9 +25,14 @@ from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.curator import Curator
 from shortlist.engine.history import HistorySource
-from shortlist.engine.models import EngineConfig, Pick, UserProfile, UserRunReport, WrittenDetails
+from shortlist.engine.models import EngineConfig, Pick, TitleKey, UserProfile, UserRunReport, WrittenDetails
+from shortlist.engine.over_time import PickHistory
 from shortlist.engine.privacy import SnapshotStore
 from shortlist.engine.seasons import SeasonTitles
+from shortlist.engine.themes import ThemeTitles
+
+if TYPE_CHECKING:
+    from shortlist.engine.requests_row import RequestLedger
 
 
 @dataclass
@@ -54,6 +60,12 @@ class EngineContext:
     # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
     # bootstraps by curating fresh, exactly like a first run.
     previous_picks: dict[tuple[str, str, str], list[Pick]] = field(default_factory=dict)
+    # What earlier real runs showed, for an AI row's no-repeat and keep-out controls (#138); None on direct
+    # engine runs, where the controls then see only what this run built.
+    pick_history: PickHistory | None = None
+    # (user_slug, row_slug) -> the titles that row settled on in THIS run, filled as each person's rows
+    # build; a keep-out row built earlier tonight is read from here rather than from last night's history.
+    built_this_run: dict[tuple[str, str], set[TitleKey]] = field(default_factory=dict)
     # (user_slug, row_slug, section_key) -> the Plex ratingKey that row last delivered there, from the
     # delivery ledger. Delivery's ONE identity question is "is the collection in front of me this
     # row's, under a title it no longer renders to?" — a rename in place versus a fresh build. It used
@@ -66,6 +78,10 @@ class EngineContext:
     # Same key -> what Shortlist last wrote to that collection's summary and sort title. Empty (direct
     # engine runs, rows delivered before issue #120) only means clearing a field reverts nothing.
     delivered_details: dict[tuple[str, str, str], WrittenDetails] = field(default_factory=dict)
+    # Same key -> the season that collection was last BUILT for, as `RowSeason.built_for` renders it; "" for
+    # a row that was not seasonal then. Absent for collections delivered before the ledger recorded it. A
+    # seasonal row's collection built for another season is kept hidden (`pipeline.built_seasons`).
+    delivered_seasons: dict[tuple[str, str, str], str] = field(default_factory=dict)
     # Build a PMS client that sees the server AS one user, or None when no token can be had. Used to
     # CHECK what an account Plex refuses a hide-list for can actually see, rather than assume. None on
     # direct engine runs, where the check is simply skipped.
@@ -109,6 +125,9 @@ class EngineContext:
     # season is missing here keeps what it has — the same as a row whose every source is down.
     season_titles: dict[str, SeasonTitles] = field(default_factory=dict)
     season_failures: dict[str, str] = field(default_factory=dict)
+    # The same for an AI row's theme (#138), by theme slug: its titles tonight and the AI's reason per pick.
+    theme_titles: dict[str, ThemeTitles] = field(default_factory=dict)
+    theme_failures: dict[str, str] = field(default_factory=dict)
     # plex account id -> the slug Shortlist assigned that account, for EVERY user it knows (not just
     # tonight's). This is how "whose row is this?" is answered. It cannot be answered from a name:
     # people rename themselves, and two display names can slugify to the same string — either
@@ -182,6 +201,14 @@ class EngineContext:
     # promote still run for the users already delivered, so the server stays consistent. Default:
     # never cancels (direct engine runs and tests can't be cancelled).
     cancelled: Callable[[], bool] = lambda: False
+    # Built once per run by the pipeline when any row is a requests row; None otherwise.
+    request_ledger: RequestLedger | None = None
+    #: Everyone who could own a tag — enabled or not — whatever `users` this run is scoped to. The
+    #: request ledger resolves tags against THIS list: a tag two roster people render to is ambiguous
+    #: whoever is in tonight's run, and resolving it against the run's own users would credit the one
+    #: person in it with a disabled or paused person's requests. None (a direct engine caller) means
+    #: `users` is the roster.
+    roster: list[UserProfile] | None = None
 
 
 def _emit(ctx: EngineContext, slug: str, stage: str, counts: dict, reason: str | None = None) -> None:

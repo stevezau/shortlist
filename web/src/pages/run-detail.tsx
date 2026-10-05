@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Info, Loader2 } from "lucide-react";
+import { Download, Play } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import {
@@ -9,19 +9,23 @@ import {
   EmptyState,
   ErrorState,
 } from "@/components/query-boundary";
+import { MutationAlert } from "@/components/mutation-alert";
+import { PageHeader } from "@/components/page-header";
 import { RunLogPanel } from "@/components/runs/run-log-panel";
 import { RunPhaseTimeline } from "@/components/runs/run-phase-timeline";
+import { RunPrivacyCallout } from "@/components/runs/run-privacy-callout";
 import { RunStatTiles } from "@/components/runs/run-stat-tiles";
 import { RunRowsTab } from "@/components/runs/run-rows-tab";
-import { Segmented } from "@/components/segmented";
+import { Tabs, TabPanel } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api } from "@/lib/api";
+import { api, apiUrl } from "@/lib/api";
 import {
   formatDate,
   runStatusLabel,
   runStatusVariant,
+  timeAgo,
   triggerLabel,
 } from "@/lib/format";
 import {
@@ -29,10 +33,14 @@ import {
   useCancelRun,
   useCollections,
   useRun,
+  useStartRun,
   useUsers,
 } from "@/lib/queries";
 import { mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
-import { currentPhase, errorBucket, inFlight } from "@/lib/run-format";
+import { errorBucket } from "@/lib/run-format";
+import { privacyFindings } from "@/lib/run-privacy";
+import { RunProgress } from "@/components/runs/run-progress";
+import { useHashScroll } from "@/lib/use-hash-scroll";
 import { useSSE } from "@/lib/sse";
 import type { RunDetail, RunLogEntry, RunUserStageEvent } from "@/lib/types";
 
@@ -131,7 +139,9 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
           </div>
         ))
       ) : (
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
+        // `break-words`, not `break-all`: this is usually a sentence now (an unreachable Plex is
+        // explained in words), and `break-all` splits those mid-word. A long URL still wraps.
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
           {blockers.length > 0 ? blockers.join("\n") : run.error}
         </pre>
       )}
@@ -156,6 +166,8 @@ export function RunDetailPage() {
   const usersQuery = useUsers();
   const queryClient = useQueryClient();
   const cancel = useCancelRun();
+  const startRun = useStartRun();
+  const navigate = useNavigate();
   // From the RUN, not just this component's mutation state: a refresh threw that away, so the
   // button came back looking live on a run that was already stopping — and every press after that
   // returned "this run isn't currently running" about a run that was.
@@ -169,6 +181,7 @@ export function RunDetailPage() {
   // the link was still built, nothing read it, and clicking "Run #NN" from someone's page landed on
   // the top of a run with forty others in it.
   const focusUser = searchParams.get("user");
+  useHashScroll(runQuery.isSuccess);
   const setTab = (next: RunTab) => {
     const params = new URLSearchParams(searchParams);
     if (next === "rows") params.delete("tab");
@@ -238,23 +251,20 @@ export function RunDetailPage() {
     },
   });
 
-  // Computed once per render rather than called twice (header line + phase text below it). Takes the
-  // run as well as the log: the people count comes off the run's own roster, not off log subjects —
-  // the library index and shared rows narrate under names that are in nobody's roster.
-  const phase = runQuery.data ? currentPhase(runQuery.data, liveLog) : null;
-  const working =
-    runQuery.data && !runQuery.data.finished_at
-      ? inFlight(runQuery.data, liveLog)
-      : [];
   // A failed log fetch with nothing to show is otherwise indistinguishable from "no log was ever
   // recorded" — RunLogPanel's own empty state says the latter, which is a lie when the former is
   // true. Live SSE stage events can still fill `liveLog` even if the initial snapshot failed, so
   // this only takes over when there is truly nothing to show.
   const logFailed = logQuery.isError && liveLog.length === 0;
+  // Who this run found could see rows that are not theirs, by lower-cased username — the people
+  // list marks them "not private". Empty for a run that did not measure: unmeasured is not flagged.
+  const notPrivate = new Set(
+    privacyFindings(runQuery.data?.privacy).map((name) => name.toLowerCase()),
+  );
 
   return (
     <div className="space-y-6">
-      <BackLink to="/runs" label="All runs" />
+      <BackLink to="/runs" label="Runs" />
 
       {!Number.isFinite(runId) ? (
         <EmptyState
@@ -273,41 +283,16 @@ export function RunDetailPage() {
         >
           {(run) => (
             <div className="space-y-6">
-              <header className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-2xl font-semibold tracking-tight">
-                    Run #{run.id}
-                  </h1>
-                  <Badge variant={runStatusVariant(run.status)}>
-                    {runStatusLabel(run.status)}
-                  </Badge>
-                  {run.dry_run && (
-                    <Badge variant="outline">
-                      Test run — nothing was written to Plex
-                    </Badge>
-                  )}
-                  {!run.finished_at && (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="ml-auto"
-                      loading={cancel.isPending}
-                      disabled={cancel.isPending || stopping}
-                      onClick={() => cancel.mutate(run.id)}
-                      title="Stop this run. It finishes the person it's on, then stops — everyone already done stays."
-                    >
-                      {stopping ? "Stopping…" : "Cancel run"}
-                    </Button>
-                  )}
-                </div>
-                {/* A slim provenance line; the numbers moved into the tiles below so they read at a glance. */}
-                {/* `runs.started_at` is stamped at INSERT — when the run was ASKED for, not when it
-                    began — so a run still waiting on the writer lock read "started 03:30 · still
-                    running" directly under a badge saying "Queued". This is also the page the Rows
-                    page's Run button lands on, which made it the first thing you saw after pressing
-                    it. Same rule as RunDuration: don't claim it started until it has. */}
-                <p className="text-sm text-muted-foreground">
-                  {run.status === "queued" ? (
+              <PageHeader
+                className="mb-0"
+                title={`Run #${run.id}`}
+                // `runs.started_at` is stamped at INSERT — when the run was ASKED for, not when it
+                // began — so a run still waiting on the writer lock read "started 03:30 · still
+                // running" directly under a badge saying "Queued". This is also the page the Rows
+                // page's Run button lands on, which made it the first thing you saw after pressing
+                // it. Same rule as RunDuration: don't claim it started until it has.
+                subtitle={
+                  run.status === "queued" ? (
                     <>
                       {triggerLabel(run.trigger)} · queued{" "}
                       {formatDate(run.started_at)} · waiting to start
@@ -316,59 +301,93 @@ export function RunDetailPage() {
                     // Cancelled or reaped while still queued. Its status is no longer "queued", so
                     // this used to fall through and claim "started 03:30 · finished 03:39" — the same
                     // nine minutes the list row now correctly calls "never ran", one click away and
-                    // directly above a Duration tile reading "—".
+                    // directly above a Duration cell reading "—".
                     <>
                       {triggerLabel(run.trigger)} · queued{" "}
                       {formatDate(run.started_at)} · never started
                     </>
                   ) : (
+                    // Absolute AND relative: "finished 3 Oct, 02:39" answers which night, "2m ago"
+                    // answers whether this is the run you just started.
                     <>
                       {triggerLabel(run.trigger)} · started{" "}
                       {formatDate(run.began_at)}
                       {run.finished_at
-                        ? ` · finished ${formatDate(run.finished_at)}`
-                        : " · still running"}
+                        ? ` · finished ${formatDate(run.finished_at)} · ${timeAgo(run.finished_at)}`
+                        : ` · ${timeAgo(run.began_at)} · still running`}
                     </>
-                  )}
-                </p>
-                {/* The direct fix for "all users finished but it still says running": say WHAT it
-                    is doing. Everything after the last person is server-wide and used to be silent.
-                    The lead-in is NOT fixed text: "Finishing up" is a claim about where the run is,
-                    and hardcoding it told the owner a run 9 people into 46 was nearly done. */}
-                {!run.finished_at && phase && (
-                  <p className="flex items-center gap-1.5 text-sm">
-                    <Loader2
-                      className="h-3.5 w-3.5 animate-spin text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    <span className="text-muted-foreground">
-                      {phase.tail ? "Finishing up · " : "Right now · "}
-                    </span>
-                    <span className="font-medium">{phase.label}</span>
-                  </p>
-                )}
-                {/* The count says how far the run has got; this says what it is doing. One line per
-                    person it is on — at most the run's concurrency — each naming the row, the library
-                    and the write, or that they are queued behind someone else's Plex write. */}
-                {working.length > 0 && (
-                  <ul
-                    aria-label="In progress"
-                    className="space-y-0.5 pl-5 text-sm text-muted-foreground"
-                  >
-                    {working.map((person) => (
-                      <li key={person.slug} className="truncate" title={person.text}>
-                        <span className="font-medium text-foreground">
-                          {person.name}
-                        </span>
-                        {" — "}
-                        {person.text}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </header>
+                  )
+                }
+                actions={
+                  <>
+                    {/* The finished run's result lives in the summary's Result cell. While it is still
+                        going there is no summary yet, so the status rides here. */}
+                    {run.dry_run && (
+                      <Badge variant="outline">
+                        Test run — nothing was written to Plex
+                      </Badge>
+                    )}
+                    {/* The same file the Log tab's Download gives, without opening the tab first. */}
+                    <Button asChild variant="outline">
+                      <a href={apiUrl(`/api/runs/${run.id}/log?format=text`)} download>
+                        <Download aria-hidden="true" />
+                        Download log
+                      </a>
+                    </Button>
+                    {!run.finished_at && (
+                        <>
+                          <Badge variant={run.status === "running" ? "warning" : runStatusVariant(run.status)}>
+                            {runStatusLabel(run.status)}
+                          </Badge>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            loading={cancel.isPending}
+                            disabled={cancel.isPending || stopping}
+                            onClick={() => cancel.mutate(run.id)}
+                            title="Stop this run. It finishes the person it's on, then stops — everyone already done stays."
+                          >
+                            {stopping ? "Stopping…" : "Cancel run"}
+                          </Button>
+                        </>
+                      )}
+                    {/* The screen's one filled-amber action, once there is nothing to cancel: the same
+                        mutation the Runs page uses, then straight to the new run, as the Rows page does. */}
+                    {run.finished_at && (
+                      <Button
+                        loading={startRun.isPending}
+                        onClick={() =>
+                          startRun.mutate({}, { onSuccess: (created) => void navigate(`/runs/${created.run_id}`) })
+                        }
+                      >
+                        {!startRun.isPending && <Play aria-hidden="true" />}
+                        Run now
+                      </Button>
+                    )}
+                  </>
+                }
+              />
 
-              <Segmented
+              {/* A refused start says why in plain English (PMS too old, Plex unreachable). */}
+              {startRun.isError && (
+                <MutationAlert
+                  error={startRun.error}
+                  fallback="Couldn’t start that run. Check the server log and try again."
+                />
+              )}
+
+              <RunProgress run={run} entries={liveLog} />
+
+              <RunFailureBanner run={run} />
+
+              {/* The summary is the answer to "how did this run go", so it sits above the tabs and
+                  stays on both: the rows and the log are two views of the detail, not of the result.
+                  Stats are only final once a run ends; while it is live the progress above says why
+                  it is taking the time it is. */}
+              {run.finished_at && <RunStatTiles run={run} />}
+              {run.finished_at && <RunPrivacyCallout run={run} />}
+
+              <Tabs id="run-detail"
                 value={tab}
                 onChange={setTab}
                 ariaLabel="Run detail sections"
@@ -381,48 +400,24 @@ export function RunDetailPage() {
                 ]}
               />
 
-              <RunFailureBanner run={run} />
-
-              {/* Stats are only finalized once a run ends; while it's live we show the why-slow note instead. */}
-              {/* The TILES stay on both tabs — they are the run's summary, not one view of it. The
-                  phase breakdown does not: "where the time went" is read off the log's own timings and
-                  answers a question you are asking while reading the log, not while scanning people. */}
-              {run.finished_at && <RunStatTiles run={run} />}
-
               {/* No log peek here. It duplicated the Log tab sitting one click away, and on a live
                   run it churned under the header while you were trying to read the people list —
-                  the Log tab is the place to watch a run, not this one. */}
-
-              {!run.finished_at && (
-                <div className="flex gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
-                  <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="space-y-1">
-                    <p className="font-medium">
-                      Why a refresh can take a while
-                    </p>
-                    <p className="text-muted-foreground">
-                      Plex removes titles from a collection one at a time, and
-                      on a very large TV library that is slow — a row dropping
-                      ten titles there can take a few minutes. Rows whose titles haven't
-                      changed skip that. Each person's panel shows what their
-                      row is adding and removing while it happens.
-                    </p>
-                  </div>
-                </div>
-              )}
+                  the Log tab is the place to watch a run, not this one. The phase breakdown lives on
+                  the Log tab too: "where the time went" is read off the log's own timings. */}
 
               {tab === "rows" && (
-                <RunRowsTab
+                <TabPanel id="run-detail" value="rows"><div id="run-rows" className="scroll-mt-20"><RunRowsTab
                   run={run}
                   titles={rowTitles}
                   idBySlug={idBySlug}
                   liveLog={liveLog}
                   focusUser={focusUser}
-                />
+                  notPrivate={notPrivate}
+                /></div></TabPanel>
               )}
 
               {tab === "log" &&
-                (logFailed ? (
+                <TabPanel id="run-detail" value="log">{logFailed ? (
                   <ErrorState
                     error={logQuery.error}
                     onRetry={() => void logQuery.refetch()}
@@ -437,7 +432,7 @@ export function RunDetailPage() {
                       people={[...new Set(run.users.map((u) => u.slug))].sort()}
                     />
                   </>
-                ))}
+                )}</TabPanel>}
             </div>
           )}
         </QueryBoundary>

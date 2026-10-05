@@ -1,6 +1,3 @@
-import { Settings as SettingsIcon } from "lucide-react";
-import type { ReactNode } from "react";
-
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary } from "@/components/query-boundary";
 import { AdvancedSection } from "@/components/settings/advanced-section";
@@ -8,88 +5,78 @@ import { ApiAccessCard } from "@/components/settings/api-access-card";
 import { ConnectionsSection } from "@/components/settings/connections-section";
 import { DangerZoneSection } from "@/components/settings/danger-zone-section";
 import { DefaultsSection } from "@/components/settings/defaults-section";
-import { NotificationsSection } from "@/components/settings/notifications-section";
 import { RecommendationsSection } from "@/components/settings/recommendations-section";
 import { RequestsSection } from "@/components/settings/requests-section";
 import { RowPlacementSection } from "@/components/settings/row-placement-section";
-import { SETTINGS_SECTIONS } from "@/components/settings/sections";
+import { SaveBar, SaveBarProvider } from "@/components/settings/save-bar";
+import { SectionsWithJumps, SettingsTabs } from "@/components/settings/section-layout";
+import { DEFAULTS_SECTIONS } from "@/components/settings/sections";
+import { SettingsSearch } from "@/components/settings/settings-search";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSettings } from "@/lib/queries";
-import { useHashScroll } from "@/lib/use-hash-scroll";
 import type { Settings } from "@/lib/types";
 
-/** Each section's content, keyed by the id in SETTINGS_SECTIONS (the sidebar sub-nav lists them). */
-function sectionContent(settings: Settings): Record<string, ReactNode> {
-  return {
-    connections: <ConnectionsSection settings={settings} />,
-    recommendations: <RecommendationsSection settings={settings} />,
-    defaults: <DefaultsSection settings={settings} />,
-    placement: <RowPlacementSection settings={settings} />,
-    requests: <RequestsSection settings={settings} />,
-    notifications: <NotificationsSection settings={settings} />,
-    advanced: <AdvancedSection settings={settings} />,
-    "api-access": <ApiAccessCard />,
-    danger: <DangerZoneSection settings={settings} />,
-  };
+/** Connections: every service Shortlist talks to, and where its alerts go. */
+function ConnectionsTab({ settings }: { settings: Settings }) {
+  return <ConnectionsSection settings={settings} />;
 }
 
+/** Defaults: what every new row starts from. Each section still saves itself as before; the bar at
+ *  the foot reports all of them at once. */
+function DefaultsTab({ settings }: { settings: Settings }) {
+  return (
+    <SaveBarProvider>
+      <SectionsWithJumps tab="defaults" label="Defaults sections" sections={DEFAULTS_SECTIONS}>
+        <RecommendationsSection settings={settings} />
+        <DefaultsSection settings={settings} />
+        <RowPlacementSection settings={settings} />
+        <RequestsSection settings={settings} />
+      </SectionsWithJumps>
+      <SaveBar />
+    </SaveBarProvider>
+  );
+}
+
+/** System: how Shortlist runs, the API token, and the danger zone. */
+function SystemTab({ settings }: { settings: Settings }) {
+  return (
+    <SaveBarProvider>
+      <div className="space-y-10">
+        <AdvancedSection settings={settings} />
+        <ApiAccessCard />
+        <DangerZoneSection settings={settings} />
+      </div>
+      <SaveBar />
+    </SaveBarProvider>
+  );
+}
+
+/**
+ * Settings: three tabs at `/settings/connections`, `/settings/defaults` and `/settings/system`.
+ * `/settings` and the old single-page `/settings#section` links land on the tab that section lives
+ * on now (see `SettingsTabs`).
+ */
 export function SettingsPage() {
   const settingsQuery = useSettings();
-  // The sections only exist once the query resolves, so the browser's own anchor jump has already
-  // missed them on a cold load.
-  useHashScroll(settingsQuery.isSuccess);
 
   return (
-    <div>
+    <div className="mx-auto max-w-6xl">
       <PageHeader
-        icon={SettingsIcon}
         title="Settings"
-        subtitle="Everything that shapes how Shortlist runs — connections, where picks come from, and how rows look. Each row keeps its own schedule."
+        subtitle="Your services, the defaults every new row starts from, and how Shortlist runs."
+        actions={<SettingsSearch />}
       />
 
-      <QueryBoundary
-        query={settingsQuery}
-        skeleton={<Skeleton className="h-96 w-full" />}
-      >
-        {(settings) => {
-          const content = sectionContent(settings);
-          return (
-            <>
-              {/* On phones the sidebar sub-nav is hidden, so jumping between sections meant scrolling
-                  the whole page. This gives mobile its own horizontally-scrollable section jumper. */}
-              <nav
-                aria-label="Settings sections"
-                className="mb-4 flex gap-1.5 overflow-x-auto pb-2 md:hidden"
-              >
-                {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => (
-                  <a
-                    key={id}
-                    href={`#${id}`}
-                    className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    {label}
-                  </a>
-                ))}
-              </nav>
-              <div>
-                {SETTINGS_SECTIONS.map(({ id }) => (
-                  // One scrolling page, but each section is walled off: a rule and a wide gap above
-                  // it, so "where does Finding titles end?" is answerable at a glance rather than
-                  // inferred from heading sizes. scroll-mt keeps the heading clear of the top when a
-                  // sub-nav jumps here.
-                  <section
-                    key={id}
-                    id={id}
-                    className="scroll-mt-6 border-t border-border/60 py-10 first:border-t-0 first:pt-0"
-                  >
-                    {content[id]}
-                  </section>
-                ))}
-              </div>
-            </>
-          );
-        }}
+      <QueryBoundary query={settingsQuery} skeleton={<Skeleton className="h-96 w-full" />}>
+        {(settings) => (
+          <SettingsTabs
+            content={{
+              connections: <ConnectionsTab settings={settings} />,
+              defaults: <DefaultsTab settings={settings} />,
+              system: <SystemTab settings={settings} />,
+            }}
+          />
+        )}
       </QueryBoundary>
     </div>
   );

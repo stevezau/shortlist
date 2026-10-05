@@ -42,10 +42,12 @@ USER_KEYS = {
     "manage_sharing",
     "cold_start",
     "request_tag",
+    "requested_by_tag",
     "prefs",
     "history_depth",
     "last_run_at",
-    "hit_rate",
+    "picks_watched_30d",
+    "last_pick_watched_at",
     "preview_titles",
     "unhidden_rows",
     "departed",
@@ -116,6 +118,80 @@ class TestUsersApi:
         """Absent evidence renders as zero, never as null: the SPA branches on the number, and a null
         would make an unmeasured account look the same as an exposed one."""
         assert all(u["unhidden_rows"] == 0 for u in client.get("/api/users").json())
+
+    def test_the_list_counts_distinct_picks_watched_in_30_days_and_the_last_watch_ever(self, client: TestClient):
+        from shortlist.server.db.models import PickRow, Run
+
+        now = datetime.now(UTC)
+        five_days_ago = now - timedelta(days=5)
+        forty_days_ago = now - timedelta(days=40)
+        with client.app.state.sessions() as session:
+            sarah = session.query(User).filter_by(slug="sarah").one()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            # (tmdb_id, watched_at): 1 is picked twice (two runs' rows), 2 is old, 3 is unwatched.
+            for tmdb_id, watched_at in (
+                (1, five_days_ago),
+                (1, five_days_ago),
+                (2, forty_days_ago),
+                (3, None),
+                (4, now - timedelta(days=1)),
+            ):
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=sarah.id,
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        rating_key=tmdb_id,
+                        rank=tmdb_id,
+                        collection_slug="picked",
+                        section_key="1",
+                        library="Movies",
+                        title=f"Title {tmdb_id}",
+                        watched_at=watched_at,
+                    )
+                )
+            session.commit()
+
+        users = {u["username"]: u for u in client.get("/api/users").json()}
+
+        assert users["sarah"]["picks_watched_30d"] == 2, "titles 1 (once) and 4; 2 is too old, 3 unwatched"
+        assert users["sarah"]["last_pick_watched_at"] == (now - timedelta(days=1)).isoformat()
+        assert users["mike"]["picks_watched_30d"] is None
+        assert users["mike"]["last_pick_watched_at"] is None
+
+    def test_an_old_watch_sets_the_last_watched_date_but_adds_nothing_to_the_count(self, client: TestClient):
+        from shortlist.server.db.models import PickRow, Run
+
+        forty_days_ago = datetime.now(UTC) - timedelta(days=40)
+        with client.app.state.sessions() as session:
+            sarah = session.query(User).filter_by(slug="sarah").one()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=sarah.id,
+                    tmdb_id=2,
+                    media_type="movie",
+                    rating_key=2,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Old",
+                    watched_at=forty_days_ago,
+                )
+            )
+            session.commit()
+
+        sarah_out = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+
+        assert sarah_out["picks_watched_30d"] == 0
+        assert sarah_out["last_pick_watched_at"] == forty_days_ago.isoformat()
 
     def test_prefs_pass_through_whatever_an_install_has_accrued(self, client: TestClient):
         """`prefs` is free-form JSON: which keys exist varies by DATA, not by branch (`history_depth`
@@ -1159,6 +1235,101 @@ class TestUserRowsApi:
         assert rows[0]["muted"] is False
         assert rows[0]["picks"] == []
 
+    def test_rows_keep_the_last_built_picks_when_a_later_run_built_nothing(self, client: TestClient):
+        """A dry run, or a run cancelled before this person's turn, writes a `run_users` row but no
+        picks. Plex still holds the last real run's titles, so that is what the page shows — not
+        "No picks in this row yet" for every person after one cancelled dry run."""
+        from shortlist.server.db.models import Delivery, PickRow, Run, RunUser
+
+        uid = self._sarah_id(client)
+
+        def pick(run_id: int, title: str) -> PickRow:
+            return PickRow(
+                run_id=run_id,
+                user_id=uid,
+                tmdb_id=329865,
+                media_type="movie",
+                rating_key=42,
+                rank=1,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                title=title,
+            )
+
+        with client.app.state.sessions() as session:
+            # The ledger entry a real delivery leaves behind; `live_pick_ids` requires it.
+            session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=42))
+            built = Run(trigger="schedule", status="ok")
+            session.add(built)
+            session.flush()
+            session.add(RunUser(run_id=built.id, user_id=uid, status="ok"))
+            session.add(pick(built.id, "Arrival"))
+            cancelled_dry = Run(trigger="manual", status="aborted", dry_run=True)
+            session.add(cancelled_dry)
+            session.flush()
+            session.add(RunUser(run_id=cancelled_dry.id, user_id=uid, status="skipped"))
+            session.commit()
+
+        row = client.get(f"/api/users/{uid}/rows").json()[0]
+        assert [p["title"] for p in row["picks"]] == ["Arrival"]
+        assert (row["library"], row["section_key"]) == ("Movies", "1")
+
+        with client.app.state.sessions() as session:
+            rebuilt = Run(trigger="schedule", status="ok")
+            session.add(rebuilt)
+            session.flush()
+            session.add(RunUser(run_id=rebuilt.id, user_id=uid, status="ok"))
+            session.add(pick(rebuilt.id, "Contact"))
+            session.commit()
+
+        row = client.get(f"/api/users/{uid}/rows").json()[0]
+        assert [p["title"] for p in row["picks"]] == ["Contact"], "a newer build replaces the older one"
+
+    def test_rows_keep_each_rows_own_last_build_when_a_later_run_built_one_row(self, client: TestClient):
+        """Rows have their own crons, so the newest run is often scoped to ONE row. The other row's
+        picks are still on Plex, so the page must show them, not "No picks in this row yet"."""
+        from shortlist.server.db.models import Collection, Delivery, PickRow, Run, RunUser
+
+        uid = self._sarah_id(client)
+
+        def pick(run_id: int, slug: str, title: str) -> PickRow:
+            return PickRow(
+                run_id=run_id,
+                user_id=uid,
+                tmdb_id=329865,
+                media_type="movie",
+                rating_key=42,
+                rank=1,
+                collection_slug=slug,
+                section_key="1",
+                library="Movies",
+                title=title,
+            )
+
+        with client.app.state.sessions() as session:
+            session.add(
+                Collection(
+                    slug="weekend", name="Weekend", build="per_person", audience="everyone", enabled=True, sort_order=99
+                )
+            )
+            for slug in ("picked", "weekend"):
+                session.add(Delivery(collection_slug=slug, user_slug="sarah", library_key="1", rating_key=42))
+            run_a = Run(trigger="schedule", status="ok")
+            run_b = Run(trigger="schedule", status="ok")
+            session.add_all([run_a, run_b])
+            session.flush()
+            for run in (run_a, run_b):
+                session.add(RunUser(run_id=run.id, user_id=uid, status="ok"))
+            session.add(pick(run_a.id, "picked", "A picked"))
+            session.add(pick(run_a.id, "weekend", "A weekend"))
+            session.add(pick(run_b.id, "picked", "B picked"))
+            session.commit()
+
+        rows = {r["slug"]: r for r in client.get(f"/api/users/{uid}/rows").json()}
+        assert [p["title"] for p in rows["picked"]["picks"]] == ["B picked"]
+        assert [p["title"] for p in rows["weekend"]["picks"]] == ["A weekend"]
+
     def test_override_mute_and_resize_round_trip(self, client: TestClient):
         uid = self._sarah_id(client)
         cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
@@ -1527,3 +1698,92 @@ class TestUserPickOutcomes:
 
     def test_an_unknown_user_is_a_404(self, client: TestClient):
         assert client.get("/api/users/999999/outcomes").status_code == 404
+
+
+def test_requested_by_tag_round_trips(client: TestClient):
+    """The tag Overseerr/Radarr/Sonarr put on what this person asked for (issue #127) — stored
+    trimmed, and rendered back by the same serializer the Users list reads."""
+    users = client.get("/api/users").json()
+    uid = users[0]["id"]
+    r = client.patch(f"/api/users/{uid}", json={"requested_by_tag": " children "})
+    assert r.status_code == 200 and r.json()["requested_by_tag"] == "children"
+    assert next(u for u in client.get("/api/users").json() if u["id"] == uid)["requested_by_tag"] == "children"
+
+
+def _seed_user_with_runs(session, slug: str, finished: datetime) -> list[str]:
+    """A user with two runs; only the LATER run's top three picks (by rank) may reach the preview."""
+    from shortlist.server.db.models import PickRow, Run, RunUser
+
+    user = User(plex_account_id=900000 + abs(hash(slug)) % 99999, username=slug, slug=slug)
+    session.add(user)
+    session.flush()
+    runs = []
+    for offset in (2, 1):
+        run = Run(trigger="manual", status="ok", finished_at=finished - timedelta(days=offset))
+        session.add(run)
+        session.flush()
+        session.add(RunUser(run_id=run.id, user_id=user.id, status="ok"))
+        runs.append(run)
+    for run, tag in zip(runs, ("old", "new"), strict=True):
+        for rank in (4, 1, 3, 2):
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=user.id,
+                    tmdb_id=rank,
+                    media_type="movie",
+                    rating_key=rank,
+                    rank=rank,
+                    title=f"{slug}-{tag}-{rank}",
+                )
+            )
+    return [f"{slug}-new-{rank}" for rank in (1, 2, 3)]
+
+
+class TestUsersListQueries:
+    def test_the_list_reports_last_run_time_and_a_three_title_preview_per_person(self, client: TestClient):
+        finished = datetime(2026, 6, 1, 12, tzinfo=UTC)
+        with client.app.state.sessions() as session:
+            expected = {slug: _seed_user_with_runs(session, slug, finished) for slug in ("ann", "bob", "cy")}
+            session.commit()
+
+        users = {u["username"]: u for u in client.get("/api/users").json()}
+
+        for slug, preview in expected.items():
+            assert users[slug]["preview_titles"] == preview
+            assert users[slug]["last_run_at"] == (finished - timedelta(days=1)).isoformat()
+        for slug in ("sarah", "mike"):
+            assert users[slug]["preview_titles"] == []
+            assert users[slug]["last_run_at"] is None
+
+    def test_the_number_of_queries_does_not_grow_with_the_number_of_people(self, client: TestClient):
+        from sqlalchemy import event
+
+        engine = client.app.state.sessions.kw["bind"]
+        finished = datetime(2026, 6, 1, 12, tzinfo=UTC)
+
+        def statements_for_list() -> int:
+            count = 0
+
+            def bump(*_args) -> None:
+                nonlocal count
+                count += 1
+
+            event.listen(engine, "before_cursor_execute", bump)
+            try:
+                assert client.get("/api/users").status_code == 200
+            finally:
+                event.remove(engine, "before_cursor_execute", bump)
+            return count
+
+        with client.app.state.sessions() as session:
+            for i in range(1, 3):
+                _seed_user_with_runs(session, f"few{i}", finished)
+            session.commit()
+        few = statements_for_list()
+        with client.app.state.sessions() as session:
+            for i in range(3, 30):
+                _seed_user_with_runs(session, f"many{i}", finished)
+            session.commit()
+
+        assert statements_for_list() == few

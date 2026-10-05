@@ -6,14 +6,14 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import replace
-from datetime import UTC, datetime
-from typing import Annotated
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse, StreamingResponse
 
@@ -36,8 +36,10 @@ from shortlist.engine.models import (
     row_monitor_or_inherit,
     slugify,
 )
-from shortlist.engine.placeholders import refusal
+from shortlist.engine.placeholders import fill_theme, refusal, uses_season, uses_theme
 from shortlist.engine.rows import row_shown_today
+from shortlist.engine.themes import ThemeSpec
+from shortlist.engine.web_guidance import INSTRUCTION_MODES, MAX_INSTRUCTIONS_CHARS, AiInstructions
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
     PRIVACY_SYNC,
@@ -59,14 +61,21 @@ from shortlist.server.db.models import (
     Job,
     PickRow,
     RequestCandidate,
+    Run,
     RunSharedRow,
     SharedRowWatch,
+    Theme,
+    ThemeHistory,
     User,
+    iso_utc,
 )
 from shortlist.server.scheduler import crontab_trigger, rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs, poster_service, report_service
+from shortlist.server.services.audit import add_audit
 from shortlist.server.services.poster_service import load_upload
+from shortlist.server.services.season_catalogue import load_catalogue
+from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/collections", tags=["collections"], dependencies=[Depends(require_owner)])
@@ -146,6 +155,14 @@ class PosterIn(BaseModel):
     style: str = Field(default="", max_length=400)
 
 
+class AiInstructionsIn(StrictRequestModel):
+    """What AI web search should look for on this row (#138). ``default`` uses the built-in wording
+    plus the server-wide instructions; ``add`` appends ``text`` to them; ``own`` replaces them."""
+
+    mode: str = _closed_set(set(INSTRUCTION_MODES), "default", "AI instructions must be default, add or own")
+    text: str = Field(default="", max_length=MAX_INSTRUCTIONS_CHARS)
+
+
 class CollectionIn(StrictRequestModel):
     name: str = Field(min_length=1, max_length=255)
     build: str = _closed_set(BUILDS, "per_person", "Who the row is built for: one per person, or one shared row.")
@@ -207,6 +224,11 @@ class CollectionIn(StrictRequestModel):
     recency: float | None = Field(default=None, ge=0.0, le=1.0)
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
+    # Per-row limits on what may be picked; None = no limit (#138). Year order is checked in `_validate`.
+    max_runtime: int | None = Field(default=None, ge=1, le=600)  # minutes
+    min_year: int | None = Field(default=None, ge=1870, le=2100)
+    max_year: int | None = Field(default=None, ge=1870, le=2100)
+    min_rating: float | None = Field(default=None, ge=0.0, le=10.0)  # TMDB vote_average
     # "popular" | "skip" | None -> inherit the global recommendations.cold_start. Enforced in
     # `_validate`, like every other closed set here.
     cold_start: str | None = Field(
@@ -271,6 +293,7 @@ class CollectionIn(StrictRequestModel):
     # the default, which is the top of the shelf.
     hub_anchor: dict[str, HubAnchorIn] = Field(default_factory=dict)
     poster: PosterIn = Field(default_factory=PosterIn)
+    ai_instructions: AiInstructionsIn = Field(default_factory=AiInstructionsIn)
     # The collection's Plex summary and sort title (issue #120). "" leaves that field on Plex alone.
     description: str = Field(
         default="",
@@ -292,11 +315,19 @@ class CollectionIn(StrictRequestModel):
         (`01 `) is part of how it sorts."""
         return value if value.strip() else ""
 
+    # A "Your requests" row (issue #127): what each person asked for in Overseerr/Radarr/Sonarr, never
+    # the candidate pool. Always per-person, never rewatch, never seasonal — `_validate` says so.
+    requests_row: bool = False
+    # Keep a request on the row this many days after it lands; 0 = until watched.
+    requests_window_days: int = Field(default=90, ge=0, le=3650)
+    # How the *arrs tag a person's requests, e.g. "req-{username}"; empty -> only a person's own tag.
+    requests_tag_pattern: str = Field(default="", max_length=128)
+
     # The seasons this row follows (discussion #124); [] -> not seasonal. Out of season the row is hidden,
     # and it shows from `season_lead_days` before each season's day to `season_after_days` after it.
     seasons: list[str] = Field(
         default_factory=list,
-        description="Seasons this row follows (see GET /api/collections/seasons). Empty means it is not seasonal.",
+        description="Seasons this row follows (see GET /api/seasons). Empty means it is not seasonal.",
     )
     season_lead_days: int = Field(
         default=30,
@@ -311,16 +342,42 @@ class CollectionIn(StrictRequestModel):
         description="How many days after each season's day the row stays up.",
     )
 
+    # An AI row (#138): the theme it is filled from. Set it on create and the row is made disabled, so the
+    # owner sees the theme before the first build. Null is an ordinary row.
+    theme_id: int | None = Field(
+        default=None, description="The theme this AI row follows (see POST /api/themes). Null for an ordinary row."
+    )
+
+    # Explore (#138): an AI row that gives each person a new theme every ``theme_days`` days. These and the
+    # three controls below exist only on an AI row; every default is today's behaviour.
+    theme_mode: Literal["fixed", "explore"] = Field(
+        default="fixed", description="fixed keeps one theme; explore picks a new one for each person on a schedule."
+    )
+    explore_brief: str = Field(
+        default="", max_length=500, description="What kind of themes Explore should look for; blank lets the AI choose."
+    )
+    theme_days: int | None = Field(
+        default=None, ge=1, le=90, description="How many days a theme lasts in Explore; null is 7."
+    )
+    refresh_share: float | None = Field(
+        default=None, gt=0, le=1, description="The share of picks swapped on a refresh night; null keeps two thirds."
+    )
+    repeat_cooldown_days: int | None = Field(
+        default=None, ge=1, le=365, description="Don't pick a title again within this many days; null is off."
+    )
+    avoid_rows: list[str] | None = Field(
+        default=None, description="Slugs of other per-person rows whose titles this row keeps out; null is none."
+    )
+
+    @field_validator("avoid_rows")
+    @classmethod
+    def _check_avoid_rows(cls, slugs: list[str] | None) -> list[str] | None:
+        return list(dict.fromkeys(slugs)) if slugs else None
+
     @field_validator("show_days")
     @classmethod
     def _check_show_days(cls, days: list[int]) -> list[int]:
         return _normalise_show_days(days)
-
-    @field_validator("seasons")
-    @classmethod
-    def _check_seasons(cls, slugs: list[str]) -> list[str]:
-        """Known seasons only, de-duplicated and in calendar order, so equal choices compare equal."""
-        return seasons_mod.normalise_slugs(slugs)
 
 
 class HubAnchorOut(PassthroughModel):
@@ -381,16 +438,19 @@ class SeasonStatusOut(PassthroughModel):
     next: SeasonWindowOut | None
 
 
-class SeasonOut(PassthroughModel):
-    """A season a row can follow."""
+class PreviewTitleOut(PassthroughModel):
+    """One title from a row's latest delivery, for the Rows list's poster collage."""
 
-    slug: str
-    name: str
-    emoji: str
-    month: int
-    day: int
-    #: What the row holds in this season, in plain English.
-    description: str
+    #: The Plex ratingKey, which `/api/picks/{rating_key}/poster` serves the artwork for.
+    rating_key: int
+    title: str
+
+
+class AiInstructionsOut(PassthroughModel):
+    """A row's AI web search instructions as the editor reads them."""
+
+    mode: str = _closed_set_out(set(INSTRUCTION_MODES), "default, add or own")
+    text: str
 
 
 class CollectionOut(PassthroughModel):
@@ -401,6 +461,8 @@ class CollectionOut(PassthroughModel):
     # The DEFAULT row's title is the global template, not its own stale `name` column — see `_serialize`.
     name: str
     last_run_id: int | None  # None until the row has ever built
+    #: Up to four titles from the row's most recent delivery, best ranked first. Empty until it has built.
+    preview_titles: list[PreviewTitleOut]
     build: str = _closed_set_out(BUILDS, "Who the row is built for: one per person, or one shared row.")
     audience: str = _closed_set_out(AUDIENCES, "Everyone, or the subset named by audience_user_ids.")
     audience_user_ids: list[int]
@@ -419,12 +481,19 @@ class CollectionOut(PassthroughModel):
     watched_pct: float | None
     rewatch: bool
     rewatch_cooldown_days: int
+    requests_row: bool
+    requests_window_days: int
+    requests_tag_pattern: str
     unstarted_only: bool
     refresh_days: int | None
     idle_hold_days: int | None
     recency: float | None
     recent_count: int | None
     max_seeds: int | None
+    max_runtime: int | None
+    min_year: int | None
+    max_year: int | None
+    min_rating: float | None
     cold_start: str | None = Field(
         json_schema_extra={"enum": [*sorted(COLD_STARTS), None]},
         description="What this row does for someone with too little watch history; null inherits the global setting.",
@@ -502,6 +571,18 @@ class CollectionOut(PassthroughModel):
     hub_anchor: dict[str, HubAnchorOut]  # keyed by Plex section key, so the KEYS vary by library
     library_keys: list[str]
     poster: PosterOut
+    ai_instructions: AiInstructionsOut
+    theme_id: int | None = Field(description="The theme an AI row follows; null for an ordinary row.")
+    theme_name: str | None = Field(description="The fixed theme's name; null for an ordinary row or an Explore row.")
+    theme_emoji: str | None = Field(description="The fixed theme's emoji; null when it has none, or for Explore.")
+    ai_paused: bool = Field(description="Whether the row's AI is paused: it keeps its theme but spends no tokens.")
+    ai_tokens: int = Field(description="Tokens the AI has spent writing this row's themes.")
+    theme_mode: Literal["fixed", "explore"] = Field(description="Whether an AI row keeps one theme or explores.")
+    explore_brief: str = Field(description="What Explore is asked to look for; blank lets the AI choose.")
+    theme_days: int | None = Field(description="Days a theme lasts in Explore; null is 7.")
+    refresh_share: float | None = Field(description="Share of picks swapped on a refresh night; null keeps two thirds.")
+    repeat_cooldown_days: int | None = Field(description="No repeats within this many days; null is off.")
+    avoid_rows: list[str] | None = Field(description="Slugs of rows whose titles this row keeps out; null is none.")
     # The three keys below exist ONLY on a dry-run PATCH, where the row comes back unchanged and the
     # preview rides alongside it. Optional-with-None is a deliberate exception to `_closed_set_out`'s
     # "declare responses required so a dropped field fails loudly": these are genuinely absent on a
@@ -569,7 +650,25 @@ def _normalise_show_days(days: list[int]) -> list[int]:
     return [] if len(chosen) == 7 else chosen
 
 
+def _stored_instructions(body: AiInstructionsIn) -> dict[str, str]:
+    """What `Collection.prompt` holds: {} for the default, so an untouched row stores exactly what it did."""
+    if body.mode == "default":
+        return {}
+    return {"mode": body.mode, "text": body.text.strip()}
+
+
+def _ai_instructions_view(stored: object) -> dict[str, str]:
+    parsed = AiInstructions.from_stored(stored)
+    return {"mode": parsed.mode, "text": parsed.text} if parsed else {"mode": "default", "text": ""}
+
+
 def _validate(body: CollectionIn) -> None:
+    if body.ai_instructions.mode not in INSTRUCTION_MODES:
+        raise HTTPException(status_code=422, detail="AI instructions must be default, add or own")
+    # A row that names its sources without AI web search has no instructions field on screen to fill in.
+    web_search_off = bool(body.candidate_sources) and "llm_web" not in body.candidate_sources
+    if body.ai_instructions.mode != "default" and not body.ai_instructions.text.strip() and not web_search_off:
+        raise HTTPException(status_code=422, detail="Write the AI instructions, or choose Use the default.")
     if body.build not in BUILDS:
         raise HTTPException(status_code=422, detail=f"build must be one of {sorted(BUILDS)}")
     if body.audience not in AUDIENCES:
@@ -581,6 +680,8 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(
             status_code=422, detail=f"unknown candidate source(s) {unknown}; valid: {sorted(KNOWN_SOURCES)}"
         )
+    if body.min_year is not None and body.max_year is not None and body.min_year > body.max_year:
+        raise HTTPException(status_code=422, detail="min_year cannot be later than max_year")
     if body.pick_order not in ORDERS:
         raise HTTPException(status_code=422, detail=f"pick_order must be one of {sorted(ORDERS)}")
     if body.cold_start is not None and body.cold_start not in COLD_STARTS:
@@ -640,6 +741,41 @@ def _validate(body: CollectionIn) -> None:
             # leave the editor showing a placement that is not the one in force.
             raise HTTPException(status_code=422, detail=f"hub_anchor[{lib}]: set either 'row' or 'anchor', not both")
     _validate_pairing(rewatch=body.rewatch, unstarted_only=body.unstarted_only, media=body.media)
+    pattern = body.requests_tag_pattern.strip()
+    if pattern and "{username}" not in pattern and "{name}" not in pattern:
+        raise HTTPException(status_code=422, detail="Tag pattern needs {username} or {name} in it")
+    _validate_requests_row(
+        requests_row=body.requests_row,
+        build=body.build,
+        rewatch=body.rewatch,
+        seasons=body.seasons,
+        has_theme=body.theme_id is not None,
+    )
+
+
+def _validate_requests_row(
+    *, requests_row: bool, build: str, rewatch: bool, seasons: list[str], has_theme: bool = False
+) -> None:
+    """The shapes a "Your requests" row cannot take. A person's requests are theirs alone, so the row is
+    always per-person; it holds titles they have NOT seen, so it cannot lead with finished ones; and a
+    request lands when it lands, so no season decides whether the row shows.
+
+    Keyword-only like `_validate_pairing`, and for the same reason: a PATCH judges the MERGED row, so
+    flipping `rewatch` on a requests row is refused as surely as flipping `requests_row` on a rewatch row.
+    """
+    if not requests_row:
+        return
+    if build != "per_person":
+        raise HTTPException(status_code=422, detail="A requests row is always one row per person")
+    if rewatch:
+        raise HTTPException(status_code=422, detail="A requests row can't also be a rewatch row")
+    if seasons:
+        raise HTTPException(
+            status_code=422,
+            detail="A requests row can't be seasonal — it shows what they asked for whenever it lands",
+        )
+    if has_theme:
+        raise HTTPException(status_code=422, detail="A requests row can't also be an AI row")
 
 
 def _validate_anchor_rows(session: Session, body: CollectionIn, editing_slug: str) -> None:
@@ -796,31 +932,151 @@ def _season_window_view(window: seasons_mod.SeasonWindow | None) -> dict | None:
     }
 
 
-def _season_status(collection: Collection, now: datetime) -> dict | None:
+def _season_status(collection: Collection, now: datetime, *, catalogue: seasons_mod.Catalogue) -> dict | None:
     """Which season a seasonal row shows today and which comes next, on the server's clock; None if not seasonal."""
     if not collection.seasons:
         return None
     args = (list(collection.seasons), collection.season_lead_days, collection.season_after_days, now.date())
-    showing = seasons_mod.shown_on(*args)
+    showing = seasons_mod.shown_on(*args, catalogue=catalogue)
     if showing is not None:
         # Its last day on screen, which is not its window's end when a following season takes over first.
-        showing = replace(showing, ends=seasons_mod.last_shown_day(*args))
-    return {"showing": _season_window_view(showing), "next": _season_window_view(seasons_mod.next_after(*args))}
+        showing = replace(showing, ends=seasons_mod.last_shown_day(*args, catalogue=catalogue))
+    upcoming = seasons_mod.next_after(*args, catalogue=catalogue)
+    return {"showing": _season_window_view(showing), "next": _season_window_view(upcoming)}
 
 
-def _serialize(session, collection: Collection, now: datetime | None = None) -> dict:
+def row_display_name(session: Session, collection: Collection) -> str:
+    """What the Rows page calls a row.
+
+    The default row's real title is the global template (Settings → Defaults), which the engine renders per
+    library — not its stale seeded `name` column. Surfacing the template shows the actual default
+    ("✨ {library_name} Picked for You"), consistent with what delivers.
+    """
+    if collection.slug == DEFAULT_SLUG:
+        return SettingsStore(session).get("row.name_template") or collection.name
+    return collection.name
+
+
+#: How many titles the Rows list's collage shows for a row.
+PREVIEW_TITLE_COUNT = 4
+
+
+def _preview_titles(session: Session, slugs: list[str]) -> dict[str, list[dict]]:
+    """Up to four titles from each row's most recent delivery, keyed by slug, for the Rows list.
+
+    Built for every row at once — the list renders them all, so this is two queries, not two per row.
+    A per-person row's picks are `picks` rows, written only by real runs; its newest run holds every
+    person's picks, so the same title arrives once per person and is kept once, at its best rank. A
+    shared row's picks live only in `run_shared_rows`, which dry runs write too, so that read skips dry
+    runs, and skips a run that delivered it nothing (Plex still holds the earlier titles then). A pick
+    never matched to a library item (`rating_key` 0) has no artwork to show and is left out.
+
+    Args:
+        session: An open database session.
+        slugs: The rows to read.
+
+    Returns:
+        slug -> `{"rating_key", "title"}` dicts, best ranked first. A row that never built is absent.
+    """
+    latest_per_person = (
+        session.query(PickRow.collection_slug, func.max(PickRow.run_id).label("run_id"))
+        .filter(PickRow.collection_slug.in_(slugs))
+        .group_by(PickRow.collection_slug)
+        .subquery()
+    )
+    best_rank = func.min(PickRow.rank)
+    per_person = (
+        session.query(PickRow.collection_slug, PickRow.rating_key, func.min(PickRow.title), best_rank)
+        .join(
+            latest_per_person,
+            and_(
+                PickRow.collection_slug == latest_per_person.c.collection_slug,
+                PickRow.run_id == latest_per_person.c.run_id,
+            ),
+        )
+        .filter(PickRow.rating_key > 0)
+        .group_by(PickRow.collection_slug, PickRow.rating_key)
+        .order_by(PickRow.collection_slug, best_rank, PickRow.rating_key)
+        .all()
+    )
+    previews: dict[str, list[dict]] = {}
+    for slug, rating_key, title, _rank in per_person:
+        titles = previews.setdefault(slug, [])
+        if len(titles) < PREVIEW_TITLE_COUNT:
+            titles.append({"rating_key": rating_key, "title": title})
+
+    latest_shared = (
+        session.query(RunSharedRow.collection_slug, func.max(RunSharedRow.run_id).label("run_id"))
+        .join(Run, Run.id == RunSharedRow.run_id)
+        .filter(
+            RunSharedRow.collection_slug.in_(slugs),
+            Run.dry_run.is_(False),
+            func.json_array_length(RunSharedRow.picks) > 0,
+        )
+        .group_by(RunSharedRow.collection_slug)
+        .subquery()
+    )
+    shared = (
+        session.query(RunSharedRow.collection_slug, RunSharedRow.picks)
+        .join(
+            latest_shared,
+            and_(
+                RunSharedRow.collection_slug == latest_shared.c.collection_slug,
+                RunSharedRow.run_id == latest_shared.c.run_id,
+            ),
+        )
+        .all()
+    )
+    for slug, picks in shared:
+        titles, seen = [], set()
+        for pick in sorted(picks, key=lambda p: p.get("rank") or 0):
+            rating_key = pick.get("rating_key") or 0
+            if rating_key <= 0 or rating_key in seen:
+                continue
+            seen.add(rating_key)
+            titles.append({"rating_key": rating_key, "title": pick.get("title") or ""})
+            if len(titles) == PREVIEW_TITLE_COUNT:
+                break
+        previews[slug] = titles
+    return previews
+
+
+def _serialize(
+    session,
+    collection: Collection,
+    now: datetime | None = None,
+    *,
+    catalogue: seasons_mod.Catalogue,
+    previews: dict[str, list[dict]] | None = None,
+) -> dict:
+    """One row as the API renders it.
+
+    Args:
+        session: An open database session.
+        collection: The row.
+        now: The one clock read for the whole response; read here when omitted.
+        catalogue: The season catalogue, for the season status.
+        previews: `_preview_titles` for a whole list, read once by the caller; read here for this one
+            row when omitted.
+
+    Returns:
+        The `CollectionOut` payload.
+    """
     # One clock read for everything this row reports about today: the badge and the season status must
     # describe the same day, even for a response built across midnight.
     now = now or context_builder.local_now()
+    if previews is None:
+        previews = _preview_titles(session, [collection.slug])
     audience_ids = [
         row.user_id for row in session.query(CollectionAudience).filter_by(collection_id=collection.id).all()
     ]
-    # The default row's real title is the global template (Settings → Defaults), which the engine
-    # renders per library — not its stale seeded `name` column. Surface the template so the Rows UI
-    # shows the actual default ("✨ {library_name} Picked for You"), consistent with what delivers.
-    name = collection.name
-    if collection.slug == DEFAULT_SLUG:
-        name = SettingsStore(session).get("row.name_template") or collection.name
+    name = row_display_name(session, collection)
+    # An Explore row wears a different theme each period, so only a fixed row has one name to show.
+    fixed_theme = (
+        session.get(Theme, collection.theme_id)
+        if collection.theme_id is not None and (collection.theme_mode or "fixed") == "fixed"
+        else None
+    )
     # The most recent run that delivered picks for THIS row — so the Rows UI can link straight to what
     # happened (the run detail groups its results by row). None until the row has ever built.
     last_run_id = session.query(func.max(PickRow.run_id)).filter(PickRow.collection_slug == collection.slug).scalar()
@@ -829,6 +1085,7 @@ def _serialize(session, collection: Collection, now: datetime | None = None) -> 
         "slug": collection.slug,
         "name": name,
         "last_run_id": last_run_id,
+        "preview_titles": previews.get(collection.slug, []),
         "build": collection.build,
         "audience": collection.audience,
         "audience_user_ids": audience_ids,
@@ -854,12 +1111,19 @@ def _serialize(session, collection: Collection, now: datetime | None = None) -> 
         "watched_pct": collection.watched_pct,
         "rewatch": bool(collection.rewatch),
         "rewatch_cooldown_days": collection.rewatch_cooldown_days,
+        "requests_row": bool(collection.requests_row),
+        "requests_window_days": collection.requests_window_days,
+        "requests_tag_pattern": collection.requests_tag_pattern or "",
         "unstarted_only": bool(collection.unstarted_only),
         "refresh_days": collection.refresh_days,
         "idle_hold_days": collection.idle_hold_days,
         "recency": collection.recency,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
+        "max_runtime": collection.max_runtime,
+        "min_year": collection.min_year,
+        "max_year": collection.max_year,
+        "min_rating": collection.min_rating,
         "cold_start": collection.cold_start,
         "seed_window": int(collection.seed_window or 1),
         "req_min_rating": collection.req_min_rating,
@@ -896,24 +1160,146 @@ def _serialize(session, collection: Collection, now: datetime | None = None) -> 
             collection.season_lead_days,
             collection.season_after_days,
             now,
+            catalogue=catalogue,
         ),
         "seasons": list(collection.seasons or []),
         "season_lead_days": collection.season_lead_days,
         "season_after_days": collection.season_after_days,
-        "season_status": _season_status(collection, now),
+        "season_status": _season_status(collection, now, catalogue=catalogue),
         "placement_friends": collection.placement_friends or "both",
         "pin_top": bool(collection.pin_top),
         "hub_anchor": collection.hub_anchor or {},
         "library_keys": [str(k) for k in (collection.library_keys or [])],
         "poster": _poster_view(session, collection),
+        "ai_instructions": _ai_instructions_view(collection.prompt),
+        "theme_id": collection.theme_id,
+        "theme_name": None if fixed_theme is None else fixed_theme.name,
+        "theme_emoji": None if fixed_theme is None else fixed_theme.emoji or None,
+        "ai_paused": bool(collection.ai_paused),
+        "ai_tokens": collection.ai_tokens or 0,
+        "theme_mode": collection.theme_mode or "fixed",
+        "explore_brief": collection.explore_brief or "",
+        "theme_days": collection.theme_days,
+        "refresh_share": collection.refresh_share,
+        "repeat_cooldown_days": collection.repeat_cooldown_days,
+        "avoid_rows": _live_avoid_rows(session, collection),
     }
 
 
-def _reject_season_name_without_seasons(template: str, seasons: list[str]) -> None:
-    """Refuse a name that uses the season on a row that follows none: it could never be filled in, so the
-    row would never be built for anyone (discussion #124)."""
-    if why := refusal(template or "", "row_name", row_has_seasons=bool(seasons)):
+def _live_avoid_rows(session: Session, collection: Collection) -> list[str] | None:
+    """The rows this row keeps out that still exist and are per-person. A row the owner deleted, or made
+    shared, since it was listed is dropped: it has no checkbox, and sending it back would be refused."""
+    if not collection.avoid_rows:
+        return None
+    live = {
+        slug
+        for (slug,) in session.query(Collection.slug).filter(
+            Collection.slug.in_(collection.avoid_rows), Collection.build == "per_person"
+        )
+    }
+    return [slug for slug in collection.avoid_rows if slug in live] or None
+
+
+def _reject_season_name_without_seasons(template: str, seasons: list[str], *, row_has_theme: bool = False) -> None:
+    """Refuse a name that uses the season on a row that follows none, or the theme on a row that is not an AI
+    row: it could never be filled in, so the row would never be built for anyone (discussion #124, #138)."""
+    if why := refusal(template or "", "row_name", row_has_seasons=bool(seasons), row_has_theme=row_has_theme):
         raise HTTPException(status_code=422, detail=why)
+
+
+def _validate_theme(
+    session: Session,
+    theme_id: int | None,
+    *,
+    build: str,
+    seasons: list[str],
+    rewatch: bool = False,
+    requests_row: bool = False,
+) -> Theme | None:
+    """The theme an AI row follows, or None for an ordinary row; 422 for a row a theme cannot drive.
+
+    Keyword-only on what the row will be, like `_validate_requests_row`: a PATCH judges the MERGED row.
+    AI rows are per-person in v1, and a theme has no calendar, so a season is refused too.
+    """
+    if theme_id is None:
+        return None
+    theme = session.get(Theme, theme_id)
+    if theme is None:
+        raise HTTPException(status_code=422, detail="That theme doesn't exist. Write or pick one first.")
+    if build != "per_person":
+        raise HTTPException(status_code=422, detail="An AI row is always one row per person, never a shared row.")
+    if seasons:
+        raise HTTPException(
+            status_code=422, detail="An AI row can't also follow seasons — a theme has no calendar of its own."
+        )
+    if rewatch:
+        raise HTTPException(status_code=422, detail="An AI row can't also be a rewatch row")
+    if requests_row:
+        raise HTTPException(status_code=422, detail="An AI row can't also be a requests row")
+    return theme
+
+
+_EXPLORE_COLUMNS = ("theme_mode", "explore_brief", "theme_days", "refresh_share", "repeat_cooldown_days", "avoid_rows")
+_EXPLORE_DEFAULTS = {
+    "theme_mode": "fixed",
+    "explore_brief": "",
+    "theme_days": None,
+    "refresh_share": None,
+    "repeat_cooldown_days": None,
+    "avoid_rows": None,
+}
+
+
+def _validate_explore(
+    session: Session,
+    values: dict,
+    *,
+    theme_id: int | None,
+    own_slug: str,
+    only: set[str] | None = None,
+    already_avoided: tuple[str, ...] = (),
+) -> None:
+    """422 for Explore settings or over-time controls a row cannot use (#138).
+
+    ``values`` is the merged row. They exist only on an AI row, so each needs a theme; ``only`` limits the
+    "needs a theme" check to the fields a PATCH actually sent. ``avoid_rows`` must name other, existing
+    per-person rows, but only a slug the request newly ADDS is checked: ``already_avoided`` are the row's stored
+    ones, which a row deleted since then must not make unsavable.
+    """
+    if theme_id is None:
+        stray = [c for c in (only if only is not None else _EXPLORE_COLUMNS) if values[c] != _EXPLORE_DEFAULTS[c]]
+        if stray:
+            raise HTTPException(
+                status_code=422,
+                detail="Explore and the over-time controls only apply to an AI row. Give the row a theme.",
+            )
+    for slug in values["avoid_rows"] or []:
+        if slug in already_avoided:
+            continue
+        if slug == own_slug:
+            raise HTTPException(status_code=422, detail=f"A row can't keep out its own titles (“{slug}”).")
+        other = session.query(Collection).filter(Collection.slug == slug).first()
+        if other is None:
+            raise HTTPException(status_code=422, detail=f"There is no row “{slug}” to keep out.")
+        if other.build != "per_person":
+            raise HTTPException(
+                status_code=422, detail=f"“{slug}” is a shared row. Only per-person rows can be kept out."
+            )
+
+
+def _unattributed_theme_tokens(session: Session, theme: Theme | None, *, exclude_id: int | None) -> int:
+    """The tokens a theme cost that no row has been charged for yet: all of them while no other row follows it.
+
+    A new row's list is saved before the row exists, so those tokens had no row to land on. Computed, not
+    stored: a theme another row already follows has had its tokens counted by that row, and counting them
+    again would double them.
+    """
+    if theme is None or not theme.ai_tokens:
+        return 0
+    others = session.query(Collection.id).filter(Collection.theme_id == theme.id)
+    if exclude_id is not None:
+        others = others.filter(Collection.id != exclude_id)
+    return 0 if others.first() else int(theme.ai_tokens)
 
 
 def _reject_duplicate_name(
@@ -927,6 +1313,7 @@ def _reject_duplicate_name(
     media: str = "both",
     library_keys=(),
     already_clashing: frozenset[str] = frozenset(),
+    theme: ThemeSpec | None = None,
 ) -> None:
     """Refuse a row title another row is already titled from — see `reconcile.row_titled_from` for
     what "already titled from" means and why the `name` column is the wrong thing to compare.
@@ -951,6 +1338,7 @@ def _reject_duplicate_name(
                 fallback_name=fallback_name,
                 media=media,
                 library_keys=library_keys,
+                theme=theme,
             )
             if row.slug not in already_clashing
         ),
@@ -971,7 +1359,9 @@ def _reject_duplicate_name(
     # sending the operator to the box that isn't the problem.
     culprit = template
     where = "name"
-    if fallback_name and reconcile.title_key(fallback_name) in reconcile._title_keys(session, clash, secrets):
+    if fallback_name and reconcile.title_key(fallback_name) in reconcile._title_keys(
+        session, clash, secrets, catalogue=load_catalogue(session)
+    ):
         culprit = fallback_name
         where = "\u201cName for people with nothing watched yet\u201d"
     raise HTTPException(
@@ -979,6 +1369,74 @@ def _reject_duplicate_name(
         detail=f"{culprit!r} is already the title of {whose}, which can build in the same library — two rows "
         f"with the same title in one library become a single collection on Plex, so pick a different {where} "
         "or build the two rows in different libraries",
+    )
+
+
+#: PATCH fields that can move a row's title for a person, or the libraries and people it shares with another row.
+_TITLE_MOVING_FIELDS = {
+    "name",
+    "name_template",
+    "media",
+    "library_keys",
+    "audience",
+    "audience_user_ids",
+    "theme_mode",
+    "theme_id",
+    "enabled",
+    "fallback_name",
+}
+
+
+def _reject_new_person_title_clash(
+    session,
+    secrets,
+    collection: Collection,
+    body: CollectionIn,
+    sent: set[str],
+    *,
+    media: str,
+    library_keys: list[str],
+    theme: ThemeSpec | None,
+) -> None:
+    """422 when this edit would give one person two rows of one title in a library both build in.
+
+    An explore row wears each person's own theme, which the server-wide title check never sees (#121). So the
+    edit is judged per person: the clashes that exist now against those that would exist after it. Only a clash
+    the edit ADDS is refused, so a row that already clashes stays editable for anything unrelated.
+    """
+    account_by_user, audience_by_collection = context_builder.ContextBuilder._audience_maps(session)
+    audience_sent = bool(sent & {"audience", "audience_user_ids"})
+    if audience_sent:
+        subset = (body.audience if "audience" in sent else collection.audience) == "subset"
+        members = _audience_after_set(body)
+        accounts = frozenset(account_by_user[uid] for uid in members if uid in account_by_user) if subset else None
+    else:
+        accounts = reconcile._frozenset_or_none(
+            context_builder.ContextBuilder._subset_audience(collection, account_by_user, audience_by_collection)
+        )
+    theme_mode = body.theme_mode if "theme_mode" in sent else collection.theme_mode
+    after = reconcile.RowView(
+        slug=collection.slug,
+        name=collection.name,
+        template=_merged_template(collection, body, sent),
+        fallback_name=(body.fallback_name if "fallback_name" in sent else collection.fallback_name) or "",
+        media=media or "both",
+        library_keys=tuple(str(k) for k in library_keys),
+        audience=accounts,
+        base_theme=theme,
+        explore=theme_mode == "explore",
+        row_id=collection.id,
+    )
+    clash = reconcile.new_person_clash(session, secrets, collection, after)
+    if clash is None:
+        return
+    other, person, title = clash
+    who = person.nickname or person.friendly_name or person.username
+    raise HTTPException(
+        status_code=422,
+        detail=f"{title!r} would be the title of this row for {who}"
+        f" and of the row {other.name!r} ({other.slug}) too, in a library both build in — two rows with the same "
+        "title in one library become a single collection on Plex, so pick a different name, theme or library.",
     )
 
 
@@ -1083,23 +1541,21 @@ async def list_collections(request: Request) -> list[dict]:
         # millisecond either side of midnight, two rows in one list would otherwise report different
         # days.
         now = context_builder.local_now()
-        return [_serialize(session, c, now) for c in collections]
+        catalogue = load_catalogue(session)
+        previews = _preview_titles(session, [c.slug for c in collections])
+        return [_serialize(session, c, now, catalogue=catalogue, previews=previews) for c in collections]
 
 
-@router.get("/seasons", response_model=list[SeasonOut])
-async def list_seasons() -> list[dict]:
-    """Every season a row can follow, in calendar order (discussion #124)."""
-    return [
-        {
-            "slug": season.slug,
-            "name": season.name,
-            "emoji": season.emoji,
-            "month": season.month,
-            "day": season.day,
-            "description": season.description,
-        }
-        for season in seasons_mod.SEASONS.values()
-    ]
+def _known_seasons(slugs: list[str], *, catalogue: seasons_mod.Catalogue) -> list[str]:
+    """Known seasons only, de-duplicated and in calendar order, so equal choices compare equal.
+
+    In the handlers rather than a field validator on ``CollectionIn``: the catalogue holds the owner's own
+    seasons (issue #137), which live in the database, and a validator has no session to read them with.
+    """
+    try:
+        return seasons_mod.normalise_slugs(slugs, catalogue=catalogue)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
 
 
 @router.post("", status_code=201, response_model=CollectionOut)
@@ -1111,17 +1567,38 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     if body.dry_run:
         raise HTTPException(status_code=422, detail="dry_run is only supported on PATCH and DELETE")
     _validate(body)
-    _reject_season_name_without_seasons(body.name_template or body.name, body.seasons)
+    _reject_season_name_without_seasons(
+        body.name_template or body.name, body.seasons, row_has_theme=body.theme_id is not None
+    )
     with request.app.state.sessions() as session:
-        # The template this row will actually be titled from, not the bare name — a POST may set both.
+        catalogue = load_catalogue(session)
+        body.seasons = _known_seasons(body.seasons, catalogue=catalogue)
+        theme = _validate_theme(
+            session,
+            body.theme_id,
+            build=body.build,
+            seasons=body.seasons,
+            rewatch=body.rewatch,
+            requests_row=body.requests_row,
+        )
+        _validate_explore(
+            session,
+            {c: getattr(body, c) for c in _EXPLORE_COLUMNS},
+            theme_id=None if theme is None else theme.id,
+            own_slug="",
+        )
+        # The template this row will actually be titled from, not the bare name — a POST may set both. An AI
+        # row's `{theme}` is filled from its theme by the check itself.
+        template = body.name_template or body.name
         _reject_duplicate_name(
             session,
             request.app.state.secrets,
-            body.name_template or body.name,
+            template,
             build=body.build,
             fallback_name=body.fallback_name,
             media=body.media,
             library_keys=body.library_keys,
+            theme=None if theme is None else spec_from_row(theme),
         )
         _validate_anchor_rows(session, body, editing_slug="")
         slug = _unique_slug(session, slugify(body.name))
@@ -1131,6 +1608,8 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             build=body.build,
             audience=body.audience,
             enabled=body.enabled,
+            theme_id=None if theme is None else theme.id,
+            **{column: getattr(body, column) for column in _EXPLORE_COLUMNS},
             schedule=body.schedule.strip(),
             size=body.size,
             media=body.media,
@@ -1146,12 +1625,19 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             watched_pct=body.watched_pct,
             rewatch=body.rewatch,
             rewatch_cooldown_days=body.rewatch_cooldown_days,
+            requests_row=body.requests_row,
+            requests_window_days=body.requests_window_days,
+            requests_tag_pattern=body.requests_tag_pattern.strip(),
             unstarted_only=body.unstarted_only,
             refresh_days=body.refresh_days,
             idle_hold_days=body.idle_hold_days,
             recency=body.recency,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
+            max_runtime=body.max_runtime,
+            min_year=body.min_year,
+            max_year=body.max_year,
+            min_rating=body.min_rating,
             cold_start=body.cold_start,
             seed_window=body.seed_window,
             pick_order=body.pick_order,
@@ -1165,15 +1651,17 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             hub_anchor={k: v.model_dump() for k, v in body.hub_anchor.items()},
             library_keys=body.library_keys,
             poster=body.poster.model_dump(),
+            prompt=_stored_instructions(body.ai_instructions),
             description=body.description,
             sort_title_prefix=body.sort_title_prefix,
             **{column: getattr(body, column) for column in _REQUEST_COLUMNS},
         )
+        collection.ai_tokens = _unattributed_theme_tokens(session, theme, exclude_id=None)
         session.add(collection)
         session.flush()
         _set_audience(session, collection, body)
         session.commit()
-        result = _serialize(session, collection)
+        result = _serialize(session, collection, catalogue=catalogue)
     rebuild_schedule(request.app)  # a new row may carry a schedule — register its cron job now
     return result
 
@@ -1222,12 +1710,19 @@ _PATCHABLE_COLUMNS = (
     "watched_pct",
     "rewatch",
     "rewatch_cooldown_days",
+    "requests_row",
+    "requests_window_days",
+    "requests_tag_pattern",
     "unstarted_only",
     "refresh_days",
     "idle_hold_days",
     "recency",
     "recent_count",
     "max_seeds",
+    "max_runtime",
+    "min_year",
+    "max_year",
+    "min_rating",
     "cold_start",
     "seed_window",
     *_REQUEST_COLUMNS,
@@ -1240,6 +1735,8 @@ _PATCHABLE_COLUMNS = (
     "season_after_days",
     "pin_top",
     "library_keys",
+    "theme_id",
+    *_EXPLORE_COLUMNS,
 )
 
 
@@ -1363,6 +1860,10 @@ def _apply_patch(
             if column == "name_template" and is_default:
                 continue
             setattr(collection, column, getattr(body, column))
+    if "theme_id" in sent and body.theme_id is None:
+        # Without a theme the row is no longer an AI row, and these exist only on one.
+        for column, default in _EXPLORE_DEFAULTS.items():
+            setattr(collection, column, default)
     if "schedule" in sent:
         collection.schedule = body.schedule.strip()  # a whitespace-only cron means "no schedule"
     if "poster" in sent:
@@ -1374,6 +1875,20 @@ def _apply_patch(
                 message={
                     "slug": collection.slug,
                     "mode": body.poster.mode or "default",
+                    "at": datetime.now(UTC).isoformat(),
+                },
+            )
+        )
+    if "ai_instructions" in sent:
+        collection.prompt = _stored_instructions(body.ai_instructions)
+        session.add(
+            Event(
+                scope="collection.ai_instructions",
+                level="info",
+                message={
+                    "slug": collection.slug,
+                    "mode": body.ai_instructions.mode,
+                    "chars": len(body.ai_instructions.text.strip()),
                     "at": datetime.now(UTC).isoformat(),
                 },
             )
@@ -1415,9 +1930,42 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         collection = session.get(Collection, collection_id)
         if collection is None:
             raise HTTPException(status_code=404, detail="collection not found")
+        catalogue = load_catalogue(session)
+        if "seasons" in sent:
+            body.seasons = _known_seasons(body.seasons, catalogue=catalogue)
         _validate_anchor_rows(session, body, editing_slug=collection.slug)
         before = _snapshot(session, collection)
         is_default = collection.slug == DEFAULT_SLUG
+        merged_theme_id = body.theme_id if "theme_id" in sent else collection.theme_id
+        merged_seasons = body.seasons if "seasons" in sent else list(collection.seasons or [])
+        theme = None
+        if is_default and body.theme_id is not None:
+            raise HTTPException(
+                status_code=422, detail="The default row can't be an AI row — add a new row from the AI template."
+            )
+        if sent & {"theme_id", "build", "seasons", "rewatch", "requests_row"}:
+            theme = _validate_theme(
+                session,
+                merged_theme_id,
+                build=body.build if "build" in sent else collection.build,
+                seasons=merged_seasons,
+                rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
+                requests_row=body.requests_row if "requests_row" in sent else bool(collection.requests_row),
+            )
+        # The theme the row will follow once this lands: it fills `{theme}` in every title check below.
+        stored_theme = session.get(Theme, merged_theme_id) if merged_theme_id is not None else None
+        merged_spec = None if stored_theme is None else spec_from_row(stored_theme)
+        if sent & (set(_EXPLORE_COLUMNS) | {"theme_id"}):
+            # Judged on the merged row. Clearing the theme resets these (`_apply_patch`), so only what the
+            # request itself sent counts against a row that has none.
+            _validate_explore(
+                session,
+                {c: getattr(body, c) if c in sent else getattr(collection, c) for c in _EXPLORE_COLUMNS},
+                theme_id=merged_theme_id,
+                own_slug=collection.slug,
+                only=sent & set(_EXPLORE_COLUMNS),
+                already_avoided=tuple(collection.avoid_rows or ()),
+            )
         if is_default:
             # The default row is everyone's everyday row and its title is the global template, which every
             # person's row renders: it follows no season, so it can neither take one nor wear its name.
@@ -1428,12 +1976,11 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 )
             if "name" in sent:
                 _reject_season_name_without_seasons(body.name, [])
-        elif sent & {"name", "name_template", "seasons"}:
+        elif sent & {"name", "name_template", "seasons", "theme_id"}:
             # Merged, like the title checks below: a PATCH that sends only the seasons, or only the name,
             # is judged against what the row will be once it lands.
             _reject_season_name_without_seasons(
-                _merged_template(collection, body, sent),
-                body.seasons if "seasons" in sent else list(collection.seasons or []),
+                _merged_template(collection, body, sent), merged_seasons, row_has_theme=merged_theme_id is not None
             )
         # A rename only matters for a NON-default per-person row (the default row's title follows the
         # global Settings template, not this column). The old effective template is what the
@@ -1465,6 +2012,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     fallback_name=fallback_now,
                     media=collection.media,
                     library_keys=old_keys,
+                    theme=reconcile._theme_of(session, collection),
                 )
             )
             _reject_duplicate_name(
@@ -1477,6 +2025,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 media=merged_media,
                 library_keys=merged_keys,
                 already_clashing=before_clashes,
+                theme=merged_spec,
             )
         # The clash check runs on the MERGED effective template, for the same reason `_validate_pairing`
         # does: a PATCH may send either half. Sending `name_template` ALONE changes the title and used
@@ -1497,7 +2046,12 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             merged_fallback = (
                 body.fallback_name if "fallback_name" in sent else (collection.fallback_name or "")
             ) or ""
-            moved = reconcile.title_key(merged) != reconcile.title_key(collection.name_template or collection.name)
+            # A `{theme}` template keys on "" until filled, so "{theme} too" -> "{theme}" looked like no move at
+            # all: compare the titles the row wears before and after, each with its own theme filled in.
+            title_before = fill_theme(
+                collection.name_template or collection.name, reconcile._theme_of(session, collection)
+            )
+            moved = reconcile.title_key(fill_theme(merged, merged_spec)) != reconcile.title_key(title_before)
             fallback_moved = reconcile.title_key(merged_fallback) != reconcile.title_key(collection.fallback_name or "")
             # Only when the TITLE actually moves. The editor re-sends `name` on every save, so
             # checking on "was the field present" refused a size-only edit on a row that already
@@ -1514,7 +2068,55 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                     fallback_name=merged_fallback,
                     media=merged_media,
                     library_keys=merged_keys,
+                    theme=merged_spec,
                 )
+        # A season newly ticked gives a `{season}` row a title it never wore: "{season} picks" becomes
+        # "Thanksgiving picks", the title a plain row beside it may already have (#137 I-2). The checks above run
+        # only when the name, libraries or build move, so ticking a season was the one door left open. Only
+        # the seasons ADDED are checked, each as the row would be titled in it: unticking can add no clash.
+        if "seasons" in sent and not is_default:
+            ticked = [slug for slug in body.seasons if slug not in (collection.seasons or [])]
+            seasonal_template = _merged_template(collection, body, sent)
+            for slug in ticked if uses_season(seasonal_template) else []:
+                _reject_duplicate_name(
+                    session,
+                    state.secrets,
+                    reconcile.season_title(seasonal_template, catalogue[slug]),
+                    exclude_slug=collection.slug,
+                    build=merged_build,
+                    media=merged_media,
+                    library_keys=merged_keys,
+                    theme=merged_spec,
+                )
+        if theme is not None and "theme_id" in sent and theme.id != collection.theme_id:
+            collection.ai_tokens = (collection.ai_tokens or 0) + _unattributed_theme_tokens(
+                session, theme, exclude_id=collection.id
+            )
+        # A theme newly set gives a `{theme}` row a title it never wore, as a ticked season does.
+        if theme is not None and "theme_id" in sent and theme.id != collection.theme_id and not is_default:
+            themed_template = _merged_template(collection, body, sent)
+            if uses_theme(themed_template):
+                _reject_duplicate_name(
+                    session,
+                    state.secrets,
+                    themed_template,
+                    exclude_slug=collection.slug,
+                    build=merged_build,
+                    media=merged_media,
+                    library_keys=merged_keys,
+                    theme=merged_spec,
+                )
+        if sent & _TITLE_MOVING_FIELDS and not is_default:
+            _reject_new_person_title_clash(
+                session,
+                state.secrets,
+                collection,
+                body,
+                sent,
+                media=merged_media,
+                library_keys=merged_keys,
+                theme=merged_spec,
+            )
         # The default row has no per-collection name: its title IS the global `row.name_template`
         # (Settings → Defaults), which delivery renders per library. So a rename of it writes that
         # global setting — NOT this column — because a per-collection template would win over each
@@ -1542,11 +2144,22 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 )
                 default_rename_to = new_template
                 template_before, template_after = previous, new_template
+        merged_min_year = body.min_year if "min_year" in sent else collection.min_year
+        merged_max_year = body.max_year if "max_year" in sent else collection.max_year
+        if merged_min_year is not None and merged_max_year is not None and merged_min_year > merged_max_year:
+            raise HTTPException(status_code=422, detail="The earliest year can't be later than the latest year.")
         # Checked against the MERGED row, never the request body — see `_validate_pairing`.
         _validate_pairing(
             rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
             unstarted_only=body.unstarted_only if "unstarted_only" in sent else bool(collection.unstarted_only),
             media=body.media if "media" in sent else collection.media,
+        )
+        _validate_requests_row(
+            requests_row=body.requests_row if "requests_row" in sent else bool(collection.requests_row),
+            build=body.build if "build" in sent else collection.build,
+            rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
+            seasons=body.seasons if "seasons" in sent else list(collection.seasons or []),
+            has_theme=merged_theme_id is not None,
         )
         # Hoisted above the writes: `_set_audience` raises this from inside the apply half, which on a
         # default-row rename meant answering 422 after `SettingsStore.set` had already committed.
@@ -1565,7 +2178,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 template_after=template_after,
                 defer_rename=body.defer_rename,
             )
-            preview_row = _serialize(session, collection)
+            preview_row = _serialize(session, collection, catalogue=catalogue)
         else:
             _apply_patch(
                 session,
@@ -1580,7 +2193,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             after = _snapshot(session, collection)
             if touching_name:
                 template_after = collection.name_template or collection.name
-            result = _serialize(session, collection)
+            result = _serialize(session, collection, catalogue=catalogue)
 
     if body.dry_run:
         warnings: list[str] = []
@@ -1995,7 +2608,9 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
             # could hand two rows one title, or overwrite the global template, with nothing to stop
             # it. Checked BEFORE either write, so a refusal renames nothing here or on Plex.
             _reject_season_name_without_seasons(
-                new_template, [] if slug == DEFAULT_SLUG else list(collection.seasons or [])
+                new_template,
+                [] if slug == DEFAULT_SLUG else list(collection.seasons or []),
+                row_has_theme=collection.theme_id is not None,
             )
             _reject_duplicate_name(
                 session,
@@ -2005,6 +2620,7 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
                 build=build,
                 media=collection.media,
                 library_keys=collection.library_keys or [],
+                theme=reconcile._theme_of(session, collection),
             )
             # Same rule as the PATCH handler: the DEFAULT row's title IS the global setting, and its
             # own column must stay empty. Writing it here would undo that guard within the same
@@ -2088,9 +2704,32 @@ async def cleanup_collection(collection_id: int, body: CleanupRequest, request: 
             raise HTTPException(status_code=404, detail="collection not found")
         slug, build, name = collection.slug, collection.build, collection.name
 
-    removed, error = await reconcile.run_reconcile(
-        state, slug=slug, build=build, dry_run=body.dry_run, scope="collection.cleanup"
-    )
+    # A real cleanup is a Plex writer, so it takes the one-writer lock the job worker and every run take.
+    # Without it, a cleanup overlapping a run that delivers this row could forget the ledger key the run had
+    # just written, leaving that row's plays uncredited until a later delivery found it by label again.
+    # Same policy as uninstall: 409 for a RUN, which holds the lock for many minutes; a bounded wait for a
+    # writer JOB, which is seconds. A preview writes nothing and never takes it.
+    writer = None if body.dry_run else jobs.plex_writer_lock()
+    if writer is not None:
+        if state.run_service.is_running():
+            raise HTTPException(
+                status_code=409,
+                detail="A run is updating Plex right now, so nothing was removed. Try again once it finishes.",
+            )
+        try:
+            await asyncio.wait_for(writer.acquire(), timeout=jobs.WRITER_LOCK_WAIT_S)
+        except TimeoutError:
+            raise HTTPException(
+                status_code=409,
+                detail="Shortlist is busy making other changes on Plex, so nothing was removed. Try again in a minute.",
+            ) from None
+    try:
+        removed, error = await reconcile.run_reconcile(
+            state, slug=slug, build=build, dry_run=body.dry_run, scope="collection.cleanup"
+        )
+    finally:
+        if writer is not None:
+            writer.release()
     if error:
         raise HTTPException(status_code=502, detail=f"Cleanup failed part-way; removed {len(removed)} before: {error}")
     verb = "Would remove" if body.dry_run else "Removed"
@@ -2106,6 +2745,247 @@ def _require_collection(session, collection_id: int) -> Collection:
     if collection is None:
         raise HTTPException(status_code=404, detail="collection not found")
     return collection
+
+
+class AiPauseRequest(StrictRequestModel):
+    paused: bool
+
+
+@router.post("/{collection_id}/ai-pause", response_model=CollectionOut)
+async def pause_ai(collection_id: int, body: AiPauseRequest, request: Request) -> dict:
+    """Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; it just never
+    spends tokens writing or refining one (409 from the theme endpoints until resumed)."""
+    with request.app.state.sessions() as session:
+        collection = _require_collection(session, collection_id)
+        if collection.theme_id is None:
+            raise HTTPException(status_code=422, detail="Only an AI row has AI to pause.")
+        if collection.ai_paused != body.paused:
+            collection.ai_paused = body.paused
+            add_audit(
+                session,
+                "collection.ai_pause",
+                "info",
+                slug=collection.slug,
+                paused=body.paused,
+            )
+        session.commit()
+        return _serialize(session, collection, catalogue=load_catalogue(session))
+
+
+class ThemeRefOut(PassthroughModel):
+    """A theme as one person's rotation holds it: which one, when it started, and when it hands over."""
+
+    theme_id: int | None = Field(description="The stored theme; null once it has been deleted.")
+    name: str
+    emoji: str | None
+    started_at: str
+    due_at: str | None
+
+
+class RotationTargetOut(PassthroughModel):
+    user_id: int
+    name: str
+    current: ThemeRefOut | None
+    next: ThemeRefOut | None = Field(description="The theme queued to start when the current one ends.")
+    started_at: str | None = Field(description="When the current theme started.")
+    next_due_at: str | None = Field(description="When the current theme ends and the next one starts.")
+    history: list[ThemeRefOut] = Field(description="Their earlier themes on this row, newest first.")
+
+
+class ThemeRotationOut(PassthroughModel):
+    mode: Literal["fixed", "explore"]
+    days: int = Field(description="How many days a theme lasts.")
+    targets: list[RotationTargetOut]
+
+
+class UpNextRequest(StrictRequestModel):
+    user_id: int
+    theme_id: int
+
+
+class RegenerateRequest(StrictRequestModel):
+    user_id: int
+
+
+_HISTORY_SHOWN = 6
+
+
+def _ai_row(session, collection_id: int) -> Collection:
+    """The row, or 404 when it is not an AI row: only those have a theme to rotate."""
+    collection = _require_collection(session, collection_id)
+    if collection.theme_id is None:
+        raise HTTPException(status_code=404, detail="That row isn't an AI row.")
+    return collection
+
+
+def _theme_ref(row, themes: dict[int, Theme]) -> dict:
+    theme = themes.get(row.theme_id) if row.theme_id is not None else None
+    return {
+        "theme_id": row.theme_id,
+        "name": theme.name if theme is not None else row.theme_name,
+        "emoji": theme.emoji if theme is not None else None,
+        "started_at": iso_utc(row.started_at),
+        "due_at": iso_utc(row.due_at),
+    }
+
+
+def _person_name(user: User) -> str:
+    return user.nickname or user.friendly_name or user.username
+
+
+def _audience_person(session, collection: Collection, user_id: int) -> User:
+    from shortlist.server.services.theme_rotation import audience_users
+
+    person = next((u for u in audience_users(session, collection) if u.id == user_id), None)
+    if person is None:
+        raise HTTPException(status_code=404, detail="That person isn't in this row's audience.")
+    return person
+
+
+@router.get("/{collection_id}/theme-rotation", response_model=ThemeRotationOut)
+async def get_theme_rotation(collection_id: int, request: Request) -> dict:
+    """Where each person's Explore rotation stands: their current theme, the one queued next, and what came before."""
+    from shortlist.server.services.theme_rotation import DEFAULT_THEME_DAYS, audience_users
+
+    with request.app.state.sessions() as session:
+        collection = _ai_row(session, collection_id)
+        days = collection.theme_days or DEFAULT_THEME_DAYS
+        targets = []
+        for person in audience_users(session, collection):
+            rows = (
+                session.query(ThemeHistory)
+                .filter(ThemeHistory.collection_id == collection.id, ThemeHistory.user_id == person.id)
+                .order_by(ThemeHistory.started_at.desc(), ThemeHistory.id.desc())
+                .all()
+            )
+            themes = {
+                t.id: t for t in session.query(Theme).filter(Theme.id.in_([r.theme_id for r in rows if r.theme_id]))
+            }
+            current = next((r for r in rows if r.state == "current"), None)
+            upcoming = next((r for r in rows if r.state == "next"), None)
+            targets.append(
+                {
+                    "user_id": person.id,
+                    "name": _person_name(person),
+                    "current": None if current is None else _theme_ref(current, themes),
+                    "next": None if upcoming is None else _theme_ref(upcoming, themes),
+                    "started_at": None if current is None else iso_utc(current.started_at),
+                    "next_due_at": None if current is None else iso_utc(current.started_at + timedelta(days=days)),
+                    "history": [_theme_ref(r, themes) for r in rows if r.state == "past"][:_HISTORY_SHOWN],
+                }
+            )
+        return {"mode": collection.theme_mode or "fixed", "days": days, "targets": targets}
+
+
+@router.put("/{collection_id}/up-next", response_model=ThemeRefOut)
+async def set_up_next(collection_id: int, body: UpNextRequest, request: Request) -> dict:
+    """Point a person's "Up next" at a saved theme, replacing any theme already queued. Changes no Plex state."""
+    from shortlist.server.api.seasons import _off_loop
+    from shortlist.server.services.theme_rotation import _target_lock, queue_next
+    from shortlist.server.services.theme_store import TitleClash
+
+    state = request.app.state
+
+    def write() -> dict:
+        # Under the person's rotation lock: a nightly pass may be mid-write for the same person.
+        with _target_lock(collection_id, body.user_id), state.sessions() as session:
+            collection = _ai_row(session, collection_id)
+            if collection.theme_mode != "explore":
+                raise HTTPException(status_code=422, detail="Turn on Explore for this row first.")
+            person = _audience_person(session, collection, body.user_id)
+            theme = session.get(Theme, body.theme_id)
+            if theme is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            try:
+                queued = queue_next(session, collection, person.id, theme, datetime.now(UTC), secrets=state.secrets)
+            except TitleClash as e:
+                raise HTTPException(status_code=422, detail=str(e)) from None
+            add_audit(
+                session,
+                "collection.up_next",
+                "info",
+                slug=collection.slug,
+                user=person.slug,
+                theme=theme.slug,
+            )
+            session.commit()
+            return _theme_ref(queued, {theme.id: theme})
+
+    return await _off_loop(write, "up-next")
+
+
+@router.post("/{collection_id}/up-next/regenerate", response_model=ThemeRefOut)
+async def regenerate_up_next(collection_id: int, body: RegenerateRequest, request: Request) -> dict:
+    """Write a new "Up next" theme for one person now, with one AI call, replacing any theme queued.
+
+    409 while the row's AI is paused, 422 without an AI provider or when the row isn't set to Explore.
+    """
+    from shortlist.server.api.seasons import _off_loop
+    from shortlist.server.api.themes import _PAUSED, _PREVIEW_MAX_DETAILS
+    from shortlist.server.services import theme_rotation, theme_store
+    from shortlist.server.services.theme_author import ThemeAuthorError
+
+    state = request.app.state
+    with state.sessions() as session:
+        collection = _ai_row(session, collection_id)
+        if collection.theme_mode != "explore":
+            raise HTTPException(status_code=422, detail="Turn on Explore for this row first.")
+        if collection.ai_paused:
+            raise HTTPException(status_code=409, detail=_PAUSED)
+        _audience_person(session, collection, body.user_id)
+
+    def write() -> dict:
+        tools = theme_rotation.authoring_tools(state)
+        if tools.unavailable:
+            raise HTTPException(status_code=tools.status, detail=tools.unavailable)
+        spent: list[int] = []
+        try:
+            with theme_rotation._target_lock(collection_id, body.user_id), state.sessions() as session:
+                collection = session.get(Collection, collection_id)
+                try:
+                    theme = theme_rotation.author_for_person(
+                        session,
+                        sessions=state.sessions,
+                        secrets=state.secrets,
+                        collection=collection,
+                        user_id=body.user_id,
+                        author=theme_rotation.author_theme,
+                        curator=tools.curator,
+                        tmdb=tools.tmdb,
+                        plex=tools.plex,
+                        profile_for=state.run_service.profile_with_history,
+                        spent=spent,
+                        max_details=_PREVIEW_MAX_DETAILS,
+                    )
+                except ThemeAuthorError as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from None
+                except LookupError:
+                    raise HTTPException(status_code=422, detail="That person is no longer on the server.") from None
+                except RuntimeError:
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Shortlist couldn't read their watch history. Check the Plex connection.",
+                    ) from None
+                except theme_store.RowPaused:
+                    raise HTTPException(status_code=409, detail=_PAUSED) from None
+                except theme_store.TitleClash as e:
+                    raise HTTPException(status_code=422, detail=str(e)) from None
+                queued = theme_rotation.queue_next(
+                    session, collection, body.user_id, theme, datetime.now(UTC), checked=True
+                )
+                session.commit()
+                return _theme_ref(queued, {theme.id: theme})
+        except Exception:
+            # The AI call ran, so its cost stands even though the save rolled back.
+            if spent:
+                with state.sessions() as session:
+                    row = session.get(Collection, collection_id)
+                    if row is not None:
+                        theme_store.add_row_tokens(session, row, sum(spent))
+                        session.commit()
+            raise
+
+    return await _off_loop(write, "theme authoring")
 
 
 @router.post("/{collection_id}/poster/upload", response_model=PosterUploadOut)

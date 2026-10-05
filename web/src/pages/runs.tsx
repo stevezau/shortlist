@@ -1,13 +1,9 @@
 import {
-  CalendarClock,
-  CircleCheck,
-  CircleX,
-  ListChecks,
   Play,
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 
@@ -15,7 +11,6 @@ import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { RunRowsDialog } from "@/components/runs/run-rows-dialog";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
-import { StatTile } from "@/components/stat-tile";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -136,7 +131,7 @@ export function RunDuration({ run }: { run: Run }) {
 function RunRow({ run }: { run: Run }) {
   const cancel = useCancelRun();
   return (
-    <TableRow className="group">
+    <TableRow className="group grid grid-cols-2 gap-x-3 px-2 py-2 md:table-row md:p-0">
       <TableCell>
         <Link
           to={`/runs/${run.id}`}
@@ -145,7 +140,7 @@ function RunRow({ run }: { run: Run }) {
           #{run.id}
         </Link>
       </TableCell>
-      <TableCell className="hidden text-muted-foreground sm:table-cell">
+      <TableCell className="text-right text-muted-foreground md:text-left">
         {triggerLabel(run.trigger)}
       </TableCell>
       <TableCell
@@ -154,8 +149,8 @@ function RunRow({ run }: { run: Run }) {
       >
         <RunStarted run={run} />
       </TableCell>
-      <TableCell className="hidden text-muted-foreground md:table-cell">
-        <RunDuration run={run} />
+      <TableCell className="text-muted-foreground">
+        <span className="mr-1 text-xs md:hidden">Duration:</span><RunDuration run={run} />
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap gap-1">
@@ -187,7 +182,10 @@ function RunRow({ run }: { run: Run }) {
         </div>
       </TableCell>
       <TableCell className="text-muted-foreground">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        {/* Each figure after the first carries its own "·"; the -ml + overflow-hidden pair clips the
+            one that lands at the start of a wrapped line, so no line ever opens on a separator. */}
+        <div className="overflow-hidden">
+        <div className="-ml-4 flex flex-wrap items-center gap-y-0.5 [&>*]:before:inline-block [&>*]:before:w-4 [&>*]:before:text-center [&>*]:before:content-['·']">
           <span>
             {run.stats.users_ok} ok
             {/* A skipped person built nothing but nothing went wrong — counting them as "ok" made a
@@ -210,23 +208,24 @@ function RunRow({ run }: { run: Run }) {
               detail described one fact in two vocabularies. */}
           {(run.stats.titles_added ?? 0) > 0 && (
             <span>
-              · <span className="text-success">+{run.stats.titles_added}</span>{" "}
+              <span className="text-success">+{run.stats.titles_added}</span>{" "}
               added
             </span>
           )}
           {(run.stats.titles_removed ?? 0) > 0 && (
-            <span>· −{run.stats.titles_removed} rotated out</span>
+            <span>−{run.stats.titles_removed} rotated out</span>
           )}
           {(run.stats.titles_requested ?? 0) > 0 && (
             <span title="Titles requested from Sonarr/Radarr">
-              · {run.stats.titles_requested} requested
+              {run.stats.titles_requested} requested
             </span>
           )}
           {(run.stats.llm_tokens ?? 0) > 0 && (
             <span title="AI input + output tokens this run, as the provider reported them">
-              · {run.stats.llm_tokens!.toLocaleString()} tokens
+              {run.stats.llm_tokens!.toLocaleString()} tokens
             </span>
           )}
+        </div>
         </div>
       </TableCell>
     </TableRow>
@@ -253,21 +252,10 @@ function historyHint(summary: RunsSummary): string {
  */
 function RunsStats({ summary }: { summary: RunsSummary }) {
   return (
-    <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <StatTile
-        icon={CalendarClock}
-        label="Last run"
-        value={summary.last_finished ? timeAgo(summary.last_finished) : "never"}
-        hint={summary.last_status ? runStatusLabel(summary.last_status) : "—"}
-      />
-      <StatTile
-        icon={summary.error > 0 ? CircleX : CircleCheck}
-        label="Runs recorded"
-        value={summary.total}
-        hint={historyHint(summary)}
-        tone={summary.error > 0 ? "destructive" : "default"}
-      />
-    </div>
+    <dl className="mb-5 flex flex-wrap gap-x-8 gap-y-3 rounded-lg border bg-card px-4 py-3">
+      <div><dt className="text-xs text-muted-foreground">Last run</dt><dd className="mt-1 font-medium">{summary.last_finished ? timeAgo(summary.last_finished) : "never"}<span className="ml-2 text-xs font-normal text-muted-foreground">{summary.last_status ? runStatusLabel(summary.last_status) : "—"}</span></dd></div>
+      <div><dt className="text-xs text-muted-foreground">Runs recorded</dt><dd className="mt-1 font-medium">{summary.total}<span className={summary.error > 0 ? "ml-2 text-xs font-normal text-destructive-text" : "ml-2 text-xs font-normal text-muted-foreground"}>{historyHint(summary)}</span></dd></div>
+    </dl>
   );
 }
 
@@ -294,6 +282,7 @@ export function RunsPage() {
   });
   const clearRuns = useClearRuns();
   const [clearOpen, setClearOpen] = useState(false);
+  const clearTrigger = useRef<HTMLButtonElement>(null);
   const rowName =
     rowSlug && collections.data
       ? collections.data.find((c) => c.slug === rowSlug)?.name
@@ -302,7 +291,6 @@ export function RunsPage() {
   return (
     <div>
       <PageHeader
-        icon={ListChecks}
         title="Runs"
         subtitle="Every time Shortlist rebuilt rows, and how it went."
         actions={
@@ -311,6 +299,7 @@ export function RunsPage() {
               <Button
                 variant="ghost"
                 className="text-muted-foreground"
+                ref={clearTrigger}
                 onClick={() => setClearOpen(true)}
               >
                 <Trash2 aria-hidden="true" />
@@ -338,7 +327,7 @@ export function RunsPage() {
       )}
 
       <Dialog open={clearOpen} onOpenChange={setClearOpen}>
-        <DialogContent>
+        <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); clearTrigger.current?.focus(); }}>
           <DialogHeader>
             <DialogTitle>Clear all run history?</DialogTitle>
             <DialogDescription>
@@ -421,7 +410,7 @@ export function RunsPage() {
           <div className="space-y-3">
             <div className="overflow-hidden rounded-xl border">
               <Table>
-                <TableHeader>
+                <TableHeader className="hidden md:table-header-group">
                   <TableRow className="hover:bg-transparent">
                     {/* Six columns overran a 320px phone by ~55px, and the one pushed outside the
                         card was Users — the column that says how the run actually went. Trigger and
@@ -439,7 +428,7 @@ export function RunsPage() {
                     <TableHead>Users</TableHead>
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="grid md:table-row-group">
                   {runs.map((run) => (
                     <RunRow key={run.id} run={run} />
                   ))}

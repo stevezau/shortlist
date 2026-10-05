@@ -5,12 +5,14 @@ import { Link } from "react-router";
 
 import { CronPicker } from "@/components/cron-picker";
 import { MutationAlert } from "@/components/mutation-alert";
+import { ErrorState } from "@/components/query-boundary";
+import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { describeCron } from "@/lib/cron";
 import { formatDate, formatSize, timeAgo } from "@/lib/format";
-import { queryKeys, useSaveSettings, useSettings } from "@/lib/queries";
+import { queryKeys, useBuiltInScheduleLabel, useSaveSettings, useSettings } from "@/lib/queries";
 
 const RETENTION_OPTIONS = ["5", "10", "20", "30"];
 
@@ -68,8 +70,15 @@ export function BackupPanel() {
   const waiting = pendingRestore.data?.pending ?? null;
 
   const backupCron = ((settings.data ?? {})["backup.cron"] as string) ?? "";
+  const blankLabel = useBuiltInScheduleLabel("backup.take");
   const backupMaxKeep =
     ((settings.data ?? {})["backup.max_keep"] as number) ?? 10;
+
+  if (settings.isError || backups.isError || pendingRestore.isError) {
+    const failed = settings.isError ? settings : backups.isError ? backups : pendingRestore;
+    return <ErrorState error={failed.error} onRetry={() => void failed.refetch()} />;
+  }
+  if (settings.isPending || backups.isPending || pendingRestore.isPending) return <p role="status" className="py-4 text-sm text-muted-foreground">Loading backups…</p>;
 
   return (
     <div className="space-y-4">
@@ -95,6 +104,7 @@ export function BackupPanel() {
       <div className="flex flex-wrap items-start gap-4">
         <CronPicker
           value={backupCron}
+          blankLabel={blankLabel}
           onChange={(cron) =>
             saveSettings.mutate(
               { "backup.cron": cron },
@@ -128,6 +138,8 @@ export function BackupPanel() {
           />
         </div>
       </div>
+
+      <SaveStatus isPending={saveSettings.isPending} isError={saveSettings.isError} error={saveSettings.error} saved={saveSettings.isSuccess} onRetry={() => { if (saveSettings.variables) saveSettings.mutate(saveSettings.variables); }} />
 
       {waiting && (
         <div
@@ -206,10 +218,10 @@ export function BackupPanel() {
             then try again. If it keeps failing, restore the file by hand rather
             than retrying: the{" "}
             <Link
-              to="/logs"
+              to="/activity?tab=log"
               className="font-medium underline underline-offset-2"
             >
-              Logs page
+              Activity log
             </Link>{" "}
             has the reason it gave.
           </p>

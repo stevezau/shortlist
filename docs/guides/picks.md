@@ -7,7 +7,7 @@ nav_order: 3
 
 ## Recommendation sources
 
-Settings → **Finding titles** controls where candidate titles come from. Shortlist pools every source
+Settings → Defaults → **Title sources** controls where candidate titles come from. Shortlist pools every source
 you enable, keeps only what's already in your library, then ranks them with a simple no-AI score and
 writes each pick's "why" in code. More sources means wider reach. Available today:
 
@@ -35,7 +35,7 @@ the libraries you pick.
 
 ### How often rows rebuild, already-watched, and cost
 
-Settings → Finding titles has five more dials, each of which a row can override:
+Settings → Defaults → Refresh & variety has five more dials, each of which a row can override:
 
 - **How often it changes**, called **How often rows rebuild** in Settings where the global lives.
   A number of days, so it says what it does: `1` rebuilds every night, `7` weekly, `30` monthly, and
@@ -129,13 +129,13 @@ full found around **13,000**.
 
 When it does happen, it is almost always timing. **The read is per-run, so a title you mark watched
 after the last run stays eligible until the next one.** To fix it immediately without waiting for a
-scheduled run, go to **Jobs → Sync history**. That re-reads every user's watched set right now,
+scheduled run, go to **Activity → Jobs → Sync watch history**. That re-reads every user's watched set right now,
 writes nothing to Plex, and updates what Shortlist knows, including the "N titles watched" count on
 the Users page. Any run after that leaves the title out.
 
 ### Any row can override all of this
 
-Settings → Finding titles sets what a row uses **unless the row says otherwise**. Open any row
+Settings → Defaults → Refresh & variety sets what a row uses **unless the row says otherwise**. Open any row
 (Rows → Edit) and it defines its own recipe:
 
 | In the row editor                                    | What it overrides                                                                         |
@@ -156,7 +156,7 @@ settings.
 All on the same server, all at once. The Rows list shows each row's overrides on its card, so you can
 see at a glance which rows differ.
 
-A row left on "Use global default" stays in sync with Settings → Finding titles.
+A row left on "Use global default" stays in sync with Settings → Defaults → Refresh & variety.
 
 **You can go one step finer, per person.** Row size and recent-watches depth can also be set for a
 single person on a single row. Open that person (Users → click them), find the row, and use
@@ -191,7 +191,7 @@ it. The watch stays in their history, it just stops shaping their picks.
 
 The natural place to do it is a run's **How we picked** page, on the seeds list, since a bad seed is
 usually what you noticed in the first place. There is also a search box on a person's detail page
-(**Users → someone → Settings → Blocked seeds**) for a title you remember but can't find a run for.
+(**Users → someone → Settings → Blocked titles**) for a title you remember but can't find a run for.
 
 Blocks are personal. A **shared** row is public, so one person's block does _not_ reshape what
 everyone else sees. Otherwise an individual preference would become a server-wide edit nobody else
@@ -200,7 +200,7 @@ can see or undo. Shared rows have their own server-wide block list instead.
 ## Letting people block their own
 
 Blocking is something only you can do, which means anyone who wants a bad seed gone has to message
-you about it. **Respect Plex ratings** (Settings → Finding titles) closes that gap: when someone
+you about it. **Respect Plex ratings** (Settings → Defaults → Refresh & variety) closes that gap: when someone
 rates a title 1 star or gives it a thumbs-down in Plex, it stops being used to find similar things
 for them, exactly as if you had blocked it.
 

@@ -46,6 +46,11 @@ class PickOut(PassthroughModel):
     affinity: float | None  # 0..1, how near the top of the suggesting source's list it sat
     year: int | None = None  # release year (a show's first-air year); null on a cold-start pick
     rating: float | None = None  # TMDB vote_average 0..10 as stored at pick time; 0.0 when unrated
+    rating_source: str | None = None  # "tmdb" on runs that record it; null on older runs
+    # The score a rating-sorted row was ordered on when the owner chose another service, and its name
+    # ("imdb"). 0.0 means that service had no score; null means the row was not sorted on one.
+    order_rating: float | None = None
+    order_rating_source: str | None = None
 
 
 class RunUserOut(PassthroughModel):
@@ -105,6 +110,31 @@ class RunSharedRowOut(PassthroughModel):
     has_trace: bool
 
 
+class RunPrivacyOut(PassthroughModel):
+    """What this run measured about who can see whose rows. Reporting only."""
+
+    #: Accounts Plex refuses hide rules for that can nonetheless see other people's rows
+    #: (`stats.unhideable_rows` keys with a non-empty list).
+    can_see_others: list[str]
+    #: Accounts whose share filter Plex itself cannot read (`stats.unreadable_filters` keys). None =
+    #: not measured (a run recorded before that key existed); [] = measured, none found.
+    unreadable_filters: list[str] | None
+    #: Accounts whose filter Shortlist wrote and Plex is not applying (`stats.filters_not_enforced`
+    #: keys). None = that check did not measure — it has its own flag (`filters_enforcement_measured`),
+    #: so a run can measure the rest and not this; [] = measured, none found.
+    filters_not_enforced: list[str] | None
+    #: The accounts below are ones this run cannot say hide every row, so the page never counts them as
+    #: hiding. Each: None = not recorded (a run from before the key existed); [] = recorded, nobody.
+    #: Accounts with a Restriction Profile it could not look through (`stats.privacy_unchecked`).
+    unchecked: list[str] | None
+    #: Accounts whose share-filter write failed (`stats.privacy_write_failed`; the named half of
+    #: `promotion_blockers`).
+    write_failed: list[str] | None
+    #: Accounts the owner chose to leave alone (`users.manage_sharing=0`, `stats.privacy_left_alone`):
+    #: they keep none of Shortlist's excludes and see every row, by design. Not a fault.
+    left_alone: list[str] | None
+
+
 class RunSummaryOut(PassthroughModel):
     """One run, as the Runs list shows it."""
 
@@ -128,6 +158,11 @@ class RunSummaryOut(PassthroughModel):
     stats: dict[str, Any]
     error: str | None  # why the run failed, when the failure belongs to no single person
     promotion_blockers: list[str]  # accounts whose share filter Plex refused
+    #: None = this run did not measure privacy: no `stats.unhideable_rows` (an older run, or one that
+    #: died before the privacy phase), or a dry run (it records the key but built no rows). The UI must
+    #: read that as "not measured", never as "everyone is private". A finding never changes `status` —
+    #: every reader that filters on ok/error would drop a run with a new one.
+    privacy: RunPrivacyOut | None
 
 
 class RunDetailOut(RunSummaryOut):

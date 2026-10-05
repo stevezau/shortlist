@@ -55,7 +55,7 @@ from shortlist.server.db.models import (
     WatchedTitle,
     WatchSyncState,
 )
-from shortlist.server.services import privacy_status
+from shortlist.server.services import plex_reachability, privacy_status
 from shortlist.server.services.redaction import known_identifiers, redact_all, scrub_secrets
 from shortlist.server.settings_store import SettingsStore
 
@@ -320,7 +320,12 @@ class _Block:
 def _stamp(block: _Block) -> _Block:
     """The provenance every block carries. Read without the screen that produced it, a block is
     useless unless it says which build, which database and when — so this is not optional."""
-    return block.kv("version", shortlist.__version__).kv("generated", datetime.now(UTC).isoformat(timespec="seconds"))
+    return (
+        block.kv("version", shortlist.__version__)
+        .kv("generated", datetime.now(UTC).isoformat(timespec="seconds"))
+        # `localhost` and the host's own addresses mean something different from inside one.
+        .kv("container", "yes" if plex_reachability.in_container() else "no")
+    )
 
 
 # --------------------------------------------------------------------------------------------
@@ -435,7 +440,8 @@ async def health(request: Request) -> dict:
             plex_error = _fail(e)
         elapsed_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
 
-        checks.append(_check("Plex server", lambda: _probe_plex(plex, plex_error, elapsed_ms)))
+        address = plex_reachability.describe_address(str(store.get("plex.url") or ""))
+        checks.append(_check("Plex server", lambda: _probe_plex(plex, plex_error, elapsed_ms, address)))
         checks.append(_check("Libraries", lambda: _probe_libraries(plex, plex_error)))
         checks.append(_check("Share tokens", lambda: _probe_tokens(session)))
         checks.append(
@@ -457,11 +463,15 @@ async def health(request: Request) -> dict:
     return {"checks": checks, "text": block.render()}
 
 
-def _probe_plex(client, error: str | None, elapsed_ms: int) -> tuple[bool, str]:
+def _probe_plex(client, error: str | None, elapsed_ms: int, address: str) -> tuple[bool, str]:
     """Version and the time the connection actually took. `elapsed_ms` is measured by the caller
-    around the client CONSTRUCTION, which is where the round trip happens."""
+    around the client CONSTRUCTION, which is where the round trip happens.
+
+    `address` is the KIND of address saved (`plex_reachability.describe_address`): the host itself is
+    scrubbed from every report, and the kind is what says why an address stopped answering.
+    """
     if error is not None:
-        return False, f"unreachable after {elapsed_ms}ms — {error}"
+        return False, f"unreachable after {elapsed_ms}ms at {address} — {error}"
     if client is None:
         return False, "not connected"
     version = getattr(client._server, "version", "?")

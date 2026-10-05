@@ -7,8 +7,13 @@ import {
   RecentCountField,
 } from "@/components/recent-count-field";
 import { InheritableField } from "@/components/rows/inheritable-field";
+import { RowAiInstructionsField } from "@/components/rows/row-ai-instructions-field";
+import { RowLimitsFields } from "@/components/rows/row-limits-fields";
 import { RowMaxSeedsSetting } from "@/components/rows/row-max-seeds-setting";
-import { RowSourcesField } from "@/components/rows/row-sources-field";
+import {
+  effectiveSources,
+  RowSourcesField,
+} from "@/components/rows/row-sources-field";
 import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Label } from "@/components/ui/label";
@@ -22,6 +27,11 @@ import {
   watchedPctSeed,
 } from "@/lib/row-globals";
 import type { RowFill, RowSettingKey } from "@/lib/row-kinds";
+import {
+  aiInstructionsInert,
+  sourceShortLabel,
+  webSearchProvider,
+} from "@/lib/sources";
 import type { CollectionInput, Settings } from "@/lib/types";
 
 /**
@@ -89,12 +99,28 @@ export function RowContentsFields({
     </InheritableField>
   );
 
+  // Same test as the server's preview (`api/ai.py`). While settings load neither is known, so nothing
+  // is claimed.
+  const aiInstructions = shown.has("ai_instructions") && (
+    <div data-setting="ai_instructions">
+      <RowAiInstructionsField
+        value={input.ai_instructions}
+        onChange={(ai_instructions) => set({ ai_instructions })}
+        otherSources={effectiveSources(input.candidate_sources, settings)
+          .filter((source) => source !== "llm_web")
+          .map(sourceShortLabel)}
+        backend={settings ? webSearchProvider(settings) : "native"}
+        inert={settings === undefined ? null : aiInstructionsInert(settings)}
+      />
+    </div>
+  );
+
   // Anything that can hold shows, which is what the API accepts — it refuses this only on a
   // movies-only row, where `visibleSettings` leaves it out.
   const unstarted = shown.has("unstarted_only") && (
     <div
       data-setting="unstarted_only"
-      className="flex items-start justify-between gap-4 rounded-md border p-3"
+      className="flex items-start justify-between gap-4 border-t pt-4"
     >
       <div className="space-y-1">
         <Label htmlFor="row-unstarted">
@@ -188,7 +214,9 @@ export function RowContentsFields({
         {takeTurns}
         {sources}
         {recentCount}
+        {aiInstructions}
         {recency}
+        {shown.has("limits") && <RowLimitsFields input={input} set={set} />}
       </section>
     );
   }
@@ -197,10 +225,12 @@ export function RowContentsFields({
     <>
       {sources}
       {recentCount}
+      {aiInstructions}
       {watched}
       {/* Defensive: every kind that shows this also shows the cap it sits under. */}
       {!shown.has("watched_pct") && unstarted}
       {recency}
+      {shown.has("limits") && <RowLimitsFields input={input} set={set} />}
     </>
   );
 }

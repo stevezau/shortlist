@@ -22,11 +22,15 @@ import {
   visibleSettings,
   type RowKindChoice,
 } from "@/lib/row-kinds";
-import { findRowTemplate, type RowTemplate } from "@/lib/row-templates";
+import { findRowTemplate, ROW_TEMPLATES, type RowTemplate } from "@/lib/row-templates";
 import type { Collection, CollectionInput } from "@/lib/types";
 import { BYW_NAME, CTX, FIXTURES, named, row } from "@/test/row-kind-fixtures";
+import { BUILTINS, CATALOGUE } from "@/test/season-fixtures";
 
-const { updateCollection, createCollection, settingsData, librariesData } = vi.hoisted(() => ({
+// Mutable so a test can serve the owner's own seasons beside the built-ins.
+const catalogueData = vi.hoisted(() => ({ current: [] as unknown[] }));
+
+const { updateCollection, createCollection, settingsData, librariesData, rowSources } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
     Promise.resolve({ ...(body as object), id }),
   ),
@@ -37,6 +41,22 @@ const { updateCollection, createCollection, settingsData, librariesData } = vi.h
   settingsData: { current: {} as Record<string, unknown> },
   // Mutable so a test can offer libraries to narrow a row to; empty = none listed.
   librariesData: { current: [] as { key: string; title: string; type: string }[] },
+  // What the Your requests block's sources panel reads: one connected Overseerr, nothing else.
+  rowSources: {
+    overseerr: "connected",
+    radarr: "off",
+    sonarr: "off",
+    complete: true,
+    problems: [],
+    seerr_requests: 3,
+    seerr_requesters: 2,
+    seerr_linked: 2,
+    servers: [],
+    tagged_movies: 0,
+    tagged_shows: 0,
+    people: [],
+    tags: [],
+  },
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -49,13 +69,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getSettings: () => Promise.resolve(settingsData.current),
       getLibraries: () => Promise.resolve(librariesData.current),
       getLibraryCollections: () => Promise.resolve([]),
-      getSeasons: () =>
-        Promise.resolve([
-          { slug: "valentines", name: "Valentine's Day", emoji: "💘", month: 2, day: 14, description: "Valentine's films and romance" },
-          { slug: "halloween", name: "Halloween", emoji: "🎃", month: 10, day: 31, description: "Halloween films and horror" },
-          { slug: "christmas", name: "Christmas", emoji: "🎄", month: 12, day: 25, description: "Christmas films" },
-        ]),
+      getSeasons: () => Promise.resolve(catalogueData.current),
+      getSeasonPresets: () => Promise.resolve([]),
       getImageProvider: () => Promise.resolve({ capable: false, provider: "", reason: "" }),
+      getRequestRowSources: () => Promise.resolve(rowSources),
       startRun: () => Promise.resolve({ run_id: 1 }),
     },
   };
@@ -72,6 +89,7 @@ function renderEditor(collection: Collection | null, template: RowTemplate | nul
       </QueryClientProvider>
     </MemoryRouter>,
   );
+  document.querySelectorAll<HTMLDetailsElement>("details[data-settings-group], details[data-setting='kind']").forEach((group) => { group.open = true; });
   return { onClose, onRename };
 }
 
@@ -85,12 +103,27 @@ const kindRadio = (name: string) =>
     name,
   });
 
+const buildRadio = (name: "Per person" | "Shared") =>
+  within(screen.getByRole("radiogroup", { name: "One row each, or one for everyone?" })).getByRole("radio", { name });
+
 /** Picks a kind on a saved row and confirms the dialog, taking whatever name it proposes. */
 async function switchTo(kind: string) {
-  await userEvent.click(kindRadio(kind));
-  const dialog = await screen.findByRole("dialog");
-  await userEvent.click(within(dialog).getByRole("button", { name: "Change it" }));
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  const confirm = async () => {
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Change it" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  };
+  if (kind !== "Seasonal") {
+    const mode = buildRadio(kind === "Popular on this server" ? "Shared" : "Per person");
+    if (!(mode as HTMLInputElement).checked) {
+      await userEvent.click(mode);
+      await confirm();
+    }
+  }
+  if (!(kindRadio(kind) as HTMLInputElement).checked) {
+    await userEvent.click(kindRadio(kind));
+    await confirm();
+  }
 }
 
 const savedBody = async () => {
@@ -104,6 +137,98 @@ beforeEach(() => {
   createCollection.mockClear();
   settingsData.current = {};
   librariesData.current = [];
+  catalogueData.current = BUILTINS;
+});
+
+describe("explicit Per person / Shared choice", () => {
+  it.each(ROW_TEMPLATES)("$title exposes its mode before any section is opened", (template) => {
+    renderEditor(null, template);
+    document.querySelectorAll<HTMLDetailsElement>("details").forEach((group) => { group.open = false; });
+
+    expect(buildRadio("Per person")).toBeVisible();
+    expect(buildRadio("Shared")).toBeVisible();
+    expect(buildRadio(template.values.build === "shared" ? "Shared" : "Per person")).toBeChecked();
+  });
+
+  it("a new seasonal row switches to shared without losing its season or other choices", async () => {
+    const template = findRowTemplate("seasonal")!;
+    renderEditor(null, { ...template, values: {
+      ...template.values, build: "per_person", seasons: ["halloween"], season_lead_days: 17,
+      season_after_days: 4, library_keys: ["1"], audience: "subset", audience_user_ids: [7],
+    } });
+    await userEvent.click(buildRadio("Shared"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(kindRadio("Seasonal")).toBeChecked();
+    expect(buildRadio("Shared")).toBeChecked();
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledTimes(1));
+    expect(createCollection.mock.calls[0]?.[0]).toMatchObject({
+      build: "shared", seasons: ["halloween"], season_lead_days: 17,
+      season_after_days: 4, library_keys: ["1"], audience: "subset", audience_user_ids: [7],
+    });
+  });
+
+  it.each(["because-you-watched", "seen-it-already", "your-requests"])(
+    "%s returns to its personal settings after trying Shared", async (id) => {
+      const template = findRowTemplate(id)!;
+      renderEditor(null, template);
+      await userEvent.click(buildRadio("Shared"));
+      await userEvent.click(buildRadio("Per person"));
+      await save();
+      await waitFor(() => expect(createCollection).toHaveBeenCalledTimes(1));
+      expect(createCollection.mock.calls[0]?.[0]).toMatchObject(template.values);
+    },
+  );
+
+  it("a saved row stays unchanged when Shared is cancelled", async () => {
+    const collection = row({ rewatch: true, request_tag: "family" });
+    renderEditor(collection);
+    await userEvent.click(buildRadio("Shared"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Saving removes everyone's own copy/)).toBeInTheDocument();
+    expect(updateCollection).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(buildRadio("Per person")).toBeChecked();
+    expect(await savedBody()).toEqual(toInput(collection));
+  });
+
+  it("saved Shared confirms the name change and submits through the existing save", async () => {
+    const { onRename } = renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
+    await userEvent.click(buildRadio("Shared"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("New name")).toHaveValue("👥 Popular {library_name} on this server");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Change it" }));
+    expect(updateCollection).not.toHaveBeenCalled();
+    expect(await savedBody()).toMatchObject({ build: "shared", defer_rename: false });
+    expect(onRename).not.toHaveBeenCalled();
+  });
+
+  it("an existing shared seasonal row can become personal and keep its seasons", async () => {
+    renderEditor(row({ ...named("{season} picks"), build: "shared", seasons: ["christmas"] }));
+    await userEvent.click(buildRadio("Per person"));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Change it" }));
+    expect(await savedBody()).toMatchObject({ build: "per_person", seasons: ["christmas"] });
+  });
+
+  it("cannot bypass the default row's watch-based name restriction", async () => {
+    settingsData.current = { "row.name_template": BYW_NAME };
+    renderEditor(row({ slug: "picked", name: "" }));
+    await waitFor(() => expect(buildRadio("Shared")).toBeDisabled());
+    expect(buildRadio("Shared")).toHaveAccessibleDescription(/Change it in Settings first/);
+    expect(screen.getAllByRole("link", { name: "Settings › Row defaults" }).length).toBeGreaterThan(0);
+  });
+
+  it("Discard forgets an unsaved personal fill when reopening the saved shared draft", async () => {
+    renderEditor(row({ build: "shared" }));
+    await switchTo("Watch it again");
+    await switchTo("Popular on this server");
+    await userEvent.type(screen.getByLabelText("Description"), "Draft description");
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(updateCollection).not.toHaveBeenCalled();
+    await userEvent.click(buildRadio("Per person"));
+    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Change it" }));
+    expect(await savedBody()).toMatchObject({ build: "per_person", rewatch: false, description: "" });
+  });
 });
 
 describe("opening a row never changes it", () => {
@@ -134,7 +259,7 @@ describe("each kind shows exactly its settings", () => {
 
   it("keeps matching after a switch, with the settings of the new kind", async () => {
     renderEditor(null);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
 
     const after = applyRowKind(blankInput(), { kind: "popular", fill: "popular" }, CTX);
     expect(renderedSettings()).toEqual([...visibleSettings(after, CTX)].filter((key) => key !== "enabled").sort());
@@ -142,10 +267,16 @@ describe("each kind shows exactly its settings", () => {
 });
 
 describe("the kind picker", () => {
-  it("lists the five kinds with what viewers see, the row's own kind checked", async () => {
+  it("lists the personal kinds with what viewers see, the row's own kind checked", async () => {
     renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
     const group = screen.getByRole("radiogroup", { name: "What kind of row is this?" });
-    const titles = ["Picked for You", "Because you watched", "Watch it again", "Seasonal", "Popular on this server"];
+    const titles = [
+      "Picked for You",
+      "Because you watched",
+      "Watch it again",
+      "Your requests",
+      "Seasonal",
+    ];
     const radios = within(group).getAllByRole("radio");
     expect(radios).toHaveLength(titles.length);
     radios.forEach((radio, i) => expect(radio).toHaveAccessibleName(titles[i]));
@@ -159,7 +290,7 @@ describe("the kind picker", () => {
     renderEditor(row({ slug: "picked", name: "✨ {library_name} Picked for You" }));
     expect(kindRadio("Seasonal")).toBeDisabled();
     expect(kindRadio("Seasonal")).toHaveAccessibleDescription(/The default row can't be seasonal/);
-    expect(kindRadio("Popular on this server")).toBeEnabled();
+    expect(buildRadio("Shared")).toBeEnabled();
   });
 
   it("switches a NEW row with no dialog", async () => {
@@ -188,6 +319,19 @@ describe("the kind picker", () => {
     const body = createCollection.mock.calls[0]?.[0] as CollectionInput;
     expect(body.seasons).toEqual(["valentines", "halloween", "christmas"]);
     expect(body.season_lead_days).toBe(30);
+  });
+
+  it("turning it on leaves the owner's own seasons unticked: they are opt-in, row by row (#137)", async () => {
+    catalogueData.current = CATALOGUE;
+    renderEditor(null);
+    await userEvent.type(screen.getByLabelText("Name"), "{{season} picks");
+    await waitFor(() => expect(kindRadio("Seasonal")).toBeEnabled());
+    await userEvent.click(kindRadio("Seasonal"));
+    await save();
+
+    await waitFor(() => expect(createCollection).toHaveBeenCalled());
+    const body = createCollection.mock.calls[0]?.[0] as CollectionInput;
+    expect(body.seasons).toEqual(["valentines", "halloween", "christmas"]);
   });
 
   it("renames a new {top_seed} row as it leaves Because you watched, or it would read straight back", async () => {
@@ -225,7 +369,7 @@ describe("the confirm dialog on a saved row", () => {
   it("says what the switch will do, in describeKindChange's words", async () => {
     const collection = row({ request_tag: "family" });
     renderEditor(collection);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
 
     const dialog = await screen.findByRole("dialog");
     const change = describeKindChange(toInput(collection), choice, CTX);
@@ -238,7 +382,7 @@ describe("the confirm dialog on a saved row", () => {
   it("changes nothing on Cancel", async () => {
     const collection = row();
     renderEditor(collection);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -252,7 +396,7 @@ describe("the confirm dialog on a saved row", () => {
   it("applies exactly applyRowKind once confirmed", async () => {
     const collection = row({ request_tag: "family", seed_window: 1 });
     renderEditor(collection);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     await userEvent.click(screen.getByRole("button", { name: "Change it" }));
 
     expect(kindRadio("Popular on this server")).toBeChecked();
@@ -292,7 +436,7 @@ describe("the confirm dialog on a saved row", () => {
     // Popular, not Watch it again: the engine names a Watch it again row after a watch too, but a
     // shared row has none to fill {top_seed} with (`rows._shared_row`).
     renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     const dialog = await screen.findByRole("dialog");
     const name = within(dialog).getByLabelText("New name");
     await userEvent.clear(name);
@@ -438,7 +582,7 @@ describe("wording", () => {
 
   it("says Rated by is shared with every row and with requests", () => {
     renderEditor(row({ pick_order: "rating" }));
-    expect(screen.getByText(/Shared by every row and by requests: changing it here changes it everywhere/)).toBeInTheDocument();
+    expect(screen.getByText(/Shared by every row and by requests. Changes save immediately/)).toBeInTheDocument();
   });
 
   it("groups a Watch it again row's fill-up settings under their own heading", () => {
@@ -463,9 +607,17 @@ describe("requests", () => {
     expect(await screen.findByLabelText(/Request tag/)).toBeInTheDocument();
   });
 
+  it("has no Requests section on a Your requests row, which has nothing there to set", async () => {
+    // The folded group read "None — shared rows never ask for missing titles" under a row that is
+    // not shared. With nothing to configure, an empty section is only a place to be wrong.
+    renderEditor(row({ requests_row: true }));
+    await screen.findByText("Which requests show up");
+    expect(screen.queryByRole("region", { name: "Requests" })).toBeNull();
+  });
+
   it("says a Popular row never asks for anything", () => {
     renderEditor(row({ build: "shared" }));
-    const group = screen.getByText("Requests", { selector: "summary span span" }).closest("details")!;
+    const group = screen.getByRole("region", { name: "Requests" });
     expect(within(group).getByText(/A shared row never asks for missing titles/)).toBeInTheDocument();
     expect(group.querySelector('[data-setting="requests"]')).toBeNull();
   });
@@ -486,7 +638,8 @@ describe("switching kind is reversible, and only the last switch counts", () => 
 
     expect(kindRadio("Because you watched")).toBeChecked();
     expect(screen.queryByText(/to match its new kind/i)).toBeNull();
-    expect(screen.getByLabelText("Name")).toHaveValue(BYW_NAME);
+    // The Name box exists only while a switch's rename is pending; back to the saved name, it is gone.
+    expect(screen.queryByLabelText("Name")).toBeNull();
     expect(await savedBody()).toEqual(toInput(collection));
     expect(onRename).not.toHaveBeenCalled();
   });
@@ -509,8 +662,8 @@ describe("switching kind is reversible, and only the last switch counts", () => 
     await waitFor(() => expect(kindRadio("Seasonal")).toBeEnabled());
 
     kindRadio("Picked for You").focus();
-    // Down through every kind to Popular, then back up to Seasonal.
-    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowUp}");
+    // Down through the personal kinds to Seasonal.
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
     expect(kindRadio("Seasonal")).toBeChecked();
     await save();
 
@@ -518,10 +671,9 @@ describe("switching kind is reversible, and only the last switch counts", () => 
     const body = createCollection.mock.calls[0]?.[0] as CollectionInput;
     expect(body.unstarted_only).toBe(true);
     expect(body.watched_pct).toBe(0);
-    // Seasonal keeps the kind on screen when it is entered — here Popular, itself worked out from the
-    // template, not from the kinds passed on the way.
+    // Your requests cannot be seasonal, so Seasonal starts with Picked for You.
     expect(body).toEqual(
-      applyRowKind({ ...blankInput(), ...template.values }, { kind: "seasonal", fill: "popular" }, CTX),
+      applyRowKind({ ...blankInput(), ...template.values }, { kind: "seasonal", fill: "picked" }, CTX),
     );
   });
 
@@ -613,12 +765,20 @@ describe("switching kind is reversible, and only the last switch counts", () => 
     const ownFill = FILL_META[ownKind.fill].title;
 
     for (const kind of ROW_KINDS.map((k) => KIND_META[k].title)) {
-      if (kind === own || kindRadio(kind).hasAttribute("disabled")) continue;
+      const available = within(screen.getByRole("radiogroup", { name: "What kind of row is this?" })).queryByRole("radio", { name: kind });
+      if (kind === own || available?.hasAttribute("disabled") || (kind === "Popular on this server" && buildRadio("Shared").hasAttribute("disabled"))) continue;
       await switchTo(kind);
       await switchTo(own);
       expect(kindRadio(own), `back from ${kind}`).toBeChecked();
       // Seasonal keeps the kind on screen as its fill; the row's own fill is then picked under it.
       if (ownKind.kind === "seasonal") {
+        const mode = buildRadio(ownKind.fill === "popular" ? "Shared" : "Per person");
+        if (!(mode as HTMLInputElement).checked) {
+          await userEvent.click(mode);
+          await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Change it" }));
+          await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+        }
+        if (ownKind.fill === "popular") continue;
         const fill = within(screen.getByRole("radiogroup", { name: "How it's filled" })).getByRole("radio", {
           name: ownFill,
         });
@@ -642,7 +802,8 @@ describe("the default row named after a watch in Settings", () => {
     renderEditor(row({ slug: "picked", name: BYW_NAME }));
     await waitFor(() => expect(kindRadio("Picked for You")).toBeDisabled());
 
-    for (const kind of ["Picked for You", "Popular on this server"]) {
+    // Your requests has no watch to fill a {top_seed} name with either.
+    for (const kind of ["Picked for You", "Your requests"]) {
       expect(kindRadio(kind), kind).toBeDisabled();
       expect(kindRadio(kind), kind).toHaveAccessibleDescription(
         /This row's name \(set in Settings\) follows one watch\. Change it in Settings first\./,
@@ -733,7 +894,7 @@ describe("saving a kind switch that renames the row", () => {
     // nothing left on Plex to rename: no rename screen, and no deferred rename.
     const collection = row({ ...named(BYW_NAME), max_seeds: 2 });
     const { onClose, onRename } = renderEditor(collection);
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("The new name is used when the row is rebuilt.")).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Change it" }));
@@ -815,7 +976,7 @@ describe("saving a kind switch that renames the row", () => {
     await userEvent.type(name, "{{season} forever");
     expect(screen.getByText("A name with {season} only works on a seasonal row.")).toHaveAttribute("role", "alert");
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rename on Plex…" })).toBeDisabled();
   });
 });
 
@@ -838,10 +999,10 @@ describe("the dialog's nightly line", () => {
 describe("focus after the dialog", () => {
   it("goes back to the kind that was picked when the dialog is cancelled", async () => {
     renderEditor(row());
-    await userEvent.click(kindRadio("Popular on this server"));
+    await userEvent.click(buildRadio("Shared"));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
 
-    await waitFor(() => expect(kindRadio("Popular on this server")).toHaveFocus());
+    await waitFor(() => expect(buildRadio("Shared")).toHaveFocus());
   });
 
   it("goes back to the kind that was picked when the dialog is closed with Escape", async () => {
@@ -963,7 +1124,7 @@ describe("a switch never leaves a pair the API refuses", () => {
       await switchTo(away);
       await userEvent.click(await screen.findByRole("checkbox", { name: /TV Shows/ }));
 
-      await userEvent.click(kindRadio("Picked for You"));
+      await userEvent.click(away === "Popular on this server" ? buildRadio("Per person") : kindRadio("Picked for You"));
       const dialog = await screen.findByRole("dialog");
       const lines = within(within(dialog).getByRole("list", { name: "What this changes" }))
         .getAllByRole("listitem")
@@ -1030,7 +1191,8 @@ describe("a pending rename never changes the kind on screen", () => {
     await switchTo("Because you watched");
     expect(kindRadio("Because you watched")).toBeChecked();
     expect(screen.queryByText(/to match its new kind/i)).toBeNull();
-    expect(screen.getByLabelText("Name")).toHaveValue(BYW_NAME);
+    // The Name box exists only while a switch's rename is pending; back to the saved name, it is gone.
+    expect(screen.queryByLabelText("Name")).toBeNull();
     expect(await savedBody()).toEqual(toInput(collection));
     expect(onRename).not.toHaveBeenCalled();
   });
@@ -1158,21 +1320,20 @@ describe("the on/off switch and page Save never overlap", () => {
     return () => release();
   }
 
-  it("holds page Save and Rename… while the switch's change is being saved", async () => {
+  it("holds page Save and Rename on Plex… while the switch's change is being saved", async () => {
     renderEditor(row());
-    await userEvent.type(screen.getByLabelText("Name"), " again");
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Rename on Plex…" })).toBeEnabled();
 
     const release = holdNextSave();
     await userEvent.click(await screen.findByRole("switch", { name: /Enable Hidden Gems/ }));
     await userEvent.click(await screen.findByRole("button", { name: "Turn it off" }));
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Rename on Plex…" })).toBeDisabled();
 
     release();
     await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled());
-    expect(screen.getByRole("button", { name: "Rename…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Rename on Plex…" })).toBeEnabled();
     await save();
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(2));
     expect((updateCollection.mock.calls[1]?.[1] as CollectionInput).enabled).toBe(false);

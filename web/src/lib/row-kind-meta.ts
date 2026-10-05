@@ -7,7 +7,7 @@
  * which module loads first.
  */
 
-export type RowKind = "picked" | "byw" | "again" | "seasonal" | "popular";
+export type RowKind = "picked" | "byw" | "again" | "requests" | "seasonal" | "popular";
 
 /** How a row is filled. A seasonal row has one of these too; every other row's fill is its kind. */
 export type RowFill = Exclude<RowKind, "seasonal">;
@@ -25,10 +25,16 @@ export interface KindMeta {
 }
 
 /** The picker's order. */
-export const ROW_KINDS: readonly RowKind[] = ["picked", "byw", "again", "seasonal", "popular"];
+export const ROW_KINDS: readonly RowKind[] = ["picked", "byw", "again", "requests", "seasonal", "popular"];
 
-/** The Seasonal block's "How it's filled" order. */
-export const ROW_FILLS: readonly RowFill[] = ["picked", "byw", "again", "popular"];
+/** Every fill, in the picker's order. */
+export const ROW_FILLS: readonly RowFill[] = ["picked", "byw", "again", "requests", "popular"];
+
+/**
+ * The Seasonal block's "How it's filled" order. A requests row is never seasonal — a request lands
+ * when it lands, and the API refuses the pair — so that one fill is left out.
+ */
+export const SEASONAL_FILLS: readonly RowFill[] = ROW_FILLS.filter((fill) => fill !== "requests");
 
 export const KIND_META: Readonly<Record<RowKind, KindMeta>> = {
   picked: {
@@ -43,10 +49,14 @@ export const KIND_META: Readonly<Record<RowKind, KindMeta>> = {
     title: "Watch it again",
     description: "Favourites they've already finished, ready to rewatch.",
   },
+  requests: {
+    title: "Your requests",
+    description: "What they asked for in Overseerr that's now on Plex, newest first. Never recommendations.",
+  },
   seasonal: {
     title: "Seasonal",
     description:
-      "Only appears around the holidays you pick, like Halloween or Christmas. Filled in any of the ways above.",
+      "Only appears around the holidays you pick, like Halloween or Christmas, or a season you add yourself. Filled in any of the ways above.",
   },
   popular: {
     title: "Popular on this server",
@@ -58,6 +68,7 @@ export const FILL_META: Readonly<Record<RowFill, KindMeta>> = {
   picked: KIND_META.picked,
   byw: KIND_META.byw,
   again: KIND_META.again,
+  requests: KIND_META.requests,
   popular: KIND_META.popular,
 };
 
@@ -65,4 +76,15 @@ export const KIND_GROUP: Readonly<KindMeta> = {
   title: "What kind of row is this?",
   description:
     "Each kind fills the row in a different way. Pick one, and the settings below change to match it. You can switch later: you'll see exactly what will change before anything is saved.",
+};
+
+/**
+ * An AI row (#138): filled from a theme the AI wrote once from the owner's description. Not in
+ * `KIND_META` or the picker's list: a row can't be switched into it (it needs a theme first), so it
+ * is chosen from the gallery's "AI" group, and the editor shows it as a fixed row type.
+ */
+export const AI_KIND_META: Readonly<KindMeta> = {
+  title: "AI row",
+  description:
+    "Describe the row in your own words. The AI writes the list once, then Shortlist picks from it for each person every run, with no more AI.",
 };

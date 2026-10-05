@@ -44,7 +44,9 @@ const SARAH: User = {
   history_depth: 120,
   last_run_at: null,
   request_tag: "",
-  hit_rate: null,
+  requested_by_tag: "",
+  picks_watched_30d: null,
+  last_pick_watched_at: null,
   nickname: "",
   friendly_name: "",
   display_name: "",
@@ -162,7 +164,7 @@ describe("StepUsers — the owner's own line", () => {
     // The sentence is split by <em>/<strong>, so match a fragment that lives in one text node.
     expect(
       screen.getByText(
-        /you own the server, so you have no share with yourself/i,
+        /because the owner has no sharing restrictions/i,
       ),
     ).toBeInTheDocument();
   });

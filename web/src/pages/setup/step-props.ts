@@ -4,4 +4,4 @@ import type { WizardApi } from "@/lib/wizard";
 export type StepProps = Pick<
   WizardApi,
   "data" | "update" | "next" | "complete"
->;
+> & { back?: WizardApi["back"] };

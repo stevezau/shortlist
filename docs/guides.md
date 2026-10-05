@@ -2,25 +2,29 @@
 title: Shortlist guides
 description: How to do the things people actually want to do with Shortlist, from changing how often a row refreshes to sending missing films to Radarr.
 heading: Guides
+updated: 2026-10-03
 ---
 
-Eight short pages instead of one long one. If you know what you want to do, start here.
+Short pages instead of one long one. If you know what you want to do, start here.
 
 ## What do you want to do?
 
 | I want to…                                       | Go to                                                                   |
 | ------------------------------------------------ | ----------------------------------------------------------------------- |
 | Work out what a page in the app is for           | [The web interface](guides/interface.md)                                |
+| Turn someone off, pause them, or leave their sharing alone | [People and sharing](guides/people-and-sharing.md)            |
 | Give someone a different kind of row             | [Rows and templates](guides/rows.md)                                    |
 | Name a row after the film that inspired it       | [Naming a row](guides/rows.md#naming-a-row)                             |
-| Change the order titles appear in                | [The order titles appear in](guides/rows.md#the-order-titles-appear-in) |
-| Move a row to the top of the shelf               | [Row placement](guides/rows.md#row-placement-recommended-shelf)         |
-| Give a row its own artwork                       | [Row posters](guides/rows.md#row-posters)                               |
-| Give a row a description, or sort it in Collections | [Description and sort order](guides/rows.md#description-and-sort-order) |
+| Make a Halloween or Christmas row                | [Seasonal rows](guides/rows/seasonal.md)                                |
+| Change the order titles appear in                | [The order titles appear in](guides/rows/what-goes-in.md#the-order-titles-appear-in) |
+| Move a row to the top of the shelf               | [Row placement](guides/rows/placement.md#row-placement-recommended-shelf)         |
+| Give a row its own artwork                       | [Row posters](guides/rows/placement.md#row-posters)                               |
+| Give a row a description, or sort it in Collections | [Description and sort order](guides/rows/placement.md#description-and-sort-order) |
 | Change where the suggestions come from           | [What goes in a row](guides/picks.md)                                   |
 | Stop one film skewing someone's picks            | [Blocking a seed](guides/picks.md#blocking-a-seed)                      |
 | Change how often a row's picks CHANGE            | [What goes in a row](guides/picks.md)                                   |
 | Change WHEN a row runs overnight                 | [Schedules and runs](guides/schedules.md)                               |
+| Describe a row in plain words and let AI build it | [An AI row](guides/ai.md#an-ai-row)                                   |
 | Use AI, or keep it cheap                         | [AI and cost](guides/ai.md)                                             |
 | Send missing films and shows to Radarr, Sonarr or Overseerr | [Requests](guides/requests.md)                               |
 | Find out why a row didn't turn up                | [Troubleshooting](guides/troubleshooting.md)                            |
@@ -33,7 +37,11 @@ Eight short pages instead of one long one. If you know what you want to do, star
 | Page                                                     | What's in it                                                                |
 | -------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [The web interface](guides/interface.md)                 | What every page does, and what each dashboard figure means                  |
-| [Rows and templates](guides/rows.md)                     | Starting from a template, naming, ordering, where a row shows, posters, descriptions |
+| [People and sharing](guides/people-and-sharing.md)       | The Users page, on/off/paused, per-person settings, accounts Plex restricts |
+| [Rows and templates](guides/rows.md)                     | Starting from a template, row kinds, editing and naming a row               |
+| [How a row is filled](guides/rows/what-goes-in.md)       | Because you watched and Watch it again rows, cold start, title order        |
+| [Seasonal rows](guides/rows/seasonal.md)                 | Rows that follow Halloween, Christmas and Valentine's Day                   |
+| [Where a row shows](guides/rows/placement.md)            | Home and Recommended, shelf placement, posters, descriptions                |
 | [What goes in a row](guides/picks.md)                    | Recommendation sources, rebuild cadence, per-row and per-person overrides   |
 | [Schedules and runs](guides/schedules.md)                | Each row's own schedule, custom schedules, the jobs worth knowing about     |
 | [AI and cost](guides/ai.md)                              | What AI does, which search backend to pick, how to keep the bill down       |
@@ -79,7 +87,7 @@ Open the library in Plex → **Manage Recommendations**. If the collection you a
 list with every toggle off, turn one on, or pick a different anchor. Plex's own rows — "Recently
 Added" and the like — always work as anchors.
 
-Shortlist leaves the rows where they are until then, and says so. On the **Logs** page, search for
+Shortlist leaves the rows where they are until then, and says so. On the **Activity → Log** tab, search for
 `hub order`: the line names the library and the anchor. The same outcome is recorded in the change
 log as well, which has no screen yet — read it at `/api/events/log?scope=run.hub_unplaced` after a
 nightly run, or `?scope=shelf.unplaced` after **Check and fix rows on Plex**. (A privacy sync no
@@ -87,7 +95,7 @@ longer touches shelf order, so it records nothing here.)
 
 A row that has never been built in that library yet looks the same from the shelf, but is not the
 same thing: there is nothing to position until the row exists. Run it once and it lands in place.
-Nothing is recorded in the change log for this, and usually nothing on the Logs page either — the
+Nothing is recorded in the change log for this, and usually nothing on the Activity → Log tab either — the
 exception is a library where another row has its own placement, which puts a `hub order` line there
 naming the row that is missing.
 
@@ -104,14 +112,14 @@ as people join and leave, and needs no updating.
 That field is newer than Agregarr's v2.9.1 release — at the time of writing it is on the maintained
 fork's `:develop` image (`bitr8/agregarr:develop`).
 
-Shortlist's own side is one switch, **Settings → Row placement → Let Shortlist order the Recommended
+Shortlist's own side is one switch, **Settings → Defaults → Row placement → Let Shortlist order the Recommended
 shelf**; turning it off leaves the order entirely to the other tool. Where each row goes is set on
 the row itself.
 
 ## Your AI web search finds nothing new
 
 The `llm_web` source asks the web what to watch next. Which backend it asks is
-**Settings → AI web search**, and the three choices behave very differently.
+**Settings → Connections → AI & web search**, and the three choices behave very differently.
 
 **Gemini answers from memory, not from the web.** Google's grounding tool is attached on every
 call, and Gemini decides for itself whether to use it — for "what should I watch next" it almost

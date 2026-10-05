@@ -14,6 +14,10 @@ from sqlalchemy.orm import Session, sessionmaker
 ALEMBIC_DIR = Path(__file__).parent / "alembic"
 
 
+class MigrationBackupError(RuntimeError):
+    """A migration is pending and the backup that must come before it could not be written."""
+
+
 def db_url(config_dir: Path) -> str:
     return f"sqlite:///{config_dir / 'shortlist.db'}"
 
@@ -144,6 +148,21 @@ def _sweep_batch_leftovers(config_dir: Path) -> None:
             conn.execute(f'DROP TABLE "{table}"')
 
 
+def _refuse_without_backup(config_dir: Path) -> MigrationBackupError:
+    """Log, and return for raising, the startup error for a pending migration whose backup failed."""
+    from shortlist.server.services.backup import BACKUP_SUBDIR
+
+    message = (
+        f"refusing to upgrade the database: could not write the pre-upgrade backup to "
+        f"{config_dir / BACKUP_SUBDIR}, so the upgrade would run with no copy to go back to. The "
+        "database was not changed. The 'backup failed' line above has the exact error; it is "
+        "usually a full disk, or a config folder the user Shortlist runs as (PUID/PGID) cannot "
+        "write to. Free some space or fix that folder's permissions, then restart Shortlist."
+    )
+    logger.error("{}", message)
+    return MigrationBackupError(message)
+
+
 def run_migrations(config_dir: Path) -> None:
     """Apply Alembic migrations to head (every schema change ships one — project rule).
 
@@ -151,6 +170,10 @@ def run_migrations(config_dir: Path) -> None:
     every boot meant ten restarts — a crash loop, or a week of `docker restart` — evicted all ten
     retained backups (`backup.py` rotation) and replaced them with ten copies of the already-broken
     state, destroying the scheduled backups exactly when they were needed.
+
+    Raises:
+        MigrationBackupError: a migration is pending and its backup could not be written. Nothing
+            has been migrated; the database is exactly as it was.
     """
     from shortlist.server.services.backup import take_backup
 
@@ -159,8 +182,18 @@ def run_migrations(config_dir: Path) -> None:
     cfg.set_main_option("sqlalchemy.url", db_url(config_dir))
 
     db_path = config_dir / "shortlist.db"
+    # The backup is the only way back from a migration that goes wrong. Same rule as a restore that
+    # cannot take its pre-restore copy: refuse, rather than change the schema with no way back.
     if db_path.exists() and db_path.stat().st_size > 0 and _migration_pending(cfg, config_dir):
-        take_backup(config_dir, label="pre-migration")
+        try:
+            backup = take_backup(config_dir, label="pre-migration")
+        except OSError as exc:
+            # `take_backup` answers None for a failed copy, but creating `backups/` sits outside its
+            # handler, so a first upgrade into a config folder that cannot be written raises instead.
+            logger.error("backup failed: {}", exc)
+            raise _refuse_without_backup(config_dir) from exc
+        if backup is None:
+            raise _refuse_without_backup(config_dir)
 
     _heal_squashed_revision(cfg, config_dir)
     _sweep_batch_leftovers(config_dir)

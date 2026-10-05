@@ -1,9 +1,11 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { RowPlexCard } from "@/components/rows/row-plex-card";
 import { blankInput } from "@/lib/collections";
 import type { CollectionInput } from "@/lib/types";
+
+import { HALLOWEEN } from "./season-fixtures";
 
 function input(patch: Partial<CollectionInput> = {}): CollectionInput {
   return { ...blankInput(), name: "Hidden Gems", ...patch };
@@ -35,7 +37,7 @@ describe("RowPlexCard", () => {
         input={input({ name_template: "{season} picks", description: "{season_emoji} {season} favourites", seasons: ["halloween"] })}
         collectionId={null}
         hasImage={false}
-        sampleSeason={{ slug: "halloween", name: "Halloween", emoji: "🎃", month: 10, day: 31, description: "" }}
+        sampleSeason={HALLOWEEN}
       />,
     );
 
@@ -82,4 +84,24 @@ describe("RowPlexCard", () => {
     expect(screen.getByText("From Movies")).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
+});
+
+
+it("shrinks poster lettering when long words would overflow the thumbnail", () => {
+  const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(112);
+  const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(168);
+  const contentHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
+    // A narrow poster with a long title needs twelve lines in this measured layout.
+    return this.style.fontSize ? parseFloat(this.style.fontSize) * 12 : 0;
+  });
+  const contentWidth = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(92);
+  try {
+    render(<RowPlexCard compact input={input({ poster: { mode: "text", title: "A very long title to fit on a small poster", subtitle: "Selected for you", style: "" } })} collectionId={null} hasImage={false} />);
+    const words = screen.getByText("A very long title to fit on a small poster").parentElement!;
+    expect(parseFloat(words.style.fontSize)).toBeLessThan(16);
+    expect(words.scrollHeight).toBeLessThanOrEqual(148);
+    expect(screen.getByText("Selected for you")).toBeInTheDocument();
+  } finally {
+    width.mockRestore(); height.mockRestore(); contentHeight.mockRestore(); contentWidth.mockRestore();
+  }
 });

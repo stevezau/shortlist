@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowPlacementSection } from "@/components/settings/row-placement-section";
@@ -29,7 +30,7 @@ function renderSection(settings: Settings = {}) {
   });
   render(
     <QueryClientProvider client={client}>
-      <RowPlacementSection settings={settings} />
+      <MemoryRouter><RowPlacementSection settings={settings} /></MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -76,7 +77,7 @@ describe("RowPlacementSection", () => {
   it("points at the row editor for where a row actually goes", async () => {
     renderSection({ "rows.manage_shelf_order": true });
 
-    expect(await screen.findByText(/Where it sits/)).toBeTruthy();
+    expect(await screen.findByText(/Plex placement/)).toBeTruthy();
   });
 
   it("says what happens when ordering is off — new rows land at the end of the shelf", async () => {

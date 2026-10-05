@@ -17,6 +17,7 @@ The thin methods below those section banners exist because `RunService` is the p
 from __future__ import annotations
 
 import asyncio
+import functools
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -33,7 +34,9 @@ from shortlist.server.db.models import Collection, Run, RunUser, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs, notify, run_persistence
 from shortlist.server.services.context_builder import ContextBuilder
-from shortlist.server.services.run_log import RunLogBuffer, capture_warnings
+from shortlist.server.services.plex_reachability import error_text
+from shortlist.server.services.report_cache import invalidate_report_cache
+from shortlist.server.services.run_log import RunLogBuffer, capture_warnings, problem_line
 from shortlist.server.services.run_persistence import HIT_WINDOW_DAYS  # noqa: F401  (re-export)
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_sync import WatchSync
@@ -105,6 +108,8 @@ class RunService:
         # run_id -> cancel flag for the one in-flight run, so the /cancel endpoint can ask the engine
         # to stop. The engine checks it before each user (cooperative), so an in-flight user finishes.
         self._cancels: dict[int, threading.Event] = {}
+        # Runs whose engine has returned and whose results are being saved; see `cancel_run`.
+        self._settling: set[int] = set()
         self._tasks: set[asyncio.Task] = set()  # strong refs so in-flight runs aren't GC'd
         self._log = RunLogBuffer(session_factory)
         self._watch = WatchSync(session_factory, bus)
@@ -155,6 +160,22 @@ class RunService:
     def build_requests_context(self):
         """Requests config + TMDB client for the approval inbox's manual send — no Plex/LLM I/O."""
         return self._ctx.build_requests_only()
+
+    def build_tmdb_only(self):
+        """A TMDB client, or None without an API key — for the season editor (issue #137)."""
+        return self._ctx.build_tmdb_only()
+
+    def build_plex_reader(self):
+        """The owner's PMS, or None before setup — for the season editor's reads (issue #137). Connects."""
+        return self._ctx.build_plex_reader()
+
+    def profile_with_history(self, session: Session, user_id: int):
+        """One person's profile with their watch history filled in, as a run reads it — for theme authoring."""
+        return self._ctx.profile_with_history(session, user_id)
+
+    def build_request_sources_only(self):
+        """Request sources + enabled roster + plex id -> DB id for the requests-row setup check."""
+        return self._ctx.build_request_sources_only()
 
     def enabled_profiles(self, session: Session, user_ids: list[int] | None = None):
         return self._ctx.enabled_profiles(session, user_ids)
@@ -237,7 +258,11 @@ class RunService:
             # starts. A queued run is a real thing an operator sits watching — it had no scope
             # recorded yet, so its page had nothing to show and said so. `collection_ids` is the
             # scope a "run selected rows" press chose; without it, every enabled row.
-            wanted = session.query(Collection).filter(Collection.enabled)
+            # A DRY run also builds a switched-off row it names (an AI row's "Try it" before going live).
+            named_dry = bool(dry_run and collection_ids)
+            wanted = session.query(Collection).filter(
+                Collection.enabled | Collection.id.in_(collection_ids) if named_dry else Collection.enabled
+            )
             if collection_ids:
                 wanted = wanted.filter(Collection.id.in_(collection_ids))
             run = Run(
@@ -285,7 +310,18 @@ class RunService:
             #
             # After `_run_locked` returns, so the lock is released and `_cancels` is empty: draining
             # while `is_running()` is still true would re-park every writer and achieve nothing.
-            await self._drain_jobs_after_run(run_id)
+            #
+            # NOT when this task is being cancelled. In the shipped image (tini as PID 1) the process
+            # dies at shutdown with no task cancelled; a teardown path cancels it — Ctrl-C, uvicorn as
+            # PID 1 without an init, an in-process server. The process lives on there for a moment,
+            # and cancellation cannot stop the engine's executor thread, yet the `finally` blocks above
+            # have already released the writer lock and dropped the Event — so a drain here would start
+            # a share-filter writer beside an engine still merging its own (rule 3). The jobs stay
+            # queued for the next drain.
+            # `cancel_run` is not this: it lets the engine return, and that run still drains.
+            task = asyncio.current_task()
+            if task is None or not task.cancelling():
+                await self._drain_jobs_after_run(run_id)
 
     async def _run_locked(
         self,
@@ -310,6 +346,7 @@ class RunService:
                             run.status = "aborted"
                             run.finished_at = datetime.now(UTC)
                             session.commit()
+                            invalidate_report_cache()
                     logger.info("run {} was cancelled before it started — nothing was built", run_id)
                     self._bus.publish("run.progress", {"run_id": run_id, "status": "aborted"})
                     self._bus.publish("run.finished", {"run_id": run_id, "status": "aborted"})
@@ -325,6 +362,7 @@ class RunService:
                     self.flush_run_log(run_id)
                 return
             self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
+            log_sink: Callable[[dict], None] | None = None
             try:
                 # Inside the try so a failure here (e.g. reading users) still marks the run errored
                 # AND runs the finally that frees the cancel Event — never leaves a run stuck "running".
@@ -342,12 +380,18 @@ class RunService:
                     }
                     session.commit()
                 log_sink = self._new_run_log(run_id)
-                ctx = self.build_context(
-                    dry_run=dry_run,
-                    loop=loop,
-                    run_id=run_id,
-                    log_sink=log_sink,
-                    collection_ids=collection_ids,
+                # In an executor: building the context makes a PMS request (up to the 45s timeout),
+                # which on the loop stalled /api/system/health and SSE for as long.
+                ctx = await loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        self.build_context,
+                        dry_run=dry_run,
+                        loop=loop,
+                        run_id=run_id,
+                        log_sink=log_sink,
+                        collection_ids=collection_ids,
+                    ),
                 )
                 # Which rows this run will build, recorded UP FRONT — the row twin of
                 # `expected_users` above. Without it the page cannot know a run's SCOPE until the
@@ -386,7 +430,7 @@ class RunService:
                 # Fill each person's history from the cache BEFORE the engine runs. The run used to
                 # do its own complete per-user read — the same read the nightly sync had already
                 # done hours earlier — which was half the total cost of a night.
-                await loop.run_in_executor(None, self._watch.prefill_history, ctx, profiles, run_id)  # scoped inside
+                await loop.run_in_executor(None, self._watch.prefill_history, ctx, profiles, run_id)
                 # What is in each person's rows RIGHT NOW, before the engine rebuilds them. This is
                 # the shelf they were actually looking at during the window they were watching in,
                 # and it stops existing the moment the run persists tonight's picks — so it has to be
@@ -400,7 +444,17 @@ class RunService:
                 async with jobs.plex_writer_lock():
                     report = await loop.run_in_executor(None, _engine_run_logged, run_id, log_sink, ctx, profiles)
                 aborted = cancel is not None and cancel.is_set()
-                self._persist_report(run_id, report, status="aborted" if aborted else None)
+                # Settling: from here the run is finished as far as Cancel is concerned. `cancel_run`
+                # writes `Run.stats`, which the save below also writes, so it must stay out of the
+                # way (a lost update) — and a flag set on a finished run is stale anyway.
+                self._settling.add(run_id)
+                # Off the loop: the save, crediting and alert measured 4.4s+ on a 46-user run. Only the
+                # reconcile commits per person; `persist_report` is one transaction, so loop-side writers
+                # can wait on SQLite's write lock for its duration.
+                await loop.run_in_executor(
+                    None,
+                    functools.partial(self._persist_report, run_id, report, status="aborted" if aborted else None),
+                )
                 # The engine filled each profile's history in place, so this is the one moment we hold
                 # both "what we recommended" and "what they have since watched". A dry run is a
                 # preview and mutates nothing, matching the rest of persistence.
@@ -412,7 +466,7 @@ class RunService:
                     # moved out of the persist transaction for exactly this reason. Whatever this
                     # pass misses, the nightly sync reaches from the same records.
                     try:
-                        self._reconcile_watched(profiles, live_picks)
+                        await loop.run_in_executor(None, self._reconcile_watched, profiles, live_picks)
                     except Exception as e:
                         logger.warning(
                             "run {}: crediting watches failed ({}) — the run itself is unaffected",
@@ -420,23 +474,28 @@ class RunService:
                             type(e).__name__,
                         )
                 status = "aborted" if aborted else ("ok" if report.ok else "error")
-                notify.enqueue_run_outcome(self._sessions, run_id)
+                await loop.run_in_executor(None, notify.enqueue_run_outcome, self._sessions, run_id)
                 # In an executor: the update check can reach GitHub (3s timeout, cached for 6h).
                 await loop.run_in_executor(None, notify.after_run, self._sessions, run_id, shortlist.__version__)
             except Exception as e:
                 logger.exception("run {} failed", run_id)
-                self._mark_run_error(run_id, {"error": f"{type(e).__name__}: {e}"})
+                error = error_text(e)
+                # The engine's own warnings are captured only while it runs; a failure before that
+                # (or one it raised rather than logged) would leave the run's Log tab with no reason.
+                if log_sink is not None:
+                    log_sink(problem_line(run_id, "error", f"The run failed: {error}"))
+                self._mark_run_error(run_id, {"error": error})
                 # Both ways a run reaches `error` get the alert, and they are genuinely two paths: the
                 # engine returning a not-ok report, and it raising. Hooking only the tidy one would
                 # stay silent for exactly the failures worth waking up for.
                 notify.enqueue_run_outcome(self._sessions, run_id)
                 await loop.run_in_executor(None, notify.after_run, self._sessions, run_id, shortlist.__version__)
-                self._bus.publish(
-                    "run.finished", {"run_id": run_id, "status": "error", "error": f"{type(e).__name__}: {e}"}
-                )
+                self._bus.publish("run.finished", {"run_id": run_id, "status": "error", "error": error})
                 return
             finally:
                 self._cancels.pop(run_id, None)
+                invalidate_report_cache()
+                self._settling.discard(run_id)
                 # In the `finally` so a crashed run still leaves its narration behind — that is
                 # exactly the run whose log someone will want to read.
                 self.flush_run_log(run_id)
@@ -511,6 +570,11 @@ class RunService:
         if event.is_set():
             return True  # already stopping — pressing again is a no-op, and a no-op is not an error
         event.set()
+        if run_id in self._settling:
+            # The engine has returned and the run is being saved. The Event above is moot, and the
+            # save owns `Run.stats` now: writing the flag would race it or outlive the run.
+            logger.info("run {} cancel ignored — it is already finishing", run_id)
+            return True
         # Recorded on the RUN, not just in memory and an SSE event, so any client can see it. The
         # button used to read "Stopping..." off local mutation state alone: a page refresh forgot,
         # offered a live-looking Cancel, and every press after that 409'd with "this run isn't
@@ -536,6 +600,7 @@ class RunService:
                         run.finished_at = datetime.now(UTC)
                         run.stats = {**(run.stats or {}), "cancel_requested": True}
                         session.commit()
+                        invalidate_report_cache()
                         logger.info("run {} cancelled while queued — it never started", run_id)
                         self._bus.publish("run.progress", {"run_id": run_id, "status": "aborted"})
                         self._bus.publish("run.finished", {"run_id": run_id, "status": "aborted"})

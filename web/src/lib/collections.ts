@@ -3,7 +3,9 @@ import {
   recencyBadgeLabel,
   watchedBadgeLabel,
 } from "@/lib/constants";
+import { effectiveSources } from "@/components/rows/row-sources-field";
 import { placementLabel } from "@/lib/placement";
+import { withoutWebSearchWhenSeasonal } from "@/lib/seasonal-sources";
 import { showDaysSummary } from "@/lib/show-days";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
 import type {
@@ -41,12 +43,19 @@ export function blankInput(): CollectionInput {
     rewatch: false,
     // Mirrors the API default, so a row created as a rewatch row starts where the server would.
     rewatch_cooldown_days: 30,
+    requests_row: false,
+    requests_window_days: 90,
+    requests_tag_pattern: "",
     unstarted_only: false,
     refresh_days: null,
     idle_hold_days: null,
     recency: null,
     recent_count: null,
     max_seeds: null,
+    max_runtime: null,
+    min_year: null,
+    max_year: null,
+    min_rating: null,
     cold_start: null,
     // Every request setting starts null: a new row inherits Settings > Requests entirely, and only
     // differs once someone says so. Same contract as watched_pct / recency / cold_start above.
@@ -81,8 +90,27 @@ export function blankInput(): CollectionInput {
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "" },
+    ai_instructions: { mode: "default", text: "" },
+    theme_id: null,
+    ...OVER_TIME_DEFAULTS,
   };
 }
+
+/**
+ * The AI row's Explore and over-time settings at their defaults (#138): one fixed theme, no brief, and
+ * every control off. A row with no theme sends these, matching what the server resets them to.
+ */
+export const OVER_TIME_DEFAULTS: Pick<
+  CollectionInput,
+  "theme_mode" | "explore_brief" | "theme_days" | "refresh_share" | "repeat_cooldown_days" | "avoid_rows"
+> = {
+  theme_mode: "fixed",
+  explore_brief: "",
+  theme_days: null,
+  refresh_share: null,
+  repeat_cooldown_days: null,
+  avoid_rows: null,
+};
 
 /** Project a saved collection onto the editable input shape the editor and PATCH share. */
 export function toInput(collection: Collection): CollectionInput {
@@ -111,9 +139,16 @@ export function toInput(collection: Collection): CollectionInput {
     refresh_days: collection.refresh_days ?? null,
     idle_hold_days: collection.idle_hold_days ?? null,
     rewatch_cooldown_days: collection.rewatch_cooldown_days ?? 30,
+    requests_row: collection.requests_row ?? false,
+    requests_window_days: collection.requests_window_days ?? 90,
+    requests_tag_pattern: collection.requests_tag_pattern ?? "",
     recency: collection.recency ?? null,
     recent_count: collection.recent_count ?? null,
     max_seeds: collection.max_seeds ?? null,
+    max_runtime: collection.max_runtime ?? null,
+    min_year: collection.min_year ?? null,
+    max_year: collection.max_year ?? null,
+    min_rating: collection.min_rating ?? null,
     cold_start: collection.cold_start ?? null,
     req_min_rating: collection.req_min_rating ?? null,
     req_min_votes: collection.req_min_votes ?? null,
@@ -155,6 +190,18 @@ export function toInput(collection: Collection): CollectionInput {
       subtitle: collection.poster?.subtitle ?? "",
       style: collection.poster?.style ?? "",
     },
+    // Only the two fields: the response model is open, and the request model refuses any other key.
+    ai_instructions: {
+      mode: collection.ai_instructions?.mode ?? "default",
+      text: collection.ai_instructions?.text ?? "",
+    },
+    theme_id: collection.theme_id ?? null,
+    theme_mode: collection.theme_mode ?? "fixed",
+    explore_brief: collection.explore_brief ?? "",
+    theme_days: collection.theme_days ?? null,
+    refresh_share: collection.refresh_share ?? null,
+    repeat_cooldown_days: collection.repeat_cooldown_days ?? null,
+    avoid_rows: collection.avoid_rows ?? null,
   };
 }
 
@@ -197,7 +244,20 @@ export function hasUnsavedChanges(
   collection: Collection | null,
 ): boolean {
   if (!collection) return false; // an unsaved new row has nothing to differ from
-  return !sameValue(input, toInput(collection));
+  return !sameValue(asStored(input), asStored(toInput(collection)));
+}
+
+/**
+ * The form as the server would store it, for comparison only. The draft keeps text typed under Add
+ * after a switch back to the default, so choosing Add again restores it; but the server stores no
+ * text for the default and trims the rest (`_stored_instructions`), so neither is a change.
+ */
+function asStored(input: CollectionInput): CollectionInput {
+  const { mode, text } = input.ai_instructions;
+  return {
+    ...input,
+    ai_instructions: { mode, text: mode === "default" ? "" : text.trim() },
+  };
 }
 
 /** One-line "who sees this row" summary for a row card. */
@@ -315,6 +375,43 @@ export function rowOverrides(
       `AI web search: ${collection.recent_count} ${collection.recent_count === 1 ? "watch" : "watches"}`,
     );
   }
+
+  // The instructions only reach AI web search, so a row that doesn't use it has nothing to badge.
+  // Before settings load the global set is unknown, so a row with no sources of its own keeps the badge.
+  // An AI row is filled from its theme (`rows.effective_row_sources`), so it never searches the web.
+  const isAiRow = collection.theme_id != null;
+  const usesAiWebSearch =
+    !isAiRow &&
+    (collection.candidate_sources.length > 0 || settings
+      ? withoutWebSearchWhenSeasonal(
+          effectiveSources(collection.candidate_sources, settings),
+          collection.seasons ?? [],
+        ).includes("llm_web")
+      : true);
+  if (usesAiWebSearch && collection.ai_instructions?.mode === "add") {
+    parts.push("AI instructions: adds to the default");
+  }
+  if (usesAiWebSearch && collection.ai_instructions?.mode === "own") {
+    parts.push("AI instructions: own");
+  }
+  // On an AI row the same field holds the guidance "Write the list" is given, so it is badged as that.
+  if (isAiRow && collection.ai_instructions?.mode === "add") {
+    parts.push("AI prompt: adds to the default");
+  }
+  if (isAiRow && collection.ai_instructions?.mode === "own") {
+    parts.push("AI prompt: own");
+  }
+  if (isAiRow && collection.ai_paused) {
+    parts.push("AI paused");
+  }
+
+  // null = no limit, so only a limit that is set gets a badge.
+  if (collection.max_runtime != null) parts.push(`Max length ${collection.max_runtime} min`);
+  const { min_year: fromYear, max_year: toYear } = collection;
+  if (fromYear != null && toYear != null) parts.push(`Released ${fromYear}–${toYear}`);
+  else if (fromYear != null) parts.push(`From ${fromYear}`);
+  else if (toYear != null) parts.push(`Up to ${toYear}`);
+  if (collection.min_rating != null) parts.push(`Rating ${collection.min_rating}+`);
 
   // null inherits the global cold-start behaviour, so only badge a row that overrides it — and only
   // "skip" is worth a badge: it is the one that makes a row silently absent for someone.

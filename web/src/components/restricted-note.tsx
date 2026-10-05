@@ -41,7 +41,9 @@ export function RestrictedNote({
         <div className="space-y-2">
           <p className="font-medium text-destructive-text">
             {name} can see {exposed}{" "}
-            {exposed === 1 ? "row that belongs" : "rows that belong"} to other
+            {/* Collections, not rows: the run counts one per row per library, a bigger number than the
+                per-person rows the Users list and the Privacy page count from the live reading. */}
+            {exposed === 1 ? "collection that belongs" : "collections that belong"} to other
             people.
           </p>
           <p className="text-muted-foreground">

@@ -20,6 +20,8 @@ import shortlist.engine.clients.plextv as plextv_mod
 from shortlist.engine.clients.plex_pms import (
     MIN_PMS_VERSION,
     CollectionRejectedItems,
+    LibraryCollection,
+    LibraryTitle,
     PlexClient,
     parse_pms_version,
 )
@@ -638,6 +640,20 @@ class TestTmdbClient:
         assert cache.store == {}
 
     @respx.mock
+    @pytest.mark.parametrize(
+        "params",
+        [{}, {"with_keywords": ""}, {"with_genres": " "}, {"with_keywords": "|"}, {"vote_count.gte": 200}],
+    )
+    def test_discover_all_refuses_a_query_with_no_filter(self, params):
+        """With no filter TMDB answers with every title it holds: 500 pages read, and cached for a week."""
+        route = respx.get("https://api.themoviedb.org/3/discover/movie").mock(
+            return_value=httpx.Response(200, json={"page": 1, "total_pages": 1, "results": []})
+        )
+        with pytest.raises(ValueError, match="filter"):
+            TmdbClient("k").discover_all(MediaType.MOVIE, params)
+        assert not route.called
+
+    @respx.mock
     def test_discover_with_no_genres_makes_no_call(self):
         # No genres -> no query at all (respx would raise on any unmocked request).
         assert TmdbClient("k").discover(MediaType.MOVIE, []) == []
@@ -826,6 +842,110 @@ class TestTmdbClient:
             TmdbClient("SUPERSECRETKEY").suggestions(1, MediaType.MOVIE)
         assert "SUPERSECRETKEY" not in str(excinfo.value)
         assert "500" in str(excinfo.value)
+
+    @respx.mock
+    def test_list_item_is_a_list_shaped_title_with_its_genres_as_ids(self):
+        """A season's hand picks and collection films arrive as bare ids; the pool reads list items, so the
+        detail payload is cut to a list item's keys, with ``genres`` turned into the list's ``genre_ids``."""
+        route = respx.get("https://api.themoviedb.org/3/movie/603").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": 603,
+                    "title": "The Matrix",
+                    "release_date": "1999-03-31",
+                    "genres": [{"id": 28, "name": "Action"}, {"id": 878, "name": "Science Fiction"}],
+                    "vote_average": 8.2,
+                    "vote_count": 26000,
+                    "poster_path": "/matrix.jpg",
+                    "overview": "A hacker learns the truth.",
+                    "original_language": "en",
+                    "runtime": 136,
+                    "credits": {"cast": [{"name": "Keanu Reeves"}]},
+                },
+            )
+        )
+        item = TmdbClient("k").list_item(603, MediaType.MOVIE)
+        assert item == {
+            "id": 603,
+            "title": "The Matrix",
+            "release_date": "1999-03-31",
+            "genre_ids": [28, 878],
+            "vote_average": 8.2,
+            "vote_count": 26000,
+            "poster_path": "/matrix.jpg",
+            "overview": "A hacker learns the truth.",
+            "original_language": "en",
+        }
+        # The same cached read `details` makes, so a title the run already looked up costs nothing.
+        assert route.calls.last.request.url.params["append_to_response"] == "credits"
+
+    @respx.mock
+    def test_list_item_names_a_show_by_its_tv_keys(self):
+        respx.get("https://api.themoviedb.org/3/tv/1399").mock(
+            return_value=httpx.Response(
+                200, json={"id": 1399, "name": "Game of Thrones", "first_air_date": "2011-04-17", "genres": []}
+            )
+        )
+        item = TmdbClient("k").list_item(1399, MediaType.SHOW)
+        assert item == {"id": 1399, "name": "Game of Thrones", "first_air_date": "2011-04-17", "genre_ids": []}
+
+    @respx.mock
+    def test_list_item_is_none_for_a_title_tmdb_no_longer_has(self):
+        respx.get("https://api.themoviedb.org/3/movie/999999").mock(return_value=httpx.Response(404))
+        assert TmdbClient("k").list_item(999999, MediaType.MOVIE) is None
+
+    @respx.mock
+    def test_search_keywords_counts_each_tags_films_from_discover(self):
+        """The editor shows how many films each tag holds; page 1 of discover carries ``total_results``. The
+        keyword search answers what TMDB really answered (`tmdb_search_keyword.json`, rule 11); the counts are
+        the ones TMDB gave for those tags the same day."""
+        recorded = json.loads((FIXTURES / "tmdb_search_keyword.json").read_text())
+        search = respx.get("https://api.themoviedb.org/3/search/keyword").mock(
+            return_value=httpx.Response(200, json=recorded)
+        )
+        totals = {"4543": 133, "337336": 1}
+        discover = respx.get("https://api.themoviedb.org/3/discover/movie").mock(
+            side_effect=lambda request: httpx.Response(
+                200, json={"page": 1, "results": [], "total_results": totals[request.url.params["with_keywords"]]}
+            )
+        )
+        cache = _MemoryCache()
+
+        found = TmdbClient("k", cache=cache).search_keywords("thanksgiving", limit=2)
+        TmdbClient("k", cache=cache).search_keywords("thanksgiving", limit=2)
+
+        assert found == [
+            {"id": 4543, "name": "thanksgiving", "movies": 133},
+            {"id": 337336, "name": "thanksgiving prayer", "movies": 1},
+        ]
+        assert search.calls[0].request.url.params["query"] == "thanksgiving"
+        assert sorted(call.request.url.params["with_keywords"] for call in discover.calls) == ["337336", "4543"]
+        assert all(call.request.url.params["include_adult"] == "false" for call in discover.calls)
+
+    def test_search_keywords_for_a_blank_query_makes_no_call(self):
+        assert TmdbClient("k").search_keywords("  ") == []
+
+    @respx.mock
+    @pytest.mark.parametrize("workers", [1, 4])
+    def test_discover_all_returns_the_same_list_however_many_pages_it_reads_at_once(self, workers):
+        recorded = json.loads((FIXTURES / "tmdb_discover_paged.json").read_text())
+        pages = {1: recorded["movie_page_1"], 34: recorded["movie_last_page"]}
+        blank = {"page": 0, "total_pages": 34, "total_results": 676, "results": []}
+        route = respx.get("https://api.themoviedb.org/3/discover/movie").mock(
+            side_effect=lambda request: httpx.Response(
+                200, json=pages.get(int(request.url.params["page"]), {**blank, "page": request.url.params["page"]})
+            )
+        )
+
+        titles = TmdbClient("k").discover_all(MediaType.MOVIE, {"with_keywords": "3335|180193"}, workers=workers)
+
+        expected = [r["id"] for r in recorded["movie_page_1"]["results"] + recorded["movie_last_page"]["results"]]
+        assert [t["id"] for t in titles] == expected, "pages reassemble in page order"
+        requested = [int(call.request.url.params["page"]) for call in route.calls]
+        assert sorted(requested) == list(range(1, 35))
+        if workers == 1:
+            assert requested == list(range(1, 35)), "one at a time, in order"
 
 
 class TestRemovedOmdbClient:
@@ -1507,6 +1627,44 @@ class TestPlexClient:
         mock_plex._server.library.sections.return_value = [movies, shows]
 
         assert mock_plex.sections_by_type() == {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+
+    def test_a_tv_collection_reads_its_shows_and_skips_episodes(self, mock_plex: PlexClient):
+        """Kometa builds season- and episode-level collections. An episode's ``tmdb://`` guid is an EPISODE id,
+        which read as a show id would put an unrelated series in the season."""
+        show = SimpleNamespace(type="show", title="Doctor Who", year=2005, guids=[SimpleNamespace(id="tmdb://57243")])
+        episode = SimpleNamespace(
+            type="episode", title="The Christmas Invasion", year=2005, guids=[SimpleNamespace(id="tmdb://1008562")]
+        )
+        collection = SimpleNamespace(title="Christmas Specials", items=lambda: [show, episode])
+        mock_plex._sections_cache = [
+            SimpleNamespace(key="2", type="show", title="TV Shows", collections=lambda: [collection])
+        ]
+
+        assert mock_plex.collection_members("2", "Christmas Specials") == [
+            LibraryTitle(57243, MediaType.SHOW, "Doctor Who", 2005)
+        ]
+
+    def test_a_collection_says_how_many_of_its_items_it_could_not_use(self, mock_plex: PlexClient):
+        """The season editor counts what a collection gives the season, so a member skipped for having no TMDB
+        id, or for being an episode, must not vanish without a word."""
+        from loguru import logger
+
+        show = SimpleNamespace(type="show", title="Doctor Who", year=2005, guids=[SimpleNamespace(id="tmdb://57243")])
+        episode = SimpleNamespace(type="episode", title="Ep", year=2005, guids=[SimpleNamespace(id="tmdb://1")])
+        unmatched = SimpleNamespace(type="show", title="Local Show", year=2001, guids=[])
+        collection = SimpleNamespace(title="Christmas Specials", items=lambda: [show, episode, unmatched])
+        mock_plex._sections_cache = [
+            SimpleNamespace(key="2", type="show", title="TV Shows", collections=lambda: [collection])
+        ]
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="INFO", format="{message}")
+        try:
+            members = mock_plex.collection_members("2", "Christmas Specials")
+        finally:
+            logger.remove(sink)
+
+        assert [m.tmdb_id for m in members] == [57243]
+        assert any("Christmas Specials" in line and "2 of its 3" in line for line in lines), lines
 
 
 class TestUserHubs:
@@ -3224,3 +3382,177 @@ class TestTheRecordedUserRatingResponse:
         # the point: the account guard is the only thing standing between Kometa's IMDb scores and a
         # silently shrunken seed list.
         assert disliked_seed_keys([i for i in doubled if i.is_human_rating], 6.0) == {(509967, MediaType.MOVIE)}
+
+
+class TestTheRecordedSeasonSourceReads:
+    """Replays `pms_collection_children.xml.txt` and `pms_section_title_search.xml.txt` through plexapi's real
+    parser: the two reads a custom season makes of the owner's library (issue #137).
+
+    The collections listing itself is built from the Directory recorded in `pms_collections_listing.json`, and
+    the fake PMS refuses any read it was not given — so a per-item re-read, which plexapi issues silently for
+    an attribute a listing lacks, fails here rather than costing a round trip per film in production.
+    """
+
+    LISTING = "/library/sections/{key}/all"
+    CHILDREN = "/library/collections/{rating_key}/children"
+
+    @staticmethod
+    def _directory(rating_key: int, title: str, *, smart: bool = False, subtype: str = "movie") -> str:
+        recorded = json.loads((FIXTURES / "pms_collections_listing.json").read_text())["listing"]
+        attrs = {
+            **recorded["directory_attributes"],
+            "ratingKey": str(rating_key),
+            "key": f"/library/collections/{rating_key}/children",
+            "title": title,
+            "titleSort": title,
+            "subtype": subtype,
+            "childCount": "4",
+        }
+        if smart:
+            attrs["smart"] = "1"
+        return ET.tostring(ET.Element("Directory", attrs), encoding="unicode")
+
+    @staticmethod
+    def _section(server, key: str, kind: str, title: str):
+        from plexapi.library import MovieSection, ShowSection
+
+        cls = MovieSection if kind == "movie" else ShowSection
+        return cls(server, ET.Element("Directory", {"key": key, "type": kind, "title": title}), "/library/sections")
+
+    def _serve(self, mock_plex: PlexClient, routes: dict[str, str], sections: list[tuple[str, str, str]]) -> list:
+        """Answer each read from ``routes`` (path, or path + one telling query param) and record it."""
+        reads: list[tuple[str, dict]] = []
+
+        def query(key, method=None, headers=None, params=None, **_kwargs):
+            headers = dict(headers or {})
+            reads.append((key, headers))
+            path, _, query_string = key.partition("?")
+            for route, body in routes.items():
+                route_path, _, needle = route.partition("?")
+                if path == route_path and needle in query_string:
+                    return self._page(ET.fromstring(body), headers)
+            raise AssertionError(f"the fake PMS was not given {key}")
+
+        mock_plex._server.query.side_effect = query
+        mock_plex._server.library.sections.return_value = [
+            self._section(mock_plex._server, key, kind, title) for key, kind, title in sections
+        ]
+        return reads
+
+    @staticmethod
+    def _page(container: ET.Element, headers: dict) -> ET.Element:
+        """The slice the container headers ask for, as a real PMS serves it (``size`` is the slice's)."""
+        start = int(headers.get("X-Plex-Container-Start", 0))
+        size = int(headers.get("X-Plex-Container-Size", len(container)))
+        children = list(container)
+        for child in children:
+            container.remove(child)
+        container.extend(children[start : start + size])
+        container.set("size", str(len(container)))
+        return container
+
+    def _listing(self, *directories: str) -> str:
+        return f'<MediaContainer size="{len(directories)}">{"".join(directories)}</MediaContainer>'
+
+    def test_collection_members_are_the_recorded_children_by_tmdb_id(self, mock_plex: PlexClient):
+        reads = self._serve(
+            mock_plex,
+            {
+                self.LISTING.format(key="1") + "?type=18": self._listing(
+                    self._directory(536664, "Letterboxd Oscars Best Picture Winners")
+                ),
+                self.CHILDREN.format(rating_key=536664): (FIXTURES / "pms_collection_children.xml.txt").read_text(),
+            },
+            [("1", "movie", "Movies")],
+        )
+
+        # Case-insensitive: Kometa may re-case a title it recreates each season.
+        members = mock_plex.collection_members("1", "letterboxd OSCARS best picture winners")
+
+        assert members == [
+            LibraryTitle(424, MediaType.MOVIE, "Schindler's List", 1993),
+            LibraryTitle(197, MediaType.MOVIE, "Braveheart", 1995),
+            LibraryTitle(1054867, MediaType.MOVIE, "One Battle After Another", 2025),
+            LibraryTitle(11050, MediaType.MOVIE, "Terms of Endearment", 1983),
+        ]
+        assert [key.partition("?")[0] for key, _headers in reads] == [
+            "/library/sections/1/all",
+            "/library/collections/536664/children",
+        ], "one listing read and one children read; no per-film re-read"
+
+    def test_collection_members_is_none_when_no_collection_has_that_title(self, mock_plex: PlexClient):
+        """Kometa deletes a seasonal collection out of season, so "absent tonight" is a normal answer."""
+        self._serve(
+            mock_plex,
+            {self.LISTING.format(key="1") + "?type=18": self._listing(self._directory(536664, "Something Else"))},
+            [("1", "movie", "Movies")],
+        )
+        assert mock_plex.collection_members("1", "Thanksgiving Movies") is None
+        assert mock_plex.collection_members("9", "Something Else") is None, "a library that is gone"
+
+    def test_collection_members_never_reads_a_shortlist_row(self, mock_plex: PlexClient):
+        from shortlist.engine.delivery import row_marker
+
+        ours = "🎄 Christmas picks" + row_marker(100)
+        reads = self._serve(
+            mock_plex,
+            {self.LISTING.format(key="1") + "?type=18": self._listing(self._directory(575662, ours))},
+            [("1", "movie", "Movies")],
+        )
+        assert mock_plex.collection_members("1", ours) is None
+        assert len(reads) == 1, "its members were never read"
+
+    def test_list_collections_offers_every_library_but_never_a_shortlist_row(self, mock_plex: PlexClient):
+        from shortlist.engine.delivery import row_marker
+
+        self._serve(
+            mock_plex,
+            {
+                self.LISTING.format(key="1") + "?type=18": self._listing(
+                    self._directory(536664, "Letterboxd Oscars Best Picture Winners"),
+                    self._directory(575662, "✨ Movies Picked for You" + row_marker(100)),
+                    self._directory(536700, "Christmas Movies", smart=True),
+                ),
+                self.LISTING.format(key="2") + "?type=18": self._listing(
+                    self._directory(600001, "Christmas Specials", subtype="show")
+                ),
+            },
+            [("1", "movie", "Movies"), ("2", "show", "TV Shows")],
+        )
+
+        assert mock_plex.list_collections() == [
+            LibraryCollection("1", "Movies", "Letterboxd Oscars Best Picture Winners", 4, False, MediaType.MOVIE),
+            LibraryCollection("1", "Movies", "Christmas Movies", 4, True, MediaType.MOVIE),
+            LibraryCollection("2", "TV Shows", "Christmas Specials", 4, False, MediaType.SHOW),
+        ]
+
+    def test_search_titles_asks_the_pms_for_no_more_than_the_limit(self, mock_plex: PlexClient):
+        reads = self._serve(
+            mock_plex,
+            {self.LISTING.format(key="1") + "?title=free": (FIXTURES / "pms_section_title_search.xml.txt").read_text()},
+            [("1", "movie", "Movies")],
+        )
+
+        found = mock_plex.search_titles("free", limit=3)
+
+        assert found == [
+            LibraryTitle(663075, MediaType.MOVIE, "Free Burma Rangers", 2020),
+            LibraryTitle(913824, MediaType.MOVIE, "Free Chol Soo Lee", 2022),
+            LibraryTitle(334521, MediaType.MOVIE, "Free Fire", 2016),
+        ]
+        assert [headers["X-Plex-Container-Size"] for _key, headers in reads] == ["3"]
+
+    def test_search_titles_skips_a_title_with_no_tmdb_guid(self, mock_plex: PlexClient):
+        """A film matched by another agent carries other guids but no ``tmdb://`` one; nothing could pick it."""
+        recorded = ET.fromstring((FIXTURES / "pms_section_title_search.xml.txt").read_text())
+        free_fire = next(video for video in recorded if video.get("title") == "Free Fire")
+        free_fire.remove(next(guid for guid in free_fire.findall("Guid") if guid.get("id").startswith("tmdb://")))
+        self._serve(
+            mock_plex,
+            {self.LISTING.format(key="1") + "?title=free": ET.tostring(recorded, encoding="unicode")},
+            [("1", "movie", "Movies")],
+        )
+
+        found = mock_plex.search_titles("free", limit=5)
+
+        assert [title.title for title in found] == ["Free Burma Rangers", "Free Chol Soo Lee", "Free Guy", "Free Solo"]

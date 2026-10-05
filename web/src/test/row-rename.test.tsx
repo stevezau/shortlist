@@ -1,19 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import { RowRenamePage } from "@/pages/row-rename";
 
-const { listCollections, updateCollection } = vi.hoisted(() => ({
+const { listCollections, updateCollection, getUsers } = vi.hoisted(() => ({
   listCollections: vi.fn(),
   updateCollection: vi.fn(),
+  // Resolved by default so no test reaches for `fetch`, which several of them stub for the stream.
+  getUsers: vi.fn((): Promise<unknown[]> => Promise.resolve([])),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
-  return { ...actual, api: { ...actual.api, listCollections, updateCollection } };
+  return { ...actual, api: { ...actual.api, listCollections, updateCollection, getUsers } };
 });
 
 function streamOf(events: object[]) {
@@ -30,8 +33,7 @@ function streamOf(events: object[]) {
   };
 }
 
-function renderRename(state: object = { proposedName: "New Name" }) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderRename(state: object = { proposedName: "New Name" }, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[{ pathname: "/rows/7/rename", state }]}>
@@ -50,6 +52,24 @@ describe("RowRenamePage — what each person's rename came to", () => {
     updateCollection.mockResolvedValue({});
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it("prefills the saved name after a direct page load without claiming a rename happened", async () => {
+    renderRename({});
+    expect(await screen.findByDisplayValue("Old Name")).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing to rename/)).not.toBeInTheDocument();
+    expect(updateCollection).not.toHaveBeenCalled();
+  });
+
+  it("keeps a typed draft when the collection refreshes", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderRename({}, client);
+    const input = await screen.findByDisplayValue("Old Name");
+    await userEvent.clear(input);
+    await userEvent.type(input, "My draft");
+    listCollections.mockResolvedValue([{ id: 7, slug: "comedy", name: "Refreshed", name_template: "Refreshed" }]);
+    await client.invalidateQueries({ queryKey: ["collections"] });
+    expect(screen.getByDisplayValue("My draft")).toBeInTheDocument();
+  });
 
   it("keeps going past one person Plex refused, and says why in plain words", async () => {
     vi.stubGlobal(
@@ -163,5 +183,75 @@ describe("RowRenamePage — where the name was saved", () => {
     });
     expect(updateCollection.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0] ?? 0);
     expect(streamed()).toEqual({ name_template: "New Name", old_template: "Old Name" });
+  });
+});
+
+describe("RowRenamePage — how far a rename reaches, before the button", () => {
+  const person = (id: number, enabled = true, departed = false) => ({
+    id,
+    username: `user${id}`,
+    display_name: `User ${id}`,
+    enabled,
+    departed,
+  });
+
+  beforeEach(() => {
+    Element.prototype.scrollTo = vi.fn();
+    getUsers.mockReset();
+  });
+
+  function row(overrides: object) {
+    listCollections.mockResolvedValue([
+      { id: 7, slug: "comedy", name: "Old Name", name_template: "Old Name", build: "per_person", ...overrides },
+    ]);
+  }
+
+  it("counts the enabled people a chosen-people row is built for", async () => {
+    row({ audience: "subset", audience_user_ids: [1, 2, 3] });
+    getUsers.mockResolvedValue([person(1), person(2), person(3, false), person(4)]);
+    renderRename({});
+
+    const reach = await screen.findByText("Renames this row’s collection for 2 people.");
+    const button = screen.getByRole("button", { name: "Rename on Plex" });
+    expect(reach.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(button).toBeEnabled();
+  });
+
+  it("counts everyone enabled and still on the server for an everyone row", async () => {
+    row({ audience: "everyone", audience_user_ids: [] });
+    getUsers.mockResolvedValue([person(1), person(2), person(3), person(4, false), person(5, true, true)]);
+    renderRename({});
+
+    expect(await screen.findByText("Renames this row’s collection for 3 people.")).toBeInTheDocument();
+  });
+
+  it("says one person, not one people", async () => {
+    row({ audience: "subset", audience_user_ids: [1] });
+    getUsers.mockResolvedValue([person(1)]);
+    renderRename({});
+
+    expect(await screen.findByText("Renames this row’s collection for 1 person.")).toBeInTheDocument();
+  });
+
+  it("names the one shared collection for a shared row", async () => {
+    row({ build: "shared", audience: "everyone", audience_user_ids: [] });
+    getUsers.mockResolvedValue([person(1), person(2), person(3)]);
+    renderRename({});
+
+    expect(
+      await screen.findByText("Renames this row’s shared collection, seen by 3 people."),
+    ).toBeInTheDocument();
+  });
+
+  it("holds the Rename button until the count has loaded", async () => {
+    row({ audience: "everyone", audience_user_ids: [] });
+    let resolveUsers: (value: unknown[]) => void = () => {};
+    getUsers.mockImplementation(() => new Promise((resolve) => { resolveUsers = resolve; }));
+    renderRename({});
+
+    const button = await screen.findByRole("button", { name: "Rename on Plex" });
+    expect(button).toBeDisabled();
+    resolveUsers([person(1)]);
+    await waitFor(() => expect(button).toBeEnabled());
   });
 });

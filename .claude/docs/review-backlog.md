@@ -10,6 +10,72 @@ below is later work.
 
 ---
 
+## 2026-10-02 — release audit: fixed this batch / left open
+
+**Fixed this batch** (see the `[Unreleased]` CHANGELOG entries): late row runs are no longer skipped and
+other skipped jobs reach the bell; a clean shutdown with a browser tab open; runless jobs audit their
+Plex changes, and runs record demotions and orphan deletes; "Your requests" tag ownership and
+malformed-reply handling; no upgrade without a written backup, and no half-written backup offered; a
+retried job's stale error; the "no picks produced" wording; web-search diagnostics.
+
+**Fixed 2026-10-05 (`d80ccc6c`):**
+- Post-run save, crediting and the run-outcome alert no longer block the event loop: settling runs off
+  the loop, reconcile commits per person, and a cancel that lands while settling is ignored.
+- `build_context`'s PMS request runs off the loop.
+- A Cancel during `notify.after_run` no longer leaves a stale `cancel_requested` (cancel while settling
+  is ignored).
+- The title-list parser handles a fenced array followed by prose containing `[...]`.
+- Autumn DST repeated hour: a row schedule fires once, deduped per wall-clock minute. Accepted cost: an
+  hourly cron loses one fire a year.
+- Backup restore runs `PRAGMA integrity_check` and refuses an empty file or one with no `alembic_version`.
+- The row editor's Check names the right person: row-sources takes `row_id`; with no `row_id` it includes
+  all enabled requests rows.
+
+**Already fixed before this sweep** (verified in code 2026-10-05; the entries were stale): overlapping
+request tag patterns choosing the wrong person (`engine/requests_row.py` `_add_tagged`: ambiguous means
+nobody; `TestOneTagAcrossSeveralPatterns`); malformed Arr replies authorizing row removal (`arr.py`
+`_records` raises `ArrError`, so the ledger is incomplete; `MALFORMED_ARR` tests); schema upgrades
+continuing after a failed backup (`run_migrations` raises `MigrationBackupError`).
+- Arr helper reads (`library_tmdb_ids`, `status_by_tmdb`, `library_ids`, `status_by_ids`, `_resolve_tag`) read
+  through `_records` like `tags`/`movies`/`series`: a malformed reply raises `ArrError`. The inbox status
+  endpoint reports that Arr `unreachable`; a send aborts before any write; the presence pre-check still fails
+  open by design (the send's own lookup answers `skipped_present`).
+
+**New 2026-10-05: dashboard report cache** (`shortlist/server/services/report_cache.py`, 120s TTL).
+Invalidated on run finish, the watch-sync stamp, `watch.reconcile`, `clear_deleted_rows` and
+`DELETE /api/runs`. Known lag, up to 120s: live-playback credits and retention pruning invalidate nothing.
+
+### Left open
+
+- **LOW — a `rebuild_schedule` that lands while the loop is stalled loses that night's run.**
+  Precondition: it runs before a due row job has been dispatched, so the next fire time is recomputed
+  from now and the due one is dropped.
+- **LOW — the "no picks produced" line still says rows are left as they are when the only removals were
+  swept unhideable rows.** The sweep's removals are added to the person's diff after the line is logged.
+- **LOW — a skipped scheduled job is not a webhook event.** It reaches the bell and the events log only.
+- **LOW — sessions orphaned by a crash are closed at boot with end reason `timeout`,** the same value a
+  real 5-minute timeout writes. Nothing reads `end_reason` today.
+- **LOW — web search keeps a few loose ends.** A failed seed is never cached, so it is retried every
+  night; `failed_seeds` is saved in the trace but no screen shows it; `exa_searches` counts failed
+  searches too.
+- **LOW — a Plex collection write that outlasts the 150s read timeout still completes on the server.**
+  Worst seen 186.6s under load from another tool, so the retry repeats a write that already landed.
+  Owner chose to move the row run's start time rather than change the timeout (2026-10-02).
+  Owner-accepted trade-off; still open 2026-10-05.
+- **LOW — the dashboard report cache (120s) can lag on two events nothing invalidates:** live-playback
+  credits and retention pruning. Added 2026-10-05; see the cache entry above.
+
+### Left on purpose (owner decisions 2026-10-02)
+
+- Excludes for switched-off people and the owner stay in every share filter. A recorded departure is the
+  only trigger that prunes one.
+- The `jobs` table is not pruned. It is small, and a blind prune would break transfer-undo and the
+  failed-jobs alert.
+- A person with history in only one media type keeps a short carried row in the other library.
+- Six job rows written before the stale-error fix keep their old error text.
+
+---
+
 ## OPEN — pre-existing gaps found during the row-editor cleanup trace (2026-09-27)
 
 Found read-only while tracing per-person ↔ shared switching for the row-editor cleanup design
@@ -58,7 +124,7 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   a completed walk forgot (an empty label read, or an ambiguous key — issue #121's other row); a person
   whose OWN walk raises after deleting in one library keeps that library's dead key; and copies of a
   DISABLED shared row (left out so its libraries are not indexed every run). These are left ON PURPOSE
-  (2026-09-27, not yet put to the owner): reaching them means deleting by a ledger key when a title renders, sweeping
+  (2026-09-27; put to the owner 2026-09-28 as "not worth fixing", with this reason): reaching them means deleting by a ledger key when a title renders, sweeping
   people the run does not process, or indexing a disabled row's libraries — each loosens a guard that keeps
   a delete off a row that is not this one, for copies that stay private to their owner. Pinned by
   `test_api_collections.py::test_a_row_switched_to_shared_retires_everyones_per_person_copy`,
@@ -116,6 +182,12 @@ up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour
   `POST /api/collections/{id}/cleanup` takes no `plex_writer_lock` (the job worker does), so a cleanup
   overlapping a run that delivers the same row can forget the run's fresh key — the row's next delivery
   finds it by label and writes it back, and plays go uncredited until then. Same race on the per-person branch.
+  **Both residuals FIXED (2026-09-28; unit-tested).** A real `POST /collections/{id}/cleanup` now returns 409
+  while a run is in flight and otherwise waits at most `WRITER_LOCK_WAIT_S` for `plex_writer_lock` (uninstall's
+  policy; a dry run takes no lock) — `test_api_collections.py::test_a_real_cleanup_holds_the_one_writer_lock_while_it_touches_plex`
+  and three siblings. The shared branch removes one library at a time and forgets each library's
+  `shared_<slug>` key as soon as it returns —
+  `test_collection_reconcile.py::test_a_shared_walk_that_fails_partway_has_already_forgotten_the_libraries_it_finished`.
 
 ## OPEN — the rename screen can't rename a `{top_seed}` row (found 2026-09-27)
 
@@ -146,7 +218,11 @@ The bug itself is fixed in be9dcd95: `_seed_moved` compared pick #1 as it stood 
 unseeded picks, so a row led by a discover/web-search pick never saw its seed move. These three were
 found on the way and are not fixed.
 
-- **LOW — the run trace says "refreshed" for a row rebuilt because its seed moved.** `decision` is
+- **FIXED (2026-09-28) — LOW — the run trace says "refreshed" for a row rebuilt because its seed moved.**
+  `_seed_moved` is computed once in `_build_section_picks`; a moved seed on a refresh night is now
+  `decision: "seed_moved"`, and the run page says "rebuilt from scratch because the watch it was named after
+  changed". Pinned by `test_pipeline.py::test_a_rebuild_because_the_named_watch_changed_is_named_as_the_reason`.
+  Original entry: `decision` is
   settled at `shortlist/engine/rows.py:2754-2762`, before the branch at `:2803` asks `_seed_moved`, so a
   forced rebuild is recorded as `refreshed`. It hid the #133 mirror cells (a nightly full rebuild) from
   anyone reading the trace, and it makes `decision` useless as a test assertion — the #133 tests assert
@@ -158,8 +234,13 @@ found on the way and are not fixed.
   case, unchanged). Same change fixed the second #133 mechanism: a new watch with no look-alikes in the
   library left a row with no seeded pick, an empty name, and the OLD collection frozen on Plex. Pinned
   by `tests/integration/test_top_seed_row_title.py`.
-- **LOW, reasoned not reproduced — above one seed per library, a title can name a dead seed for a
-  night.** `_seed_moved` now checks the prior NAMED pick; the refresh then re-ranks survivors against
+- **FIXED (2026-09-28; reproduced first over three real nights) — LOW — above one seed per library, a
+  title can name a dead seed for a night.** Heat un-watched; a kept pick that discover also finds
+  out-ranked Fargo's look-alikes and still carried Heat. `rows._reseed_survivors` re-attributes a NAMED
+  row's refresh survivors whose seed left the set to tonight's pool seed (or none); the picks stay, and the
+  title and `_seed_moved` still share `named_seed_pick`. Pinned by
+  `test_pipeline.py::test_a_refresh_never_names_a_watch_that_left_the_seed_set`. Original entry:
+  `_seed_moved` now checks the prior NAMED pick; the refresh then re-ranks survivors against
   the pool (`rows.py:2821`) and the title renders from whichever seeded survivor ranks best — which can
   be one whose seed has since left the seed set. The next night's check sees that name and rebuilds.
   One seed per library (the recommended Movies+TV budget of 2) cannot reach it.
@@ -173,6 +254,17 @@ best pick's seed, not the newest watch — the trade-off `docs/guides/rows.md` a
 The release-PR Architecture Review over `v1.9.1..dev` (PR #131) found no HIGH, so 1.9.2 shipped with
 these open. All four are in the shared-row duplicate cleanup (`_remove_shared_row_duplicates`, 92d690c7)
 and fire only on a server that still carries a duplicate from a rename before 1.9.1.
+
+**All four FIXED (2026-09-28; unit-tested).** The MED's UI half never happened: shared rows render in
+`SharedRowPanel`, which ignored `deleted` — the fault was the audit data (`run.shared` event,
+`run_shared_rows`). A removed duplicate now goes to `CollectionDiff.duplicates_removed` (JSON key only;
+older runs lack it, no migration), shown muted as "Removed a duplicate copy of this row". It is recorded
+only after the delete returns (or in a dry run), and each title reaches the caller's diff as its delete
+lands, so `_run_shared` keeps it when the row's own write then fails — no Plex writes were reordered
+(collection titles are global tags). The comment now names `_rebuild_under_name` and says plexapi 4.18.2
+text is token-free unless `log.show_secrets` is on. Pinned by
+`test_delivery.py::test_a_removed_duplicate_is_not_reported_as_a_deleted_row` and
+`test_a_removed_duplicate_is_audited_even_when_the_rows_own_write_then_fails`.
 
 - **MED — the run page calls a removed duplicate a deleted row.** The removed titles go into the
   library's `CollectionDiff.deleted` (`shortlist/engine/delivery.py:1805`, `:916`), which
@@ -199,7 +291,7 @@ and fire only on a server that still carries a duplicate from a rename before 1.
 
 ---
 
-## OPEN — #115 leaves an allow-list account's own row VISIBLE BUT EMPTY (measured 2026-09-18)
+## CLOSED 2026-09-28 — #115 "leaves an allow-list account's own row VISIBLE BUT EMPTY" (measured 2026-09-18; a stale row)
 
 `privacy.admit_own_rows` was shipped to make an allow-list account "see its own rows, filled with titles
 it can watch". Measured against a real managed account, it does not do the second half.
@@ -236,6 +328,18 @@ admits" is 0 when none of the row's titles carry the allowed label. What oversta
 `admit_own_rows` is still harmless and still additive, so there is nothing to revert. What is open is
 whether the feature is worth anything: to fill the row, the row's TITLES would have to carry the label,
 which means labelling other people's media — a much larger decision than #115 made.
+
+**2026-09-28 — CLOSED: the row is NOT left empty; this measurement read a stale row.** Picking already
+limits every row to what the person can see, read AS them with their own token: `RowPolicy.visible`
+(`rows.py`) → `PlexClient.visible_to`, shipped in cc114810 on 2026-09-13, applied to the pool, carried picks
+and cold start, pinned by `test_engine_vs_fake.py::test_a_cold_start_allow_list_account_gets_only_titles_it_can_see`.
+The 2026-09-18 table planted the allow list on a row built BEFORE it and never re-ran, so 0/30 is that
+row until its next run, not what a run produces. Still true: an allow list gives a short row if few
+titles qualify, and the row is unfiltered when no token can be minted (a PIN-protected Home user) or the
+visibility read fails. (A scout claimed "picking never reads an account's filter" by grepping for
+`filterMovies`; the check is by token, not by parsing the filter — Architecture Review caught it.) The
+owner warning (`notifications.py`, "restrictions-restored") and `docs/reference/concepts.md` now say the
+row is filled only with titles the list admits. SFLIX: 0 of 48 accounts carry a restriction of their own.
 
 Residue note: `CanaryAllow_DELETE_ME` now appears in the movie library's label list with 0 items, from the
 first void attempt. Inert, and that list already carries several empty names (`Kometa`, `Based`, `Decade`,
@@ -510,7 +614,16 @@ fetch` fail-softs past an unreadable section and returns a non-empty answer that
 
 **Also outstanding, unrelated to the reporter:**
 
-* **The watch sync now takes ~87s** (was ~27s on the broken read). The cost is 141 serial PMS calls —
+* **DONE (2026-09-28; measured live on SFLIX: 47.8s, was 87–132s over the six syncs before; all 47 people's cached sets byte-identical before and after):** users are read `run.concurrency` at a time
+  (sync + run prefill). PMS reads run lock-free, then each user's SQLite write step runs under
+  `WatchSync._cache_writes`. The "static half" lever had nothing to share: every per-section call depends
+  on the user's own token. Review (2026-09-28): the
+  unlocked `PlexClient` sections cache is now read once before the pool starts. Accepted, LOW: a transfer
+  UNDO (`watching_account.undo`, a writer job) that lands between a person's read-ahead and their queued
+  write step lets the write re-insert the pre-undo titles as ordinary rows — "watched" until the next
+  sync drops them. The window existed before (one library read); it is now every library plus the wait
+  for the write lock. Self-heals next sync. Original note:
+  **The watch sync now takes ~87s** (was ~27s on the broken read). The cost is 141 serial PMS calls —
   users x their libraries — not any single query. Two levers, neither tried: fetch the static half of
   a library's metadata once instead of once per user, and run users in parallel (`run.concurrency`
   already exists for other work).
@@ -1016,7 +1129,11 @@ expression fails the `using_default` assertion. The live-trigger assertion is th
 most — the job is REMOVED from APScheduler while off, so "restore" has to re-register it, and the
 test reads the trigger string rather than `next_run is not None`.
 
-**Still open here, small:** for the five jobs where blank means default, the chip is labelled
+**FIXED 2026-09-28** (`queries.useBuiltInScheduleLabel`): the chip reads "Built-in (HH:MM)" from
+`default_cron`. The first fix (02239886) reached only the generic `SchedulePanel`, so on SFLIX only "Clear
+out old records" changed: Sync watch history, Sync people from Plex and Back up the database draw their
+own `CronPicker` and still said "Daily". All four now share the one hook; pinned by
+`jobs-page.test.tsx` ("…sync jobs that draw their own panel") and `backup-panel.test.tsx`. Original note: for the five jobs where blank means default, the chip is labelled
 "Daily" rather than the time it actually runs at ("Built-in (03:00)"). Accurate but vague; now
 cheap to fix, since `default_cron` is on every entry of `GET /api/schedule`.
 

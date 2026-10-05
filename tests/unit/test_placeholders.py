@@ -14,6 +14,7 @@ from shortlist.engine.placeholders import (
     season_renderings,
     uses_season,
 )
+from shortlist.engine.seasons import BUILTIN_SEASONS, DateRule, Season
 
 CHRISTMAS = RowSeason(slug="christmas", name="Christmas", emoji="🎄", anchor=date(2026, 12, 25))
 
@@ -44,14 +45,14 @@ class TestFillingTheSeason:
         assert fill_season("{season} picks", None) == "{season} picks"
 
     def test_a_seasonal_name_renders_once_per_catalogue_season(self):
-        assert season_renderings("{season} picks") == [
+        assert season_renderings("{season} picks", BUILTIN_SEASONS) == [
             "Valentine's Day picks",
             "Halloween picks",
             "Christmas picks",
         ]
 
     def test_a_plain_name_renders_once(self):
-        assert season_renderings("Picked for You") == ["Picked for You"]
+        assert season_renderings("Picked for You", BUILTIN_SEASONS) == ["Picked for You"]
 
 
 class TestRefusal:
@@ -92,3 +93,16 @@ class TestRefusal:
             "{top_seed}",
         )
         assert placeholders.SEASON_PLACEHOLDERS == ("{season}", "{season_emoji}")
+
+
+def test_season_renderings_include_custom_seasons() -> None:
+    pat = Season(
+        slug="pat",
+        name="St Patrick's Day",
+        emoji="☘️",
+        rule=DateRule("fixed", month=3, day=17),
+        description="",
+        keywords=(1,),
+    )
+    catalogue = {**BUILTIN_SEASONS, "pat": pat}
+    assert "☘️ St Patrick's Day picks" in season_renderings("{season_emoji} {season} picks", catalogue)

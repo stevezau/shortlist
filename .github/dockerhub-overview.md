@@ -1,11 +1,13 @@
 # Shortlist
 
-**Per-user movie & TV recommendations for Plex.** A private, personalized **"Picked for You"** row on
-every user's Plex home screen — built from their own watch history, visible only to them.
-Self-hosted, one Docker container, no AI key required.
+Shortlist is a free, open-source, self-hosted tool that gives each person on your Plex server their
+own recommendation rows (Picked for You, Because you watched, seasonal picks, the titles they asked
+for), built from what they watched and hidden from everyone else. One Docker
+container, no AI key required.
 
+[Website](https://shortlistapp.dev/) ·
+[Tools compared](https://shortlistapp.dev/plex-recommendation-tools/) ·
 [Source on GitHub](https://github.com/stevezau/shortlist) ·
-[Documentation](https://shortlistapp.dev/) ·
 [Report a bug](https://github.com/stevezau/shortlist/issues/new/choose)
 
 > The identical image is also published to GHCR as `ghcr.io/stevezau/shortlist` — same build, same
@@ -17,10 +19,10 @@ Everyone on your Plex server sees the same recommendation rows. Plex's Recommend
 come from the library, not from the person looking at it — so the friend who has watched every
 sci-fi film you own and the one who only watches comedies get an identical home screen.
 
-Shortlist gives **each user their own row**, built from **their own** watch history, containing only
+Shortlist gives **each user their own rows**, built from **their own** watch history, containing only
 titles that are **already in your library** and that they haven't seen.
 
-And it's private: each person sees only their own row, nobody else's.
+And it's private: each person sees only their own rows, nobody else's.
 
 ## How the privacy works
 
@@ -76,24 +78,32 @@ services:
 | -------- | ----------------------------------------------------- |
 | `latest` | The current stable release                            |
 | `X.Y.Z`  | A specific release, pinned                            |
-| `dev`    | Every green push to `dev` — newest code, less settled |
+| `dev`    | The development build: newest code, less settled      |
 
 Multi-arch: `linux/amd64` and `linux/arm64`.
 
 ## What you get
 
-- **A private row for every user**, built from their watch history. One container serves your whole
-  server — including you, so it's just as useful on a one-person server.
+- **Private rows for every user**, built from their watch history. One container serves your whole
+  server, including you, so it's just as useful on a one-person server.
 - **No AI key required.** The built-in picker runs entirely in code. An optional LLM (Claude, GPT,
-  Gemini, or a local model via Ollama, llama.cpp, LM Studio, vLLM or LocalAI) adds a ranking and
-  explanation pass.
+  Gemini, or a local model via Ollama, llama.cpp, LM Studio, vLLM or LocalAI) adds one extra source,
+  a live web search for current titles TMDB and Trakt miss.
 - **No hallucinated picks.** Every title is verified to exist in your library before it's delivered.
 - **Every pick explains itself** — "Because you watched _Arrival_".
-- **Multiple rows per person, plus shared rows**, each with its own sources, size, libraries,
-  refresh cadence and audience.
-- **Radarr/Sonarr requests (optional)** when a strong pick isn't in your library yet.
-- **Kometa-friendly** — never touches a collection it didn't create.
-- **Provable uninstall** — share filters are snapshotted before the first change and restored
+- **Six row kinds, ten templates**: Picked for You, Because you watched, Watch it again, Popular on
+  this server (shared), Seasonal and Your requests. Add as many rows as you like, each with its own
+  sources, size, libraries, refresh cadence and audience.
+- **Seasonal rows** — a row that follows the calendar: Halloween, Christmas and Valentine's Day,
+  ten ready-made holidays such as Thanksgiving and Easter, or your own dates. Ranked for each person
+  and hidden between seasons.
+- **Radarr/Sonarr or Overseerr requests (optional)** when a strong pick isn't in your library yet,
+  with an approval inbox.
+- **A "Your requests" row** — what each person asked for in Overseerr, or tagged with
+  their name in Radarr/Sonarr, once it's on Plex and until they've watched it. No AI; a person with
+  nothing ready simply has no row.
+- **Kometa-friendly**: never touches a collection it didn't create.
+- **Provable uninstall**: share filters are snapshotted before the first change and restored
   exactly.
 
 ## Configuration
@@ -106,7 +116,7 @@ Full list: [Reference](https://shortlistapp.dev/reference/).
 
 ## Requirements
 
-- Plex Media Server **1.43.2.10687+** with a **Plex Pass** on the admin account
+- Plex Media Server **1.43.2.10687 or newer**, with a **Plex Pass** on the admin account
 - A free [TMDB](https://www.themoviedb.org/) API key
 - A volume mounted at `/config`
 

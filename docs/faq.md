@@ -8,13 +8,14 @@ heading: FAQ
 
 It does, indirectly. Plex lets you hide things from someone by **label**, so Shortlist gives each
 person's row a label of its own and tells every _other_ account to hide that label. The result is a
-row only its owner can see.
+row for that person, hidden from other supported accounts using Plex sharing filters.
 
 The order those steps happen in is what makes it safe, and it is the same every run:
 
 {% include privacy-order.html %}
 
-Your existing sharing settings are saved beforehand, and **Uninstall** puts them back exactly.
+Your existing sharing settings are saved beforehand. The in-app **Uninstall** flow previews
+restoring that saved copy and reports any accounts it cannot restore.
 
 This needs Plex Media Server **1.43.2.10687 or newer**, and **Plex Pass** on the admin account,
 because the hiding rule is a Pass feature. Older versions ignore it.
@@ -39,8 +40,8 @@ rows**.
 So it adds hide-this-label rules to every account your server is shared with — unless you've asked
 it to leave one alone, which you can do per person if their own Plex restrictions clash with
 Shortlist's. Nothing else in their settings is touched. Shortlist reads what's there, adds only its
-own entries, and leaves the rest exactly as they were. The original is saved first, and Uninstall
-restores all of them.
+own entries, and leaves the rest exactly as they were. The original is saved first;
+[the in-app Uninstall flow](#what-if-i-uninstall) previews restoring the saved settings and reports failures.
 
 ## Someone has an "allow only" label or rating list. Do they still get a row?
 
@@ -92,7 +93,7 @@ See [AI and cost](guides/ai.md) for the full breakdown and cost controls.
 ## Which web-search backend should I use?
 
 The optional web-search source can search in three ways, and you pick one in
-**Settings → Connections → Web search**:
+**Settings → Connections → AI & Web search**:
 
 | Option                              | Works with                         | Trade-off                                                 |
 | ----------------------------------- | ---------------------------------- | --------------------------------------------------------- |
@@ -110,7 +111,7 @@ provider's own search, or to no web search at all.
 
 ## Will it fight with Kometa?
 
-No. Shortlist only ever touches collections carrying its own `shortlist_*` label. Kometa overlays
+Shortlist changes the contents, names and artwork only of collections carrying its own `shortlist_*` label. Placing its rows can move other shelves while preserving their relative order. Kometa overlays
 and your own collections are detected and left alone.
 
 They also solve different problems. Kometa's collections are the same for everyone; Shortlist's are
@@ -123,11 +124,12 @@ what to watch next. No usernames, no account IDs, no genres, no viewing times.
 
 ## What if I uninstall?
 
-One flow, with a preview first. Every account's sharing settings are restored from the copy taken
-before Shortlist's first change, every Shortlist collection is deleted, and you get a report of
-exactly what changed. Your server ends up exactly as it was before you installed Shortlist.
+Open **Settings → System → Danger zone → Uninstall** before removing the container. Review the preview,
+then confirm the cleanup. It restores the saved sharing settings and deletes Shortlist's collections,
+with a report of what succeeded and what needs attention. Deleting the Docker container alone does
+not remove its rows or sharing filters from Plex.
 
-The one exception is an account that has since left your server. Shortlist can no longer reach a
+An account that has since left your server cannot be restored. Shortlist can no longer reach a
 departed account's settings on plex.tv, so there is nothing there to put back — the report names
 those accounts rather than quietly counting them as restored, and the uninstall finishes regardless.
 

@@ -8,6 +8,8 @@ worker thread (the Arr/TMDB clients are sync) and respects ``dry_run``.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -343,20 +345,45 @@ async def get_arr_status(request: Request) -> dict:
         shows_by_tmdb: dict[int, str] = {}
         radarr_reach: ArrReach = "off"
         sonarr_reach: ArrReach = "off"
-        if cfg.radarr:
-            radarr_reach = "ok"
+
+        # Each read is a whole-library dump that takes seconds, and the two apps are independent
+        # servers, so both start now: the wait is the slower read, not the sum. Results are applied
+        # in the old order (Radarr, then Sonarr), and a failure is caught inside its own thread.
+        def _guarded(read):
             try:
-                movies = RadarrClient(cfg.radarr).status_by_tmdb()
+                return read(), None
             except Exception as e:
-                radarr_reach = "unreachable"
-                logger.warning("request status: Radarr lookup failed ({})", e)
-        if cfg.sonarr:
-            sonarr_reach = "ok"
-            try:
-                shows_by_tvdb, shows_by_tmdb = SonarrClient(cfg.sonarr).status_by_ids()
-            except Exception as e:
-                sonarr_reach = "unreachable"
-                logger.warning("request status: Sonarr lookup failed ({})", e)
+                return None, e
+
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="requests-status") as pool:
+            # Each submit runs in a copy of this thread's context, or loguru's `contextualize` keys
+            # are lost on the pool threads.
+            radarr_read = (
+                pool.submit(contextvars.copy_context().run, _guarded, lambda: RadarrClient(cfg.radarr).status_by_tmdb())
+                if cfg.radarr
+                else None
+            )
+            sonarr_read = (
+                pool.submit(contextvars.copy_context().run, _guarded, lambda: SonarrClient(cfg.sonarr).status_by_ids())
+                if cfg.sonarr
+                else None
+            )
+            if radarr_read:
+                radarr_reach = "ok"
+                result, error = radarr_read.result()
+                if error is not None:
+                    radarr_reach = "unreachable"
+                    logger.warning("request status: Radarr lookup failed ({})", error)
+                else:
+                    movies = result
+            if sonarr_read:
+                sonarr_reach = "ok"
+                result, error = sonarr_read.result()
+                if error is not None:
+                    sonarr_reach = "unreachable"
+                    logger.warning("request status: Sonarr lookup failed ({})", error)
+                else:
+                    shows_by_tvdb, shows_by_tmdb = result
 
         statuses: dict[int, str | None] = {}
         for row in rows:
@@ -383,6 +410,156 @@ async def get_arr_status(request: Request) -> dict:
         return {"statuses": statuses, "radarr": radarr_reach, "sonarr": sonarr_reach}
 
     return await asyncio.get_running_loop().run_in_executor(None, _fetch_statuses)
+
+
+#: "off" = no URL + key for it; "unreachable" = configured, but the read failed; else "connected".
+RowSourceState = Literal["connected", "unreachable", "off"]
+
+
+class RowSourceServerOut(PassthroughModel):
+    """One Radarr/Sonarr server Overseerr sends to, and whether it stamps the requester's tag."""
+
+    kind: str  # "radarr" | "sonarr"
+    name: str
+    is4k: bool
+    tag_requests: bool
+
+
+class TagMatchOut(PassthroughModel):
+    """How one requester tag on Radarr/Sonarr resolved — the preview under "Use my own tags"."""
+
+    label: str
+    source: Literal["overseerr", "pattern", "override"]
+    user_id: int | None  # the DB user it names; None when it names nobody on the roster
+    display_name: str  # "" when it names nobody
+    titles: int  # items carrying the tag, matched or not
+    ambiguous: bool  # more than one person renders to this tag, so it credits nobody
+
+
+class PersonReadyOut(PassthroughModel):
+    user_id: int
+    display_name: str
+    linked: bool  # an Overseerr account carries this person's Plex id
+    ready: int  # titles they asked for that are on disk, any library
+
+
+class RowSourcesOut(PassthroughModel):
+    """The requests-row setup check: can the row know who asked for what, and for whom?"""
+
+    overseerr: RowSourceState
+    radarr: RowSourceState
+    sonarr: RowSourceState
+    complete: bool  # every configured source was read in full
+    problems: list[str]
+    seerr_requests: int
+    seerr_requesters: int
+    seerr_linked: int  # requesters whose account maps to someone on the roster
+    servers: list[RowSourceServerOut]
+    tagged_movies: int  # movies credited to a person by a Radarr tag alone
+    tagged_shows: int
+    people: list[PersonReadyOut]
+    tags: list[TagMatchOut]
+
+
+@router.get("/row-sources", response_model=RowSourcesOut)
+async def get_row_sources(
+    request: Request,
+    pattern: Annotated[
+        # 128 is the stored column's length: a longer pattern could never be saved, so it is not previewed.
+        str, Query(max_length=128, description="An own-tag pattern to preview, e.g. req-{username}")
+    ] = "",
+    row_id: Annotated[
+        int | None,
+        Query(
+            description="The requests row being edited. Its pattern is the typed one; every OTHER enabled "
+            "requests row's pattern joins it, because a run judges a tag against all of them. Omitted, "
+            "every enabled requests row's saved pattern joins the typed one."
+        ),
+    ] = None,
+) -> dict:
+    """Read every request source once and say whether a "Your requests" row can be built from it.
+
+    Read-only: nothing is written to Overseerr, the Arrs, or Plex. A source that is down reads as
+    "unreachable" with the reason in `problems` — never a 500, because the screen this feeds exists
+    precisely to show the owner what is wrong.
+    """
+    svc = request.app.state.run_service
+
+    def _check() -> dict:
+        from shortlist.engine.requests_row import RequestLedger, collect_requests
+
+        sources, profiles, db_ids = svc.build_request_sources_only()
+        patterns = {pattern} if pattern else set()
+        with request.app.state.sessions() as session:
+            saved = session.query(Collection.requests_tag_pattern).filter(Collection.requests_row, Collection.enabled)
+            # Without a row_id nothing is being edited, so every enabled row's pattern counts, as in a run.
+            others = saved if row_id is None else saved.filter(Collection.id != row_id)
+            patterns |= {p.strip() for (p,) in others if p and p.strip()}
+        if sources is None:
+            ledger = RequestLedger(titles=[], complete=True)
+        else:
+            try:
+                ledger = collect_requests(sources, profiles, patterns=frozenset(patterns))
+            except Exception as e:
+                # collect_requests swallows per-source failures itself; this is for anything that
+                # goes wrong before a read starts (a client refusing its URL, say).
+                logger.warning("requests row check: sources could not be read ({})", e)
+                ledger = RequestLedger(titles=[], complete=False, problems=[f"Request sources could not be read: {e}"])
+                ledger.unreadable = {
+                    app
+                    for app, target in (
+                        ("Overseerr", sources.overseerr),
+                        ("Radarr", sources.radarr),
+                        ("Sonarr", sources.sonarr),
+                    )
+                    if target
+                }
+
+        def state(target: object, app: str) -> RowSourceState:
+            # Tracks the READ, not the wording of `problems`: advice ("requester tags were found ...
+            # but Overseerr isn't connected") and degradations (media dates) name an app without
+            # that app being down.
+            if target is None:
+                return "off"
+            return "unreachable" if app in ledger.unreadable else "connected"
+
+        by_plex = {p.plex_account_id: p for p in profiles}
+        tagged = [t for t in ledger.titles if "tag" in t.found_in]
+        return {
+            "overseerr": state(sources and sources.overseerr, "Overseerr"),
+            "radarr": state(sources and sources.radarr, "Radarr"),
+            "sonarr": state(sources and sources.sonarr, "Sonarr"),
+            "complete": ledger.complete,
+            "problems": ledger.problems,
+            "seerr_requests": ledger.seerr_requests,
+            "seerr_requesters": ledger.seerr_requesters,
+            "seerr_linked": ledger.seerr_linked,
+            "servers": ledger.seerr_servers,
+            "tagged_movies": sum(1 for t in tagged if t.media_type is MediaType.MOVIE),
+            "tagged_shows": sum(1 for t in tagged if t.media_type is MediaType.SHOW),
+            "people": [
+                {
+                    "user_id": db_ids[p.plex_account_id],
+                    "display_name": p.display_name,
+                    "linked": p.plex_account_id in ledger.seerr_plex_ids,
+                    "ready": sum(1 for t in ledger.for_person(p.plex_account_id) if t.on_disk),
+                }
+                for p in profiles
+            ],
+            "tags": [
+                {
+                    "label": m.label,
+                    "source": m.source,
+                    "user_id": db_ids.get(m.plex_account_id) if m.plex_account_id is not None else None,
+                    "display_name": by_plex[m.plex_account_id].display_name if m.plex_account_id in by_plex else "",
+                    "titles": m.titles,
+                    "ambiguous": m.ambiguous,
+                }
+                for m in ledger.tag_matches
+            ],
+        }
+
+    return await asyncio.get_running_loop().run_in_executor(None, _check)
 
 
 class SendOutcomeOut(PassthroughModel):

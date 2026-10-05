@@ -124,7 +124,7 @@ def test_the_settings_card_lists_the_events_and_ticks_the_chosen_ones(page: Page
         json={"values": {"notify.webhook.enabled": True, "notify.webhook.events": ["run.failed", "job.failed"]}},
     )
     assert resp.status_code == 200, resp.text
-    page.goto("/settings")
+    page.goto("/settings#notifications")
     expect(page.get_by_text("What to send")).to_be_visible(timeout=20_000)
     expect(page.get_by_role("checkbox", name="A run failed")).to_be_checked()
     expect(page.get_by_role("checkbox", name="A job failed")).to_be_checked()
@@ -155,7 +155,7 @@ def test_the_webhook_is_set_up_and_removed_from_its_connection_card(page: Page, 
     card.get_by_label("Header name").fill("X-Api-Key")
     card.get_by_label("Header value").fill("k3y-value")
     card.get_by_role("button", name="Save", exact=True).click()
-    expect(card.get_by_text("Address and auth header saved")).to_be_visible()
+    expect(card.get_by_text("Address and auth header saved").filter(visible=True)).to_be_visible()
     # Saving sends nothing yet: the card says so and links to where it is switched on.
     expect(card.get_by_text("Not sending yet", exact=False)).to_be_visible()
     card.get_by_role("link", name="Notifications").click()
@@ -166,6 +166,7 @@ def test_the_webhook_is_set_up_and_removed_from_its_connection_card(page: Page, 
     assert saved["notify.webhook.auth_header_name"] == "X-Api-Key"
     assert saved["notify.webhook.auth_header_value"] == "•••••"
 
+    page.goto("/settings#connections")
     card.get_by_role("button", name="Remove Webhook connection").click()
     card.get_by_role("button", name="Remove", exact=True).click()
     expect(card.get_by_role("button", name="Set up")).to_be_visible()

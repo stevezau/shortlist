@@ -61,13 +61,13 @@ export function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md animate-fade-in">
+      <div className="w-full max-w-md motion-safe:animate-fade-in">
         <div className="mb-8 flex flex-col items-center text-center">
           <Logo size="lg" className="mb-4" />
           <h1 className="text-3xl font-semibold tracking-tight">Shortlist</h1>
           <p className="mt-2 max-w-xs text-sm text-muted-foreground">
-            A private, AI-curated Picked-for-You row for every user on your Plex
-            server.
+            Personalized rows for the people on your Plex server.
+            Built from what they watch, with optional AI discovery.
           </p>
         </div>
 

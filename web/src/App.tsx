@@ -3,7 +3,14 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router";
+import { lazy, Suspense, type ComponentType } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  Route,
+  Routes,
+  useSearchParams,
+} from "react-router";
 
 import { AppShell } from "@/components/layout/app-shell";
 import { ErrorState } from "@/components/query-boundary";
@@ -12,26 +19,57 @@ import { ApiError } from "@/lib/api";
 import { basePath } from "@/lib/base-path";
 import { resolveArea } from "@/lib/auth";
 import { queryKeys, useSession, useSetupState } from "@/lib/queries";
-import { DashboardPage } from "@/pages/dashboard";
-import { LoginPage } from "@/pages/login";
-import { NotFoundPage } from "@/pages/not-found";
-import { RequestsPage } from "@/pages/requests";
-import { RowEditPage } from "@/pages/row-edit";
-import { RowRenamePage } from "@/pages/row-rename";
-import { RowsPage } from "@/pages/rows";
-import { RunDetailPage } from "@/pages/run-detail";
-import { RunUserTracePage } from "@/pages/run-user-trace";
-import { SharingPage } from "@/pages/sharing";
-import { WatchingAccountPage } from "@/pages/watching-account";
-import { LogsPage } from "@/pages/logs";
-import { IssuePage } from "@/pages/issue";
-import { RunsPage } from "@/pages/runs";
-import { SettingsPage } from "@/pages/settings";
-import { SetupPage } from "@/pages/setup";
-import { JobsPage } from "@/pages/jobs";
-import { UninstallPage } from "@/pages/uninstall";
-import { UserDetailPage } from "@/pages/user-detail";
-import { UsersPage } from "@/pages/users";
+
+/** A route's page, fetched the first time someone opens it rather than in the first paint. Pages are
+ *  named exports, and `React.lazy` wants a default one. */
+function page<K extends string>(
+  load: () => Promise<{ [P in K]: ComponentType }>,
+  name: K,
+) {
+  return lazy(() => load().then((module) => ({ default: module[name] })));
+}
+
+const ActivityPage = page(() => import("@/pages/activity"), "ActivityPage");
+const DashboardPage = page(() => import("@/pages/dashboard"), "DashboardPage");
+const IssuePage = page(() => import("@/pages/issue"), "IssuePage");
+const LoginPage = page(() => import("@/pages/login"), "LoginPage");
+const NotFoundPage = page(() => import("@/pages/not-found"), "NotFoundPage");
+const RequestsPage = page(() => import("@/pages/requests"), "RequestsPage");
+const RowEditPage = page(() => import("@/pages/row-edit"), "RowEditPage");
+const RowRenamePage = page(() => import("@/pages/row-rename"), "RowRenamePage");
+const RowsPage = page(() => import("@/pages/rows"), "RowsPage");
+const RunDetailPage = page(() => import("@/pages/run-detail"), "RunDetailPage");
+const RunUserTracePage = page(() => import("@/pages/run-user-trace"), "RunUserTracePage");
+const RunsPage = page(() => import("@/pages/runs"), "RunsPage");
+const SettingsPage = page(() => import("@/pages/settings"), "SettingsPage");
+const SetupPage = page(() => import("@/pages/setup"), "SetupPage");
+const SharingPage = page(() => import("@/pages/sharing"), "SharingPage");
+const UninstallPage = page(() => import("@/pages/uninstall"), "UninstallPage");
+const UserDetailPage = page(() => import("@/pages/user-detail"), "UserDetailPage");
+const UsersPage = page(() => import("@/pages/users"), "UsersPage");
+const WatchingAccountPage = page(() => import("@/pages/watching-account"), "WatchingAccountPage");
+
+function PageSkeleton() {
+  return (
+    <div className="mx-auto mt-16 w-full max-w-4xl px-4">
+      <Skeleton className="h-96 w-full" />
+    </div>
+  );
+}
+
+/**
+ * Old /jobs links, carried onto the Activity page's Jobs tab. The Jobs page's own badges wrote
+ * `?tab=activity&filter=failed` for its run feed; that view is now `?view=activity` inside the tab,
+ * and the filter comes along.
+ */
+function LegacyJobsRedirect() {
+  const [searchParams] = useSearchParams();
+  const next = new URLSearchParams({ tab: "jobs" });
+  if (searchParams.get("tab") === "activity") next.set("view", "activity");
+  const filter = searchParams.get("filter");
+  if (filter) next.set("filter", filter);
+  return <Navigate to={`/activity?${next.toString()}`} replace />;
+}
 
 const queryClient = new QueryClient({
   // Any mutation might enqueue background work — disabling someone, pausing them, editing a row —
@@ -74,13 +112,7 @@ function RequireApp() {
   // is just 401s, and the visitor would sit behind a skeleton instead of the login screen.
   const setup = useSetupState({ enabled: authenticated || !loginRequired });
 
-  if (session.isPending) {
-    return (
-      <div className="mx-auto mt-16 w-full max-w-4xl px-4">
-        <Skeleton className="h-96 w-full" />
-      </div>
-    );
-  }
+  if (session.isPending) return <PageSkeleton />;
   if (session.isError) {
     return (
       <div className="mx-auto mt-16 max-w-2xl px-4">
@@ -92,13 +124,7 @@ function RequireApp() {
     );
   }
   if (!authenticated && loginRequired) return <Navigate to="/login" replace />;
-  if (setup.isPending) {
-    return (
-      <div className="mx-auto mt-16 w-full max-w-4xl px-4">
-        <Skeleton className="h-96 w-full" />
-      </div>
-    );
-  }
+  if (setup.isPending) return <PageSkeleton />;
 
   const area = resolveArea(
     authenticated,
@@ -110,49 +136,63 @@ function RequireApp() {
   return <AppShell />;
 }
 
+/** Every route. Separate from {@link App} so a test can mount it under a `MemoryRouter`. */
+export function AppRoutes() {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <Routes>
+        <Route path="login" element={<LoginPage />} />
+        <Route path="setup" element={<SetupPage />} />
+        {/* Old addresses, redirected rather than removed: they are in bookmarks, in the docs, and in
+            the `action_url` of notifications already stored in the database. Outside the auth gate on
+            purpose — the gate applies to wherever they land. */}
+        <Route path="sharing" element={<Navigate to="/privacy" replace />} />
+        <Route path="jobs" element={<LegacyJobsRedirect />} />
+        <Route path="logs" element={<Navigate to="/activity?tab=log" replace />} />
+        {/* /schedule was merged into Jobs, and Jobs was /tools before the nav called it Jobs. */}
+        <Route path="schedule" element={<Navigate to="/activity?tab=jobs" replace />} />
+        <Route path="tools" element={<Navigate to="/activity?tab=jobs" replace />} />
+        <Route element={<RequireApp />}>
+          <Route index element={<DashboardPage />} />
+          <Route path="rows" element={<RowsPage />} />
+          {/* Before "rows/:id", or "new" would be parsed as a row id. */}
+          <Route path="rows/new" element={<RowEditPage />} />
+          <Route path="rows/:id/rename" element={<RowRenamePage />} />
+          <Route path="rows/:id" element={<RowEditPage />} />
+          <Route path="users" element={<UsersPage />} />
+          <Route path="privacy" element={<SharingPage />} />
+          <Route path="users/:id" element={<UserDetailPage />} />
+          <Route path="watching-account" element={<WatchingAccountPage />} />
+          <Route path="runs" element={<RunsPage />} />
+          <Route path="runs/:id" element={<RunDetailPage />} />
+          <Route
+            path="runs/:id/trace/row/:rowSlug"
+            element={<RunUserTracePage />}
+          />
+          <Route
+            path="runs/:id/trace/:userId"
+            element={<RunUserTracePage />}
+          />
+          <Route path="requests" element={<RequestsPage />} />
+          <Route path="activity" element={<ActivityPage />} />
+          <Route path="issue" element={<IssuePage />} />
+          {/* One route for /settings and its three tabs, so moving between them (or arriving from an
+              old /settings#section link, rewritten to its tab in place) keeps the page mounted and
+              every unsaved draft with it. "settings/uninstall" is a static segment and wins. */}
+          <Route path="settings/:tab?" element={<SettingsPage />} />
+          <Route path="settings/uninstall" element={<UninstallPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Routes>
+    </Suspense>
+  );
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter basename={basePath || "/"}>
-        <Routes>
-          <Route path="login" element={<LoginPage />} />
-          <Route path="setup" element={<SetupPage />} />
-          <Route element={<RequireApp />}>
-            <Route index element={<DashboardPage />} />
-            <Route path="rows" element={<RowsPage />} />
-            {/* Before "rows/:id", or "new" would be parsed as a row id. */}
-            <Route path="rows/new" element={<RowEditPage />} />
-            <Route path="rows/:id/rename" element={<RowRenamePage />} />
-            <Route path="rows/:id" element={<RowEditPage />} />
-            <Route path="users" element={<UsersPage />} />
-            <Route path="sharing" element={<SharingPage />} />
-            <Route path="users/:id" element={<UserDetailPage />} />
-            <Route path="watching-account" element={<WatchingAccountPage />} />
-            <Route path="runs" element={<RunsPage />} />
-            <Route path="logs" element={<LogsPage />} />
-            <Route path="runs/:id" element={<RunDetailPage />} />
-            <Route
-              path="runs/:id/trace/row/:rowSlug"
-              element={<RunUserTracePage />}
-            />
-            <Route
-              path="runs/:id/trace/:userId"
-              element={<RunUserTracePage />}
-            />
-            <Route path="requests" element={<RequestsPage />} />
-            <Route path="jobs" element={<JobsPage />} />
-            {/* Merged into Jobs. Redirect rather than remove: the old page was linked from docs
-                and may be bookmarked, and a 404 would read as the feature being gone. */}
-            <Route path="schedule" element={<Navigate to="/jobs" replace />} />
-            {/* The page was /tools until the nav started calling it Jobs. Kept as a redirect:
-                bookmarks and the `action_url` baked into notifications already in the DB. */}
-            <Route path="tools" element={<Navigate to="/jobs" replace />} />
-            <Route path="issue" element={<IssuePage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="settings/uninstall" element={<UninstallPage />} />
-            <Route path="*" element={<NotFoundPage />} />
-          </Route>
-        </Routes>
+        <AppRoutes />
       </BrowserRouter>
     </QueryClientProvider>
   );

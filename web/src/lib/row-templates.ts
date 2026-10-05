@@ -1,4 +1,4 @@
-import { KIND_META, ROW_KINDS, type RowKind } from "@/lib/row-kind-meta";
+import { AI_KIND_META, KIND_META, ROW_KINDS, type RowKind } from "@/lib/row-kind-meta";
 import type { CollectionInput } from "@/lib/types";
 
 /**
@@ -6,28 +6,32 @@ import type { CollectionInput } from "@/lib/types";
  *
  * The form is the only place the app ever explained what a row COULD be, and it explained it one
  * control at a time — you had to already know what you wanted to build before it helped. These are
- * the answer to "what can I make here?", and `highlights` names the two or three settings each one
- * actually changes, so picking a template teaches the knobs rather than hiding them.
+ * the answer to "what can I make here?". `summary` keeps the chooser compact, while `highlights`
+ * names the settings each template changes in the selected template's details.
  *
  * `values` is deliberately a partial: everything it omits keeps `blankInput()`'s default, and every
  * field stays editable after picking. A template is a starting point, never a mode.
  *
- * `kind` groups the gallery by the same five kinds the row editor's kind picker uses (design doc §3),
+ * `kind` groups the gallery by the same six kinds the row editor's kind picker uses (design doc §3),
  * with the picker's own copy, so the two cannot describe a kind differently.
  */
 
+/** A template's kind: one of the six, or "ai" (#138), which the kind picker never offers. */
+export type TemplateKind = RowKind | "ai";
+
 export interface RowTemplate {
   id: string;
-  kind: RowKind;
+  kind: TemplateKind;
   emoji: string;
   title: string;
+  summary: string;
   blurb: string;
-  /** The settings this template changes, in plain English, for the tile. */
+  /** The settings this template changes, in plain English. */
   highlights: string[];
   values: Partial<CollectionInput>;
 }
 
-/** The gallery's five headings, in the kind picker's order, each with the kind's description. */
+/** The gallery's six headings, in the kind picker's order, each with the kind's description. */
 export const ROW_TEMPLATE_GROUPS: {
   kind: RowKind;
   heading: string;
@@ -38,12 +42,23 @@ export const ROW_TEMPLATE_GROUPS: {
   description: KIND_META[kind].description,
 }));
 
+/** The AI group's heading, in the same shape as the six kinds'. */
+export const AI_TEMPLATE_GROUP: { kind: "ai"; heading: string; description: string } = {
+  kind: "ai",
+  heading: AI_KIND_META.title,
+  description: AI_KIND_META.description,
+};
+
+/** The gallery's headings: the six kinds in the picker's order, then AI. */
+export const GALLERY_GROUPS = [...ROW_TEMPLATE_GROUPS, AI_TEMPLATE_GROUP];
+
 export const ROW_TEMPLATES: RowTemplate[] = [
   {
     id: "picked-for-you",
     kind: "picked",
     emoji: "✨",
     title: "Picked for You",
+    summary: "A little of everything they love",
     blurb:
       "The everyday row. Blends someone's whole recent history into a general set of suggestions.",
     // "15 picks" rather than the "follows your global defaults" this used to claim. Size is the one
@@ -73,6 +88,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "byw",
     emoji: "🎯",
     title: "Because you watched…",
+    summary: "One favourite leads to another",
     blurb:
       "Names one recent film and fills the row with things like it. The title tells them why it's there.",
     // "Films only" is first because it is the one thing about this template someone would not guess:
@@ -92,7 +108,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       // 1 seed is the whole point: at the default 30 the row names one watch and fills itself from
       // the other 29, so the title claims something the contents don't honour.
       max_seeds: 1,
-      recent_count: 3,
+      recent_count: 1,
       media: "movie",
       size: 20,
       // Nightly, not the global default. This row is ABOUT recency: at the default cadence (~8 days)
@@ -119,6 +135,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "again",
     emoji: "☕",
     title: "Watch it again",
+    summary: "Favourites worth another look",
     // `watched_pct` alone could never deliver this: it is a CEILING, so `_apply_watched_cap` shows
     // unwatched titles FIRST and merely PERMITS finished ones — at 1.0 a library with plenty of
     // unwatched candidates still yielded a mostly-unwatched row. `rewatch` (engine) inverts that
@@ -139,17 +156,39 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     },
   },
   {
+    id: "your-requests",
+    kind: "requests",
+    emoji: "📬",
+    title: "Your requests",
+    summary: "What they asked for, ready to watch",
+    blurb:
+      "What they asked for in Overseerr, once it's on Plex. Each title leaves once they've watched it.",
+    highlights: ["Only what they asked for", "Newest first", "Overseerr or Radarr/Sonarr tags"],
+    values: {
+      name: "📬 {library_name} you asked for",
+      build: "per_person",
+      requests_row: true,
+      // 90 days: long enough that a request they made last season is still there, short enough that
+      // one they've lost interest in doesn't sit in the row for good.
+      requests_window_days: 90,
+      size: 20,
+    },
+  },
+  {
     id: "fresh-finds",
     kind: "picked",
     emoji: "🌱",
     title: "Fresh finds",
+    summary: "Something new, every evening",
     blurb:
-      "Rebuilds every night, nothing they've seen. For people who want something new each evening.",
-    highlights: ["Rebuilds nightly", "Nothing already watched"],
+      "Titles refresh every night, nothing they've seen. For people who want something new each evening.",
+    highlights: ["Refreshes nightly", "Nothing already watched"],
     values: {
       name: "🌱 New {library_name} to try",
       build: "per_person",
       refresh_days: 1,
+      // This template promises new picks nightly even when their watch history has not changed.
+      idle_hold_days: 0,
       watched_pct: 0,
       size: 15,
     },
@@ -159,31 +198,30 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "seasonal",
     emoji: "🗓️",
     title: "Seasonal",
+    summary: "The right films at the right time",
     // Films only: TMDB tags a few dozen seasonal SHOWS against thousands of films (13 Christmas shows
     // on a 5,000-show library, measured for discussion #124), so a TV half would sit nearly empty.
     blurb:
-      "Follows the calendar: Halloween films and horror in October, Christmas films in December, romance for Valentine's. Hidden between seasons.",
+      "One shared row of the most-watched seasonal films. Follows the holidays you choose and stays hidden between seasons.",
     highlights: [
-      "Halloween, Christmas & Valentine's",
+      "Shared with everyone",
+      "Needs 2 watchers",
+      "Halloween, Christmas & Valentine's, or your own",
       "Shows a month before",
-      "Changes nightly",
+      "Rebuilt nightly",
     ],
     values: {
       name: "{season_emoji} {season} picks",
-      build: "per_person",
+      build: "shared",
+      min_watchers: 2,
       media: "movie",
       size: 15,
       seasons: ["valentines", "halloween", "christmas"],
       season_lead_days: 30,
       season_after_days: 0,
-      // Nightly, because "changes every day" is the refresh cadence: each night keeps the best
-      // two-thirds and swaps the rest from the season's titles.
+      // Shared popularity is recounted every run. Keep a nightly cadence if they choose Per person.
       refresh_days: 1,
-      // Release date ignored. Seasonal favourites are old: on a real server the Christmas films people
-      // watched had a median release year of 2008, and at a server's usual lean towards new releases a
-      // Christmas row filled with obscure 2025 TV movies instead of Home Alone and Klaus. Measured side
-      // by side, both seasons read better at 0 — and new releases still arrive through their similar
-      // titles.
+      // Personal seasonal picks should keep older favourites competitive too. Shared ignores age.
       recency: 0,
     },
   },
@@ -192,18 +230,17 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "picked",
     emoji: "🕰️",
     title: "From the vault",
-    // "Never re-picks on a schedule" is the honest form of what `refresh_days: 0` buys. The row is
-    // frozen against the CADENCE, not against everything: it inherits the global `watched_pct`, which
-    // defaults to 0, and a 0% row drops any pick the person has since watched (`_reusable_prior`) —
-    // the carry-forward branch then pads the gap from that night's pool. So the shelf does move, for
-    // exactly the people watching from it, and the old "set it once, it stays" promised otherwise.
+    summary: "A shelf that takes its time",
+    // A frozen row still replaces watched picks. Pin the cap so an owner's more permissive global
+    // default cannot silently turn off the replacement this template promises.
     blurb:
       "Built once and never re-picked on a schedule. A shelf that stays put apart from titles they've watched, which are replaced.",
-    highlights: ["Never rebuilds on its own", "Only moves as they watch it"],
+    highlights: ["Never refreshes on its own", "Only moves as they watch it"],
     values: {
       name: "🕰️ {library_name} from the vault",
       build: "per_person",
       refresh_days: 0,
+      watched_pct: 0,
       size: 20,
     },
   },
@@ -212,6 +249,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "popular",
     emoji: "👥",
     title: "Popular on this server",
+    summary: "What everyone’s watching",
     blurb:
       "One row everybody sees, built only from titles several people have watched. Nothing personal in it.",
     highlights: ["Shared with everyone", "Needs 3 watchers"],
@@ -227,8 +265,9 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "picked",
     emoji: "🍿",
     title: "Movie night",
+    summary: "Ten films. One good evening.",
     blurb:
-      "Films only, a short shelf, refreshed weekly. Something to pick from on a Friday.",
+      "Ten films picked for each person, refreshed weekly. A short list for their next movie night.",
     highlights: ["Movies only", "10 picks", "Weekly"],
     values: {
       name: "🍿 Tonight's {library_name}",
@@ -238,6 +277,8 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       // The blurb says "refreshed weekly", so the cadence is 7. This needed a comment when it was a
       // fraction: 0.5 resolved to 8 days, a day out, so the value had to be nudged to 0.53.
       refresh_days: 7,
+      // A weekly shelf keeps its cadence even if the global idle hold is longer than a week.
+      idle_hold_days: 0,
     },
   },
   {
@@ -245,6 +286,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     kind: "picked",
     emoji: "📺",
     title: "More TV to watch",
+    summary: "Their next series starts here",
     // Now literally true: `unstarted_only` (engine) drops any series with a single viewed episode,
     // where the normal filter only drops FINISHED ones — so a show they are three episodes into no
     // longer turns up on a shelf that calls itself "to start".
@@ -267,6 +309,62 @@ export const ROW_TEMPLATES: RowTemplate[] = [
   },
 ];
 
+/**
+ * The AI templates. Kept apart from `ROW_TEMPLATES`, which is the six kinds' own: an AI row is not a
+ * kind a row can be switched to, and its name uses the theme placeholders that no other template may.
+ *
+ * Exploring new themes over time is a switch on the AI row ("Themes over time"), not a template of its own.
+ */
+export const AI_TEMPLATES: RowTemplate[] = [
+  {
+    id: "describe-a-row",
+    kind: "ai",
+    emoji: "🪄",
+    title: "Describe a row",
+    summary: "Say what you want. The AI builds the list.",
+    blurb:
+      "Describe a row in your own words, like “films with a twist ending”. The AI writes the list once from your words, and Shortlist picks from it for each person every run. No more AI after that.",
+    highlights: ["One row each", "The AI writes the list once", "Live like any other row"],
+    values: {
+      // Named from the theme once there is one; the server refuses these placeholders on any other row.
+      name: "{theme_emoji} {theme}",
+      build: "per_person",
+      enabled: true,
+      size: 15,
+      // The AI's own order and picks matter more than release date; the global default would sort it newest-first.
+      recency: 0,
+    },
+  },
+];
+
 export function findRowTemplate(id: string): RowTemplate | undefined {
-  return ROW_TEMPLATES.find((template) => template.id === id);
+  return [...ROW_TEMPLATES, ...AI_TEMPLATES].find((template) => template.id === id);
+}
+
+/** Names a highlight may start with that keep their capital mid-sentence: the apps, and every season
+ *  the engine ships (`shortlist/engine/seasons.py`), matched on the first word. */
+const PROPER_NOUNS = new Set([
+  "Overseerr",
+  "Radarr",
+  "Sonarr",
+  "Plex",
+  "TMDB",
+  "Trakt",
+  "TV",
+  "Halloween",
+  "Christmas",
+  "Valentine's",
+]);
+
+/**
+ * The highlights as they read joined into one sentence: each starts lowercase, unless its first
+ * word is a proper noun or an acronym (a run of two or more capitals). A blanket `toLowerCase()`
+ * wrote "overseerr or radarr/sonarr tags" and "tv only" in the editor's "Started from" banner.
+ */
+export function sentenceCaseHighlights(highlights: string[]): string[] {
+  return highlights.map((highlight) => {
+    const firstWord = highlight.split(/[\s/,.-]/, 1)[0] ?? "";
+    const keepsCapital = PROPER_NOUNS.has(firstWord) || /^[A-Z]{2,}/.test(firstWord);
+    return keepsCapital ? highlight : highlight.charAt(0).toLowerCase() + highlight.slice(1);
+  });
 }

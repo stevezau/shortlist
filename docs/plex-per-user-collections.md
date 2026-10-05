@@ -1,12 +1,16 @@
 ---
 title: Make a Plex collection visible to one user
-description: Plex has no per-user collections, but label restrictions on share filters get you there. The mechanism, the manual steps, the ordering mistake that leaks, and the version requirements.
+description: Plex has no per-user collections or per-user home screen rows, but label restrictions on share filters get you there. What managed users, pinned sources and published collections change, the manual steps, the ordering mistake that leaks, and what it costs at your server's size.
 heading: How to make a Plex collection visible to only one user
+updated: 2026-10-03
+byline: true
+redirect_from:
+  - /plex-per-user-home-screen/
 ---
 
 **Short answer:** Plex has no per-user collections, but it does have **label restrictions**. Give the
 collection a label, then tell every _other_ account to exclude that label. What's left is a
-collection only one person can see.
+collection hidden from other supported accounts. The [server owner and some restriction profiles](#two-things-to-watch-out-for) are exceptions.
 
 It works, it's supported, and it needs **Plex Media Server 1.43.2.10687 or newer** plus a **Plex
 Pass** on the admin account. The rest of this page is how to do it, and the one mistake that quietly
@@ -24,6 +28,41 @@ are something you control and Plex evaluates them per account.
 
 So the trick isn't making a collection visible to one person. It's making it **invisible to everyone
 else**.
+
+## What each account can already change for itself
+
+Some of the home screen is per-account, which is why this question gets confusing answers.
+
+**Pinned sources and their order.** Each user chooses which servers and libraries appear in their
+sidebar and can reorder them. This is stored per account, so two people genuinely can have different
+home screens in that sense — but they're picking from the same set of rows.
+
+**Continue Watching and Up Next.** Genuinely personal, and the only rows on the server whose
+_contents_ differ per viewer.
+
+**Hiding a row locally.** In some clients a user can dismiss individual shelves. Client-side,
+inconsistent between apps, and it doesn't survive much.
+
+What none of that does is give someone a row of _different titles_ chosen for them.
+
+## What the admin controls, and why it doesn't help
+
+**Manage Recommendations** (library → **Manage Recommendations**) lets the admin choose which rows
+appear on the Recommended shelf and in what order. It's a server-wide setting. Change it and you've
+changed it for everybody.
+
+**Publishing Collections** lets the admin promote a collection to Home or Recommended for shared
+users. This is the closest thing Plex has to "put a curated row on people's home screens", and it's
+worth knowing about — but a published collection goes to _everyone_ who can see that library. There
+is no per-account targeting in the publishing UI.
+
+**Managed users** (Settings → Users & Sharing → add a managed user) create separate profiles under
+your account with their own watch state and their own content restrictions. People reach for these
+expecting Netflix profiles. They do give separate watch history, which is real and useful. They do
+not give separate recommendation rows — a managed user still sees the library's shelves.
+
+So: the admin can decide what rows exist, and each user can decide which libraries they look at.
+Nobody can make a row that contains different titles for different people. Not through the UI.
 
 ## Why this only started working in 2026
 
@@ -114,38 +153,34 @@ _other_ account, so the work grows with the square of your user count — twenty
 is 380 filter entries, every one of them a string you must edit without corrupting. Add a user, or a
 second row, and you touch them all again.
 
-Doing it by hand is realistic for one or two collections. Past that you want it automated. [A
-different home screen per user](plex-per-user-home-screen.md#what-it-costs-at-your-servers-size) has
-the numbers for a server your size.
+### What it costs at your server's size
 
-## The automated version
+Each private row needs an exclusion on every _other_ account. For **n** users with one row each,
+that's **n × (n−1)** share-filter entries:
 
-[**Shortlist**](https://github.com/stevezau/shortlist) is a self-hosted container that does exactly
-this, on a schedule. It builds a personalized "Picked for You" collection for each user from their
-own Plex watch history, labels it `shortlist_<user>`, merges the exclusions into every other
-account's share filter, and only then promotes the rows to Home. In that order, every run.
+| Users | Filter entries to maintain |
+| ----- | -------------------------- |
+| 3     | 6                          |
+| 10    | 90                         |
+| 20    | 380                        |
+| 40    | 1,560                      |
 
-It also handles the parts this page warns you about: it snapshots your share filters before the first
-change and restores them exactly on uninstall, it merges rather than rebuilds, it skips the owner, and
-it never modifies a collection it didn't create (so Kometa keeps working alongside it).
+And it isn't a one-time cost. Add a user and you touch every existing share. Add a second row type —
+films and shows are separate collections, because label restrictions are evaluated per library — and
+it doubles. Rebuild rows nightly and every run walks the whole matrix again, reading each account's
+current setting, changing only its own part, and writing it back without breaking the rest.
 
-```bash
-docker run -d --name shortlist -p 5959:5959 \
-  -v /path/to/config:/config \
-  stevezzau/shortlist:latest
-```
+Two or three collections by hand is fine. Past that you want something maintaining the matrix for
+you.
 
-The doubled **z** in `stevezzau` is deliberate — it's the project's Docker Hub account, not a
-typo. The same image is on GHCR as `ghcr.io/stevezau/shortlist`.
-
-Set `-e SHORTLIST_DRY_RUN=1` to see every change it _would_ make to your server without writing one.
+{% include seo-closing.html shot="two-account.webp" shot_w="1440" shot_h="811"
+   shot_alt="Two Plex Homes on one server side by side. Sarah's shows Movies and TV Shows Picked for You and lists Jess's 2 rows and Mike's row as not on this Home; Mike's shows TV Shows Picked for You and lists Jess's and Sarah's rows as not on his."
+   shot_caption="Each Home read with that account's own Plex token on a test server, drawn side by side: neither person's Home carries the other's row." %}
 
 ## Related
 
 - [How to improve Plex recommendations](improve-plex-recommendations.md) — the settings to change first
-- [A different home screen per user](plex-per-user-home-screen.md) — what Plex controls per account, and what it costs at scale
 - [Recommendations from watch history](plex-recommendations-watch-history.md) — where the titles in the row come from
-- [Netflix-style rows for your own library](plex-netflix-style-recommendations.md) — reasons, refresh and the rest of the feel
 - [Plex recommendation tools compared](plex-recommendation-tools.md) — which project fits which server
 - [FAQ — How is this private?](faq.md#how-is-this-private-plex-doesnt-have-per-user-collections)
 - [Getting started](getting-started.md) — install and the setup wizard

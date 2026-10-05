@@ -17,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -140,6 +141,9 @@ class User(Base):
     cold_start: Mapped[bool] = mapped_column(Boolean, default=False)
     label: Mapped[str] = mapped_column(String(255), default="")  # as stored by Plex (title-cased)
     request_tag: Mapped[str] = mapped_column(String(64), default="")  # tag added to titles requested for them
+    # The tag Overseerr/Radarr/Sonarr put on what THIS person asked for (issue #127) — wins over a row's
+    # `requests_tag_pattern` for them. "" -> the pattern, or no tag match at all.
+    requested_by_tag: Mapped[str] = mapped_column(String(64), default="", nullable=False, server_default="")
     prefs: Mapped[dict] = mapped_column(JSON, default=dict)
 
     run_users: Mapped[list[RunUser]] = relationship(back_populates="user")
@@ -216,6 +220,11 @@ class Collection(Base):
     # How many watched titles SEED this row — what every source searches from, not just the web one.
     # NULL -> inherit the engine default (30).
     max_seeds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Optional limits on what this row may pick (#138). NULL = no limit; there is no global default.
+    max_runtime: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)  # minutes
+    min_year: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    max_year: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    min_rating: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)  # TMDB 0..10
     # What this row does for someone with too little watch history: "popular" (the server's top-rated
     # titles) or "skip" (don't build it for them; remove any copy they already have).
     # NULL -> inherit the global recommendations.cold_start.
@@ -306,6 +315,8 @@ class Collection(Base):
     # nobody in particular — there is no one person to name. The editor hides it there, exactly as it
     # already hides `request_tag`.
     req_auto_user_tag: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+    # AI web search instructions for this row (#138): {} or {"mode": "add"|"own", "text": str}. Held the curate
+    # settings until migration 0036 cleared it.
     prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     # Custom collection poster for this row. {} -> Plex's own artwork. Shape:
     # {"mode": "upload"|"generate", "title", "subtitle", "style"}. No image bytes live here — an
@@ -317,8 +328,79 @@ class Collection(Base):
     # Put before the row's name to make its Plex sort title, e.g. "!010_" — orders the row in the
     # library's Collections tab, not on Home. "" -> the sort title is left alone.
     sort_title_prefix: Mapped[str] = mapped_column(String(64), default="", nullable=False, server_default="")
+    # A "Your requests" row (issue #127): built from what each person asked for in Overseerr/Radarr/
+    # Sonarr, never from the candidate pool. Always per-person, never rewatch, never seasonal.
+    requests_row: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    # Keep a request on the row this many days after it lands; 0 = until watched.
+    requests_window_days: Mapped[int] = mapped_column(Integer, default=90, nullable=False, server_default="90")
+    # How the *arrs tag a person's requests, e.g. "req-{username}"; "" -> only `users.requested_by_tag`.
+    requests_tag_pattern: Mapped[str] = mapped_column(String(128), default="", nullable=False, server_default="")
+    # The AI theme this row is built from; deleting the theme unlinks the row instead of deleting it.
+    theme_id: Mapped[int | None] = mapped_column(
+        ForeignKey("themes.id", ondelete="SET NULL", name="fk_collections_theme_id_themes"), nullable=True, default=None
+    )
+    ai_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    ai_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    # Explore mode and over-time controls (#138 phase 4); every default is today's behaviour.
+    theme_mode: Mapped[str] = mapped_column(String(16), default="fixed", nullable=False, server_default="fixed")
+    explore_brief: Mapped[str] = mapped_column(String(500), default="", nullable=False, server_default="")
+    # Days a theme stays on the row; NULL = 7.
+    theme_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    refresh_share: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    repeat_cooldown_days: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # JSON list of collection slugs whose titles this row avoids.
+    avoid_rows: Mapped[list[str] | None] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ThemeHistory(Base):
+    """Which theme a row showed a person, and when; drives "avoid the last N" and the repeat cooldown."""
+
+    __tablename__ = "theme_history"
+    __table_args__ = (Index("ix_theme_history_target", "collection_id", "user_id", "state"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    collection_id: Mapped[int] = mapped_column(ForeignKey("collections.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    theme_id: Mapped[int | None] = mapped_column(ForeignKey("themes.id", ondelete="SET NULL"), nullable=True)
+    # Copied at write time so the history survives a deleted theme.
+    theme_name: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    state: Mapped[str] = mapped_column(String(16))  # current | next | past — a closed set the DB does not enforce
+    started_at: Mapped[datetime] = mapped_column(DateTime)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Theme(Base):
+    """A named, resolved set of titles (from a brief, AI-named or hand-built) that a row can draw on."""
+
+    __tablename__ = "themes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    brief: Mapped[str] = mapped_column(Text, default="", server_default="")
+    origin: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")  # ai | manual
+    media: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # [{"id": int, "name": str}] — TMDB keywords.
+    tags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    genres: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    excluded_genres: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    collections: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # [{"tmdb_id", "media", "origin", "reason", "title", "year"}]
+    picks: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # {"max_runtime", "min_year", "max_year", "min_rating", "min_votes"}; a missing or null value is no limit.
+    rules: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    content_hash: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.current_timestamp()
+    )
+    ai_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # {"named", "resolved", "in_library", "after_rules"} counts from the last build.
+    stats: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
+    # When the one extra AI call that extends this theme's list was made; NULL until then.
+    topped_up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CollectionAudience(Base):
@@ -328,6 +410,43 @@ class CollectionAudience(Base):
 
     collection_id: Mapped[int] = mapped_column(ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+
+
+class SeasonDef(Base):
+    """An owner-defined season (issue #137). Built-ins live in code (`seasons.BUILTIN_SEASONS`).
+
+    Rows reference a season by `slug`, and its recipe carries it, so the slug is made from the name once,
+    at creation, and never changes. The rule columns hold every `DateRule` field whatever `rule_kind` is;
+    the kind decides which of them mean anything.
+    """
+
+    __tablename__ = "seasons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(40))
+    emoji: Mapped[str] = mapped_column(String(16))
+    rule_kind: Mapped[str] = mapped_column(String(8))
+    month: Mapped[int] = mapped_column(Integer, server_default="1")
+    day: Mapped[int] = mapped_column(Integer, server_default="1")
+    nth: Mapped[int] = mapped_column(Integer, server_default="1")
+    weekday: Mapped[int] = mapped_column(Integer, server_default="0")
+    easter_offset: Mapped[int] = mapped_column(Integer, server_default="0")
+    lead_days: Mapped[int] = mapped_column(Integer, server_default="7")
+    after_days: Mapped[int] = mapped_column(Integer, server_default="0")
+    # [{"id": int, "name": str}] — TMDB keywords; the name is kept so the editor can show it without TMDB.
+    tags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    genre: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    excluded_genres: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # [{"section_key", "section_title", "title"}] — by title, never ratingKey: Kometa recreates its
+    # seasonal collections under a new key every year (D5).
+    collections: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # [{"tmdb_id", "media_type", "title", "year"}]
+    picks: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    # The preset this season was added from, so the editor stops offering it (D9).
+    preset: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class PosterAsset(Base):
@@ -503,6 +622,11 @@ class RunSharedRow(Base):
 
 class PickRow(Base):
     __tablename__ = "picks"
+    __table_args__ = (
+        # The dashboard report's two heavy reads (`_avg_days_to_watch` covering, `_viewing_share` first pick).
+        Index("ix_picks_user_title_dates", "user_id", "tmdb_id", "media_type", "created_at", "watched_at"),
+        Index("ix_picks_user_created", "user_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), index=True, nullable=True)
@@ -666,6 +790,10 @@ class Delivery(Base):
     # person or another tool put there since is never wiped.
     summary_written: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     title_sort_written: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    # The season this collection's films were last chosen for, ``slug@anchor`` (`RowSeason.built_for`); "" for
+    # a row that was not seasonal. NULL = delivered before this was recorded (#137 C-1). A seasonal row's
+    # collection built for another season is kept hidden rather than promoted.
+    season: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

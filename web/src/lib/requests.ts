@@ -44,10 +44,13 @@ const INHERITED = " (global default)";
  * @param shared A shared row: built from titles people already watched, it can never ask for one.
  */
 export function requestsSummary(
-  input: Pick<CollectionInput, "req_max_per_row" | "req_auto_send" | "request_tag">,
+  input: Pick<CollectionInput, "req_max_per_row" | "req_auto_send" | "request_tag" | "requests_row">,
   settings: Settings | undefined,
   { shared }: { shared: boolean },
 ): string {
+  // Before `shared`: a Your requests row is per-person, and the shared-row sentence would explain
+  // the wrong thing. This row never searches, so there is nothing missing for it to ask for.
+  if (input.requests_row) return "None — this row only shows what they already asked for";
   if (shared) return "None — shared rows never ask for missing titles";
   if (!settings) return "Following Settings › Requests";
   if (settings["requests.enabled"] !== true) return "None — requests are off in Settings";

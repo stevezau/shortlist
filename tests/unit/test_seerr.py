@@ -18,7 +18,7 @@ import respx
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients import http_retry
 from shortlist.engine.clients import seerr as seerr_mod
-from shortlist.engine.clients.seerr import SeerrClient, SeerrError
+from shortlist.engine.clients.seerr import PartialRead, SeerrClient, SeerrError
 from shortlist.engine.models import MediaType, MissingTitle, RequestConfig, SeerrTarget
 
 pytestmark = pytest.mark.integration
@@ -777,3 +777,177 @@ class TestWhatTheReviewCaught:
             )
             state = _client().media_state()
         assert state == {("movie", 1): "downloaded", ("movie", 2): "downloaded"}
+
+
+def _fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text())
+
+
+class TestRequestReads:
+    def test_requests_walks_the_list_with_filter_all(self):
+        page = _fixture("overseerr_requests_page.json")
+        with respx.mock:
+            route = respx.get(f"{BASE}/request").mock(return_value=httpx.Response(200, json=page))
+            got = _client().requests()
+        assert len(got) == page["pageInfo"]["results"] == 7
+        assert route.calls[0].request.url.params["filter"] == "all"
+        assert route.calls[0].request.url.params["sort"] == "added"
+        assert got[0]["requestedBy"]["plexId"] == page["results"][0]["requestedBy"]["plexId"]
+
+    def test_user_plex_ids_maps_seerr_id_to_plex_id_and_none_when_unlinked(self):
+        users = _fixture("overseerr_users_page.json")
+        with respx.mock:
+            respx.get(f"{BASE}/user").mock(return_value=httpx.Response(200, json=users))
+            got = _client().user_plex_ids()
+        linked = {u["id"]: u["plexId"] for u in users["results"]}
+        assert got == linked
+        assert None in got.values()  # the fixture's local (non-Plex) account
+
+    def test_arr_settings_returns_both_lists_with_tag_requests(self):
+        st = _fixture("overseerr_arr_settings.json")
+        with respx.mock:
+            respx.get(f"{BASE}/settings/radarr").mock(return_value=httpx.Response(200, json=st["radarr"]))
+            respx.get(f"{BASE}/settings/sonarr").mock(return_value=httpx.Response(200, json=st["sonarr"]))
+            got = _client().arr_settings()
+        assert [s["tagRequests"] for s in got["radarr"]] == [True]
+        assert [s["tagRequests"] for s in got["sonarr"]] == [True]
+
+    def test_media_dates_keys_by_media_type_and_tmdb_id(self):
+        page = _fixture("overseerr_media_page.json")
+        with respx.mock:
+            respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json=page))
+            got = _client().media_dates()
+        row = page["results"][0]
+        assert got[(row["mediaType"], row["tmdbId"])]["mediaAddedAt"] == row.get("mediaAddedAt")
+        assert set(got[(row["mediaType"], row["tmdbId"])]) == {
+            "mediaAddedAt",
+            "lastSeasonChange",
+            "tvdbId",
+            "status",
+            "status4k",
+        }
+        # Keyed on Seerr's OWN word for a show ("tv"), never Shortlist's ("show"): the key has to
+        # equal a request row's literal `type` for the two to join.
+        show = next(r for r in page["results"] if r["mediaType"] == "tv")
+        assert got[("tv", show["tmdbId"])]["mediaAddedAt"] == show.get("mediaAddedAt")
+        assert ("show", show["tmdbId"]) not in got
+
+    def test_a_request_read_failure_raises_seerr_error(self):
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(return_value=httpx.Response(500, text="boom"))
+            with pytest.raises(SeerrError):
+                _client().requests()
+
+
+class TestPartialReads:
+    """The two reads that can take a row DOWN (`requests`, `user_plex_ids`) refuse a partial page.
+
+    `media_state`, `media_dates` and `blocklisted` keep tolerating one — they only ever hold a request
+    back or leave a date blank — so `test_a_server_that_caps_take_is_reported_rather_than_believed`
+    still stands for them.
+    """
+
+    @staticmethod
+    def _short(path: str, promised: int = 3) -> list[httpx.Response]:
+        page = {"pageInfo": {"pages": 1, "results": promised}, "results": [{"id": 1, "plexId": 100}]}
+        empty = {"pageInfo": {"pages": 1, "results": promised}, "results": []}
+        return [httpx.Response(200, json=page), httpx.Response(200, json=empty)]
+
+    def test_partial_read_is_a_seerr_error(self):
+        """So `collect_requests`' existing `except` catches it and flips `complete`."""
+        assert issubclass(PartialRead, SeerrError)
+
+    def test_requests_raises_when_page_info_promises_more_than_arrived(self):
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(side_effect=self._short("/request"))
+            with pytest.raises(PartialRead, match="1 of the 3"):
+                _client().requests()
+
+    def test_user_plex_ids_raises_when_page_info_promises_more_than_arrived(self):
+        with respx.mock:
+            respx.get(f"{BASE}/user").mock(side_effect=self._short("/user"))
+            with pytest.raises(PartialRead):
+                _client().user_plex_ids()
+
+    def test_requests_raises_when_the_page_cap_trips(self):
+        client = _client()
+        client._PAGE_SIZE, client._MAX_PAGES = 1, 2
+        full = {"pageInfo": {"pages": 99}, "results": [{"id": 1}]}  # no `results` count, a full page each time
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(return_value=httpx.Response(200, json=full))
+            with pytest.raises(PartialRead, match="2-page"):
+                client.requests()
+
+    def test_a_complete_walk_is_untouched(self):
+        page = _fixture("overseerr_requests_page.json")
+        with respx.mock:
+            respx.get(f"{BASE}/request").mock(return_value=httpx.Response(200, json=page))
+            assert len(_client().requests()) == page["pageInfo"]["results"]
+
+    def test_media_dates_still_tolerates_a_short_page(self):
+        with respx.mock:
+            respx.get(f"{BASE}/media").mock(
+                side_effect=[
+                    httpx.Response(
+                        200,
+                        json={
+                            "pageInfo": {"pages": 1, "results": 3},
+                            "results": [{"mediaType": "movie", "tmdbId": 1, "mediaAddedAt": "2026-01-01T00:00:00Z"}],
+                        },
+                    ),
+                    httpx.Response(200, json={"pageInfo": {"pages": 1, "results": 3}, "results": []}),
+                ]
+            )
+            assert list(_client().media_dates()) == [("movie", 1)]
+
+
+class TestMalformedPages:
+    """The two reads that can take a row DOWN refuse a 200 that is not a ``{results: [objects]}`` page.
+
+    Coerced to an empty batch, ``{}``, ``null`` or a proxy's string read as "nobody asked for anything"
+    (or "nobody is linked"), which a complete ledger turns into row removals. The message names the
+    endpoint and the JSON type, never the body or the key.
+    """
+
+    READS = (
+        pytest.param("/request", "requests", id="requests"),
+        pytest.param("/user", "user_plex_ids", id="user_plex_ids"),
+    )
+
+    @pytest.mark.parametrize("path,method", READS)
+    @pytest.mark.parametrize(
+        "body,shape",
+        [
+            pytest.param(b'{"message": "CANARY"}', "an object whose results are null", id="object-without-results"),
+            pytest.param(b"null", "null", id="null"),
+            pytest.param(b'"CANARY"', "a string", id="string"),
+            pytest.param(b"[]", "a list", id="bare-list"),
+            pytest.param(
+                b'{"pageInfo": {"results": 1}, "results": ["CANARY"]}',
+                "an object whose results are a list holding a string",
+                id="results-holding-a-string",
+            ),
+        ],
+    )
+    def test_a_malformed_200_is_a_seerr_error_naming_the_endpoint_and_shape(self, path, method, body, shape):
+        target = SeerrTarget(url="http://overseerr.test", api_key="SEERR-KEY-CANARY")
+        with respx.mock:
+            respx.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, content=body))
+            with pytest.raises(SeerrError) as raised:
+                getattr(SeerrClient(target), method)()
+        message = str(raised.value)
+        assert f"Overseerr GET {path} answered with {shape}" in message
+        assert "CANARY" not in message and "overseerr.test" not in message
+
+    @pytest.mark.parametrize("path,method", READS)
+    def test_a_genuinely_empty_page_is_a_complete_empty_read(self, path, method):
+        empty = {"pageInfo": {"pages": 0, "results": 0}, "results": []}
+        with respx.mock:
+            respx.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, json=empty))
+            assert getattr(_client(), method)() in ([], {})
+
+    def test_the_lenient_reads_still_tolerate_a_malformed_page(self):
+        """`media_dates` only ever leaves a date blank, so it keeps failing open."""
+        with respx.mock:
+            respx.get(f"{BASE}/media").mock(return_value=httpx.Response(200, json={"message": "x"}))
+            assert _client().media_dates() == {}

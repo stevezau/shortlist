@@ -22,7 +22,7 @@ Everything else requires the owner's Plex account, re-checked on every request. 
 and so are failed API-token attempts.
 
 **The API token is owner-level access.** Anything holding it can do anything you can, including
-deleting rows and rewriting share filters. Rotate it from Settings → API access if it leaks; the old
+deleting rows and rewriting share filters. Rotate it from Settings → System → API access if it leaks; the old
 one stops working immediately.
 
 **URLs you enter are fetched by the server**, which is the point: your Plex, Tautulli, Radarr,

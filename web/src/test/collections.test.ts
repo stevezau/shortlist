@@ -91,8 +91,43 @@ describe("hasUnsavedChanges", () => {
     ).toBe(true);
   });
 
+  it("compares AI instructions as the server stores them: no text on the default, trimmed otherwise", () => {
+    const onDefault = collection({ ai_instructions: { mode: "default", text: "" } });
+    // Text typed under Add and kept in the draft after switching back is never saved.
+    expect(
+      hasUnsavedChanges({ ...toInput(onDefault), ai_instructions: { mode: "default", text: "x" } }, onDefault),
+    ).toBe(false);
+    expect(
+      hasUnsavedChanges({ ...toInput(onDefault), ai_instructions: { mode: "add", text: "x" } }, onDefault),
+    ).toBe(true);
+
+    const adding = collection({ ai_instructions: { mode: "add", text: "x" } });
+    expect(
+      hasUnsavedChanges({ ...toInput(adding), ai_instructions: { mode: "add", text: "y" } }, adding),
+    ).toBe(true);
+    expect(
+      hasUnsavedChanges({ ...toInput(adding), ai_instructions: { mode: "own", text: "x" } }, adding),
+    ).toBe(true);
+    expect(
+      hasUnsavedChanges({ ...toInput(adding), ai_instructions: { mode: "add", text: " x " } }, adding),
+    ).toBe(false);
+  });
+
   it("treats a row being created as having nothing to differ from", () => {
     expect(hasUnsavedChanges(toInput(collection()), null)).toBe(false);
+  });
+});
+
+describe("toInput", () => {
+  it("carries a row's AI instructions as just the mode and text the API accepts", () => {
+    const saved = collection({
+      ai_instructions: { mode: "own", text: "Any decade.", extra: 1 },
+    });
+    expect(toInput(saved).ai_instructions).toEqual({ mode: "own", text: "Any decade." });
+  });
+
+  it("reads a row saved without AI instructions as using the default", () => {
+    expect(toInput(collection()).ai_instructions).toEqual({ mode: "default", text: "" });
   });
 });
 
@@ -118,6 +153,72 @@ describe("rowOverrides", () => {
     );
     expect(parts).toContain("Sources: Trakt"); // only the runnable one is advertised as active
     expect(parts).toContain("Needs setup: AI web search"); // the dead one is flagged, never claimed
+  });
+
+  it("drops the AI instructions badge on a seasonal row, which never uses web search", () => {
+    const own = { ai_instructions: { mode: "own", text: "Keep it cosy" } } as const;
+    const seasonal = rowOverrides(
+      collection({ candidate_sources: ["trakt", "llm_web"], seasons: ["halloween"], ...own }),
+      LIBRARIES,
+    );
+    expect(seasonal).not.toContain("AI instructions: own");
+    const plain = rowOverrides(collection({ candidate_sources: ["trakt", "llm_web"], ...own }), LIBRARIES);
+    expect(plain).toContain("AI instructions: own");
+  });
+
+  it("badges a row's own AI instructions, but not one on the default", () => {
+    expect(
+      rowOverrides(collection({ ai_instructions: { mode: "add", text: "x" } }), LIBRARIES),
+    ).toContain("AI instructions: adds to the default");
+    expect(
+      rowOverrides(collection({ ai_instructions: { mode: "own", text: "x" } }), LIBRARIES),
+    ).toContain("AI instructions: own");
+    const onDefault = rowOverrides(
+      collection({ ai_instructions: { mode: "default", text: "" } }),
+      LIBRARIES,
+    );
+    expect(onDefault).not.toContain("AI instructions: adds to the default");
+    expect(onDefault).not.toContain("AI instructions: own");
+  });
+
+  it("badges length, year and rating limits only when set", () => {
+    expect(
+      rowOverrides(
+        collection({ max_runtime: 120, min_year: 1990, max_year: 2010, min_rating: 7 }),
+        LIBRARIES,
+      ),
+    ).toEqual(["Max length 120 min", "Released 1990–2010", "Rating 7+"]);
+    expect(rowOverrides(collection({ min_year: 1990 }), LIBRARIES)).toEqual(["From 1990"]);
+    expect(rowOverrides(collection({ max_year: 2010 }), LIBRARIES)).toEqual(["Up to 2010"]);
+    expect(
+      rowOverrides(
+        collection({ max_runtime: null, min_year: null, max_year: null, min_rating: null }),
+        LIBRARIES,
+      ),
+    ).toEqual([]);
+  });
+
+  it("badges AI instructions only when the row uses AI web search", () => {
+    const own = { ai_instructions: { mode: "own", text: "x" } } as const;
+    const withSearch = rowOverrides(
+      collection({ ...own, candidate_sources: ["llm_web"] }),
+      LIBRARIES,
+      {},
+    );
+    expect(withSearch).toContain("AI instructions: own");
+    const withoutSearch = rowOverrides(
+      collection({ ...own, candidate_sources: ["trakt"] }),
+      LIBRARIES,
+      {},
+    );
+    expect(withoutSearch).not.toContain("AI instructions: own");
+    // No sources of its own: it follows the global set, which decides.
+    expect(
+      rowOverrides(collection(own), LIBRARIES, { "candidates.sources": ["llm_web"] }),
+    ).toContain("AI instructions: own");
+    expect(
+      rowOverrides(collection(own), LIBRARIES, { "candidates.sources": ["tmdb_similar"] }),
+    ).not.toContain("AI instructions: own");
   });
 
   it("names the libraries a row is pinned to", () => {
@@ -150,13 +251,13 @@ describe("rowOverrides", () => {
 
   it("badges a row's own cadence override, but not when it inherits the global one", () => {
     expect(rowOverrides(collection({ refresh_days: 0 }), LIBRARIES)).toContain(
-      "Rebuilds: never",
+      "Titles refresh: never",
     );
     expect(rowOverrides(collection({ refresh_days: 7 }), LIBRARIES)).toContain(
-      "Rebuilds: every 7 days",
+      "Titles refresh: every 7 days",
     );
     expect(rowOverrides(collection({ refresh_days: 1 }), LIBRARIES)).toContain(
-      "Rebuilds: nightly",
+      "Titles refresh: nightly",
     );
     expect(rowOverrides(collection({ refresh_days: null }), LIBRARIES)).toEqual(
       [],
@@ -220,7 +321,7 @@ describe("rowOverrides", () => {
       "Sources: Trakt",
       "Libraries: 4K Movies",
       "Watched: all fresh",
-      "Rebuilds: nightly",
+      "Titles refresh: nightly",
     ]);
   });
 });

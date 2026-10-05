@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { describeCron } from "@/lib/cron";
 import { timeUntil } from "@/lib/format";
 import { useSchedule } from "@/lib/queries";
-import { rowDisplayName } from "@/lib/run-rows";
+import { RowName } from "@/components/rows/row-name";
 
 /**
  * The rows that build on a timer, listed alongside the jobs that do.
@@ -62,10 +62,10 @@ export function RowSchedules() {
 
   return (
     <section className="space-y-2">
-      <div className="flex items-baseline gap-2">
-        <h2 className="text-sm font-medium">Rows</h2>
+      <div className="flex flex-wrap items-baseline gap-x-2 px-1">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Rows</h2>
         <p className="text-xs text-muted-foreground">
-          built on their own schedule
+          · built on their own schedule
         </p>
       </div>
 
@@ -73,55 +73,53 @@ export function RowSchedules() {
         {groups.map((entry, index) => {
           const rows = entry.rows ?? [];
           return (
+            // The icon sits in the job rows' icon column and the text on their name line, so this
+            // list lines up with the two around it: the leading inset is the width of a job row's
+            // chevron and its gap, which a schedule (nothing to expand) has no use for.
             <div
               key={entry.cron}
-              className={`space-y-2 px-3 py-2.5 ${index > 0 ? "border-t" : ""}`}
+              className={`flex items-start gap-2.5 py-2.5 pl-[2.375rem] pr-3 ${index > 0 ? "border-t" : ""}`}
             >
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <CalendarClock
-                  aria-hidden="true"
-                  className="size-4 shrink-0 text-muted-foreground"
-                />
-                <p className="text-sm font-medium">
-                  {describeCron(entry.cron) || entry.cron}
-                </p>
-                {entry.next_run && (
-                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Clock className="size-3 shrink-0" aria-hidden="true" />
-                    {timeUntil(entry.next_run)}
+              <CalendarClock
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+              />
+              <div className="min-w-0 flex-1 space-y-2">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <p className="text-sm font-medium">
+                    {describeCron(entry.cron) || entry.cron}
+                  </p>
+                  {entry.next_run && (
+                    <span className="flex items-center gap-1.5 self-center text-xs text-muted-foreground">
+                      <Clock className="size-3 shrink-0" aria-hidden="true" />
+                      {timeUntil(entry.next_run)}
+                    </span>
+                  )}
+                  {/* The count is what makes the chips below read as a list rather than as tags on
+                      the schedule — and it is the number that matters when one cron drives twelve. */}
+                  <span className="text-xs text-muted-foreground/80">
+                    · builds {rows.length} {rows.length === 1 ? "row" : "rows"}
                   </span>
-                )}
-                {/* The count is what makes the chips below read as a list rather than as tags on
-                    the schedule — and it is the number that matters when one cron drives twelve. */}
-                <span className="text-xs text-muted-foreground/80">
-                  · builds {rows.length} {rows.length === 1 ? "row" : "rows"}
-                </span>
-              </div>
+                </div>
 
-              {/* One link per row, to that row's own editor. The old single "Edit" button pointed
-                  at /rows — the list — because with N names on one line there was no single row it
-                  could mean. It read as "edit this schedule" and could not be. */}
-              <div className="flex flex-wrap gap-1.5">
-                {rows.map((row) => {
-                  // The row's own name with its `{placeholders}` stripped, exactly as the run pages
-                  // do it. Printed raw, a template row rendered here with literal braces —
-                  // "Because you watched {top_seed}" — which reads as a substitution that failed.
-                  // The slug is the fallback for a name that is nothing BUT a placeholder, the same
-                  // fallback `run-rows.ts` uses.
-                  const label = rowDisplayName(row.name) || row.slug;
-                  return (
-                    <Link
-                      key={row.id}
-                      to={`/rows/${row.id}`}
-                      title={`Edit ${label}`}
-                      className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    >
-                      {/* `truncate` needs `min-w-0` on the flex child to shrink; a long row name
-                          ("👥 Popular Movies on SFLIX") matters on a phone. */}
-                      <span className="min-w-0 truncate">{label}</span>
-                    </Link>
-                  );
-                })}
+                {/* One link per row, to that row's own editor. The old single "Edit" button pointed
+                    at /rows — the list — because with N names on one line there was no single row it
+                    could mean. It read as "edit this schedule" and could not be. */}
+                <div className="flex flex-wrap gap-1.5">
+                  {rows.map((row) => {
+                    const label = row.name || row.slug;
+                    return (
+                      <Link
+                        key={row.id}
+                        to={`/rows/${row.id}`}
+                        title={`Edit ${label}`}
+                        className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <RowName name={label} className="min-w-0 break-words font-normal" />
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           );

@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from shortlist.server.db.models import User
+from shortlist.server.services.report_cache import invalidate_report_cache
 
 pytestmark = pytest.mark.integration
 
@@ -31,6 +32,8 @@ RUN_SUMMARY_KEYS = {
     "stats",
     "error",
     "promotion_blockers",
+    # What the run measured about who can see whose rows. None when it did not measure.
+    "privacy",
 }
 RUN_DETAIL_KEYS = RUN_SUMMARY_KEYS | {"users", "shared_rows"}
 RUN_USER_KEYS = {
@@ -58,7 +61,21 @@ RUN_SHARED_ROW_KEYS = (RUN_USER_KEYS - {"username", "display_name", "slug", "row
     "collection_slug",
     "row_title",
 }
-PICK_KEYS = {"rank", "title", "reason", "rating_key", "seed_title", "sources", "affinity", "year", "rating"}
+PICK_KEYS = {
+    "rank",
+    "title",
+    "reason",
+    "rating_key",
+    "seed_title",
+    "sources",
+    "affinity",
+    "year",
+    "rating",
+    # The score the row was sorted on and its source, so a "Highest rated" row reads in order.
+    "rating_source",
+    "order_rating",
+    "order_rating_source",
+}
 TRACE_KEYS = {"username", "display_name", "status", "error", "reason", "trace", "breakdown", "requests"}
 TRACE_REQUEST_KEYS = {"status", "detail", "arr_slug", "excluded"}
 RUN_LOG_KEYS = {"seq", "ts", "run_id", "user", "stage", "counts", "reason", "level"}
@@ -642,6 +659,51 @@ class TestRunsApi:
         assert summary["error"] == 1
         assert summary["last_status"] == "error"  # the newest run
 
+    def test_a_dry_runs_picks_are_served_from_the_trace_and_never_stored_as_picks(self, client: TestClient):
+        """ "Try it" on an AI row is a dry run, which writes no PickRow (carry-forward reads those) and so
+        had nothing to show. Its picks ride on the person's trace, and only a dry run reads them there."""
+        from shortlist.engine.models import MediaType, Pick, UserRunReport
+        from shortlist.server.db.models import PickRow, Run
+        from shortlist.server.services.run_persistence import _persist_user_report
+
+        report = UserRunReport(
+            username="sarah",
+            slug="sarah",
+            status="ok",
+            picks=[
+                Pick(
+                    tmdb_id=7,
+                    rating_key=70,
+                    title="Se7en",
+                    rank=1,
+                    reason="Fits Twist endings",
+                    media_type=MediaType.MOVIE,
+                    sources=["theme"],
+                    year=1995,
+                )
+            ],
+        )
+        run_ids = {}
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter_by(slug="sarah").first()
+            for dry_run in (True, False):
+                run = Run(trigger="manual", status="success", dry_run=dry_run, stats={})
+                session.add(run)
+                session.flush()
+                _persist_user_report(session, run.id, user, report, dry_run)
+                run_ids[dry_run] = run.id
+            session.commit()
+            stored = session.query(PickRow).filter_by(run_id=run_ids[True]).count()
+
+        dry = client.get(f"/api/runs/{run_ids[True]}").json()["users"][0]["picks"]
+        real = client.get(f"/api/runs/{run_ids[False]}").json()["users"][0]["picks"]
+
+        assert stored == 0
+        assert [(p["title"], p["reason"], p["sources"], p["year"]) for p in dry] == [
+            ("Se7en", "Fits Twist endings", ["theme"], 1995)
+        ]
+        assert [p["title"] for p in real] == ["Se7en"]
+
     def test_clear_runs_deletes_history_but_keeps_picks_for_the_dashboard(self, client: TestClient):
         from shortlist.server.db.models import PickRow, Run, RunUser
 
@@ -899,7 +961,9 @@ class TestRunsApi:
                 ]
             )
             session.commit()
-            return uid
+        # Seeding bypasses the hooks that drop the report cache, so a report read earlier would be served stale.
+        invalidate_report_cache()
+        return uid
 
     def test_report_payload_carries_every_key_the_dashboard_reads(self, client: TestClient):
         """The report is the largest shape this API returns and the dashboard reads nearly all of it,
@@ -1778,6 +1842,211 @@ class TestRunsApi:
         assert [set(line) for line in lines] == [RUN_LOG_KEYS, RUN_LOG_KEYS]
         assert lines[0]["counts"] == {"titles": 7} and lines[0]["ts"] is not None
         assert lines[0]["reason"] is None and lines[1]["reason"] == "paused"
+
+
+def _finished_run(client: TestClient, stats: dict, *, dry_run: bool = False) -> int:
+    """Insert a finished `ok` run carrying `stats`, as the engine would have persisted it."""
+    from shortlist.server.db.models import Run
+
+    with client.app.state.sessions() as session:
+        run = Run(trigger="manual", status="ok", finished_at=datetime.now(UTC), stats=stats, dry_run=dry_run)
+        session.add(run)
+        session.commit()
+        return run.id
+
+
+def _list_and_detail(client: TestClient, run_id: int) -> tuple[dict, dict]:
+    listed = next(r for r in client.get("/api/runs").json() if r["id"] == run_id)
+    return listed, client.get(f"/api/runs/{run_id}").json()
+
+
+#: The three "could not vouch for" lists, as a run recorded before they existed reports them.
+NOT_RECORDED = {"unchecked": None, "write_failed": None, "left_alone": None}
+
+
+class TestRunPrivacy:
+    """`privacy` reports the facts a run persisted about who can see whose rows. Reporting only.
+
+    A run never gains a new status for a privacy finding: every reader that filters on
+    `status in ("ok", "error")` would silently drop a run with a new value. The UI
+    derives "OK with warnings" from `status == "ok"` plus a finding here instead.
+    """
+
+    def test_an_account_that_can_see_other_rows_is_reported_on_list_and_detail(self, client: TestClient):
+        run_id = _finished_run(
+            client, {"users_ok": 2, "unhideable_rows": {"kid": [1, 2, 3], "zed": []}, "unreadable_filters": {}}
+        )
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        # `zed` sees nothing of anyone else's, so an empty list is not a finding. No
+        # `filters_not_enforced` key: that check did not measure, so it is None, not [].
+        expected = {"can_see_others": ["kid"], "unreadable_filters": [], "filters_not_enforced": None, **NOT_RECORDED}
+        assert listed["privacy"] == expected
+        assert detail["privacy"] == expected
+        assert listed["status"] == detail["status"] == "ok"
+
+    def test_a_run_that_did_not_measure_privacy_reports_none_not_an_empty_finding(self, client: TestClient):
+        """An older run, a dry run, or one that died before the privacy phase has no `unhideable_rows`
+        key. That must read as "not measured", never as "measured and everyone is private"."""
+        run_id = _finished_run(client, {"users_ok": 2})
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        assert listed["privacy"] is None
+        assert detail["privacy"] is None
+        assert listed["status"] == detail["status"] == "ok"
+
+    def test_filters_not_enforced_is_none_when_that_check_did_not_measure(self, client: TestClient):
+        """`filters_not_enforced` has its own measured flag (`filters_enforcement_measured`): the
+        privacy loop can run while the enforcement check cannot vouch for every account type, and
+        then the key is absent. Reading that as [] would claim "checked, nothing found"."""
+        run_id = _finished_run(client, {"unhideable_rows": {}, "unreadable_filters": {}})
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": None, **NOT_RECORDED}
+        assert listed["privacy"] == expected
+        assert detail["privacy"] == expected
+
+    def test_filters_not_enforced_is_empty_when_measured_and_clean(self, client: TestClient):
+        run_id = _finished_run(client, {"unhideable_rows": {}, "unreadable_filters": {}, "filters_not_enforced": {}})
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": [], **NOT_RECORDED}
+        assert listed["privacy"] == expected
+        assert detail["privacy"] == expected
+
+    def test_unreadable_filters_is_none_on_a_run_recorded_before_that_key_existed(self, client: TestClient):
+        run_id = _finished_run(client, {"unhideable_rows": {}, "filters_not_enforced": {}})
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        expected = {"can_see_others": [], "unreadable_filters": None, "filters_not_enforced": [], **NOT_RECORDED}
+        assert listed["privacy"] == expected
+        assert detail["privacy"] == expected
+
+    def test_a_dry_run_reports_none_even_when_it_recorded_privacy_keys(self, client: TestClient):
+        """A dry run reaches the privacy loop (so `unhideable_rows` is written) but builds no rows, so
+        its empty finding is not an all-clear."""
+        run_id = _finished_run(
+            client,
+            {"unhideable_rows": {}, "unreadable_filters": {}, "filters_not_enforced": {}},
+            dry_run=True,
+        )
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        assert listed["privacy"] is None
+        assert detail["privacy"] is None
+
+    def test_a_filter_plex_is_not_applying_is_reported(self, client: TestClient):
+        run_id = _finished_run(
+            client, {"unhideable_rows": {}, "unreadable_filters": {}, "filters_not_enforced": {"mike": [5]}}
+        )
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        expected = {"can_see_others": [], "unreadable_filters": [], "filters_not_enforced": ["mike"], **NOT_RECORDED}
+        assert listed["privacy"] == expected
+        assert detail["privacy"] == expected
+        assert listed["status"] == detail["status"] == "ok"
+
+    def test_a_finding_never_changes_the_run_status(self, client: TestClient):
+        run_id = _finished_run(
+            client,
+            {
+                "unhideable_rows": {"kid": [1]},
+                "unreadable_filters": {"lisa": "label contains &"},
+                "filters_not_enforced": {"mike": [5]},
+            },
+        )
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        assert listed["status"] == "ok"
+        assert detail["status"] == "ok"
+        assert detail["privacy"] == {
+            "can_see_others": ["kid"],
+            "unreadable_filters": ["lisa"],
+            "filters_not_enforced": ["mike"],
+            **NOT_RECORDED,
+        }
+
+    def test_every_privacy_list_is_sorted_case_insensitively(self, client: TestClient):
+        names = {"bob": [1], "Alice": [2], "carol": [3]}
+        run_id = _finished_run(
+            client, {"unhideable_rows": names, "unreadable_filters": names, "filters_not_enforced": names}
+        )
+
+        _, detail = _list_and_detail(client, run_id)
+
+        ordered = ["Alice", "bob", "carol"]
+        assert detail["privacy"] == {
+            "can_see_others": ordered,
+            "unreadable_filters": ordered,
+            "filters_not_enforced": ordered,
+            **NOT_RECORDED,
+        }
+
+    def test_accounts_the_run_could_not_vouch_for_are_reported(self, client: TestClient):
+        """The run page counts every account it is not told about as hiding every row. These three
+        never are: one nobody could look through, one whose filter write failed, one left alone."""
+        run_id = _finished_run(
+            client,
+            {
+                "unhideable_rows": {},
+                "unreadable_filters": {},
+                "filters_not_enforced": {},
+                "privacy_unchecked": ["kid"],
+                "privacy_write_failed": ["mike"],
+                "privacy_left_alone": ["tom", "Ann"],
+            },
+        )
+
+        listed, detail = _list_and_detail(client, run_id)
+
+        expected = {
+            "can_see_others": [],
+            "unreadable_filters": [],
+            "filters_not_enforced": [],
+            "unchecked": ["kid"],
+            "write_failed": ["mike"],
+            "left_alone": ["Ann", "tom"],
+        }
+        assert listed["privacy"] == expected
+        assert detail["privacy"] == expected
+        assert listed["status"] == detail["status"] == "ok"
+
+    def test_a_run_that_looked_and_found_every_account_vouched_for_reports_empty_lists(self, client: TestClient):
+        run_id = _finished_run(
+            client,
+            {
+                "unhideable_rows": {},
+                "unreadable_filters": {},
+                "filters_not_enforced": {},
+                "privacy_unchecked": [],
+                "privacy_write_failed": [],
+                "privacy_left_alone": [],
+            },
+        )
+
+        _, detail = _list_and_detail(client, run_id)
+
+        assert detail["privacy"]["unchecked"] == []
+        assert detail["privacy"]["write_failed"] == []
+        assert detail["privacy"]["left_alone"] == []
+
+    def test_a_run_recorded_before_those_keys_existed_reports_none_never_empty(self, client: TestClient):
+        """An older run's silence is "not recorded", which must never read as "every account vouched for"."""
+        run_id = _finished_run(client, {"unhideable_rows": {}, "unreadable_filters": {}, "filters_not_enforced": {}})
+
+        _, detail = _list_and_detail(client, run_id)
+
+        assert detail["privacy"]["unchecked"] is None
+        assert detail["privacy"]["write_failed"] is None
+        assert detail["privacy"]["left_alone"] is None
 
 
 class TestClosedSetFieldsMatchWhatTheCodeWrites:

@@ -22,10 +22,12 @@ import {
   SEED_NAME_IN_SETTINGS,
   ROW_FILLS,
   ROW_KINDS,
+  SEASONAL_FILLS,
   ROW_SETTING_KEYS,
   rowKindOf,
   takeTurnsEnabled,
   visibleSettings,
+  withoutHiddenInstructions,
   type RowFill,
   type RowKindChoice,
   type RowKindContext,
@@ -41,6 +43,7 @@ const CTX: RowKindContext = {
   defaultRowName: "✨ {library_name} Picked for You",
   globalSources: ["tmdb_similar", "tmdb_discover"],
   seasonCatalogue: ["valentines", "halloween", "christmas"],
+  builtinSeasons: ["valentines", "halloween", "christmas"],
 };
 const DEFAULT_CTX: RowKindContext = { ...CTX, isDefault: true };
 
@@ -48,6 +51,7 @@ const PICKS_NAME = "✨ {library_name} Picks";
 const BYW_NAME = "🎯 Because you watched {top_seed}";
 const AGAIN_NAME = "☕ {library_name} you've already seen";
 const POPULAR_NAME = "👥 Popular {library_name} on this server";
+const REQUESTS_NAME = "📬 {library_name} you asked for";
 
 function named(name: string): Pick<CollectionInput, "name" | "name_template"> {
   return { name, name_template: name };
@@ -64,6 +68,7 @@ const FIXTURES = {
   bywCount: row({ max_seeds: 2 }),
   again: row({ ...named(AGAIN_NAME), rewatch: true, watched_pct: 1 }),
   popular: row({ ...named(POPULAR_NAME), build: "shared", min_watchers: 3 }),
+  requests: row({ ...named(REQUESTS_NAME), requests_row: true }),
 } satisfies Record<string, CollectionInput>;
 
 const FIXTURE_FILL: Record<keyof typeof FIXTURES, RowFill> = {
@@ -72,6 +77,7 @@ const FIXTURE_FILL: Record<keyof typeof FIXTURES, RowFill> = {
   bywCount: "byw",
   again: "again",
   popular: "popular",
+  requests: "requests",
 };
 
 const MEDIA = ["movie", "show", "both"] as const;
@@ -80,15 +86,15 @@ function seasonal(input: CollectionInput): CollectionInput {
   return { ...input, seasons: ["halloween"] };
 }
 
-/** Every target a picker can ask for: four plain kinds, and Seasonal with each fill. */
+/** Every target a picker can ask for: five plain kinds, and Seasonal with each fill it offers. */
 const TARGETS: RowKindChoice[] = [
   ...ROW_FILLS.map((fill) => ({ kind: fill, fill })),
-  ...ROW_FILLS.map((fill) => ({ kind: "seasonal" as const, fill })),
+  ...SEASONAL_FILLS.map((fill) => ({ kind: "seasonal" as const, fill })),
 ];
 
 describe("kind metadata", () => {
-  it("lists the five kinds in the picker's order with the design's copy", () => {
-    expect(ROW_KINDS).toEqual(["picked", "byw", "again", "seasonal", "popular"]);
+  it("lists the six kinds in the picker's order with the design's copy", () => {
+    expect(ROW_KINDS).toEqual(["picked", "byw", "again", "requests", "seasonal", "popular"]);
     expect(KIND_META).toEqual({
       picked: {
         title: "Picked for You",
@@ -103,10 +109,14 @@ describe("kind metadata", () => {
         title: "Watch it again",
         description: "Favourites they've already finished, ready to rewatch.",
       },
+      requests: {
+        title: "Your requests",
+        description: "What they asked for in Overseerr that's now on Plex, newest first. Never recommendations.",
+      },
       seasonal: {
         title: "Seasonal",
         description:
-          "Only appears around the holidays you pick, like Halloween or Christmas. Filled in any of the ways above.",
+          "Only appears around the holidays you pick, like Halloween or Christmas, or a season you add yourself. Filled in any of the ways above.",
       },
       popular: {
         title: "Popular on this server",
@@ -116,8 +126,12 @@ describe("kind metadata", () => {
   });
 
   it("offers every kind but Seasonal as a fill, titled as the kind is", () => {
-    expect(ROW_FILLS).toEqual(["picked", "byw", "again", "popular"]);
+    expect(ROW_FILLS).toEqual(["picked", "byw", "again", "requests", "popular"]);
     for (const fill of ROW_FILLS) expect(FILL_META[fill]).toEqual(KIND_META[fill]);
+  });
+
+  it("never offers a requests fill to a seasonal row: a request lands when it lands", () => {
+    expect(SEASONAL_FILLS).toEqual(["picked", "byw", "again", "popular"]);
   });
 });
 
@@ -237,7 +251,7 @@ describe("kindDisabledReason", () => {
     // You would read straight back as Because you watched, and a shared row has no watch to fill it
     // with; Watch it again is named after a watch by the engine too (`rows._names_a_seed`).
     const seedCtx = { ...DEFAULT_CTX, defaultRowName: BYW_NAME };
-    for (const kind of ["picked", "popular"] as const) {
+    for (const kind of ["picked", "popular", "requests"] as const) {
       expect(kindDisabledReason(kind, defaultRow, seedCtx), kind).toBe(SEED_NAME_IN_SETTINGS);
     }
     for (const kind of ["byw", "again"] as const) {
@@ -280,11 +294,12 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "watched_pct",
     "unstarted_only",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
   ],
-  // Named after a watch, so the engine forces nightly and How often it changes is hidden.
+  // Named after a watch, so the engine forces nightly and Titles refresh every is hidden.
   bywNamed: [
     "based_on",
     "seed_window",
@@ -294,6 +309,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "watched_pct",
     "unstarted_only",
     "recency",
+    "limits",
     "idle_hold_days",
     "requests",
   ],
@@ -307,6 +323,7 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "watched_pct",
     "unstarted_only",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
@@ -317,11 +334,13 @@ const EXTRA: Record<keyof typeof FIXTURES, RowSettingKey[]> = {
     "max_seeds",
     "candidate_sources",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
   ],
   popular: ["min_watchers"],
+  requests: ["requests_window_days", "requests_sources", "requests_tag_pattern"],
 };
 
 function expected(
@@ -330,7 +349,9 @@ function expected(
   opts: { isDefault?: boolean; seasonal?: boolean } = {},
 ): RowSettingKey[] {
   return [
-    ...ALWAYS.filter((key) => !(opts.isDefault && key === "size")),
+    ...ALWAYS.filter((key) => !(opts.isDefault && key === "size"))
+      // Newest arrival first, always: a requests row offers no order.
+      .filter((key) => !(fixture === "requests" && key === "pick_order")),
     ...EXTRA[fixture].filter((key) => !(media === "movie" && key === "unstarted_only")),
     ...(opts.seasonal ? (["seasons"] as const) : []),
   ].sort();
@@ -355,14 +376,27 @@ describe("visibleSettings", () => {
       expect(visible(defaultRow, ctx)).toEqual(expected(name, media, { isDefault: true }));
     });
 
-    it.each(fixtureNames)("shows the %s fill's settings plus Which seasons on a seasonal row", (name) => {
+    it.each(fixtureNames)("shows the %s fill's settings plus Seasons on a seasonal row", (name) => {
       expect(visible(seasonal({ ...FIXTURES[name], media }))).toEqual(expected(name, media, { seasonal: true }));
     });
+  });
+
+  it("only the requests settings show for a requests row", () => {
+    const shown = visibleSettings({ ...blankInput(), requests_row: true }, CTX);
+    expect(shown.has("requests_window_days")).toBe(true);
+    expect(shown.has("candidate_sources")).toBe(false);
+    expect(shown.has("cold_start")).toBe(false);
   });
 
   it("shows Rated by only under Highest rated", () => {
     expect(visibleSettings(row({ pick_order: "rating" }), CTX).has("rated_by")).toBe(true);
     expect(visibleSettings(row({ pick_order: "best" }), CTX).has("rated_by")).toBe(false);
+  });
+
+  it("offers a requests row no order, and so no Rated by either: it is newest arrival first", () => {
+    const shown = visibleSettings({ ...FIXTURES.requests, pick_order: "rating" }, CTX);
+    expect(shown.has("pick_order")).toBe(false);
+    expect(shown.has("rated_by")).toBe(false);
   });
 
   it("shows Recent watches for AI web search only when that source is on, from the row or the global", () => {
@@ -382,6 +416,23 @@ describe("visibleSettings", () => {
   it("hides Recent watches for AI web search on a seasonal row, which the engine drops that source from", () => {
     const web = ["tmdb_similar", "llm_web"];
     expect(visibleSettings(seasonal(row({ candidate_sources: web })), CTX).has("recent_count")).toBe(false);
+  });
+
+  it("shows AI instructions only when AI web search is on, from the row or the global", () => {
+    const web = ["tmdb_similar", "llm_web"];
+    expect(visibleSettings(row({ candidate_sources: web }), CTX).has("ai_instructions")).toBe(true);
+    expect(visibleSettings(row(), { ...CTX, globalSources: web }).has("ai_instructions")).toBe(true);
+    expect(visibleSettings(row(), CTX).has("ai_instructions")).toBe(false);
+    // A row's own list replaces the global, so the global's web search doesn't reach it.
+    expect(
+      visibleSettings(row({ candidate_sources: ["tmdb_similar"] }), { ...CTX, globalSources: web }).has(
+        "ai_instructions",
+      ),
+    ).toBe(false);
+    expect(visibleSettings(FIXTURES.again, { ...CTX, globalSources: web }).has("ai_instructions")).toBe(true);
+    expect(visibleSettings(FIXTURES.bywNamed, { ...CTX, globalSources: web }).has("ai_instructions")).toBe(true);
+    expect(visibleSettings(FIXTURES.popular, { ...CTX, globalSources: web }).has("ai_instructions")).toBe(false);
+    expect(visibleSettings(seasonal(row({ candidate_sources: web })), CTX).has("ai_instructions")).toBe(false);
   });
 
   it("hides the hold on a Because you watched row that takes turns", () => {
@@ -550,7 +601,7 @@ describe("applyRowKind", () => {
   it("→ Because you watched on a row that already is one changes nothing but the seasons", () => {
     const blend = row({ ...named(BYW_NAME), max_seeds: 3, seed_window: 1 });
     expect(applyRowKind(seasonal(blend), { kind: "byw", fill: "byw" }, CTX)).toEqual(blend);
-    expect(applyRowKind(blend, { kind: "seasonal", fill: "byw" }, CTX)).toEqual({ ...blend, seasons: CTX.seasonCatalogue });
+    expect(applyRowKind(blend, { kind: "seasonal", fill: "byw" }, CTX)).toEqual({ ...blend, seasons: CTX.builtinSeasons });
     expect(applyRowKind(blend, { kind: "byw", fill: "byw" }, CTX)).toEqual(blend);
   });
 
@@ -588,7 +639,7 @@ describe("applyRowKind", () => {
 
   it("→ Seasonal with a new fill applies both", () => {
     const out = applyRowKind(FIXTURES.picked, { kind: "seasonal", fill: "popular" }, CTX);
-    expect(out).toEqual({ ...FIXTURES.picked, seasons: CTX.seasonCatalogue, build: "shared", request_tag: "" });
+    expect(out).toEqual({ ...FIXTURES.picked, seasons: CTX.builtinSeasons, build: "shared", request_tag: "" });
   });
 
   it("switching only a seasonal row's fill leaves its seasons alone", () => {
@@ -601,6 +652,29 @@ describe("applyRowKind", () => {
   it("leaving Seasonal clears the seasons and keeps the days", () => {
     const from = { ...seasonal(FIXTURES.picked), season_lead_days: 9 };
     expect(applyRowKind(from, { kind: "picked", fill: "picked" }, CTX)).toEqual({ ...from, seasons: [] });
+  });
+
+  it("a requests row is its own fill and never shared", () => {
+    const input = { ...blankInput(), requests_row: true };
+    expect(rowKindOf(input, CTX).fill).toBe("requests");
+    const patched = applyRowKind(blankInput(), { kind: "requests", fill: "requests" }, CTX);
+    expect(patched.requests_row).toBe(true);
+    expect(patched.build).toBe("per_person");
+    const back = applyRowKind(patched, { kind: "picked", fill: "picked" }, CTX);
+    expect(back.requests_row).toBe(false);
+  });
+
+  it("→ Your requests on a shared rewatch row: per person, no rewatch, no rotation", () => {
+    const from = row({ build: "shared", rewatch: true, unstarted_only: true, seed_window: 3, media: "show" });
+    const out = applyRowKind(from, { kind: "requests", fill: "requests" }, CTX);
+    expect(out).toEqual({
+      ...from,
+      build: "per_person",
+      rewatch: false,
+      requests_row: true,
+      unstarted_only: false,
+      seed_window: 1,
+    });
   });
 
   it("ignores the fill on a kind that isn't Seasonal", () => {
@@ -636,10 +710,11 @@ describe("applyRowKind", () => {
 
   describe("touches nothing outside its documented patch", () => {
     const FILL_FIELDS: Record<RowFill, (keyof CollectionInput)[]> = {
-      picked: ["build", "rewatch", "seed_window", "max_seeds"],
-      byw: ["build", "rewatch", "max_seeds"],
-      again: ["build", "rewatch", "unstarted_only", "seed_window"],
-      popular: ["build", "request_tag"],
+      picked: ["build", "rewatch", "requests_row", "seed_window", "max_seeds"],
+      byw: ["build", "rewatch", "requests_row", "max_seeds"],
+      again: ["build", "rewatch", "requests_row", "unstarted_only", "seed_window"],
+      popular: ["build", "requests_row", "request_tag"],
+      requests: ["build", "rewatch", "requests_row", "unstarted_only", "seed_window"],
     };
     const froms = Object.entries(FIXTURES).flatMap(([name, input]) =>
       MEDIA.flatMap((media) => {
@@ -697,6 +772,15 @@ describe("switching from the kind baseline", () => {
     expect(kindSwitchBase(drifted, kindBaseline(input), PICKED, CTX)).toEqual({ ...input, size: 12 });
   });
 
+  it("starts a row turned Seasonal on the built-in seasons only, never the owner's own (#137)", () => {
+    const ctx = { ...CTX, seasonCatalogue: ["valentines", "halloween", "thanksgiving", "christmas"] };
+    expect(applyRowKind(row(), { kind: "seasonal", fill: "picked" }, ctx).seasons).toEqual([
+      "valentines",
+      "halloween",
+      "christmas",
+    ]);
+  });
+
   it("keeps the seasons on screen while the row stays seasonal", () => {
     const loaded = row();
     const narrowed = { ...applyRowKind(loaded, { kind: "seasonal", fill: "picked" }, CTX), seasons: ["halloween"] };
@@ -709,7 +793,7 @@ describe("switching from the kind baseline", () => {
     const onScreen = { ...applyRowKind(loaded, { kind: "byw", fill: "byw" }, CTX), seed_window: 5 };
     const choice = { kind: "seasonal", fill: "byw" } as const;
     const out = applyRowKind(kindSwitchBase(onScreen, kindBaseline(loaded), choice, CTX), choice, CTX);
-    expect(out).toEqual({ ...onScreen, seasons: CTX.seasonCatalogue });
+    expect(out).toEqual({ ...onScreen, seasons: CTX.builtinSeasons });
   });
 
   it("enters Seasonal with the loaded seasons when the row was loaded seasonal", () => {
@@ -841,7 +925,7 @@ describe("round trip: the kind asked for is the kind read back", () => {
     }
   });
 
-  it.each(ROW_FILLS)(
+  it.each(SEASONAL_FILLS)(
     "holds for a seasonal %s row named after the season, under any new name the rename accepts",
     (fill) => {
       const base = row({
@@ -1081,7 +1165,7 @@ describe("describeKindChange", () => {
         expect(kept).toContain(NIGHTLY_LINE);
         const proposed = describeKindChange(from, choice, CTX).lines;
         expect(proposed).not.toContain(NIGHTLY_LINE);
-        expect(proposed.join(" ")).toContain("How often it changes");
+        expect(proposed.join(" ")).toContain("Titles refresh every");
       });
 
       it("reads a new row's typed name the same way, since the Name box takes the proposal", () => {
@@ -1165,7 +1249,7 @@ describe("describeKindChange", () => {
         saved: loaded,
       });
       expect(change.title).toBe("Change this row to Seasonal (Watch it again)?");
-      expect(change.lines).toEqual(["Follows the calendar with all 3 seasons picked. Narrow them down under Which seasons."]);
+      expect(change.lines).toEqual(["Follows the calendar with all 3 seasons picked. Narrow them down under Seasons."]);
     });
 
     it("names the kind, and the fill for Seasonal", () => {
@@ -1183,7 +1267,7 @@ describe("describeKindChange", () => {
       const row2 = row({ ...named(BYW_NAME), max_seeds: 3, seed_window: 1, refresh_days: 1 });
       // Its 3 watches are the owner's own and stay; only the settings on screen change.
       expect(describeKindChange(row2, { kind: "picked", fill: "picked" }, CTX).lines).toEqual([
-        "Adds a setting this kind uses: How often it changes.",
+        "Adds a setting this kind uses: Titles refresh every.",
         "Hides settings this kind doesn't use: Take turns between their last watches and Name for someone who's new. What they're set to is kept, so switching back restores it.",
       ]);
     });
@@ -1195,7 +1279,7 @@ describe("describeKindChange", () => {
         "Clears the request tag “family”.",
         "A shared row never asks for missing titles.",
         "Adds a setting this kind uses: How many people must have watched a title.",
-        "Hides settings this kind doesn't use: How many recent watches to match, When someone hasn't watched enough, Sources, Already-watched titles, Only series they haven't started, Recent releases, How often it changes and Hold when they aren't watching. What they're set to is kept, so switching back restores it.",
+        "Hides settings this kind doesn't use: How many recent watches to match, When someone hasn't watched enough, Sources, Already-watched titles, Only series they haven't started, Recent releases, Length, year and rating limits, Titles refresh every and Hold when they aren't watching. What they're set to is kept, so switching back restores it.",
       ]);
     });
 
@@ -1229,7 +1313,7 @@ describe("describeKindChange", () => {
         "Leads the row with favourites they've already finished, then fills it with new picks.",
         "Stops taking turns between their last 3 watches.",
         "Turns off Only series they haven't started, which can't be combined with Watch it again.",
-        "Adds settings this kind uses: Skip titles finished recently, How often it changes and Hold when they aren't watching.",
+        "Adds settings this kind uses: Skip titles finished recently, Titles refresh every and Hold when they aren't watching.",
         // Its 0% cap is kept, not raised, so it is hidden like any other setting the kind doesn't use.
         "Hides a setting this kind doesn't use: Already-watched titles. What it's set to is kept, so switching back restores it.",
       ]);
@@ -1237,7 +1321,7 @@ describe("describeKindChange", () => {
 
     it("describes following and leaving the calendar", () => {
       expect(describeKindChange(FIXTURES.picked, { kind: "seasonal", fill: "picked" }, CTX).lines).toEqual([
-        "Follows the calendar with all 3 seasons picked. Narrow them down under Which seasons.",
+        "Follows the calendar with all 3 seasons picked. Narrow them down under Seasons.",
       ]);
       expect(describeKindChange(seasonal(FIXTURES.picked), { kind: "picked", fill: "picked" }, CTX).lines).toEqual([
         "Stops following the calendar, so the row can show all year.",
@@ -1436,5 +1520,33 @@ describe("Watch it again's new picks can take turns", () => {
     expect(visible(turns)).toEqual(
       [...expected("again", "both").filter((key) => key !== "refresh_days" && key !== "idle_hold_days"), "seed_window"].sort(),
     );
+  });
+});
+
+describe("withoutHiddenInstructions", () => {
+  const blankAdd = { mode: "add", text: "  " } as const;
+  const web = ["tmdb_similar", "llm_web"];
+
+  it.each([
+    ["inherited global sources without web search", row({ ai_instructions: blankAdd }), CTX],
+    ["a seasonal row", row({ ai_instructions: blankAdd, seasons: ["halloween"] }), { ...CTX, globalSources: web }],
+    [
+      "explicit sources without web search",
+      row({ ai_instructions: blankAdd, candidate_sources: ["tmdb_similar"] }),
+      { ...CTX, globalSources: web },
+    ],
+  ])("sends the default for blank text when the field is hidden: %s", (_name, input, ctx) => {
+    expect(visibleSettings(input, ctx).has("ai_instructions")).toBe(false);
+    expect(withoutHiddenInstructions(input, ctx).ai_instructions).toEqual({ mode: "default", text: "" });
+  });
+
+  it("leaves blank text alone while the field is shown, so its own error still works", () => {
+    const input = row({ ai_instructions: blankAdd, candidate_sources: web });
+    expect(withoutHiddenInstructions(input, CTX).ai_instructions).toEqual(blankAdd);
+  });
+
+  it("keeps real text on a hidden field", () => {
+    const input = row({ ai_instructions: { mode: "own", text: "Any decade." } });
+    expect(withoutHiddenInstructions(input, CTX)).toBe(input);
   });
 });

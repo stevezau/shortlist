@@ -29,9 +29,10 @@ from shortlist.engine.curator.base import (
     build_web_pick_prompt,
     build_web_query_for_title,
     build_web_rag_prompt,
-    parse_web_titles,
+    try_parse_web_titles,
 )
 from shortlist.engine.models import MAX_ROW_SIZE, Attribution, Candidate, MediaType, Seed
+from shortlist.engine.web_guidance import Guidance
 
 # One cached web search PER recent title (Exa bills per search): cache the RESULTS by (media, tmdb_id)
 # so a title many users watched is searched once server-wide.
@@ -54,6 +55,8 @@ _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the web-search LLM
 # point of the structured path: the curator picks from everything the searches found instead of from
 # a rationed slice of it.
 _WEB_PICK_CAP = 300
+# A normal reply is ~2,500 characters, so real failures are kept whole; a runaway one must not bloat the run trace.
+_UNPARSED_REPLY_CAP = 20_000
 # A search that came back nearly empty is cached BRIEFLY rather than for the usual fortnight. Exa's
 # `deep-lite` is measurably variable — three identical calls returned 36, 45 and 38 usable titles,
 # sharing only 45% — so a thin draw should not be served to every user for a whole week. But refusing to
@@ -84,6 +87,7 @@ _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
 # web searches are driven by `recent_count` instead — so this costs output tokens for the extra
 # titles, not extra requests.
 _LLM_WEB_K = MAX_ROW_SIZE
+LLM_WEB_K = _LLM_WEB_K  # public, for the server's prompt preview
 _TRACE_SEEDS_SAMPLE = 12  # per source, how many seeds' queries to record in the trace (display only)
 _TRACE_RETURNS_SAMPLE = 25  # per seed, how many returned titles to record in the trace (display only —
 # the UI shows the first few and lets you expand the rest, so this is the ceiling on what "expand" reveals)
@@ -166,6 +170,7 @@ def web_recommendations(
     *,
     cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
+    guidance: Guidance | None = None,
 ) -> list[dict]:
     """Titles to watch next from a web search, as ``[{title, year, media}]`` for TMDB resolution.
 
@@ -184,6 +189,7 @@ def web_recommendations(
     ``recent_count`` caps how many recent titles the external path searches (one cached search each).
     ``stats`` accumulates this source's token spend (and searches) for per-run AI accounting —
     read ``last_tokens`` right after each LLM call, before the next one overwrites it.
+    ``guidance`` is this row's AI instructions (#138), handed to whichever prompt the backend sends.
     """
     web_trace: dict = {"mode": mode}
     stats.trace["web"] = web_trace
@@ -191,13 +197,22 @@ def web_recommendations(
         if search is None:
             return []
         recs = _web_via_search(
-            curator, search, profile, seeds, k, stats, web_trace, cache=cache, recent_count=recent_count
+            curator,
+            search,
+            profile,
+            seeds,
+            k,
+            stats,
+            web_trace,
+            cache=cache,
+            recent_count=recent_count,
+            guidance=guidance,
         )
     elif not getattr(curator, "supports_native_web_search", False):
         return []
     else:
         _clear_last_tokens(curator)
-        recs = curator.recommend_web(profile, seeds, k)
+        recs = curator.recommend_web(profile, seeds, k, guidance=guidance)
         stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0), getattr(curator, "last_output_tokens", 0))
     recs = _drop_watched_proposals(recs, seeds, profile, web_trace)
     # Cap here, not before the filter: the keyless path hands back every extracted title so that
@@ -245,6 +260,13 @@ def _rec_label(rec: dict) -> str:
     return f"{rec.get('title', '?')}{f' ({year})' if year else ''} [{media}]"
 
 
+def _capped_reply(reply: str) -> str:
+    """An unparseable model reply as kept in the run trace: whole up to the cap, else its head plus its length."""
+    if len(reply) <= _UNPARSED_REPLY_CAP:
+        return reply
+    return f"{reply[:_UNPARSED_REPLY_CAP]}\n… [truncated; reply was {len(reply)} characters]"
+
+
 def _web_via_search(
     curator,
     search,
@@ -256,6 +278,7 @@ def _web_via_search(
     *,
     cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
+    guidance: Guidance | None = None,
 ) -> list[dict]:
     """External-search path: one CACHED web search per recent title, then the curator picks from the
     union. Caching by (media, tmdb_id) means a title many users watched is searched once server-wide —
@@ -353,9 +376,9 @@ def _web_via_search(
     # empty — a mode that declined to synthesise, a shape change — still has the snippets, so this
     # degrades to exactly the path that shipped before rather than to nothing.
     if candidates:
-        system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k)
+        system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k, guidance=guidance)
     elif results:
-        system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k)
+        system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k, guidance=guidance)
     else:
         return []
     # No model to ask: Exa's `outputSchema` already returned clean titles, so hand those straight to
@@ -368,7 +391,12 @@ def _web_via_search(
     if not getattr(curator, "can_complete", True):
         return _titles_as_proposals(candidates, web_trace, reason="no AI provider configured")
     _clear_last_tokens(curator)
-    titles = parse_web_titles(curator.complete(system, user), k)
+    reply = curator.complete(system, user)
+    parsed = try_parse_web_titles(reply, k)
+    titles = parsed or []
+    if parsed is None and web_trace is not None:
+        # The parse warning logs only a preview; the full reply is what shows where it went wrong.
+        web_trace["unparsed_reply"] = _capped_reply(reply)
     stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0), getattr(curator, "last_output_tokens", 0))
     # Same fallback for a model that answered with nothing usable — rate-limited, timed out, or
     # replying in prose. Degrading to Exa's own extraction beats losing the searches we just paid for.
@@ -808,16 +836,20 @@ def gather_candidates(
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
     stats: GatherStats | None = None,
     season_items: dict[MediaType, list[dict]] | None = None,
+    season_source: str = "season",
+    web_guidance: Guidance | None = None,
 ) -> list[Candidate]:
     """Pool candidates from every enabled source, deduped by (tmdb_id, media_type).
 
     ``season_items`` is a seasonal row's season, as the TMDB list items the server's libraries hold
     (`seasons.SeasonTitles.in_library`). When given, they join the pool as the ``season`` source whatever
-    ``sources`` says — they are what the row is made of.
+    ``sources`` says — they are what the row is made of. ``season_source`` names that source: an AI row's
+    theme (#138) is read the same way and reports as ``theme``.
 
     ``curator``/``profile`` are only needed by the ``llm_web`` source and ``trakt`` by the Trakt
     source; the TMDB sources ignore them. ``search``/``web_search_mode`` drive the ``llm_web``
     source's external-search backend (Exa) — ``search`` is None when no key is configured.
+    ``web_guidance`` is the row's AI instructions for that source's prompt (#138); None = built-in.
 
     Pass a ``stats`` (a :class:`GatherStats`) to have the AI token spend of the ``llm_web`` source
     (and Exa searches) accumulated into it, for per-run AI accounting.
@@ -1010,6 +1042,7 @@ def gather_candidates(
                 stats,
                 cache=web_search_cache,
                 recent_count=recent_count,
+                guidance=web_guidance,
             ):
                 media_type = MediaType.SHOW if rec.get("media") == "show" else MediaType.MOVIE
                 found = tmdb.search(rec["title"], media_type, year=rec.get("year"))
@@ -1034,7 +1067,7 @@ def gather_candidates(
                 continue
             # Counted once it has titles to offer: a season with nothing here is no working source, so with
             # every other source down the pool fails loudly below instead of passing as a quiet empty.
-            attempted.add("season")
+            attempted.add(season_source)
             try:
                 genres_for(media_type)
             except Exception as e:
@@ -1064,11 +1097,16 @@ def gather_candidates(
                 # of their Halloween row, measured on a real server.
                 already = (item["id"], media_type) in measured
                 fit = None if already else genre_coherence(theirs, item.get("genre_ids") or [])
-                add(item, media_type, "season", fit)
+                add(item, media_type, season_source, fit)
                 returned.append((int(item.get("id") or 0), item.get("title") or item.get("name") or ""))
-            _record_query("season", "the season's titles in your libraries", media_type.value, returned)
-        if season_skipped and not any("season" in candidate.sources for candidate in pool.values()):
-            failures["season"] = season_skipped
+            _record_query(
+                season_source,
+                f"the {season_source}'s titles in your libraries",
+                media_type.value,
+                returned,
+            )
+        if season_skipped and not any(season_source in candidate.sources for candidate in pool.values()):
+            failures[season_source] = season_skipped
 
     # One source down is a degradation the other sources absorb. EVERY source down is not: we know
     # nothing about this person tonight, and returning an empty pool would report a cheerful "ok"

@@ -43,7 +43,7 @@ def _sync_and_open_history(page: Page, app: ShortlistApp, user_slug: str = "sara
     page.get_by_role("link", name=re.compile(user_slug, re.IGNORECASE)).first.click()
     # "Watched", not "Watch History": the tab now holds what they did with SHORTLIST'S picks as well
     # as their whole Plex history, and the old label described only the second.
-    page.get_by_role("button", name="Watched", exact=True).click(timeout=20_000)
+    page.get_by_role("tab", name="Watched", exact=True).click(timeout=20_000)
     page.wait_for_timeout(1500)
 
 
@@ -102,8 +102,9 @@ class TestRatingsOnScreen:
 
 class TestRatingSettings:
     def test_the_switch_and_threshold_persist(self, page: Page, app: ShortlistApp):
-        page.goto("/settings?tab=recommendations")
+        page.goto("/settings#recommendations")
         page.wait_for_timeout(2000)
+        page.get_by_text("More recommendation controls", exact=True).click()
         threshold = page.get_by_label(re.compile("didn.t like it", re.IGNORECASE))
         expect(threshold).to_be_visible()
 
@@ -112,14 +113,16 @@ class TestRatingSettings:
         page.wait_for_timeout(2000)
         page.reload()
         page.wait_for_timeout(2000)
+        page.get_by_text("More recommendation controls", exact=True).click()
 
         expect(page.get_by_label(re.compile("didn.t like it", re.IGNORECASE))).to_have_value("3")
 
     def test_switching_it_off_hides_the_threshold(self, page: Page, app: ShortlistApp):
         """The threshold is meaningless with the feature off, so it must not sit there inviting an
         edit that changes nothing."""
-        page.goto("/settings?tab=recommendations")
+        page.goto("/settings#recommendations")
         page.wait_for_timeout(2000)
+        page.get_by_text("More recommendation controls", exact=True).click()
 
         page.get_by_label("Respect Plex ratings").click()
         page.wait_for_timeout(1000)

@@ -11,6 +11,8 @@ retried write can double a Radarr add or a share-filter change.
 
 from __future__ import annotations
 
+import types
+
 import httpx
 import pytest
 import requests
@@ -60,6 +62,63 @@ class TestAnIdempotentPostRetriesLikeARead:
         route = respx.post(URL).mock(return_value=httpx.Response(401))
         assert http_retry.idempotent_post(URL, json={}).status_code == 401
         assert route.call_count == 1
+
+
+class TestAFailedRequestSaysHowLongItTookAndWhichAttempt:
+    """114 `POST api.exa.ai failed (ReadTimeout)` warnings carried no elapsed time or attempt number,
+    and the final failure was not logged at all, so a request abandoned at the 90s ceiling could not be
+    told from one that failed fast."""
+
+    @staticmethod
+    def _capture():
+        from loguru import logger
+
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="WARNING", format="{message}")
+        return lines, sink
+
+    @respx.mock
+    def test_every_failed_attempt_logs_its_elapsed_time_and_attempt_number(self, monkeypatch):
+        from loguru import logger
+
+        sleeps: list[float] = []
+        ticks = iter([0.0, 90.0, 100.0, 190.0])  # start and failure of each attempt: 90s apiece
+        fake_time = types.SimpleNamespace(sleep=sleeps.append, monotonic=lambda: next(ticks))
+        monkeypatch.setattr(http_retry, "time", fake_time)
+        backoff_calls: list[int] = []
+        monkeypatch.setattr(http_retry, "_backoff", lambda attempt, base, cap: backoff_calls.append(attempt) or 2.5)
+        route = respx.post(URL).mock(side_effect=httpx.ReadTimeout("too slow"))
+        lines, sink = self._capture()
+        try:
+            with pytest.raises(httpx.ReadTimeout, match="too slow"):
+                http_retry.idempotent_post(URL, json={"query": "secret-body"}, attempts=2)
+        finally:
+            logger.remove(sink)
+
+        assert route.call_count == 2
+        assert backoff_calls == [1]
+        assert sleeps == [2.5], "one backoff between two attempts, none after the last"
+        assert len(lines) == 2
+        assert lines[0].startswith("POST example.test failed (ReadTimeout)")
+        assert "90.0s" in lines[0] and "attempt 1/2" in lines[0]
+        assert "retry 1/2 in 2.5s" in lines[0], "the existing retry wording is kept"
+        assert lines[1].startswith("POST example.test failed (ReadTimeout)")
+        assert "90.0s" in lines[1] and "attempt 2/2" in lines[1]
+        assert all("secret-body" not in line and "/search" not in line for line in lines)
+
+    @respx.mock
+    def test_a_failure_followed_by_success_logs_exactly_one_warning(self, monkeypatch):
+        from loguru import logger
+
+        _no_backoff(monkeypatch)
+        respx.post(URL).mock(side_effect=[httpx.ReadTimeout("too slow"), httpx.Response(200, json={})])
+        lines, sink = self._capture()
+        try:
+            assert http_retry.idempotent_post(URL, json={}, attempts=2).status_code == 200
+        finally:
+            logger.remove(sink)
+        assert len(lines) == 1
+        assert "attempt 1/2" in lines[0] and "ReadTimeout" in lines[0]
 
 
 class TestMutationsStayConservative:

@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -23,6 +23,7 @@ import shortlist
 from shortlist.logging_config import configure_logging, normalize_level
 from shortlist.server import auth, whats_new
 from shortlist.server.api import (
+    ai,
     collections,
     events,
     notifications,
@@ -32,9 +33,11 @@ from shortlist.server.api import (
     requests,
     runs,
     schedule,
+    seasons,
     setup,
     support,
     system,
+    themes,
     user_rows,
     users,
     watching_account,
@@ -47,7 +50,7 @@ from shortlist.server.scheduler import build_scheduler
 from shortlist.server.services import backup as backups
 from shortlist.server.services.run_service import RunService, missed_by_restart
 from shortlist.server.services.secrets import SecretBox
-from shortlist.server.services.sse import EventBus
+from shortlist.server.services.sse import EventBus, close_on_stop_signals
 from shortlist.server.services.watch_stream import WatchStream
 from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
 
@@ -358,10 +361,13 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             logger.warning(
                 "SHORTLIST_DRY_RUN={!r} is not a recognized value (use 1/true/yes/on) — safe mode is OFF", bad
             )
+        # A stop signal ends the open event streams, which uvicorn otherwise waits on before shutting down.
+        close_on_stop_signals(bus, asyncio.get_running_loop())
         logger.info("shortlist server up (config: {})", config_dir)
         try:
             yield
         finally:
+            bus.close()
             scheduler.shutdown(wait=False)
             watch_stream.stop()
             # Awaited, not just cancelled: `run()` closes every in-flight session on its way out, and
@@ -373,6 +379,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 stream_task.cancel()
             # Close the pool, so the WAL is checkpointed now rather than whenever the interpreter gets to it.
             engine.dispose()
+            logger.info("shutdown complete: scheduler and playback listener stopped, database closed")
 
     # The interactive API docs + schema disclose the whole API surface unauthenticated. They're off
     # by default (nothing sensitive, but no reason to advertise); set SHORTLIST_ENABLE_DOCS=1 to
@@ -400,12 +407,15 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
     app.include_router(auth.router, prefix="/api")
     for module in (
         setup,
+        ai,
         users,
         user_rows,
         picks,
         privacy,
         runs,
         collections,
+        seasons,
+        themes,
         requests,
         settings_api,
         system,
@@ -460,6 +470,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
 
         @app.get("/{path:path}", include_in_schema=False)
         async def spa(path: str):  # SPA fallback: every non-API path serves the app shell
+            if path == "api" or path.startswith("api/"):
+                # Not a page: an endpoint that does not exist. The shell here answered a removed or misspelt
+                # endpoint with HTML and a 200, so a JSON client parsed a web page and "this endpoint is gone"
+                # could only be checked on a server whose SPA had not been built.
+                raise HTTPException(status_code=404)
             if path:
                 # Containment guard: `path` is caller-controlled and uvicorn does NOT collapse
                 # `..`/`%2e%2e`, so a crafted `../../config/secret.key` would otherwise escape the

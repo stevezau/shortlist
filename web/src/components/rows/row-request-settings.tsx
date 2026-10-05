@@ -104,7 +104,7 @@ function RequestField({
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-3 border-t pt-4">
+    <div className="space-y-3 border-t pt-4 first:border-t-0 first:pt-0">
       {labelFor ? (
         <Label htmlFor={labelFor}>{label}</Label>
       ) : (

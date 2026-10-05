@@ -7,7 +7,8 @@ import {
   type RowKindChoice,
 } from "@/lib/row-kind-meta";
 import { findRowTemplate } from "@/lib/row-templates";
-import type { CollectionInput } from "@/lib/types";
+import { withoutWebSearchWhenSeasonal } from "@/lib/seasonal-sources";
+import type { CollectionInput, RowSources } from "@/lib/types";
 
 /**
  * Row kinds: what a row IS, worked out from the fields it already has (design:
@@ -19,7 +20,15 @@ import type { CollectionInput } from "@/lib/types";
  */
 
 export type { KindMeta, RowFill, RowKind, RowKindChoice } from "@/lib/row-kind-meta";
-export { FILL_META, KIND_GROUP, KIND_META, ROW_FILLS, ROW_KINDS } from "@/lib/row-kind-meta";
+export {
+  AI_KIND_META,
+  FILL_META,
+  KIND_GROUP,
+  KIND_META,
+  ROW_FILLS,
+  ROW_KINDS,
+  SEASONAL_FILLS,
+} from "@/lib/row-kind-meta";
 
 /**
  * The server-wide values a row's kind depends on. Each function takes only the part it reads.
@@ -33,8 +42,11 @@ export interface RowKindContext {
   defaultRowName: string;
   /** `candidates.sources`: what a row with no sources of its own gathers from. */
   globalSources: readonly string[];
-  /** Every season slug, in catalogue order — what a row turned Seasonal starts with. */
+  /** Every season slug, in catalogue order: the built-ins and the owner's own (#137). */
   seasonCatalogue: readonly string[];
+  /** The built-in seasons' slugs — what a row turned Seasonal starts with. A season the owner made is
+   *  ticked row by row, never by default (#137). */
+  builtinSeasons: readonly string[];
   /** Settings › Danger zone's `paused_all`: no run or Plex pass happens until it is lifted. */
   pausedAll?: boolean;
 }
@@ -91,7 +103,18 @@ export function takeTurnsEnabled(input: CollectionInput, ctx: Pick<RowKindContex
   return seeds >= 1 && seeds <= 2;
 }
 
+/**
+ * Whether the row follows an AI-written theme (#138). Kept apart from `rowKindOf` on purpose: an AI row
+ * is a way of FILLING a row with its own editor and its own limits, not one more fill a row can be
+ * switched to, so the kind picker never offers it and nothing here changes how the other kinds read.
+ */
+export function isAiRow(input: Pick<CollectionInput, "theme_id">): boolean {
+  return input.theme_id !== null;
+}
+
 function fillOf(input: CollectionInput, ctx: KindGlobals): RowFill {
+  // First: a requests row is per person by validation, so the flag alone decides.
+  if (input.requests_row) return "requests";
   if (input.build === "shared") return "popular";
   if (input.rewatch) return "again";
   // The name before the count: a {top_seed} row blending 3 watches (row 2) is still "Because you
@@ -113,6 +136,21 @@ export const SEED_NAME_IN_SETTINGS =
 /** Where the default row's name is changed: Settings › Row defaults. */
 export const DEFAULT_ROW_NAME_SETTINGS = "/settings#defaults";
 
+/** Where the Overseerr, Radarr and Sonarr connections are made: Settings › Connections. */
+export const CONNECTIONS_SETTINGS = "/settings#connections";
+
+/** The one sentence, in the gallery and the editor, for a server with no request source at all. */
+export const NO_REQUEST_SOURCE =
+  "Needs a way to know who asked for what: an Overseerr or Jellyseerr connection, or Radarr/Sonarr with request tags.";
+
+/**
+ * Whether nothing on the server can say who asked for what, from the setup check's own states —
+ * never from the wording of its `problems`, which are for people to read.
+ */
+export function noRequestSource(sources: Pick<RowSources, "overseerr" | "radarr" | "sonarr">): boolean {
+  return sources.overseerr === "off" && sources.radarr === "off" && sources.sonarr === "off";
+}
+
 /** Why a kind can't be picked right now, in the picker's words; null when it can. */
 export function kindDisabledReason(
   kind: RowKind,
@@ -127,9 +165,9 @@ export function kindDisabledReason(
   }
   // The default row's name lives in Settings, so a switch made here can't take a {top_seed} out of
   // it: only the kinds that can carry one are left (`renameFor`). Picked for You would read straight
-  // back as Because you watched, and a shared row has no watch to fill it with; Watch it again is
-  // named after a watch by the engine too (`rows._names_a_seed`).
-  if (ctx.isDefault && (kind === "picked" || kind === "popular") && namesASeed(input, ctx)) {
+  // back as Because you watched, and a shared row or a requests row has no watch to fill it with;
+  // Watch it again is named after a watch by the engine too (`rows._names_a_seed`).
+  if (ctx.isDefault && REFUSES_SEED.has(kind) && namesASeed(input, ctx)) {
     return SEED_NAME_IN_SETTINGS;
   }
   return null;
@@ -139,6 +177,9 @@ export function kindDisabledReason(
 export function isNarrowGlobal(ctx: Pick<RowKindContext, "globalMaxSeeds">): boolean {
   return ctx.globalMaxSeeds === 1 || ctx.globalMaxSeeds === 2;
 }
+
+/** The fills whose rows have no watch to fill a {top_seed} name with (`renameFor`). */
+const REFUSES_SEED: ReadonlySet<RowKind> = new Set(["picked", "popular", "requests"]);
 
 function targetFill(choice: RowKindChoice): RowFill {
   return choice.kind === "seasonal" ? choice.fill : choice.kind;
@@ -151,6 +192,7 @@ function targetFill(choice: RowKindChoice): RowFill {
 export const KIND_FIELDS = [
   "build",
   "rewatch",
+  "requests_row",
   "max_seeds",
   "seed_window",
   "unstarted_only",
@@ -230,20 +272,25 @@ function fillPatch(input: CollectionInput, fill: RowFill, ctx: RowKindContext): 
       return {
         build: "per_person",
         rewatch: false,
+        requests_row: false,
         seed_window: 1,
         // Only a count of 1 or 2 reads back as Because you watched, so an owner's 3 or more stays.
         // Inheriting instead is only safe when the global itself is 3 or more.
         ...(takeTurnsEnabled(input, ctx) ? { max_seeds: isNarrowGlobal(ctx) ? 3 : null } : {}),
       };
     case "byw":
-      return { build: "per_person", rewatch: false, max_seeds: namedRowSeeds(input.media) };
+      return { build: "per_person", rewatch: false, requests_row: false, max_seeds: namedRowSeeds(input.media) };
     case "again":
       // The API refuses rewatch with unstarted_only. The already-watched cap is left alone: the kind
       // hides it and the engine ignores it on a rewatch row, so it only matters once the row leaves.
-      return { build: "per_person", rewatch: true, unstarted_only: false, seed_window: 1 };
+      return { build: "per_person", rewatch: true, requests_row: false, unstarted_only: false, seed_window: 1 };
+    case "requests":
+      // The API refuses a requests row that is shared, a rewatch row, or seasonal (`_validate_requests_row`).
+      // Its titles are what they asked for, so there is no series filter and no watch to take turns on.
+      return { build: "per_person", rewatch: false, requests_row: true, unstarted_only: false, seed_window: 1 };
     case "popular":
       // Shared rows never request, so a request tag on one is inert.
-      return { build: "shared", request_tag: "" };
+      return { build: "shared", requests_row: false, request_tag: "" };
   }
 }
 
@@ -270,7 +317,7 @@ export function applyRowKind(input: CollectionInput, choice: RowKindChoice, ctx:
   return {
     ...input,
     ...(fill !== current.fill ? fillPatch(input, fill, ctx) : {}),
-    ...(toSeasonal && !wasSeasonal ? { seasons: [...ctx.seasonCatalogue] } : {}),
+    ...(toSeasonal && !wasSeasonal ? { seasons: [...ctx.builtinSeasons] } : {}),
     ...(!toSeasonal && wasSeasonal ? { seasons: [] } : {}),
   };
 }
@@ -295,6 +342,9 @@ export const ROW_SETTING_KEYS = [
   "audience",
   "min_watchers",
   "seasons",
+  "requests_window_days",
+  "requests_sources",
+  "requests_tag_pattern",
   "libraries",
   "size",
   "pick_order",
@@ -308,9 +358,11 @@ export const ROW_SETTING_KEYS = [
   "rewatch_cooldown_days",
   "candidate_sources",
   "recent_count",
+  "ai_instructions",
   "watched_pct",
   "unstarted_only",
   "recency",
+  "limits",
   "schedule",
   "refresh_days",
   "idle_hold_days",
@@ -333,7 +385,10 @@ export const SETTING_LABELS: Readonly<Record<RowSettingKey, string>> = {
   poster: "Poster",
   audience: "Who gets it",
   min_watchers: "How many people must have watched a title",
-  seasons: "Which seasons",
+  seasons: "Seasons",
+  requests_window_days: "Show titles that landed in the last",
+  requests_sources: "Where requests are read from",
+  requests_tag_pattern: "Use my own tags",
   libraries: "Libraries",
   size: "Row size",
   pick_order: "Pick order",
@@ -345,11 +400,13 @@ export const SETTING_LABELS: Readonly<Record<RowSettingKey, string>> = {
   rewatch_cooldown_days: "Skip titles finished recently",
   candidate_sources: "Sources",
   recent_count: "Recent watches for AI web search",
+  ai_instructions: "AI instructions",
   watched_pct: "Already-watched titles",
   unstarted_only: "Only series they haven't started",
   recency: "Recent releases",
-  schedule: "Cadence",
-  refresh_days: "How often it changes",
+  limits: "Length, year and rating limits",
+  schedule: "Runs on",
+  refresh_days: "Titles refresh every",
   idle_hold_days: "Hold when they aren't watching",
   placement: "Where it shows",
   hub_anchor: "Position in the Recommended shelf",
@@ -395,12 +452,28 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   candidate_sources: "candidate_sources",
   watched_pct: "watched_pct",
   rewatch_cooldown_days: "rewatch_cooldown_days",
+  requests_row: "kind",
+  requests_window_days: "requests_window_days",
+  requests_tag_pattern: "requests_tag_pattern",
   unstarted_only: "unstarted_only",
   refresh_days: "refresh_days",
   idle_hold_days: "idle_hold_days",
   recency: "recency",
   recent_count: "recent_count",
+  ai_instructions: "ai_instructions",
+  theme_id: "kind", // an AI row's theme is part of what kind of row it is
+  // Explore and the over-time controls exist only on an AI row, which has its own section for them.
+  theme_mode: "kind",
+  explore_brief: "kind",
+  theme_days: "kind",
+  refresh_share: "kind",
+  repeat_cooldown_days: "kind",
+  avoid_rows: "kind",
   max_seeds: "max_seeds",
+  max_runtime: "limits",
+  min_year: "limits",
+  max_year: "limits",
+  min_rating: "limits",
   cold_start: "cold_start",
   seed_window: "seed_window",
   pick_order: "pick_order",
@@ -470,9 +543,11 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "cold_start",
     "candidate_sources",
     "recent_count",
+    "ai_instructions",
     "watched_pct",
     "unstarted_only",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
@@ -484,9 +559,11 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "fallback_name",
     "candidate_sources",
     "recent_count",
+    "ai_instructions",
     "watched_pct",
     "unstarted_only",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
@@ -499,19 +576,37 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "max_seeds",
     "candidate_sources",
     "recent_count",
+    "ai_instructions",
     "recency",
+    "limits",
     "refresh_days",
     "idle_hold_days",
     "requests",
   ],
+  // Built from the request ledger, not from watches: no seeds, sources, cap or cadence apply.
+  requests: ["requests_window_days", "requests_sources", "requests_tag_pattern"],
   popular: ["min_watchers"],
 };
+
+/**
+ * What an AI row shows beside the settings every row has. Its titles come from its theme, so there are
+ * no sources, watch counts or seasons to choose, and its limits are the theme's own rules. It is library-only:
+ * a title the server lacks is left out, never requested, so there are no request settings either.
+ */
+export function aiRowSettings(): ReadonlySet<RowSettingKey> {
+  return new Set<RowSettingKey>([
+    ...ALWAYS_VISIBLE,
+    "watched_pct",
+    "recency",
+    "refresh_days",
+    "idle_hold_days",
+  ]);
+}
 
 /** The sources the engine gathers from for this row (`rows.effective_row_sources`). */
 function rowSources(input: CollectionInput, ctx: Pick<RowKindContext, "globalSources">): readonly string[] {
   const sources = input.candidate_sources.length > 0 ? input.candidate_sources : ctx.globalSources;
-  // Web search asks about one watched title at a time, which is not seasonal, so a seasonal row drops it.
-  return input.seasons.length > 0 ? sources.filter((source) => source !== "llm_web") : sources;
+  return withoutWebSearchWhenSeasonal(sources, input.seasons);
 }
 
 /**
@@ -524,19 +619,23 @@ export function visibleSettings(
   input: CollectionInput,
   ctx: Pick<RowKindContext, "isDefault" | "globalMaxSeeds" | "defaultRowName" | "globalSources">,
 ): ReadonlySet<RowSettingKey> {
+  if (isAiRow(input)) return aiRowSettings();
   const { kind, fill } = rowKindOf(input, ctx);
   const shown = new Set<RowSettingKey>([...ALWAYS_VISIBLE, ...FILL_SETTINGS[fill]]);
 
   // The default row's size is the global `row.size`.
   if (ctx.isDefault) shown.delete("size");
   if (kind === "seasonal") shown.add("seasons");
-  if (input.pick_order === "rating") shown.add("rated_by");
+  // A requests row is newest arrival first, always: the engine never reads its pick order.
+  if (fill === "requests") shown.delete("pick_order");
+  if (input.pick_order === "rating" && shown.has("pick_order")) shown.add("rated_by");
   // The engine rotates the fill-up's seed list like any other (`history.py`), so Watch it again
   // offers rotation while its new picks match 1 or 2 watches.
   if (fill === "again" && takeTurnsEnabled(input, ctx)) shown.add("seed_window");
   // The engine renders the fallback whenever a {top_seed} name has no watch to fill it, whatever the kind.
   if (namesASeed(input, ctx)) shown.add("fallback_name");
   if (!rowSources(input, ctx).includes("llm_web")) shown.delete("recent_count");
+  if (!rowSources(input, ctx).includes("llm_web")) shown.delete("ai_instructions");
   // The API refuses it on a movies-only row.
   if (input.media === "movie") shown.delete("unstarted_only");
   // `effective_refresh_days` forces nightly and `effective_idle_hold_days` forces no hold here.
@@ -544,6 +643,20 @@ export function visibleSettings(
   if (input.seed_window > 1) shown.delete("idle_hold_days");
 
   return shown;
+}
+
+/**
+ * The row as it should be saved: blank AI instructions on a row that hides that field become the default,
+ * since the server refuses a mode with no words and the owner has no field to write them in. Text the owner
+ * did write is kept, so choosing web search again finds it.
+ */
+export function withoutHiddenInstructions(
+  input: CollectionInput,
+  ctx: Pick<RowKindContext, "isDefault" | "globalMaxSeeds" | "defaultRowName" | "globalSources">,
+): CollectionInput {
+  const { mode, text } = input.ai_instructions;
+  if (mode === "default" || text.trim() !== "" || visibleSettings(input, ctx).has("ai_instructions")) return input;
+  return { ...input, ai_instructions: { mode: "default", text: "" } };
 }
 
 /**
@@ -558,7 +671,8 @@ export function hiddenButRead(
   input: CollectionInput,
   ctx: Pick<RowKindContext, "isDefault" | "globalMaxSeeds" | "defaultRowName" | "globalSources">,
 ): RowSettingKey[] {
-  if (input.build === "shared" || input.seed_window <= 1) return [];
+  // A requests row is built from the ledger, so it has no seed list to rotate either.
+  if (input.build === "shared" || input.requests_row || input.seed_window <= 1) return [];
   const usable = visibleSettings(input, ctx).has("seed_window") && takeTurnsEnabled(input, ctx);
   return usable ? [] : ["seed_window"];
 }
@@ -682,6 +796,7 @@ const FILL_TEMPLATE_ID: Readonly<Record<RowFill, string>> = {
   picked: "picked-for-you",
   byw: "because-you-watched",
   again: "seen-it-already",
+  requests: "your-requests",
   popular: "popular-here",
 };
 
@@ -745,7 +860,7 @@ function changeLines(
       count === 0
         ? "Stops following the calendar, so the row can show all year."
         : before.seasons.length === 0
-          ? `Follows the calendar with ${all} picked. Narrow them down under Which seasons.`
+          ? `Follows the calendar with ${all} picked. Narrow them down under Seasons.`
           : `Follows ${all} instead of the ${before.seasons.length} picked now.`,
     );
   }
@@ -761,6 +876,13 @@ function changeLines(
       after.rewatch
         ? "Leads the row with favourites they've already finished, then fills it with new picks."
         : "Stops leading the row with titles they've already finished.",
+    );
+  }
+  if (changed("requests_row")) {
+    lines.push(
+      after.requests_row
+        ? "Fills the row with what they asked for that's now on Plex, newest first, instead of recommendations."
+        : "Stops showing what they asked for, and fills the row with recommendations again.",
     );
   }
   if (changed("max_seeds")) lines.push(maxSeedsLine(after, fill, ctx));
@@ -817,7 +939,7 @@ function renameFor(
   // `delivery.render_row_name` renders no name and the row isn't built. The API accepts it all the
   // same. Watch it again keeps it: the engine names that row after a watch too (`rows._names_a_seed`
   // ignores rewatch), and rebuilds it nightly.
-  const refusesSeed = fill === "picked" || fill === "popular";
+  const refusesSeed = REFUSES_SEED.has(fill);
   const dropSeed = fill !== currentFill && seedName && refusesSeed;
   // The API refuses {season} or {season_emoji} on a row that follows no season.
   const dropSeason = after.seasons.length === 0 && usesSeason(effectiveRowName(before, ctx));

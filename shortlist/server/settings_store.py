@@ -135,6 +135,9 @@ DEFAULTS: dict[str, Any] = {
     # was the default and it was removed in 1.3 — the name described nothing, and owners could not
     # tell what it was doing. Migration 0063 pins every existing install to what it was really using.
     "llm_web.search_provider": "native",
+    # Owner's own guidance for AI web search (#138). It REPLACES the built-in guidance on every row without
+    # its own instructions, and rows set to "add" append theirs after it. "" = the built-in wording.
+    "llm_web.instructions": "",
     # Self-hosted SearXNG for the llm_web source. Its JSON API must be enabled — a stock instance
     # ships `search.formats: [html]` and answers `format=json` with a 403. Username/password are for
     # a reverse proxy in front of it (SearXNG itself has no auth); the password is a SECRET_KEY.

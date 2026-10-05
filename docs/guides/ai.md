@@ -10,7 +10,7 @@ nav_order: 5
 **AI is off by default.** The provider is set to "None" out of the box and the AI web-search source
 is off, so Shortlist works fully with no AI at all.
 
-AI has exactly one job: the **AI web-search source**, which finds acclaimed "what to watch next"
+AI has two jobs: the **AI web-search source** and, if you create one, an [AI row](#an-ai-row) (written once, not nightly). For ordinary rows it has one job, the **AI web-search source**, which finds acclaimed "what to watch next"
 titles that the TMDB lists miss. Everything else is done in code, with no AI and no per-token cost.
 That includes gathering candidates, ranking them, and writing the "why" under each pick.
 
@@ -47,7 +47,13 @@ works with **any** provider, including a local Ollama, llama.cpp or LM Studio se
 access of its own. A local model that could never search the web still gets to recommend from current
 web results.
 
-You choose the search backend in **Settings → Connections → Web search**, which is also where
+**Telling it what to look for.** You can add your own guidance for the AI, such as "prefer
+award-winning dramas" or "no horror". Set a server-wide default in **Settings → Defaults → Title
+sources**, or write it per row in the row editor under **What goes in**. Shortlist still checks every
+suggestion against your library and what each person may see. The
+[full details](rows/what-goes-in.md#ai-instructions) cover the modes and what each backend does with it.
+
+You choose the search backend in **Settings → Connections → AI & Web search**, which is also where
 that backend's credentials live:
 
 | Backend                             | Works with                                 | Trade-off                                              |
@@ -117,6 +123,100 @@ least one engine answers. If none do, **Test** reports which engines failed rath
 It is entirely optional. Leave it empty and everything still works. You are just limited to your
 provider's own search, or to no web search at all.
 
+### An AI row
+
+An **AI row** is a row you describe in your own words. It is the one place AI writes a list for you,
+and it does so once, not every night.
+
+**To make one:**
+
+1. In **Add a row**, choose the AI filter, then the **Describe a row** template.
+2. Under **What should this row be?**, write what you want, for example "slow-burn heist films". It is used
+   once, to write the list, and is not shown on Plex. Pick movies, shows or both.
+3. Click **Write the list**. The AI proposes a theme: a name, rules, TMDB tags and genres, and about 60
+   named titles with a one-line reason each.
+4. Read the result. Shortlist shows how many titles it found on TMDB, how many are in your library,
+   and how many survive the row's limits. Click **Adjust the list** and say what to change; your own
+   description stays as you wrote it, and you see what was added and removed (titles, tags and genres)
+   before you keep anything. Tags and genres you added by hand stay unless the AI says to drop them.
+5. Click **Try it** and choose a person. It runs the row for them without writing anything to Plex.
+   You can try a row that is switched off.
+6. Save. An AI row goes live like any other row. If you would rather look it over first, switch it off
+   before you save.
+
+**Every night after that uses no AI.** Each person's row is filled from the saved theme (its tags,
+genres and named titles), kept to titles in your library they have not watched, and ranked by their
+own taste. Two people get different rows from the same theme. An AI row only ever picks from what you
+already have: a title the AI named that your server lacks is left out and never requested, so the row
+has no request settings.
+
+**An AI row only fills the kinds of title its AI named.** If the list is films only, the row stays out of
+your TV libraries even when the row covers both. If **Adjust the list**, or an Explore theme, drops a kind, the
+row's existing collection in those libraries is removed on its next run.
+
+**A list is topped up once.** When someone has watched most of the titles the AI named, their row starts
+filling with tag and genre matches. The nightly **Pick new row themes** job then asks the AI once for about 40
+more titles and adds them to the list, keeping everything already there. It never does this twice for the
+same theme, a paused row or a missing provider is skipped, and nothing else about a night uses AI.
+
+**Controls in the editor:**
+
+- **Advanced: how the AI is instructed** (closed until you open it) shows what the AI is told. You can
+  edit the guidance. The mechanics that keep the answer machine-readable are locked.
+- **Usage** shows the tokens each row has spent building and changing its theme.
+- **Pause AI for this row** stops the row spending tokens. It keeps its theme and keeps filling from
+  it every night. Resume it when you want to edit the theme again.
+
+**Needs an AI provider** (Settings → Connections). With none, the AI half of the editor is hidden and
+you can still edit the tags, genres and limits by hand. AI rows are per-person rows only.
+
+### Explore: a new theme every few days
+
+By default an AI row keeps the one theme you built. Switch it to **Pick a new theme every few days** (Row →
+**What goes in**, under the list) and each person's row gets a fresh theme on a schedule instead.
+
+- **Per person.** Every person gets their own theme, chosen from what they watch. AI rows are never shared
+  rows, so two people on the same row can be on different themes.
+- **Days each theme lasts.** 7 unless you change it (1 to 90).
+- **What kinds of lists should it pick?** Optional. Leave it blank and the AI chooses from each person's watching; write
+  "cosy mysteries" and every theme leans that way.
+- **Cost.** One call to your AI provider per person per change, counted against the row's usage. Nothing
+  else in a night uses AI.
+- **Up next.** The next theme is written a day before it starts, so you can look at it. On each person's
+  card, **Change it** lets you say what to change (you see what would be added and removed before it is
+  saved) and **Pick another** asks the AI for a different one. Both need AI not to be paused. Neither
+  touches Plex: the row picks up the new theme the next time it builds.
+- **Recent themes.** The last six themes for each person are listed, and Shortlist won't pick those again
+  soon.
+
+A background job, **Pick new row themes**, does the switching and writing. It runs once a day by default;
+change or switch off its schedule on the **Jobs** page (setting `themes.rotate_cron`). If the AI is
+paused or unreachable, the person keeps their current theme and the problem shows in the change log.
+
+Nothing changes when you upgrade: every AI row starts on **Keep the same theme**.
+
+### How a row changes over time
+
+These controls are on AI rows only. Each starts at today's behaviour.
+
+- **How much changes each time.** On each refresh, how much of the row is swapped for new titles: *A
+  little (about a fifth)*, *A third (usual)*, *Half*, or *Almost everything*. Default: a third.
+- **Don't repeat a title for N days.** Off by default. When on (1 to 365 days, 30 to start), a title that
+  has been in the person's row stays out for that long. The days count from the first time the title was
+  shown, not the last. It never removes a title the row is keeping tonight; it only stops it coming back
+  as a new pick.
+- **Keep out titles already in.** Tick other per-person rows to keep their titles out of this one for the
+  same person. None by default. It depends on build order: a row built earlier in the same run is kept out
+  exactly; a row built later is kept out by what it showed on its previous run.
+
+**My row stopped changing.** The controls can use up the pool: a long no-repeat period or several keep-out
+rows can leave too few titles. When that would leave the row with nothing new to pick, Shortlist ignores
+the controls for that night and says so in the run, so titles can repeat that night. A small pool also
+makes the row shorter than its size, because there are not enough titles to fill it. Shorten the days,
+untick a row, or widen the theme's limits.
+
+A theme with only a few named titles keeps rotating among them unless the no-repeat control is on.
+
 ### If you don't want to use AI
 
 Leave the AI provider on **None** in Settings → Connections, which is the default, and the AI
@@ -137,7 +237,7 @@ cheapest-to-priciest levers:
    (Rows → Edit). Keep AI web search only on the rows that benefit and let the rest run on the free
    TMDB and Trakt sources.
 2. **Search fewer recent watches.** The source runs one web search per person's recent watch, so
-   lowering how many recent watches it looks at (Settings → Finding titles) cuts searches. Results are
+   lowering how many recent watches it looks at (Settings → Defaults → Refresh & variety) cuts searches. Results are
    cached for 7 days and shared across users, so a popular title is searched once server-wide.
 3. **Use a small, cheap model.** A fast or mini model such as Claude Haiku, GPT-mini or Gemini Flash
    is plenty. You don't need a flagship model to read a few search results.

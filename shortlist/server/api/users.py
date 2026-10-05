@@ -7,12 +7,12 @@ nightly job is its other caller, so it is not this layer's to own.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import String, cast, func
+from sqlalchemy import String, case, cast, func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.http_retry import redact
@@ -91,6 +91,8 @@ class UserPatch(BaseModel):
     # that excludes it) is unaffected.
     nickname: str | None = Field(default=None, max_length=255)
     request_tag: str | None = Field(default=None, max_length=64)  # tag added to titles requested for this user
+    # The tag the *arrs put on what this person asked for (issue #127); wins over a row's tag pattern.
+    requested_by_tag: str | None = Field(default=None, max_length=64)
     prefs: UserPrefs | None = None
 
 
@@ -328,59 +330,90 @@ def _unhidden_row_counts(session) -> dict[str, int]:
     return {name: len(keys) for name, keys in exposed.items()}
 
 
+def _pick_watching(session: Session) -> dict[int, tuple[int, datetime | None]]:
+    """Per user with any pick: distinct titles watched in the last 30 days, and the latest watch ever.
+
+    One grouped query for everyone. DISTINCT title, not pick row: a title recommended over several
+    runs is one title, so counting rows would skew the figure. `||` via .concat(), NOT func.concat:
+    the latter compiles to SQLite's concat() scalar, which only exists in SQLite >= 3.44 — the
+    runtime image ships 3.40, so it would 500.
+    """
+    title = cast(PickRow.tmdb_id, String).concat("-").concat(PickRow.media_type)
+    # `watched_at` is stored as UTC; SQLite drops the offset on write, so compare against UTC.
+    cutoff = datetime.now(UTC) - timedelta(days=30)
+    rows = (
+        session.query(
+            PickRow.user_id,
+            func.count(func.distinct(case((PickRow.watched_at >= cutoff, title)))),
+            func.max(PickRow.watched_at),
+        )
+        .group_by(PickRow.user_id)
+        .all()
+    )
+    return {user_id: (count, last) for user_id, count, last in rows}
+
+
+def _latest_run_ids(session: Session):
+    """Subquery of (user_id, run_id): each person's most recent run."""
+    return (
+        session.query(RunUser.user_id.label("user_id"), func.max(RunUser.run_id).label("run_id"))
+        .group_by(RunUser.user_id)
+        .subquery()
+    )
+
+
+def _last_runs(session: Session) -> dict[int, tuple[int, datetime | None]]:
+    """user_id -> (their latest run id, when that run finished). One grouped query for everyone."""
+    latest = _latest_run_ids(session)
+    rows = session.query(latest.c.user_id, latest.c.run_id, Run.finished_at).join(Run, Run.id == latest.c.run_id).all()
+    return {user_id: (run_id, finished_at) for user_id, run_id, finished_at in rows}
+
+
+def _preview_titles(session: Session) -> dict[int, list[str]]:
+    """user_id -> the first three titles (by rank) of their latest run. One query for everyone."""
+    latest = _latest_run_ids(session)
+    rows = (
+        session.query(PickRow.user_id, PickRow.title)
+        .join(latest, (PickRow.user_id == latest.c.user_id) & (PickRow.run_id == latest.c.run_id))
+        .order_by(PickRow.user_id, PickRow.rank, PickRow.id)
+        .all()
+    )
+    previews: dict[int, list[str]] = {}
+    for user_id, title in rows:
+        titles = previews.setdefault(user_id, [])
+        if len(titles) < 3:
+            titles.append(title)
+    return previews
+
+
 @router.get("", response_model=list[UserOut])
 def list_users(request: Request) -> list[dict]:
-    """Every user with their badges, watch depth, lifetime hit rate and a pick preview.
+    """Every user with their badges, watch depth, picks watched in 30 days and a pick preview.
 
-    Deliberately a plain `def`, not `async def`: it issues four synchronous queries PER USER,
-    which on a 40-account server is ~160 round-trips. On the event loop that stalls SSE,
-    `/api/system/health` and every other request for the duration; as a sync handler Starlette
-    runs it in a worker thread instead.
+    Deliberately a plain `def`, not `async def`: it issues a handful of synchronous queries. On the
+    event loop that stalls SSE, `/api/system/health` and every other request for the duration; as a
+    sync handler Starlette runs it in a worker thread instead. Each metric is ONE grouped query for
+    everyone, never one per person — a 40-account server used to cost ~80 round-trips here.
     """
     with request.app.state.sessions() as session:
         depths = _watch_depths(session)
         exposed = _unhidden_row_counts(session)
+        pick_watching = _pick_watching(session)
+        last_runs = _last_runs(session)
+        previews = _preview_titles(session)
         out = []
         for user in session.query(User).filter(User.removed_at.is_(None)).order_by(User.username).all():
-            # DISTINCT title, not pick row: a title recommended over several runs is one title, and a
-            # title watched after lingering a few runs is one hit — counting rows would skew both.
-            # `||` via .concat(), NOT func.concat: the latter compiles to SQLite's concat() scalar,
-            # which only exists in SQLite >= 3.44 — the runtime image ships 3.40, so it would 500.
-            title = cast(PickRow.tmdb_id, String).concat("-").concat(PickRow.media_type)
-            titles_total = (
-                session.query(func.count(func.distinct(title))).filter(PickRow.user_id == user.id).scalar() or 0
-            )
-            titles_watched = (
-                session.query(func.count(func.distinct(title)))
-                .filter(PickRow.user_id == user.id, PickRow.watched_at.isnot(None))
-                .scalar()
-                or 0
-            )
-            hit_rate = round(titles_watched / titles_total, 3) if titles_total else None
-            last = (
-                session.query(RunUser)
-                .filter_by(user_id=user.id)
-                .join(RunUser.run)
-                .order_by(RunUser.run_id.desc())
-                .first()
-            )
-            preview = []
-            if last is not None:
-                preview = [
-                    p.title
-                    for p in session.query(PickRow)
-                    .filter_by(user_id=user.id, run_id=last.run_id)
-                    .order_by(PickRow.rank)
-                    .limit(3)
-                    .all()
-                ]
+            watched = pick_watching.get(user.id)
+            picks_watched_30d, last_pick_watched_at = watched if watched else (None, None)
+            last = last_runs.get(user.id)
             out.append(
                 user_dict(
                     user,
                     depths.get(user.id, 0),
-                    last.run.finished_at if last else None,
-                    hit_rate,
-                    preview,
+                    last[1] if last else None,
+                    picks_watched_30d,
+                    last_pick_watched_at,
+                    previews.get(user.id, []),
                     exposed.get(user.username, 0),
                 )
             )
@@ -459,6 +492,8 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
             user.nickname = nickname
         if patch.request_tag is not None:
             user.request_tag = patch.request_tag.strip()
+        if patch.requested_by_tag is not None:
+            user.requested_by_tag = patch.requested_by_tag.strip()
         if patch.prefs is not None:
             was_paused = bool((user.prefs or {}).get("paused"))
             prefs = merged_prefs(user.prefs or {}, patch.prefs)
@@ -478,6 +513,7 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
         result = user_dict(
             user,
             _watch_depths(session).get(user.id, 0),
+            None,
             None,
             None,
             unhidden_rows=_unhidden_row_counts(session).get(user.username, 0),

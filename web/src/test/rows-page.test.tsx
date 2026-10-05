@@ -1,5 +1,6 @@
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,6 +32,7 @@ const SUBSET_ROW: Collection = {
   slug: "hidden-gems",
   name: "Hidden Gems",
   last_run_id: null,
+  preview_titles: [],
   build: "per_person",
   audience: "subset",
   audience_user_ids: [4],
@@ -50,12 +52,19 @@ const SUBSET_ROW: Collection = {
   watched_pct: null,
   rewatch: false,
   rewatch_cooldown_days: 30,
+  requests_row: false,
+  requests_window_days: 90,
+  requests_tag_pattern: "",
   unstarted_only: false,
   refresh_days: null,
   idle_hold_days: null,
   recency: null,
   recent_count: null,
   max_seeds: null,
+  max_runtime: null,
+  min_year: null,
+  max_year: null,
+  min_rating: null,
   cold_start: null,
   req_min_rating: null,
   req_min_votes: null,
@@ -87,6 +96,18 @@ const SUBSET_ROW: Collection = {
   pin_top: false,
   hub_anchor: {},
   poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
+  ai_instructions: { mode: "default", text: "" },
+  theme_id: null,
+  theme_name: null,
+  theme_emoji: null,
+  ai_paused: false,
+  ai_tokens: 0,
+  theme_mode: "fixed",
+  explore_brief: "",
+  theme_days: null,
+  refresh_share: null,
+  repeat_cooldown_days: null,
+  avoid_rows: null,
 };
 
 function renderPage() {
@@ -135,7 +156,9 @@ describe("RowsPage", () => {
         history_depth: 10,
         last_run_at: null,
         request_tag: "",
-        hit_rate: null,
+        requested_by_tag: "",
+        picks_watched_30d: null,
+        last_pick_watched_at: null,
       },
     ]);
     listCollections.mockResolvedValue([SUBSET_ROW]);
@@ -266,4 +289,17 @@ describe("RowsPage — the day-schedule badge", () => {
 
     expect(await screen.findByText("Hidden today")).toBeInTheDocument();
   });
+});
+
+
+it("returns keyboard focus to the template gallery opener after Escape", async () => {
+  getUsers.mockResolvedValue([]);
+  listCollections.mockResolvedValue([SUBSET_ROW]);
+  renderPage();
+  const opener = screen.getByRole("button", { name: "Add a row" });
+  await waitFor(() => expect(opener).toBeEnabled());
+  await userEvent.click(opener);
+  expect(screen.getByRole("dialog")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await waitFor(() => expect(opener).toHaveFocus());
 });

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -19,6 +21,7 @@ from shortlist.server.api.schemas_runs import (
 )
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import PickRow, RequestCandidate, Run, RunSharedRow, RunUser, iso_utc
+from shortlist.server.services.report_cache import invalidate_report_cache
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(require_owner)])
 
@@ -29,6 +32,43 @@ class RunRequest(BaseModel):
     # the delivery loop; the sweep, share-filter merge, and promotion still see every row (plex-safety).
     collection_ids: list[int] | None = None
     dry_run: bool = False
+
+
+def _sorted_names(names: Iterable[str]) -> list[str]:
+    return sorted(names, key=str.casefold)
+
+
+def _measured_names(stats: dict, key: str) -> list[str] | None:
+    """The sorted names under `stats[key]`, or None when the run did not record that key at all."""
+    found = stats.get(key)
+    return None if found is None else _sorted_names(found)
+
+
+def _run_privacy(run: Run) -> dict | None:
+    """The privacy facts a run persisted, or None when it never reached the point of measuring them.
+
+    `run_persistence` writes `unhideable_rows` only when the run actually measured, so its absence
+    means "not measured" — which must never read as an empty, all-clear finding. A dry run reaches
+    the privacy loop and records the key, but it built no rows, so its finding is no all-clear either.
+    """
+    stats = run.stats or {}
+    unhideable = stats.get("unhideable_rows")
+    if unhideable is None or run.dry_run:
+        return None
+    return {
+        # The engine records an account only when it sees somebody else's rows, but an empty list
+        # is not a finding whoever wrote it.
+        "can_see_others": _sorted_names(name for name, keys in unhideable.items() if keys),
+        # Each of these has its own measured flag: an absent key is "not checked", never [] — runs
+        # recorded before `unreadable_filters` existed, and runs whose enforcement check could not
+        # vouch for every account type (`filters_enforcement_measured`).
+        "unreadable_filters": _measured_names(stats, "unreadable_filters"),
+        "filters_not_enforced": _measured_names(stats, "filters_not_enforced"),
+        # Accounts the run could not vouch for. None on a run recorded before these keys existed.
+        "unchecked": _measured_names(stats, "privacy_unchecked"),
+        "write_failed": _measured_names(stats, "privacy_write_failed"),
+        "left_alone": _measured_names(stats, "privacy_left_alone"),
+    }
 
 
 def _run_summary(run: Run) -> dict:
@@ -48,6 +88,7 @@ def _run_summary(run: Run) -> dict:
         # "Failed" and nothing else, and the operator had to read container logs (issue #1).
         "error": (run.stats or {}).get("error"),
         "promotion_blockers": (run.stats or {}).get("promotion_blockers") or [],
+        "privacy": _run_privacy(run),
     }
 
 
@@ -113,6 +154,7 @@ async def clear_runs(request: Request) -> dict:
         session.query(RunSharedRow).delete(synchronize_session=False)
         session.query(Run).delete(synchronize_session=False)
         session.commit()
+    invalidate_report_cache()
     return {"deleted": deleted}
 
 
@@ -216,6 +258,41 @@ def _request_outcomes(session, tmdb_ids: set[int]) -> dict[str, dict]:
     }
 
 
+def _run_user_picks(run: Run, run_user: RunUser, picks: list) -> list[dict]:
+    """A person's picks for the run page: the picks table, or for a dry run (which writes none) the copy
+    kept on the run's trace."""
+    if run.dry_run:
+        stored = (run_user.trace or {}).get("picks") or []
+        return [
+            {
+                "rank": p.get("rank", 0),
+                "title": p.get("title", ""),
+                "reason": p.get("reason"),
+                "rating_key": p.get("rating_key") or 0,
+                "seed_title": p.get("seed_title"),
+                "sources": list(p.get("sources") or []),
+                "affinity": p.get("affinity", 1.0),
+                "year": p.get("year"),
+                "rating": p.get("rating"),
+            }
+            for p in stored
+        ]
+    return [
+        {
+            "rank": p.rank,
+            "title": p.title,
+            "reason": p.reason,
+            "rating_key": p.rating_key or 0,
+            "seed_title": p.seed_title,
+            "sources": [s for s in (p.sources or "").split(",") if s],
+            "affinity": p.affinity,
+            "year": p.year,
+            "rating": p.rating,
+        }
+        for p in picks
+    ]
+
+
 @router.get("/{run_id}", response_model=RunDetailOut)
 async def get_run(run_id: int, request: Request) -> dict:
     with request.app.state.sessions() as session:
@@ -246,20 +323,7 @@ async def get_run(run_id: int, request: Request) -> dict:
                     "llm_tokens_by_step": run_user.llm_tokens_by_step or {},
                     "exa_searches": run_user.exa_searches,
                     "diff": run_user.diff or {},
-                    "picks": [
-                        {
-                            "rank": p.rank,
-                            "title": p.title,
-                            "reason": p.reason,
-                            "rating_key": p.rating_key or 0,
-                            "seed_title": p.seed_title,
-                            "sources": [s for s in (p.sources or "").split(",") if s],
-                            "affinity": p.affinity,
-                            "year": p.year,
-                            "rating": p.rating,
-                        }
-                        for p in picks
-                    ],
+                    "picks": _run_user_picks(run, run_user, picks),
                     # Per-(row, library) breakdown; [] on legacy runs -> UI falls back to diff + picks.
                     "breakdown": _with_provenance(run_user.breakdown or [], picks),
                     # Whether a full pipeline trace was recorded for this user (fetched on demand from

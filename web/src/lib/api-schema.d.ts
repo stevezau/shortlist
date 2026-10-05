@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/ai/web-prompt-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Web Prompt Preview
+         * @description The system prompt AI web search sends with these instructions. Reads settings; writes nothing.
+         */
+        post: operations["web_prompt_preview_api_ai_web_prompt_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/logout": {
         parameters: {
             query?: never;
@@ -93,26 +113,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/collections/seasons": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Seasons
-         * @description Every season a row can follow, in calendar order (discussion #124).
-         */
-        get: operations["list_seasons_api_collections_seasons_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/collections/{collection_id}": {
         parameters: {
             query?: never;
@@ -150,6 +150,27 @@ export interface paths {
          *     silently left someone's row on the wrong Home screen.
          */
         patch: operations["update_collection_api_collections__collection_id__patch"];
+        trace?: never;
+    };
+    "/api/collections/{collection_id}/ai-pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause Ai
+         * @description Pause or resume an AI row's AI. A paused row keeps its theme and keeps building from it; it just never
+         *     spends tokens writing or refining one (409 from the theme endpoints until resumed).
+         */
+        post: operations["pause_ai_api_collections__collection_id__ai_pause_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/collections/{collection_id}/cleanup": {
@@ -303,6 +324,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/collections/{collection_id}/theme-rotation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Theme Rotation
+         * @description Where each person's Explore rotation stands: their current theme, the one queued next, and what came before.
+         */
+        get: operations["get_theme_rotation_api_collections__collection_id__theme_rotation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/collections/{collection_id}/up-next": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Up Next
+         * @description Point a person's "Up next" at a saved theme, replacing any theme already queued. Changes no Plex state.
+         */
+        put: operations["set_up_next_api_collections__collection_id__up_next_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/collections/{collection_id}/up-next/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Regenerate Up Next
+         * @description Write a new "Up next" theme for one person now, with one AI call, replacing any theme queued.
+         *
+         *     409 while the row's AI is paused, 422 without an AI provider or when the row isn't set to Explore.
+         */
+        post: operations["regenerate_up_next_api_collections__collection_id__up_next_regenerate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events": {
         parameters: {
             query?: never;
@@ -330,7 +413,8 @@ export interface paths {
         /**
          * Audit Log
          * @description The audit trail, newest first. `before_id` pages backwards — pass the id of the oldest entry
-         *     you already have. A cursor, not an offset: events are appended while you read.
+         *     you already have. A cursor, not an offset: events are appended while you read. Every filter given
+         *     applies.
          */
         get: operations["audit_log_api_events_log_get"];
         put?: never;
@@ -760,6 +844,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/requests/row-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Row Sources
+         * @description Read every request source once and say whether a "Your requests" row can be built from it.
+         *
+         *     Read-only: nothing is written to Overseerr, the Arrs, or Plex. A source that is down reads as
+         *     "unreachable" with the reason in `problems` — never a 500, because the screen this feeds exists
+         *     precisely to show the owner what is wrong.
+         */
+        get: operations["get_row_sources_api_requests_row_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/requests/send": {
         parameters: {
             query?: never;
@@ -1004,6 +1112,185 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Seasons
+         * @description Every season a row can follow, in calendar order: the built-ins and the owner's own.
+         */
+        get: operations["list_seasons_api_seasons_get"];
+        put?: never;
+        /**
+         * Create Season
+         * @description Save a new season. Its slug is made from its name now and never changes (D14).
+         */
+        post: operations["create_season_api_seasons_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/library-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library Search
+         * @description Films and shows in the libraries whose title contains ``q``, for picking by hand.
+         */
+        get: operations["library_search_api_seasons_library_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/next-date": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Next Date
+         * @description When a draft date rule next falls, or why it can't be used — from the rule alone.
+         *
+         *     The editor's "Next: …" line asks this rather than the count, so a count that fails (no TMDB key, Plex
+         *     down) never takes the date with it. Reads no clock but the server's, and nothing else.
+         */
+        post: operations["next_date_api_seasons_next_date_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/plex-collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plex Collections
+         * @description The libraries' collections whose title contains ``q``, in any case, by title. Never one of Shortlist's.
+         */
+        get: operations["plex_collections_api_seasons_plex_collections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Presets
+         * @description The ready-made seasons not added yet (#137 D9).
+         */
+        get: operations["list_presets_api_seasons_presets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Season
+         * @description Count a draft season's titles in one row's libraries, as a run would, without saving anything.
+         *
+         *     Only the row's own media type and libraries count: that is all the row draws from (#137 I-1). An invalid
+         *     date rule still counts: the editor shows what is wrong with the date beside the count.
+         */
+        post: operations["preview_season_api_seasons_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/tmdb-tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tmdb Tags
+         * @description TMDB tags whose name matches ``q``, each with how many films TMDB tags with it.
+         */
+        get: operations["tmdb_tags_api_seasons_tmdb_tags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/seasons/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Season
+         * @description Replace a custom season, keeping its slug.
+         *
+         *     A change of date or timing changes which days its rows are shown on, so it is applied to Plex now, as a
+         *     change to a row's own seasons is. A source change rebuilds its rows on their next build (D11).
+         */
+        put: operations["update_season_api_seasons__slug__put"];
+        post?: never;
+        /**
+         * Delete Season
+         * @description Delete a custom season and untick it in every row, in one transaction (D12).
+         *
+         *     Refused, naming the rows, while it is any row's only season: that row would be left following nothing.
+         */
+        delete: operations["delete_season_api_seasons__slug__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2312,6 +2599,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/themes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Theme
+         * @description Save a theme. Its slug is made from its name now; its hash is worked out here.
+         */
+        post: operations["create_theme_api_themes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/themes/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Capabilities
+         * @description Whether an AI provider is set, so the editor can hide the half that needs one.
+         */
+        get: operations["capabilities_api_themes_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/themes/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Theme
+         * @description Write or refine a theme from a brief with one AI call, without saving anything.
+         *
+         *     409 while the row's AI is paused, 422 without an AI provider (neither makes a call).
+         */
+        post: operations["preview_theme_api_themes_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/themes/prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Prompts
+         * @description The system prompt "Build the list" sends: the guidance an owner may replace, and the mechanics they may not.
+         */
+        get: operations["prompts_api_themes_prompts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/themes/{theme_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Theme */
+        get: operations["get_theme_api_themes__theme_id__get"];
+        /**
+         * Update Theme
+         * @description Replace a theme's contents (a hand edit, or an AI refinement the owner kept), keeping its slug.
+         */
+        put: operations["update_theme_api_themes__theme_id__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users": {
         parameters: {
             query?: never;
@@ -2321,12 +2711,12 @@ export interface paths {
         };
         /**
          * List Users
-         * @description Every user with their badges, watch depth, lifetime hit rate and a pick preview.
+         * @description Every user with their badges, watch depth, picks watched in 30 days and a pick preview.
          *
-         *     Deliberately a plain `def`, not `async def`: it issues four synchronous queries PER USER,
-         *     which on a 40-account server is ~160 round-trips. On the event loop that stalls SSE,
-         *     `/api/system/health` and every other request for the duration; as a sync handler Starlette
-         *     runs it in a worker thread instead.
+         *     Deliberately a plain `def`, not `async def`: it issues a handful of synchronous queries. On the
+         *     event loop that stalls SSE, `/api/system/health` and every other request for the duration; as a
+         *     sync handler Starlette runs it in a worker thread instead. Each metric is ONE grouped query for
+         *     everyone, never one per person — a 40-account server used to cost ~80 round-trips here.
          */
         get: operations["list_users_api_users_get"];
         put?: never;
@@ -2790,6 +3180,46 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * AiInstructionsIn
+         * @description What AI web search should look for on this row (#138). ``default`` uses the built-in wording
+         *     plus the server-wide instructions; ``add`` appends ``text`` to them; ``own`` replaces them.
+         */
+        AiInstructionsIn: {
+            /**
+             * Mode
+             * @description AI instructions must be default, add or own
+             * @default default
+             * @enum {string}
+             */
+            mode: "add" | "default" | "own";
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+        };
+        /**
+         * AiInstructionsOut
+         * @description A row's AI web search instructions as the editor reads them.
+         */
+        AiInstructionsOut: {
+            /**
+             * Mode
+             * @description default, add or own
+             * @enum {string}
+             */
+            mode: "add" | "default" | "own";
+            /** Text */
+            text: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AiPauseRequest */
+        AiPauseRequest: {
+            /** Paused */
+            paused: boolean;
+        };
         /** ApiTokenCreatedOut */
         ApiTokenCreatedOut: {
             /** Created At */
@@ -2979,6 +3409,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** CapabilitiesOut */
+        CapabilitiesOut: {
+            /** Ai */
+            ai: boolean;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * CleanupOut
          * @description What `POST /collections/{id}/cleanup` removed (or would remove, on a dry run).
@@ -3019,8 +3456,36 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** CollectionCountOut */
+        CollectionCountOut: {
+            /** Found */
+            found: boolean;
+            /** In Library */
+            in_library: number;
+            /** Section Key */
+            section_key: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CollectionIO
+         * @description A Plex collection, by library and title — never ratingKey: Kometa recreates its seasonal ones each year.
+         */
+        CollectionIO: {
+            /** Section Key */
+            section_key: string;
+            /** Section Title */
+            section_title: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** CollectionIn */
         CollectionIn: {
+            ai_instructions?: components["schemas"]["AiInstructionsIn"];
             /**
              * Audience
              * @description Everyone, or the subset named by audience_user_ids.
@@ -3030,6 +3495,11 @@ export interface components {
             audience: "everyone" | "subset";
             /** Audience User Ids */
             audience_user_ids?: number[];
+            /**
+             * Avoid Rows
+             * @description Slugs of other per-person rows whose titles this row keeps out; null is none.
+             */
+            avoid_rows?: string[] | null;
             /**
              * Build
              * @description Who the row is built for: one per person, or one shared row.
@@ -3067,6 +3537,12 @@ export interface components {
              */
             enabled: boolean;
             /**
+             * Explore Brief
+             * @description What kind of themes Explore should look for; blank lets the AI choose.
+             * @default
+             */
+            explore_brief: string;
+            /**
              * Fallback Name
              * @default
              */
@@ -3079,8 +3555,12 @@ export interface components {
             idle_hold_days?: number | null;
             /** Library Keys */
             library_keys?: string[];
+            /** Max Runtime */
+            max_runtime?: number | null;
             /** Max Seeds */
             max_seeds?: number | null;
+            /** Max Year */
+            max_year?: number | null;
             /**
              * Media
              * @description Which library types this row builds in.
@@ -3088,11 +3568,15 @@ export interface components {
              * @enum {string}
              */
             media: "both" | "movie" | "show";
+            /** Min Rating */
+            min_rating?: number | null;
             /**
              * Min Watchers
              * @default 2
              */
             min_watchers: number;
+            /** Min Year */
+            min_year?: number | null;
             /** Name */
             name: string;
             /**
@@ -3133,6 +3617,16 @@ export interface components {
             recent_count?: number | null;
             /** Refresh Days */
             refresh_days?: number | null;
+            /**
+             * Refresh Share
+             * @description The share of picks swapped on a refresh night; null keeps two thirds.
+             */
+            refresh_share?: number | null;
+            /**
+             * Repeat Cooldown Days
+             * @description Don't pick a title again within this many days; null is off.
+             */
+            repeat_cooldown_days?: number | null;
             /** Req Auto Min Demand */
             req_auto_min_demand?: number | null;
             /** Req Auto Min Rating */
@@ -3181,6 +3675,21 @@ export interface components {
              */
             request_tag: string;
             /**
+             * Requests Row
+             * @default false
+             */
+            requests_row: boolean;
+            /**
+             * Requests Tag Pattern
+             * @default
+             */
+            requests_tag_pattern: string;
+            /**
+             * Requests Window Days
+             * @default 90
+             */
+            requests_window_days: number;
+            /**
              * Rewatch
              * @default false
              */
@@ -3209,7 +3718,7 @@ export interface components {
             season_lead_days: number;
             /**
              * Seasons
-             * @description Seasons this row follows (see GET /api/collections/seasons). Empty means it is not seasonal.
+             * @description Seasons this row follows (see GET /api/seasons). Empty means it is not seasonal.
              */
             seasons?: string[];
             /**
@@ -3239,6 +3748,23 @@ export interface components {
              */
             sort_title_prefix: string;
             /**
+             * Theme Days
+             * @description How many days a theme lasts in Explore; null is 7.
+             */
+            theme_days?: number | null;
+            /**
+             * Theme Id
+             * @description The theme this AI row follows (see POST /api/themes). Null for an ordinary row.
+             */
+            theme_id?: number | null;
+            /**
+             * Theme Mode
+             * @description fixed keeps one theme; explore picks a new one for each person on a schedule.
+             * @default fixed
+             * @enum {string}
+             */
+            theme_mode: "fixed" | "explore";
+            /**
              * Unstarted Only
              * @default false
              */
@@ -3251,6 +3777,17 @@ export interface components {
          * @description A curated-row definition — the response shape of :func:`_serialize`.
          */
         CollectionOut: {
+            ai_instructions: components["schemas"]["AiInstructionsOut"];
+            /**
+             * Ai Paused
+             * @description Whether the row's AI is paused: it keeps its theme but spends no tokens.
+             */
+            ai_paused: boolean;
+            /**
+             * Ai Tokens
+             * @description Tokens the AI has spent writing this row's themes.
+             */
+            ai_tokens: number;
             /**
              * Audience
              * @description Everyone, or the subset named by audience_user_ids.
@@ -3259,6 +3796,11 @@ export interface components {
             audience: "everyone" | "subset";
             /** Audience User Ids */
             audience_user_ids: number[];
+            /**
+             * Avoid Rows
+             * @description Slugs of rows whose titles this row keeps out; null is none.
+             */
+            avoid_rows: string[] | null;
             /**
              * Build
              * @description Who the row is built for: one per person, or one shared row.
@@ -3279,6 +3821,11 @@ export interface components {
             dry_run?: boolean | null;
             /** Enabled */
             enabled: boolean;
+            /**
+             * Explore Brief
+             * @description What Explore is asked to look for; blank lets the AI choose.
+             */
+            explore_brief: string;
             /** Fallback Name */
             fallback_name: string;
             /** Hub Anchor */
@@ -3293,16 +3840,24 @@ export interface components {
             last_run_id: number | null;
             /** Library Keys */
             library_keys: string[];
+            /** Max Runtime */
+            max_runtime: number | null;
             /** Max Seeds */
             max_seeds: number | null;
+            /** Max Year */
+            max_year: number | null;
             /**
              * Media
              * @description Which library types this row builds in.
              * @enum {string}
              */
             media: "both" | "movie" | "show";
+            /** Min Rating */
+            min_rating: number | null;
             /** Min Watchers */
             min_watchers: number;
+            /** Min Year */
+            min_year: number | null;
             /** Name */
             name: string;
             /** Name Template */
@@ -3332,12 +3887,24 @@ export interface components {
             poster: components["schemas"]["PosterOut"];
             /** Preview Incomplete */
             preview_incomplete?: string | null;
+            /** Preview Titles */
+            preview_titles: components["schemas"]["PreviewTitleOut"][];
             /** Recency */
             recency: number | null;
             /** Recent Count */
             recent_count: number | null;
             /** Refresh Days */
             refresh_days: number | null;
+            /**
+             * Refresh Share
+             * @description Share of picks swapped on a refresh night; null keeps two thirds.
+             */
+            refresh_share: number | null;
+            /**
+             * Repeat Cooldown Days
+             * @description No repeats within this many days; null is off.
+             */
+            repeat_cooldown_days: number | null;
             /** Req Auto Min Demand */
             req_auto_min_demand: number | null;
             /** Req Auto Min Rating */
@@ -3393,6 +3960,12 @@ export interface components {
             req_sonarr_root_folder: string | null;
             /** Request Tag */
             request_tag: string;
+            /** Requests Row */
+            requests_row: boolean;
+            /** Requests Tag Pattern */
+            requests_tag_pattern: string;
+            /** Requests Window Days */
+            requests_window_days: number;
             /** Rewatch */
             rewatch: boolean;
             /** Rewatch Cooldown Days */
@@ -3436,6 +4009,32 @@ export interface components {
             sort_order: number;
             /** Sort Title Prefix */
             sort_title_prefix: string;
+            /**
+             * Theme Days
+             * @description Days a theme lasts in Explore; null is 7.
+             */
+            theme_days: number | null;
+            /**
+             * Theme Emoji
+             * @description The fixed theme's emoji; null when it has none, or for Explore.
+             */
+            theme_emoji: string | null;
+            /**
+             * Theme Id
+             * @description The theme an AI row follows; null for an ordinary row.
+             */
+            theme_id: number | null;
+            /**
+             * Theme Mode
+             * @description Whether an AI row keeps one theme or explores.
+             * @enum {string}
+             */
+            theme_mode: "fixed" | "explore";
+            /**
+             * Theme Name
+             * @description The fixed theme's name; null for an ordinary row or an Explore row.
+             */
+            theme_name: string | null;
             /** Unstarted Only */
             unstarted_only: boolean;
             /** Watched Pct */
@@ -3505,6 +4104,44 @@ export interface components {
             ollama_url?: string | null;
             /** Provider */
             provider?: string | null;
+        };
+        /**
+         * DateRuleIO
+         * @description When a season falls: see `seasons.DateRule`. ``weekday`` is Monday=0; ``nth`` is 1-4, or -1 for the last.
+         */
+        DateRuleIO: {
+            /**
+             * Day
+             * @default 1
+             */
+            day: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "fixed" | "nth" | "easter";
+            /**
+             * Month
+             * @default 1
+             */
+            month: number;
+            /**
+             * Nth
+             * @default 1
+             */
+            nth: number;
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
+            /**
+             * Weekday
+             * @default 0
+             */
+            weekday: number;
+        } & {
+            [key: string]: unknown;
         };
         /** DeletedOut */
         DeletedOut: {
@@ -3659,6 +4296,26 @@ export interface components {
             title: string;
             /** Watched At */
             watched_at: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EventOut
+         * @description One audit row. `message` is the writer's structured diff, and its keys depend on `scope`.
+         */
+        EventOut: {
+            /** Id */
+            id: number;
+            /** Level */
+            level: string;
+            /** Message */
+            message: {
+                [key: string]: unknown;
+            };
+            /** Scope */
+            scope: string;
+            /** Ts */
+            ts: string;
         } & {
             [key: string]: unknown;
         };
@@ -3938,6 +4595,22 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** LibraryTitleOut */
+        LibraryTitleOut: {
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "movie" | "show";
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** LinkRequest */
         LinkRequest: {
             /** Machine Id */
@@ -4186,6 +4859,38 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** PersonReadyOut */
+        PersonReadyOut: {
+            /** Display Name */
+            display_name: string;
+            /** Linked */
+            linked: boolean;
+            /** Ready */
+            ready: number;
+            /** User Id */
+            user_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PickIO
+         * @description A title the owner picked by hand.
+         */
+        PickIO: {
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "movie" | "show";
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * PickOut
          * @description One delivered recommendation, as the run detail lists it.
@@ -4193,6 +4898,10 @@ export interface components {
         PickOut: {
             /** Affinity */
             affinity: number | null;
+            /** Order Rating */
+            order_rating?: number | null;
+            /** Order Rating Source */
+            order_rating_source?: string | null;
             /** Rank */
             rank: number;
             /** Rating */
@@ -4202,6 +4911,8 @@ export interface components {
              * @default 0
              */
             rating_key: number;
+            /** Rating Source */
+            rating_source?: string | null;
             /** Reason */
             reason: string;
             /** Seed Title */
@@ -4269,6 +4980,26 @@ export interface components {
             only_user_ids: number[];
             /** Reason */
             reason: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** PlexCollectionOut */
+        PlexCollectionOut: {
+            /** Count */
+            count: number;
+            /**
+             * Media Type
+             * @enum {string}
+             */
+            media_type: "movie" | "show";
+            /** Section Key */
+            section_key: string;
+            /** Section Title */
+            section_title: string;
+            /** Smart */
+            smart: boolean;
+            /** Title */
+            title: string;
         } & {
             [key: string]: unknown;
         };
@@ -4353,6 +5084,98 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PresetOut
+         * @description A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``.
+         */
+        PresetOut: {
+            /**
+             * After Days
+             * @default 0
+             */
+            after_days: number;
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
+            /** Emoji */
+            emoji: string;
+            /** Excluded Genres */
+            excluded_genres?: number[];
+            /** Genre */
+            genre?: number | null;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Lead Days
+             * @default 7
+             */
+            lead_days: number;
+            /** Name */
+            name: string;
+            /** Note */
+            note: string;
+            /** Picks */
+            picks?: components["schemas"]["PickIO"][];
+            /** Preset */
+            preset?: string | null;
+            rule: components["schemas"]["DateRuleIO"];
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** PreviewIn */
+        PreviewIn: {
+            /**
+             * Brief
+             * @default
+             */
+            brief: string;
+            /**
+             * Change
+             * @default
+             */
+            change: string;
+            /** Collection Id */
+            collection_id?: number | null;
+            current_draft?: components["schemas"]["ThemeIn"] | null;
+            /** Current Theme Id */
+            current_theme_id?: number | null;
+            /**
+             * Guidance
+             * @default
+             */
+            guidance: string;
+            /**
+             * Media
+             * @default both
+             * @enum {string}
+             */
+            media: "movie" | "show" | "both";
+        };
+        /** PreviewOut */
+        PreviewOut: {
+            diff: components["schemas"]["ThemeDiffOut"] | null;
+            draft: components["schemas"]["ThemeOut"];
+            stats: components["schemas"]["ThemeStatsOut"];
+            /** Tokens */
+            tokens: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PreviewTitleOut
+         * @description One title from a row's latest delivery, for the Rows list's poster collage.
+         */
+        PreviewTitleOut: {
+            /** Rating Key */
+            rating_key: number;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PrivacyStatusOut
          * @description One live reading of the whole server's sharing state.
          */
@@ -4368,6 +5191,8 @@ export interface components {
             rows_error: string | null;
             /** Rows On Plex */
             rows_on_plex: string[];
+            /** Snapshots Kept */
+            snapshots_kept: number;
             /** Summary */
             summary: string;
         } & {
@@ -4436,6 +5261,15 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** PromptsOut */
+        PromptsOut: {
+            /** Guidance */
+            guidance: string;
+            /** Mechanics */
+            mechanics: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** QualityProfileOut */
         QualityProfileOut: {
             /** Id */
@@ -4475,6 +5309,11 @@ export interface components {
             year: number | null;
         } & {
             [key: string]: unknown;
+        };
+        /** RegenerateRequest */
+        RegenerateRequest: {
+            /** User Id */
+            user_id: number;
         };
         /**
          * RejectedOut
@@ -4670,6 +5509,33 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** RotationTargetOut */
+        RotationTargetOut: {
+            current: components["schemas"]["ThemeRefOut"] | null;
+            /**
+             * History
+             * @description Their earlier themes on this row, newest first.
+             */
+            history: components["schemas"]["ThemeRefOut"][];
+            /** Name */
+            name: string;
+            /** @description The theme queued to start when the current one ends. */
+            next: components["schemas"]["ThemeRefOut"] | null;
+            /**
+             * Next Due At
+             * @description When the current theme ends and the next one starts.
+             */
+            next_due_at: string | null;
+            /**
+             * Started At
+             * @description When the current theme started.
+             */
+            started_at: string | null;
+            /** User Id */
+            user_id: number;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * RowDeletePreviewOut
          * @description What `DELETE /collections/{id}?dry_run=true` WOULD do. Nothing is written.
@@ -4792,6 +5658,83 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * RowSourceServerOut
+         * @description One Radarr/Sonarr server Overseerr sends to, and whether it stamps the requester's tag.
+         */
+        RowSourceServerOut: {
+            /** Is4K */
+            is4k: boolean;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Tag Requests */
+            tag_requests: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowSourcesOut
+         * @description The requests-row setup check: can the row know who asked for what, and for whom?
+         */
+        RowSourcesOut: {
+            /** Complete */
+            complete: boolean;
+            /**
+             * Overseerr
+             * @enum {string}
+             */
+            overseerr: "connected" | "unreachable" | "off";
+            /** People */
+            people: components["schemas"]["PersonReadyOut"][];
+            /** Problems */
+            problems: string[];
+            /**
+             * Radarr
+             * @enum {string}
+             */
+            radarr: "connected" | "unreachable" | "off";
+            /** Seerr Linked */
+            seerr_linked: number;
+            /** Seerr Requesters */
+            seerr_requesters: number;
+            /** Seerr Requests */
+            seerr_requests: number;
+            /** Servers */
+            servers: components["schemas"]["RowSourceServerOut"][];
+            /**
+             * Sonarr
+             * @enum {string}
+             */
+            sonarr: "connected" | "unreachable" | "off";
+            /** Tagged Movies */
+            tagged_movies: number;
+            /** Tagged Shows */
+            tagged_shows: number;
+            /** Tags */
+            tags: components["schemas"]["TagMatchOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RulesIO
+         * @description A theme's hard limits. A missing or null one is no limit.
+         */
+        RulesIO: {
+            /** Max Runtime */
+            max_runtime?: number | null;
+            /** Max Year */
+            max_year?: number | null;
+            /** Min Rating */
+            min_rating?: number | null;
+            /** Min Votes */
+            min_votes?: number | null;
+            /** Min Year */
+            min_year?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** RunCancelledOut */
         RunCancelledOut: {
             /** Cancelling */
@@ -4821,6 +5764,7 @@ export interface components {
             finished_at: string | null;
             /** Id */
             id: number;
+            privacy: components["schemas"]["RunPrivacyOut"] | null;
             /** Promotion Blockers */
             promotion_blockers: string[];
             /** Shared Rows */
@@ -4917,6 +5861,26 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * RunPrivacyOut
+         * @description What this run measured about who can see whose rows. Reporting only.
+         */
+        RunPrivacyOut: {
+            /** Can See Others */
+            can_see_others: string[];
+            /** Filters Not Enforced */
+            filters_not_enforced: string[] | null;
+            /** Left Alone */
+            left_alone: string[] | null;
+            /** Unchecked */
+            unchecked: string[] | null;
+            /** Unreadable Filters */
+            unreadable_filters: string[] | null;
+            /** Write Failed */
+            write_failed: string[] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * RunProgressEvent
          * @description Event ``run.progress`` — a run entered a non-terminal state. `cancelling` is published the
          *     moment /cancel is accepted; the run keeps going until the person it is on finishes.
@@ -5003,6 +5967,7 @@ export interface components {
             finished_at: string | null;
             /** Id */
             id: number;
+            privacy: components["schemas"]["RunPrivacyOut"] | null;
             /** Promotion Blockers */
             promotion_blockers: string[];
             /** Started At */
@@ -5202,22 +6167,151 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * SeasonDateOut
+         * @description When a date rule next falls (ISO), or, with ``next_date`` None, why the rule can't be used.
+         */
+        SeasonDateOut: {
+            /** Next Date */
+            next_date: string | null;
+            /** Rule Error */
+            rule_error: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SeasonIn
+         * @description A custom season, to create or replace.
+         */
+        SeasonIn: {
+            /**
+             * After Days
+             * @default 0
+             */
+            after_days: number;
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
+            /** Emoji */
+            emoji: string;
+            /** Excluded Genres */
+            excluded_genres?: number[];
+            /** Genre */
+            genre?: number | null;
+            /**
+             * Lead Days
+             * @default 7
+             */
+            lead_days: number;
+            /** Name */
+            name: string;
+            /** Picks */
+            picks?: components["schemas"]["PickIO"][];
+            /** Preset */
+            preset?: string | null;
+            rule: components["schemas"]["DateRuleIO"];
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+        };
+        /**
          * SeasonOut
-         * @description A season a row can follow.
+         * @description A season a row can follow. A built-in's sources live in code and are not listed.
          */
         SeasonOut: {
-            /** Day */
-            day: number;
+            /** After Days */
+            after_days: number | null;
+            /** Builtin */
+            builtin: boolean;
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
             /** Description */
             description: string;
             /** Emoji */
             emoji: string;
-            /** Month */
-            month: number;
+            /** Excluded Genres */
+            excluded_genres?: number[];
+            /** Genre */
+            genre?: number | null;
+            /** Lead Days */
+            lead_days: number | null;
             /** Name */
             name: string;
+            /** Next Dates */
+            next_dates: string[];
+            /** Picks */
+            picks?: components["schemas"]["PickIO"][];
+            /** Preset */
+            preset: string | null;
+            rule: components["schemas"]["DateRuleIO"];
+            /** Rule Label */
+            rule_label: string;
             /** Slug */
             slug: string;
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+            /** Used By */
+            used_by: components["schemas"]["UsedByOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SeasonPreviewIn
+         * @description A draft season to count, for the row the editor was opened from. Undeclared fields are let through, not
+         *     refused: the editor posts its whole draft, and a preview stores nothing that a misspelt field could
+         *     silently fail to set.
+         */
+        SeasonPreviewIn: {
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
+            /** Excluded Genres */
+            excluded_genres?: number[];
+            /** Genre */
+            genre?: number | null;
+            /** Library Keys */
+            library_keys?: string[];
+            /**
+             * Media
+             * @default both
+             * @enum {string}
+             */
+            media: "movie" | "show" | "both";
+            /** Picks */
+            picks?: components["schemas"]["PickIO"][];
+            rule: components["schemas"]["DateRuleIO"];
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SeasonPreviewOut
+         * @description What the editor's summary shows. Every count is of titles in the libraries.
+         */
+        SeasonPreviewOut: {
+            /** From Collections */
+            from_collections: number;
+            /** From Genre */
+            from_genre: number;
+            /** From Picks */
+            from_picks: number;
+            /** From Tags */
+            from_tags: number;
+            /** Movies */
+            movies: number | null;
+            /** Next Date */
+            next_date: string | null;
+            /** Per Collection */
+            per_collection: components["schemas"]["CollectionCountOut"][];
+            /** Per Tag */
+            per_tag: {
+                [key: string]: number;
+            };
+            /** Rule Error */
+            rule_error: string | null;
+            /** Sample */
+            sample: string[];
+            /** Shows */
+            shows: number | null;
+            /** Total */
+            total: number;
         } & {
             [key: string]: unknown;
         };
@@ -5495,6 +6589,276 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * TagIO
+         * @description A TMDB tag (keyword), with its name so the editor can show it without asking TMDB.
+         */
+        TagIO: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TagMatchOut
+         * @description How one requester tag on Radarr/Sonarr resolved — the preview under "Use my own tags".
+         */
+        TagMatchOut: {
+            /** Ambiguous */
+            ambiguous: boolean;
+            /** Display Name */
+            display_name: string;
+            /** Label */
+            label: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "overseerr" | "pattern" | "override";
+            /** Titles */
+            titles: number;
+            /** User Id */
+            user_id: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** TagOut */
+        TagOut: {
+            /** Id */
+            id: number;
+            /** Movies */
+            movies: number;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ThemeDiffOut */
+        ThemeDiffOut: {
+            /** Added */
+            added: string[];
+            /** Added Count */
+            added_count: number;
+            /** After Count */
+            after_count: number;
+            /** Before Count */
+            before_count: number;
+            /** Genres Added */
+            genres_added: string[];
+            /** Genres Removed */
+            genres_removed: string[];
+            /** Removed */
+            removed: string[];
+            /** Removed Count */
+            removed_count: number;
+            /** Rules Changed */
+            rules_changed: boolean;
+            /** Tags Added */
+            tags_added: string[];
+            /** Tags Removed */
+            tags_removed: string[];
+            /** Unchanged */
+            unchanged: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ThemeIn
+         * @description A theme to store. Undeclared fields (a hash echoed back from a preview) are ignored, never stored.
+         */
+        ThemeIn: {
+            /**
+             * Brief
+             * @default
+             */
+            brief: string;
+            /** Collections */
+            collections?: components["schemas"]["CollectionIO"][];
+            /** Emoji */
+            emoji?: string | null;
+            /** Excluded Genres */
+            excluded_genres?: string[];
+            /** Genres */
+            genres?: string[];
+            /** Media */
+            media: ("movie" | "show")[];
+            /** Name */
+            name: string;
+            /**
+             * Origin
+             * @default manual
+             * @enum {string}
+             */
+            origin: "ai" | "manual";
+            /** Picks */
+            picks?: components["schemas"]["ThemePickIO"][];
+            rules?: components["schemas"]["RulesIO"];
+            /** Tags */
+            tags?: components["schemas"]["TagIO"][];
+        };
+        /** ThemeOut */
+        ThemeOut: {
+            /** Ai Tokens */
+            ai_tokens: number;
+            /** Brief */
+            brief: string;
+            /** Collections */
+            collections: components["schemas"]["CollectionIO"][];
+            /** Content Hash */
+            content_hash: string;
+            /** Emoji */
+            emoji: string | null;
+            /** Excluded Genres */
+            excluded_genres: string[];
+            /** Genres */
+            genres: string[];
+            /** Id */
+            id: number | null;
+            /** Media */
+            media: string[];
+            /** Name */
+            name: string;
+            /** Origin */
+            origin: string;
+            /** Picks */
+            picks: components["schemas"]["ThemePickIO"][];
+            rules: components["schemas"]["RulesIO"];
+            /** Slug */
+            slug: string;
+            /** Stats */
+            stats: {
+                [key: string]: number;
+            };
+            /** Tags */
+            tags: components["schemas"]["TagIO"][];
+            /** Topped Up At */
+            topped_up_at?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ThemePickIO
+         * @description A title a theme names by TMDB id; ``origin`` says whether the AI or the owner chose it.
+         */
+        ThemePickIO: {
+            /**
+             * Media
+             * @enum {string}
+             */
+            media: "movie" | "show";
+            /**
+             * Origin
+             * @default owner
+             * @enum {string}
+             */
+            origin: "ai" | "owner";
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ThemeRefOut
+         * @description A theme as one person's rotation holds it: which one, when it started, and when it hands over.
+         */
+        ThemeRefOut: {
+            /** Due At */
+            due_at: string | null;
+            /** Emoji */
+            emoji: string | null;
+            /** Name */
+            name: string;
+            /** Started At */
+            started_at: string;
+            /**
+             * Theme Id
+             * @description The stored theme; null once it has been deleted.
+             */
+            theme_id: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ThemeRotationOut */
+        ThemeRotationOut: {
+            /**
+             * Days
+             * @description How many days a theme lasts.
+             */
+            days: number;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "fixed" | "explore";
+            /** Targets */
+            targets: components["schemas"]["RotationTargetOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ThemeSaveIn
+         * @description A save: the theme, what the AI call that wrote it cost, and the row it was written for.
+         */
+        ThemeSaveIn: {
+            /** Collection Id */
+            collection_id?: number | null;
+            draft: components["schemas"]["ThemeIn"];
+            /** Stats */
+            stats?: {
+                [key: string]: number;
+            };
+            /**
+             * Tokens
+             * @default 0
+             */
+            tokens: number;
+        };
+        /** ThemeStatsOut */
+        ThemeStatsOut: {
+            /** After Rules */
+            after_rules: number;
+            /**
+             * Ai Kept
+             * @default 0
+             */
+            ai_kept: number;
+            /** In Library */
+            in_library: number;
+            /** Named */
+            named: number;
+            /** Resolved */
+            resolved: number;
+            /**
+             * Runtime Checked
+             * @default 0
+             */
+            runtime_checked: number;
+            /**
+             * Runtime Total
+             * @default 0
+             */
+            runtime_total: number;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+            /** Unwatched Median */
+            unwatched_median: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * TitleMatchOut
          * @description TMDB's own best guess for a title search, for the "block a seed" picker.
          */
@@ -5725,6 +7089,25 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** UpNextRequest */
+        UpNextRequest: {
+            /** Theme Id */
+            theme_id: number;
+            /** User Id */
+            user_id: number;
+        };
+        /**
+         * UsedByOut
+         * @description A row that follows the season.
+         */
+        UsedByOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * UserOut
          * @description One person — the response shape of :func:`user_dict`.
@@ -5744,16 +7127,18 @@ export interface components {
             friendly_name: string;
             /** History Depth */
             history_depth: number;
-            /** Hit Rate */
-            hit_rate: number | null;
             /** Id */
             id: number;
+            /** Last Pick Watched At */
+            last_pick_watched_at: string | null;
             /** Last Run At */
             last_run_at: string | null;
             /** Manage Sharing */
             manage_sharing: boolean;
             /** Nickname */
             nickname: string;
+            /** Picks Watched 30D */
+            picks_watched_30d: number | null;
             /** Plex Account Id */
             plex_account_id: number;
             /** Prefs */
@@ -5764,6 +7149,8 @@ export interface components {
             preview_titles: string[];
             /** Request Tag */
             request_tag: string;
+            /** Requested By Tag */
+            requested_by_tag: string;
             /** Restricted */
             restricted: boolean;
             /** Restriction Profile */
@@ -5789,6 +7176,8 @@ export interface components {
             prefs?: components["schemas"]["UserPrefs"] | null;
             /** Request Tag */
             request_tag?: string | null;
+            /** Requested By Tag */
+            requested_by_tag?: string | null;
         };
         /**
          * UserPickOut
@@ -6129,6 +7518,33 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * WebPromptPreviewIn
+         * @description What to preview: a row's instructions and/or unsaved server-wide text; either may be omitted.
+         */
+        WebPromptPreviewIn: {
+            ai_instructions?: components["schemas"]["AiInstructionsIn"] | null;
+            /** Server Text */
+            server_text?: string | null;
+        };
+        /**
+         * WebPromptPreviewOut
+         * @description The prompt AI web search would send, the built-in wording, and whether instructions do anything.
+         */
+        WebPromptPreviewOut: {
+            /** Backend */
+            backend: string;
+            /** Builtin Guidance */
+            builtin_guidance: string;
+            /** Builtin Template */
+            builtin_template: string;
+            /** Inert */
+            inert: boolean;
+            /** System */
+            system: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** WhatsNewOut */
         WhatsNewOut: {
             /** Releases */
@@ -6193,6 +7609,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    web_prompt_preview_api_ai_web_prompt_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebPromptPreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebPromptPreviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     logout_api_auth_logout_post: {
         parameters: {
             query?: never;
@@ -6337,26 +7786,6 @@ export interface operations {
             };
         };
     };
-    list_seasons_api_collections_seasons_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SeasonOut"][];
-                };
-            };
-        };
-    };
     delete_collection_api_collections__collection_id__delete: {
         parameters: {
             query?: {
@@ -6409,6 +7838,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CollectionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pause_ai_api_collections__collection_id__ai_pause_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiPauseRequest"];
             };
         };
         responses: {
@@ -6663,6 +8127,107 @@ export interface operations {
             };
         };
     };
+    get_theme_rotation_api_collections__collection_id__theme_rotation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeRotationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_up_next_api_collections__collection_id__up_next_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpNextRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeRefOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    regenerate_up_next_api_collections__collection_id__up_next_regenerate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeRefOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     stream_api_events_get: {
         parameters: {
             query?: never;
@@ -6687,6 +8252,10 @@ export interface operations {
         parameters: {
             query?: {
                 scope?: string | null;
+                /** @description Only scopes starting with this, e.g. `run.`. Case-insensitive on SQLite (it is a LIKE). */
+                scope_prefix?: string | null;
+                /** @description Only the scopes that record a write to Plex or plex.tv. Includes dry-run audit rows (`message.dry_run` true), which changed nothing on Plex; the UI labels them as dry runs. */
+                plex_writes?: boolean;
                 limit?: number;
                 before_id?: number | null;
             };
@@ -6702,9 +8271,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["EventOut"][];
                 };
             };
             /** @description Validation Error */
@@ -7174,6 +8741,40 @@ export interface operations {
             };
         };
     };
+    get_row_sources_api_requests_row_sources_get: {
+        parameters: {
+            query?: {
+                /** @description An own-tag pattern to preview, e.g. req-{username} */
+                pattern?: string;
+                /** @description The requests row being edited. Its pattern is the typed one; every OTHER enabled requests row's pattern joins it, because a run judges a tag against all of them. Omitted, every enabled requests row's saved pattern joins the typed one. */
+                row_id?: number | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RowSourcesOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     send_requests_api_requests_send_post: {
         parameters: {
             query?: never;
@@ -7509,6 +9110,302 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleOut"];
+                };
+            };
+        };
+    };
+    list_seasons_api_seasons_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonOut"][];
+                };
+            };
+        };
+    };
+    create_season_api_seasons_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeasonIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    library_search_api_seasons_library_search_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryTitleOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    next_date_api_seasons_next_date_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DateRuleIO"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonDateOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    plex_collections_api_seasons_plex_collections_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexCollectionOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_presets_api_seasons_presets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetOut"][];
+                };
+            };
+        };
+    };
+    preview_season_api_seasons_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeasonPreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonPreviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tmdb_tags_api_seasons_tmdb_tags_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_season_api_seasons__slug__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SeasonIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeasonOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_season_api_seasons__slug__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -9054,6 +10951,178 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionOut"];
+                };
+            };
+        };
+    };
+    create_theme_api_themes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThemeSaveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    capabilities_api_themes_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilitiesOut"];
+                };
+            };
+        };
+    };
+    preview_theme_api_themes_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prompts_api_themes_prompts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptsOut"];
+                };
+            };
+        };
+    };
+    get_theme_api_themes__theme_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                theme_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_theme_api_themes__theme_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                theme_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThemeSaveIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThemeOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,9 +11,12 @@ const updateCollection = vi.fn((_id: number, _body: unknown) =>
   Promise.resolve({}),
 );
 const startRun = vi.fn((_body: unknown) => Promise.resolve({ run_id: 42 }));
+// Fails unless a test serves a history: a card must still render when the row's history can't load.
+const getCollectionEffectiveness = vi.fn((_id: number): Promise<unknown> => Promise.reject(new Error("no history")));
 
 vi.mock("@/lib/api", () => ({
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+  apiUrl: (path: string) => path,
   api: {
     posterImageUrl: (id: number) => `/api/collections/${id}/poster/image`,
     getSettings: () => Promise.resolve({ "row.size": "15" }),
@@ -24,6 +27,7 @@ vi.mock("@/lib/api", () => ({
       ]),
     updateCollection: (id: number, body: unknown) => updateCollection(id, body),
     startRun: (body: unknown) => startRun(body),
+    getCollectionEffectiveness: (id: number) => getCollectionEffectiveness(id),
   },
 }));
 
@@ -35,6 +39,7 @@ function collection(patch: Partial<Collection> = {}): Collection {
     slug: "hidden-gems",
     name: "Hidden Gems",
     last_run_id: null,
+    preview_titles: [],
     build: "per_person",
     audience: "everyone",
     audience_user_ids: [],
@@ -85,6 +90,44 @@ describe("RowCard", () => {
     updateCollection.mockClear();
   });
 
+  it("names a fixed AI row for its theme and marks it AI", async () => {
+    renderCard(
+      collection({
+        name: "{theme_emoji} {theme}",
+        name_template: "{theme_emoji} {theme}",
+        theme_id: 5,
+        theme_name: "Heist films",
+        theme_emoji: "🕶️",
+      }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "🕶️ Heist films" })).toBeInTheDocument();
+    expect(screen.getByText("AI")).toBeInTheDocument();
+    expect(screen.queryByText("theme emoji")).not.toBeInTheDocument();
+  });
+
+  it("drops the emoji slot cleanly when the theme has none", async () => {
+    renderCard(
+      collection({ name: "{theme_emoji} {theme}", theme_id: 5, theme_name: "Heist films", theme_emoji: null }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "Heist films" })).toBeInTheDocument();
+  });
+
+  it("keeps the placeholder chips on an Explore row, which has no one theme, but still says AI", async () => {
+    renderCard(collection({ name: "{theme_emoji} {theme}", theme_id: 5, theme_name: null, theme_emoji: null }));
+
+    expect(await screen.findByText("theme")).toBeInTheDocument();
+    expect(screen.getByText("AI")).toBeInTheDocument();
+  });
+
+  it("does not mark an ordinary row AI", async () => {
+    renderCard(collection());
+
+    await screen.findByRole("heading", { name: "Hidden Gems" });
+    expect(screen.queryByText("AI")).not.toBeInTheDocument();
+  });
+
   it("runs just this row, and lands on the run it started", async () => {
     // `collection_ids` has always been part of POST /api/runs; the only way to reach it was the
     // "Run selected rows…" dialog on the Runs page, where you re-picked the row you were looking at.
@@ -119,11 +162,9 @@ describe("RowCard", () => {
     // reversible option; deleting it is allowed.
     renderCard(collection({ slug: "picked", name: "Picked for You" }));
 
-    expect(
-      await screen.findByRole("link", {
-        name: /Remove or delete Picked for You/,
-      }),
-    ).toBeInTheDocument();
+    // In the card's "⋯" menu now, so no red text sits on the list until someone opens it.
+    await userEvent.click(screen.getByRole("button", { name: "More actions for Picked for You" }));
+    expect(screen.getByRole("menuitem", { name: "Remove or delete…" })).toBeInTheDocument();
   });
 
   it("offers ONE way out, pointing at the editor that explains the difference", async () => {
@@ -132,9 +173,8 @@ describe("RowCard", () => {
     // The editor's danger section already states the difference above the same two buttons.
     renderCard(collection({ id: 9, slug: "gems", name: "Hidden Gems" }));
 
-    const out = await screen.findByRole("link", {
-      name: /Remove or delete Hidden Gems/,
-    });
+    await userEvent.click(screen.getByRole("button", { name: "More actions for Hidden Gems" }));
+    const out = screen.getByRole("menuitem", { name: "Remove or delete…" });
     expect(out).toHaveAttribute("href", "/rows/9#remove-this-row");
     // Neither of the two ambiguous buttons may survive on the card.
     expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
@@ -189,6 +229,34 @@ describe("RowCard", () => {
     expect(container.querySelector('[title^="No poster"]')).toBeNull();
   });
 
+  const POSTER = { mode: "upload", title: "", subtitle: "", style: "", has_image: true } as Collection["poster"];
+  const picks = (...keys: number[]) => keys.map((rating_key) => ({ rating_key, title: `Title ${rating_key}` }));
+
+  it("shows four of the row's latest picks, through the same poster proxy as the run detail, ahead of its own poster", () => {
+    const { container } = renderCard(collection({ preview_titles: picks(11, 12, 13, 14), poster: POSTER }));
+    const sources = [...container.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+    expect(sources).toEqual([
+      "/api/picks/11/poster",
+      "/api/picks/12/poster",
+      "/api/picks/13/poster",
+      "/api/picks/14/poster",
+    ]);
+    expect(container.querySelector('[title^="No poster"]')).toBeNull();
+  });
+
+  it("falls back to the row's own poster when it has fewer than four latest picks to show", () => {
+    const { container } = renderCard(collection({ preview_titles: picks(11, 12, 13), poster: POSTER }));
+    const sources = [...container.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatch(/^\/api\/collections\/1\/poster\/image/);
+  });
+
+  it("falls back to the placeholder when it has neither enough picks nor a poster", () => {
+    const { container } = renderCard(collection({ preview_titles: picks(11) }));
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector('[title^="No poster"]')).toBeTruthy();
+  });
+
   it("asks before turning a row OFF, and does not save until you confirm", async () => {
     // The toggle's consequence reaches past this screen: saving it takes the row off Plex for everyone
     // who has it straight away (`row_changes.py`, RECONCILE collection.disable). A switch is the wrong
@@ -233,7 +301,69 @@ describe("RowCard", () => {
     });
   });
 
-  it("does not offer Rename — that lives in the editor, beside the name it changes", () => {
+  it("keeps Edit, Runs, Rename and the way out in one menu, and no red until it opens", async () => {
+    // Four actions sat on every card as buttons, one of them red, so a list of four rows carried four
+    // red "Remove or delete" labels before anyone had decided to remove anything.
+    const { container } = renderCard(collection({ id: 9, slug: "gems", name: "Hidden Gems" }));
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(container.querySelector(".text-destructive-text")).toBeNull();
+
+    const trigger = screen.getByRole("button", { name: "More actions for Hidden Gems" });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    await userEvent.click(trigger);
+
+    const menu = screen.getByRole("menu", { name: "More actions for Hidden Gems" });
+    const items = within(menu).getAllByRole("menuitem");
+    expect(items.map((item) => item.textContent)).toEqual(["Edit", "Runs", "Rename on Plex…", "Remove or delete…"]);
+    expect(items[1]).toHaveAttribute("href", "/runs?row=gems");
+    expect(items[2]).toHaveAttribute("href", "/rows/9/rename");
+    expect(items[3]).toHaveAttribute("href", "/rows/9#remove-this-row");
+    expect(items[3]).toHaveClass("text-destructive-text");
+    expect(items[0]).toHaveFocus();
+  });
+
+  it("says when the row last built, and that an off row is on nobody's Plex", async () => {
+    const today = new Date();
+    today.setHours(2, 30, 0, 0);
+    const history = { last_delivered_at: today.toISOString(), first_delivered_at: today.toISOString() };
+    const time = today.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+    getCollectionEffectiveness.mockResolvedValueOnce(history);
+    const { unmount } = renderCard(collection());
+    expect(await screen.findByText(`Last built ${time} today`)).toBeInTheDocument();
+    unmount();
+
+    getCollectionEffectiveness.mockResolvedValueOnce(history);
+    renderCard(collection({ enabled: false }));
+    expect(await screen.findByText(`Off, not on anyone's Plex · last built ${time} today`)).toBeInTheDocument();
+  });
+
+  it("claims no build at all while the row's history can't be read", async () => {
+    renderCard(collection());
+    await waitFor(() => expect(getCollectionEffectiveness).toHaveBeenCalled());
+    expect(screen.queryByText(/Not built yet|Last built/)).toBeNull();
+  });
+
+  it("walks the menu with the arrow keys and closes it on Escape, back on its button", async () => {
+    renderCard(collection());
+    const trigger = screen.getByRole("button", { name: "More actions for Hidden Gems" });
+    trigger.focus();
+    await userEvent.keyboard("{Enter}");
+
+    const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(items[1]).toHaveFocus();
+    await userEvent.keyboard("{ArrowUp}{ArrowUp}");
+    expect(items[3]).toHaveFocus();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+  });
+
+  it("never renames in place — Rename on Plex… is a link to the rename screen", () => {
     renderCard(collection());
     expect(screen.queryByRole("button", { name: /^Rename$/i })).toBeNull();
   });

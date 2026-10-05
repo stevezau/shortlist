@@ -1,0 +1,348 @@
+{
+ "_provenance": "Sonarr v3 GET /api/v3/tag and GET /api/v3/series recorded 2026-09-28 off a live server (4966 items, 63 tags, of which 3 are Seerr requester tags on 4 items). Items are cut to the keys a requests row reads (full key set in `all_item_keys`), titles and paths neutralised, tag user numbers remapped to match overseerr_requests_page.json.",
+ "_what_the_live_response_settled": {
+  "requester_tag_format": "<seerr user id>-<username>, no spaces (Seerr \u2265 2.x; older wrote `12 - name`, and Seerr's 0007_migrate_arr_tags renamed those). Matching is on the leading number only.",
+  "tag_survives_request_delete": "3 of 7 tagged films and 3 of 4 tagged shows had their Seerr request already deleted, and every one still carried its tag \u2014 Seerr never removes a tag (MediaRequestSubscriber.afterRemove only recalculates media status).",
+  "added_is_iso_utc": true,
+  "hasFile_present_on_movies": false,
+  "statistics_present_on_series": true
+ },
+ "all_item_keys": [
+  "added",
+  "airTime",
+  "alternateTitles",
+  "cleanTitle",
+  "ended",
+  "firstAired",
+  "genres",
+  "id",
+  "images",
+  "imdbId",
+  "languageProfileId",
+  "lastAired",
+  "monitorNewItems",
+  "monitored",
+  "network",
+  "originalLanguage",
+  "overview",
+  "path",
+  "previousAiring",
+  "qualityProfileId",
+  "ratings",
+  "rootFolderPath",
+  "runtime",
+  "seasonFolder",
+  "seasons",
+  "seriesType",
+  "sortTitle",
+  "statistics",
+  "status",
+  "tags",
+  "title",
+  "titleSlug",
+  "tmdbId",
+  "tvMazeId",
+  "tvRageId",
+  "tvdbId",
+  "useSceneNumbering",
+  "year"
+ ],
+ "tags": [
+  {
+   "id": 99,
+   "label": "16-person16"
+  },
+  {
+   "id": 117,
+   "label": "10-person10"
+  },
+  {
+   "id": 85,
+   "label": "14-person14"
+  },
+  {
+   "id": 106,
+   "label": "other-tag"
+  },
+  {
+   "id": 105,
+   "label": "other-tag"
+  }
+ ],
+ "tagged_items": [
+  {
+   "id": 5153,
+   "title": "series 5",
+   "year": 2018,
+   "tmdbId": 80475,
+   "tvdbId": 344280,
+   "imdbId": "tt6109562",
+   "tags": [
+    33,
+    85
+   ],
+   "added": "2026-08-28T11:44:48Z",
+   "monitored": true,
+   "status": "ended",
+   "path": "/media/series/5",
+   "rootFolderPath": "/media/series",
+   "statistics": {
+    "seasonCount": 5,
+    "episodeFileCount": 25,
+    "episodeCount": 25,
+    "totalEpisodeCount": 65,
+    "sizeOnDisk": 33037657386,
+    "releaseGroups": [
+     "NTb",
+     "Vialle",
+     "Kitsune",
+     "playWEB"
+    ],
+    "percentOfEpisodes": 100
+   },
+   "seasons": [
+    {
+     "seasonNumber": 0,
+     "monitored": false,
+     "statistics": {
+      "episodeFileCount": 0,
+      "episodeCount": 0,
+      "totalEpisodeCount": 34,
+      "sizeOnDisk": 0,
+      "releaseGroups": [],
+      "percentOfEpisodes": 0
+     }
+    },
+    {
+     "seasonNumber": 1,
+     "monitored": true,
+     "statistics": {
+      "previousAiring": "2018-08-15T08:30:00Z",
+      "episodeFileCount": 6,
+      "episodeCount": 6,
+      "totalEpisodeCount": 6,
+      "sizeOnDisk": 7739816377,
+      "releaseGroups": [
+       "NTb",
+       "Vialle"
+      ],
+      "percentOfEpisodes": 100
+     }
+    },
+    {
+     "seasonNumber": 2,
+     "monitored": true,
+     "statistics": {
+      "previousAiring": "2019-12-19T07:30:00Z",
+      "episodeFileCount": 7,
+      "episodeCount": 7,
+      "totalEpisodeCount": 7,
+      "sizeOnDisk": 8477480925,
+      "releaseGroups": [
+       "Vialle"
+      ],
+      "percentOfEpisodes": 100
+     }
+    }
+   ]
+  },
+  {
+   "id": 5171,
+   "title": "series 6",
+   "year": 2020,
+   "tmdbId": 111834,
+   "tvdbId": 388611,
+   "imdbId": "tt13135714",
+   "tags": [
+    33,
+    99,
+    15
+   ],
+   "added": "2026-09-03T17:50:27Z",
+   "monitored": true,
+   "status": "continuing",
+   "path": "/media/series/6",
+   "rootFolderPath": "/media/series",
+   "statistics": {
+    "seasonCount": 5,
+    "episodeFileCount": 77,
+    "episodeCount": 77,
+    "totalEpisodeCount": 77,
+    "sizeOnDisk": 51229470992,
+    "releaseGroups": [
+     "FLUX",
+     "KOGi",
+     "STC",
+     "NTb",
+     "UNRAR"
+    ],
+    "percentOfEpisodes": 100
+   },
+   "seasons": [
+    {
+     "seasonNumber": 1,
+     "monitored": true,
+     "statistics": {
+      "previousAiring": "2021-12-03T08:00:00Z",
+      "episodeFileCount": 24,
+      "episodeCount": 24,
+      "totalEpisodeCount": 24,
+      "sizeOnDisk": 18601884572,
+      "releaseGroups": [
+       "FLUX"
+      ],
+      "percentOfEpisodes": 100
+     }
+    },
+    {
+     "seasonNumber": 2,
+     "monitored": true,
+     "statistics": {
+      "previousAiring": "2022-04-15T07:00:00Z",
+      "episodeFileCount": 13,
+      "episodeCount": 13,
+      "totalEpisodeCount": 13,
+      "sizeOnDisk": 5781131471,
+      "releaseGroups": [
+       "KOGi"
+      ],
+      "percentOfEpisodes": 100
+     }
+    },
+    {
+     "seasonNumber": 3,
+     "monitored": true,
+     "statistics": {
+      "previousAiring": "2023-05-19T07:00:00Z",
+      "episodeFileCount": 20,
+      "episodeCount": 20,
+      "totalEpisodeCount": 20,
+      "sizeOnDisk": 4041603718,
+      "releaseGroups": [],
+      "percentOfEpisodes": 100
+     }
+    }
+   ]
+  },
+  {
+   "id": 5172,
+   "title": "series 7",
+   "year": 2020,
+   "tmdbId": 92053,
+   "tvdbId": 364318,
+   "imdbId": "tt10327830",
+   "tags": [
+    33,
+    99
+   ],
+   "added": "2026-09-03T17:50:27Z",
+   "monitored": true,
+   "status": "ended",
+   "path": "/media/series/7",
+   "rootFolderPath": "/media/series",
+   "statistics": {
+    "seasonCount": 2,
+    "episodeFileCount": 23,
+    "episodeCount": 23,
+    "totalEpisodeCount": 23,
+    "sizeOnDisk": 104859793150,
+    "releaseGroups": [
+     "CRUCiFiED"
+    ],
+    "percentOfEpisodes": 100
+   },
+   "seasons": [
+    {
+     "seasonNumber": 1,
+     "monitored": true,
+     "statistics": {
+      "previousAiring": "2020-05-13T02:00:00Z",
+      "episodeFileCount": 13,
+      "episodeCount": 13,
+      "totalEpisodeCount": 13,
+      "sizeOnDisk": 58500125284,
+      "releaseGroups": [
+       "CRUCiFiED"
+      ],
+      "percentOfEpisodes": 100
+     }
+    },
+    {
+     "seasonNumber": 2,
+     "monitored": true,
+     "statistics": {
+      "previousAiring": "2021-02-25T03:00:00Z",
+      "episodeFileCount": 10,
+      "episodeCount": 10,
+      "totalEpisodeCount": 10,
+      "sizeOnDisk": 46359667866,
+      "releaseGroups": [
+       "CRUCiFiED"
+      ],
+      "percentOfEpisodes": 100
+     }
+    }
+   ]
+  }
+ ],
+ "untagged_item": {
+  "id": 1,
+  "title": "series 8",
+  "year": 2025,
+  "tmdbId": 218510,
+  "tvdbId": 429874,
+  "imdbId": "tt18566094",
+  "tags": [],
+  "added": "2025-04-17T19:46:39Z",
+  "monitored": true,
+  "status": "continuing",
+  "path": "/media/series/8",
+  "rootFolderPath": "/media/series",
+  "statistics": {
+   "seasonCount": 2,
+   "episodeFileCount": 8,
+   "episodeCount": 8,
+   "totalEpisodeCount": 16,
+   "sizeOnDisk": 7755245809,
+   "releaseGroups": [
+    "FLUX"
+   ],
+   "percentOfEpisodes": 100
+  },
+  "seasons": [
+   {
+    "seasonNumber": 1,
+    "monitored": true,
+    "statistics": {
+     "previousAiring": "2025-04-17T04:00:00Z",
+     "episodeFileCount": 8,
+     "episodeCount": 8,
+     "totalEpisodeCount": 8,
+     "sizeOnDisk": 7755245809,
+     "releaseGroups": [
+      "FLUX"
+     ],
+     "percentOfEpisodes": 100
+    }
+   },
+   {
+    "seasonNumber": 2,
+    "monitored": true,
+    "statistics": {
+     "episodeFileCount": 0,
+     "episodeCount": 0,
+     "totalEpisodeCount": 8,
+     "sizeOnDisk": 0,
+     "releaseGroups": [],
+     "percentOfEpisodes": 0
+    }
+   }
+  ]
+ },
+ "counts": {
+  "items": 4966,
+  "tags": 63,
+  "requester_tags": 3,
+  "tagged_items": 4
+ }
+}

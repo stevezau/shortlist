@@ -8,9 +8,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from shortlist.engine.models import RowLimits
 from shortlist.engine.rows import ROW_ORDERS
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.db.models import DEFAULT_SLUG, User
+from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration
@@ -21,12 +23,25 @@ pytestmark = pytest.mark.integration
 
 #: Every key `collections._serialize` renders — `GET`, `POST` and `PATCH /api/collections` alike.
 COLLECTION_KEYS = {
+    "ai_instructions",
+    "ai_paused",
+    "ai_tokens",
+    "theme_id",
+    "theme_name",
+    "theme_emoji",
+    "theme_mode",
+    "explore_brief",
+    "theme_days",
+    "refresh_share",
+    "repeat_cooldown_days",
+    "avoid_rows",
     "id",
     "slug",
     "name",
     "description",
     "sort_title_prefix",
     "last_run_id",
+    "preview_titles",
     "build",
     "audience",
     "audience_user_ids",
@@ -43,12 +58,19 @@ COLLECTION_KEYS = {
     "watched_pct",
     "rewatch",
     "rewatch_cooldown_days",
+    "requests_row",
+    "requests_window_days",
+    "requests_tag_pattern",
     "unstarted_only",
     "refresh_days",
     "idle_hold_days",
     "recency",
     "recent_count",
     "max_seeds",
+    "max_runtime",
+    "min_year",
+    "max_year",
+    "min_rating",
     "cold_start",
     "seed_window",
     # This row's own request floors and Arr target; null on any of them means inherit the global.
@@ -277,7 +299,9 @@ class TestCollectionsSeed:
         client.put("/api/settings", json={"values": {"row.size": 10}})
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         picked = next(spec for spec in specs if spec.slug == "picked")
         assert picked.size == 10  # follows the setting, not the collection's seeded 15
         assert picked.name_template == ""  # falls through to the global row name
@@ -293,7 +317,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "rewatch_row").watched_pct == 0.5
 
     def test_per_row_auto_user_tag_round_trips_and_reaches_the_spec(self, client: TestClient):
@@ -314,7 +340,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "kids_row").auto_user_tag is False
         # ...and the untouched default row still inherits, so one row's override reaches no other.
         assert next(s for s in specs if s.slug == "picked").auto_user_tag is None
@@ -336,7 +364,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "fresh_row").refresh_days == 3
 
     def test_per_row_idle_hold_round_trips_and_reaches_the_spec(self, client: TestClient):
@@ -356,7 +386,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "patient_row").idle_hold_days == 28
         # An untouched row still inherits, so one row's ceiling reaches no other.
         assert next(s for s in specs if s.slug == "picked").idle_hold_days is None
@@ -381,7 +413,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "old_favourites").rewatch_cooldown_days == 90
         assert next(s for s in specs if s.slug == "anything_goes").rewatch_cooldown_days == 0
 
@@ -418,7 +452,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         gems = next(s for s in specs if s.slug == "hidden_gems")
         assert (gems.description, gems.sort_title_prefix) == ("", "01 ")
 
@@ -436,7 +472,7 @@ class TestCollectionsSeed:
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
             store = SettingsStore(session, client.app.state.secrets)
-            specs = builder._build_rows(session, store)
+            specs = builder._build_rows(session, store, catalogue=load_catalogue(session))
             assert builder._engine_config(session, store).recency == 0.4
         assert next(s for s in specs if s.slug == "new_row").recency == 0.8
 
@@ -453,7 +489,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "plain_row").recency is None
 
     def test_an_explicit_zero_is_stored_and_not_swallowed_as_unset(self, client: TestClient):
@@ -482,10 +520,104 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "because_row").max_seeds == 1
         # A row that never set one keeps None, so the engine falls back to its own budget.
         assert next(s for s in specs if s.slug == "picked").max_seeds is None
+
+    def test_per_row_limits_round_trip_clear_and_reach_the_spec(self, client: TestClient):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        limits = {"max_runtime": 120, "min_year": 1990, "max_year": 2020, "min_rating": 7.5}
+        created = client.post("/api/collections", json={"name": "Limit Row", **limits})
+        assert created.status_code == 201
+        assert {k: created.json()[k] for k in limits} == limits
+        cid = created.json()["id"]
+        listed = next(c for c in client.get("/api/collections").json() if c["id"] == cid)
+        assert {k: listed[k] for k in limits} == limits
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
+        spec = next(s for s in specs if s.slug == "limit_row")
+        assert (spec.max_runtime, spec.min_year, spec.max_year, spec.min_rating) == (120, 1990, 2020, 7.5)
+        picked = next(s for s in specs if s.slug == "picked")
+        assert not picked.limits().active
+
+        cleared = {k: None for k in limits}
+        patched = client.patch(f"/api/collections/{cid}", json={"name": "Limit Row", **cleared})
+        assert {k: patched.json()[k] for k in limits} == cleared
+
+    def test_an_int_min_rating_builds_the_same_spec_as_a_float_one(self, client: TestClient):
+        from shortlist.server.db.models import Collection
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Rated Row", "min_rating": 7})
+        assert created.status_code == 201
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            # Hand the builder a genuine int: SQLite hands back a float, so the cast is only exercised this way.
+            row = session.query(Collection).filter_by(slug="rated_row").one()
+            row.min_rating = 7
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
+            assert type(row.min_rating) is int
+        spec = next(s for s in specs if s.slug == "rated_row")
+        assert isinstance(spec.min_rating, float)
+        assert spec.limits().fingerprint() == RowLimits(min_rating=7.0).fingerprint()
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"max_runtime": 0},
+            {"max_runtime": 601},
+            {"min_year": 1869},
+            {"min_year": 2101},
+            {"max_year": 1869},
+            {"max_year": 2101},
+            {"min_rating": -0.1},
+            {"min_rating": 10.1},
+        ],
+    )
+    def test_a_limit_outside_its_bounds_is_rejected(self, client: TestClient, bad: dict):
+        assert client.post("/api/collections", json={"name": "X", **bad}).status_code == 422
+
+    def test_a_limit_at_its_bounds_is_accepted(self, client: TestClient):
+        ok = {"max_runtime": 1, "min_year": 1870, "max_year": 2100, "min_rating": 0}
+        assert client.post("/api/collections", json={"name": "Edge Row", **ok}).status_code == 201
+
+    def test_min_year_after_max_year_is_rejected_naming_both_fields(self, client: TestClient):
+        response = client.post("/api/collections", json={"name": "X", "min_year": 2010, "max_year": 2000})
+        assert response.status_code == 422
+        assert "min_year" in response.text and "max_year" in response.text
+
+    def test_patch_year_order_is_judged_against_the_stored_row(self, client: TestClient):
+        cid = client.post("/api/collections", json={"name": "Years Row", "min_year": 1990, "max_year": 2000}).json()[
+            "id"
+        ]
+        url = f"/api/collections/{cid}"
+
+        late_min = client.patch(url, json={"name": "Years Row", "min_year": 2010})
+        assert late_min.status_code == 422
+        assert "earliest year" in late_min.text
+        early_max = client.patch(url, json={"name": "Years Row", "max_year": 1980})
+        assert early_max.status_code == 422
+        assert "earliest year" in early_max.text
+
+        both = client.patch(url, json={"name": "Years Row", "min_year": 2010, "max_year": 2020})
+        assert both.status_code == 200
+        assert (both.json()["min_year"], both.json()["max_year"]) == (2010, 2020)
+
+        cleared = client.patch(url, json={"name": "Years Row", "max_year": None})
+        assert cleared.status_code == 200 and cleared.json()["max_year"] is None
+        assert client.patch(url, json={"name": "Years Row", "min_year": 2050}).status_code == 200
 
     def test_per_row_seed_window_round_trips_and_reaches_the_spec(self, client: TestClient):
         """How many recent watches a row cycles between. Unlike max_seeds it is NOT nullable — there
@@ -505,7 +637,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "cycling_row").seed_window == 3
         # A row that never set one takes their most recent watch — the behaviour before cycling existed.
         assert next(s for s in specs if s.slug == "picked").seed_window == 1
@@ -579,7 +713,9 @@ class TestCollectionsSeed:
         with client.app.state.sessions() as session:
             from shortlist.server.settings_store import SettingsStore
 
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         by_slug = {s.slug: s for s in specs}
         assert by_slug[inherits.json()["slug"]].cold_start is None
         assert by_slug[created.json()["slug"]].cold_start is None  # the PATCH above handed it back
@@ -596,7 +732,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == "top_row")
         assert spec.placement == "library" and spec.pin_top is True
         assert spec.show_library and not spec.show_home  # library-only
@@ -618,7 +756,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == created.json()["slug"])
         assert spec.pick_order == order, f"{order!r} did not reach the engine spec"
 
@@ -644,7 +784,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == "quiet_row")
         assert not spec.show_home and not spec.show_friends_home
         assert not spec.show_owner_library and not spec.show_friends_library
@@ -663,7 +805,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == "split_row")
         assert spec.show_owner_library and not spec.show_friends_library
         assert spec.show_home and spec.show_friends_home
@@ -794,7 +938,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         assert next(s for s in specs if s.slug == "gems_row").hub_anchors == {
             "2": HubAnchor(anchor_title="New Series", before=True)
         }
@@ -822,7 +968,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
 
         assert next(s for s in specs if s.slug == follower.json()["slug"]).hub_anchors == {
             "2": HubAnchor(anchor_row=target, before=True)
@@ -842,7 +990,7 @@ class TestCollectionsSeed:
         with client.app.state.sessions() as session:
             store = SettingsStore(session, client.app.state.secrets)
             retired = builder._retired_rows(session, store)
-            built = builder._build_rows(session, store)
+            built = builder._build_rows(session, store, catalogue=load_catalogue(session))
 
         assert "hidden_gems" not in {s.slug for s in built}  # not delivered
         assert "hidden_gems" in {s.slug for s in retired}  # but queued for removal
@@ -974,7 +1122,9 @@ class TestCollectionsSeed:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         spec = next(s for s in specs if s.slug == "poster_row")
         assert spec.poster is not None and spec.poster.mode == "generate" and spec.poster.style == "neon"
 
@@ -1337,6 +1487,86 @@ class TestCollectionsApi:
         assert r.json()["removed"] == ["Drop Me"]
         assert deleted == ["Drop Me" + row_marker(acct)]
         assert keep.status_code == 201
+
+    def _shared_row_with_a_lock_spy(self, client: TestClient, monkeypatch, lock) -> tuple[int, list[str], list[bool]]:
+        """A shared row on a fake Plex, with `jobs.plex_writer_lock` pinned to ``lock`` and every Plex read
+        recording whether that lock was held at the time."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.services import jobs
+
+        created = client.post("/api/collections", json={"name": "Popular", "build": "shared"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        deleted = self._fake_plex_ctx(
+            monkeypatch, client, collections=[("🔥 Popular" + row_marker(0), f"shortlist__shared_{slug}")]
+        )
+        monkeypatch.setattr(jobs, "plex_writer_lock", lambda: lock)
+        plex = client.app.state.run_service.build_context().plex
+        sections = plex.sections.return_value
+        held: list[bool] = []
+        plex.sections.side_effect = lambda *a, **kw: (held.append(lock.locked()), sections)[1]
+        return cid, deleted, held
+
+    def test_a_real_cleanup_holds_the_one_writer_lock_while_it_touches_plex(self, client: TestClient, monkeypatch):
+        """The job worker and every run hold this lock; the cleanup button did not. A cleanup overlapping a run
+        that delivers the same row could forget the ledger key the run had just written, and plays on that row
+        went uncredited until its next delivery found it by label again."""
+        import asyncio
+
+        cid, deleted, held = self._shared_row_with_a_lock_spy(client, monkeypatch, asyncio.Lock())
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        assert r.status_code == 200
+        assert len(deleted) == 1
+        assert held and all(held), "the removal touched Plex without the one-writer lock held"
+
+    def test_a_cleanup_preview_takes_no_lock_and_still_answers_during_a_run(self, client: TestClient, monkeypatch):
+        """A dry run writes nothing, so it has no business holding the one-writer lock — and the preview is
+        what the confirm dialog opens on, so refusing it mid-run would leave the dialog with nothing to show."""
+        import asyncio
+
+        cid, deleted, held = self._shared_row_with_a_lock_spy(client, monkeypatch, asyncio.Lock())
+        monkeypatch.setattr(client.app.state.run_service, "is_running", lambda: True)
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": True})
+
+        assert r.status_code == 200
+        assert r.json()["removed"] == ["🔥 Popular"]
+        assert deleted == []
+        assert held and not any(held), "a preview took the one-writer lock"
+
+    def test_a_real_cleanup_is_refused_while_a_run_is_writing(self, client: TestClient, monkeypatch):
+        """A run holds the lock for its whole length — many minutes on a real server — so waiting for it
+        would hang the request with nothing on screen to say why. Refuse, say so, and touch nothing."""
+        import asyncio
+
+        cid, deleted, held = self._shared_row_with_a_lock_spy(client, monkeypatch, asyncio.Lock())
+        monkeypatch.setattr(client.app.state.run_service, "is_running", lambda: True)
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        assert r.status_code == 409
+        assert "run" in r.json()["detail"].lower() and "nothing was removed" in r.json()["detail"].lower()
+        assert deleted == [] and held == [], "a refused cleanup still read or wrote Plex"
+
+    def test_a_real_cleanup_stands_down_when_another_writer_keeps_the_lock(self, client: TestClient, monkeypatch):
+        """A writer JOB is short enough to wait for, but only for a bounded time — the same bound the job
+        worker uses — so a lock that stays held costs the request a wait, never an open-ended hang."""
+        import asyncio
+
+        from shortlist.server.services import jobs
+
+        lock = asyncio.Lock()
+        asyncio.run(lock.acquire())  # another writer, mid-flight
+        cid, deleted, held = self._shared_row_with_a_lock_spy(client, monkeypatch, lock)
+        monkeypatch.setattr(jobs, "WRITER_LOCK_WAIT_S", 0.05)
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        assert r.status_code == 409
+        assert "nothing was removed" in r.json()["detail"].lower()
+        assert deleted == [] and held == []
+        assert lock.locked(), "the other writer's hold was released by a request that never had it"
 
     def test_deleting_a_row_also_removes_its_plex_collection(self, client: TestClient, monkeypatch):
         """Delete now cleans Plex first (while the slug still exists), THEN drops the DB row.
@@ -3264,7 +3494,9 @@ class TestRowShowDaysApi:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         return next(s for s in specs if s.slug == slug)
 
     def test_show_days_round_trips(self, client: TestClient):
@@ -3397,7 +3629,9 @@ class TestSeasonalRowsApi:
 
         builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
         return next(s for s in specs if s.slug == slug)
 
     def test_seasons_round_trip_in_calendar_order(self, client: TestClient):
@@ -3415,6 +3649,20 @@ class TestSeasonalRowsApi:
         body = client.post("/api/collections", json={"name": "Plain"}).json()
         assert body["seasons"] == []
         assert body["season_status"] is None
+
+    def test_a_patch_refuses_an_unknown_season_and_stores_its_seasons_in_calendar_order(self, client: TestClient):
+        """The catalogue lives partly in the database (#137), so the check runs in the handlers rather than a
+        field validator — and a PATCH has to get it as surely as a POST."""
+        cid = client.post("/api/collections", json={"name": "Seasonal", "seasons": ["halloween"]}).json()["id"]
+
+        refused = client.patch(f"/api/collections/{cid}", json={"name": "Seasonal", "seasons": ["easter"]})
+        assert refused.status_code == 422
+        assert "easter" in refused.text
+        r = client.patch(
+            f"/api/collections/{cid}", json={"name": "Seasonal", "seasons": ["christmas", "valentines", "christmas"]}
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["seasons"] == ["valentines", "christmas"]
 
     def test_an_unknown_season_is_refused(self, client: TestClient):
         r = client.post("/api/collections", json={"name": "Seasonal", "seasons": ["easter"]})
@@ -3483,17 +3731,6 @@ class TestSeasonalRowsApi:
         assert body["shown_today"] is False
         assert body["season_status"]["showing"] is None
         assert body["season_status"]["next"]["starts"] == "2026-11-25"
-
-    def test_the_catalogue_lists_every_season_with_its_day(self, client: TestClient):
-        r = client.get("/api/collections/seasons")
-
-        assert r.status_code == 200
-        assert [(s["slug"], s["month"], s["day"]) for s in r.json()] == [
-            ("valentines", 2, 14),
-            ("halloween", 10, 31),
-            ("christmas", 12, 25),
-        ]
-        assert r.json()[1]["description"] == "Halloween films and horror"
 
     def test_changing_the_seasons_is_applied_now(self, client: TestClient, monkeypatch):
         """Make a row seasonal in September and it has to come off people's Home now, not at midnight."""
@@ -4095,3 +4332,323 @@ class TestDryRunPreview:
         # And the warning must be TRUE: the real delete does exactly what the preview promised.
         client.delete(f"/api/collections/{target['id']}")
         assert self._row_state(client, follower["id"])["hub_anchor"] == {}
+
+
+class TestRequestsRowFields:
+    """A "Your requests" row (issue #127): three per-row settings that have to survive the POST, the
+    serializer AND the spec build, and the shapes such a row cannot take."""
+
+    def test_requests_row_fields_round_trip_and_reach_the_spec(self, client: TestClient):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        body = {
+            "name": "📬 {library_name} you asked for",
+            "build": "per_person",
+            "requests_row": True,
+            "requests_window_days": 30,
+            "requests_tag_pattern": "req-{username}",
+            "size": 20,
+        }
+        r = client.post("/api/collections", json=body)
+        assert r.status_code == 201, r.text
+        out = r.json()
+        assert (out["requests_row"], out["requests_window_days"], out["requests_tag_pattern"]) == (
+            True,
+            30,
+            "req-{username}",
+        )
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(
+                session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
+            )
+        spec = next(s for s in specs if s.slug == out["slug"])
+        assert (spec.requests_row, spec.requests_window_days, spec.requests_tag_pattern) == (True, 30, "req-{username}")
+
+    @pytest.mark.parametrize(
+        ("bad", "msg"),
+        [
+            ({"build": "shared"}, "one row per person"),
+            ({"rewatch": True}, "rewatch"),
+            ({"seasons": ["halloween"]}, "seasonal"),
+            ({"requests_tag_pattern": "req-sarah"}, "{username}"),
+            ({"requests_window_days": 4000}, "less than or equal to 3650"),
+        ],
+    )
+    def test_a_requests_row_rejects_shapes_it_cannot_be(self, client: TestClient, bad: dict, msg: str):
+        body = {"name": "n", "build": "per_person", "requests_row": True, **bad}
+        r = client.post("/api/collections", json=body)
+        assert r.status_code == 422 and msg in r.text, r.text
+
+    def test_patch_can_turn_a_row_into_a_requests_row(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "n", "build": "per_person"}).json()
+        assert created["requests_row"] is False
+        # `name` rides along because `CollectionIn` requires it on a PATCH too; only the fields SENT move.
+        r = client.patch(f"/api/collections/{created['id']}", json={"name": "n", "requests_row": True})
+        assert r.status_code == 200, r.text
+        assert r.json()["requests_row"] is True
+        assert (r.json()["requests_window_days"], r.json()["requests_tag_pattern"]) == (90, "")
+
+    @pytest.mark.parametrize(
+        ("existing", "patch", "msg"),
+        [
+            ({"rewatch": True}, {"requests_row": True}, "rewatch"),
+            ({"requests_row": True}, {"rewatch": True}, "rewatch"),
+            ({"requests_row": True}, {"build": "shared"}, "one row per person"),
+            ({"requests_row": True}, {"seasons": ["halloween"]}, "seasonal"),
+        ],
+    )
+    def test_a_patch_is_judged_against_the_merged_row(self, client: TestClient, existing: dict, patch: dict, msg: str):
+        """A PATCH sends only what changed, so the body alone never shows the clash — a rewatch row
+        turning into a requests row sends no `rewatch`, and it is the STORED value that forbids it."""
+        created = client.post("/api/collections", json={"name": "n", "build": "per_person", **existing})
+        assert created.status_code == 201, created.text
+        r = client.patch(f"/api/collections/{created.json()['id']}", json={"name": "n", **patch})
+        assert r.status_code == 422 and msg in r.text, r.text
+
+
+class TestPreviewTitles:
+    """`preview_titles`: the Rows list's 4-poster collage, from each row's most recent delivery."""
+
+    @staticmethod
+    def _people(client: TestClient, *slugs: str) -> list[int]:
+        """The ids of these people, adding any the fixture's roster does not already have."""
+        with client.app.state.sessions() as session:
+            for i, slug in enumerate(slugs):
+                if session.query(User).filter_by(slug=slug).one_or_none() is None:
+                    session.add(User(username=slug, slug=slug, plex_account_id=5000 + i, enabled=True))
+            session.commit()
+            return [session.query(User).filter_by(slug=slug).one().id for slug in slugs]
+
+    @staticmethod
+    def _run(client: TestClient, picks: list[tuple[int, str, int, str, int]], *, dry_run: bool = False) -> int:
+        """One run delivering `(user_id, slug, rating_key, title, rank)` picks."""
+        from shortlist.server.db.models import PickRow, Run
+
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok", dry_run=dry_run)
+            session.add(run)
+            session.flush()
+            for user_id, slug, rating_key, title, rank in picks:
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=user_id,
+                        tmdb_id=rating_key,
+                        media_type="movie",
+                        rating_key=rating_key,
+                        rank=rank,
+                        collection_slug=slug,
+                        title=title,
+                    )
+                )
+            session.commit()
+            return run.id
+
+    @staticmethod
+    def _row(client: TestClient, slug: str) -> dict:
+        return next(c for c in client.get("/api/collections").json() if c["slug"] == slug)
+
+    def test_a_row_never_built_has_none(self, client: TestClient):
+        assert self._row(client, "picked")["preview_titles"] == []
+
+    def test_four_distinct_titles_from_the_latest_run_best_ranked_first(self, client: TestClient):
+        sarah, mike = self._people(client, "sarah", "mike")
+        # An older run's titles are not what the row holds now.
+        self._run(client, [(sarah, "picked", 900, "Old", 1)])
+        # Both people got Heat at the top: one poster, not two.
+        self._run(
+            client,
+            [
+                (sarah, "picked", 11, "Heat", 1),
+                (sarah, "picked", 12, "Ronin", 2),
+                (sarah, "picked", 13, "Collateral", 3),
+                (sarah, "picked", 14, "Thief", 4),
+                (sarah, "picked", 15, "Manhunter", 5),
+                (mike, "picked", 11, "Heat", 1),
+                (mike, "picked", 16, "Drive", 2),
+            ],
+        )
+
+        titles = self._row(client, "picked")["preview_titles"]
+
+        assert titles == [
+            {"rating_key": 11, "title": "Heat"},
+            {"rating_key": 12, "title": "Ronin"},
+            {"rating_key": 16, "title": "Drive"},
+            {"rating_key": 13, "title": "Collateral"},
+        ]
+
+    def test_fewer_than_four_are_returned_as_they_are(self, client: TestClient):
+        (sarah,) = self._people(client, "sarah")
+        self._run(client, [(sarah, "picked", 21, "Alien", 1), (sarah, "picked", 22, "Aliens", 2)])
+
+        assert self._row(client, "picked")["preview_titles"] == [
+            {"rating_key": 21, "title": "Alien"},
+            {"rating_key": 22, "title": "Aliens"},
+        ]
+
+    def test_a_pick_never_matched_to_a_library_item_has_no_artwork_to_show(self, client: TestClient):
+        (sarah,) = self._people(client, "sarah")
+        self._run(client, [(sarah, "picked", 0, "Unmatched", 1), (sarah, "picked", 31, "Matched", 2)])
+
+        assert self._row(client, "picked")["preview_titles"] == [{"rating_key": 31, "title": "Matched"}]
+
+    def test_each_row_gets_its_own_titles_from_one_list_call(self, client: TestClient):
+        (sarah,) = self._people(client, "sarah")
+        other = client.post("/api/collections", json={"name": "Another"}).json()["slug"]
+        self._run(client, [(sarah, "picked", 41, "Mine", 1), (sarah, other, 42, "Theirs", 1)])
+
+        assert self._row(client, "picked")["preview_titles"] == [{"rating_key": 41, "title": "Mine"}]
+        assert self._row(client, other)["preview_titles"] == [{"rating_key": 42, "title": "Theirs"}]
+
+    def test_a_shared_row_reads_its_latest_real_delivery(self, client: TestClient):
+        """A shared row's picks live only in `run_shared_rows` — and that table is written by dry runs
+        too, so a preview must not show a row as holding titles a dry run only imagined."""
+        from shortlist.server.db.models import RunSharedRow
+
+        slug = client.post("/api/collections", json={"name": "Popular", "build": "shared"}).json()["slug"]
+        real = self._run(client, [])
+        dry = self._run(client, [], dry_run=True)
+        skipped = self._run(client, [])
+        with client.app.state.sessions() as session:
+            session.add(
+                RunSharedRow(
+                    run_id=real,
+                    collection_slug=slug,
+                    status="ok",
+                    picks=[
+                        {"rating_key": 51, "title": "Up", "rank": 1},
+                        {"rating_key": 52, "title": "Coco", "rank": 2},
+                    ],
+                )
+            )
+            session.add(
+                RunSharedRow(
+                    run_id=dry, collection_slug=slug, status="ok", picks=[{"rating_key": 99, "title": "Dry", "rank": 1}]
+                )
+            )
+            # A later run that delivered nothing for it leaves Plex holding the earlier titles.
+            session.add(RunSharedRow(run_id=skipped, collection_slug=slug, status="skipped", picks=[]))
+            session.commit()
+
+        assert self._row(client, slug)["preview_titles"] == [
+            {"rating_key": 51, "title": "Up"},
+            {"rating_key": 52, "title": "Coco"},
+        ]
+
+    def test_a_single_row_response_carries_them_too(self, client: TestClient):
+        (sarah,) = self._people(client, "sarah")
+        created = client.post("/api/collections", json={"name": "Another"}).json()
+        self._run(client, [(sarah, created["slug"], 61, "Solo", 1)])
+
+        patched = client.patch(f"/api/collections/{created['id']}", json={"name": "Another"})
+
+        assert patched.status_code == 200, patched.text
+        assert patched.json()["preview_titles"] == [{"rating_key": 61, "title": "Solo"}]
+
+
+class TestAiInstructions:
+    """A row's instructions for AI web search (#138), kept in the formerly dead `Collection.prompt` column."""
+
+    @staticmethod
+    def _spec(client: TestClient, slug: str):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            specs = builder._build_rows(session, store, catalogue=load_catalogue(session))
+            config = builder._engine_config(session, store)
+        return next(s for s in specs if s.slug == slug), config
+
+    def test_ai_instructions_round_trip_and_reach_the_spec(self, client: TestClient):
+        from shortlist.engine.web_guidance import AiInstructions
+
+        body = {"name": "Guided Row", "ai_instructions": {"mode": "add", "text": " No kids films. "}}
+        created = client.post("/api/collections", json=body)
+        assert created.status_code == 201
+        assert created.json()["ai_instructions"] == {"mode": "add", "text": "No kids films."}
+        rid = created.json()["id"]
+        patched = client.patch(
+            f"/api/collections/{rid}",
+            json={"name": "Guided Row", "ai_instructions": {"mode": "own", "text": "Any decade."}},
+        )
+        assert patched.json()["ai_instructions"] == {"mode": "own", "text": "Any decade."}
+        spec, _ = self._spec(client, "guided_row")
+        assert spec.ai_instructions == AiInstructions("own", "Any decade.")
+
+    def test_the_server_text_reaches_the_engine_config(self, client: TestClient):
+        client.post("/api/collections", json={"name": "Plain Row"})
+        assert (
+            client.put("/api/settings", json={"values": {"llm_web.instructions": "Favour classics."}}).status_code
+            == 200
+        )
+        spec, config = self._spec(client, "plain_row")
+        assert config.web_instructions == "Favour classics."
+        assert spec.ai_instructions is None
+
+    def test_ai_instructions_need_words_unless_they_use_the_default(self, client: TestClient):
+        def post(instructions: dict):
+            return client.post("/api/collections", json={"name": "X", "ai_instructions": instructions})
+
+        assert post({"mode": "own", "text": "   "}).status_code == 422
+        assert post({"mode": "add", "text": ""}).status_code == 422
+        assert post({"mode": "nope", "text": "x"}).status_code == 422
+        assert post({"mode": "add", "text": "x" * 2001}).status_code == 422
+
+    def test_blank_instructions_are_not_required_when_the_row_has_web_search_off(self, client: TestClient):
+        def post(sources: list[str]):
+            body = {"name": "Quiet", "candidate_sources": sources, "ai_instructions": {"mode": "add", "text": ""}}
+            return client.post("/api/collections", json=body)
+
+        assert post(["tmdb_similar"]).status_code == 201
+        assert post(["tmdb_similar", "llm_web"]).status_code == 422
+
+    def test_a_row_saved_with_the_default_stores_nothing_new(self, client: TestClient):
+        from shortlist.server.db.models import Collection
+
+        rid = client.post("/api/collections", json={"name": "Quiet Row"}).json()["id"]
+        with client.app.state.sessions() as session:
+            assert session.get(Collection, rid).prompt == {}
+        rows = client.get("/api/collections").json()
+        assert next(r for r in rows if r["id"] == rid)["ai_instructions"] == {"mode": "default", "text": ""}
+
+    def test_a_legacy_prompt_value_reads_as_the_default(self, client: TestClient):
+        from shortlist.server.db.models import Collection
+
+        rid = client.post("/api/collections", json={"name": "Old Row"}).json()["id"]
+        with client.app.state.sessions() as session:
+            session.get(Collection, rid).prompt = {"tone": "warm", "guidance": "old curate setting"}
+            session.commit()
+        row = next(r for r in client.get("/api/collections").json() if r["id"] == rid)
+        assert row["ai_instructions"] == {"mode": "default", "text": ""}
+
+    def test_a_patch_that_omits_ai_instructions_leaves_them_alone(self, client: TestClient):
+        from shortlist.server.db.models import Event
+
+        body = {"name": "Kept Row", "ai_instructions": {"mode": "add", "text": "No kids films."}}
+        rid = client.post("/api/collections", json=body).json()["id"]
+        patched = client.patch(f"/api/collections/{rid}", json={"name": "Kept Row Renamed"})
+        assert patched.status_code == 200
+        assert patched.json()["ai_instructions"] == {"mode": "add", "text": "No kids films."}
+        with client.app.state.sessions() as session:
+            assert session.query(Event).filter_by(scope="collection.ai_instructions").count() == 0
+
+    def test_the_response_schema_declares_ai_instructions(self, client: TestClient):
+        schema = client.app.openapi()["components"]["schemas"]["CollectionOut"]
+        assert "ai_instructions" in schema["properties"]
+        assert "ai_instructions" in schema["required"]
+
+    def test_changing_ai_instructions_is_audited(self, client: TestClient):
+        from shortlist.server.db.models import Event
+
+        rid = client.post("/api/collections", json={"name": "Audited Row"}).json()["id"]
+        patch = {"name": "Audited Row", "ai_instructions": {"mode": "add", "text": "No kids films."}}
+        assert client.patch(f"/api/collections/{rid}", json=patch).status_code == 200
+        with client.app.state.sessions() as session:
+            event = session.query(Event).filter_by(scope="collection.ai_instructions").one()
+            assert event.message["mode"] == "add" and event.message["chars"] == len("No kids films.")

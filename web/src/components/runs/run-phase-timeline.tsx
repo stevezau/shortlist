@@ -78,14 +78,14 @@ export function RunPhaseTimeline({ entries }: { entries: RunLogEntry[] }) {
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="flex w-full items-center justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex w-full flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {/* The card keeps its own name as the heading. The number is SUPPORTING detail, on the
               right: leading with "After everyone finished: 1m 17s" put a second duration directly
               under the run's own "Duration 7m 37s" tile with nothing saying how the two relate. This
               says what its number measures — the tail — instead of competing for "the" total. */}
           <CardTitle className="text-base">Where the time went</CardTitle>
-          <span className="shrink-0 text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {total !== null && (
               <span className="tabular-nums text-foreground">
                 {humanSeconds(total)}

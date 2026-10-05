@@ -67,6 +67,8 @@ export type ConnectionTestResult = Schemas["ConnectionTestOut"];
 /** GET /api/settings/arr/{service}/options — dropdown data for a connected Sonarr/Radarr. */
 export type ArrOptions = Schemas["ArrOptionsOut"];
 export type SeerrOptions = Schemas["SeerrOptionsOut"];
+/** GET /api/requests/row-sources — whether a "Your requests" row can know who asked for what. */
+export type RowSources = Schemas["RowSourcesOut"];
 
 // --- Rows / collections ---
 
@@ -128,10 +130,58 @@ export type CollectionBody = Partial<CollectionInput> & {
  *  `hub_anchor` needs no override: its dynamic keys are Plex section keys, which the schema already
  *  expresses as an index signature, and its VALUES are modelled (`HubAnchorOut`). */
 export type Collection = Schemas["CollectionOut"];
-/** A season a row can follow (GET /api/collections/seasons), and where a seasonal row is today. */
+/** What AI web search should look for on a row (#138): the default, added to, or replaced. */
+export type AiInstructions = Collection["ai_instructions"];
+/** POST /api/ai/web-prompt-preview: a row's instructions and/or unsaved server-wide text to preview. */
+export type WebPromptPreviewInput = Schemas["WebPromptPreviewIn"];
+/** The system prompt AI web search would send, the built-in wording, and whether instructions apply. */
+export type WebPromptPreview = Schemas["WebPromptPreviewOut"];
+/** A season a row can follow (GET /api/seasons): a built-in, or one of the owner's own (#137). */
 export type Season = Schemas["SeasonOut"];
+/** Where a seasonal row is today. */
 export type SeasonStatus = Schemas["SeasonStatusOut"];
+/** A ready-made season not added yet (GET /api/seasons/presets). */
+export type SeasonPreset = Schemas["PresetOut"];
+/** A season to save (POST /api/seasons, PUT /api/seasons/{slug}). Refuses any field it doesn't name. */
+export type SeasonInput = Schemas["SeasonIn"];
+/** A draft season to count (POST /api/seasons/preview), and what the count found. */
+export type SeasonPreviewInput = Schemas["SeasonPreviewIn"];
+export type SeasonPreview = Schemas["SeasonPreviewOut"];
+/** When a draft date rule next falls, or why it can't be used (POST /api/seasons/next-date). */
+export type SeasonDate = Schemas["SeasonDateOut"];
+/** When a season falls: a fixed day, the nth weekday of a month, or days from Easter. Monday is 0. */
+export type DateRule = Schemas["DateRuleIO"];
+export type SeasonTag = Schemas["TagIO"];
+export type SeasonCollection = Schemas["CollectionIO"];
+export type SeasonPick = Schemas["PickIO"];
+/** The editor's three searches: TMDB tags, Plex collections, and titles in the libraries. */
+export type TmdbTag = Schemas["TagOut"];
+export type PlexCollectionMatch = Schemas["PlexCollectionOut"];
+export type LibraryTitle = Schemas["LibraryTitleOut"];
 export type RowEffectiveness = Schemas["RowEffectivenessOut"];
+
+/** GET /api/themes/capabilities: whether an AI provider is set, so the AI row editor can offer its AI half. */
+export type ThemeCapabilities = Schemas["CapabilitiesOut"];
+/** GET /api/themes/prompts: the guidance "Write the list" starts from, and the mechanics no one may edit. */
+export type ThemePrompts = Schemas["PromptsOut"];
+/** A theme as the API returns it, saved (`id` set) or an unsaved draft from a preview (`id` null). */
+export type Theme = Schemas["ThemeOut"];
+export type ThemePick = Schemas["ThemePickIO"];
+export type ThemeRules = Schemas["RulesIO"];
+/** POST /api/themes/preview body: only the brief is required. */
+export type ThemePreviewInput = Partial<Schemas["PreviewIn"]>;
+/** What one AI call wrote: the draft, how it fared, what it spent, and (when refining) what it changed. */
+export type ThemePreview = Schemas["PreviewOut"];
+export type ThemeStats = Schemas["ThemeStatsOut"];
+export type ThemeDiff = Schemas["ThemeDiffOut"];
+/** POST /api/themes and PUT /api/themes/{id} body. */
+export type ThemeSaveInput = Partial<Schemas["ThemeSaveIn"]> & { draft: Schemas["ThemeIn"] };
+
+/** GET /api/collections/{id}/theme-rotation: each person's current theme, the one queued next, and what came before. */
+export type ThemeRotation = Schemas["ThemeRotationOut"];
+export type RotationTarget = Schemas["RotationTargetOut"];
+/** A theme as one person's rotation holds it: which one, when it started, and when it hands over. */
+export type ThemeRef = Schemas["ThemeRefOut"];
 
 /** A Plex library on the server (GET /api/system/libraries). */
 export type PlexLibrary = Schemas["LibraryOut"];
@@ -511,6 +561,9 @@ export type PrivacyStatus = Schemas["PrivacyStatusOut"];
 /** One account on that screen. `state` is decided server-side so the copy lives in one place. */
 export type AccountPrivacy = Schemas["AccountPrivacyOut"];
 
+/** GET /api/events/log — one audit row. `message` is the writer's own diff; its keys depend on `scope`. */
+export type AuditEvent = Schemas["EventOut"];
+
 // ---------------------------------------------------------------------------
 // Hand-written — the shapes the schema genuinely cannot describe.
 //
@@ -593,6 +646,8 @@ export interface RunDiff {
   kept?: string[];
   /** Rows deleted because Plex could not hide them (wrong type for their library). */
   deleted?: string[];
+  /** Leftover copies of a shared row removed beside it; the row itself is still live. Absent on older runs. */
+  duplicates_removed?: string[];
 }
 
 /** One (row, library) slice of a user's run result: what changed in that library + its own picks.
@@ -607,6 +662,9 @@ export interface RunLibraryBreakdown {
   removed: string[];
   kept: string[];
   deleted: string[];
+  /** Leftover copies of a shared row removed from this library; the row itself is still live. Absent on
+   *  older runs. */
+  duplicates_removed?: string[];
   created: boolean;
   picks: Pick[];
   /** AI tokens the curate call for this (row, library) cost. Absent on legacy runs. */
@@ -804,15 +862,18 @@ export interface TraceSelection {
   library: string;
   /** `rebuilt` (built fresh) · `carried_forward` (redelivered untouched — not its refresh night) ·
    *  `refreshed` (kept the strongest two-thirds, swapped the rest) · `settings_changed` (rebuilt
-   *  early because a setting that decides contents was edited) · `held_idle` (it WAS its refresh
-   *  night, but the person has watched nothing since the row was built) · `cold_start`. */
+   *  early because a setting that decides contents was edited) · `seed_moved` (a row named after a
+   *  watch, rebuilt because that watch changed) · `held_idle` (it WAS its refresh night, but the
+   *  person has watched nothing since the row was built) · `cold_start`. */
   decision:
     | "rebuilt"
     | "carried_forward"
     | "refreshed"
     | "settings_changed"
+    | "seed_moved"
     | "held_idle"
-    | "cold_start";
+    | "cold_start"
+    | "requests";
   size: number;
   delivered: number;
   candidates?: number;
@@ -834,6 +895,26 @@ export interface TraceSelection {
   cooling?: number;
   rewatch_cooldown_days?: number;
   unstarted_only?: boolean;
+  /** `requests` rows only: every request of theirs the run looked at for this library, and what
+   *  became of each. Nothing is searched for a requests row, so this is the whole story. */
+  requests?: TraceRequest[];
+  /** `requests` rows only: the row's `requests_window_days` on the night, behind any `too_old`. */
+  requests_window_days?: number;
+}
+
+/** One request a Your requests row considered (`engine/requests_row.py`). */
+export interface TraceRequest {
+  tmdb_id: number;
+  media_type: "movie" | "show";
+  title: string;
+  /** When they asked (ISO), null for a title found only by its tag. */
+  asked_at: string | null;
+  /** When it reached the server (ISO), null if it has not. */
+  landed_at: string | null;
+  found_in: ("overseerr" | "tag")[];
+  /** `in_row` · `not_on_plex` · `season_not_landed` · `watched` · `too_old` · `hidden` ·
+   *  `over_size` — see {@link requestResultLabel} in `lib/trace.ts`. */
+  result: string;
 }
 
 // --- SSE payloads (GET /api/events) ---
@@ -861,6 +942,7 @@ export type TraceFate =
   | "lost_ranking_cutoff"
   | "hidden_by_their_restrictions"
   | "not_in_season"
+  | "outside_row_limits"
   | "not_returned";
 
 /** The services POST /api/settings/test/{service} accepts (a path parameter typed `str`). */
