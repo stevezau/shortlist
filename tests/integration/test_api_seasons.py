@@ -232,7 +232,7 @@ class TestValidation:
             ),
             ({"name": "christmas"}, "There's already a season called “Christmas”."),
             ({"name": "CHRISTMAS"}, "There's already a season called “Christmas”."),
-            ({"tags": []}, "Add at least one tag, collection or film."),
+            ({"tags": []}, "Add at least one tag, genre, collection or film."),
         ],
     )
     def test_post_refuses_with_the_message_the_editor_shows(self, client: TestClient, overrides, message):

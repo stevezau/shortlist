@@ -85,6 +85,125 @@ ROW_INPUT_DEFAULTS: dict[str, object] = {
     "avoid_rows": None,
 }
 
+# The MCP catalog needs one compact description of row values.  Keep this alongside the
+# accepted defaults so the list of names cannot drift from RowIntent's creation contract.
+_ROW_FIELD_DESCRIPTIONS: dict[str, str] = {
+    "enabled": "Whether the row is active. Assistant-created rows default to inactive until explicitly enabled.",
+    "schedule": "Five-field cron in the installation timezone. The stored cron is inactive while enabled is false.",
+    "audience": "Who may receive the row: everyone, or an explicit audience_user_ids subset.",
+    "audience_user_ids": "User IDs used when audience is an explicit subset; ignored when audience is everyone.",
+    "library_keys": "Permitted Plex library keys used by the row.",
+    "poster": "Poster source and optional text fields. Text posters use the built-in renderer and no AI.",
+    "hub_anchor": "Optional placement after a row or foreign collection, or at the top of a library shelf.",
+    "ai_instructions": "Instructions for provider-backed web search: default, add, or own.",
+    "ai_paused": "Stops recurring AI top-ups for a themed row while retaining its saved picks.",
+}
+
+
+def _row_field_type(value: object) -> str:
+    """Return the JSON type advertised for a row field default."""
+    if value is None:
+        return "string | number | boolean | object | array | null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "unknown"
+
+
+def _build_row_field_definitions() -> dict[str, dict[str, object]]:
+    definitions = {
+        key: {
+            "type": _row_field_type(value),
+            "default": deepcopy(value),
+            "nullable": value is None,
+            "description": _ROW_FIELD_DESCRIPTIONS.get(
+                key,
+                "Nullable row value; null clears or inherits according to the field. Omit it to preserve "
+                "the template default.",
+            ),
+        }
+        for key, value in ROW_INPUT_DEFAULTS.items()
+    }
+    definitions["ai_paused"] = {
+        "type": "boolean",
+        "default": False,
+        "description": _ROW_FIELD_DESCRIPTIONS["ai_paused"],
+    }
+    definitions["audience"]["enum"] = ["everyone", "explicit"]
+    definitions["build"]["enum"] = ["per_person", "shared"]
+    definitions["poster"]["shape"] = {
+        "mode": {"type": "string", "enum": ["", "upload", "text", "ai", "generate"], "default": ""},
+        "title": {"type": "string", "max_length": 120},
+        "subtitle": {"type": "string", "max_length": 120},
+        "style": {"type": "string", "max_length": 400},
+    }
+    definitions["poster"]["effects"] = {
+        "text": "local rendering only; no AI or provider call",
+        "ai": "provider image generation; requires the run's image allowance",
+        "upload": "reuses an image uploaded through the owner UI; no URL or path is accepted",
+    }
+    definitions["ai_paused"]["effects"] = {"true": "prevents recurring provider top-ups", "false": "allows them"}
+    definitions["hub_anchor"]["shape"] = {
+        "anchor": {"type": "string", "default": ""},
+        "row": {"type": "string", "default": ""},
+        "before": {"type": "boolean", "default": False},
+        "top": {"type": "boolean", "default": False},
+        "enabled": {"type": "boolean", "default": True},
+    }
+    definitions["ai_instructions"]["shape"] = {
+        "mode": {"type": "string", "enum": ["default", "add", "own"], "default": "default"},
+        "text": {"type": "string", "default": "", "max_length": 2000},
+    }
+    # Replace default-inferred types with the accepted REST model's JSON schema.  The assistant
+    # create adapter uses this same model after applying its inactive-row default, so this keeps
+    # enums, bounds, unions and nested object shapes in one validation contract.
+    from shortlist.server.api.collections import CollectionIn
+
+    canonical = CollectionIn.model_json_schema()
+    schema_defs = canonical.get("$defs", {})
+
+    def resolve(node: object) -> object:
+        if not isinstance(node, dict):
+            return node
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/$defs/"):
+            return resolve(schema_defs[ref.rsplit("/", 1)[-1]])
+        return {key: resolve(value) for key, value in node.items() if key != "$ref"}
+
+    for key in ROW_INPUT_DEFAULTS:
+        property_schema = canonical.get("properties", {}).get(key)
+        if property_schema is None:
+            continue
+        merged = resolve(property_schema)
+        if isinstance(merged, dict):
+            merged.setdefault("default", deepcopy(ROW_INPUT_DEFAULTS[key]))
+            if key in _ROW_FIELD_DESCRIPTIONS:
+                merged["description"] = _ROW_FIELD_DESCRIPTIONS[key]
+            definitions[key] = merged
+    return definitions
+
+
+ROW_FIELD_DEFINITIONS = _build_row_field_definitions()
+
+# `schedule` remains the catalog's stored cron default, but creation deliberately leaves it
+# inactive. This avoids implying that a newly planned row will run before activation.
+MCP_CREATION_DEFAULTS = {
+    "enabled": False,
+    "schedule_active": False,
+    "stored_schedule": ROW_INPUT_DEFAULTS["schedule"],
+    "supplied_values_override_template_defaults": True,
+    "description": "A planned row is inactive until explicitly enabled; supplied values replace template defaults.",
+}
+
 
 _TEMPLATES: tuple[dict[str, object], ...] = (
     {
@@ -313,7 +432,8 @@ _TEMPLATES: tuple[dict[str, object], ...] = (
         "summary": "Say what you want. The AI builds the list.",
         "description": (
             "Describe a row in your own words, like “films with a twist ending”. The AI writes the list once from "
-            "your words, and Shortlist picks from it for each person every run. No more AI after that."
+            "your words, and Shortlist picks from it for each person every run. Set ai_paused=true "
+            "when saved picks should not receive recurring AI top-ups."
         ),
         "highlights": ("One row each", "The AI writes the list once", "Live like any other row"),
         "values": {

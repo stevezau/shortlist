@@ -23,7 +23,11 @@ from shortlist.server.assistant_auth import (
     require_authorized,
 )
 from shortlist.server.catalogs.settings import get_settings_catalog
-from shortlist.server.catalogs.templates import get_template_catalog
+from shortlist.server.catalogs.templates import (
+    MCP_CREATION_DEFAULTS,
+    ROW_FIELD_DEFINITIONS,
+    get_template_catalog,
+)
 from shortlist.server.db.models import Collection, CollectionAudience, Server, Setting, Theme, ThemeHistory, User
 from shortlist.server.settings_store import SettingsStore
 
@@ -165,7 +169,11 @@ class DiscoveryService:
         require_authorized(principal, [Capability.CATALOG_READ])
         return ToolResult(
             summary="The same row starting points used by Shortlist's editor.",
-            data={"items": [item.model_dump(mode="json") for item in get_template_catalog()]},
+            data={
+                "items": [item.model_dump(mode="json") for item in get_template_catalog()],
+                "field_definitions": ROW_FIELD_DEFINITIONS,
+                "creation_defaults": MCP_CREATION_DEFAULTS,
+            },
             next_action="shortlist_plan_row",
         )
 

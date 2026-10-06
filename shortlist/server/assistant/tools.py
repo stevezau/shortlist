@@ -282,9 +282,10 @@ def register_tools(server: MCPServer, state) -> None:
         "shortlist_list_templates",
         (
             "Discover the same named row templates and defaults as Shortlist's editor, including "
-            "intended use, audience behavior, prerequisites and editable fields. Templates are "
-            "starting points; use plan_row for explicit people, libraries, schedule and "
-            "activation."
+            "intended use, audience behavior, prerequisites and editable fields. The response also "
+            "contains one shared field_definitions map for row values and creation_defaults. "
+            "Templates are starting points; use plan_row for explicit people, libraries, schedule "
+            "and activation."
         ),
     )
     async def list_templates() -> ToolResult:
@@ -382,8 +383,9 @@ def register_tools(server: MCPServer, state) -> None:
             "Prepare a theme supplied by this assistant using verified metadata IDs from "
             "search_titles. Creating or editing this draft does not invoke Shortlist's generation "
             "provider or accept claimed token costs. Resolves all current and next consumers "
-            "before updating a shared theme. Saving picks and autonomously generating fresh future"
-            " picks are different behaviors."
+            "before updating a shared theme. A usable draft needs at least one verified pick, genre, "
+            "tag or collection. Saving picks and autonomously generating fresh future picks are "
+            "different behaviors."
         ),
         read_only=False,
     )
@@ -530,6 +532,9 @@ def register_tools(server: MCPServer, state) -> None:
         "shortlist_plan_season",
         (
             "Prepare a custom season creation, update or deletion with a validated calendar rule. "
+            "A create or update definition needs at least one source: tag, genre, collection or "
+            "picked title; genre alone is valid. Tags, collections and picks use the typed shapes "
+            "in the request schema, and picks should come from search_titles where applicable. "
             "Resolves every dependent row and any immediate visibility work. Built-in seasons "
             "cannot be edited or deleted; deleting a custom season cannot leave a dependent row "
             "without its only season. Nothing is applied until apply_change."

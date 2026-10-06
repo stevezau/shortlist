@@ -613,8 +613,8 @@ class RunSharedRow(Base):
     #: judging it against the row the run was BUILDING rather than the one Plex was still serving —
     #: which drops a credit for a title this run removed, and invents one for a title it added.
     #: `_load_per_person` derives its equivalent from `min(picks.created_at)`; a shared row writes no
-    #: picks, so it has to be stamped here. NULL on rows written before this column existed, which
-    #: fall back to `Run.started_at`.
+    #: picks, so it has to be stamped here. NULL on rows written before this column existed has no
+    #: exact delivery clock; readers must not infer one from the parent run's start time.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="shared_rows")

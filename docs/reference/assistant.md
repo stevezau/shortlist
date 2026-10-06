@@ -2,7 +2,7 @@
 title: "MCP assistant reference"
 description: Shortlist's assistant tools, scoped permissions, reviewed changes, operation receipts and external-call limits.
 heading: MCP assistant reference
-updated: 2026-10-05
+updated: 2026-10-07
 ---
 
 Shortlist serves MCP over Streamable HTTP at its configured canonical `/mcp` endpoint. It is
@@ -14,7 +14,10 @@ local credentials, OAuth, proxy routes and client configuration.
 
 The MCP tool list is the authoritative input schema. Inputs are strict: unknown fields and values
 with the wrong JSON type are rejected. IDs come from discovery tools. Dynamic row and settings
-fields come from their catalogs, which supply defaults, accepted values, descriptions and effects.
+fields come from their catalog, which supplies defaults, accepted values, descriptions and
+effects. `shortlist_list_templates` also returns one top-level `field_definitions` object for row
+values (including nested `poster`, `hub_anchor` and `ai_instructions`) plus `creation_defaults`;
+the `items` entries remain the named editor starting points.
 
 Tools return a human-readable `summary`, structured `data`, `warnings`, an optional `next_action`
 and an `observed_at` timestamp. A successful plan describes a possible change; it does not mean
@@ -54,8 +57,10 @@ destination; paid provider, search and webhook tests use browser handoffs.
 **Rows and themes:** `shortlist_list_templates`, `shortlist_list_rows`, `shortlist_get_row`,
 `shortlist_list_themes`, `shortlist_get_theme`, `shortlist_search_titles`, `shortlist_plan_theme`,
 `shortlist_plan_row` and `shortlist_plan_setup`. Setup atomically saves one theme and its new,
-disabled, unscheduled row. Activation is a separate plan. Row plans can explicitly set
-`ai_paused: true` to prevent automatic theme top-ups.
+disabled row with an empty schedule. Generic row creation retains the template or default cron
+unless a schedule is supplied. A stored cron does not run while the row is disabled; activation
+is a separate plan. Row plans can explicitly set `ai_paused: true` to prevent automatic theme
+top-ups.
 
 **People, libraries and seasons:** `shortlist_list_people`, `shortlist_list_libraries`,
 `shortlist_list_seasons`, `shortlist_plan_people` and `shortlist_plan_season`. Every current and

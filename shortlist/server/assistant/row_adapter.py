@@ -184,7 +184,23 @@ class RowAdapter:
             library_keys = tuple(str(key) for key in create_body.library_keys)
             steps = [schedule_rebuild_step()]
             capabilities = self._capabilities("create", values, build=build, steps=steps)
-            capabilities.update(capability.value for capability in template.required_capabilities)
+            effective_sources = candidate_sources or tuple(
+                SettingsStore(session, self.secrets).get("candidates.sources") or ()
+            )
+            poster = final_values.get("poster") or {}
+            skip_static_theme_generation = (
+                template.id == "describe-a-row"
+                and trusted_theme is not None
+                and final_values.get("ai_paused") is True
+                and final_values.get("theme_mode") == "fixed"
+                and "llm_web" not in effective_sources
+                and poster.get("mode") not in {"ai", "generate"}
+            )
+            capabilities.update(
+                capability.value
+                for capability in template.required_capabilities
+                if not (skip_static_theme_generation and capability is Capability.AI_GENERATE)
+            )
             normalized = RowIntent(action="create", template_id=template.id, values=values).model_dump(mode="json")
             row_ids: tuple[int, ...] = ()
             dynamic_rows = False

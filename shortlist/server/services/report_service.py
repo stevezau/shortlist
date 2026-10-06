@@ -17,7 +17,7 @@ import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, case, cast, func, literal, or_
+from sqlalchemy import String, case, cast, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from shortlist.engine import placeholders
@@ -27,7 +27,9 @@ from shortlist.server.db.models import (
     Collection,
     PickRow,
     RequestCandidate,
+    RowDeliverySnapshot,
     Run,
+    RunSharedRow,
     RunUser,
     SharedRowWatch,
     User,
@@ -1411,23 +1413,50 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
     )
     watched_all += shared_watched
     finished_all += shared_finished
-    shared_first = (
-        session.query(func.min(SharedRowWatch.watched_at)).filter(SharedRowWatch.collection_slug == slug).scalar()
+    # A shared watch proves only that somebody watched a title, not when that row reached Plex.
+    # `RunSharedRow.delivered_at` is stamped at the delivery boundary.  The parent run may later
+    # report an error for a different row, so the shared row's own successful outcome is decisive;
+    # dry runs never count as delivery history.
+    shared_delivery_filters = (
+        RunSharedRow.collection_slug == slug,
+        RunSharedRow.status == "ok",
+        RunSharedRow.delivered_at.isnot(None),
+        Run.dry_run.is_(False),
     )
-    # A shared row's earliest credit stands in for "has this row ever done anything", which is the
-    # only question `first` is asked here.
-    if first is None:
-        first = shared_first
-    if shared_first is not None and last is None:
-        last = shared_first
+    shared_first, shared_last = (
+        session.query(func.min(RunSharedRow.delivered_at), func.max(RunSharedRow.delivered_at))
+        .join(Run, Run.id == RunSharedRow.run_id)
+        .filter(*shared_delivery_filters)
+        .one()
+    )
+    # Before `RunSharedRow.delivered_at` existed, a non-legacy delivery snapshot is durable evidence
+    # that a shared row actually reached Plex. It is written only for confirmed, non-dry deliveries
+    # and survives run-log retention; a run's queued/start time and a later watch are not
+    # substitutes. Migration 0102's `legacy:` snapshots may instead carry inferred began/start
+    # times, so they cannot supply this panel's delivery clock. Keep this separate from `runs`
+    # below: the Runs tile must still mirror retained RunSharedRow records selected by /api/runs.
+    snapshot_first, snapshot_last = (
+        session.query(func.min(RowDeliverySnapshot.delivered_at), func.max(RowDeliverySnapshot.delivered_at))
+        .filter(
+            RowDeliverySnapshot.collection_slug == slug,
+            RowDeliverySnapshot.shared.is_(True),
+            ~RowDeliverySnapshot.source_key.startswith("legacy:"),
+        )
+        .one()
+    )
+    if first is not None or shared_first is not None or snapshot_first is not None:
+        first = min(value for value in (first, shared_first, snapshot_first) if value is not None)
+    if last is not None or shared_last is not None or snapshot_last is not None:
+        last = max(value for value in (last, shared_last, snapshot_last) if value is not None)
 
     # Counted the SAME way `/api/runs?collection=<slug>` selects them, because the panel's Runs tile
     # links straight to that list — a tile that says 40 above a list of 11 is worse than no tile.
     # Both therefore count runs STILL ON RECORD: `runs.retention` prunes old runs and nulls the
     # picks' run_id (migration 0040, so picks outlive their run), and neither side pretends the
     # pruned ones are still there.
-    built_in = session.query(PickRow.run_id).filter(*mine).distinct()
-    runs = session.query(func.count(Run.id)).filter(Run.id.in_(built_in)).scalar() or 0
+    built_in = select(PickRow.run_id).filter(*mine).distinct()
+    shared_built_in = select(RunSharedRow.run_id).join(Run).filter(*shared_delivery_filters).distinct()
+    runs = session.query(func.count(Run.id)).filter(Run.id.in_(built_in.union(shared_built_in))).scalar() or 0
 
     matured_until = now - timedelta(days=HIT_WINDOW_DAYS)
     cohort = [PickRow.created_at < matured_until]

@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.assistant.discovery import DiscoveryService
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantContext, GrantPreset
+from shortlist.server.catalogs.templates import ROW_INPUT_DEFAULTS
 from shortlist.server.db.models import Base, Collection, CollectionAudience, Setting, Theme, ThemeHistory, User
 
 
@@ -87,6 +88,52 @@ def test_configuration_group_cannot_bypass_scope(service, principal):
 
     with pytest.raises(AuthorizationDenied):
         service.configuration(principal, "requests")
+
+
+def test_template_discovery_has_precise_row_input_metadata(service, principal):
+    """Keep LLM discovery precise enough to construct a valid row plan.
+
+    This reads the public discovery result and anchors fields whose null defaults
+    would otherwise conceal their actual input type, along with the nested
+    objects used by the MCP row workflow.
+    """
+    result = service.templates(principal)
+    definitions = result.data["field_definitions"]
+
+    assert set(definitions) == set(ROW_INPUT_DEFAULTS) | {"ai_paused"}
+    assert definitions["theme_id"]["anyOf"] == [{"type": "integer"}, {"type": "null"}]
+    assert definitions["theme_id"]["default"] is None
+    assert "ordinary row" in definitions["theme_id"]["description"]
+    assert definitions["watched_pct"]["anyOf"] == [
+        {"maximum": 1.0, "minimum": 0.0, "type": "number"},
+        {"type": "null"},
+    ]
+    assert definitions["req_auto_send"]["anyOf"] == [{"type": "boolean"}, {"type": "null"}]
+    assert definitions["req_preferred_languages"]["anyOf"] == [
+        {"items": {"type": "string"}, "maxItems": 50, "type": "array"},
+        {"type": "null"},
+    ]
+    assert definitions["ai_paused"]["type"] == "boolean"
+    assert definitions["ai_paused"]["default"] is False
+    assert definitions["ai_paused"]["effects"]["true"] == "prevents recurring provider top-ups"
+
+    poster = definitions["poster"]
+    assert poster["properties"]["mode"]["enum"] == ["", "ai", "generate", "text", "upload"]
+    assert poster["properties"]["title"]["maxLength"] == 120
+    assert "no AI" in poster["description"]
+    anchor = definitions["hub_anchor"]["additionalProperties"]
+    assert anchor["properties"]["anchor"] == {"default": "", "maxLength": 255, "title": "Anchor", "type": "string"}
+    assert anchor["properties"]["enabled"]["default"] is True
+    instructions = definitions["ai_instructions"]["properties"]
+    assert instructions["mode"]["enum"] == ["add", "default", "own"]
+    assert instructions["text"]["maxLength"] == 2000
+    assert result.data["creation_defaults"] == {
+        "enabled": False,
+        "schedule_active": False,
+        "stored_schedule": "30 3 * * *",
+        "supplied_values_override_template_defaults": True,
+        "description": "A planned row is inactive until explicitly enabled; supplied values replace template defaults.",
+    }
 
 
 def test_broad_row_access_does_not_export_personal_theme_history(service, principal):

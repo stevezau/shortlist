@@ -320,7 +320,7 @@ export const GENERATED_AI_TEMPLATES: RowTemplate[] = [
     "emoji": "🪄",
     "title": "Describe a row",
     "summary": "Say what you want. The AI builds the list.",
-    "blurb": "Describe a row in your own words, like “films with a twist ending”. The AI writes the list once from your words, and Shortlist picks from it for each person every run. No more AI after that.",
+    "blurb": "Describe a row in your own words, like “films with a twist ending”. The AI writes the list once from your words, and Shortlist picks from it for each person every run. Set ai_paused=true when saved picks should not receive recurring AI top-ups.",
     "highlights": [
       "One row each",
       "The AI writes the list once",

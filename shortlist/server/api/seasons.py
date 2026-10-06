@@ -443,7 +443,7 @@ def _checked(session: Session, body: SeasonIn, *, editing: str | None) -> DateRu
     # Stored normalised, so an edit to a field the kind ignores changes nothing and moves no row (`_calendar`).
     rule = rule.normalised()
     if not (body.tags or body.genre is not None or body.collections or body.picks):
-        raise HTTPException(status_code=422, detail="Add at least one tag, collection or film.")
+        raise HTTPException(status_code=422, detail="Add at least one tag, genre, collection or film.")
     # Every stored name, not just the catalogue's, and the built-ins': a row's title renders `{season}`, so two
     # seasons with one name would give two rows one title (D13).
     names = [(season.slug, season.name) for season in BUILTIN_SEASONS.values()]

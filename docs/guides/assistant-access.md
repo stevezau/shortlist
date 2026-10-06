@@ -37,9 +37,10 @@ Set that exact address as `SHORTLIST_MCP_URL` on the Shortlist container and res
 does not infer this security-sensitive address from a request's `Host` or forwarding headers.
 Plain HTTP on a LAN address is refused; use HTTPS when the address is not loopback.
 
-Open **Settings → AI assistants** beside the settings search, or search Settings for **MCP**,
-**ChatGPT**, **Claude** or **Codex**. The same entry is under **System → AI assistants**, where
-the card should say **Enabled**. Follow **Manage connections**, then **New connection** to create a grant.
+Open **Settings → AI assistants** to reach the connections page, then choose **New connection**.
+You can also search Settings for **MCP**, **ChatGPT**, **Claude** or **Codex**. Under
+**System → AI assistants**, the card should say **Enabled**; its **Manage connections** button
+opens the same page.
 
 ## Choose what the connection can do
 
@@ -174,6 +175,14 @@ Enter the canonical `/mcp` URL in the host's custom MCP connection screen and ch
 offers authentication choices. Account plan and workspace policy can control whether that screen is
 available.
 
+For ChatGPT, open **Plugins → + → Add custom MCP server**, enter the canonical URL and choose
+OAuth. Shortlist advertises dynamic client registration (DCR); select DCR if the client asks for
+the registration method. Complete Shortlist's owner consent, then install the resulting plugin
+and select it in a conversation. Ask it to call `shortlist_get_instance` and
+`shortlist_get_setup_status` before making changes. See OpenAI's
+[custom MCP connection guide](https://developers.openai.com/api/docs/guides/custom-mcp-server)
+for the current client controls.
+
 Shortlist's protocol, discovery, registration and consent flows have automated and SDK-level tests.
 The complete current ChatGPT and Claude hosted connection screens have not yet been validated
 end-to-end against a released Shortlist image. Treat those two recipes as compatibility testing until
@@ -221,9 +230,10 @@ effects. Approval covers that content hash and grant revision once; changing the
 ## Build rows with an assistant
 
 Start by asking the assistant to inspect the installation, available libraries, people, row
-templates and settings catalog. Those responses include field descriptions, allowed values,
-constraints, side effects and the connection's current permissions. The assistant should use the
-returned IDs and schemas rather than inventing them.
+templates and settings catalog. The template response includes one shared row-field definition map
+with accepted types, defaults, nested shapes and important effects, plus the MCP creation defaults.
+The assistant should use those returned IDs and schemas rather than inventing them. New assistant
+rows are inactive until explicitly enabled; their stored cron is not active while disabled.
 
 A complete workflow is:
 
