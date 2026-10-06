@@ -312,6 +312,7 @@ def update_row_in_session(
         if proposed and proposed != previous:
             default_rename_to = proposed
             template_before, template_after = previous, proposed
+    after_values = body.model_dump(mode="json")
     if not apply:
         projected = api._projected_snapshot(session, collection, body, sent)
         if touching_name:
@@ -341,7 +342,7 @@ def update_row_in_session(
         )
         if sent & {"schedule", "enabled"}:
             steps.append(schedule_rebuild_step())
-        diff = {key: {"before": current.get(key), "after": getattr(body, key)} for key in sorted(sent)}
+        diff = {key: {"before": current.get(key), "after": after_values[key]} for key in sorted(sent)}
         return collection, steps, diff
     if theme is not None and "theme_id" in sent and theme.id != collection.theme_id:
         collection.ai_tokens = (collection.ai_tokens or 0) + api._unattributed_theme_tokens(
@@ -383,7 +384,7 @@ def update_row_in_session(
     steps = steps_for_row_plan(plan_row_changes(change, stranded), slug=change.slug, build=change.build_before)
     if sent & {"schedule", "enabled"}:
         steps.append(schedule_rebuild_step())
-    diff = {key: {"before": current.get(key), "after": getattr(body, key)} for key in sorted(sent)}
+    diff = {key: {"before": current.get(key), "after": after_values[key]} for key in sorted(sent)}
     return collection, steps, diff
 
 
@@ -406,6 +407,7 @@ def apply_prevalidated_row_update_in_session(
         raise HTTPException(status_code=404, detail="collection not found")
     before = api._snapshot(session, collection)
     current = api._serialize(session, collection, catalogue=load_catalogue(session))
+    after_values = body.model_dump(mode="json")
     is_default = collection.slug == DEFAULT_SLUG
     touching_name = before["build"] == "per_person" and not is_default and bool(sent & {"name", "name_template"})
     template_before = (collection.name_template or collection.name) if touching_name else ""
@@ -456,7 +458,7 @@ def apply_prevalidated_row_update_in_session(
     steps = steps_for_row_plan(plan_row_changes(change, stranded), slug=change.slug, build=change.build_before)
     if sent & {"schedule", "enabled"}:
         steps.append(schedule_rebuild_step())
-    diff = {key: {"before": current.get(key), "after": getattr(body, key)} for key in sorted(sent)}
+    diff = {key: {"before": current.get(key), "after": after_values[key]} for key in sorted(sent)}
     return collection, steps, diff
 
 

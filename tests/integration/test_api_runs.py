@@ -2063,10 +2063,10 @@ class TestClosedSetFieldsMatchWhatTheCodeWrites:
     def test_every_trigger_the_producers_write_survives_the_runs_endpoints(self, client: TestClient, monkeypatch):
         """Captured from the producers, not hand-listed — that is the whole point.
 
-        Exactly two code paths start a run: `POST /api/runs` and the scheduler's cron job, and both
-        insert through `RunService.start_run`. This intercepts that one seam to record what each
-        really passes, then pushes every captured word back through the real response model. Add a
-        third producer with a new word and this fails here, instead of 500ing the Runs page.
+        The HTTP and scheduler producers start runs through `RunService.start_run`; the assistant
+        queue writes its durable `assistant` trigger directly. This intercepts the former seam to
+        record the HTTP and scheduler words, then pushes those values back through the real response
+        model. The ORM-backed assistant regression separately protects the direct queue path.
 
         (`wizard` is in the Literal because `runs.trigger` has documented it since 0001, but no
         producer writes it — the wizard's first run is a `POST /api/runs` like any other.)

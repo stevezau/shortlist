@@ -5,6 +5,7 @@ from dataclasses import asdict
 from shortlist.engine.clients.search import DEFAULT_EXA_SEARCH_TYPE, EXA_SEARCH_TYPES
 from shortlist.engine.provider_calls import ProviderCall
 from shortlist.engine.request_config import resolve_request_config
+from shortlist.engine.rows import effective_row_sources
 from shortlist.server.services.request_actions import _destination, _target_snapshot
 
 from .generation import provider_destination
@@ -18,7 +19,7 @@ def paid_effect_contract(config, store, intent, *, config_hash):
         provider = "openai_compatible"
     mode = str(store.get("llm_web.search_provider") or "native")
     selected = [row for row in config.rows if config.should_build(row)]
-    web = any("llm_web" in (row.candidate_sources or config.candidate_sources) for row in selected)
+    web = any("llm_web" in effective_row_sources(row, config.candidate_sources) for row in selected)
     images = not config.dry_run and any(row.poster and row.poster.mode in {"ai", "generate"} for row in selected)
     descriptors = []
     managed_search = False

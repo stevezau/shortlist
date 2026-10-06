@@ -315,6 +315,7 @@ describe("triggerLabel", () => {
   it.each([
     ["schedule", "Scheduled"],
     ["manual", "Manual"],
+    ["assistant", "Assistant"],
     ["wizard", "Setup"],
     ["resume", "Resumed after a restart"],
   ])("says %s as %s", (trigger, label) => {

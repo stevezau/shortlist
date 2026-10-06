@@ -7081,7 +7081,8 @@
               "schedule",
               "manual",
               "wizard",
-              "resume"
+              "resume",
+              "assistant"
             ],
             "title": "Trigger",
             "type": "string"
@@ -7582,7 +7583,8 @@
               "schedule",
               "manual",
               "wizard",
-              "resume"
+              "resume",
+              "assistant"
             ],
             "title": "Trigger",
             "type": "string"

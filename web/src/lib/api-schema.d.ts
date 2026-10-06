@@ -6391,7 +6391,7 @@ export interface components {
              * Trigger
              * @enum {string}
              */
-            trigger: "schedule" | "manual" | "wizard" | "resume";
+            trigger: "schedule" | "manual" | "wizard" | "resume" | "assistant";
             /** Users */
             users: components["schemas"]["RunUserOut"][];
         } & {
@@ -6592,7 +6592,7 @@ export interface components {
              * Trigger
              * @enum {string}
              */
-            trigger: "schedule" | "manual" | "wizard" | "resume";
+            trigger: "schedule" | "manual" | "wizard" | "resume" | "assistant";
         } & {
             [key: string]: unknown;
         };

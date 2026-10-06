@@ -5,10 +5,15 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
+from shortlist.server.assistant.changes import ChangeService
 from shortlist.server.assistant.row_adapter import RowAdapter, RowIntent
-from shortlist.server.db.models import Base, Collection
+from shortlist.server.assistant_auth import GrantConstraints, GrantPreset
+from shortlist.server.assistant_auth.credentials import CredentialHasher
+from shortlist.server.assistant_auth.repository import AssistantAuthRepository
+from shortlist.server.db.models import Base, Collection, Event, Server
+from shortlist.server.services.secrets import SecretBox
 
 
 def test_row_intent_rejects_ambiguous_or_unknown_shapes():
@@ -53,6 +58,72 @@ def test_delete_declares_exact_row_and_ordered_cleanup():
             "schedule.rebuild",
         ]
     engine.dispose()
+
+
+@pytest.fixture
+def row_change_service(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'assistant-rows.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(engine, expire_on_commit=False)
+    with sessions() as session:
+        session.add_all(
+            [
+                Server(machine_id="rows", url="http://unused.invalid", token_enc="unused", owner_account_id=42),
+                Collection(id=1, slug="seasonal", name="Seasonal", library_keys=["1"]),
+                Collection(id=2, slug="popular", name="Popular", library_keys=["1"]),
+            ]
+        )
+        session.commit()
+    repository = AssistantAuthRepository(sessions, CredentialHasher(b"assistant-row-change-test-key-000"))
+    principal = repository.create_grant(
+        owner_account_id=42,
+        client_id="row-change-test",
+        name="Row change test",
+        preset=GrantPreset.OWNER_AUTOMATION,
+        constraints=GrantConstraints(row_ids=frozenset({1}), library_keys=frozenset({"1"})),
+    )
+    service = ChangeService(sessions, {"row": RowAdapter(SimpleNamespace(secrets=SecretBox(tmp_path)))})
+    yield SimpleNamespace(sessions=sessions, principal=principal, service=service)
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("values", "field", "expected"),
+    [
+        (
+            {"poster": {"mode": "text", "title": "{season_emoji} {season} Favourites", "subtitle": "", "style": ""}},
+            "poster",
+            {"mode": "text", "title": "{season_emoji} {season} Favourites", "subtitle": "", "style": ""},
+        ),
+        (
+            {
+                "hub_anchor": {
+                    "1": {"row": "popular", "before": False, "top": False, "enabled": True},
+                }
+            },
+            "hub_anchor",
+            {"1": {"anchor": "", "row": "popular", "before": False, "top": False, "enabled": True}},
+        ),
+        (
+            {"ai_instructions": {"mode": "add", "text": "Keep the seasonal framing."}},
+            "ai_instructions",
+            {"mode": "add", "text": "Keep the seasonal framing."},
+        ),
+    ],
+)
+def test_nested_row_updates_are_plannable_and_auditable_json(row_change_service, values, field, expected):
+    plan = row_change_service.service.prepare(
+        row_change_service.principal,
+        "row",
+        {"action": "update", "row_id": 1, "values": values},
+    )
+
+    assert plan["summary"]["configuration_diff"][field]["after"] == expected
+    row_change_service.service.apply(row_change_service.principal, plan["change_id"], f"nested-{field}")
+
+    with row_change_service.sessions() as session:
+        event = session.query(Event).filter_by(scope="assistant.applied").one()
+        assert event.message["diff"][field]["after"] == expected
 
 
 @pytest.fixture

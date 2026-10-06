@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.assistant.changes import ChangeError
 from shortlist.server.assistant.run_adapter import RunAdapter, RunIntent
-from shortlist.server.db.models import Base, Collection, User
+from shortlist.server.db.models import Base, Collection, Theme, User
 from shortlist.server.services.run_service import RunService
 
 
@@ -56,6 +56,57 @@ def test_ai_source_requires_budgeted_dispatch(run_env):
         session.commit()
         with pytest.raises(ChangeError, match="budget"):
             RunAdapter(run_env).prepare(session, {"row_ids": [1], "person_ids": [1], "dry_run": True})
+
+
+@pytest.mark.parametrize(
+    ("row_sources", "default_sources"),
+    [
+        ([], ["tmdb_similar", "llm_web"]),
+        (["llm_web"], ["tmdb_similar"]),
+    ],
+)
+def test_seasonal_rows_exclude_web_search_from_zero_budget_previews(run_env, row_sources, default_sources):
+    from shortlist.server.settings_store import SettingsStore
+
+    with run_env.sessions() as session:
+        row = session.get(Collection, 1)
+        row.seasons = ["halloween"]
+        row.candidate_sources = row_sources
+        SettingsStore(session, run_env.secrets).set_in_transaction("candidates.sources", default_sources)
+        session.commit()
+
+        plan = RunAdapter(run_env).prepare(session, {"row_ids": [1], "person_ids": [1], "dry_run": True})
+
+    assert plan.requirements.provider_calls == 0
+    assert plan.summary["external_generation"] is False
+    assert plan.summary["provider_calls"] == []
+
+
+@pytest.mark.parametrize(
+    ("row_sources", "default_sources"),
+    [
+        ([], ["tmdb_similar", "llm_web"]),
+        (["llm_web"], ["tmdb_similar"]),
+    ],
+)
+def test_themed_rows_exclude_web_search_from_zero_budget_previews(run_env, row_sources, default_sources):
+    from shortlist.server.settings_store import SettingsStore
+
+    with run_env.sessions() as session:
+        theme = Theme(slug="spooky", name="Spooky", media=["movie"], genres=["Horror"])
+        session.add(theme)
+        session.flush()
+        row = session.get(Collection, 1)
+        row.theme_id = theme.id
+        row.candidate_sources = row_sources
+        SettingsStore(session, run_env.secrets).set_in_transaction("candidates.sources", default_sources)
+        session.commit()
+
+        plan = RunAdapter(run_env).prepare(session, {"row_ids": [1], "person_ids": [1], "dry_run": True})
+
+    assert plan.requirements.provider_calls == 0
+    assert plan.summary["external_generation"] is False
+    assert plan.summary["provider_calls"] == []
 
 
 def test_shared_run_rejects_partial_roster(run_env):
