@@ -35,6 +35,7 @@ from shortlist.engine.models import (
     MediaType,
     OwnedRow,
     Pick,
+    PosterSpec,
     RequestSources,
     RowOverride,
     RowSpec,
@@ -2755,6 +2756,38 @@ class TestPerRowOverrides:
         shared_report = next(u for u in report.users if u.slug == "shared_popular")
         assert shared_report.breakdown, "the shared row records a breakdown"
         assert all(e["row_slug"] == "popular" for e in shared_report.breakdown)
+
+    def test_a_shared_text_poster_renders_and_uploads_to_its_collection(self, ctx: EngineContext, mock_plextv):
+        """Shared delivery needs the same poster artist as a private row.
+
+        The synthetic shared profile is the renderer's identity: its poster must use that identity
+        and the target library, then reach the collection that this shared delivery creates.
+        """
+        ctx.config.rows = [
+            RowSpec(
+                slug="popular",
+                name_template="Popular",
+                size=5,
+                shared=True,
+                min_watchers=2,
+                poster=PosterSpec(mode="text", title="{user}'s {library_name} picks"),
+            )
+        ]
+        sarah = make_profile("sarah", account_id=100)
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.poster_artist = MagicMock()
+        ctx.poster_artist.render.return_value = b"SHARED-TEXT"
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        shared_report = next(user for user in report.users if user.slug == "shared_popular")
+        assert shared_report.status == "ok"
+        ctx.poster_artist.render.assert_called_once_with(
+            title="Everyone's Movies picks", subtitle="", style="", engine="text"
+        )
+        ctx.plex.upload_poster.assert_called_once_with(ctx.plex.create_collection.return_value, b"SHARED-TEXT")
 
     def test_a_shared_row_narrates_its_writes_under_its_own_slug(self, ctx: EngineContext, mock_plextv):
         """A shared row is delivered by a separate path from a person's row, so it needs its own proof

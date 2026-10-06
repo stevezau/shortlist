@@ -4412,6 +4412,7 @@ def _shared_row(
         section_index=ctx.section_index,
         section_picks=section_picks,
         breakdown=user_report.breakdown,
+        poster_artist=ctx.poster_artist,
         order_work=order_work,
         on_write=lambda counts: _emit(ctx, slug, "delivering", counts),
         on_label_stored=on_first_row,
