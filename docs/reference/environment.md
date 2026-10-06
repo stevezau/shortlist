@@ -2,7 +2,7 @@
 title: "Reference: environment variables and files"
 description: The container's environment variables and which are live or one-time seeds, serving Shortlist from a subpath behind a reverse proxy, and the files it keeps under /config.
 heading: Environment and files
-updated: 2026-10-03
+updated: 2026-10-05
 ---
 
 Everything else is set in the app and stored in its database; see the
@@ -20,6 +20,7 @@ Everything else is set in the app and stored in its database; see the
 | `LOG_LEVEL`                                                                | `DEBUG`   | **seed once**: initial value for the `log.level` setting; change it live in Settings → System                                                                                                                                                                                                                   |
 | `SHORTLIST_DRY_RUN`                                                        | unset     | live: when set (`1`/`true`), EVERY run is forced to dry-run. The app builds its clients and logs the would-be changes but writes NOTHING to Plex/plex.tv. Safe mode for a demo/test instance pointed at a real server (even a manual "Run now" can't modify it)                                                   |
 | `SHORTLIST_ENABLE_DOCS`                                                    | unset     | live: when set (`1`), exposes the API docs at `/api/docs` and `/api/openapi.json` (off by default)                                                                                                                                                                                                                |
+| `SHORTLIST_MCP_URL`                                                        | unset     | live: enables assistant access at the exact canonical URL, including `APP_BASE_PATH` and the final `/mcp`; for example `https://media.example.com/shortlist/mcp`. Requires HTTPS outside loopback. Read at startup. See [Connect an assistant](../guides/assistant-access.md).                                      |
 | `APP_BASE_PATH`                                                            | `/`       | live: serve the app from a subpath behind a reverse proxy, e.g. `/shortlist`. Read at startup, so the published image works unmodified — no rebuild. Accepts `/shortlist` or `/shortlist/`. The proxy just forwards; it does not need to strip the prefix. See [Serving from a subpath](#serving-from-a-subpath). |
 
 ### Serving from a subpath
@@ -84,6 +85,22 @@ If it is blank _through the proxy_, check the container log first: it states the
 using at startup, and warns if `APP_BASE_PATH` held something it could not use (a query, a
 fragment, a space, an escaped or relative path) — in which case it ignores it and serves from the
 root, which on its own looks exactly like a proxy problem.
+
+When assistant access is enabled under a base path, MCP clients also request origin-root discovery
+URLs. The exact two paths and proxy requirements are listed under
+[Reverse proxy routes](../guides/assistant-access.md#reverse-proxy-routes).
+
+### Client-side stdio bridge variables
+
+These belong to the client process that launches `shortlist-mcp-stdio`; they are not alternative
+server settings:
+
+| Variable                       | Meaning                                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------------------------- |
+| `SHORTLIST_MCP_URL`            | The same canonical `/mcp` URL configured on the Shortlist server                         |
+| `SHORTLIST_MCP_CREDENTIAL`     | A named `shla_` local credential copied once from **AI assistants**; treat as a secret |
+
+The bridge never accepts a credential in the URL or as a command argument.
 
 ## Files under /config
 

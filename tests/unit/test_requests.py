@@ -1052,6 +1052,117 @@ class TestHybridSplit:
 class TestRequestTitles:
     """Explicit send of owner-approved titles from the inbox — no floors applied."""
 
+    def test_denied_live_claim_prevents_client_creation(self, monkeypatch):
+        from contextlib import contextmanager
+
+        def unexpected(*args, **kwargs):
+            raise AssertionError("A denied claim must not open an acquisition client")
+
+        @contextmanager
+        def guard(slug, title, cfg):
+            assert slug == "r"
+            assert title.tmdb_id == 10
+            assert cfg.radarr == RADARR
+            yield None
+
+        monkeypatch.setattr(requests_mod, "RadarrClient", unexpected)
+        outcomes = requests_mod._send_claims(
+            [("r", MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8, vote_count=1000))],
+            {"r": RequestConfig(enabled=True, radarr=RADARR)},
+            FakeTmdb(),
+            dry_run=False,
+            min_write_interval=1,
+            acquisition_guard=guard,
+        )
+        assert [item.status for item in outcomes] == ["skipped_claimed"]
+
+    def test_live_claim_records_actual_outcome_before_exit(self, monkeypatch):
+        from contextlib import contextmanager
+
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *args, **kwargs: fake)
+        recorded = []
+
+        @contextmanager
+        def guard(slug, title, cfg):
+            assert fake.movie_calls == []
+            yield recorded.append
+            assert fake.movie_calls == [(10, False)]
+            assert recorded[0].status == "requested"
+
+        outcomes = requests_mod._send_claims(
+            [("r", MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8, vote_count=1000))],
+            {"r": RequestConfig(enabled=True, radarr=RADARR)},
+            FakeTmdb(),
+            dry_run=False,
+            min_write_interval=1,
+            acquisition_guard=guard,
+        )
+        assert recorded == outcomes
+
+    def test_dry_run_never_reserves_live_claim(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *args, **kwargs: fake)
+
+        def unexpected(*args):
+            raise AssertionError("A preview must not claim a title")
+
+        outcomes = requests_mod._send_claims(
+            [("r", MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8, vote_count=1000))],
+            {"r": RequestConfig(enabled=True, radarr=RADARR)},
+            FakeTmdb(),
+            dry_run=True,
+            min_write_interval=1,
+            acquisition_guard=unexpected,
+        )
+        assert fake.movie_calls == [(10, True)]
+        assert outcomes[0].status == "would_request"
+
+    def test_checkpointed_batch_reuses_clients_and_server_clock(self, monkeypatch):
+        from dataclasses import replace
+
+        constructed = []
+
+        def factory(target, **kwargs):
+            fake = FakeArr()
+            constructed.append((target, kwargs, fake))
+            return fake
+
+        monkeypatch.setattr(requests_mod, "RadarrClient", factory)
+        batch = requests_mod.RequestBatch()
+        changed_profile = replace(RADARR, quality_profile_id=2)
+        changed_key = replace(RADARR, api_key="rotated")
+        for index, target in enumerate([RADARR, RADARR, changed_profile, changed_key]):
+            cfg = RequestConfig(enabled=True, radarr=target)
+            title = MissingTitle(index + 1, "film", MediaType.MOVIE, 2020, rating=8, vote_count=1000)
+            requests_mod.request_titles_by_row(
+                {"r": cfg}, FakeTmdb(), [("r", title)], dry_run=False, batch=batch, min_write_interval=1.5
+            )
+
+        assert len(constructed) == 3
+        assert constructed[0][2].movie_calls == [(1, False), (2, False)]
+        assert constructed[1][2].movie_calls == [(3, False)]
+        assert constructed[2][2].movie_calls == [(4, False)]
+        assert all(kwargs["min_write_interval"] == 1.5 for _, kwargs, _ in constructed)
+        assert all(kwargs["write_clock"] is constructed[0][1]["write_clock"] for _, kwargs, _ in constructed)
+
+    def test_independent_batches_do_not_reuse_remote_state(self, monkeypatch):
+        constructed = []
+
+        def factory(target, **kwargs):
+            fake = FakeArr()
+            constructed.append((kwargs["write_clock"], fake))
+            return fake
+
+        monkeypatch.setattr(requests_mod, "RadarrClient", factory)
+        cfg = RequestConfig(enabled=True, radarr=RADARR)
+        for index in range(2):
+            title = MissingTitle(index + 1, "film", MediaType.MOVIE, 2020, rating=8, vote_count=1000)
+            requests_mod.request_titles_by_row({"r": cfg}, FakeTmdb(), [("r", title)], dry_run=False)
+        assert len(constructed) == 2
+        assert constructed[0][0] is not constructed[1][0]
+        assert constructed[0][1] is not constructed[1][1]
+
     def test_sends_given_titles_ignoring_all_floors(self, monkeypatch):
         radarr, sonarr = FakeArr(), FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: radarr)

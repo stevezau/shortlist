@@ -2424,6 +2424,7 @@ def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.R
                 dry_run=ctx.config.dry_run,
                 already_handled=ctx.handled_requests,
                 mdblist=ctx.mdblist,
+                acquisition_guard=ctx.acquisition_guard,
             )
         except Exception as e:
             # A wholesale request-pass failure (e.g. building a client) is a footnote, never a run

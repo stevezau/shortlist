@@ -448,13 +448,10 @@ def _cached_plex_read(state, key: str, read):
         return value
 
 
-@_authed.get("/libraries", response_model=list[LibraryOut])
-async def libraries(request: Request) -> list[dict]:
-    """The server's movie/show libraries, so the Rows editor can offer them as delivery targets."""
+def read_libraries(state) -> list[dict]:
+    """Read configured Plex libraries through the shared short-lived interactive cache."""
     from shortlist.engine.clients.plex_pms import PlexClient
     from shortlist.server.settings_store import SettingsStore
-
-    state = request.app.state
 
     def read() -> list[dict]:
         with state.sessions() as session:
@@ -463,9 +460,17 @@ async def libraries(request: Request) -> list[dict]:
         if not url or not token:
             raise HTTPException(status_code=409, detail="Plex isn't connected yet")
         client = PlexClient(url, token, timeout=_INTERACTIVE_TIMEOUT_S)
-        return [{"key": str(s.key), "title": s.title, "type": s.type} for s in client.sections()]
+        return [
+            {"key": str(section.key), "title": section.title, "type": section.type} for section in client.sections()
+        ]
 
-    return await asyncio.get_running_loop().run_in_executor(None, lambda: _cached_plex_read(state, "libraries", read))
+    return _cached_plex_read(state, "libraries", read)
+
+
+@_authed.get("/libraries", response_model=list[LibraryOut])
+async def libraries(request: Request) -> list[dict]:
+    """The server's movie/show libraries, so the Rows editor can offer them as delivery targets."""
+    return await asyncio.get_running_loop().run_in_executor(None, read_libraries, request.app.state)
 
 
 class LibraryCollectionOut(PassthroughModel):

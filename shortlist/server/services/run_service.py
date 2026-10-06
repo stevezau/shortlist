@@ -139,6 +139,9 @@ class RunService:
         log_sink: Callable[[dict], None] | None = None,
         collection_ids: list[int] | None = None,
         plex_only: bool = False,
+        session: Session | None = None,
+        provider_controls=None,
+        acquisition_guard=None,
     ) -> EngineContext:
         """The engine context for any Plex-touching path.
 
@@ -154,7 +157,17 @@ class RunService:
         if plex_only:
             return self._ctx.build_plex_only(dry_run=dry_run)
         return self._ctx.build(
-            dry_run=dry_run, loop=loop, run_id=run_id, log_sink=log_sink, collection_ids=collection_ids
+            dry_run=dry_run,
+            loop=loop,
+            run_id=run_id,
+            log_sink=log_sink,
+            collection_ids=collection_ids,
+            session=session,
+            **(
+                {"provider_controls": provider_controls, "acquisition_guard": acquisition_guard}
+                if provider_controls is not None or acquisition_guard is not None
+                else {}
+            ),
         )
 
     def build_requests_context(self):
@@ -236,6 +249,121 @@ class RunService:
 
     # -- execution -----------------------------------------------------------------------
 
+    def queue_run_in_session(
+        self,
+        session: Session,
+        *,
+        trigger: str,
+        dry_run: bool,
+        user_ids: list[int] | None = None,
+        collection_ids: list[int] | None = None,
+        assistant_contract: dict | None = None,
+    ) -> Run:
+        """Insert a run without committing or launching; a durable caller owns dispatch."""
+        dry_run = force_dry_run() or dry_run
+        named_dry = bool(dry_run and collection_ids)
+        wanted = session.query(Collection).filter(
+            Collection.enabled | Collection.id.in_(collection_ids) if named_dry else Collection.enabled
+        )
+        if collection_ids:
+            wanted = wanted.filter(Collection.id.in_(collection_ids))
+        stats = {
+            "expected_users": [
+                {"slug": p.slug, "username": p.username, "display_name": p.nickname or p.username}
+                for p in self.enabled_profiles(session, user_ids)
+            ],
+            "expected_rows": [
+                {"slug": row.slug, "title": row.name_template or row.name, "build": row.build}
+                for row in wanted.order_by(Collection.sort_order, Collection.id)
+            ],
+        }
+        if assistant_contract is not None:
+            stats["assistant_contract"] = assistant_contract
+        run = Run(trigger=trigger, dry_run=dry_run, status="queued", stats=stats)
+        session.add(run)
+        session.flush()
+        return run
+
+    async def dispatch_queued_assistant_run(self, run_id: int) -> dict:
+        """Hand off once; a committed handoff without a live task is an unknown outcome."""
+        from shortlist.server.assistant.changes import ChangeError
+        from shortlist.server.assistant.run_adapter import validate_execution_in_session
+
+        with self._sessions() as session:
+            session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            run = session.get(Run, run_id)
+            if run is None or run.trigger != "assistant":
+                raise ChangeError("invalid_selection", "The assistant run does not exist.")
+            if run.status not in {"queued", "running"}:
+                return {"run_id": run_id, "status": run.status}
+            if (run.stats or {}).get("assistant_handoff_at"):
+                if run_id in self._cancels:
+                    return {"run_id": run_id, "status": "handed_off"}
+                run.status = "error"
+                run.finished_at = datetime.now(UTC)
+                run.stats = {
+                    **run.stats,
+                    "assistant_outcome_unknown": True,
+                    "error": "The process stopped after run handoff; this run will not be replayed.",
+                }
+                session.commit()
+                raise ChangeError("outcome_unknown", "Run handoff has an unknown outcome; it was not replayed.")
+            try:
+                contract, _ = validate_execution_in_session(session, self.state, run)
+            except (ValueError, PermissionError):
+                run.status = "aborted"
+                run.finished_at = datetime.now(UTC)
+                run.stats = {**run.stats, "error": "The queued assistant run is no longer authorized or current."}
+                session.commit()
+                raise
+            run.stats = {**run.stats, "assistant_handoff_at": datetime.now(UTC).isoformat()}
+            dry_run = run.dry_run
+            session.commit()
+        intent = contract["intent"]
+        self._cancels[run_id] = threading.Event()
+        task = asyncio.create_task(self._execute(run_id, dry_run, intent["person_ids"], intent["row_ids"]))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return {"run_id": run_id, "status": "handed_off"}
+
+    def _build_assistant_context(self, run_id: int, *, dry_run: bool, loop, log_sink):
+        """Pin credentials and config in an explicit SQLite read snapshot before network I/O."""
+        from shortlist.engine.provider_calls import ProviderCallControls
+        from shortlist.server.assistant.changes import ChangeError
+        from shortlist.server.assistant.run_adapter import (
+            config_fingerprint,
+            validate_execution_in_session,
+        )
+        from shortlist.server.assistant.run_spend import RunSpendGuard
+
+        with self._sessions() as session:
+            session.connection().exec_driver_sql("BEGIN")
+            run = session.get(Run, run_id)
+            contract, profiles = validate_execution_in_session(session, self.state, run)
+            intent = contract["intent"]
+            guard = RunSpendGuard(self.state, run_id)
+            controls = ProviderCallControls(
+                guard=guard,
+                max_output_tokens=intent["max_output_tokens"],
+                max_native_tool_uses=intent["max_native_tool_uses"],
+                allow_provider_managed_search=intent["allow_provider_managed_search"],
+            )
+            ctx = self.build_context(
+                dry_run=dry_run,
+                loop=loop,
+                run_id=run_id,
+                log_sink=log_sink,
+                collection_ids=contract["intent"]["row_ids"],
+                session=session,
+                provider_controls=controls,
+                acquisition_guard=guard.acquisition,
+            )
+            if config_fingerprint(ctx.config) != contract["config_hash"]:
+                raise ChangeError("stale_plan", "The built run context differs from its approved contract.")
+            # A full-roster shared run is explicitly authorized, never inferred from omitted selectors.
+            ctx.config.users_scoped = not contract["intent"]["include_shared"]
+            return ctx, profiles
+
     async def start_run(
         self,
         *,
@@ -254,36 +382,9 @@ class RunService:
             logger.warning("SHORTLIST_DRY_RUN is set — forcing this {} run to dry-run (no Plex writes)", trigger)
             dry_run = True
         with self._sessions() as session:
-            # The rows this run will build, recorded the moment it is QUEUED rather than when it
-            # starts. A queued run is a real thing an operator sits watching — it had no scope
-            # recorded yet, so its page had nothing to show and said so. `collection_ids` is the
-            # scope a "run selected rows" press chose; without it, every enabled row.
-            # A DRY run also builds a switched-off row it names (an AI row's "Try it" before going live).
-            named_dry = bool(dry_run and collection_ids)
-            wanted = session.query(Collection).filter(
-                Collection.enabled | Collection.id.in_(collection_ids) if named_dry else Collection.enabled
+            run = self.queue_run_in_session(
+                session, trigger=trigger, dry_run=dry_run, user_ids=user_ids, collection_ids=collection_ids
             )
-            if collection_ids:
-                wanted = wanted.filter(Collection.id.in_(collection_ids))
-            run = Run(
-                trigger=trigger,
-                dry_run=dry_run,
-                status="queued",
-                stats={
-                    # Who it will build for, recorded here for the same reason as the rows below: a
-                    # QUEUED run is exactly when someone is watching the page, and without this its
-                    # rows opened onto "0 succeeded" and an empty list.
-                    "expected_users": [
-                        {"slug": p.slug, "username": p.username, "display_name": p.nickname or p.username}
-                        for p in self.enabled_profiles(session, user_ids)
-                    ],
-                    "expected_rows": [
-                        {"slug": row.slug, "title": row.name_template or row.name, "build": row.build}
-                        for row in wanted.order_by(Collection.sort_order, Collection.id).all()
-                    ],
-                },
-            )
-            session.add(run)
             session.commit()
             run_id = run.id
         self._cancels[run_id] = threading.Event()  # armed here so /cancel works the instant it's queued
@@ -363,9 +464,21 @@ class RunService:
                 return
             self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
             log_sink: Callable[[dict], None] | None = None
+            assistant_run = False
+            assistant_authorized = False
             try:
                 # Inside the try so a failure here (e.g. reading users) still marks the run errored
                 # AND runs the finally that frees the cancel Event — never leaves a run stuck "running".
+                with self._sessions() as session:
+                    pending = session.get(Run, run_id)
+                    assistant_run = pending.trigger == "assistant"
+                    if assistant_run and (pending.status == "aborted" or pending.stats.get("cancel_requested")):
+                        raise RuntimeError("The queued assistant run was cancelled before execution.")
+                    if assistant_run:
+                        from shortlist.server.assistant.run_adapter import validate_execution_in_session
+
+                        validate_execution_in_session(session, self.state, pending)
+                        assistant_authorized = True
                 self._mark_started(run_id)
                 notify.enqueue_run_started(self._sessions, run_id)
                 with self._sessions() as session:
@@ -382,17 +495,29 @@ class RunService:
                 log_sink = self._new_run_log(run_id)
                 # In an executor: building the context makes a PMS request (up to the 45s timeout),
                 # which on the loop stalled /api/system/health and SSE for as long.
-                ctx = await loop.run_in_executor(
-                    None,
-                    functools.partial(
-                        self.build_context,
-                        dry_run=dry_run,
-                        loop=loop,
-                        run_id=run_id,
-                        log_sink=log_sink,
-                        collection_ids=collection_ids,
-                    ),
-                )
+                if assistant_run:
+                    ctx, profiles = await loop.run_in_executor(
+                        None,
+                        functools.partial(
+                            self._build_assistant_context,
+                            run_id,
+                            dry_run=dry_run,
+                            loop=loop,
+                            log_sink=log_sink,
+                        ),
+                    )
+                else:
+                    ctx = await loop.run_in_executor(
+                        None,
+                        functools.partial(
+                            self.build_context,
+                            dry_run=dry_run,
+                            loop=loop,
+                            run_id=run_id,
+                            log_sink=log_sink,
+                            collection_ids=collection_ids,
+                        ),
+                    )
                 # Which rows this run will build, recorded UP FRONT — the row twin of
                 # `expected_users` above. Without it the page cannot know a run's SCOPE until the
                 # first person finishes, because scope only exists in `rows_considered`, which is
@@ -420,7 +545,8 @@ class RunService:
                     ctx.cancelled = cancel.is_set
                 # "Run now" for one person hands the engine a subset of the roster. Tell it so, or it
                 # reads that subset as the whole server and builds/judges shared rows against it.
-                ctx.config.users_scoped = user_ids is not None
+                if not assistant_run:
+                    ctx.config.users_scoped = user_ids is not None
                 # Persist each user's results the moment they finish, so the run page fills in person by
                 # person instead of staying empty until the whole run ends (the end-of-run persist below
                 # is the backstop + reconciler).
@@ -488,8 +614,9 @@ class RunService:
                 # Both ways a run reaches `error` get the alert, and they are genuinely two paths: the
                 # engine returning a not-ok report, and it raising. Hooking only the tidy one would
                 # stay silent for exactly the failures worth waking up for.
-                notify.enqueue_run_outcome(self._sessions, run_id)
-                await loop.run_in_executor(None, notify.after_run, self._sessions, run_id, shortlist.__version__)
+                if not assistant_run or assistant_authorized:
+                    notify.enqueue_run_outcome(self._sessions, run_id)
+                    await loop.run_in_executor(None, notify.after_run, self._sessions, run_id, shortlist.__version__)
                 self._bus.publish("run.finished", {"run_id": run_id, "status": "error", "error": error})
                 return
             finally:
@@ -619,7 +746,10 @@ class RunService:
             run = session.get(Run, run_id)
             run.status = "error"
             run.finished_at = datetime.now(UTC)
-            run.stats = stats
+            run.stats = {
+                **{key: value for key, value in (run.stats or {}).items() if key.startswith("assistant_")},
+                **stats,
+            }
             session.commit()
 
     # -- persistence + audit (delegated to run_persistence) -------------------------------

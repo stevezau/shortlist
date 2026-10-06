@@ -9,6 +9,13 @@ import type {
   JobStatus,
   ApiTokenCreated,
   ApiTokenStatus,
+  AssistantConsentFlow,
+  AssistantChangeReview,
+  AssistantCredentialCreated,
+  AssistantGrant,
+  AssistantGrantCreate,
+  AssistantGrantUpdate,
+  AssistantStatus,
   NotificationsPage,
   WhatsNew,
   ArrOptions,
@@ -57,6 +64,7 @@ import type {
   ArrStatus,
   RequestCandidate,
   RequestSendResult,
+  AcquisitionClaimsPage,
   Run,
   RunCreated,
   RunDetail,
@@ -227,6 +235,71 @@ export const api = {
   getSession: (): Promise<Session> => request("/api/auth/session"),
 
   logout: (): Promise<void> => request("/api/auth/logout", { method: "POST" }),
+
+  // --- Assistant access (browser owner session only) ---
+  getAssistantStatus: (): Promise<AssistantStatus> =>
+    request("/api/assistant/status"),
+
+  getAssistantGrants: (): Promise<AssistantGrant[]> =>
+    request("/assistant/grants"),
+
+  createAssistantGrant: (body: AssistantGrantCreate): Promise<AssistantGrant> =>
+    request("/assistant/grants", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateAssistantGrant: (grantId: string, body: AssistantGrantUpdate): Promise<AssistantGrant> =>
+    request(`/assistant/grants/${encodeURIComponent(grantId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  issueAssistantCredential: (
+    grantId: string,
+    expiresInDays = 90,
+  ): Promise<AssistantCredentialCreated> =>
+    request(`/assistant/grants/${encodeURIComponent(grantId)}/credentials`, {
+      method: "POST",
+      body: JSON.stringify({ expires_in_days: expiresInDays }),
+    }),
+
+  revokeAssistantGrant: (grantId: string): Promise<{ revoked: boolean }> =>
+    request(`/assistant/grants/${encodeURIComponent(grantId)}/revoke`, {
+      method: "POST",
+    }),
+
+  removeAssistantGrant: (grantId: string): Promise<void> =>
+    request(`/assistant/grants/${encodeURIComponent(grantId)}`, {
+      method: "DELETE",
+    }),
+
+  beginAssistantConsent: (
+    body: Record<string, string>,
+  ): Promise<AssistantConsentFlow> =>
+    request("/assistant/oauth/authorize", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  decideAssistantConsent: (body: {
+    flow_id: string;
+    csrf_token: string;
+    approved: boolean;
+    grant_id: string | null;
+  }): Promise<{ redirect_to: string }> =>
+    request("/assistant/oauth/consent", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getAssistantChange: (changeId: string): Promise<AssistantChangeReview> =>
+    request(`/api/assistant/changes/${encodeURIComponent(changeId)}`),
+
+  approveAssistantChange: (changeId: string): Promise<Record<string, unknown>> =>
+    request(`/api/assistant/changes/${encodeURIComponent(changeId)}/approve`, {
+      method: "POST",
+    }),
 
   // --- Setup wizard ---
   /** Servers this account can see, each advertised address already probed for reachability. */
@@ -835,6 +908,23 @@ export const api = {
     request("/api/requests/send", {
       method: "POST",
       body: JSON.stringify({ ids, dry_run: dryRun }),
+    }),
+
+  listAcquisitionClaims: (limit = 100, offset = 0): Promise<AcquisitionClaimsPage> =>
+    request(`/api/requests/acquisition-claims?limit=${limit}&offset=${offset}`),
+
+  releaseAcquisitionClaim: (
+    claimId: number,
+    reviewToken: string,
+    expectedStatus: "outcome_unknown" | "succeeded",
+  ): Promise<{ id: number; status: "released" }> =>
+    request(`/api/requests/acquisition-claims/${claimId}/release`, {
+      method: "POST",
+      body: JSON.stringify({
+        review_token: reviewToken,
+        expected_status: expectedStatus,
+        checked_destination: true,
+      }),
     }),
 
   rejectRequests: (ids: number[]): Promise<{ rejected: number }> =>

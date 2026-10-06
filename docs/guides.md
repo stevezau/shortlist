@@ -2,7 +2,7 @@
 title: Shortlist guides
 description: How to do the things people actually want to do with Shortlist, from changing how often a row refreshes to sending missing films to Radarr.
 heading: Guides
-updated: 2026-10-03
+updated: 2026-10-05
 ---
 
 Short pages instead of one long one. If you know what you want to do, start here.
@@ -31,6 +31,7 @@ Short pages instead of one long one. If you know what you want to do, start here
 | Work out what's wrong, or file a bug report      | [Have an issue?](guides/troubleshooting.md#start-here-have-an-issue)    |
 | Know what's in a backup                          | [Backups](guides/troubleshooting.md#backups)                            |
 | Put Shortlist on the internet safely             | [Putting it on the internet](guides/security.md)                        |
+| Connect ChatGPT, Claude, Codex or another MCP client | [Connect an assistant](guides/assistant-access.md)                  |
 
 ## The pages
 
@@ -48,6 +49,7 @@ Short pages instead of one long one. If you know what you want to do, start here
 | [Requests (Radarr, Sonarr, Overseerr)](guides/requests.md) | Setting it up, the approval inbox, guardrails, why a title is still waiting |
 | [Troubleshooting and backups](guides/troubleshooting.md) | The common failures, and what a backup does and doesn't hold                |
 | [Putting it on the internet](guides/security.md)         | TLS, proxies, the API token, and what's in `/config/backups`                |
+| [Connect an assistant](guides/assistant-access.md)       | Named grants, local credentials, OAuth, stdio and remote connection limits  |
 
 New here? [Getting started](getting-started.md) covers the install and the setup wizard first.
 Looking for a specific setting or API endpoint? That's [Reference](reference.md).

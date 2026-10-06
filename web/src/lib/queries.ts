@@ -1075,6 +1075,27 @@ export function useSendRequests() {
   });
 }
 
+export function useAcquisitionClaims() {
+  return useQuery({
+    queryKey: ["requests", "acquisition-claims"],
+    queryFn: () => api.listAcquisitionClaims(),
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
+export function useReleaseAcquisitionClaim() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reviewToken, expectedStatus }: { id: number; reviewToken: string; expectedStatus: "outcome_unknown" | "succeeded" }) =>
+      api.releaseAcquisitionClaim(id, reviewToken, expectedStatus),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["requests", "acquisition-claims"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.requests });
+    },
+  });
+}
+
 export function useRejectRequests() {
   const queryClient = useQueryClient();
   return useMutation({

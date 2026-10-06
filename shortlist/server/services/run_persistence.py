@@ -1831,4 +1831,4 @@ def _finalize_run(
         stats["left_alone_failures"] = {str(account): why for account, why in report.left_alone_failures.items()}
     # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit
     # after assignment would not reliably mark it dirty.
-    run.stats = stats
+    run.stats = {**{key: value for key, value in (run.stats or {}).items() if key.startswith("assistant_")}, **stats}

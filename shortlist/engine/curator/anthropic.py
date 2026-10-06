@@ -10,6 +10,7 @@ from shortlist.engine.curator.base import (
     parse_web_titles,
 )
 from shortlist.engine.models import UserProfile
+from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls, provider_call
 from shortlist.engine.web_guidance import Guidance
 
 # Design doc §3: cheap tier is plenty for a web-search title lookup.
@@ -33,12 +34,35 @@ class AnthropicCurator:
     last_tokens = ThreadLocalTokens()  # per-thread, so parallel per-user web search doesn't race
     last_output_tokens = ThreadLocalTokens()
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, timeout: float = 60.0):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_MODEL,
+        timeout: float = 60.0,
+        max_retries: int = 2,
+        base_url: str | None = None,
+        follow_redirects: bool = True,
+        provider_controls: ProviderCallControls | None = None,
+    ):
         try:
             import anthropic
         except ImportError as e:
             raise ImportError("Anthropic provider needs `pip install shortlist[anthropic]`") from e
-        self._client = anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=2)
+        if provider_controls is not None and base_url is None:
+            base_url = "https://api.anthropic.com"
+        self._client = anthropic.Anthropic(
+            api_key=api_key,
+            timeout=timeout,
+            max_retries=0 if provider_controls is not None else max_retries,
+            base_url=base_url,
+            **(
+                {"http_client": anthropic.DefaultHttpxClient(follow_redirects=False)}
+                if provider_controls is not None or not follow_redirects
+                else {}
+            ),
+        )
+        self._provider_controls = provider_controls
+        self._destination = (base_url or "https://api.anthropic.com").rstrip("/")
         self._model = model
 
     def ping(self) -> str:
@@ -75,29 +99,43 @@ class AnthropicCurator:
         import anthropic
 
         system, user = build_web_prompt(profile, seeds, k, guidance=guidance)
+        controls = self._provider_controls
+        output_tokens = controls.output_limit(2048) if controls is not None else 2048
+        tool_uses = min(5, controls.max_native_tool_uses) if controls is not None else 5
         try:
-            response = self._client.messages.create(
-                model=self._model,
-                max_tokens=2048,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                # Five, not three, and the difference is the YEAR. Measured against the live API on
-                # five seeds: at max_uses=3 only 4 of 12 proposals carried a release year, at 5 it is
-                # 10-12 of 12, and the resolver needs the year to disambiguate. It costs ~$0.05 more
-                # per user per run ($0.055 → $0.106, five searches at $10/1k plus the tokens they
-                # bring). Ten searches buys one more year and doubles the bill again.
-                #
-                # The tool version stays at the original: `web_search_20260209` and `_20260318` add
-                # dynamic filtering, which needs Claude 4.6+ and 400s on our default haiku-4-5 unless
-                # you pass `allowed_callers: ["direct"]` — and with `direct` they produce byte-identical
-                # output at identical cost. Nothing to gain until the default model moves.
-                #
-                # No `allowed_domains` either: a whitelist of review sites is rejected outright with
-                # "The following domains are not accessible to our user agent: ['reddit.com',
-                # 'vulture.com']". `blocked_domains` and `user_location` both work and both changed
-                # nothing except the token bill.
-                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
-            )
+            with provider_call(
+                controls,
+                ProviderCall(
+                    kind="native_search",
+                    provider=self.name,
+                    destination=self._destination,
+                    model=self._model,
+                    output_tokens=output_tokens,
+                    native_tool_uses=tool_uses,
+                ),
+            ):
+                response = self._client.messages.create(
+                    model=self._model,
+                    max_tokens=output_tokens,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                    # Five, not three, and the difference is the YEAR. Measured against the live API on
+                    # five seeds: at max_uses=3 only 4 of 12 proposals carried a release year, at 5 it is
+                    # 10-12 of 12, and the resolver needs the year to disambiguate. It costs ~$0.05 more
+                    # per user per run ($0.055 → $0.106, five searches at $10/1k plus the tokens they
+                    # bring). Ten searches buys one more year and doubles the bill again.
+                    #
+                    # The tool version stays at the original: `web_search_20260209` and `_20260318` add
+                    # dynamic filtering, which needs Claude 4.6+ and 400s on our default haiku-4-5 unless
+                    # you pass `allowed_callers: ["direct"]` — and with `direct` they produce byte-identical
+                    # output at identical cost. Nothing to gain until the default model moves.
+                    #
+                    # No `allowed_domains` either: a whitelist of review sites is rejected outright with
+                    # "The following domains are not accessible to our user agent: ['reddit.com',
+                    # 'vulture.com']". `blocked_domains` and `user_location` both work and both changed
+                    # nothing except the token bill.
+                    tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": tool_uses}],
+                )
         except anthropic.APIError as e:
             logger.warning("llm_web (anthropic): {}", e)
             return []
@@ -111,13 +149,25 @@ class AnthropicCurator:
         """Plain completion (no tools) — the external-search ``llm_web`` path (see base.complete)."""
         import anthropic
 
+        controls = self._provider_controls
+        output_tokens = controls.output_limit(max_tokens or 2048) if controls is not None else max_tokens or 2048
         try:
-            response = self._client.messages.create(
-                model=self._model,
-                max_tokens=max_tokens or 2048,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-            )
+            with provider_call(
+                controls,
+                ProviderCall(
+                    kind="completion",
+                    provider=self.name,
+                    destination=self._destination,
+                    model=self._model,
+                    output_tokens=output_tokens,
+                ),
+            ):
+                response = self._client.messages.create(
+                    model=self._model,
+                    max_tokens=output_tokens,
+                    system=system,
+                    messages=[{"role": "user", "content": user}],
+                )
         except anthropic.APIError as e:
             logger.warning("complete (anthropic): {}", e)
             return ""

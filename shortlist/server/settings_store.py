@@ -435,6 +435,12 @@ class SettingsStore:
         return self._session.get(Setting, key) is not None
 
     def set(self, key: str, value: Any) -> None:
+        """Write and commit one value, preserving the existing convenience API."""
+        self.set_in_transaction(key, value)
+        self._session.commit()
+
+    def set_in_transaction(self, key: str, value: Any) -> None:
+        """Write and flush a value; the caller owns the transaction and its consequences."""
         self._require_box(key)
         if key in SECRET_KEYS and value:
             value = self._secrets.encrypt(str(value))
@@ -443,7 +449,7 @@ class SettingsStore:
             self._session.add(Setting(key=key, value={"v": value}))
         else:
             row.value = {"v": value}
-        self._session.commit()
+        self._session.flush()
 
     def unset(self, key: str) -> bool:
         """Delete this key's row, putting it back to "never written". Returns whether a row went.
@@ -453,11 +459,18 @@ class SettingsStore:
         default is reachable ONLY by removing the row. Storing a blank and deleting the row are
         different states — see `scheduler._resolve_cron`.
         """
+        removed = self.unset_in_transaction(key)
+        if removed:
+            self._session.commit()
+        return removed
+
+    def unset_in_transaction(self, key: str) -> bool:
+        """Restore inheritance without committing other changes in the caller's session."""
         row = self._session.get(Setting, key)
         if row is None:
             return False
         self._session.delete(row)
-        self._session.commit()
+        self._session.flush()
         return True
 
     def all_public(self) -> dict[str, Any]:

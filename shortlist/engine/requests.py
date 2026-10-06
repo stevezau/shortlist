@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from loguru import logger
@@ -41,6 +44,10 @@ from shortlist.engine.models import (
     SeerrTarget,
 )
 from shortlist.engine.request_alloc import allocate
+
+AcquisitionGuard = Callable[
+    [str, MissingTitle, RequestConfig], AbstractContextManager[Callable[[RequestOutcome], None] | None]
+]
 
 # When gating on a non-TMDB source, only so many candidates are rated on MDBList per run, so a large
 # missing pool can't blow the daily cap (each title's whole rating set is cached, so re-runs mostly
@@ -479,6 +486,7 @@ def request_missing(
     min_write_interval: float = 1.0,
     already_handled: set[tuple[int, str]] | None = None,
     mdblist: MdbListClient | None = None,
+    acquisition_guard: AcquisitionGuard | None = None,
 ) -> RequestReport:
     """Auto-request the strongest missing titles per row; queue the rest for the owner to approve.
 
@@ -639,7 +647,13 @@ def request_missing(
 
     # 5. Send, each title under the target of the row that claimed it.
     report.outcomes = _send_claims(
-        claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval, seerr=seerr
+        claims,
+        cfg_by_row,
+        tmdb,
+        dry_run=dry_run,
+        min_write_interval=min_write_interval,
+        seerr=seerr,
+        acquisition_guard=acquisition_guard,
     )
     # Only the ones the Arr actually accepted. A send that failed, or was skipped for want of a TVDB
     # id, must stay requestable — suppressing it would lose the title silently.
@@ -779,6 +793,18 @@ def _enrich(tmdb: TmdbClient, titles: list[MissingTitle]) -> None:
                 logger.debug("synopsis lookup for {!r} failed: {}", m.title, e)
 
 
+@dataclass
+class RequestBatch:
+    """Invocation-local clients and server pacing for separately checkpointed title sends.
+
+    Targets include credentials and request configuration. Never retain this context across jobs
+    or share it between concurrent batches: its clients cache remote state for this one batch.
+    """
+
+    clients: dict[ArrTarget | SeerrTarget, RadarrClient | SonarrClient | SeerrClient] = field(default_factory=dict)
+    clocks: dict[str, list[float]] = field(default_factory=dict)
+
+
 def _send_claims(
     claims: list[tuple[str, MissingTitle]],
     cfg_by_row: dict[str, RequestConfig],
@@ -787,6 +813,8 @@ def _send_claims(
     dry_run: bool,
     min_write_interval: float,
     seerr: SeerrClient | None = None,
+    batch: RequestBatch | None = None,
+    acquisition_guard: AcquisitionGuard | None = None,
 ) -> list[RequestOutcome]:
     """Send each claimed title under the target of the row that claimed it.
 
@@ -794,8 +822,8 @@ def _send_claims(
     and its rate limiter — the plex-safety throttle is per client, and one per row would multiply the
     write rate by the number of rows.
     """
-    clients: dict[ArrTarget | SeerrTarget, RadarrClient | SonarrClient | SeerrClient] = {}
-    clocks: dict[str, list[float]] = {}
+    batch = batch if batch is not None else RequestBatch()
+    clients, clocks = batch.clients, batch.clocks
     # Seed the run's own reconcile client, so the send reuses its memoised media state instead of
     # walking /media a second time. Seeded into the SAME cache rather than special-cased in the loop
     # below: keyed by its target, it is reused only for rows that actually point at that instance,
@@ -805,15 +833,30 @@ def _send_claims(
     outcomes: list[RequestOutcome] = []
     for slug, title in claims:
         cfg = cfg_by_row[slug]
-        if cfg.target == "overseerr":
-            # On the ROUTE, not on the target: a chosen-but-unconnected Overseerr must not fall
-            # through to the Arr branch below and be explained in that branch's words.
-            target = _cached_client(clients, clocks, cfg.overseerr, SeerrClient, min_write_interval)
-            outcomes.append(_request_one_seerr(title, target, tmdb, dry_run=dry_run))
-            continue
-        radarr = _cached_client(clients, clocks, cfg.radarr, RadarrClient, min_write_interval)
-        sonarr = _cached_client(clients, clocks, cfg.sonarr, SonarrClient, min_write_interval)
-        outcomes.append(_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run, sonarr_monitor=cfg.sonarr_monitor))
+        guarded = acquisition_guard is not None and not dry_run
+        with acquisition_guard(slug, title, cfg) if guarded else nullcontext(None) as record:
+            if guarded and record is None:
+                outcomes.append(
+                    RequestOutcome(
+                        title.tmdb_id,
+                        title.title,
+                        title.media_type,
+                        "skipped_claimed",
+                        "Another durable acquisition claim already covers this title.",
+                    )
+                )
+                continue
+            if cfg.target == "overseerr":
+                # A chosen-but-unconnected Overseerr must not fall through to the Arr route.
+                target = _cached_client(clients, clocks, cfg.overseerr, SeerrClient, min_write_interval)
+                outcome = _request_one_seerr(title, target, tmdb, dry_run=dry_run)
+            else:
+                radarr = _cached_client(clients, clocks, cfg.radarr, RadarrClient, min_write_interval)
+                sonarr = _cached_client(clients, clocks, cfg.sonarr, SonarrClient, min_write_interval)
+                outcome = _request_one(title, radarr, sonarr, tmdb, dry_run=dry_run, sonarr_monitor=cfg.sonarr_monitor)
+            if record is not None:
+                record(outcome)
+            outcomes.append(outcome)
     return outcomes
 
 
@@ -845,6 +888,7 @@ def request_titles_by_row(
     *,
     dry_run: bool,
     min_write_interval: float = 1.0,
+    batch: RequestBatch | None = None,
 ) -> RequestReport:
     """Send titles the owner approved from the inbox, each under its own row's target.
 
@@ -855,7 +899,9 @@ def request_titles_by_row(
     own rate limiter and multiply the write rate to one server (plex-safety rule 6).
     """
     report = RequestReport(considered=len(claims))
-    report.outcomes = _send_claims(claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval)
+    report.outcomes = _send_claims(
+        claims, cfg_by_row, tmdb, dry_run=dry_run, min_write_interval=min_write_interval, batch=batch
+    )
     return report
 
 

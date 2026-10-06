@@ -30,6 +30,9 @@ function page<K extends string>(
 }
 
 const ActivityPage = page(() => import("@/pages/activity"), "ActivityPage");
+const AssistantAccessPage = page(() => import("@/pages/assistant-access"), "AssistantAccessPage");
+const AssistantChangePage = page(() => import("@/pages/assistant-change"), "AssistantChangePage");
+const AssistantConsentPage = page(() => import("@/pages/assistant-consent"), "AssistantConsentPage");
 const DashboardPage = page(() => import("@/pages/dashboard"), "DashboardPage");
 const IssuePage = page(() => import("@/pages/issue"), "IssuePage");
 const LoginPage = page(() => import("@/pages/login"), "LoginPage");
@@ -143,6 +146,8 @@ export function AppRoutes() {
       <Routes>
         <Route path="login" element={<LoginPage />} />
         <Route path="setup" element={<SetupPage />} />
+        <Route path="assistant/consent" element={<AssistantConsentPage />} />
+        <Route path="assistant/changes/:changeId" element={<AssistantChangePage />} />
         {/* Old addresses, redirected rather than removed: they are in bookmarks, in the docs, and in
             the `action_url` of notifications already stored in the database. Outside the auth gate on
             purpose — the gate applies to wherever they land. */}
@@ -176,6 +181,7 @@ export function AppRoutes() {
           <Route path="requests" element={<RequestsPage />} />
           <Route path="activity" element={<ActivityPage />} />
           <Route path="issue" element={<IssuePage />} />
+          <Route path="assistant-access" element={<AssistantAccessPage />} />
           {/* One route for /settings and its three tabs, so moving between them (or arriving from an
               old /settings#section link, rewritten to its tab in place) keeps the page mounted and
               every unsaved draft with it. "settings/uninstall" is a static segment and wins. */}

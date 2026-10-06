@@ -17,6 +17,7 @@ from urllib.parse import urlparse, urlunparse
 from loguru import logger
 
 from shortlist.engine.curator.openai import DEFAULT_MODEL, OpenAICurator
+from shortlist.engine.provider_calls import ProviderCallControls, ProviderCallRefused
 
 
 def normalize_base_url(url: str) -> str:
@@ -59,6 +60,9 @@ class OpenAICompatibleCurator(OpenAICurator):
         api_key: str = "",
         model: str = DEFAULT_MODEL,
         timeout: float = 300.0,
+        max_retries: int = 2,
+        follow_redirects: bool = True,
+        provider_controls: ProviderCallControls | None = None,
     ):
         """
         Args:
@@ -73,7 +77,15 @@ class OpenAICompatibleCurator(OpenAICurator):
         resolved = normalize_base_url(base_url)
         if resolved != base_url.strip().rstrip("/"):
             logger.debug("curator: using {} for the OpenAI-compatible endpoint", resolved)
-        super().__init__(api_key=api_key or "not-needed", model=model, timeout=timeout, base_url=resolved)
+        super().__init__(
+            api_key=api_key or "not-needed",
+            model=model,
+            timeout=timeout,
+            base_url=resolved,
+            max_retries=max_retries,
+            follow_redirects=follow_redirects,
+            provider_controls=provider_controls,
+        )
 
     def _send_model(self) -> str:
         """The model name to send. Asks the server what it has if we weren't told.
@@ -83,6 +95,10 @@ class OpenAICompatibleCurator(OpenAICurator):
         blank, which is the natural thing to do for a server hosting exactly one model, would fail on
         two of the runtimes this provider exists to support. Resolved once and remembered.
         """
+        if self._provider_controls is not None:
+            if not self._model:
+                raise ProviderCallRefused("Choose an explicit model before starting a bounded provider run.")
+            return self._model
         if self._model and self._model != DEFAULT_MODEL:
             return self._model
         try:

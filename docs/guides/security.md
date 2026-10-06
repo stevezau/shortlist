@@ -1,8 +1,9 @@
 ---
 title: Exposing Shortlist to the internet
-description: "What to know before publishing Shortlist outside your network: TLS, proxies, the API token, and what's in a backup."
+description: "What to know before publishing Shortlist outside your network: TLS, proxies, assistant access, the API token, and what's in a backup."
 heading: Putting it on the internet
 nav_order: 8
+updated: 2026-10-05
 ---
 
 ## Exposing Shortlist to the internet
@@ -24,6 +25,11 @@ and so are failed API-token attempts.
 **The API token is owner-level access.** Anything holding it can do anything you can, including
 deleting rows and rewriting share filters. Rotate it from Settings → System → API access if it leaks; the old
 one stops working immediately.
+
+**Assistant access uses separate named grants.** A remote MCP client should use Shortlist's OAuth
+flow, with only the capabilities and resources selected for that connection. Do not give it the API
+token. Hosted clients also need additional discovery and browser routes through the proxy; see
+[Connect an assistant](assistant-access.md#connect-a-hosted-assistant).
 
 **URLs you enter are fetched by the server**, which is the point: your Plex, Tautulli, Radarr,
 Sonarr and Ollama are usually on private addresses, and all of those keep working. The only thing

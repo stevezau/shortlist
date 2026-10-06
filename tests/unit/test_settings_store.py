@@ -142,6 +142,39 @@ class TestUnsetIsNotTheSameAsStoringABlank:
             assert store.has_row("sync.check_cron") is False
 
 
+class TestTransactionOwnedSettings:
+    def test_flush_only_write_rolls_back_with_its_caller(self, sessions):
+        with sessions() as session:
+            store = SettingsStore(session)
+            store.set_in_transaction("row.size", 37)
+            assert store.get("row.size") == 37
+            session.rollback()
+        with sessions() as session:
+            assert SettingsStore(session).get("row.size") == DEFAULTS["row.size"]
+
+    def test_unset_rolls_back_with_other_mutations(self, sessions):
+        with sessions() as session:
+            store = SettingsStore(session)
+            store.set("sync.check_cron", "")
+            assert store.unset_in_transaction("sync.check_cron") is True
+            store.set_in_transaction("row.size", 37)
+            session.rollback()
+        with sessions() as session:
+            store = SettingsStore(session)
+            assert store.has_row("sync.check_cron") is True
+            assert store.get("sync.check_cron") == ""
+            assert store.get("row.size") == DEFAULTS["row.size"]
+
+    def test_transactional_secret_remains_encrypted(self, sessions, tmp_path):
+        with sessions() as session:
+            store = SettingsStore(session, SecretBox(tmp_path))
+            store.set_in_transaction("tmdb.apikey", "transaction-secret")
+            assert "transaction-secret" not in str(session.get(Setting, "tmdb.apikey").value)
+            session.commit()
+        with sessions() as session:
+            assert SettingsStore(session, SecretBox(tmp_path)).get("tmdb.apikey") == "transaction-secret"
+
+
 class TestADroppedSecretStaysInLegacyKeys:
     """Removing a key from SECRET_KEYS while a row for it survives LEAKS it.
 

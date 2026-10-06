@@ -273,6 +273,18 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 config_dir / "logs" / "shortlist.log",
             )
             stale = session.query(Run).filter(Run.status.in_(("queued", "running"))).all()
+            # Queued assistant work has a durable dispatch job. A committed handoff, however,
+            # may already have reached external services and must never be replayed on restart.
+            stale = [
+                run
+                for run in stale
+                if not (
+                    run.trigger == "assistant"
+                    and run.status == "queued"
+                    and run.began_at is None
+                    and not (run.stats or {}).get("assistant_handoff_at")
+                )
+            ]
             booted_at = datetime.now(UTC)
             # Not after a restore: a run the BACKUP caught mid-flight is history, not a run this restart cut short.
             restored = restore is not None and restore["status"] == "restored"
@@ -280,6 +292,8 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 [] if restored else [plan for run in stale if (plan := missed_by_restart(session, run, booted_at))]
             )
             for run in stale:
+                if run.trigger == "assistant" and (run.stats or {}).get("assistant_handoff_at"):
+                    run.stats = {**run.stats, "assistant_outcome_unknown": True}
                 run.status = "aborted"
                 run.finished_at = booted_at
             if stale:
@@ -296,8 +310,12 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         # Requeue jobs a previous process died inside. Handlers are idempotent (converge-to-desired,
         # never a delta), so replaying is safe — and losing the work is not: a disable cleanup lost to
         # a restart is never retried by anything, because no run revisits a disabled user.
+        from shortlist.server.assistant.run_spend import recover_assistant_run_calls
         from shortlist.server.services.jobs import recover_stale
+        from shortlist.server.services.request_actions import recover_abandoned_request_dispatches
 
+        recover_abandoned_request_dispatches(sessions)
+        recover_assistant_run_calls(sessions)
         recover_stale(sessions, boot=True)
 
         # A run the previous process died inside leaves rows DELIVERED BUT UNPROMOTED — safe, but
@@ -365,7 +383,10 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         close_on_stop_signals(bus, asyncio.get_running_loop())
         logger.info("shortlist server up (config: {})", config_dir)
         try:
-            yield
+            from shortlist.server.assistant.runtime import assistant_lifespan
+
+            async with assistant_lifespan(app):
+                yield
         finally:
             bus.close()
             scheduler.shutdown(wait=False)
@@ -427,6 +448,18 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         watching_account,
     ):
         app.include_router(module.router, prefix="/api")
+
+    from starlette.routing import Route
+
+    from shortlist.server.assistant.routes import catalog_router
+    from shortlist.server.assistant.routes import router as assistant_router
+    from shortlist.server.assistant.runtime import AssistantEndpoint
+    from shortlist.server.assistant_auth.routes import create_assistant_auth_router
+
+    app.include_router(assistant_router, prefix="/api")
+    app.include_router(catalog_router, prefix="/api")
+    app.include_router(create_assistant_auth_router())
+    app.router.routes.append(Route("/mcp", AssistantEndpoint(app), methods=["GET", "POST", "DELETE"]))
 
     if WEB_DIST.exists():
         app.mount("/assets", StaticFiles(directory=WEB_DIST / "assets"), name="assets")

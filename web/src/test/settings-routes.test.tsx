@@ -23,6 +23,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       putSettings: (values: Settings) => putSettings(values),
       getRuns: () => Promise.resolve([]),
       getApiToken: () => Promise.resolve({ active: false, created_at: null, last_used_at: null }),
+      getAssistantStatus: () => Promise.resolve({ enabled: false, configuration_hint: "Configure the MCP URL." }),
       testConnection: () => Promise.resolve({ ok: true, message: "ok" }),
     },
   };
@@ -41,6 +42,7 @@ function renderAt(path: string) {
         <Routes>
           <Route path="/settings/:tab?" element={<SettingsPage />} />
           <Route path="/privacy" element={<p>Privacy page</p>} />
+          <Route path="/assistant-access" element={<p>AI assistant connections</p>} />
         </Routes>
         <Where />
       </MemoryRouter>
@@ -76,6 +78,7 @@ describe("Settings addresses", () => {
     ["#min-history", "defaults", "/settings/defaults#min-history"],
     ["#advanced", "system", "/settings/system#advanced"],
     ["#api-access", "system", "/settings/system#api-access"],
+    ["#assistant-access", "system", "/settings/system#assistant-access"],
     ["#danger", "system", "/settings/system#danger"],
   ])("lands an old /settings%s link on the right tab, scrolled to it", async (hash, tab, landed) => {
     renderAt(`/settings${hash}`);
@@ -107,6 +110,13 @@ describe("Settings addresses", () => {
 });
 
 describe("the tab strip", () => {
+  it.each(["connections", "defaults", "system"])("offers AI assistants from the %s header", async (tab) => {
+    renderAt(`/settings/${tab}`);
+    const link = screen.getByRole("link", { name: "AI assistants" });
+    expect(link).toHaveAttribute("href", "/assistant-access");
+    await userEvent.click(link);
+    expect(address()).toBe("/assistant-access");
+  });
   it("switches tabs by address, and keeps an unsaved draft on the tab it left", async () => {
     renderAt("/settings/defaults");
     const name = await screen.findByLabelText("Row name template");
@@ -161,6 +171,12 @@ describe("one Webhook, and the switch that moved", () => {
 });
 
 describe("Search settings", () => {
+  it("opens AI assistants from an MCP search", async () => {
+    renderAt("/settings/connections");
+    await userEvent.type(screen.getByRole("combobox", { name: /search settings/i }), "MCP");
+    await userEvent.click(screen.getByRole("option", { name: /AI assistants/ }));
+    expect(address()).toBe("/assistant-access");
+  });
   it("finds a setting on another tab and jumps to it", async () => {
     renderAt("/settings/connections");
     const search = await screen.findByRole("combobox", { name: /search settings/i });

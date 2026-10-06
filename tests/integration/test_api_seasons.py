@@ -62,7 +62,18 @@ def _jobs(monkeypatch) -> tuple[list[tuple[str, dict]], list[str]]:
     async def waited_on(state, reason: str) -> None:
         raise AssertionError(f"the response waited on the queue ({reason})")
 
-    monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append((kind, payload)))
+    enqueue = jobs_mod.enqueue_in_session
+
+    def record(session, kind, payload=None, **kwargs):
+        job = enqueue(session, kind, payload, **kwargs)
+        assert job.id is not None, "owed work is saved in the caller's transaction"
+        if kind == "assistant.converge":
+            queued.extend((step["kind"], step["payload"]) for step in payload["steps"])
+        else:
+            queued.append((kind, payload))
+        return job
+
+    monkeypatch.setattr(jobs_mod, "enqueue_in_session", record)
     monkeypatch.setattr(jobs_mod, "drain_in_background", lambda state, reason: drains.append(reason))
     monkeypatch.setattr(jobs_mod, "drain_now", waited_on)
     return queued, drains
@@ -299,7 +310,7 @@ class TestUpdate:
         assert (queued, drains) == ([], []), "a rename changes no day the row is shown on"
 
         assert client.put("/api/seasons/thanksgiving", json=_body(lead_days=3)).status_code == 200
-        assert queued == [("rows.visibility", {"row": row["slug"]})]
+        assert queued == [("rows.visibility", {"row": row["slug"], "dry_run": False})]
         assert drains == ["season 'thanksgiving' moved"]
 
     def test_a_move_that_changes_nothing_today_queues_no_pass(self, client: TestClient, monkeypatch):
@@ -326,7 +337,7 @@ class TestUpdate:
         r = client.put("/api/seasons/thanksgiving", json=_body(rule={"kind": "fixed", "month": 11, "day": 27}))
 
         assert r.status_code == 200, r.text
-        assert queued == [("rows.visibility", {"row": row["slug"]})]
+        assert queued == [("rows.visibility", {"row": row["slug"], "dry_run": False})]
         assert drains == ["season 'thanksgiving' moved"]
 
     def test_a_move_that_hands_the_row_to_another_season_queues_a_pass(self, client: TestClient, monkeypatch):
@@ -339,7 +350,7 @@ class TestUpdate:
 
         client.put("/api/seasons/thanksgiving", json=_body(rule={"kind": "fixed", "month": 12, "day": 12}, lead_days=7))
 
-        assert queued == [("rows.visibility", {"row": row["slug"]})]
+        assert queued == [("rows.visibility", {"row": row["slug"], "dry_run": False})]
 
     def test_a_disabled_row_is_not_given_a_pass(self, client: TestClient, monkeypatch):
         # The day after Thanksgiving: two days after brings it back.
@@ -351,7 +362,7 @@ class TestUpdate:
 
         client.put("/api/seasons/thanksgiving", json=_body(after_days=2))
 
-        assert queued == [("rows.visibility", {"row": on["slug"]})]
+        assert queued == [("rows.visibility", {"row": on["slug"], "dry_run": False})]
 
     def test_a_rule_is_stored_without_the_fields_its_kind_ignores(self, client: TestClient, monkeypatch):
         """So editing one of them is no edit: nothing stored changes and no row is re-applied."""

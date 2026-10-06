@@ -26,6 +26,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.clients.poster import PosterArtist
+from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls, provider_call
 from shortlist.server.db.models import PosterAsset, utcnow
 from shortlist.server.settings_store import SettingsStore
 
@@ -71,13 +72,16 @@ def image_provider_status(store: SettingsStore) -> dict:
     return {"capable": True, "provider": provider, "reason": ""}
 
 
-def make_studio(store: SettingsStore, sessions: sessionmaker[Session]) -> PosterStudio:
+def make_studio(
+    store: SettingsStore, sessions: sessionmaker[Session], *, provider_controls: ProviderCallControls | None = None
+) -> PosterStudio:
     """Build the poster studio: the built-in text renderer always, plus the AI engine when the curator
     provider can generate images. Rendered images are cached in the DB by (engine, text, style)."""
     ai: PosterArtist | None = None
     if image_provider_status(store)["capable"]:
         key = store.get("curator.api_key")
-        ai = _OpenAIArtist(key) if store.get("curator.provider") == "openai" else _GoogleArtist(key)
+        kwargs = {"provider_controls": provider_controls} if provider_controls is not None else {}
+        ai = _OpenAIArtist(key, **kwargs) if store.get("curator.provider") == "openai" else _GoogleArtist(key, **kwargs)
     return PosterStudio(sessions, ai)
 
 
@@ -127,18 +131,41 @@ def ai_image_prompt(title: str, subtitle: str, style: str) -> str:
 class _OpenAIArtist:
     """OpenAI Images (gpt-image-1). Always returns base64 in ``data[0].b64_json``."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, *, provider_controls: ProviderCallControls | None = None):
         self._api_key = api_key
+        self._provider_controls = provider_controls
 
     def render(self, *, title: str, subtitle: str, style: str, engine: str) -> bytes | None:
         try:
             import openai
         except ImportError as exc:  # pragma: no cover - image extra missing from the runtime
             raise ImportError("OpenAI image generation needs `pip install shortlist[openai]`") from exc
-        client = openai.OpenAI(api_key=self._api_key, timeout=120.0, max_retries=2)
-        resp = client.images.generate(
-            model=OPENAI_IMAGE_MODEL, prompt=ai_image_prompt(title, subtitle, style), n=1, size=_OPENAI_SIZE
+        controls = self._provider_controls
+        client = openai.OpenAI(
+            api_key=self._api_key,
+            timeout=120.0,
+            max_retries=0 if controls is not None else 2,
+            **(
+                {
+                    "base_url": "https://api.openai.com/v1",
+                    "http_client": openai.DefaultHttpxClient(follow_redirects=False),
+                }
+                if controls is not None
+                else {}
+            ),
         )
+        with provider_call(
+            controls,
+            ProviderCall(
+                kind="image",
+                provider="openai",
+                destination="https://api.openai.com/v1",
+                model=OPENAI_IMAGE_MODEL,
+            ),
+        ):
+            resp = client.images.generate(
+                model=OPENAI_IMAGE_MODEL, prompt=ai_image_prompt(title, subtitle, style), n=1, size=_OPENAI_SIZE
+            )
         b64 = resp.data[0].b64_json if resp.data else None
         return base64.b64decode(b64) if b64 else None
 
@@ -146,8 +173,9 @@ class _OpenAIArtist:
 class _GoogleArtist:
     """Google Imagen via google-genai. Bytes live in ``generated_images[0].image.image_bytes``."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, *, provider_controls: ProviderCallControls | None = None):
         self._api_key = api_key
+        self._provider_controls = provider_controls
 
     def render(self, *, title: str, subtitle: str, style: str, engine: str) -> bytes | None:
         try:
@@ -155,14 +183,40 @@ class _GoogleArtist:
             from google.genai import types
         except ImportError as exc:  # pragma: no cover - image extra missing from the runtime
             raise ImportError("Google image generation needs `pip install shortlist[google]`") from exc
-        client = genai.Client(api_key=self._api_key)
-        resp = client.models.generate_images(
-            model=GOOGLE_IMAGE_MODEL,
-            prompt=ai_image_prompt(title, subtitle, style),
-            config=types.GenerateImagesConfig(
-                number_of_images=1, aspect_ratio=_GOOGLE_ASPECT, output_mime_type="image/jpeg"
+        controls = self._provider_controls
+        client = genai.Client(
+            api_key=self._api_key,
+            **(
+                {
+                    "vertexai": False,
+                    "http_options": {
+                        "base_url": "https://generativelanguage.googleapis.com",
+                        "timeout": 120000,
+                        "retry_options": {"attempts": 1},
+                        "client_args": {"follow_redirects": False},
+                        "async_client_args": {"follow_redirects": False},
+                    },
+                }
+                if controls is not None
+                else {}
             ),
         )
+        with provider_call(
+            controls,
+            ProviderCall(
+                kind="image",
+                provider="google",
+                destination="https://generativelanguage.googleapis.com",
+                model=GOOGLE_IMAGE_MODEL,
+            ),
+        ):
+            resp = client.models.generate_images(
+                model=GOOGLE_IMAGE_MODEL,
+                prompt=ai_image_prompt(title, subtitle, style),
+                config=types.GenerateImagesConfig(
+                    number_of_images=1, aspect_ratio=_GOOGLE_ASPECT, output_mime_type="image/jpeg"
+                ),
+            )
         images = getattr(resp, "generated_images", None) or []
         return images[0].image.image_bytes if images else None
 
