@@ -301,7 +301,12 @@ and exact approvals require the owner browser session; mutations also require it
 The legacy owner API bearer and an assistant bearer cannot substitute for that session.
 
 - `GET /api/assistant/status` reports enablement, canonical resource, issuer and available presets.
-- `GET /assistant/grants` lists named grants; `POST /assistant/grants` creates one.
+- `GET /assistant/grants` lists named grants with conservative lifetime provider-call usage;
+  `POST /assistant/grants` creates one. `PATCH /assistant/grants/{grant_id}` updates explicit
+  constraints and permissions together under the grant revision guard.
+- `GET /assistant/destinations` lists configured, credential-free service choices for the owner.
+  A newly chosen service endpoint is checked again when its grant is saved; a changed endpoint
+  needs fresh owner review. Existing approvals keep their saved exact destination.
 - `POST /assistant/grants/{grant_id}/credentials` creates a one-time local credential;
   `POST /assistant/grants/{grant_id}/revoke` revokes the grant.
 - `GET /api/assistant/changes/{change_id}` returns an owner's concrete review;

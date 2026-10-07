@@ -14,9 +14,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import _check_csrf, read_session
 
 from .authlib_adapter import ASGIAuthorizationServer, PreparedOAuthRequest
+from .destinations import (
+    ConfiguredDestination,
+    DestinationSelection,
+    DestinationSelectionConflict,
+    configured_destinations,
+)
 from .oauth import OAuthService
 from .policy import AuthorizationDenied
 from .repository import AssistantAuthRepository, GrantRemovalConflict, GrantUpdateConflict, GrantUpdateNotFound
@@ -125,6 +132,7 @@ class GrantCreateIn(BaseModel):
     preset: GrantPreset
     capabilities: set[Capability] | None = None
     constraints: ConstraintsIn = Field(default_factory=ConstraintsIn)
+    selected_destinations: list[DestinationSelection] = Field(default_factory=list)
     expires_in_days: int | None = Field(default=90, ge=1, le=365)
 
 
@@ -149,22 +157,74 @@ class ConstraintsPatchIn(BaseModel):
 
 
 class GrantConstraintsPatchIn(BaseModel):
-    """Revision-guarded, constraints-only change to one owner grant."""
+    """Revision-guarded owner change to one grant's authority."""
 
     model_config = ConfigDict(extra="forbid")
 
     expected_revision: int = Field(gt=0)
     constraints: ConstraintsPatchIn | None = None
+    capabilities: set[Capability] | None = None
+    selected_destinations: list[DestinationSelection] = Field(default_factory=list)
     approve_updated_access: bool = False
 
     @model_validator(mode="after")
     def require_one_change(self) -> GrantConstraintsPatchIn:
         """Keep legacy approval separate from ordinary resource edits."""
-        if self.approve_updated_access and self.constraints is not None:
-            raise ValueError("approve_updated_access cannot be combined with constraints")
-        if not self.approve_updated_access and self.constraints is None:
-            raise ValueError("constraints are required unless approving updated access")
+        if self.approve_updated_access and (
+            self.constraints is not None or self.capabilities is not None or self.selected_destinations
+        ):
+            raise ValueError("approve_updated_access cannot be combined with other changes")
+        if not self.approve_updated_access and self.constraints is None and self.capabilities is None:
+            raise ValueError("constraints or capabilities are required unless approving updated access")
         return self
+
+
+class ProviderCallQuotaOut(PassthroughModel):
+    """Current conservative lifetime call accounting."""
+
+    lifetime_limit: int
+    reserved: int
+    remaining: int
+
+
+class GrantConstraintsOut(PassthroughModel):
+    """Publicly effective resource and work bounds."""
+
+    row_ids: list[int]
+    library_keys: list[str]
+    setting_groups: list[str]
+    destination_ids: list[str]
+    include_future_rows: bool
+    include_future_libraries: bool
+    max_batch_size: int | None
+    max_work_per_operation: int | None
+    max_provider_calls: int
+
+
+class GrantOut(PassthroughModel):
+    """Safe browser-facing named grant authority."""
+
+    id: str
+    owner_account_id: int
+    client_id: str
+    name: str
+    preset: GrantPreset
+    capabilities: list[Capability]
+    constraints: GrantConstraintsOut
+    requires_access_approval: bool
+    revision: int
+    expires_at: datetime | None
+
+
+class GrantSummaryOut(GrantOut):
+    """Grant authority plus owner-visible activity and call accounting."""
+
+    created_at: datetime
+    updated_at: datetime
+    revoked_at: datetime | None
+    last_used_at: datetime | None
+    local_credential_count: int
+    provider_call_quota: ProviderCallQuotaOut
 
 
 class ConsentDecisionIn(BaseModel):
@@ -225,12 +285,12 @@ def create_owner_grant_router(repository: AssistantAuthRepository | None = None)
     """Create explicit browser-only grant list/create/revoke routes."""
     router = APIRouter(prefix="/assistant/grants", tags=["assistant-access"])
 
-    @router.get("")
+    @router.get("", response_model=list[GrantSummaryOut])
     def list_grants(request: Request, owner: BrowserOwnerDep) -> list[dict[str, Any]]:
         current_repository = repository or _runtime(request).repository
         return [_serialize_grant_summary(grant) for grant in current_repository.list_grant_summaries(owner.account_id)]
 
-    @router.post("", status_code=201)
+    @router.post("", status_code=201, response_model=GrantOut)
     def create_grant(request: Request, body: GrantCreateIn, owner: BrowserOwnerDep) -> dict[str, Any]:
         current_repository = repository or _runtime(request).repository
         expires_at = (
@@ -244,13 +304,16 @@ def create_owner_grant_router(repository: AssistantAuthRepository | None = None)
                 preset=body.preset,
                 capabilities=body.capabilities,
                 constraints=body.constraints.to_domain(),
+                selected_destinations=body.selected_destinations,
                 expires_at=expires_at,
             )
+        except DestinationSelectionConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
         except AuthorizationDenied as error:
             raise HTTPException(status_code=422, detail=str(error)) from None
         return _serialize_grant(grant)
 
-    @router.patch("/{grant_id}")
+    @router.patch("/{grant_id}", response_model=GrantOut)
     def patch_grant_constraints(
         request: Request,
         grant_id: str,
@@ -272,11 +335,15 @@ def create_owner_grant_router(repository: AssistantAuthRepository | None = None)
                     owner_account_id=owner.account_id,
                     expected_revision=body.expected_revision,
                     constraints_patch=body.constraints.explicit_values() if body.constraints else {},
+                    capabilities=body.capabilities,
+                    selected_destinations=body.selected_destinations,
                 )
         except GrantUpdateNotFound as error:
             raise HTTPException(status_code=404, detail="assistant grant not found") from error
         except GrantUpdateConflict as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        except DestinationSelectionConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         return _serialize_grant(grant)
@@ -505,6 +572,12 @@ def create_assistant_auth_router() -> APIRouter:
     router.include_router(create_owner_grant_router())
     router.include_router(create_oauth_router())
 
+    @router.get("/assistant/destinations", response_model=list[ConfiguredDestination], tags=["assistant-access"])
+    def list_configured_destinations(request: Request, owner: BrowserOwnerDep) -> list[ConfiguredDestination]:
+        current_repository = _runtime(request).repository
+        with current_repository.sessions() as session:
+            return configured_destinations(session)
+
     @router.get("/.well-known/oauth-authorization-server", include_in_schema=False)
     def authorization_metadata(request: Request) -> dict[str, Any]:
         return authorization_server_metadata(_runtime(request).oauth)
@@ -580,6 +653,11 @@ def _serialize_grant_summary(summary: GrantSummary) -> dict[str, Any]:
         revoked_at=summary.revoked_at.isoformat() if summary.revoked_at else None,
         last_used_at=summary.last_used_at.isoformat() if summary.last_used_at else None,
         local_credential_count=summary.local_credential_count,
+        provider_call_quota={
+            "lifetime_limit": summary.context.constraints.max_provider_calls,
+            "reserved": summary.provider_calls_reserved,
+            "remaining": max(0, summary.context.constraints.max_provider_calls - summary.provider_calls_reserved),
+        },
     )
     return serialized
 

@@ -168,6 +168,7 @@ class GrantSummary:
     revoked_at: datetime | None = None
     last_used_at: datetime | None = None
     local_credential_count: int = 0
+    provider_calls_reserved: int = 0
 
 
 @dataclass(frozen=True, slots=True)

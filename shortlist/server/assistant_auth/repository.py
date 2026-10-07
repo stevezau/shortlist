@@ -10,9 +10,11 @@ from datetime import UTC, datetime
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from shortlist.server.assistant.budgets import AssistantBudget
 from shortlist.server.db.models import Event
 
 from .credentials import CredentialHasher, IssuedSecret, as_utc, credential_is_active
+from .destinations import DestinationSelection, validate_selected_destinations
 from .models import (
     AssistantConsentFlow,
     AssistantGrant,
@@ -168,6 +170,7 @@ class AssistantAuthRepository:
         preset: GrantPreset,
         constraints: GrantConstraints,
         capabilities: Iterable[Capability] | None = None,
+        selected_destinations: list[DestinationSelection] | None = None,
         expires_at: datetime | None = None,
         now: datetime | None = None,
         session: Session | None = None,
@@ -191,10 +194,12 @@ class AssistantAuthRepository:
             expires_at=as_utc(expires_at).astimezone(UTC) if expires_at is not None else None,
         )
         if session is not None:
+            validate_selected_destinations(session, selected_destinations or [], set(constraints.destination_ids))
             session.add(row)
             session.flush()
             return _grant_context(row)
         with self.sessions() as owned:
+            validate_selected_destinations(owned, selected_destinations or [], set(constraints.destination_ids))
             owned.add(row)
             owned.commit()
             return _grant_context(row)
@@ -284,8 +289,13 @@ class AssistantAuthRepository:
                 .subquery()
             )
             statement = (
-                select(AssistantGrant, func.coalesce(counts.c.count, 0))
+                select(
+                    AssistantGrant,
+                    func.coalesce(counts.c.count, 0),
+                    func.coalesce(AssistantBudget.provider_calls_reserved, 0),
+                )
                 .outerjoin(counts, counts.c.grant_id == AssistantGrant.id)
+                .outerjoin(AssistantBudget, AssistantBudget.grant_id == AssistantGrant.id)
                 .where(AssistantGrant.owner_account_id == owner_account_id)
                 .order_by(AssistantGrant.created_at.desc())
             )
@@ -297,8 +307,9 @@ class AssistantAuthRepository:
                     revoked_at=as_utc(row.revoked_at) if row.revoked_at else None,
                     last_used_at=as_utc(row.last_used_at) if row.last_used_at else None,
                     local_credential_count=count,
+                    provider_calls_reserved=reserved,
                 )
-                for row, count in session.execute(statement)
+                for row, count, reserved in session.execute(statement)
             ]
 
     def replace_grant_authority(
@@ -346,6 +357,8 @@ class AssistantAuthRepository:
         owner_account_id: int,
         expected_revision: int,
         constraints_patch: dict[str, object],
+        capabilities: Iterable[Capability] | None = None,
+        selected_destinations: list[DestinationSelection] | None = None,
         now: datetime | None = None,
     ) -> GrantContext:
         """Merge explicit constraint fields through an owner-scoped revision CAS.
@@ -369,6 +382,9 @@ class AssistantAuthRepository:
         unknown = set(constraints_patch) - known
         if unknown:
             raise ValueError(f"unknown assistant grant constraints: {', '.join(sorted(unknown))}")
+        capability_values = None if capabilities is None else set(capabilities)
+        if capability_values is not None and not ASSISTANT_CAPABILITIES.issuperset(capability_values):
+            raise ValueError("owner secrets and grant administration cannot be delegated")
 
         timestamp = _now(now)
         with self.sessions() as session:
@@ -384,11 +400,18 @@ class AssistantAuthRepository:
             merged_constraints = current_constraints.as_dict()
             merged_constraints.update(constraints_patch)
             updated_constraints = GrantConstraints.from_dict(merged_constraints)
+            validate_selected_destinations(
+                session,
+                selected_destinations or [],
+                set(updated_constraints.destination_ids) - set(current_constraints.destination_ids),
+            )
             changed_fields = sorted(
                 field
                 for field in constraints_patch
                 if getattr(current_constraints, field) != getattr(updated_constraints, field)
             )
+            if capability_values is not None and capability_values != set(_grant_context(row).capabilities):
+                changed_fields.append("capabilities")
             changed = session.execute(
                 update(AssistantGrant)
                 .execution_options(synchronize_session=False)
@@ -400,6 +423,11 @@ class AssistantAuthRepository:
                     or_(AssistantGrant.expires_at.is_(None), AssistantGrant.expires_at > timestamp),
                 )
                 .values(
+                    capabilities=(
+                        sorted(capability.value for capability in capability_values)
+                        if capability_values is not None
+                        else row.capabilities
+                    ),
                     constraints=updated_constraints.as_dict(),
                     revision=AssistantGrant.revision + 1,
                     updated_at=timestamp,

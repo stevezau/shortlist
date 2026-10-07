@@ -2333,6 +2333,44 @@
         "title": "CollectionOut",
         "type": "object"
       },
+      "ConfiguredDestination": {
+        "additionalProperties": true,
+        "description": "A credential-free, currently configured service endpoint.",
+        "properties": {
+          "destination_id": {
+            "title": "Destination Id",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "purposes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Purposes",
+            "type": "array"
+          },
+          "service_id": {
+            "title": "Service Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "label",
+          "purposes",
+          "destination_id",
+          "host"
+        ],
+        "title": "ConfiguredDestination",
+        "type": "object"
+      },
       "ConnectionTestOut": {
         "additionalProperties": true,
         "description": "`message` is plain English either way \u2014 the success line, or a redacted failure (rule 9).",
@@ -2776,6 +2814,26 @@
           "last_seen"
         ],
         "title": "DeletedRowOut",
+        "type": "object"
+      },
+      "DestinationSelection": {
+        "additionalProperties": false,
+        "description": "The exact catalog choice the owner saw before saving.",
+        "properties": {
+          "destination_id": {
+            "title": "Destination Id",
+            "type": "string"
+          },
+          "service_id": {
+            "title": "Service Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "destination_id"
+        ],
+        "title": "DestinationSelection",
         "type": "object"
       },
       "Dismiss": {
@@ -3308,14 +3366,110 @@
         "title": "EventOut",
         "type": "object"
       },
+      "GrantConstraintsOut": {
+        "additionalProperties": true,
+        "description": "Publicly effective resource and work bounds.",
+        "properties": {
+          "destination_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Destination Ids",
+            "type": "array"
+          },
+          "include_future_libraries": {
+            "title": "Include Future Libraries",
+            "type": "boolean"
+          },
+          "include_future_rows": {
+            "title": "Include Future Rows",
+            "type": "boolean"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array"
+          },
+          "max_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Batch Size"
+          },
+          "max_provider_calls": {
+            "title": "Max Provider Calls",
+            "type": "integer"
+          },
+          "max_work_per_operation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Work Per Operation"
+          },
+          "row_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Row Ids",
+            "type": "array"
+          },
+          "setting_groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Setting Groups",
+            "type": "array"
+          }
+        },
+        "required": [
+          "row_ids",
+          "library_keys",
+          "setting_groups",
+          "destination_ids",
+          "include_future_rows",
+          "include_future_libraries",
+          "max_batch_size",
+          "max_work_per_operation",
+          "max_provider_calls"
+        ],
+        "title": "GrantConstraintsOut",
+        "type": "object"
+      },
       "GrantConstraintsPatchIn": {
         "additionalProperties": false,
-        "description": "Revision-guarded, constraints-only change to one owner grant.",
+        "description": "Revision-guarded owner change to one grant's authority.",
         "properties": {
           "approve_updated_access": {
             "default": false,
             "title": "Approve Updated Access",
             "type": "boolean"
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Capability"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
           },
           "constraints": {
             "anyOf": [
@@ -3331,6 +3485,13 @@
             "exclusiveMinimum": 0.0,
             "title": "Expected Revision",
             "type": "integer"
+          },
+          "selected_destinations": {
+            "items": {
+              "$ref": "#/components/schemas/DestinationSelection"
+            },
+            "title": "Selected Destinations",
+            "type": "array"
           }
         },
         "required": [
@@ -3389,6 +3550,13 @@
           },
           "preset": {
             "$ref": "#/components/schemas/GrantPreset"
+          },
+          "selected_destinations": {
+            "items": {
+              "$ref": "#/components/schemas/DestinationSelection"
+            },
+            "title": "Selected Destinations",
+            "type": "array"
           }
         },
         "required": [
@@ -3397,6 +3565,75 @@
           "preset"
         ],
         "title": "GrantCreateIn",
+        "type": "object"
+      },
+      "GrantOut": {
+        "additionalProperties": true,
+        "description": "Safe browser-facing named grant authority.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/GrantConstraintsOut"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_account_id": {
+            "title": "Owner Account Id",
+            "type": "integer"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/GrantPreset"
+          },
+          "requires_access_approval": {
+            "title": "Requires Access Approval",
+            "type": "boolean"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "owner_account_id",
+          "client_id",
+          "name",
+          "preset",
+          "capabilities",
+          "constraints",
+          "requires_access_approval",
+          "revision",
+          "expires_at"
+        ],
+        "title": "GrantOut",
         "type": "object"
       },
       "GrantPreset": {
@@ -3408,6 +3645,122 @@
         ],
         "title": "GrantPreset",
         "type": "string"
+      },
+      "GrantSummaryOut": {
+        "additionalProperties": true,
+        "description": "Grant authority plus owner-visible activity and call accounting.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/GrantConstraintsOut"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "local_credential_count": {
+            "title": "Local Credential Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_account_id": {
+            "title": "Owner Account Id",
+            "type": "integer"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/GrantPreset"
+          },
+          "provider_call_quota": {
+            "$ref": "#/components/schemas/ProviderCallQuotaOut"
+          },
+          "requires_access_approval": {
+            "title": "Requires Access Approval",
+            "type": "boolean"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_account_id",
+          "client_id",
+          "name",
+          "preset",
+          "capabilities",
+          "constraints",
+          "requires_access_approval",
+          "revision",
+          "expires_at",
+          "created_at",
+          "updated_at",
+          "revoked_at",
+          "last_used_at",
+          "local_credential_count",
+          "provider_call_quota"
+        ],
+        "title": "GrantSummaryOut",
+        "type": "object"
       },
       "HTTPValidationError": {
         "properties": {
@@ -5654,6 +6007,31 @@
           "mechanics"
         ],
         "title": "PromptsOut",
+        "type": "object"
+      },
+      "ProviderCallQuotaOut": {
+        "additionalProperties": true,
+        "description": "Current conservative lifetime call accounting.",
+        "properties": {
+          "lifetime_limit": {
+            "title": "Lifetime Limit",
+            "type": "integer"
+          },
+          "remaining": {
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "reserved": {
+            "title": "Reserved",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lifetime_limit",
+          "reserved",
+          "remaining"
+        ],
+        "title": "ProviderCallQuotaOut",
         "type": "object"
       },
       "QualityProfileOut": {
@@ -17836,6 +18214,31 @@
         ]
       }
     },
+    "/assistant/destinations": {
+      "get": {
+        "operationId": "list_configured_destinations_assistant_destinations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConfiguredDestination"
+                  },
+                  "title": "Response List Configured Destinations Assistant Destinations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Configured Destinations",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
     "/assistant/grants": {
       "get": {
         "operationId": "list_grants_assistant_grants_get",
@@ -17845,8 +18248,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/GrantSummaryOut"
                   },
                   "title": "Response List Grants Assistant Grants Get",
                   "type": "array"
@@ -17878,9 +18280,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Grant Assistant Grants Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GrantOut"
                 }
               }
             },
@@ -17967,9 +18367,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Patch Grant Constraints Assistant Grants  Grant Id  Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GrantOut"
                 }
               }
             },

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import { AssistantAccessPage } from "@/pages/assistant-access";
 const {
   getAssistantStatus,
   getAssistantGrants,
+  getAssistantDestinations,
   getUsers,
   listCollections,
   getLibraries,
@@ -21,6 +22,7 @@ const {
 } = vi.hoisted(() => ({
   getAssistantStatus: vi.fn(),
   getAssistantGrants: vi.fn(),
+  getAssistantDestinations: vi.fn(),
   getUsers: vi.fn(),
   listCollections: vi.fn(),
   getLibraries: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       ...actual.api,
       getAssistantStatus,
       getAssistantGrants,
+      getAssistantDestinations,
       getUsers,
       listCollections,
       getLibraries,
@@ -55,8 +58,8 @@ const activeStatus: AssistantStatus = {
   configuration_hint: "",
   presets: {
     inspect: ["instance.read"],
-    manage_selected_rows: ["instance.read", "rows.write"],
-    owner_automation: ["instance.read", "rows.write", "runs.write"],
+    manage_selected_rows: ["instance.read", "rows.update"],
+    owner_automation: ["instance.read", "rows.update", "runs.execute"],
   },
   setting_groups: ["schedule"],
 };
@@ -68,7 +71,7 @@ function activeGrant(overrides: Partial<AssistantGrant> = {}): AssistantGrant {
     client_id: "codex",
     name: "Seasonal Codex",
     preset: "inspect",
-    capabilities: ["instance.read", "rows.write"],
+    capabilities: ["instance.read", "rows.update"],
     constraints: {
       row_ids: [17],
       library_keys: ["2"],
@@ -91,6 +94,7 @@ function activeGrant(overrides: Partial<AssistantGrant> = {}): AssistantGrant {
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><MemoryRouter><AssistantAccessPage /></MemoryRouter></QueryClientProvider>);
+  return client;
 }
 
 describe("AI assistants page", () => {
@@ -99,6 +103,7 @@ describe("AI assistants page", () => {
   beforeEach(() => {
     getAssistantStatus.mockReset();
     getAssistantGrants.mockReset();
+    getAssistantDestinations.mockReset();
     getUsers.mockReset();
     listCollections.mockReset();
     getLibraries.mockReset();
@@ -107,6 +112,7 @@ describe("AI assistants page", () => {
     removeAssistantGrant.mockReset();
     getAssistantStatus.mockResolvedValue(activeStatus);
     getAssistantGrants.mockResolvedValue([activeGrant()]);
+    getAssistantDestinations.mockResolvedValue([]);
     getUsers.mockResolvedValue([
       { id: 1, display_name: "Alice", friendly_name: "Alice" },
       { id: 2, display_name: "Ben", friendly_name: "Ben" },
@@ -141,20 +147,65 @@ describe("AI assistants page", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "New connection" }));
-    expect(screen.getByText(/Rows: All current and future rows · Libraries: All current and future libraries/)).toBeVisible();
+    expect(screen.getByText(/All current and future people\. All current and future rows; all current and future libraries/)).toBeVisible();
     expect(screen.queryByRole("radio", { name: "Selected rows" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Max batch size")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Paid provider calls")).toHaveValue(0);
+    expect(screen.getByLabelText("Allow this assistant to use paid services")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Manage Shortlist" })).toHaveAttribute("aria-pressed", "true");
     await user.type(screen.getByPlaceholderText("Living room Codex"), "Desktop Codex");
     await user.click(screen.getByRole("button", { name: "Create connection" }));
 
     await waitFor(() => expect(createAssistantGrant).toHaveBeenCalledWith(expect.objectContaining({
       name: "Desktop Codex",
+      preset: "owner_automation",
+      capabilities: activeStatus.presets.owner_automation,
       expires_in_days: 90,
       constraints: expect.objectContaining({
         row_ids: [], library_keys: [], include_future_rows: true, include_future_libraries: true,
-        max_batch_size: 25, max_work_per_operation: null, max_provider_calls: 0,
+        setting_groups: ["schedule"], max_batch_size: 25, max_work_per_operation: null, max_provider_calls: 0,
       }),
+    })));
+  });
+
+  it("keeps the paid amount visible and invalid while the owner replaces it", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "New connection" }));
+    await user.type(screen.getByPlaceholderText("Living room Codex"), "Paid client");
+    await user.click(screen.getByLabelText("Allow this assistant to use paid services"));
+    const allowance = screen.getByLabelText("Lifetime call allowance");
+    expect(allowance).toHaveValue(1);
+    await user.clear(allowance);
+    expect(allowance).toBeVisible();
+    expect(allowance).toBeInvalid();
+    await user.click(screen.getByRole("button", { name: "Create connection" }));
+    expect(createAssistantGrant).not.toHaveBeenCalled();
+    await user.type(allowance, "2");
+    await user.click(screen.getByRole("button", { name: "Create connection" }));
+    await waitFor(() => expect(createAssistantGrant).toHaveBeenCalledWith(expect.objectContaining({
+      constraints: expect.objectContaining({ max_provider_calls: 2 }),
+      capabilities: expect.arrayContaining(["ai.generate"]),
+    })));
+  });
+
+  it("retains a selected endpoint snapshot if the live catalog changes before save", async () => {
+    const user = userEvent.setup();
+    const original = { service_id: "searxng", label: "SearXNG search", purposes: ["search"], host: "localhost", destination_id: "http://localhost:8080" };
+    getAssistantDestinations.mockResolvedValue([original]);
+    const client = renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "New connection" }));
+    await user.type(screen.getByPlaceholderText("Living room Codex"), "Search client");
+    await user.click(screen.getByRole("checkbox", { name: /SearXNG search/ }));
+    await act(async () => {
+      client.setQueryData(["assistant", "destinations"], [{ ...original, destination_id: "http://localhost:8081" }]);
+    });
+    await user.click(screen.getByRole("button", { name: "Create connection" }));
+
+    await waitFor(() => expect(createAssistantGrant).toHaveBeenCalledWith(expect.objectContaining({
+      constraints: expect.objectContaining({ destination_ids: ["http://localhost:8080"] }),
+      selected_destinations: [{ service_id: "searxng", destination_id: "http://localhost:8080" }],
     })));
   });
 
@@ -252,24 +303,24 @@ describe("AI assistants page", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Edit resources" }));
+    await user.click(await screen.findByRole("button", { name: "Edit connection" }));
 
-    expect(screen.getByText("Custom permissions")).toBeVisible();
+    expect(screen.getByText("Custom access")).toBeVisible();
     expect(screen.queryByLabelText("Ben")).not.toBeInTheDocument();
     expect(screen.getByText(/all current and future people/i)).toBeVisible();
-    expect(screen.getByText(/Rows: Selected rows \(1\) · Libraries: Selected libraries \(1\)/)).toBeVisible();
+    expect(screen.getByText(/1 selected rows; 1 selected libraries/)).toBeVisible();
     expect(screen.getByRole("radio", { name: "Selected rows" })).toBeChecked();
     expect(screen.getByLabelText("Max batch size")).toHaveValue(25);
-    expect(screen.getByLabelText("Approved destination IDs or canonical URLs")).toHaveValue("https://search.example");
-    expect(screen.getByText("instance.read")).toBeVisible();
-    expect(screen.getByText("rows.write")).toBeVisible();
+    expect(screen.getByText(/Previously approved service endpoints/)).toBeVisible();
+    expect(screen.getByText(/instance.read · rows.update/)).toBeVisible();
 
     await user.click(screen.getByRole("radio", { name: "All current and future rows" }));
-    await user.click(screen.getByRole("button", { name: "Save resources" }));
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
 
     await waitFor(() => expect(updateAssistantGrant).toHaveBeenCalledWith("grant-codex", {
       expected_revision: 4,
       constraints: { include_future_rows: true },
+      selected_destinations: [],
     }));
     expect(await screen.findByRole("status")).toHaveTextContent(/New requests use the changed access/);
   });
@@ -281,27 +332,65 @@ describe("AI assistants page", () => {
     })]);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Edit resources" }));
+    await user.click(await screen.findByRole("button", { name: "Edit connection" }));
     expect(screen.getByRole("button", { name: "Hide advanced access and limits" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("radio", { name: "Selected rows" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Selected libraries" })).toBeChecked();
-    await user.clear(screen.getByLabelText("Paid provider calls"));
-    await user.type(screen.getByLabelText("Paid provider calls"), "4");
+    await user.clear(screen.getByLabelText("Max batch size"));
+    await user.type(screen.getByLabelText("Max batch size"), "26");
     await user.click(screen.getByRole("button", { name: "Hide advanced access and limits" }));
     expect(screen.queryByLabelText("Max work per operation")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Save resources" }));
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
 
     await waitFor(() => expect(updateAssistantGrant).toHaveBeenCalledWith("grant-codex", {
       expected_revision: 4,
-      constraints: { max_provider_calls: 4 },
+      constraints: { max_batch_size: 26 },
+      selected_destinations: [],
     }));
+  });
+
+  it("shows an exhausted paid allowance and preserves it during an unrelated edit", async () => {
+    const user = userEvent.setup();
+    getAssistantGrants.mockResolvedValue([activeGrant({
+      capabilities: [...activeGrant().capabilities, "ai.generate"],
+      constraints: { ...activeGrant().constraints, max_provider_calls: 100 },
+      provider_call_quota: { lifetime_limit: 100, reserved: 100, remaining: 0 },
+    })]);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Edit connection" }));
+    expect(screen.getByLabelText("Allow this assistant to use paid services")).toBeChecked();
+    expect(screen.getByLabelText("Lifetime call allowance")).toHaveValue(100);
+    expect(screen.getByText(/Used or uncertain: 100 · Remaining now: 0 · Exhausted/)).toBeVisible();
+    await user.clear(screen.getByLabelText("Max batch size"));
+    await user.type(screen.getByLabelText("Max batch size"), "26");
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
+
+    await waitFor(() => expect(updateAssistantGrant).toHaveBeenCalledWith("grant-codex", {
+      expected_revision: 4,
+      constraints: { max_batch_size: 26 },
+      selected_destinations: [],
+    }));
+  });
+
+  it("does not offer a paid call when the lifetime maximum is already reserved", async () => {
+    const user = userEvent.setup();
+    getAssistantGrants.mockResolvedValue([activeGrant({
+      constraints: { ...activeGrant().constraints, max_provider_calls: 0 },
+      provider_call_quota: { lifetime_limit: 0, reserved: 100, remaining: 0 },
+    })]);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Edit connection" }));
+    expect(screen.getByLabelText("Allow this assistant to use paid services")).toBeDisabled();
+    expect(screen.getByText(/Used or uncertain: 100 · Remaining: 0/)).toBeVisible();
   });
 
   it("keeps an invalid edited work limit visible instead of hiding validation", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Edit resources" }));
+    await user.click(await screen.findByRole("button", { name: "Edit connection" }));
     const work = screen.getByLabelText("Max work per operation");
     await user.clear(work);
     await user.type(work, "100001");
@@ -317,7 +406,7 @@ describe("AI assistants page", () => {
     getLibraries.mockResolvedValue([{ key: "2", title: "Films" }, { key: "3", title: "Shows" }]);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Edit resources" }));
+    await user.click(await screen.findByRole("button", { name: "Edit connection" }));
     await user.click(screen.getByRole("button", { name: "Select all current rows" }));
     await user.click(screen.getByRole("button", { name: "Select all current libraries" }));
     expect(screen.getByLabelText("Summer films")).toBeChecked();
@@ -325,11 +414,12 @@ describe("AI assistants page", () => {
     await user.click(screen.getByRole("button", { name: "Clear current rows selection" }));
     expect(screen.getByRole("radio", { name: "Selected rows" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Selected libraries" })).toBeChecked();
-    await user.click(screen.getByRole("button", { name: "Save resources" }));
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
 
     await waitFor(() => expect(updateAssistantGrant).toHaveBeenCalledWith("grant-codex", {
       expected_revision: 4,
       constraints: { row_ids: [], library_keys: ["2", "3"] },
+      selected_destinations: [],
     }));
   });
 
@@ -339,14 +429,14 @@ describe("AI assistants page", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: "New connection" }));
+    await user.click(screen.getByRole("button", { name: "Advanced access and limits" }));
     await user.click(screen.getByRole("button", { name: "Select all settings groups" }));
     expect(screen.getByLabelText("Manage schedule settings")).toBeChecked();
     expect(screen.getByLabelText("Manage recommendations settings")).toBeChecked();
     expect(screen.getByLabelText("Manage row defaults settings")).toBeChecked();
-    expect(screen.getByLabelText(/^Send history-derived context to approved providers/)).not.toBeChecked();
+    expect(screen.getByLabelText("Allow viewing context to approved services")).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "Clear settings groups selection" }));
     expect(screen.getByLabelText("Manage schedule settings")).not.toBeChecked();
-    await user.click(screen.getByRole("button", { name: "Advanced access and limits" }));
     expect(screen.getByLabelText("Max batch size")).toHaveValue(25);
     expect(screen.getByLabelText("Max work per operation")).toHaveValue(null);
     expect(screen.getByLabelText("Connection expires after days")).toHaveValue(90);
@@ -356,12 +446,12 @@ describe("AI assistants page", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Edit resources" }));
+    await user.click(await screen.findByRole("button", { name: "Edit connection" }));
     await user.click(screen.getByRole("radio", { name: "All current and future rows" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(updateAssistantGrant).not.toHaveBeenCalled();
-    expect(await screen.findByRole("button", { name: "Edit resources" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Edit connection" })).toBeVisible();
   });
 
   it("requires an explicit reload after a stale revision conflict", async () => {
@@ -369,13 +459,13 @@ describe("AI assistants page", () => {
     updateAssistantGrant.mockRejectedValue(new ApiError(409, "assistant grant changed or was revoked"));
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: "Edit resources" }));
+    await user.click(await screen.findByRole("button", { name: "Edit connection" }));
     await user.click(screen.getByRole("radio", { name: "All current and future rows" }));
-    await user.click(screen.getByRole("button", { name: "Save resources" }));
+    await user.click(screen.getByRole("button", { name: "Save connection" }));
 
     expect(await screen.findByText(/changed elsewhere/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Reload resources" }));
-    expect(await screen.findByRole("button", { name: "Edit resources" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Edit connection" })).toBeVisible();
     expect(getAssistantGrants).toHaveBeenCalledTimes(2);
   });
 
@@ -384,7 +474,7 @@ describe("AI assistants page", () => {
     renderPage();
 
     expect(await screen.findByText("Revoked")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Edit resources" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit connection" })).not.toBeInTheDocument();
   });
 
   it("makes legacy access approval visible before opening its explicit confirmation", async () => {
@@ -446,8 +536,8 @@ describe("AI assistants page", () => {
     const future = (await screen.findByText("Future offset")).closest("article")!;
     const equal = screen.getByText("Equal offset").closest("article")!;
     const past = screen.getByText("Past offset").closest("article")!;
-    expect(within(future).getByRole("button", { name: "Edit resources" })).toBeVisible();
-    expect(within(equal).queryByRole("button", { name: "Edit resources" })).not.toBeInTheDocument();
-    expect(within(past).queryByRole("button", { name: "Edit resources" })).not.toBeInTheDocument();
+    expect(within(future).getByRole("button", { name: "Edit connection" })).toBeVisible();
+    expect(within(equal).queryByRole("button", { name: "Edit connection" })).not.toBeInTheDocument();
+    expect(within(past).queryByRole("button", { name: "Edit connection" })).not.toBeInTheDocument();
   });
 });

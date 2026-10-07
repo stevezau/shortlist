@@ -283,8 +283,10 @@ def test_browser_owner_can_patch_only_explicit_grant_constraints_without_reconne
         listing = client.get("/assistant/grants")
         assert listing.status_code == 200, listing.json()
         listed = next(item for item in listing.json() if item["id"] == grant.grant_id)
-        assert listed["expires_at"] == expected_expiry.isoformat()
-        assert datetime.fromisoformat(listed["expires_at"]) == original_expiry
+        listed_expiry = datetime.fromisoformat(listed["expires_at"])
+        assert listed_expiry == expected_expiry
+        assert listed_expiry == original_expiry
+        assert listed_expiry.utcoffset() == timedelta(0)
 
         response = client.patch(
             path,
@@ -316,7 +318,6 @@ def test_browser_owner_can_patch_only_explicit_grant_constraints_without_reconne
             "name",
             "preset",
             "capabilities",
-            "expires_at",
         )
         assert {field: updated[field] for field in authority_fields} == {
             "owner_account_id": grant.owner_account_id,
@@ -324,9 +325,10 @@ def test_browser_owner_can_patch_only_explicit_grant_constraints_without_reconne
             "name": grant.name,
             "preset": grant.preset.value,
             "capabilities": sorted(capability.value for capability in grant.capabilities),
-            "expires_at": grant.expires_at.isoformat(),
         }
-        assert datetime.fromisoformat(updated["expires_at"]) == original_expiry
+        updated_expiry = datetime.fromisoformat(updated["expires_at"])
+        assert updated_expiry == original_expiry
+        assert updated_expiry.utcoffset() == timedelta(0)
         with app.state.sessions() as session:
             audit = session.query(Event).filter_by(scope="assistant.grant.update").one()
             assert audit.message["actor"] == {"via": "browser", "account_id": 42}

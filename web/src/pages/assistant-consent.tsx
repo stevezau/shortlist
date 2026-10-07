@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Logo } from "@/components/brand";
+import { AssistantPermissionFields } from "@/components/assistant-permissions";
+import { baselineCapabilities, selectedDestinationSnapshots, type AssistantMode, type SelectedDestination } from "@/lib/assistant-permission-model";
 import { PlexPinButton } from "@/components/plex-pin-button";
 import { ErrorState } from "@/components/query-boundary";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -74,12 +75,19 @@ export function AssistantConsentPage() {
   const initialized = useRef(false);
   const [flow, setFlow] = useState<AssistantConsentFlow | null>(null);
   const [selectedGrant, setSelectedGrant] = useState<string | null>(null);
+  const [mode, setMode] = useState<AssistantMode>("suggest");
+  const [capabilities, setCapabilities] = useState<string[]>([]);
+  const [constraints, setConstraints] = useState<AssistantGrantConstraints>(emptyConstraints);
+  const [selectedDestinations, setSelectedDestinations] = useState<SelectedDestination[]>([]);
+  const initializedPermissions = useRef(false);
   const params = useMemo(() => Object.fromEntries(new URLSearchParams(window.location.search)), []);
   const grants = useQuery({
     queryKey: ["assistant", "grants", flow?.client.id],
     queryFn: api.getAssistantGrants,
     enabled: flow !== null,
   });
+  const status = useQuery({ queryKey: ["assistant", "status"], queryFn: api.getAssistantStatus, enabled: flow !== null });
+  const choices = useQuery({ queryKey: ["assistant", "destinations"], queryFn: api.getAssistantDestinations, enabled: flow !== null });
   const begin = useMutation({
     mutationFn: () => api.beginAssistantConsent(params),
     onSuccess: setFlow,
@@ -87,17 +95,19 @@ export function AssistantConsentPage() {
   const decide = useMutation({
     mutationFn: async (approved: boolean) => {
       if (!flow) throw new Error("The authorization request is not ready.");
-      let grantId = selectedGrant ?? grants.data?.find((grant) =>
-        !grant.revoked_at && !grant.requires_access_approval && grant.client_id === flow.client.id &&
-        flow.requested_scopes.every((scope) => grant.capabilities.includes(scope)),
-      )?.id ?? null;
-      if (approved && !grantId) {
+      const compatible = (grants.data ?? []).filter((grant) =>
+        !grant.revoked_at && !grant.requires_access_approval && grant.client_id === flow.client.id,
+      );
+      let grantId = selectedGrant ?? compatible[0]?.id ?? "new";
+      if (approved && grantId === "new") {
+        const approvedCapabilities = capabilities.filter((capability) => flow.requested_scopes.includes(capability));
         const created = await api.createAssistantGrant({
           client_id: flow.client.id,
           name: flow.client.name,
-          preset: "inspect",
-          capabilities: flow.requested_scopes,
-          constraints: emptyConstraints(),
+          preset: mode === "manage" ? "owner_automation" : "inspect",
+          capabilities: approvedCapabilities,
+          constraints,
+          selected_destinations: selectedDestinationSnapshots(constraints.destination_ids, [], selectedDestinations),
           expires_in_days: 90,
         });
         grantId = created.id;
@@ -118,6 +128,17 @@ export function AssistantConsentPage() {
     begin.mutate();
   }, [begin, session.data?.authenticated]);
 
+  useEffect(() => {
+    if (!flow || !status.data || initializedPermissions.current) return;
+    initializedPermissions.current = true;
+    const suggest = status.data.presets.inspect;
+    const manage = status.data.presets.owner_automation;
+    const nextMode = flow.requested_scopes.some((scope) => manage.includes(scope) && !suggest.includes(scope)) ? "manage" : "suggest";
+    setMode(nextMode);
+    setCapabilities(baselineCapabilities(status.data, nextMode));
+    setConstraints({ ...emptyConstraints(), setting_groups: nextMode === "manage" ? [...status.data.setting_groups] : [] });
+  }, [flow, status.data]);
+
   if (session.isPending) return <ConsentLoading />;
   if (session.isError) return <ConsentFrame><ErrorState error={session.error} onRetry={() => void session.refetch()} /></ConsentFrame>;
   if (!session.data.authenticated) {
@@ -135,35 +156,35 @@ export function AssistantConsentPage() {
   if (!flow) return <ConsentLoading />;
 
   const compatible = (grants.data ?? []).filter((grant: AssistantGrant) =>
-    !grant.revoked_at && !grant.requires_access_approval && grant.client_id === flow.client.id &&
-    flow.requested_scopes.every((scope) => grant.capabilities.includes(scope)),
+    !grant.revoked_at && !grant.requires_access_approval && grant.client_id === flow.client.id,
   );
-  const effectiveGrant = selectedGrant ?? compatible[0]?.id ?? null;
+  const effectiveGrant = selectedGrant ?? compatible[0]?.id ?? "new";
+  const selectedExisting = compatible.find((grant) => grant.id === effectiveGrant);
+  const chosenCapabilities = selectedExisting?.capabilities ?? capabilities;
+  const approvedScopes = flow.requested_scopes.filter((scope) => chosenCapabilities.includes(scope));
+  const ready = !grants.isPending && !status.isPending && !choices.isPending && !status.isError && !choices.isError;
 
   return (
     <ConsentFrame>
       <Card>
         <CardHeader>
-          <div className="flex items-start gap-3"><ShieldAlert aria-hidden="true" className="mt-0.5 h-5 w-5 text-warning" /><div><CardTitle>{flow.client.name} wants to connect</CardTitle><CardDescription className="mt-1">Approve this exact permission set. This connection can work with all current and future people, rows, and libraries; row audiences and sharing rules still protect each row.</CardDescription></div></div>
+          <div className="flex items-start gap-3"><ShieldAlert aria-hidden="true" className="mt-0.5 h-5 w-5 text-warning" /><div><CardTitle>{flow.client.name} wants to connect</CardTitle><CardDescription className="mt-1">Choose what this connection can do. Shortlist grants only permissions this assistant requested.</CardDescription></div></div>
         </CardHeader>
-        <CardContent className="space-y-6">
-          <section className="space-y-2"><h2 className="text-sm font-semibold">Resource</h2><code className="block break-all rounded-md bg-muted px-3 py-2 font-mono text-xs">{flow.resource}</code></section>
-          <section className="space-y-2">
-            <h2 className="text-sm font-semibold">Requested permissions</h2>
-            <div className="divide-y rounded-md border">
-              {flow.requested_scopes.map((scope) => <div key={scope} className="px-3 py-3"><div className="flex items-center gap-2"><CheckCircle2 aria-hidden="true" className="h-4 w-4 text-success" /><p className="text-sm font-medium">{scope}</p></div><p className="mt-1 pl-6 text-sm text-muted-foreground">{SCOPE_DESCRIPTIONS[scope] ?? "Use this named Shortlist permission."}</p></div>)}
-            </div>
-          </section>
+        <CardContent>
+          <form className="space-y-6" onSubmit={(event) => { event.preventDefault(); decide.mutate(true); }}>
           {compatible.length > 0 && (
-            <section className="space-y-2"><h2 className="text-sm font-semibold">Connection grant</h2>{compatible.map((grant) => <label key={grant.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-3"><span><span className="block text-sm font-medium">{grant.name}</span><span className="text-xs text-muted-foreground">Expires {grant.expires_at ? formatDate(grant.expires_at) : "never"}</span></span><input type="radio" name="grant" checked={effectiveGrant === grant.id} onChange={() => setSelectedGrant(grant.id)} className="h-4 w-4 accent-primary" /></label>)}</section>
+            <section className="space-y-2"><h2 className="text-sm font-semibold">Connection grant</h2>{compatible.map((grant) => <label key={grant.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-3"><span><span className="block text-sm font-medium">{grant.name}</span><span className="text-xs text-muted-foreground">Expires {grant.expires_at ? formatDate(grant.expires_at) : "never"}</span></span><input type="radio" name="grant" checked={effectiveGrant === grant.id} onChange={() => setSelectedGrant(grant.id)} className="h-4 w-4 accent-primary" /></label>)}<label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-3 text-sm"><span>Create a new connection</span><input type="radio" name="grant" checked={effectiveGrant === "new"} onChange={() => setSelectedGrant("new")} className="h-4 w-4 accent-primary" /></label></section>
           )}
-          {compatible.length === 0 && !grants.isPending && <p className="rounded-md border bg-elevated px-3 py-3 text-sm text-muted-foreground">Approving creates a new 90-day grant for this client and these permissions. It includes all current and future people, rows, and libraries. Provider calls stay at zero.</p>}
+          {selectedExisting ? <p className="text-sm text-muted-foreground">This grant keeps its current rows, libraries, settings and service approvals. {selectedExisting.constraints.include_future_rows ? "All current and future rows" : `${selectedExisting.constraints.row_ids.length} selected rows`}; {selectedExisting.constraints.include_future_libraries ? "all current and future libraries" : `${selectedExisting.constraints.library_keys.length} selected libraries`}.</p> : status.data && <AssistantPermissionFields status={status.data} mode={mode} setMode={setMode} capabilities={capabilities} setCapabilities={setCapabilities} constraints={constraints} setConstraints={setConstraints} choices={choices.data ?? []} setSelectedDestinations={setSelectedDestinations} requestedScopes={flow.requested_scopes} />}
+          <p className="text-sm text-muted-foreground">{approvedScopes.length > 0 ? `This approval grants ${approvedScopes.length} of ${flow.requested_scopes.length} requested permissions.` : "No requested permissions match this choice. Choose another mode or grant."}</p>
+          <details className="border-t pt-3 text-sm"><summary className="cursor-pointer text-primary">Advanced request details</summary><div className="mt-3 space-y-2"><p>Resource: <code className="break-all font-mono text-xs">{flow.resource}</code></p><p>Requested permissions</p>{flow.requested_scopes.map((scope) => <p key={scope} className="text-xs"><code>{scope}</code> — {SCOPE_DESCRIPTIONS[scope] ?? "Named Shortlist permission."}</p>)}</div></details>
+          {(status.isError || choices.isError || grants.isError) && <p role="alert" className="text-sm text-destructive-text">Could not load current connection choices. Reload this page and try again.</p>}
           {decide.isError && <p role="alert" className="text-sm text-destructive-text">{apiErrorMessage(decide.error, "Could not finish this authorization request.")}</p>}
           <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
-            <Button variant="outline" loading={decide.isPending} onClick={() => decide.mutate(false)}>Deny</Button>
-            <Button loading={decide.isPending || grants.isPending} onClick={() => decide.mutate(true)}>Allow connection</Button>
+            <Button type="button" variant="outline" loading={decide.isPending} onClick={() => decide.mutate(false)}>Deny</Button>
+            <Button type="submit" disabled={!ready || approvedScopes.length === 0} loading={decide.isPending}>Allow connection</Button>
           </div>
-          <div className="flex flex-wrap gap-1.5">{flow.requested_scopes.map((scope) => <Badge key={scope} variant="outline">{scope}</Badge>)}</div>
+          </form>
         </CardContent>
       </Card>
     </ConsentFrame>

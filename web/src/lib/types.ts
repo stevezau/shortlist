@@ -467,35 +467,19 @@ export type AssistantGrantPreset =
   | "manage_selected_rows"
   | "owner_automation";
 
-export interface AssistantGrantConstraints {
-  row_ids: number[];
-  library_keys: string[];
-  setting_groups: string[];
-  destination_ids: string[];
-  include_future_rows: boolean;
-  include_future_libraries: boolean;
-  max_batch_size: number | null;
-  max_work_per_operation: number | null;
-  max_provider_calls: number;
-}
+export type AssistantGrantConstraints = Schemas["GrantConstraintsOut"];
 
-export interface AssistantGrant {
-  id: string;
-  owner_account_id: number;
-  client_id: string;
-  name: string;
-  preset: AssistantGrantPreset;
+export type AssistantGrant = {
   capabilities: string[];
-  constraints: AssistantGrantConstraints;
-  revision: number;
-  requires_access_approval?: boolean;
   created_at?: string;
   updated_at?: string;
-  expires_at: string | null;
   revoked_at?: string | null;
   last_used_at?: string | null;
   local_credential_count?: number;
-}
+  provider_call_quota?: Schemas["ProviderCallQuotaOut"];
+} & Schemas["GrantOut"];
+
+export type AssistantDestination = Schemas["ConfiguredDestination"];
 
 export interface AssistantStatus {
   enabled: boolean;
@@ -513,12 +497,13 @@ export interface AssistantGrantCreate {
   preset: AssistantGrantPreset;
   capabilities?: string[];
   constraints: AssistantGrantConstraints;
+  selected_destinations?: Array<{ service_id: string; destination_id: string }>;
   expires_in_days: number | null;
 }
 
 /** PATCH /assistant/grants/{grant_id}: sparse owner-selected constraint changes. */
 export type AssistantGrantUpdate =
-  | { expected_revision: number; constraints: Partial<AssistantGrantConstraints> }
+  | { expected_revision: number; constraints?: Partial<AssistantGrantConstraints>; capabilities?: string[]; selected_destinations?: Array<{ service_id: string; destination_id: string }> }
   | { expected_revision: number; approve_updated_access: true };
 
 export interface AssistantCredentialCreated {

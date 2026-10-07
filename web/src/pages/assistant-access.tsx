@@ -9,8 +9,10 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react";
-import { useId, useMemo, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { useId, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 
+import { AssistantPermissionFields } from "@/components/assistant-permissions";
+import { baselineCapabilities, classifyAccess, selectedDestinationSnapshots, type AssistantMode, type SelectedDestination } from "@/lib/assistant-permission-model";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, ErrorState } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
@@ -24,8 +26,8 @@ import { useCollections, useLibraries } from "@/lib/queries";
 import type {
   AssistantGrant,
   AssistantGrantConstraints,
-  AssistantGrantPreset,
   AssistantStatus,
+  AssistantDestination,
   Collection,
   PlexLibrary,
 } from "@/lib/types";
@@ -35,47 +37,6 @@ const assistantKeys = {
   status: ["assistant", "status"] as const,
   grants: ["assistant", "grants"] as const,
 };
-
-const PRESETS: Array<{ value: AssistantGrantPreset; title: string; description: string }> = [
-  {
-    value: "inspect",
-    title: "Inspect and propose",
-    description: "Read configuration and activity, then prepare changes for you to review in Shortlist.",
-  },
-  {
-    value: "manage_selected_rows",
-    title: "Manage rows",
-    description: "Edit allowed rows and create rows in allowed libraries. You can narrow the scope under Advanced.",
-  },
-  {
-    value: "owner_automation",
-    title: "Owner automation",
-    description: "Operate approved settings, people, rows, schedules, and runs within the limits below.",
-  },
-];
-
-const EXTRA_PERMISSIONS = [
-  {
-    value: "history.providers",
-    title: "Send history-derived context to approved providers",
-    description: "Allows summaries or search queries based on viewing history to reach only the exact destinations below.",
-  },
-  {
-    value: "history.export",
-    title: "Show viewing details to the connected assistant",
-    description: "Allows watched titles, picks, and sensitive explanations to appear in tool results sent to this assistant.",
-  },
-  {
-    value: "ai.generate",
-    title: "Spend provider calls",
-    description: "Allows Shortlist's configured AI provider to generate content, up to this connection's lifetime call allowance.",
-  },
-  {
-    value: "requests.send",
-    title: "Send acquisition requests",
-    description: "Allows approved plans to send requests to a configured request service, within existing instance limits.",
-  },
-] as const;
 
 function emptyConstraints(): AssistantGrantConstraints {
   return {
@@ -126,11 +87,6 @@ function constraintPatch(
   return patch;
 }
 
-function hasCustomPermissions(grant: AssistantGrant, presets: AssistantStatus["presets"]): boolean {
-  const presetCapabilities = presets[grant.preset] ?? [];
-  return !sameValues(grant.capabilities, presetCapabilities);
-}
-
 function Choice({ checked, title, description, onChange }: {
   checked: boolean;
   title: string;
@@ -174,31 +130,28 @@ function SelectionActions({ label, onSelectAll, onClear, disabled = false }: {
 function ResourceLimitFields({
   constraints,
   setConstraints,
-  destinations,
-  setDestinations,
   rows,
   libraries,
   settingGroups,
-  includeExtras = false,
-  extras = [],
-  setExtras,
+  choices,
+  capabilities,
+  onGroupsCustomized,
+  forceAdvancedOpen = false,
   expiresInDays,
   setExpiresInDays,
 }: {
   constraints: AssistantGrantConstraints;
   setConstraints: Dispatch<SetStateAction<AssistantGrantConstraints>>;
-  destinations: string;
-  setDestinations: (value: string) => void;
   rows: Collection[] | undefined;
   libraries: PlexLibrary[] | undefined;
   settingGroups: string[];
-  includeExtras?: boolean;
-  extras?: string[];
-  setExtras?: Dispatch<SetStateAction<string[]>>;
+  choices: AssistantDestination[];
+  capabilities: string[];
+  onGroupsCustomized: () => void;
+  forceAdvancedOpen?: boolean;
   expiresInDays?: number;
   setExpiresInDays?: (value: number) => void;
 }) {
-  const destinationEditorId = useId();
   const rowScopeName = useId();
   const libraryScopeName = useId();
   const advancedId = useId();
@@ -209,12 +162,11 @@ function ResourceLimitFields({
   const workRef = useRef<HTMLInputElement>(null);
   const expiryRef = useRef<HTMLInputElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(
-    !constraints.include_future_rows || !constraints.include_future_libraries ||
+    forceAdvancedOpen || !constraints.include_future_rows || !constraints.include_future_libraries ||
     constraints.max_batch_size !== 25 || constraints.max_work_per_operation !== null ||
     (setExpiresInDays !== undefined && expiresInDays !== 90),
   );
-  const rowSummary = constraints.include_future_rows ? "All current and future rows" : `Selected rows (${constraints.row_ids.length})`;
-  const librarySummary = constraints.include_future_libraries ? "All current and future libraries" : `Selected libraries (${constraints.library_keys.length})`;
+  const historicalDestinations = constraints.destination_ids.filter((id) => !choices.some((choice) => choice.destination_id === id));
   function toggleAdvanced() {
     if (advancedOpen) {
       const invalid = [batchRef.current, workRef.current, expiryRef.current].find((field) => field && !field.checkValidity());
@@ -228,35 +180,6 @@ function ResourceLimitFields({
   }
   return (
     <>
-      <section className="space-y-3">
-        <div><h2 className="font-semibold">Who and what this connection covers</h2><p className="text-sm text-muted-foreground">All current and future people. Row audiences still control who sees each row.</p></div>
-        <p className="text-sm text-muted-foreground">Rows: {rowSummary} · Libraries: {librarySummary}</p>
-      </section>
-
-      <section className="space-y-3">
-        <div><h2 className="font-semibold">Settings and external effects</h2><p className="text-sm text-muted-foreground">These controls are independent. Provider spend never implies permission to disclose viewing history.</p></div>
-        <div className="grid gap-x-6 md:grid-cols-2">
-          <div>
-            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-medium">Setting groups</h3>
-              {settingGroups.length > 0 && <SelectionActions label="settings groups" onSelectAll={() => setConstraints((value) => ({ ...value, setting_groups: [...new Set([...value.setting_groups, ...settingGroups])] }))} onClear={() => setConstraints((value) => ({ ...value, setting_groups: [] }))} />}
-            </div>
-            {settingGroups.map((group) => <Choice key={group} checked={constraints.setting_groups.includes(group)} title={`Manage ${group.replace(/_/g, " ")} settings`} onChange={() => setConstraints((value) => ({ ...value, setting_groups: toggle(value.setting_groups, group) }))} />)}
-          </div>
-          {includeExtras && EXTRA_PERMISSIONS.map((permission) => <Choice key={permission.value} checked={extras.includes(permission.value)} title={permission.title} description={permission.description} onChange={() => setExtras?.((value) => toggle(value, permission.value))} />)}
-        </div>
-        <div className="space-y-1 text-sm">
-          <label htmlFor={destinationEditorId} className="font-medium">Approved destination IDs or canonical URLs</label>
-          <p id={`${destinationEditorId}-help`} className="text-muted-foreground">One exact destination per line. Changing a configured URL requires a new approval.</p>
-          <textarea id={destinationEditorId} aria-describedby={`${destinationEditorId}-help`} value={destinations} onChange={(event) => setDestinations(event.target.value)} rows={3} className="mt-2 w-full rounded-md border bg-transparent px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-        </div>
-      </section>
-
-      <section className="space-y-2">
-        <label className="block max-w-xs space-y-1 text-sm"><span className="font-medium">Paid provider calls</span><Input type="number" min={0} max={100} value={constraints.max_provider_calls} onChange={(event) => setConstraints((value) => ({ ...value, max_provider_calls: Number(event.target.value) || 0 }))} /></label>
-        <p className="max-w-prose text-xs text-muted-foreground">Total AI, web search and image service calls allowed across this connection. Zero blocks these calls. Used or uncertain calls are not returned automatically. This counts calls, not money.</p>
-      </section>
-
       <section className="space-y-4 border-t pt-4">
         <button type="button" aria-expanded={advancedOpen} aria-controls={advancedId} onClick={toggleAdvanced} className="text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{advancedOpen ? "Hide advanced access and limits" : "Advanced access and limits"}</button>
         {advancedOpen && <div id={advancedId} className="space-y-5">
@@ -280,6 +203,12 @@ function ResourceLimitFields({
               </div>}
             </fieldset>
           </div>
+          <div className="space-y-2 border-t pt-4">
+            <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-medium">Setting groups</h3>{settingGroups.length > 0 && <SelectionActions label="settings groups" onSelectAll={() => { onGroupsCustomized(); setConstraints((value) => ({ ...value, setting_groups: [...new Set([...value.setting_groups, ...settingGroups])] })); }} onClear={() => { onGroupsCustomized(); setConstraints((value) => ({ ...value, setting_groups: [] })); }} />}</div>
+            <div className="grid gap-x-6 md:grid-cols-2">{settingGroups.map((group) => <Choice key={group} checked={constraints.setting_groups.includes(group)} title={`Manage ${group.replace(/_/g, " ")} settings`} onChange={() => { onGroupsCustomized(); setConstraints((value) => ({ ...value, setting_groups: toggle(value.setting_groups, group) })); }} />)}</div>
+          </div>
+          {historicalDestinations.length > 0 && <div className="space-y-2 border-t pt-4"><h3 className="text-sm font-medium">Previously approved service endpoints</h3><p className="text-xs text-muted-foreground">These no longer match a configured service. They stay approved until you remove them.</p>{historicalDestinations.map((id) => <div key={id} className="flex flex-wrap items-center gap-2 text-xs"><code className="break-all">{id}</code><button type="button" className="text-primary hover:underline" onClick={() => setConstraints((value) => ({ ...value, destination_ids: value.destination_ids.filter((item) => item !== id) }))}>Remove endpoint</button></div>)}</div>}
+          <div className="border-t pt-4 text-xs text-muted-foreground"><p>Current permission details</p><p className="mt-1 break-words">{capabilities.join(" · ")}</p></div>
           <div className="grid gap-4 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="space-y-1 text-sm"><label htmlFor={batchId} className="block font-medium">Max batch size</label><p id={`${batchId}-help`} className="text-xs text-muted-foreground">Limits picks, settings, or rows changed in one operation.</p><Input ref={batchRef} id={batchId} aria-describedby={`${batchId}-help`} type="number" min={1} max={1000} value={constraints.max_batch_size ?? ""} onChange={(event) => setConstraints((value) => ({ ...value, max_batch_size: Number(event.target.value) || null }))} /></div>
             <div className="space-y-1 text-sm"><label htmlFor={workId} className="block font-medium">Max work per operation</label><p id={`${workId}-help`} className="text-xs text-muted-foreground">Optional work limit based on affected rows and people. Blank adds no extra limit.</p><Input ref={workRef} id={workId} aria-describedby={`${workId}-help`} type="number" min={1} max={100000} value={constraints.max_work_per_operation ?? ""} onChange={(event) => setConstraints((value) => ({ ...value, max_work_per_operation: Number(event.target.value) || null }))} /></div>
@@ -322,14 +251,17 @@ function CredentialDialog({ value, expiresAt, onClose }: {
   );
 }
 
-function GrantRow({ grant, presets, onCredential, onEdit, onRevoke, onRemove }: {
+function GrantRow({ grant, status: assistantStatus, onCredential, onEdit, onRevoke, onRemove }: {
   grant: AssistantGrant;
-  presets: AssistantStatus["presets"];
+  status: AssistantStatus;
   onCredential: (grant: AssistantGrant) => void;
   onEdit: (grant: AssistantGrant) => void;
   onRevoke: (grant: AssistantGrant) => void;
   onRemove: (grant: AssistantGrant) => void;
 }) {
+  const mode = classifyAccess(grant.capabilities, assistantStatus);
+  const restricted = !grant.constraints.include_future_rows || !grant.constraints.include_future_libraries ||
+    grant.constraints.setting_groups.length < assistantStatus.setting_groups.length;
   const revoked = Boolean(grant.revoked_at);
   const expired = Boolean(grant.expires_at && new Date(grant.expires_at) <= new Date());
   const requiresApproval = !revoked && !expired && grant.requires_access_approval === true;
@@ -343,7 +275,7 @@ function GrantRow({ grant, presets, onCredential, onEdit, onRevoke, onRemove }: 
             <Badge variant={revoked || expired ? "secondary" : requiresApproval ? "warning" : "success"}>{status}</Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            {PRESETS.find((preset) => preset.value === grant.preset)?.title ?? grant.preset}
+            {mode === "custom" ? "Custom access" : mode === "manage" ? "Manage Shortlist" : "Suggest changes"}
             {grant.last_used_at ? ` · Used ${timeAgo(grant.last_used_at)}` : " · Never used"}
             {grant.expires_at ? ` · Expires ${formatDate(grant.expires_at)}` : " · No expiry"}
           </p>
@@ -363,7 +295,7 @@ function GrantRow({ grant, presets, onCredential, onEdit, onRevoke, onRemove }: 
                 <KeyRound aria-hidden="true" /> New local credential
               </Button>
               <Button variant="outline" size="sm" onClick={() => onEdit(grant)}>
-                Edit resources
+                Edit connection
               </Button>
             </>}
             <Button variant="ghost" size="sm" className="text-destructive-text" onClick={() => onRevoke(grant)}>
@@ -372,10 +304,7 @@ function GrantRow({ grant, presets, onCredential, onEdit, onRevoke, onRemove }: 
           </div>
         )}
       </div>
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {grant.capabilities.map((capability) => <Badge key={capability} variant="outline">{capability}</Badge>)}
-        {hasCustomPermissions(grant, presets) && <Badge variant="outline">Custom permissions</Badge>}
-      </div>
+      {restricted && <p className="mt-2 text-xs text-muted-foreground">Restricted resources or settings groups</p>}
       <p className="mt-3 text-xs text-muted-foreground">
         All people · {grant.constraints.include_future_rows ? "All rows" : `Selected rows (${grant.constraints.row_ids.length})`} · {grant.constraints.include_future_libraries ? "All libraries" : `Selected libraries (${grant.constraints.library_keys.length})`} · {grant.local_credential_count ?? 0} local credentials
       </p>
@@ -391,46 +320,59 @@ export function AssistantAccessPage() {
     queryFn: api.getAssistantGrants,
     enabled: status.data?.enabled === true,
   });
+  const choices = useQuery({ queryKey: ["assistant", "destinations"], queryFn: api.getAssistantDestinations, enabled: status.data?.enabled === true });
   const rows = useCollections();
   const libraries = useLibraries();
   const [creating, setCreating] = useState(false);
+  const [draftStarted, setDraftStarted] = useState(false);
   const [name, setName] = useState("");
-  const [preset, setPreset] = useState<AssistantGrantPreset>("inspect");
+  const [mode, setMode] = useState<AssistantMode>("manage");
+  const [capabilities, setCapabilities] = useState<string[]>([]);
   const [constraints, setConstraints] = useState<AssistantGrantConstraints>(emptyConstraints);
-  const [extras, setExtras] = useState<string[]>([]);
+  const [selectedDestinations, setSelectedDestinations] = useState<SelectedDestination[]>([]);
+  const [groupsCustomized, setGroupsCustomized] = useState(false);
   const [expiresInDays, setExpiresInDays] = useState(90);
-  const [destinations, setDestinations] = useState("");
   const [credential, setCredential] = useState<{ value: string; expiresAt: string } | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<AssistantGrant | null>(null);
   const [removeTarget, setRemoveTarget] = useState<AssistantGrant | null>(null);
   const [editingTarget, setEditingTarget] = useState<AssistantGrant | null>(null);
   const [editingConstraints, setEditingConstraints] = useState<AssistantGrantConstraints>(emptyConstraints);
-  const [editingDestinations, setEditingDestinations] = useState("");
+  const [editingSelectedDestinations, setEditingSelectedDestinations] = useState<SelectedDestination[]>([]);
+  const [editingCapabilities, setEditingCapabilities] = useState<string[]>([]);
+  const [editingMode, setEditingMode] = useState<AssistantMode>("custom");
   const [resourceUpdateNotice, setResourceUpdateNotice] = useState<string | null>(null);
 
-  const capabilities = useMemo(() => {
-    const base = status.data?.presets[preset] ?? [];
-    return [...new Set([...base, ...extras])];
-  }, [extras, preset, status.data]);
+  function beginCreating() {
+    if (!draftStarted) {
+      setMode("manage");
+      setCapabilities(baselineCapabilities(status.data!, "manage"));
+      setConstraints({ ...emptyConstraints(), setting_groups: [...status.data!.setting_groups] });
+      setSelectedDestinations([]);
+      setGroupsCustomized(false);
+      setDraftStarted(true);
+    }
+    setCreating(true);
+  }
 
   const create = useMutation({
     mutationFn: () => api.createAssistantGrant({
       client_id: `local-${crypto.randomUUID()}`,
       name: name.trim(),
-      preset,
+      preset: mode === "suggest" ? "inspect" : "owner_automation",
       capabilities,
-      constraints: {
-        ...constraints,
-        destination_ids: destinations.split("\n").map((value) => value.trim()).filter(Boolean),
-      },
+      constraints,
+      selected_destinations: selectedDestinationSnapshots(constraints.destination_ids, [], selectedDestinations),
       expires_in_days: expiresInDays,
     }),
     onSuccess: () => {
       setCreating(false);
+      setDraftStarted(false);
       setName("");
-      setPreset("inspect");
+      setMode("manage");
+      setCapabilities([]);
       setConstraints(emptyConstraints());
-      setExtras([]);
+      setSelectedDestinations([]);
+      setGroupsCustomized(false);
       setExpiresInDays(90);
       void queryClient.invalidateQueries({ queryKey: assistantKeys.grants });
     },
@@ -459,14 +401,13 @@ export function AssistantAccessPage() {
   const update = useMutation({
     mutationFn: (grant: AssistantGrant) => api.updateAssistantGrant(grant.id, {
       expected_revision: grant.revision,
-      constraints: constraintPatch(
-        { ...editingConstraints, destination_ids: editingDestinations.split("\n").map((value) => value.trim()).filter(Boolean) },
-        grant.constraints,
-      ),
+      constraints: constraintPatch(editingConstraints, grant.constraints),
+      ...(sameValues(editingCapabilities, grant.capabilities) ? {} : { capabilities: editingCapabilities }),
+      selected_destinations: selectedDestinationSnapshots(editingConstraints.destination_ids, grant.constraints.destination_ids, editingSelectedDestinations),
     }),
     onSuccess: () => {
       setEditingTarget(null);
-      setResourceUpdateNotice("Resources saved. New requests use the changed access. Older prepared changes need a new plan.");
+      setResourceUpdateNotice("Connection saved. New requests use the changed access. Reconnect the assistant to request any newly allowed OAuth permissions.");
       void queryClient.invalidateQueries({ queryKey: assistantKeys.grants });
     },
   });
@@ -490,7 +431,9 @@ export function AssistantAccessPage() {
   function beginEditing(grant: AssistantGrant) {
     setEditingTarget(grant);
     setEditingConstraints(cloneConstraints(grant.constraints));
-    setEditingDestinations(grant.constraints.destination_ids.join("\n"));
+    setEditingSelectedDestinations([]);
+    setEditingCapabilities([...grant.capabilities]);
+    setEditingMode(classifyAccess(grant.capabilities, status.data!));
     update.reset();
     setResourceUpdateNotice(null);
   }
@@ -519,7 +462,7 @@ export function AssistantAccessPage() {
         title="AI assistants"
         subtitle="Connect ChatGPT, Claude or Codex to set up and manage Shortlist. You choose each connection’s permissions and limits."
         actions={status.data.enabled && !creating && !editingTarget ? (
-          <Button onClick={() => setCreating(true)}><Plus aria-hidden="true" /> New connection</Button>
+          <Button onClick={beginCreating}><Plus aria-hidden="true" /> New connection</Button>
         ) : undefined}
       />
 
@@ -564,30 +507,19 @@ export function AssistantAccessPage() {
       ) : creating ? (
         <form onSubmit={submit} className="space-y-8 rounded-lg border bg-card p-5">
           <section className="space-y-3">
-            <div><h2 className="font-semibold">Name and access mode</h2><p className="text-sm text-muted-foreground">Name the app or device so you can recognize it later.</p></div>
+            <div><h2 className="font-semibold">Connection name</h2><p className="text-sm text-muted-foreground">Name the app or device so you can recognize it later.</p></div>
             <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Living room Codex" autoFocus maxLength={255} required />
-            <div className="grid gap-2 md:grid-cols-3">
-              {PRESETS.map((option) => (
-                <button key={option.value} type="button" onClick={() => setPreset(option.value)}
-                  className={`rounded-md border p-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${preset === option.value ? "border-primary bg-elevated shadow-selected-y" : "hover:bg-elevated"}`}>
-                  <span className="block text-sm font-semibold">{option.title}</span>
-                  <span className="mt-1 block text-xs text-muted-foreground">{option.description}</span>
-                </button>
-              ))}
-            </div>
           </section>
-
+          <AssistantPermissionFields status={status.data} mode={mode} setMode={setMode} capabilities={capabilities} setCapabilities={setCapabilities} constraints={constraints} setConstraints={setConstraints} choices={choices.data ?? []} setSelectedDestinations={setSelectedDestinations} groupsCustomized={groupsCustomized} />
           <ResourceLimitFields
             constraints={constraints}
             setConstraints={setConstraints}
-            destinations={destinations}
-            setDestinations={setDestinations}
             rows={rows.data}
             libraries={libraries.data}
             settingGroups={status.data.setting_groups}
-            includeExtras
-            extras={extras}
-            setExtras={setExtras}
+            choices={choices.data ?? []}
+            capabilities={capabilities}
+            onGroupsCustomized={() => setGroupsCustomized(true)}
             expiresInDays={expiresInDays}
             setExpiresInDays={setExpiresInDays}
           />
@@ -603,7 +535,7 @@ export function AssistantAccessPage() {
       ) : grants.isError ? (
         <ErrorState error={grants.error} onRetry={() => void grants.refetch()} />
       ) : grants.data.length === 0 ? (
-        <EmptyState icon={Link2} title="No assistant connections" hint="Create a named connection, choose exactly what it can reach, then issue a local credential or approve an OAuth sign-in." action={<Button onClick={() => setCreating(true)}><Plus aria-hidden="true" /> New connection</Button>} />
+        <EmptyState icon={Link2} title="No assistant connections" hint="Create a named connection, choose its access, then issue a local credential or approve an OAuth sign-in." action={<Button onClick={beginCreating}><Plus aria-hidden="true" /> New connection</Button>} />
       ) : (
         <div className="divide-y overflow-hidden rounded-lg border bg-card">
           {grants.data.map((grant) => editingTarget?.id === grant.id ? (
@@ -618,36 +550,35 @@ export function AssistantAccessPage() {
             </section> : <form key={grant.id} onSubmit={submitEdit} className="space-y-6 px-4 py-5 sm:px-5">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="font-semibold">Edit resources for {grant.name}</h2>
-                  <Badge variant="outline">{PRESETS.find((presetOption) => presetOption.value === grant.preset)?.title ?? grant.preset}</Badge>
-                  {hasCustomPermissions(grant, status.data.presets) && <Badge variant="outline">Custom permissions</Badge>}
+                  <h2 className="font-semibold">Edit connection for {grant.name}</h2>
+                  {editingMode === "custom" && <Badge variant="outline">Custom access</Badge>}
                 </div>
-                <p className="text-sm text-muted-foreground">Permissions stay read-only here. Save only rows, libraries, settings, destinations, and limits below. Row audiences continue to protect each person's privacy.</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {grant.capabilities.map((capability) => <Badge key={capability} variant="outline">{capability}</Badge>)}
-                </div>
+                <p className="text-sm text-muted-foreground">Changes affect new requests. Existing OAuth connections must reconnect to request newly allowed permissions.</p>
               </div>
+              <AssistantPermissionFields status={status.data} mode={editingMode} setMode={setEditingMode} capabilities={editingCapabilities} setCapabilities={setEditingCapabilities} constraints={editingConstraints} setConstraints={setEditingConstraints} choices={choices.data ?? []} setSelectedDestinations={setEditingSelectedDestinations} reserved={grant.provider_call_quota?.reserved ?? 0} groupsCustomized />
               <ResourceLimitFields
                 constraints={editingConstraints}
                 setConstraints={setEditingConstraints}
-                destinations={editingDestinations}
-                setDestinations={setEditingDestinations}
                 rows={rows.data}
                 libraries={libraries.data}
                 settingGroups={status.data.setting_groups}
+                choices={choices.data ?? []}
+                capabilities={editingCapabilities}
+                onGroupsCustomized={() => undefined}
+                forceAdvancedOpen={editingMode === "custom" || editingConstraints.setting_groups.length < status.data.setting_groups.length}
               />
               {update.isError && (update.error instanceof ApiError && update.error.status === 409 ? (
                 <div role="alert" className="space-y-2 text-sm text-destructive-text">
                   <p>This connection changed elsewhere. Reload its resources before making another edit.</p>
                   <Button type="button" variant="outline" onClick={reloadAfterConflict}>Reload resources</Button>
                 </div>
-              ) : <p role="alert" className="text-sm text-destructive-text">{apiErrorMessage(update.error, "Could not save these resources.")}</p>)}
+              ) : <p role="alert" className="text-sm text-destructive-text">{apiErrorMessage(update.error, "Could not save this connection.")}</p>)}
               <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
                 <Button type="button" variant="outline" onClick={cancelEditing} disabled={update.isPending}>Cancel</Button>
-                <Button type="submit" loading={update.isPending} disabled={Object.keys(constraintPatch({ ...editingConstraints, destination_ids: editingDestinations.split("\n").map((value) => value.trim()).filter(Boolean) }, grant.constraints)).length === 0}>Save resources</Button>
+                <Button type="submit" loading={update.isPending} disabled={Object.keys(constraintPatch(editingConstraints, grant.constraints)).length === 0 && sameValues(editingCapabilities, grant.capabilities)}>Save connection</Button>
               </div>
             </form>
-          ) : <GrantRow key={grant.id} grant={grant} presets={status.data.presets} onCredential={(value) => issue.mutate(value)} onEdit={beginEditing} onRevoke={setRevokeTarget} onRemove={setRemoveTarget} />)}
+          ) : <GrantRow key={grant.id} grant={grant} status={status.data} onCredential={(value) => issue.mutate(value)} onEdit={beginEditing} onRevoke={setRevokeTarget} onRemove={setRemoveTarget} />)}
         </div>
       )}
 

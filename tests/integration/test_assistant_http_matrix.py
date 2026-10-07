@@ -42,6 +42,7 @@ HTTP_CONTRACTS = frozenset(
         ("GET", "/api/assistant/changes/{change_id}"),
         ("POST", "/api/assistant/changes/{change_id}/approve"),
         ("GET", "/assistant/grants"),
+        ("GET", "/assistant/destinations"),
         ("POST", "/assistant/grants"),
         ("PATCH", "/assistant/grants/{grant_id}"),
         ("POST", "/assistant/grants/{grant_id}/credentials"),
@@ -114,6 +115,31 @@ def test_assistant_http_route_inventory_and_discovery_contracts(
         assert metadata["code_challenge_methods_supported"] == ["S256"]
         resource = client.get("/.well-known/oauth-protected-resource/mcp")
         assert resource.status_code == 200 and resource.json()["resource"] == "http://localhost/mcp"
+
+
+def test_configured_service_catalog_requires_owner_browser_and_returns_no_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _owner_client(tmp_path, monkeypatch) as (client, app):
+        with app.state.sessions() as session:
+            session.add_all(
+                [
+                    Setting(key="curator.provider", value={"v": "openai"}),
+                    Setting(key="curator.api_key", value={"v": "encrypted-secret"}),
+                    Setting(key="searxng.url", value={"v": "http://localhost:8080/search/"}),
+                ]
+            )
+            session.commit()
+        response = client.get("/assistant/destinations")
+        assert response.status_code == 200
+        by_id = {choice["service_id"]: choice for choice in response.json()}
+        assert by_id["curator"]["destination_id"] == "https://api.openai.com/v1"
+        assert by_id["searxng"]["destination_id"] == "http://localhost:8080/search"
+        assert "encrypted-secret" not in response.text
+        assert "tmdb" not in by_id
+        assert client.get("/assistant/destinations", headers={"Authorization": "Bearer fake"}).status_code == 403
+        client.cookies.clear()
+        assert client.get("/assistant/destinations").status_code == 401
 
 
 def test_grant_credential_and_stateless_mcp_contracts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -348,7 +374,33 @@ def test_oauth_owner_narrowed_consent_binds_code_and_token_to_approved_intersect
             else:
                 assert result["isError"] is True
                 assert "missing_permission" in str(result)
-        assert set(client.get("/assistant/grants").json()[0]["capabilities"]) == original_capabilities
+                if requested_scope == "instance.read":
+                    widened = client.patch(
+                        f"/assistant/grants/{grant['id']}",
+                        json={
+                            "expected_revision": grant["revision"],
+                            "capabilities": sorted(original_capabilities | {"config.write"}),
+                        },
+                    )
+                    assert widened.status_code == 200, widened.text
+                    assert "config.write" in widened.json()["capabilities"]
+                    still_denied = client.post(
+                        "/mcp",
+                        headers={"Authorization": f"Bearer {credential}", "Accept": "application/json"},
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 3,
+                            "method": "tools/call",
+                            "params": {"name": name, "arguments": arguments},
+                        },
+                    )
+                    assert still_denied.status_code == 200
+                    assert still_denied.json()["result"]["isError"] is True
+                    assert "missing_permission" in str(still_denied.json()["result"])
+        expected_capabilities = original_capabilities | (
+            {"config.write"} if requested_scope == "instance.read" else set()
+        )
+        assert set(client.get("/assistant/grants").json()[0]["capabilities"]) == expected_capabilities
 
 
 @pytest.mark.parametrize("base_path", ["", "/shortlist"])

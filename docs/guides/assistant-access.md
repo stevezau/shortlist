@@ -2,7 +2,7 @@
 title: Connect an assistant
 description: Enable Shortlist's MCP endpoint, give an assistant a named and limited grant, and connect local or hosted clients without sharing the owner API token.
 heading: Connect an assistant
-updated: 2026-10-07
+updated: 2026-10-08
 ---
 
 Assistant access is optional. It gives an MCP client a named connection to Shortlist, with its own
@@ -38,7 +38,7 @@ a retry could repeat a request.
 An assistant can explain those steps and continue after the owner completes them. It must not
 claim to have performed an unsupported action, use the unrestricted owner API token as a fallback,
 or treat one approved change as authority for unrelated actions. These boundaries apply even to
-the **Owner automation** preset.
+the **Manage Shortlist** connection mode.
 
 ## Before connecting
 
@@ -81,11 +81,12 @@ Plain HTTP on a LAN address is refused; use HTTPS when the address is not loopba
 If the setup wizard is still open, begin the OAuth connection from your MCP client. Its owner
 consent page is available after Plex ownership is linked, before the wizard is complete. Allowing
 the connection can create a grant for the requested permissions without opening Settings first.
-The initial browser grant includes future rows and libraries, but has no selected setting groups
-or destinations and permits zero provider calls. Some reads therefore remain unavailable. Use the
-documented setup handoffs and exact owner reviews; those reviews do not expand standing read access
-or provider quotas. After setup completes, the owner can adjust resources and limits in the
-connections page below.
+For a management request, the browser starts with **Manage Shortlist** and the currently available
+settings groups. A read-only request starts with **Suggest changes** and no settings groups. In both
+cases, the grant covers current and future rows and libraries, selects no external services and
+permits zero paid provider calls until the owner explicitly chooses otherwise. OAuth grants only the
+intersection of the client's requested permissions and the owner's choices. Exact owner reviews do
+not expand standing access or provider quotas. The owner can adjust the connection later.
 
 Open **Settings → AI assistants** to reach the connections page, then choose **New connection**.
 You can also search Settings for **MCP**, **ChatGPT**, **Claude** or **Codex**. Under
@@ -94,21 +95,23 @@ opens the same page.
 
 ## Choose what the connection can do
 
-Start with the smallest useful preset:
-
-- **Inspect and propose** reads safe configuration and activity and can prepare changes for owner
-  review.
-- **Manage rows** can work with allowed rows and create rows in allowed libraries. Narrow either list under **Advanced access and limits**.
-- **Owner automation** can run approved administration within the limits you choose. It is still a
-  named, revocable grant; it is not the owner API token.
+New owner-created connections start with **Manage Shortlist**, which can set up and operate
+Shortlist within the grant's resource limits. Choose **Suggest changes** when the assistant should
+read safe information and prepare changes for owner review. Neither mode is the unrestricted owner
+API token. Existing custom grants keep their actual permissions and limits until the owner changes
+them; the page shows **Custom access** rather than presenting a preset name as current authority.
 
 Every new connection can work with all current and future people, rows and libraries. Row audiences
 and existing Plex sharing rules still decide who can see each row. Under **Advanced access and limits**,
 choose **Selected rows** or **Selected libraries** to narrow the connection, and use **Select all**
 to select currently listed items. The **All current and future** choices also cover items added later.
-You can choose settings groups separately. Destination values
-bind history-derived data to an exact configured service or URL. Changing a service URL does not
-silently carry the old approval to a new destination.
+New Manage connections include all setting groups available at creation, not groups added later.
+Under **Advanced access and limits**, the owner can narrow that list or change batch, work and
+expiry limits. Choose named entries under **Services this assistant can use** for connection checks,
+search, AI or acquisition. No service is selected automatically, including when its related option
+is switched on. Each choice approves the service's current endpoint; changing a configured URL does
+not silently carry the old approval to the new destination. Previously approved endpoints that no
+longer match a configured service remain visible under Advanced until explicitly removed.
 
 Capabilities do not override those resource limits. For example, an assistant with `config.read`
 still needs the selected settings group or library, and `connections.manage` still needs the exact
@@ -118,9 +121,10 @@ an allowed saved destination. It can also page model IDs from the already saved 
 never accepts a caller-provided URL or credential; a disabled, unsupported or unavailable provider
 is reported separately from a provider whose model list is simply empty.
 
-Extra permissions are explicit. For example, showing watch details to the assistant, sending
-history-derived context to a provider, making acquisition requests and spending an AI provider call
-are separate choices. A tool that needs several permissions needs all of them.
+Extra permissions are explicit. **Privacy** controls whether the assistant can see viewing details
+or send history-derived context to approved services. **Allow this assistant to use paid services**
+adds AI, search and image calls with a finite lifetime allowance. **Allow requests for missing titles** is
+a separate Manage choice. A tool that needs several permissions needs all of them.
 
 The same rule applies to setting groups and destinations. An assistant may configure permitted
 non-secret settings, but it cannot enter provider, Arr, Plex or webhook credentials. It may set a
@@ -129,10 +133,11 @@ still owns credential entry and a real provider test. It may set non-secret noti
 event selection and header name when the notifications group is allowed; the webhook URL and
 authentication value stay in the browser, and the real notification test sends a message there.
 
-The provider-call allowance is a finite lifetime total for this named connection. `0` permits no
-provider calls. A call whose outcome is unknown still consumes its reservation, because retrying it
-could spend twice. This is a call count, not a dollar limit; the assistant host, search provider and
-request services can have their own charges or quotas. This allowance covers the assistant's named
+The paid-call allowance is a finite lifetime total for this named connection. The page shows its
+total, used or uncertain reservations, and remaining calls. The default `0` permits no paid calls.
+A call whose outcome is unknown still consumes its reservation, because retrying it could spend
+twice. This is a call count, not a dollar limit; the assistant host, search provider and request
+services can have their own charges or quotas. This allowance covers the assistant's named
 theme-generation tool and bounded immediate runs, including outgoing search and image requests.
 An immediate run permanently reserves its whole requested maximum, even when it uses fewer calls.
 It does not cap ordinary recurring row automation that an owner approves.

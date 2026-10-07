@@ -3261,6 +3261,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assistant/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Configured Destinations */
+        get: operations["list_configured_destinations_assistant_destinations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/assistant/grants": {
         parameters: {
             query?: never;
@@ -4354,6 +4371,24 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * ConfiguredDestination
+         * @description A credential-free, currently configured service endpoint.
+         */
+        ConfiguredDestination: {
+            /** Destination Id */
+            destination_id: string;
+            /** Host */
+            host: string;
+            /** Label */
+            label: string;
+            /** Purposes */
+            purposes: string[];
+            /** Service Id */
+            service_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ConnectionTestOut
          * @description `message` is plain English either way — the success line, or a redacted failure (rule 9).
          */
@@ -4560,6 +4595,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * DestinationSelection
+         * @description The exact catalog choice the owner saw before saving.
+         */
+        DestinationSelection: {
+            /** Destination Id */
+            destination_id: string;
+            /** Service Id */
+            service_id: string;
+        };
         /** Dismiss */
         Dismiss: {
             /** Id */
@@ -4757,8 +4802,34 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * GrantConstraintsOut
+         * @description Publicly effective resource and work bounds.
+         */
+        GrantConstraintsOut: {
+            /** Destination Ids */
+            destination_ids: string[];
+            /** Include Future Libraries */
+            include_future_libraries: boolean;
+            /** Include Future Rows */
+            include_future_rows: boolean;
+            /** Library Keys */
+            library_keys: string[];
+            /** Max Batch Size */
+            max_batch_size: number | null;
+            /** Max Provider Calls */
+            max_provider_calls: number;
+            /** Max Work Per Operation */
+            max_work_per_operation: number | null;
+            /** Row Ids */
+            row_ids: number[];
+            /** Setting Groups */
+            setting_groups: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * GrantConstraintsPatchIn
-         * @description Revision-guarded, constraints-only change to one owner grant.
+         * @description Revision-guarded owner change to one grant's authority.
          */
         GrantConstraintsPatchIn: {
             /**
@@ -4766,9 +4837,13 @@ export interface components {
              * @default false
              */
             approve_updated_access: boolean;
+            /** Capabilities */
+            capabilities?: components["schemas"]["Capability"][] | null;
             constraints?: components["schemas"]["ConstraintsPatchIn"] | null;
             /** Expected Revision */
             expected_revision: number;
+            /** Selected Destinations */
+            selected_destinations?: components["schemas"]["DestinationSelection"][];
         };
         /**
          * GrantCreateIn
@@ -4788,6 +4863,34 @@ export interface components {
             /** Name */
             name: string;
             preset: components["schemas"]["GrantPreset"];
+            /** Selected Destinations */
+            selected_destinations?: components["schemas"]["DestinationSelection"][];
+        };
+        /**
+         * GrantOut
+         * @description Safe browser-facing named grant authority.
+         */
+        GrantOut: {
+            /** Capabilities */
+            capabilities: components["schemas"]["Capability"][];
+            /** Client Id */
+            client_id: string;
+            constraints: components["schemas"]["GrantConstraintsOut"];
+            /** Expires At */
+            expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Owner Account Id */
+            owner_account_id: number;
+            preset: components["schemas"]["GrantPreset"];
+            /** Requires Access Approval */
+            requires_access_approval: boolean;
+            /** Revision */
+            revision: number;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * GrantPreset
@@ -4795,6 +4898,49 @@ export interface components {
          * @enum {string}
          */
         GrantPreset: "inspect" | "manage_selected_rows" | "owner_automation";
+        /**
+         * GrantSummaryOut
+         * @description Grant authority plus owner-visible activity and call accounting.
+         */
+        GrantSummaryOut: {
+            /** Capabilities */
+            capabilities: components["schemas"]["Capability"][];
+            /** Client Id */
+            client_id: string;
+            constraints: components["schemas"]["GrantConstraintsOut"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Local Credential Count */
+            local_credential_count: number;
+            /** Name */
+            name: string;
+            /** Owner Account Id */
+            owner_account_id: number;
+            preset: components["schemas"]["GrantPreset"];
+            provider_call_quota: components["schemas"]["ProviderCallQuotaOut"];
+            /** Requires Access Approval */
+            requires_access_approval: boolean;
+            /** Revision */
+            revision: number;
+            /** Revoked At */
+            revoked_at: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -5811,6 +5957,20 @@ export interface components {
             guidance: string;
             /** Mechanics */
             mechanics: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ProviderCallQuotaOut
+         * @description Current conservative lifetime call accounting.
+         */
+        ProviderCallQuotaOut: {
+            /** Lifetime Limit */
+            lifetime_limit: number;
+            /** Remaining */
+            remaining: number;
+            /** Reserved */
+            reserved: number;
         } & {
             [key: string]: unknown;
         };
@@ -12623,6 +12783,26 @@ export interface operations {
             };
         };
     };
+    list_configured_destinations_assistant_destinations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfiguredDestination"][];
+                };
+            };
+        };
+    };
     list_grants_assistant_grants_get: {
         parameters: {
             query?: never;
@@ -12638,9 +12818,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["GrantSummaryOut"][];
                 };
             };
         };
@@ -12664,9 +12842,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GrantOut"];
                 };
             };
             /** @description Validation Error */
@@ -12730,9 +12906,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GrantOut"];
                 };
             };
             /** @description Validation Error */

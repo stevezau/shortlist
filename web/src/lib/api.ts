@@ -13,6 +13,7 @@ import type {
   AssistantChangeReview,
   AssistantCredentialCreated,
   AssistantGrant,
+  AssistantDestination,
   AssistantGrantCreate,
   AssistantGrantUpdate,
   AssistantStatus,
@@ -242,6 +243,9 @@ export const api = {
 
   getAssistantGrants: (): Promise<AssistantGrant[]> =>
     request("/assistant/grants"),
+
+  getAssistantDestinations: (): Promise<AssistantDestination[]> =>
+    request("/assistant/destinations"),
 
   createAssistantGrant: (body: AssistantGrantCreate): Promise<AssistantGrant> =>
     request("/assistant/grants", {
