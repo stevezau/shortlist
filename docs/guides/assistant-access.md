@@ -98,13 +98,15 @@ Start with the smallest useful preset:
 
 - **Inspect and propose** reads safe configuration and activity and can prepare changes for owner
   review.
-- **Manage selected rows** can work with the rows and libraries you select.
+- **Manage rows** can work with allowed rows and create rows in allowed libraries. Narrow either list under **Advanced access and limits**.
 - **Owner automation** can run approved administration within the limits you choose. It is still a
   named, revocable grant; it is not the owner API token.
 
-Every new connection can work with all current and future people. Row audiences and existing Plex
-sharing rules still decide who can see each row. You can narrow rows, libraries and settings groups;
-**Include future** options let the same connection reach objects added later. Destination values
+Every new connection can work with all current and future people, rows and libraries. Row audiences
+and existing Plex sharing rules still decide who can see each row. Under **Advanced access and limits**,
+choose **Selected rows** or **Selected libraries** to narrow the connection, and use **Select all**
+to select currently listed items. The **All current and future** choices also cover items added later.
+You can choose settings groups separately. Destination values
 bind history-derived data to an exact configured service or URL. Changing a service URL does not
 silently carry the old approval to a new destination.
 

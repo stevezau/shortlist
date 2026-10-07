@@ -9,7 +9,7 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react";
-import { useId, useMemo, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
+import { useId, useMemo, useRef, useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, ErrorState } from "@/components/query-boundary";
@@ -44,8 +44,8 @@ const PRESETS: Array<{ value: AssistantGrantPreset; title: string; description: 
   },
   {
     value: "manage_selected_rows",
-    title: "Manage selected rows",
-    description: "Edit selected rows and create rows only in the people and libraries you choose.",
+    title: "Manage rows",
+    description: "Edit allowed rows and create rows in allowed libraries. You can narrow the scope under Advanced.",
   },
   {
     value: "owner_automation",
@@ -137,19 +137,37 @@ function Choice({ checked, title, description, onChange }: {
   description?: string;
   onChange: () => void;
 }) {
+  const titleId = useId();
+  const descriptionId = useId();
   return (
     <label className="flex cursor-pointer items-start gap-3 py-2 text-sm">
       <input
         type="checkbox"
         checked={checked}
         onChange={onChange}
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
         className="mt-1 h-4 w-4 rounded border-input accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <span className="min-w-0">
-        <span className="block font-medium">{title}</span>
-        {description && <span className="block text-muted-foreground">{description}</span>}
+        <span id={titleId} className="block font-medium">{title}</span>
+        {description && <span id={descriptionId} className="block text-muted-foreground">{description}</span>}
       </span>
     </label>
+  );
+}
+
+function SelectionActions({ label, onSelectAll, onClear, disabled = false }: {
+  label: string;
+  onSelectAll: () => void;
+  onClear: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap gap-3 text-xs">
+      <button type="button" className="text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" onClick={onSelectAll} disabled={disabled}>Select all {label}</button>
+      <button type="button" aria-label={`Clear ${label} selection`} className="text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={onClear}>Clear selection</button>
+    </div>
   );
 }
 
@@ -164,6 +182,8 @@ function ResourceLimitFields({
   includeExtras = false,
   extras = [],
   setExtras,
+  expiresInDays,
+  setExpiresInDays,
 }: {
   constraints: AssistantGrantConstraints;
   setConstraints: Dispatch<SetStateAction<AssistantGrantConstraints>>;
@@ -175,26 +195,54 @@ function ResourceLimitFields({
   includeExtras?: boolean;
   extras?: string[];
   setExtras?: Dispatch<SetStateAction<string[]>>;
+  expiresInDays?: number;
+  setExpiresInDays?: (value: number) => void;
 }) {
   const destinationEditorId = useId();
+  const rowScopeName = useId();
+  const libraryScopeName = useId();
+  const advancedId = useId();
+  const batchId = useId();
+  const workId = useId();
+  const expiryId = useId();
+  const batchRef = useRef<HTMLInputElement>(null);
+  const workRef = useRef<HTMLInputElement>(null);
+  const expiryRef = useRef<HTMLInputElement>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(
+    !constraints.include_future_rows || !constraints.include_future_libraries ||
+    constraints.max_batch_size !== 25 || constraints.max_work_per_operation !== null ||
+    (setExpiresInDays !== undefined && expiresInDays !== 90),
+  );
+  const rowSummary = constraints.include_future_rows ? "All current and future rows" : `Selected rows (${constraints.row_ids.length})`;
+  const librarySummary = constraints.include_future_libraries ? "All current and future libraries" : `Selected libraries (${constraints.library_keys.length})`;
+  function toggleAdvanced() {
+    if (advancedOpen) {
+      const invalid = [batchRef.current, workRef.current, expiryRef.current].find((field) => field && !field.checkValidity());
+      if (invalid) {
+        invalid.focus();
+        invalid.reportValidity();
+        return;
+      }
+    }
+    setAdvancedOpen(!advancedOpen);
+  }
   return (
     <>
       <section className="space-y-3">
-        <div><h2 className="font-semibold">Rows and libraries</h2><p className="text-sm text-muted-foreground">This connection can work with all current and future people. Row audiences still control who sees each row.</p></div>
-        <div className="grid gap-5 md:grid-cols-2">
-          <div><h3 className="text-sm font-medium">Rows</h3>{rows?.map((row) => <Choice key={row.id} checked={constraints.row_ids.includes(row.id)} title={row.name} onChange={() => setConstraints((value) => ({ ...value, row_ids: toggle(value.row_ids, row.id) }))} />)}</div>
-          <div><h3 className="text-sm font-medium">Libraries</h3>{libraries?.map((library) => <Choice key={library.key} checked={constraints.library_keys.includes(library.key)} title={library.title} onChange={() => setConstraints((value) => ({ ...value, library_keys: toggle(value.library_keys, library.key) }))} />)}</div>
-        </div>
-        <div className="border-t pt-2">
-          <Choice checked={constraints.include_future_rows} title="Include rows created later" onChange={() => setConstraints((value) => ({ ...value, include_future_rows: !value.include_future_rows }))} />
-          <Choice checked={constraints.include_future_libraries} title="Include libraries added later" onChange={() => setConstraints((value) => ({ ...value, include_future_libraries: !value.include_future_libraries }))} />
-        </div>
+        <div><h2 className="font-semibold">Who and what this connection covers</h2><p className="text-sm text-muted-foreground">All current and future people. Row audiences still control who sees each row.</p></div>
+        <p className="text-sm text-muted-foreground">Rows: {rowSummary} · Libraries: {librarySummary}</p>
       </section>
 
       <section className="space-y-3">
         <div><h2 className="font-semibold">Settings and external effects</h2><p className="text-sm text-muted-foreground">These controls are independent. Provider spend never implies permission to disclose viewing history.</p></div>
         <div className="grid gap-x-6 md:grid-cols-2">
-          {settingGroups.map((group) => <Choice key={group} checked={constraints.setting_groups.includes(group)} title={`Manage ${group} settings`} onChange={() => setConstraints((value) => ({ ...value, setting_groups: toggle(value.setting_groups, group) }))} />)}
+          <div>
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-medium">Setting groups</h3>
+              {settingGroups.length > 0 && <SelectionActions label="settings groups" onSelectAll={() => setConstraints((value) => ({ ...value, setting_groups: [...new Set([...value.setting_groups, ...settingGroups])] }))} onClear={() => setConstraints((value) => ({ ...value, setting_groups: [] }))} />}
+            </div>
+            {settingGroups.map((group) => <Choice key={group} checked={constraints.setting_groups.includes(group)} title={`Manage ${group.replace(/_/g, " ")} settings`} onChange={() => setConstraints((value) => ({ ...value, setting_groups: toggle(value.setting_groups, group) }))} />)}
+          </div>
           {includeExtras && EXTRA_PERMISSIONS.map((permission) => <Choice key={permission.value} checked={extras.includes(permission.value)} title={permission.title} description={permission.description} onChange={() => setExtras?.((value) => toggle(value, permission.value))} />)}
         </div>
         <div className="space-y-1 text-sm">
@@ -204,10 +252,40 @@ function ResourceLimitFields({
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <label className="space-y-1 text-sm"><span className="font-medium">Max batch size</span><Input type="number" min={1} max={1000} value={constraints.max_batch_size ?? ""} onChange={(event) => setConstraints((value) => ({ ...value, max_batch_size: Number(event.target.value) || null }))} /></label>
-        <label className="space-y-1 text-sm"><span className="font-medium">Max work per operation</span><Input type="number" min={1} max={100000} value={constraints.max_work_per_operation ?? ""} onChange={(event) => setConstraints((value) => ({ ...value, max_work_per_operation: Number(event.target.value) || null }))} /></label>
-        <label className="space-y-1 text-sm"><span className="font-medium">Provider calls across this connection</span><span className="block text-xs text-muted-foreground">A finite lifetime allowance. Used or uncertain calls are not returned automatically.</span><Input type="number" min={0} max={100} value={constraints.max_provider_calls} onChange={(event) => setConstraints((value) => ({ ...value, max_provider_calls: Number(event.target.value) || 0 }))} /></label>
+      <section className="space-y-2">
+        <label className="block max-w-xs space-y-1 text-sm"><span className="font-medium">Paid provider calls</span><Input type="number" min={0} max={100} value={constraints.max_provider_calls} onChange={(event) => setConstraints((value) => ({ ...value, max_provider_calls: Number(event.target.value) || 0 }))} /></label>
+        <p className="max-w-prose text-xs text-muted-foreground">Total AI, web search and image service calls allowed across this connection. Zero blocks these calls. Used or uncertain calls are not returned automatically. This counts calls, not money.</p>
+      </section>
+
+      <section className="space-y-4 border-t pt-4">
+        <button type="button" aria-expanded={advancedOpen} aria-controls={advancedId} onClick={toggleAdvanced} className="text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{advancedOpen ? "Hide advanced access and limits" : "Advanced access and limits"}</button>
+        {advancedOpen && <div id={advancedId} className="space-y-5">
+          <div className="grid gap-5 md:grid-cols-2">
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Rows</legend>
+              <label className="flex items-center gap-2 text-sm"><input type="radio" name={rowScopeName} checked={constraints.include_future_rows} onChange={() => setConstraints((value) => ({ ...value, include_future_rows: true }))} className="accent-primary focus-visible:ring-2 focus-visible:ring-ring" />All current and future rows</label>
+              <label className="flex items-center gap-2 text-sm"><input type="radio" name={rowScopeName} checked={!constraints.include_future_rows} onChange={() => setConstraints((value) => ({ ...value, include_future_rows: false }))} className="accent-primary focus-visible:ring-2 focus-visible:ring-ring" />Selected rows</label>
+              {!constraints.include_future_rows && <div className="pl-6">
+                <SelectionActions label="current rows" onSelectAll={() => setConstraints((value) => ({ ...value, row_ids: [...new Set([...value.row_ids, ...(rows ?? []).map((row) => row.id)])] }))} onClear={() => setConstraints((value) => ({ ...value, row_ids: [] }))} disabled={!rows?.length} />
+                {rows?.map((row) => <Choice key={row.id} checked={constraints.row_ids.includes(row.id)} title={row.name} onChange={() => setConstraints((value) => ({ ...value, row_ids: toggle(value.row_ids, row.id) }))} />)}
+              </div>}
+            </fieldset>
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Libraries</legend>
+              <label className="flex items-center gap-2 text-sm"><input type="radio" name={libraryScopeName} checked={constraints.include_future_libraries} onChange={() => setConstraints((value) => ({ ...value, include_future_libraries: true }))} className="accent-primary focus-visible:ring-2 focus-visible:ring-ring" />All current and future libraries</label>
+              <label className="flex items-center gap-2 text-sm"><input type="radio" name={libraryScopeName} checked={!constraints.include_future_libraries} onChange={() => setConstraints((value) => ({ ...value, include_future_libraries: false }))} className="accent-primary focus-visible:ring-2 focus-visible:ring-ring" />Selected libraries</label>
+              {!constraints.include_future_libraries && <div className="pl-6">
+                <SelectionActions label="current libraries" onSelectAll={() => setConstraints((value) => ({ ...value, library_keys: [...new Set([...value.library_keys, ...(libraries ?? []).map((library) => library.key)])] }))} onClear={() => setConstraints((value) => ({ ...value, library_keys: [] }))} disabled={!libraries?.length} />
+                {libraries?.map((library) => <Choice key={library.key} checked={constraints.library_keys.includes(library.key)} title={library.title} onChange={() => setConstraints((value) => ({ ...value, library_keys: toggle(value.library_keys, library.key) }))} />)}
+              </div>}
+            </fieldset>
+          </div>
+          <div className="grid gap-4 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-1 text-sm"><label htmlFor={batchId} className="block font-medium">Max batch size</label><p id={`${batchId}-help`} className="text-xs text-muted-foreground">Limits picks, settings, or rows changed in one operation.</p><Input ref={batchRef} id={batchId} aria-describedby={`${batchId}-help`} type="number" min={1} max={1000} value={constraints.max_batch_size ?? ""} onChange={(event) => setConstraints((value) => ({ ...value, max_batch_size: Number(event.target.value) || null }))} /></div>
+            <div className="space-y-1 text-sm"><label htmlFor={workId} className="block font-medium">Max work per operation</label><p id={`${workId}-help`} className="text-xs text-muted-foreground">Optional work limit based on affected rows and people. Blank adds no extra limit.</p><Input ref={workRef} id={workId} aria-describedby={`${workId}-help`} type="number" min={1} max={100000} value={constraints.max_work_per_operation ?? ""} onChange={(event) => setConstraints((value) => ({ ...value, max_work_per_operation: Number(event.target.value) || null }))} /></div>
+            {setExpiresInDays && <div className="space-y-1 text-sm"><label htmlFor={expiryId} className="block font-medium">Connection expires after days</label><p id={`${expiryId}-help`} className="text-xs text-muted-foreground">The access grant expires after this many days; local credentials have their own expiry.</p><Input ref={expiryRef} id={expiryId} aria-describedby={`${expiryId}-help`} type="number" min={1} max={365} value={expiresInDays ?? 90} onChange={(event) => setExpiresInDays(Number(event.target.value))} /></div>}
+          </div>
+        </div>}
       </section>
     </>
   );
@@ -299,7 +377,7 @@ function GrantRow({ grant, presets, onCredential, onEdit, onRevoke, onRemove }: 
         {hasCustomPermissions(grant, presets) && <Badge variant="outline">Custom permissions</Badge>}
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
-        All people · {grant.constraints.row_ids.length} rows · {grant.constraints.library_keys.length} libraries · {grant.local_credential_count ?? 0} local credentials
+        All people · {grant.constraints.include_future_rows ? "All rows" : `Selected rows (${grant.constraints.row_ids.length})`} · {grant.constraints.include_future_libraries ? "All libraries" : `Selected libraries (${grant.constraints.library_keys.length})`} · {grant.local_credential_count ?? 0} local credentials
       </p>
     </article>
   );
@@ -353,6 +431,7 @@ export function AssistantAccessPage() {
       setPreset("inspect");
       setConstraints(emptyConstraints());
       setExtras([]);
+      setExpiresInDays(90);
       void queryClient.invalidateQueries({ queryKey: assistantKeys.grants });
     },
   });
@@ -509,10 +588,9 @@ export function AssistantAccessPage() {
             includeExtras
             extras={extras}
             setExtras={setExtras}
+            expiresInDays={expiresInDays}
+            setExpiresInDays={setExpiresInDays}
           />
-          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="space-y-1 text-sm"><span className="font-medium">Expires after days</span><Input type="number" min={1} max={365} value={expiresInDays} onChange={(event) => setExpiresInDays(Number(event.target.value))} /></label>
-          </section>
 
           {create.isError && <p role="alert" className="text-sm text-destructive-text">{apiErrorMessage(create.error, "Could not create this connection.")}</p>}
           <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
