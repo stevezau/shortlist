@@ -1123,6 +1123,11 @@ class TestPickFinishedAtBackfill:
     def _seed_pick(self, config_dir: Path, *, pick_id: int, media_type: str, watched: str | None) -> None:
         with sqlite3.connect(config_dir / "shortlist.db") as db:
             db.execute(
+                "INSERT INTO users (id, plex_account_id, username, slug, avatar_url, nickname, friendly_name,"
+                " user_type, restricted, restriction_profile, enabled, cold_start, label, request_tag, prefs)"
+                " VALUES (1, 901, 'viewer', 'viewer', '', '', '', 'friend', 0, '', 1, 0, 'shortlist_viewer', '', '{}')"
+            )
+            db.execute(
                 "INSERT INTO picks (id, user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
                 "section_key, library, title, reason, sources, affinity, created_at, watched_at) "
                 "VALUES (?, 1, 500, ?, 9, 1, 'picked', '1', 'Movies', 'T', '', '', 1.0, "

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from fastapi.concurrency import run_in_threadpool
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse, StreamingResponse
 
@@ -66,6 +66,7 @@ from shortlist.server.db.models import (
     Job,
     PickRow,
     RequestCandidate,
+    RowDeliverySnapshot,
     RunSharedRow,
     SharedRowWatch,
     Theme,
@@ -1404,7 +1405,7 @@ def _reject_new_person_title_clash(
     )
 
 
-def _unique_slug(session, base: str) -> str:
+def _unique_slug(session: Session, base: str) -> str:
     """A slug no row has now AND no history still names.
 
     The slug is a row's identity in every history table, and deleting a row frees it in `collections`
@@ -1413,7 +1414,11 @@ def _unique_slug(session, base: str) -> str:
     seen live on 2026-09-13. A delivered row's history is kept (run pruning leaves picks, deliveries and
     watch credits alone), so in practice its slug stays reserved for good.
 
-    A pending `row.reconcile` for the slug counts too. DELETE queues it before dropping the row, and it
+    Skipped/pending run outcomes and retained delivery snapshots also reserve the identity even
+    when no pick or current delivery remains. Otherwise a replacement inherits another row's reports.
+
+    A pending `row.reconcile` for the slug counts too, including one inside `assistant.converge`.
+    DELETE queues it before dropping the row, and it
     cannot start while a run is in flight — a run that still holds the old row, and persists its picks
     under the slug as each person finishes. When the job does start it removes by the slug's ledger
     keys, which would by then be the NEW row's collections.
@@ -1429,10 +1434,25 @@ def _unique_slug(session, base: str) -> str:
         RunSharedRow.collection_slug,
         SharedRowWatch.collection_slug,
         RequestCandidate.row_slug,
+        RowDeliverySnapshot.collection_slug,
     )
 
     def is_taken(slug: str) -> bool:
         if any(session.query(column).filter(column == slug).first() is not None for column in columns):
+            return True
+        # These are structured JSON identities, not free text. Bind the exact slug so
+        # punctuation and prefix matches cannot attach one row's history to another.
+        histories = (
+            "SELECT 1 FROM run_users, json_each(run_users.rows_considered) AS outcome "
+            "WHERE outcome.key = :slug LIMIT 1",
+            "SELECT 1 FROM runs, json_each(runs.stats, '$.expected_rows') AS expected "
+            "WHERE expected.type = 'object' AND json_extract(expected.value, '$.slug') = :slug LIMIT 1",
+            "SELECT 1 FROM jobs, json_each(jobs.payload, '$.steps') AS step "
+            "WHERE jobs.kind = 'assistant.converge' AND jobs.status IN ('queued', 'running') "
+            "AND step.type = 'object' AND json_extract(step.value, '$.kind') = 'row.reconcile' "
+            "AND json_extract(step.value, '$.payload.slug') = :slug LIMIT 1",
+        )
+        if any(session.execute(text(query), {"slug": slug}).first() is not None for query in histories):
             return True
         pending_removal = session.query(Job.id).filter(
             Job.kind == "row.reconcile",

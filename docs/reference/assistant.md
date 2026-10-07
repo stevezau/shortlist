@@ -74,6 +74,10 @@ is a separate plan. `ai_paused: true` prevents automatic theme top-ups only for 
 or trusted supplied theme: use `shortlist_plan_setup` or give `shortlist_plan_row` a valid
 `theme_id`; omit it for a non-themed row.
 
+Each saved row ID identifies one row and is never reassigned after deletion. Existing historical
+IDs remain reserved during upgrades, and retained history or pending cleanup also reserves the
+row's slug. Discover a replacement row again and prepare a new plan for its own ID.
+
 For an existing row's `media` or `library_keys` change, Shortlist verifies current Plex libraries
 when preparing and applying the plan; clients supply no internal library snapshot. A changed
 snapshot makes the plan stale. Narrowing can remove collections from former libraries, so the

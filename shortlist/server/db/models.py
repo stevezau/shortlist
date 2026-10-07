@@ -164,6 +164,8 @@ class Collection(Base):
     """
 
     __tablename__ = "collections"
+    # Permissions and durable history retain row IDs after deletion.
+    __table_args__: ClassVar[dict[str, bool]] = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
