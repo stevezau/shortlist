@@ -17,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 import shortlist.server.services.context_builder as context_builder_mod
 from shortlist.engine.clients.search import ExaClient, SearxngClient
 from shortlist.engine.history import ShareTokenWatchSource
-from shortlist.engine.models import MediaType
+from shortlist.engine.models import MediaType, UserProfile, UserType
 from shortlist.server.db.models import PickRow, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.context_builder import ContextBuilder, make_search_client
@@ -282,6 +282,36 @@ class TestBuildContext:
             SettingsStore(session, configured).set("plex.timeout_s", 90)
         service.build_context(dry_run=True)
         assert captured["timeout"] == 90  # an explicit setting overrides it
+
+    @pytest.mark.parametrize("configured_timeout", [None, 90])
+    def test_user_client_callback_keeps_the_closed_context_session_closed(
+        self,
+        service: RunService,
+        sessions: sessionmaker,
+        configured: SecretBox,
+        monkeypatch: pytest.MonkeyPatch,
+        configured_timeout: int | None,
+    ) -> None:
+        if configured_timeout is not None:
+            with sessions() as session:
+                SettingsStore(session, configured).set("plex.timeout_s", configured_timeout)
+        created: list[tuple[str, str, int]] = []
+        client = MagicMock(machine_id="m1")
+
+        def make_client(url: str, token: str, timeout: int) -> MagicMock:
+            created.append((url, token, timeout))
+            return client
+
+        monkeypatch.setattr(context_builder_mod, "PlexClient", make_client)
+        context = service.build_context(dry_run=True)
+        pool = sessions.kw["bind"].pool
+        assert pool.checkedout() == 0
+        owner = UserProfile(username="owner", plex_account_id=1, user_type=UserType.OWNER, slug="owner")
+
+        assert context.pms_for_user(owner) is client
+
+        assert created == [("http://pms:32400", "tok", configured_timeout or 45)] * 2
+        assert pool.checkedout() == 0, "the callback reopened the context builder's closed settings session"
 
     def test_an_unreachable_plex_is_explained_and_points_at_settings(self, service, configured, monkeypatch):
         # Issue #139: the saved address stopped answering, and the run page showed the Python exception.

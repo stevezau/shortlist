@@ -1753,11 +1753,11 @@ def test_requested_by_tag_round_trips(client: TestClient):
     assert next(u for u in client.get("/api/users").json() if u["id"] == uid)["requested_by_tag"] == "children"
 
 
-def _seed_user_with_runs(session, slug: str, finished: datetime) -> list[str]:
+def _seed_user_with_runs(session, slug: str, finished: datetime, *, account_id: int) -> list[str]:
     """A user with two runs; only the LATER run's top three picks (by rank) may reach the preview."""
     from shortlist.server.db.models import PickRow, Run, RunUser
 
-    user = User(plex_account_id=900000 + abs(hash(slug)) % 99999, username=slug, slug=slug)
+    user = User(plex_account_id=account_id, username=slug, slug=slug)
     session.add(user)
     session.flush()
     runs = []
@@ -1787,7 +1787,10 @@ class TestUsersListQueries:
     def test_the_list_reports_last_run_time_and_a_three_title_preview_per_person(self, client: TestClient):
         finished = datetime(2026, 6, 1, 12, tzinfo=UTC)
         with client.app.state.sessions() as session:
-            expected = {slug: _seed_user_with_runs(session, slug, finished) for slug in ("ann", "bob", "cy")}
+            expected = {
+                slug: _seed_user_with_runs(session, slug, finished, account_id=account_id)
+                for account_id, slug in enumerate(("ann", "bob", "cy"), start=900000)
+            }
             session.commit()
 
         users = {u["username"]: u for u in client.get("/api/users").json()}
@@ -1821,12 +1824,12 @@ class TestUsersListQueries:
 
         with client.app.state.sessions() as session:
             for i in range(1, 3):
-                _seed_user_with_runs(session, f"few{i}", finished)
+                _seed_user_with_runs(session, f"few{i}", finished, account_id=900000 + i)
             session.commit()
         few = statements_for_list()
         with client.app.state.sessions() as session:
             for i in range(3, 30):
-                _seed_user_with_runs(session, f"many{i}", finished)
+                _seed_user_with_runs(session, f"many{i}", finished, account_id=900000 + i)
             session.commit()
 
         assert statements_for_list() == few

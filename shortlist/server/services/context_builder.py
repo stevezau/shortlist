@@ -424,11 +424,12 @@ class ContextBuilder:
             plex_token = store.get("plex.token")
             if not plex_url or not plex_token:
                 raise RuntimeError("Plex connection is not configured yet — finish setup first")
+            plex_timeout = int(store.get("plex.timeout_s") or 45)
             # A large TV library's collection rebuild legitimately takes 15-20s+; the configured
             # per-call timeout (default 45s) gives those headroom instead of timing out + retrying.
             # The run page is where this lands, so say where the address is changed.
             with explained(plex_url, fix_hint=" Change the address under Settings → Connections."):
-                plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
+                plex = PlexClient(plex_url, plex_token, timeout=plex_timeout)
             _refuse_a_different_server(session, plex.machine_id)
             plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
@@ -456,7 +457,7 @@ class ContextBuilder:
                 once per profiled account per run (rule 6).
                 """
                 token = _history._token_for(profile)
-                return PlexClient(_url, token, timeout=int(store.get("plex.timeout_s") or 45)) if token else None
+                return PlexClient(_url, token, timeout=plex_timeout) if token else None
 
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get, **provider_kwargs))
