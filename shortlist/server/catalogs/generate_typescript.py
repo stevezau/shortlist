@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .templates import ROW_INPUT_DEFAULTS, get_template_catalog
+from .templates import BROWSER_ROW_INPUT_DEFAULTS, ROW_INPUT_DEFAULTS, get_template_catalog
 
 GENERATED_PATH = Path(__file__).parents[3] / "web" / "src" / "lib" / "row-templates.generated.ts"
 
@@ -34,7 +34,7 @@ def render_row_templates_typescript() -> str:
     ai = [frontend_record(template) for template in templates if template.kind == "ai"]
     payload = json.dumps(ordinary, ensure_ascii=False, indent=2)
     ai_payload = json.dumps(ai, ensure_ascii=False, indent=2)
-    defaults_payload = json.dumps(ROW_INPUT_DEFAULTS, ensure_ascii=False, indent=2)
+    defaults_payload = json.dumps(BROWSER_ROW_INPUT_DEFAULTS, ensure_ascii=False, indent=2)
     over_time = {
         key: ROW_INPUT_DEFAULTS[key]
         for key in ("theme_mode", "explore_brief", "theme_days", "refresh_share", "repeat_cooldown_days", "avoid_rows")

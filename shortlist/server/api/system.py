@@ -24,8 +24,6 @@ import contextlib
 import os
 import platform
 import secrets as pysecrets
-import threading
-import time
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -43,9 +41,23 @@ from shortlist.server.db.models import Collection, Event, RestrictionSnapshotRow
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import rebuild_schedule
 from shortlist.server.services import jobs, log_reader
+from shortlist.server.services.connection_choices import (
+    _INTERACTIVE_TIMEOUT_S as _CONNECTION_INTERACTIVE_TIMEOUT_S,
+)
+from shortlist.server.services.connection_choices import (
+    _PLEX_READ_TTL_S as _CONNECTION_PLEX_READ_TTL_S,
+)
+from shortlist.server.services.connection_choices import (
+    read_libraries,
+    read_library_anchor_choices,
+)
 from shortlist.server.settings_store import SettingsStore
 
 _TOKEN_CREATED_KEY = "api.token_created_at"
+
+# Kept as module names for owner API regression compatibility; shared reads own their behavior.
+_INTERACTIVE_TIMEOUT_S = _CONNECTION_INTERACTIVE_TIMEOUT_S
+_PLEX_READ_TTL_S = _CONNECTION_PLEX_READ_TTL_S
 
 #: Owner-gated. Everything except `/health` goes here — see the module docstring.
 _authed = APIRouter(dependencies=[Depends(require_owner)])
@@ -366,107 +378,6 @@ class LibraryOut(PassthroughModel):
     type: Literal["movie", "show"]
 
 
-#: How long a Plex library read is served from memory before going back to the PMS.
-#:
-#: These two endpoints are on the PAGE-LOAD path — `/libraries` backs every row card on the Rows
-#: page, the library picker, and the placement settings — and each call is a fresh PlexServer
-#: handshake plus a `/library/sections` read. That is fine against an idle PMS and ruinous against a
-#: busy one: Plex serialises against its own database, so while a job was deleting collections one
-#: DELETE took 15.8s and every page that wanted a library list waited behind it (SFLIX 2026-08-04).
-#: The list itself changes when someone adds a library — minutes of staleness costs nothing.
-_PLEX_READ_TTL_S = 120.0
-
-#: A far shorter timeout than a run's `plex.timeout_s` (default 45s). A run is right to wait out a
-#: slow PMS; a page is not — past a few seconds the tab looks broken, and the person retries, which
-#: is the last thing an overloaded server needs.
-_INTERACTIVE_TIMEOUT_S = 8
-
-
-def invalidate_plex_reads(state) -> None:
-    """Forget every cached Plex read. Called when the connected server may have changed.
-
-    The cache key is the READ, not the server — so after re-pointing Shortlist at a different PMS the
-    old server's library list would have been served for up to the TTL. Harmless (both endpoints are
-    owner-only and read the owner's own server, and nothing cached decides a write) but confusing:
-    the picker offers libraries the new server does not have.
-    """
-    state.__dict__.pop("_plex_read_cache", None)
-    state.__dict__.pop("_plex_read_locks", None)
-
-
-def _cached_plex_read(state, key: str, read):
-    """Read from the PMS at most once per `_PLEX_READ_TTL_S` per key, and never twice at once.
-
-    Three behaviours, each earning its keep on a server that is busy rather than one that is idle:
-
-    * **TTL** — the common case never touches Plex at all.
-    * **Single-flight** — concurrent misses collapse into ONE read. Without it a slow PMS makes
-      things worse the more people look: ten page loads become ten enumerations of a server that is
-      already the bottleneck.
-    * **Serve-stale-on-failure** — if the refresh raises (a timeout on a busy server), the previous
-      value is returned rather than an error. A library list a couple of minutes old is a much better
-      answer than a broken page, and the next call retries. Nothing here is used to decide a write.
-
-    Only for READS whose staleness is harmless. Never cache something a mutation is about to act on.
-    """
-    cache = state.__dict__.setdefault("_plex_read_cache", {})
-    locks = state.__dict__.setdefault("_plex_read_locks", {})
-    lock = locks.setdefault(key, threading.Lock())
-
-    entry = cache.get(key)
-    if entry and entry[0] > time.monotonic():
-        return entry[1]
-
-    with lock:
-        # Re-checked with the lock held: whoever we queued behind has just refreshed it.
-        entry = cache.get(key)
-        if entry and entry[0] > time.monotonic():
-            return entry[1]
-        try:
-            value = read()
-        except HTTPException:
-            # "Plex isn't connected" / "no such library" is an answer, not a failure to paper over.
-            # The lock goes with it: `key` carries a caller-supplied path segment, so keeping one per
-            # value ever asked for would grow this dict for as long as the process lives. Anyone
-            # already waiting holds their own reference, so dropping it here is safe — the worst case
-            # is one extra concurrent read of a key that just 404'd.
-            if key not in cache:
-                locks.pop(key, None)
-            raise
-        except Exception as e:
-            if entry is None:
-                # Same reasoning as the HTTPException arm: nothing was cached, so this key leaves no
-                # entry behind and its lock must go with it. The failure that actually grows the dict
-                # lands HERE rather than there — a bogus library key while the PMS is timing out
-                # raises a plexapi error, not an HTTPException.
-                if key not in cache:
-                    locks.pop(key, None)
-                raise
-            logger.warning("plex read {} failed ({}) — serving the cached copy", key, type(e).__name__)
-            return entry[1]
-        cache[key] = (time.monotonic() + _PLEX_READ_TTL_S, value)
-        return value
-
-
-def read_libraries(state) -> list[dict]:
-    """Read configured Plex libraries through the shared short-lived interactive cache."""
-    from shortlist.engine.clients.plex_pms import PlexClient
-    from shortlist.server.settings_store import SettingsStore
-
-    def read() -> list[dict]:
-        with state.sessions() as session:
-            store = SettingsStore(session, state.secrets)
-            url, token = store.get("plex.url"), store.get("plex.token")
-        if not url or not token:
-            raise HTTPException(status_code=409, detail="Plex isn't connected yet")
-        client = PlexClient(url, token, timeout=_INTERACTIVE_TIMEOUT_S)
-        return [
-            {"key": str(section.key), "title": section.title, "type": section.type} for section in client.sections()
-        ]
-
-    return _cached_plex_read(state, "libraries", read)
-
-
 @_authed.get("/libraries", response_model=list[LibraryOut])
 async def libraries(request: Request) -> list[dict]:
     """The server's movie/show libraries, so the Rows editor can offer them as delivery targets."""
@@ -503,45 +414,8 @@ async def library_collections(key: str, request: Request) -> list[dict]:
     how the reporter came to have one saved: the option was a flicker, and it never placed anything.
     The marker is in the title we already have, so it cannot fail that way.
     """
-    from shortlist.engine.clients.plex_pms import PlexClient, can_anchor, has_shortlist_marker
-    from shortlist.server.settings_store import SettingsStore
-
-    state = request.app.state
-
-    def read() -> list[dict]:
-        with state.sessions() as session:
-            store = SettingsStore(session, state.secrets)
-            url, token = store.get("plex.url"), store.get("plex.token")
-        if not url or not token:
-            raise HTTPException(status_code=409, detail="Plex isn't connected yet")
-        client = PlexClient(url, token, timeout=_INTERACTIVE_TIMEOUT_S)
-        section = next((s for s in client.sections() if str(s.key) == key), None)
-        if section is None:
-            raise HTTPException(status_code=404, detail="library not found")
-        # `on_shelf` decides whether an anchor can work at all. `managedHubs()` lists every hub the
-        # library CAN manage, and a COLLECTION promoted nowhere has no position on the shelf —
-        # following it buries the row (issue #106), which is why the engine now refuses to. The editor
-        # still shows them, greyed out and labelled, rather than dropping them: an owner who cannot
-        # see the collection they picked last week has no way to tell "not on the shelf" from
-        # "deleted".
-        #
-        # `can_anchor` is the ENGINE's own predicate, imported rather than restated: this endpoint
-        # exists to predict what the ordering pass will do, and a second copy of the rule is a
-        # disagreement waiting to happen.
-        #
-        # OR-accumulated per title, because the engine scans every hub with that title and takes the
-        # first that can anchor. Two hubs CAN share one ("Top Rated" is both a stock Plex hub and a
-        # stock Kometa collection), and first-hub-wins would grey out an anchor that places fine.
-        seen: dict[str, bool] = {}
-        for hub in section.managedHubs():
-            title = getattr(hub, "title", "") or ""
-            if not title or has_shortlist_marker(title):
-                continue
-            seen[title] = seen.get(title, False) or can_anchor(hub)
-        return [{"title": t, "on_shelf": on_shelf} for t, on_shelf in seen.items()]
-
     return await asyncio.get_running_loop().run_in_executor(
-        None, lambda: _cached_plex_read(state, f"collections:{key}", read)
+        None, lambda: read_library_anchor_choices(request.app.state, key)
     )
 
 

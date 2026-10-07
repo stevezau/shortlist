@@ -763,7 +763,7 @@ class TestSystemResponseShapes:
         """
         from types import SimpleNamespace
 
-        import shortlist.server.api.system as system_module
+        import shortlist.server.services.connection_choices as choices_module
 
         self._connect_plex(client)
 
@@ -779,7 +779,7 @@ class TestSystemResponseShapes:
         monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
 
         seen: dict[str, object] = {}
-        real = system_module.invalidate_plex_reads
+        real = choices_module.invalidate_plex_reads
 
         def spy(state):
             # What a concurrent reader would find in the DB at the instant the cache is dropped.
@@ -787,8 +787,8 @@ class TestSystemResponseShapes:
                 seen["url"] = SettingsStore(session, client.app.state.secrets).get("plex.url")
             return real(state)
 
-        # `put_settings` imports this inside the function, so patching the source module is what lands.
-        monkeypatch.setattr(system_module, "invalidate_plex_reads", spy)
+        # `put_settings` imports this inside the function, so patching the shared source module is what lands.
+        monkeypatch.setattr(choices_module, "invalidate_plex_reads", spy)
 
         saved = client.put("/api/settings", json={"values": {"plex.url": "http://pms-new:32400"}})
         assert saved.status_code == 200, saved.text

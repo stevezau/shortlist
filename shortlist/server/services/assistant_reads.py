@@ -12,7 +12,7 @@ from shortlist.server.db.adapters import DbCache
 
 
 async def permitted_libraries(state, principal) -> ToolResult:
-    from shortlist.server.api.system import read_libraries
+    from shortlist.server.services.connection_choices import read_libraries
 
     require_authorized(principal, [Capability.CONFIG_READ])
     libraries = await asyncio.to_thread(read_libraries, state)

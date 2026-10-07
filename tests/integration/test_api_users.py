@@ -1215,6 +1215,39 @@ class TestUserRowsApi:
     def _sarah_id(self, client: TestClient) -> int:
         return next(u["id"] for u in client.get("/api/users").json() if u["slug"] == "sarah")
 
+    def test_override_write_uses_configured_audience_even_before_activation(self, client: TestClient):
+        from shortlist.server.db.models import Collection, CollectionAudience, CollectionUserOverride, Job
+
+        member_id = self._sarah_id(client)
+        outsider_id = next(user["id"] for user in client.get("/api/users").json() if user["id"] != member_id)
+        with client.app.state.sessions() as session:
+            row = Collection(slug="subset-override", name="Subset override", audience="subset", enabled=True)
+            session.add(row)
+            session.flush()
+            row_id = row.id
+            session.add(CollectionAudience(collection_id=row_id, user_id=member_id))
+            session.commit()
+            jobs_before = session.query(Job).count()
+
+        assert row_id not in {row["collection_id"] for row in client.get(f"/api/users/{outsider_id}/rows").json()}
+        rejected = client.put(f"/api/users/{outsider_id}/rows/{row_id}", json={"muted": True, "row_size": 20})
+        assert rejected.status_code == 422
+        with client.app.state.sessions() as session:
+            assert session.get(CollectionUserOverride, (row_id, outsider_id)) is None
+            assert session.query(Job).count() == jobs_before
+            session.get(Collection, row_id).enabled = False
+            session.get(User, member_id).enabled = False
+            session.commit()
+
+        assert row_id not in {row["collection_id"] for row in client.get(f"/api/users/{member_id}/rows").json()}
+        saved = client.put(f"/api/users/{member_id}/rows/{row_id}", json={"row_size": 20, "recent_count": 6})
+        assert saved.status_code == 200, saved.text
+        assert saved.json() == {"collection_id": row_id, "muted": False, "row_size": 20, "recent_count": 6}
+        with client.app.state.sessions() as session:
+            stored = session.get(CollectionUserOverride, (row_id, member_id))
+            assert (stored.muted, stored.row_size, stored.recent_count) == (False, 20, 6)
+            assert session.query(Job).count() == jobs_before
+
     def test_rows_lists_the_default_row_with_no_picks_yet(self, client: TestClient):
         uid = self._sarah_id(client)
         rows = client.get(f"/api/users/{uid}/rows").json()

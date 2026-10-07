@@ -105,8 +105,9 @@ GUIDES = {
         "steps": [
             "Every named connection has separate capabilities, selected resources, an expiry and a revocation control.",
             (
-                "Inspect reads allowed configuration. Manage selected rows authorizes bounded edits. "
-                "Owner automation covers broader setup."
+                "Inspect reads only selected configuration groups. Manage selected rows authorizes bounded edits. "
+                "Owner automation covers broader setup, but a configured-service read also needs that exact "
+                "library or saved destination in the connection's resource scope."
             ),
             (
                 "Internal history use, sending history to providers, and returning history to the "

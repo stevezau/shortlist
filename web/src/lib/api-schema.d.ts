@@ -6183,7 +6183,10 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** RowOverridePatch */
+        /**
+         * RowOverridePatch
+         * @description PATCH-shaped stored preference values shared by REST and assistant planning.
+         */
         RowOverridePatch: {
             /** Muted */
             muted?: boolean | null;

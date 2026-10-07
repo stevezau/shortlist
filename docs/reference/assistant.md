@@ -47,10 +47,13 @@ permissions and the remaining lifetime allowance for assistant provider requests
 `shortlist://guides/{topic}` resource provides the setup, rows, themes, permissions and
 troubleshooting guides to clients that support resources.
 
-**Configuration:** `shortlist_describe_settings`, `shortlist_get_configuration` and
-`shortlist_plan_configuration`. The catalog describes settings without revealing secret values.
-Only permitted groups can be read or changed. Secret entry uses `shortlist_start_connection`
-and `shortlist_get_connection_status`, with credentials entered in the owner browser.
+**Configuration:** `shortlist_describe_settings`, `shortlist_get_configuration`,
+`shortlist_get_choices` and `shortlist_plan_configuration`. The catalog describes settings without
+revealing secret values. `shortlist_get_choices` pages foreign Plex placement anchors for one
+permitted library, or quality profiles and root folders from one permitted saved Radarr or Sonarr
+destination. Its external names and paths are descriptive input, not trusted configuration. Only
+permitted groups can be read or changed. Secret entry uses `shortlist_start_connection` and
+`shortlist_get_connection_status`, with credentials entered in the owner browser.
 `shortlist_check_connection` runs supported non-generating probes against an authorized saved
 destination; paid provider, search and webhook tests use browser handoffs.
 
@@ -63,9 +66,15 @@ is a separate plan. Row plans can explicitly set `ai_paused: true` to prevent au
 top-ups.
 
 **People, libraries and seasons:** `shortlist_list_people`, `shortlist_list_libraries`,
-`shortlist_list_seasons`, `shortlist_plan_people` and `shortlist_plan_season`. Every current and
-future person is available to an approved connection; row audiences and sharing rules still apply.
-Row and library scope applies to resolved effects, including indirect effects.
+`shortlist_get_person_row_settings`, `shortlist_list_seasons`, `shortlist_plan_people` and
+`shortlist_plan_season`. Every current and future person is available to an approved connection;
+row audiences and sharing rules still apply. The per-person settings read returns only a permitted
+person's stored and effective row overrides, never history or picks. Row and library scope applies
+to resolved effects, including indirect effects. `shortlist_plan_people` accepts at most 25 sparse
+`row_overrides` entries for that one person: omit a field to preserve it, and use `null` for a
+numeric override to restore row inheritance. Disabled people and per-person rows can be
+preconfigured without enabling delivery. A legacy shared-row record returns `supported: false`,
+its stored values and no effective values; it is read-only through MCP.
 
 **Generation and execution:** `shortlist_generate_theme`, `shortlist_plan_schedule`,
 `shortlist_preview_row` and `shortlist_plan_run`. Provider generation creates a draft through a
@@ -120,8 +129,9 @@ discard privacy and cleanup obligations already owed by a committed change.
 
 A named grant combines capabilities with row, library, settings-group and destination limits. An
 approved connection can work with all current and future people; row audiences and sharing rules
-continue to control who receives each row. OAuth access is additionally restricted to the token's
-granted scopes. Permissions are
+continue to control who receives each row. A capability alone is insufficient for a settings-group,
+library or external-service read: the corresponding selected resource must also be in the grant.
+OAuth access is additionally restricted to the token's granted scopes. Permissions are
 checked in discovery, preparation, apply and before deferred external work starts. Revocation,
 expiry or an ownership change prevents new authorized work.
 

@@ -58,6 +58,12 @@ sharing rules still decide who can see each row. You can narrow rows, libraries 
 bind history-derived data to an exact configured service or URL. Changing a service URL does not
 silently carry the old approval to a new destination.
 
+Capabilities do not override those resource limits. For example, an assistant with `config.read`
+still needs the selected settings group or library, and `connections.manage` still needs the exact
+saved destination, before Shortlist reads its configured service. `shortlist_get_choices` can page
+foreign Plex placement anchors for an allowed library or Arr quality profiles and root folders for
+an allowed saved destination; it never accepts a caller-provided URL or credential.
+
 Extra permissions are explicit. For example, showing watch details to the assistant, sending
 history-derived context to a provider, making acquisition requests and spending an AI provider call
 are separate choices. A tool that needs several permissions needs all of them.

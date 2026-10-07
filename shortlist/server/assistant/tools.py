@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 from sqlalchemy import text
 
 from shortlist.server.assistant_auth import AuthorizationDenied, Capability, require_authorized
@@ -63,6 +63,35 @@ class TitleSearchInput(StrictModel):
         default=None, ge=1850, le=2200, description="Optional release year to distinguish remakes."
     )
     limit: int = Field(default=5, ge=1, le=10)
+
+
+class ChoicesInput(PageInput):
+    """One paginated configured-service choice family with no caller-supplied endpoint."""
+
+    kind: Literal["plex_anchors", "radarr", "sonarr"] = Field(
+        description="The configured service to inspect; this cannot name a URL or arbitrary service."
+    )
+    library_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="A library key from shortlist_list_libraries, required only for plex_anchors.",
+    )
+
+    @model_validator(mode="after")
+    def matching_selection(self) -> ChoicesInput:
+        if self.kind == "plex_anchors" and self.library_key is None:
+            raise ValueError("plex_anchors requires library_key from shortlist_list_libraries")
+        if self.kind != "plex_anchors" and self.library_key is not None:
+            raise ValueError("library_key is only valid for plex_anchors")
+        return self
+
+
+class PersonRowSettingsInput(StrictModel):
+    """One person's deterministic stored and effective settings for one row."""
+
+    person_id: int = Field(gt=0, description="A person ID returned by shortlist_list_people.")
+    row_id: int = Field(gt=0, description="A row ID returned by shortlist_list_rows.")
 
 
 class DiagnoseInput(StrictModel):
@@ -265,6 +294,18 @@ def register_tools(server: MCPServer, state) -> None:
         return discovery.people(principal(), **request.model_dump())
 
     @tool(
+        "shortlist_get_person_row_settings",
+        (
+            "Read one person's stored and effective mute, row-size and recent-count settings for one permitted "
+            "per-person row. Requires people.read and the connection's exact row and library scope. Returns no "
+            "picks, watch history or account details. Disabled people and rows may be preconfigured; legacy "
+            "shared-row records are read-only state."
+        ),
+    )
+    async def get_person_row_settings(request: PersonRowSettingsInput) -> ToolResult:
+        return discovery.person_row_settings(principal(), request.person_id, request.row_id)
+
+    @tool(
         "shortlist_list_libraries",
         (
             "Read movie and show libraries from the configured Plex server, returning only "
@@ -277,6 +318,21 @@ def register_tools(server: MCPServer, state) -> None:
         from shortlist.server.services.assistant_reads import permitted_libraries
 
         return await permitted_libraries(state, principal())
+
+    @tool(
+        "shortlist_get_choices",
+        (
+            "Discover one page of untrusted choice values from Shortlist's already configured Plex, Radarr or "
+            "Sonarr service. Plex anchors require a library key from shortlist_list_libraries and return only "
+            "foreign collections; Radarr and Sonarr return quality profiles and root folders. This accepts no "
+            "URL or credential and checks the exact selected library or saved destination before reading it."
+        ),
+        external=True,
+    )
+    async def get_choices(request: ChoicesInput) -> ToolResult:
+        from shortlist.server.services.assistant_choices import permitted_choices
+
+        return await permitted_choices(state, principal(), **request.model_dump())
 
     @tool(
         "shortlist_list_templates",
@@ -518,8 +574,10 @@ def register_tools(server: MCPServer, state) -> None:
         "shortlist_plan_people",
         (
             "Prepare a change for one explicit person: enablement, nickname, recommendation "
-            "preferences, pause state or sharing management. Resolves every row affected by that "
-            "person and declares cleanup, rename, visibility and protective share-filter work. "
+            "preferences, pause state, sharing management or up to 25 sparse per-person row overrides. "
+            "An override can set muted, row_size or recent_count; omit a field to preserve it and use null "
+            "for a numeric value to inherit the row default. Resolves every row affected by that person and "
+            "declares cleanup, rename, visibility and protective share-filter work. "
             "Personal history is never returned. Changing sharing management can affect privacy "
             "and requires the corresponding permission."
         ),

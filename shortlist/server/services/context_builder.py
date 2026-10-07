@@ -89,7 +89,7 @@ from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 #: The season editor's PMS reads (#137). A page waits on them, so a stalled server fails in seconds rather
-#: than holding the tab for a run's `plex.timeout_s` — `api/system._INTERACTIVE_TIMEOUT_S`'s reasoning.
+#: than holding the tab for a run's `plex.timeout_s` — `connection_choices._INTERACTIVE_TIMEOUT_S`'s reasoning.
 #: A library scan pages through the PMS, so no single read in it is long.
 EDITOR_PLEX_TIMEOUT_S = 8
 

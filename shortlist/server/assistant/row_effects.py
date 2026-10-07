@@ -321,7 +321,7 @@ async def _run_step(state, step: dict) -> dict:
         configure_logging(payload["level"])
         return {"level": payload["level"]}
     if kind == "cache.invalidate":
-        from shortlist.server.api.system import invalidate_plex_reads
+        from shortlist.server.services.connection_choices import invalidate_plex_reads
 
         invalidate_plex_reads(state)
         return {"invalidated": True}

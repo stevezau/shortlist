@@ -6556,6 +6556,8 @@
         "type": "object"
       },
       "RowOverridePatch": {
+        "additionalProperties": false,
+        "description": "PATCH-shaped stored preference values shared by REST and assistant planning.",
         "properties": {
           "muted": {
             "anyOf": [

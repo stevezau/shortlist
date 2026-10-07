@@ -6,7 +6,6 @@ import type { CollectionInput } from "@/lib/types";
 export function generatedRowInputDefaults(): CollectionInput {
   return {
   "name": "",
-  "defer_rename": false,
   "build": "per_person",
   "audience": "everyone",
   "audience_user_ids": [],
@@ -84,7 +83,8 @@ export function generatedRowInputDefaults(): CollectionInput {
   "theme_days": null,
   "refresh_share": null,
   "repeat_cooldown_days": null,
-  "avoid_rows": null
+  "avoid_rows": null,
+  "defer_rename": false
 };
 }
 

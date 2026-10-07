@@ -38,7 +38,7 @@ from shortlist.engine.models import (
 from shortlist.engine.placeholders import fill_theme, refusal, uses_season, uses_theme
 from shortlist.engine.rows import row_shown_today
 from shortlist.engine.themes import ThemeSpec
-from shortlist.engine.web_guidance import INSTRUCTION_MODES, MAX_INSTRUCTIONS_CHARS, AiInstructions
+from shortlist.engine.web_guidance import INSTRUCTION_MODES, MAX_INSTRUCTIONS_CHARS
 from shortlist.server.api.row_changes import (
     POSTER_RESET,
     PRIVACY_SYNC,
@@ -83,6 +83,7 @@ from shortlist.server.services.row_mutations import (
     create_row_in_session,
     delete_row_in_session,
 )
+from shortlist.server.services.row_views import ai_instructions_view, live_avoid_rows
 from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
@@ -666,11 +667,6 @@ def _stored_instructions(body: AiInstructionsIn) -> dict[str, str]:
     return {"mode": body.mode, "text": body.text.strip()}
 
 
-def _ai_instructions_view(stored: object) -> dict[str, str]:
-    parsed = AiInstructions.from_stored(stored)
-    return {"mode": parsed.mode, "text": parsed.text} if parsed else {"mode": "default", "text": ""}
-
-
 def _validate(body: CollectionIn) -> None:
     if body.ai_instructions.mode not in INSTRUCTION_MODES:
         raise HTTPException(status_code=422, detail="AI instructions must be default, add or own")
@@ -1146,7 +1142,7 @@ def _serialize(
         "hub_anchor": collection.hub_anchor or {},
         "library_keys": [str(k) for k in (collection.library_keys or [])],
         "poster": _poster_view(session, collection),
-        "ai_instructions": _ai_instructions_view(collection.prompt),
+        "ai_instructions": ai_instructions_view(collection.prompt),
         "theme_id": collection.theme_id,
         "theme_name": None if fixed_theme is None else fixed_theme.name,
         "theme_emoji": None if fixed_theme is None else fixed_theme.emoji or None,
@@ -1157,22 +1153,8 @@ def _serialize(
         "theme_days": collection.theme_days,
         "refresh_share": collection.refresh_share,
         "repeat_cooldown_days": collection.repeat_cooldown_days,
-        "avoid_rows": _live_avoid_rows(session, collection),
+        "avoid_rows": live_avoid_rows(session, collection),
     }
-
-
-def _live_avoid_rows(session: Session, collection: Collection) -> list[str] | None:
-    """The rows this row keeps out that still exist and are per-person. A row the owner deleted, or made
-    shared, since it was listed is dropped: it has no checkbox, and sending it back would be refused."""
-    if not collection.avoid_rows:
-        return None
-    live = {
-        slug
-        for (slug,) in session.query(Collection.slug).filter(
-            Collection.slug.in_(collection.avoid_rows), Collection.build == "per_person"
-        )
-    }
-    return [slug for slug in collection.avoid_rows if slug in live] or None
 
 
 def _reject_season_name_without_seasons(template: str, seasons: list[str], *, row_has_theme: bool = False) -> None:

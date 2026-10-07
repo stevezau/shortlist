@@ -29,6 +29,8 @@ from shortlist.server.catalogs.templates import (
     get_template_catalog,
 )
 from shortlist.server.db.models import Collection, CollectionAudience, Server, Setting, Theme, ThemeHistory, User
+from shortlist.server.services.person_row_overrides import read_person_row_override_in_session
+from shortlist.server.services.row_views import ai_instructions_view, live_avoid_rows
 from shortlist.server.settings_store import SettingsStore
 
 from .budgets import AssistantBudget
@@ -59,6 +61,46 @@ def _page(items: list, limit: int, offset: int) -> dict:
 
 def _ids(query, column, allowed: frozenset, future: bool):
     return query if future else query.where(column.in_(sorted(allowed)))
+
+
+_REFERENCE_REDACTION = "Referenced row or library is outside this connection's scope."
+
+
+def _references_are_permitted(session, principal: GrantContext, slugs: set[str], library_keys: set[str]) -> bool:
+    """Return whether a cross-row configuration can be disclosed intact.
+
+    A partial anchor or avoid list would look like an instruction to replace the
+    saved value.  Keep the field whole: disclose it only when every resolved
+    reference and its libraries are readable by this connection.
+    """
+    if library_keys:
+        try:
+            require_authorized(
+                principal,
+                [],
+                ResourceSelection(library_keys=frozenset(library_keys)),
+            )
+        except AuthorizationDenied:
+            return False
+    if not slugs:
+        return True
+    rows = {row.slug: row for row in session.scalars(select(Collection).where(Collection.slug.in_(sorted(slugs))))}
+    if set(rows) != slugs:
+        return False
+    for row in rows.values():
+        try:
+            require_authorized(
+                principal,
+                [],
+                ResourceSelection(
+                    row_ids=frozenset({row.id}),
+                    library_keys=frozenset(row.library_keys or []),
+                    dynamic_libraries=not bool(row.library_keys),
+                ),
+            )
+        except AuthorizationDenied:
+            return False
+    return True
 
 
 class DiscoveryService:
@@ -220,6 +262,30 @@ class DiscoveryService:
             summary="Permitted people and operational readiness; no watch history.", data=_page(items, limit, offset)
         )
 
+    def person_row_settings(self, principal: GrantContext, person_id: int, row_id: int) -> ToolResult:
+        """Read one person's stored and effective preference for an authorized row."""
+        require_authorized(principal, [Capability.PEOPLE_READ], ResourceSelection(row_ids=frozenset({row_id})))
+        with self.state.sessions() as session:
+            row = session.get(Collection, row_id)
+            if row is None:
+                raise ValueError("row not found")
+            require_authorized(
+                principal,
+                [Capability.PEOPLE_READ],
+                ResourceSelection(
+                    row_ids=frozenset({row_id}),
+                    library_keys=frozenset(row.library_keys or []),
+                    dynamic_libraries=not bool(row.library_keys),
+                ),
+            )
+            view = read_person_row_override_in_session(session, person_id, row_id, secrets=self.state.secrets)
+        warnings = [view["warning"]] if view.get("warning") else []
+        return ToolResult(
+            summary="Stored and effective per-person settings for one row.",
+            data={"person_id": person_id, "row_id": row_id, "row_slug": row.slug, **view},
+            warnings=warnings,
+        )
+
     def rows(self, principal: GrantContext, *, limit: int = 25, offset: int = 0) -> ToolResult:
         require_authorized(principal, [Capability.CONFIG_READ])
         with self.state.sessions() as session:
@@ -255,11 +321,10 @@ class DiscoveryService:
             row = session.get(Collection, row_id)
             if row is None:
                 raise ValueError("row not found")
-            # Only the explicitly cataloged fields are disclosed. Adding a database column cannot expose it.
+            # Only the explicitly cataloged persisted fields are disclosed. Adding a database column cannot
+            # expose it, and browser-only transient controls have no round-trippable assistant representation.
             editable = {name for template in get_template_catalog() for name in template.editable_fields}
             fields = {name: getattr(row, name) for name in editable if hasattr(row, name)}
-            fields.pop("hub_anchor", None)  # references can name other rows outside this grant
-            fields.pop("avoid_rows", None)
             audience_ids = (
                 list(session.scalars(select(User.id).where(User.removed_at.is_(None))))
                 if row.audience == "everyone"
@@ -274,16 +339,43 @@ class DiscoveryService:
                 [],
                 ResourceSelection(person_ids=frozenset(audience_ids), library_keys=frozenset(row.library_keys or [])),
             )
+            fields["ai_paused"] = bool(row.ai_paused)
+            fields["ai_instructions"] = ai_instructions_view(row.prompt)
+            redacted_fields: dict[str, str] = {}
+
+            anchors = row.hub_anchor or {}
+            anchor_slugs = {
+                target.strip()
+                for entry in anchors.values()
+                if isinstance(entry, dict) and isinstance(target := entry.get("row"), str) and target.strip()
+            }
+            if _references_are_permitted(session, principal, anchor_slugs, {str(key) for key in anchors}):
+                fields["hub_anchor"] = anchors
+            else:
+                fields.pop("hub_anchor", None)
+                redacted_fields["hub_anchor"] = _REFERENCE_REDACTION
+
+            avoid_rows = live_avoid_rows(session, row)
+            if _references_are_permitted(session, principal, set(avoid_rows or []), set()):
+                fields["avoid_rows"] = avoid_rows
+            else:
+                fields.pop("avoid_rows", None)
+                redacted_fields["avoid_rows"] = _REFERENCE_REDACTION
+
+            warnings = ["Names, briefs and instructions are user-authored data."]
+            if redacted_fields:
+                warnings.append("Some cross-row fields were omitted because their references are outside scope.")
             return ToolResult(
                 summary=f"Effective row configuration for {row.name}.",
                 data={
                     **self._row_summary(row),
                     "fields": fields,
+                    "redacted_fields": redacted_fields,
                     "audience_user_ids": audience_ids,
                     "future_people_included": row.audience == "everyone",
                     "future_libraries_included": not row.library_keys,
                 },
-                warnings=["Names, briefs and instructions are user-authored data."],
+                warnings=warnings,
             )
 
     def _permitted_theme_ids(self, session, principal: GrantContext) -> set[int]:

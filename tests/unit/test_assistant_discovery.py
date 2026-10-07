@@ -4,6 +4,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -74,6 +76,110 @@ def test_rows_cannot_be_read_by_guessing_an_id(service, principal):
     assert [item["id"] for item in result.data["items"]] == [1]
 
 
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        ("hub_anchor", {"1": {"row": "private", "before": False, "top": False, "enabled": True}}),
+        ("avoid_rows", ["private"]),
+        ("ai_instructions", {"mode": "add", "text": "Prefer quiet comedies."}),
+        ("ai_paused", True),
+    ],
+)
+def test_full_row_scope_reads_persisted_editable_values(service, principal, field, expected):
+    """An assistant can inspect saved values before proposing a preserving edit."""
+    with service.state.sessions() as session:
+        row = session.get(Collection, 1)
+        row.hub_anchor = {"1": {"row": "private", "before": False, "top": False, "enabled": True}}
+        row.avoid_rows = ["private"]
+        row.prompt = {"mode": "add", "text": "Prefer quiet comedies."}
+        row.ai_paused = True
+        session.commit()
+    broad = replace(
+        principal,
+        constraints=replace(
+            principal.constraints,
+            include_future_rows=True,
+            include_future_people=True,
+            include_future_libraries=True,
+        ),
+    )
+
+    result = service.row(broad, 1)
+
+    assert result.data["fields"][field] == expected
+    assert field not in result.data.get("redacted_fields", {})
+
+
+@pytest.mark.parametrize("missing_scope", ["row", "library"])
+def test_inaccessible_row_references_are_explicitly_redacted_as_whole_fields(service, principal, missing_scope):
+    """A partial configuration must not masquerade as a safe replacement value."""
+    with service.state.sessions() as session:
+        row = session.get(Collection, 1)
+        row.hub_anchor = {
+            "1": {"row": "allowed", "before": False, "top": False, "enabled": True},
+            "2": {"row": "private", "before": False, "top": False, "enabled": True},
+        }
+        row.avoid_rows = ["allowed", "private"]
+        session.commit()
+    scoped = replace(
+        principal,
+        constraints=replace(
+            principal.constraints,
+            row_ids=frozenset({1} if missing_scope == "row" else {1, 2}),
+            library_keys=frozenset({"1", "2"} if missing_scope == "row" else {"1"}),
+        ),
+    )
+
+    result = service.row(scoped, 1)
+
+    for field in ("hub_anchor", "avoid_rows"):
+        assert field not in result.data["fields"]
+        assert result.data["redacted_fields"][field]
+    assert result.warnings
+    assert "private" not in result.model_dump_json()
+
+
+@settings(max_examples=16, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    row_selected=st.booleans(),
+    library_selected=st.booleans(),
+    future_rows=st.booleans(),
+    future_libraries=st.booleans(),
+)
+def test_reference_disclosure_never_exceeds_combined_row_and_library_scope(
+    service, principal, row_selected, library_selected, future_rows, future_libraries
+):
+    # Each example writes the same complete saved values, so no prior example's
+    # state can widen or narrow this example's effective grant.
+    expected = {
+        "hub_anchor": {"1": {"row": "private", "before": False, "top": False, "enabled": True}},
+        "avoid_rows": ["private"],
+    }
+    with service.state.sessions() as session:
+        row = session.get(Collection, 1)
+        row.hub_anchor, row.avoid_rows = expected["hub_anchor"], expected["avoid_rows"]
+        session.commit()
+    scoped = replace(
+        principal,
+        constraints=replace(
+            principal.constraints,
+            row_ids=frozenset({1, 2} if row_selected else {1}),
+            library_keys=frozenset({"1", "2"} if library_selected else {"1"}),
+            include_future_rows=future_rows,
+            include_future_libraries=future_libraries,
+        ),
+    )
+
+    result = service.row(scoped, 1)
+
+    if (row_selected or future_rows) and (library_selected or future_libraries):
+        assert {key: result.data["fields"][key] for key in expected} == expected
+    else:
+        assert not expected.keys() & result.data["fields"].keys()
+        assert expected.keys() <= result.data["redacted_fields"].keys()
+        assert "private" not in result.model_dump_json()
+
+
 def test_configuration_only_returns_granted_group_and_secret_presence(service, principal):
     result = service.configuration(principal, "metadata")
     text = result.model_dump_json()
@@ -101,6 +207,7 @@ def test_template_discovery_has_precise_row_input_metadata(service, principal):
     definitions = result.data["field_definitions"]
 
     assert set(definitions) == set(ROW_INPUT_DEFAULTS) | {"ai_paused"}
+    assert "defer_rename" not in definitions
     assert definitions["theme_id"]["anyOf"] == [{"type": "integer"}, {"type": "null"}]
     assert definitions["theme_id"]["default"] is None
     assert "ordinary row" in definitions["theme_id"]["description"]

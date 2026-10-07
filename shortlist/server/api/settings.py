@@ -34,6 +34,7 @@ from shortlist.server.db.models import Server
 from shortlist.server.net_guard import BlockedUrl, check_url
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import actor_of, add_audit
+from shortlist.server.services.connection_choices import ArrNotConfigured, configured_arr_connection, read_arr_choices
 from shortlist.server.services.plex_reachability import error_text
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
@@ -717,25 +718,15 @@ async def arr_options(service: str, request: Request) -> dict:
     if service not in ("radarr", "sonarr"):
         raise HTTPException(status_code=404, detail=f"unknown service {service!r}")
     state = request.app.state
-    with state.sessions() as session:
-        store = SettingsStore(session, state.secrets)
-        url = (store.get(f"requests.{service}.url") or "").strip()
-        api_key = store.get(f"requests.{service}.apikey") or ""
-    if not url or not api_key:
-        raise HTTPException(status_code=409, detail=f"{service.title()} isn't connected yet")
-
-    def fetch() -> dict:
-        from shortlist.engine.clients.arr import make_arr_client
-        from shortlist.engine.models import ArrTarget
-
-        target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
-        client = make_arr_client(service, target)
-        return {"quality_profiles": client.quality_profiles(), "root_folders": client.root_folders()}
+    try:
+        connection = configured_arr_connection(state, service)
+    except ArrNotConfigured as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
     try:
-        return await asyncio.get_running_loop().run_in_executor(None, fetch)
+        return await asyncio.get_running_loop().run_in_executor(None, read_arr_choices, service, connection)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=_service_error_detail(service.title(), url, e)) from e
+        raise HTTPException(status_code=502, detail=_service_error_detail(service.title(), connection.url, e)) from e
 
 
 class SeerrUserOut(PassthroughModel):

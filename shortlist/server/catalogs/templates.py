@@ -8,11 +8,12 @@ from shortlist.engine.seasons import PRESETS
 
 from .models import Capability, RowTemplateDefinition, SeasonPresetReference
 
-# Mirrors the complete CollectionInput shape used for a new row. Template values are deliberately
-# partial; effective_values resolves them over this mapping for assistant planning.
+# Mirrors the persistent CollectionInput shape used for a new assistant row. Browser-only transient
+# controls such as defer_rename are deliberately absent: template values must be round-trippable.
+# Template values are deliberately partial; effective_values resolves them over this mapping for
+# assistant planning.
 ROW_INPUT_DEFAULTS: dict[str, object] = {
     "name": "",
-    "defer_rename": False,
     "build": "per_person",
     "audience": "everyone",
     "audience_user_ids": [],
@@ -84,6 +85,12 @@ ROW_INPUT_DEFAULTS: dict[str, object] = {
     "repeat_cooldown_days": None,
     "avoid_rows": None,
 }
+
+# The browser's ``CollectionInput`` also carries this transient request control so its normal
+# create form can use the REST endpoint without supplying a special-case value.  It is not a
+# stored row field and must stay out of the assistant catalog, template effective values, and
+# row-plan input contract above.
+BROWSER_ROW_INPUT_DEFAULTS: dict[str, object] = {**ROW_INPUT_DEFAULTS, "defer_rename": False}
 
 # The MCP catalog needs one compact description of row values.  Keep this alongside the
 # accepted defaults so the list of names cannot drift from RowIntent's creation contract.
