@@ -2752,7 +2752,8 @@ async def get_theme_rotation(collection_id: int, request: Request) -> dict:
 async def set_up_next(collection_id: int, body: UpNextRequest, request: Request) -> dict:
     """Point a person's "Up next" at a saved theme, replacing any theme already queued. Changes no Plex state."""
     from shortlist.server.api.seasons import _off_loop
-    from shortlist.server.services.theme_rotation import _target_lock, queue_next
+    from shortlist.server.services.person_up_next import apply_up_next_in_session, prepare_up_next_in_session
+    from shortlist.server.services.theme_rotation import _target_lock
     from shortlist.server.services.theme_store import TitleClash
 
     state = request.app.state
@@ -2760,17 +2761,16 @@ async def set_up_next(collection_id: int, body: UpNextRequest, request: Request)
     def write() -> dict:
         # Under the person's rotation lock: a nightly pass may be mid-write for the same person.
         with _target_lock(collection_id, body.user_id), state.sessions() as session:
-            collection = _ai_row(session, collection_id)
-            if collection.theme_mode != "explore":
-                raise HTTPException(status_code=422, detail="Turn on Explore for this row first.")
-            person = _audience_person(session, collection, body.user_id)
-            theme = session.get(Theme, body.theme_id)
-            if theme is None:
-                raise HTTPException(status_code=404, detail="theme not found")
             try:
-                queued = queue_next(session, collection, person.id, theme, datetime.now(UTC), secrets=state.secrets)
-            except TitleClash as e:
-                raise HTTPException(status_code=422, detail=str(e)) from None
+                selection = prepare_up_next_in_session(
+                    session, collection_id, body.user_id, body.theme_id, secrets=state.secrets
+                )
+                queued = apply_up_next_in_session(session, selection)
+            except LookupError as error:
+                raise HTTPException(status_code=404, detail=str(error)) from None
+            except (TitleClash, ValueError) as error:
+                raise HTTPException(status_code=422, detail=str(error)) from None
+            collection, person, theme = selection.collection, selection.person, selection.theme
             add_audit(
                 session,
                 "collection.up_next",

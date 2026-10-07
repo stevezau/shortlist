@@ -9,6 +9,12 @@ GUIDES = {
                 " two servers on one database."
             ),
             (
+                "Use the advertised tools and catalogs as the supported configuration contract. MCP does not "
+                "expose every owner API. Custom poster uploads, backup and restore, watching-account transfer "
+                "and undo, notification test sends, owner support diagnostics and uninstall remain owner or "
+                "deployment actions. Explain the handoff and resume after it; never substitute the owner API token."
+            ),
+            (
                 "If no Plex owner is linked, complete ownership verification in Shortlist's browser setup. "
                 "MCP cannot claim an unconfigured installation."
             ),
@@ -80,6 +86,12 @@ GUIDES = {
             ),
             "Provider generation, history disclosure and acquiring missing media each need separate permission.",
             (
+                "For a per-person Explore row, plan_person can set up_next_theme_id inside row_overrides to "
+                "select an existing saved theme. This queues a future choice without generation or immediate "
+                "Plex delivery. Inspect person-row settings when personal theme disclosure is permitted; "
+                "a redacted up_next field does not mean an applied selection failed."
+            ),
+            (
                 "For an immediate run or preview, plan explicit max_provider_calls and max_output_tokens. "
                 "Real AI posters also need max_images; automatic requests need max_acquisitions. "
                 "The whole provider-call allowance is reserved from the connection lifetime quota, even "
@@ -149,6 +161,11 @@ GUIDES = {
                 "continues to keep Plex consistent."
             ),
             "Credentials and grant administration stay in the owner's browser. An assistant cannot authorize itself.",
+            (
+                "The Owner automation preset still has these boundaries. An unsupported operation is not "
+                "made available by exact approval of another change. Releasing an uncertain acquisition for "
+                "retry requires owner inspection because it could repeat an external request."
+            ),
         ],
     },
     "troubleshooting": {

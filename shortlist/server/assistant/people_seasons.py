@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack, contextmanager
 from datetime import date, datetime
 from typing import Literal
 
 from pydantic import ConfigDict, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
 from shortlist.server.api.seasons import CollectionIO, DateRuleIO, PickIO, SeasonIn, TagIO
 from shortlist.server.api.users import BlockSeedBody, UserPatch, UserPrefs
-from shortlist.server.db.models import Collection, CollectionAudience, CollectionUserOverride, SeasonDef, Setting, User
+from shortlist.server.db.models import (
+    Collection,
+    CollectionAudience,
+    CollectionUserOverride,
+    SeasonDef,
+    Setting,
+    Theme,
+    ThemeHistory,
+    User,
+)
 from shortlist.server.services import context_builder
 from shortlist.server.services.person_changes import apply_person_in_session, prepare_person_in_session
 from shortlist.server.services.person_row_overrides import (
@@ -18,7 +28,9 @@ from shortlist.server.services.person_row_overrides import (
     apply_person_row_override_in_session,
     prepare_person_row_override_in_session,
 )
+from shortlist.server.services.person_up_next import apply_up_next_in_session, prepare_up_next_in_session
 from shortlist.server.services.season_changes import apply_season_in_session, prepare_season_in_session
+from shortlist.server.services.theme_store import TitleClash
 
 from .changes import AccessRequirements, DomainPlan, DomainResult, fingerprint
 from .contracts import StrictModel
@@ -43,11 +55,18 @@ class PersonRowOverride(RowOverridePatch, StrictModel):
     """One person's sparse settings for one applicable per-person row."""
 
     row_id: int = Field(gt=0)
+    up_next_theme_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="A saved theme to queue for this person's Explore row; omit to leave it unchanged.",
+    )
 
     @model_validator(mode="after")
     def values_are_present(self):
+        if "up_next_theme_id" in self.model_fields_set and self.up_next_theme_id is None:
+            raise ValueError("up_next_theme_id selects a saved theme; omit it instead of null")
         if not self.model_fields_set - {"row_id"}:
-            raise ValueError("row_overrides entries require muted, row_size or recent_count")
+            raise ValueError("row_overrides entries require muted, row_size, recent_count or up_next_theme_id")
         return self
 
 
@@ -102,10 +121,13 @@ class SeasonsIntent(StrictModel):
         return self
 
 
-def _snapshot(session, model) -> str:
+def _snapshot(session, model, *, where=None) -> str:
     # Hash complete authoritative state, including private fields, without returning it to the assistant.
     records = []
-    for row in session.scalars(select(model).order_by(*model.__table__.primary_key.columns)):
+    query = select(model).order_by(*model.__table__.primary_key.columns)
+    if where is not None:
+        query = query.where(where)
+    for row in session.scalars(query):
         record = {}
         for column in model.__table__.columns:
             value = getattr(row, column.name)
@@ -131,6 +153,38 @@ def _dependencies(session) -> dict[str, str]:
 class PeopleAdapter:
     kind = "people"
 
+    def __init__(self, secrets=None) -> None:
+        self.secrets = secrets
+
+    @contextmanager
+    def transaction_lock(self, normalized_intent: dict):
+        from shortlist.server.services.theme_rotation import _target_lock
+
+        body = PeopleIntent.model_validate(normalized_intent)
+        with ExitStack() as locks:
+            for row_id in sorted(override.row_id for override in body.row_overrides if override.up_next_theme_id):
+                locks.enter_context(_target_lock(row_id, body.person_id))
+            yield
+
+    def _up_next(self, session, body: PeopleIntent):
+        selections = []
+        for override in body.row_overrides:
+            if override.up_next_theme_id is None:
+                continue
+            try:
+                selections.append(
+                    prepare_up_next_in_session(
+                        session, override.row_id, body.person_id, override.up_next_theme_id, secrets=self.secrets
+                    )
+                )
+            except TitleClash:
+                # The owner may see which private sibling collides; a proposing
+                # connection must not learn its title before authorization.
+                raise ValueError("The selected theme conflicts with another row title.") from None
+            except LookupError as error:
+                raise ValueError(str(error)) from None
+        return selections
+
     def prepare(self, session, intent: dict) -> DomainPlan:
         from .row_effects import convergence_effect
 
@@ -142,11 +196,12 @@ class PeopleAdapter:
                 body.person_id,
                 override.row_id,
                 RowOverridePatch.model_validate(
-                    override.model_dump(mode="json", exclude={"row_id"}, exclude_unset=True)
+                    override.model_dump(mode="json", exclude={"row_id", "up_next_theme_id"}, exclude_unset=True)
                 ),
             )
             for override in body.row_overrides
         ]
+        selections = self._up_next(session, body)
         # Person-wide changes can affect any row they receive. Share-management changes also change
         # whether this person sees other people's rows, so every extant row belongs in the contract.
         rows = (
@@ -175,14 +230,43 @@ class PeopleAdapter:
         steps = tuple(step for mutation in (person_mutation, *override_mutations) for step in mutation.steps)
         if any(step["kind"] == "row.reconcile" for step in steps):
             capabilities.add("runs.execute")
+        dependencies = _dependencies(session)
+        if selections:
+            capabilities.add("themes.write")
+            target_history = and_(
+                ThemeHistory.collection_id.in_([selection.collection.id for selection in selections]),
+                ThemeHistory.user_id == body.person_id,
+                ThemeHistory.state.in_(("current", "next")),
+            )
+            selected_theme_ids = {selection.theme.id for selection in selections}
+            selected_theme_ids.update(selection.collection.theme_id for selection in selections)
+            selected_theme_ids.update(
+                session.scalars(
+                    select(ThemeHistory.theme_id).where(
+                        target_history,
+                        ThemeHistory.theme_id.is_not(None),
+                    )
+                )
+            )
+            dependencies["up_next_themes"] = _snapshot(session, Theme, where=Theme.id.in_(selected_theme_ids))
+            dependencies["up_next_history"] = _snapshot(session, ThemeHistory, where=target_history)
+            diff["up_next"] = [
+                {"row_id": selection.collection.id, "person_id": body.person_id, "theme_id": selection.theme.id}
+                for selection in selections
+            ]
+        libraries = {str(key) for row in rows for key in row.library_keys}
+        if selections:
+            libraries.update(
+                str(source["section_key"]) for selection in selections for source in selection.theme.collections or []
+            )
         return DomainPlan(
             normalized_intent=body.model_dump(mode="json", exclude_unset=True),
-            dependencies=_dependencies(session),
+            dependencies=dependencies,
             requirements=AccessRequirements(
                 capabilities=tuple(sorted(capabilities)),
                 row_ids=tuple(row.id for row in rows),
                 person_ids=(body.person_id,),
-                library_keys=tuple(sorted({str(key) for row in rows for key in row.library_keys})),
+                library_keys=tuple(sorted(libraries)),
                 dynamic_libraries=any(not row.library_keys for row in rows),
                 batch_size=max(1, len(override_mutations)),
             ),
@@ -204,7 +288,7 @@ class PeopleAdapter:
                 body.person_id,
                 override.row_id,
                 RowOverridePatch.model_validate(
-                    override.model_dump(mode="json", exclude={"row_id"}, exclude_unset=True)
+                    override.model_dump(mode="json", exclude={"row_id", "up_next_theme_id"}, exclude_unset=True)
                 ),
             )
             for override in body.row_overrides
@@ -212,7 +296,12 @@ class PeopleAdapter:
         apply_person_in_session(session, person_mutation)
         for mutation in override_mutations:
             apply_person_row_override_in_session(session, mutation)
+        selections = self._up_next(session, body)
+        for selection in selections:
+            apply_up_next_in_session(session, selection)
         changed_fields = sorted(person_mutation.changed)
+        if selections:
+            changed_fields.append("up_next")
         if override_mutations:
             changed_fields.append("row_overrides")
         return DomainResult(
@@ -220,6 +309,9 @@ class PeopleAdapter:
             audit_diff={
                 "person_id": body.person_id,
                 "changed_fields": changed_fields,
+                "up_next": [
+                    {"row_id": selection.collection.id, "theme_id": selection.theme.id} for selection in selections
+                ],
                 "row_overrides": [
                     {"row_id": mutation.collection_id, "changed_fields": sorted(mutation.changed)}
                     for mutation in override_mutations

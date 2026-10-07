@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field, model_validator
 from sqlalchemy import select
 
+from shortlist.server.api.seasons import CollectionIO, TagIO
 from shortlist.server.api.themes import RulesIO, ThemeIn, ThemePickIO, ThemeSaveIn, _refuse_unusable
 from shortlist.server.assistant_auth import Capability
 from shortlist.server.db.models import CacheRow, Collection, CollectionAudience, Theme, ThemeHistory, User
@@ -28,6 +29,14 @@ class AssistantPick(ThemePickIO):
     origin: Literal["owner"] = "owner"
 
 
+class AssistantTag(TagIO):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class AssistantCollection(CollectionIO):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
 class AssistantTheme(StrictModel):
     name: str = Field(min_length=1, max_length=60)
     emoji: str | None = Field(default=None, max_length=8)
@@ -36,8 +45,10 @@ class AssistantTheme(StrictModel):
     )
     media: list[Literal["movie", "show"]] = Field(min_length=1, max_length=2)
     picks: list[AssistantPick] = Field(default_factory=list, max_length=200)
+    tags: list[AssistantTag] = Field(default_factory=list, max_length=20)
     genres: list[str] = Field(default_factory=list, max_length=10)
     excluded_genres: list[str] = Field(default_factory=list, max_length=10)
+    collections: list[AssistantCollection] = Field(default_factory=list, max_length=10)
     rules: AssistantRules = Field(default_factory=AssistantRules)
 
 
@@ -55,6 +66,13 @@ class ThemeIntent(StrictModel):
 
 def _resolved_body(session, intent: ThemeIntent) -> ThemeSaveIn:
     data = intent.draft.model_dump(mode="json")
+    existing = session.get(Theme, intent.theme_id) if intent.theme_id else None
+    if existing is not None:
+        # Clients predating source support omit these fields. Preserve that content;
+        # only an explicit empty list clears it.
+        for field in ("tags", "collections"):
+            if field not in intent.draft.model_fields_set:
+                data[field] = getattr(existing, field) or []
     for pick in data["picks"]:
         row = session.get(CacheRow, ("assistant_titles", f"{pick['media']}:{pick['tmdb_id']}"))
         if row is None or row.expires_at <= time.time():
@@ -126,14 +144,21 @@ class ThemeAdapter:
             "roster": fingerprint(sorted(people)),
             "resolved_draft": fingerprint(resolved.draft.model_dump(mode="json")),
         }
+        normalized = body.model_dump(mode="json")
+        resolved_sources = resolved.draft.model_dump(mode="json", include={"tags", "collections"})
+        normalized["draft"].update(resolved_sources)
+        libraries = {str(key) for row in known_rows.values() for key in row.library_keys or []}
+        libraries.update(source.section_key for source in resolved.draft.collections)
+        if existing is not None:
+            libraries.update(str(source["section_key"]) for source in existing.collections or [])
         return DomainPlan(
-            normalized_intent=body.model_dump(mode="json"),
+            normalized_intent=normalized,
             dependencies=dependencies,
             requirements=AccessRequirements(
                 capabilities=tuple(sorted(capabilities)),
                 row_ids=tuple(sorted(known_rows)),
                 person_ids=tuple(sorted(people)),
-                library_keys=tuple(sorted({str(key) for row in known_rows.values() for key in row.library_keys or []})),
+                library_keys=tuple(sorted(libraries)),
                 dynamic_rows=bool(existing and not known_rows),
                 dynamic_audience=any(row.audience == "everyone" for row in known_rows.values()),
                 dynamic_libraries=any(not row.library_keys for row in known_rows.values()),

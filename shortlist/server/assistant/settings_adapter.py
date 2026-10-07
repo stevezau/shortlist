@@ -67,8 +67,11 @@ def validate_assistant_values(intent: SettingsIntent) -> None:
         }[definition.value_type]()
         if not valid:
             raise ValueError(f"{key} requires {definition.value_type.value}.")
-        if definition.options and value not in [option.value for option in definition.options]:
-            raise ValueError(f"{key} is not one of the catalog's supported options.")
+        if definition.options:
+            options = [option.value for option in definition.options]
+            selected = value if definition.value_type in {ValueType.STRING_LIST, ValueType.INTEGER_LIST} else [value]
+            if any(item not in options for item in selected):
+                raise ValueError(f"{key} is not one of the catalog's supported options.")
         if definition.range is not None and not definition.range.minimum <= value <= definition.range.maximum:
             raise ValueError(f"{key} is outside its supported range.")
 

@@ -74,6 +74,12 @@ is a separate plan. `ai_paused: true` prevents automatic theme top-ups only for 
 or trusted supplied theme: use `shortlist_plan_setup` or give `shortlist_plan_row` a valid
 `theme_id`; omit it for a non-themed row.
 
+Theme drafts also accept up to 20 TMDB keyword `tags` (`id`, `name`) and 10 Plex `collections`
+(`section_key`, `section_title`, `title`), using the owner editor's source fields. Collection sources
+require their libraries in the connection's scope; an exact approval does not grant ongoing read
+access to them. `shortlist_get_theme` omits collections outside that scope. On a theme update,
+omitting `tags` or `collections` preserves those sources; an explicit empty list clears them.
+
 Each saved row ID identifies one row and is never reassigned after deletion. Existing historical
 IDs remain reserved during upgrades, and retained history or pending cleanup also reserves the
 row's slug. Discover a replacement row again and prepare a new plan for its own ID.
@@ -87,13 +93,23 @@ the plan's `future_scope` still describes only the intended resulting row.
 **People, libraries and seasons:** `shortlist_list_people`, `shortlist_list_libraries`,
 `shortlist_get_person_row_settings`, `shortlist_list_seasons`, `shortlist_plan_people` and
 `shortlist_plan_season`. Every current and future person is available to an approved connection;
-row audiences and sharing rules still apply. The per-person settings read returns only a permitted
-person's stored and effective row overrides, never history or picks. Row and library scope applies
+row audiences and sharing rules still apply. The per-person settings read returns a permitted
+person's stored and effective row overrides. Queued Explore theme metadata also needs configuration
+read, history export and access to that theme's source libraries; otherwise it is omitted with a
+redaction explanation. The read returns no watch records or picks. Row and library scope applies
 to resolved effects, including indirect effects. `shortlist_plan_people` accepts at most 25 sparse
 `row_overrides` entries for that one person: omit a field to preserve it, and use `null` for a
 numeric override to restore row inheritance. Disabled people and per-person rows can be
 preconfigured without enabling delivery. A legacy shared-row record returns `supported: false`,
 its stored values and no effective values; it is read-only through MCP.
+
+For an eligible person on an Explore row, a `row_overrides` entry can set `up_next_theme_id` to a
+saved theme. This replaces the queued selection without promoting it, calling a provider or writing
+to Plex. Omit the field to leave the selection unchanged; `null` does not clear it. The plan validates
+the audience, theme and title conflicts, and rejects changed targets or sources before applying.
+Selection needs the target person's row write permissions, theme write and access to the selected
+theme's source libraries. It does not grant permission to read personal theme details. Paid
+**Regenerate up next** remains an owner-browser action.
 
 **Generation and execution:** `shortlist_generate_theme`, `shortlist_plan_schedule`,
 `shortlist_preview_row` and `shortlist_plan_run`. Provider generation creates a draft through a

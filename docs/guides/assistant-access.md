@@ -2,7 +2,7 @@
 title: Connect an assistant
 description: Enable Shortlist's MCP endpoint, give an assistant a named and limited grant, and connect local or hosted clients without sharing the owner API token.
 heading: Connect an assistant
-updated: 2026-10-05
+updated: 2026-10-07
 ---
 
 Assistant access is optional. It gives an MCP client a named connection to Shortlist, with its own
@@ -12,6 +12,33 @@ settings, prepare changes and carry out the work its grant allows.
 This is separate from **Settings → System → API access**. That API token has the owner's full power.
 Never put it in an MCP client. Assistant credentials begin with `shla_` and work only at the MCP
 endpoint.
+
+## What an assistant can manage
+
+MCP supports assisted setup after Plex ownership is linked, the advertised non-secret settings,
+people and their row overrides, saved themes, rows, audiences, seasons, schedules, recommendation
+previews, authorized runs, requests and supported maintenance. Use the current tool schemas and
+catalogs to discover the available fields and operations. A configured integration still needs a
+successful service test; a saved row still needs a successful run and delivery check.
+
+For an existing per-person Explore row, `shortlist_plan_people` can select a saved
+`up_next_theme_id` in `row_overrides`. This replaces the queued theme without generating a new
+theme or changing Plex immediately. Inspect it with `shortlist_get_person_row_settings` when
+the connection also permits the personal theme details; a redacted read does not mean the
+selection failed. Saving an assistant-authored theme and asking Shortlist to generate one are
+separate workflows, with separate provider-call permission for the latter.
+
+MCP does not expose every owner API or browser action. Installation, deployment timezone and URL,
+Plex ownership, secret entry, connection permissions and exact approvals require the owner or
+deployment operator. Custom poster file uploads, backup and restore, watching-account transfer
+and undo, notification test sends, owner support diagnostics and uninstall also remain owner or
+deployment actions. Releasing an uncertain acquisition for retry requires owner inspection because
+a retry could repeat a request.
+
+An assistant can explain those steps and continue after the owner completes them. It must not
+claim to have performed an unsupported action, use the unrestricted owner API token as a fallback,
+or treat one approved change as authority for unrelated actions. These boundaries apply even to
+the **Owner automation** preset.
 
 ## Before connecting
 

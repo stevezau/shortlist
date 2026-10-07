@@ -51,7 +51,7 @@ def build_change_service(state) -> ChangeService:
     adapters = [
         SettingsAdapter(state.secrets),
         ThemeAdapter(state.secrets),
-        PeopleAdapter(),
+        PeopleAdapter(state.secrets),
         SeasonsAdapter(state),
         RowAdapter(state),
         RequestAdapter(state),

@@ -368,6 +368,39 @@ class DiscoveryService:
                 ),
             )
             view = read_person_row_override_in_session(session, person_id, row_id, secrets=self.state.secrets)
+            if row.theme_id is not None and row.theme_mode == "explore":
+                try:
+                    require_authorized(principal, [Capability.CONFIG_READ, Capability.HISTORY_EXPORT])
+                    upcoming = session.scalar(
+                        select(ThemeHistory)
+                        .where(
+                            ThemeHistory.collection_id == row_id,
+                            ThemeHistory.user_id == person_id,
+                            ThemeHistory.state == "next",
+                        )
+                        .order_by(ThemeHistory.id.desc())
+                    )
+                    if upcoming is None:
+                        view["up_next"] = None
+                    else:
+                        if upcoming.theme_id not in self._permitted_theme_ids(session, principal):
+                            raise AuthorizationDenied("theme is outside this grant")
+                        theme = session.get(Theme, upcoming.theme_id)
+                        if theme is None:
+                            raise AuthorizationDenied("theme is no longer available")
+                        require_authorized(
+                            principal,
+                            [],
+                            ResourceSelection(
+                                library_keys=frozenset(str(source["section_key"]) for source in theme.collections or [])
+                            ),
+                        )
+                        view["up_next"] = {"theme_id": theme.id, "name": theme.name, "revision": theme.content_hash}
+                except AuthorizationDenied:
+                    view["redacted_fields"] = {
+                        "up_next": "Up-next details require configuration and history-export permission, "
+                        "plus access to the saved theme and its source libraries."
+                    }
         warnings = [view["warning"]] if view.get("warning") else []
         return ToolResult(
             summary="Stored and effective per-person settings for one row.",
@@ -523,6 +556,19 @@ class DiscoveryService:
             row = session.get(Theme, theme_id)
             if row is None:
                 raise ValueError("theme not found")
+            sources: dict = {"tags": row.tags or []}
+            try:
+                require_authorized(
+                    principal,
+                    [],
+                    ResourceSelection(
+                        library_keys=frozenset(str(source["section_key"]) for source in row.collections or [])
+                    ),
+                )
+            except AuthorizationDenied:
+                sources["redacted_fields"] = {"collections": _REFERENCE_REDACTION}
+            else:
+                sources["collections"] = row.collections or []
             return ToolResult(
                 summary=f"Saved theme: {row.name}.",
                 data={
@@ -536,6 +582,7 @@ class DiscoveryService:
                     "excluded_genres": row.excluded_genres,
                     "rules": row.rules,
                     "revision": row.content_hash,
+                    **sources,
                 },
                 warnings=["Saved picks do not imply library availability or successful delivery."],
             )

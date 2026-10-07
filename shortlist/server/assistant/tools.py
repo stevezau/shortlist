@@ -449,7 +449,7 @@ def register_tools(server: MCPServer, state) -> None:
         read_only=False,
     )
     async def plan_theme(request: ThemeIntent) -> ToolResult:
-        return planned(principal(), "theme", request.model_dump(mode="json"))
+        return planned(principal(), "theme", request.model_dump(mode="json", exclude_unset=True))
 
     @tool(
         "shortlist_plan_setup",

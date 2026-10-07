@@ -6,7 +6,7 @@ import hashlib
 import json
 import secrets
 from collections.abc import Callable, Mapping
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
@@ -129,6 +129,13 @@ class ChangeAdapter(Protocol):
     def prepare(self, session: Session, intent: dict) -> DomainPlan: ...
 
     def apply(self, session: Session, intent: dict) -> DomainResult: ...
+
+
+@runtime_checkable
+class TransactionLocker(Protocol):
+    """Optional domain lock, acquired before SQLite and held through commit or rollback."""
+
+    def transaction_lock(self, normalized_intent: dict) -> AbstractContextManager[None]: ...
 
 
 @runtime_checkable
@@ -356,15 +363,35 @@ class ChangeService:
             session.commit()
             return self._change_view(change, can_apply=True)
 
+    @contextmanager
+    def _apply_transaction(self, principal: Principal, change_id: str):
+        # Rotation holds its target lock before opening a transaction. Waiting for
+        # that lock with BEGIN IMMEDIATE already held would invert the order.
+        with self.sessions() as lookup:
+            grant = self.policy.current_grant(lookup, principal, _utc(self.clock()))
+            change = self._owned(lookup, principal, change_id)
+            if change.operation_id is None:
+                self._valid(change, grant, _utc(self.clock()))
+            adapter = self._adapter(change.kind)
+            needs_lock = change.operation_id is None and isinstance(adapter, TransactionLocker)
+            intent = json.loads(_canonical(change.intent))
+            content_hash = change.content_hash
+        lock = adapter.transaction_lock(intent) if needs_lock else nullcontext()
+        with lock, self.sessions() as session:
+            session.execute(text("BEGIN IMMEDIATE"))
+            change = self._owned(session, principal, change_id)
+            if change.content_hash != content_hash:
+                raise ChangeError("stale_plan", "The stored plan changed while waiting; prepare a new plan.")
+            yield session
+
     def apply(self, principal: Principal, change_id: str, idempotency_key: str) -> dict:
         """Atomically authorize, mutate, audit and enqueue, or return an existing receipt."""
         from shortlist.server.services.jobs import enqueue_in_session
 
         if not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 128:
             raise ChangeError("invalid_selection", "An idempotency key of 1 to 128 characters is required.")
-        now = _utc(self.clock())
-        with self.sessions() as session:
-            session.execute(text("BEGIN IMMEDIATE"))
+        with self._apply_transaction(principal, change_id) as session:
+            now = _utc(self.clock())
             grant = self.policy.current_grant(session, principal, now)
             change = self._owned(session, principal, change_id)
             request_hash = fingerprint({"change_id": change.id, "content_hash": change.content_hash})
