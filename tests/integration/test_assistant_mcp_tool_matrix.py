@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -42,6 +43,7 @@ from shortlist.server.db.models import (
     Job,
     RequestCandidate,
     Run,
+    RunSharedRow,
     Server,
     Theme,
     User,
@@ -407,6 +409,66 @@ def _approve_owner_change(wire: McpWire, app, change_id: str) -> None:
     assert approved.json()["authorization"] == {"can_apply": True, "approved": True}
 
 
+def test_mcp_review_preview_is_useful_without_disclosing_ungranted_configuration(tmp_path, monkeypatch):
+    """An inspect/propose client can explain a draft while values await exact owner review."""
+    capabilities = frozenset({Capability.INSTANCE_READ, Capability.CHANGES_PREPARE})
+    with _wire_app(tmp_path, monkeypatch, capabilities=capabilities) as (wire, app, _state):
+        with app.state.sessions() as session:
+            session.get(Theme, 20).name = "UNGRANTED_THEME_NAME_SENTINEL"
+            session.get(Collection, 10).name = "UNGRANTED_ROW_NAME_SENTINEL"
+            session.commit()
+        response = wire.exercise(
+            [
+                (
+                    "shortlist_plan_row",
+                    {
+                        "action": "create",
+                        "template_id": "describe-a-row",
+                        "values": {
+                            "name": "Review-safe draft",
+                            "enabled": False,
+                            "schedule": "",
+                            "theme_id": 20,
+                            "theme_mode": "fixed",
+                            "ai_paused": True,
+                            "library_keys": ["1"],
+                        },
+                    },
+                )
+            ]
+        )["shortlist_plan_row"]
+        plan = response["data"]
+        assert plan["authorization"]["can_apply"] is False
+        assert plan["summary"] == {"message": "This change requires owner review."}
+        preview = plan["review_preview"]
+        assert preview["kind"] == "row" and preview["action"] == "create"
+        assert "row" in preview["requested_categories"]
+        assert "configuration_convergence" in preview["effect_categories"]
+        assert preview["cost_limits"] == {}
+        assert preview["requires_owner_review"] is True
+        assert set(preview) == {
+            "kind",
+            "action",
+            "requested_categories",
+            "effect_categories",
+            "cost_limits",
+            "requires_owner_review",
+        }
+        assert "UNGRANTED_" not in str(response)
+        assert "Review-safe draft" not in str(preview) and "theme_id" not in str(preview)
+        assert response["next_action"] == plan["review_url"]
+        assert plan["review_url"].endswith("/assistant/changes/" + plan["change_id"])
+        _approve_owner_change(wire, app, plan["change_id"])
+        approved = wire.exercise([("shortlist_get_change", {"change_id": plan["change_id"]})])["shortlist_get_change"][
+            "data"
+        ]
+        assert approved["authorization"] == {"can_apply": True, "approved": True}
+        # Exact approval authorizes this operation, not standing read access to its references.
+        assert approved["summary"] == {"message": "This change requires owner review."}
+        assert approved["review_preview"] == preview
+        assert "UNGRANTED_" not in str(approved)
+
+
 def test_mcp_sdk_discovery_connection_and_catalogue_matrix(tmp_path, monkeypatch):
     """Every read/connection tool reaches the real service through SDK framing."""
     _assert_inventory()
@@ -454,7 +516,14 @@ def test_mcp_sdk_discovery_connection_and_catalogue_matrix(tmp_path, monkeypatch
             assert session.get(CacheRow, ("assistant_connection", flow_id)).value["grant_id"] == instance["grant_id"]
         setup = data["shortlist_get_setup_status"]
         assert setup["ready"] is True
-        assert {check["id"] for check in setup["checks"] if check["ready"]} == {"plex_ownership", "metadata"}
+        assert {check["id"] for check in setup["checks"] if check["ready"]} == {
+            "plex_ownership",
+            "metadata",
+            "libraries",
+            "people",
+            "wizard_completion",
+        }
+        assert setup["credentials_ready"] and setup["discovery_ready"] and setup["setup_completed"]
         connection = data["shortlist_get_connection_status"]
         assert connection["service"] == "tmdb" and connection["status"] == "waiting_for_owner"
         assert connection["configured"] is True and connection["connectivity_verified"] is False
@@ -508,6 +577,38 @@ def test_mcp_sdk_discovery_connection_and_catalogue_matrix(tmp_path, monkeypatch
         diagnosis = data["shortlist_diagnose"]
         assert diagnosis["row"]["id"] == 10 and "The row is disabled." in diagnosis["checks"]
     assert EXERCISED_BY_GROUP["discovery"] <= wire.calls
+
+
+@pytest.mark.parametrize("hidden", ["people", "configuration"])
+def test_mcp_setup_status_distinguishes_denied_readiness_from_missing_setup(tmp_path, monkeypatch, hidden):
+    capabilities = ASSISTANT_CAPABILITIES - ({Capability.PEOPLE_READ} if hidden == "people" else set())
+    with _wire_app(tmp_path, monkeypatch, capabilities=frozenset(capabilities)) as (wire, app, _state):
+        if hidden == "configuration":
+            repository = app.state.assistant_auth.repository
+            grant = repository.find_grant_for_client("mcp-wire-matrix")
+            repository.replace_grant_authority(
+                grant.grant_id,
+                capabilities=grant.capabilities,
+                constraints=replace(grant.constraints, setting_groups=frozenset()),
+                expected_revision=grant.revision,
+            )
+        result = wire.exercise([("shortlist_get_setup_status", None)])["shortlist_get_setup_status"]
+        data = result["data"]
+        checks = {item["id"]: item for item in data["checks"]}
+        hidden_ids = (
+            {"people"} if hidden == "people" else {"plex_ownership", "metadata", "libraries", "wizard_completion"}
+        )
+        for name in hidden_ids:
+            assert checks[name]["ready"] is None
+            assert checks[name]["blocked_by"] == "missing_permission"
+            assert "permission" in checks[name]["action"].lower() or "access" in checks[name]["action"].lower()
+        for name in set(checks) - hidden_ids:
+            assert checks[name]["ready"] is True
+        assert data["ready"] is None and data["discovery_ready"] is None
+        assert data["credentials_ready"] is (True if hidden == "people" else None)
+        assert data["setup_completed"] is (True if hidden == "people" else None)
+        assert result["next_action"] == "shortlist_get_instance"
+        assert "Complete Plex login" not in str(result)
 
 
 def test_mcp_sdk_configured_choices_read_real_loopback_service_shapes(tmp_path, monkeypatch):
@@ -581,6 +682,130 @@ def test_mcp_sdk_configured_choices_read_real_loopback_service_shapes(tmp_path, 
         assert EXERCISED_BY_GROUP["choices"] <= wire.calls
     finally:
         boundary.stop()
+
+
+def test_mcp_sdk_curator_model_choices_use_real_saved_provider_http(tmp_path, monkeypatch):
+    provider = FastAPI()
+    calls = []
+
+    @provider.get("/v1/models")
+    def models(request: Request):
+        calls.append((request.method, request.url.path, request.headers.get("Authorization")))
+        return {
+            "object": "list",
+            "data": [
+                {"id": name, "object": "model", "created": 1, "owned_by": "fixture"}
+                for name in ("alpha", "beta", "gamma")
+            ],
+        }
+
+    boundary = _ThreadedServer(provider, _port())
+    boundary.start()
+    boundary.wait_until_up("/v1/models")
+    calls.clear()
+    try:
+        with _wire_app(tmp_path, monkeypatch) as (wire, app, _state):
+            url = f"http://127.0.0.1:{boundary.port}/v1"
+            with app.state.sessions() as session:
+                store = SettingsStore(session, app.state.secrets)
+                store.set("curator.provider", "openai_compatible")
+                store.set("curator.openai_base_url", url)
+                store.set("curator.api_key", "synthetic-model-key")
+                store.set("curator.model", "alpha")
+                session.commit()
+            repository = app.state.assistant_auth.repository
+            grant = repository.find_grant_for_client("mcp-wire-matrix")
+            repository.replace_grant_authority(
+                grant.grant_id,
+                capabilities=grant.capabilities,
+                constraints=replace(grant.constraints, destination_ids=frozenset({url})),
+                expected_revision=grant.revision,
+            )
+            schema = wire.schemas()["shortlist_get_choices"]
+            assert "curator_models" in str(schema)
+            result = wire.exercise(
+                [
+                    (
+                        "shortlist_get_choices",
+                        {
+                            "kind": "curator_models",
+                            "limit": 1,
+                            "offset": 1,
+                        },
+                    )
+                ]
+            )["shortlist_get_choices"]
+            assert result["data"] == {
+                "kind": "curator_models",
+                "provider": "openai_compatible",
+                "items": [{"kind": "curator_model", "id": "beta"}],
+                "next_offset": 2,
+                "total": 3,
+            }
+            assert calls == [("GET", "/v1/models", "Bearer synthetic-model-key")]
+            for extra in ({"library_key": "1"}, {"url": "https://unapproved.test"}, {"api_key": "secret"}):
+                wire.expect_error("shortlist_get_choices", {"kind": "curator_models", **extra})
+            assert len(calls) == 1
+    finally:
+        boundary.stop()
+
+
+def test_mcp_sdk_curator_models_never_follow_redirect_outside_approved_destination(tmp_path, monkeypatch):
+    from fastapi.responses import RedirectResponse
+
+    remote = FastAPI()
+    contacted = []
+
+    @remote.get("/v1/models")
+    def unapproved(request: Request):
+        contacted.append(request.url.path)
+        return {
+            "object": "list",
+            "data": [{"id": "unapproved-model", "object": "model", "created": 1, "owned_by": "fixture"}],
+        }
+
+    target = _ThreadedServer(remote, _port())
+    target.start()
+    target.wait_until_up("/v1/models")
+    contacted.clear()
+    source = FastAPI()
+
+    @source.get("/v1/models")
+    def redirect():
+        return RedirectResponse(f"http://127.0.0.1:{target.port}/v1/models", status_code=307)
+
+    boundary = _ThreadedServer(source, _port())
+    boundary.start()
+    # A redirect is itself the expected source response, not a readiness failure.
+    boundary.wait_until_up("/docs")
+    try:
+        with _wire_app(tmp_path, monkeypatch) as (wire, app, _state):
+            url = f"http://127.0.0.1:{boundary.port}/v1"
+            with app.state.sessions() as session:
+                store = SettingsStore(session, app.state.secrets)
+                for key, value in {
+                    "curator.provider": "openai_compatible",
+                    "curator.openai_base_url": url,
+                    "curator.api_key": "synthetic-model-key",
+                    "curator.model": "saved-model",
+                }.items():
+                    store.set(key, value)
+                session.commit()
+            repository = app.state.assistant_auth.repository
+            grant = repository.find_grant_for_client("mcp-wire-matrix")
+            repository.replace_grant_authority(
+                grant.grant_id,
+                capabilities=grant.capabilities,
+                constraints=replace(grant.constraints, destination_ids=frozenset({url})),
+                expected_revision=grant.revision,
+            )
+            result = wire.exercise([("shortlist_get_choices", {"kind": "curator_models"})])["shortlist_get_choices"]
+            assert contacted == [], "The model read followed a redirect to an unapproved destination"
+            assert result["data"]["items"] == []
+            assert result["data"]["availability"] == "unavailable"
+    finally:
+        boundary.stop()
+        target.stop()
 
 
 def test_mcp_sdk_plan_apply_and_real_worker_matrix(tmp_path, monkeypatch):
@@ -1463,3 +1688,427 @@ def test_mcp_sdk_verified_paused_theme_setup_needs_no_ai_provider_or_capability(
         )["shortlist_plan_row"]["data"]
         assert arbitrary_theme["authorization"]["can_apply"] is False
         assert Capability.AI_GENERATE.value in arbitrary_theme["required_capabilities"]
+
+
+@pytest.mark.parametrize("contract_part", ["scope", "skip", "privacy"])
+def test_mcp_sdk_run_report_distinguishes_build_scope_and_safe_outcomes(tmp_path, monkeypatch, contract_part):
+    """A completed real run explains safe blockers without exporting audience history or raw errors."""
+    with _wire_app(tmp_path, monkeypatch, configured_provider=False) as (wire, app, state):
+        with app.state.sessions() as session:
+            for person in session.query(User):
+                person.enabled = person.username in {"sarah", "mike"}
+            people = [person.id for person in session.query(User).filter(User.enabled.is_(True))]
+            row = Collection(
+                slug="shared-no-overlap",
+                name="Shared common viewing",
+                build="shared",
+                audience="everyone",
+                enabled=True,
+                library_keys=["1", "2"],
+                min_watchers=2,
+                schedule="",
+            )
+            session.add(row)
+            session.commit()
+            selected_id = row.id
+            affected_ids = sorted(row.id for row in session.query(Collection))
+        plan = wire.exercise(
+            [
+                (
+                    "shortlist_plan_run",
+                    {
+                        "row_ids": [selected_id],
+                        "person_ids": people,
+                        "include_shared": True,
+                        "dry_run": False,
+                        "max_provider_calls": 0,
+                        "max_images": 0,
+                        "max_acquisitions": 0,
+                    },
+                )
+            ]
+        )["shortlist_plan_run"]["data"]
+        operation = _wait_for_operation(wire, _apply(wire, plan["change_id"], "safe-shared-report")["operation_id"])
+        assert operation["status"] == "completed"
+        run_id = operation["result"]["run_id"]
+        assert state.collections == {}
+        with app.state.sessions() as session:
+            shared = session.get(RunSharedRow, (run_id, "shared-no-overlap"))
+            assert shared.status == "skipped"
+            assert shared.reason.startswith("No title has been watched by 2 or more")
+            if contract_part == "privacy":
+                run = session.get(Run, run_id)
+                run.stats = {**run.stats, "unhideable_rows": {"PRIVATE_ACCOUNT_SENTINEL": [998877]}}
+                session.commit()
+        report = wire.exercise([("shortlist_get_run_report", {"id": run_id})])["shortlist_get_run_report"]["data"]
+        if contract_part == "scope":
+            assert report["selected_row_ids"] == [selected_id]
+            assert report["affected_row_ids"] == affected_ids
+            assert report["row_ids"] == affected_ids  # Backward-compatible footprint.
+        elif contract_part == "privacy":
+            assert report["privacy_warnings"][0]["code"] == "plex_restriction_profile"
+            assert report["privacy_warnings"][0]["guidance"]
+            assert "PRIVATE_ACCOUNT_SENTINEL" not in str(report) and "998877" not in str(report)
+        else:
+            shared_view = report["shared_rows"][0]
+            assert shared_view["row_id"] == selected_id
+            assert shared_view["row_slug"] == "shared-no-overlap"
+            assert shared_view["status"] == "skipped"
+            assert shared_view["reason_code"] == "insufficient_common_history"
+            assert shared_view["guidance"]
+            assert "reason" not in shared_view and "error" not in shared_view
+            listed = wire.exercise([("shortlist_list_runs", {"limit": 100})])["shortlist_list_runs"]["data"]["items"]
+            assert (
+                next(item for item in listed if item["run_id"] == run_id)["shared_rows"][0]["reason_code"]
+                == "insufficient_common_history"
+            )
+            with app.state.sessions() as session:
+                shared = session.get(RunSharedRow, (run_id, "shared-no-overlap"))
+                shared.reason = "PRIVATE_HISTORY_SENTINEL upstream bearer=PRIVATE_CREDENTIAL_SENTINEL"
+                shared.error = "PRIVATE_VENDOR_SENTINEL"
+                session.commit()
+            safe = wire.exercise(
+                [
+                    ("shortlist_get_run_report", {"id": run_id}),
+                    ("shortlist_list_runs", {"limit": 100}),
+                ]
+            )
+            assert "PRIVATE_" not in str(safe)
+            unknown = safe["shortlist_get_run_report"]["data"]["shared_rows"][0]
+            assert unknown["reason_code"] == "owner_review_required"
+            assert unknown["guidance"]
+
+
+@pytest.mark.parametrize("qualifying_metadata", [False, True])
+def test_mcp_sdk_seasonal_run_reports_zero_picks_and_delivers_only_qualifying_titles(
+    tmp_path, monkeypatch, qualifying_metadata
+):
+    """A real seasonal worker distinguishes empty content from a qualifying Halloween delivery."""
+    from fastapi.responses import Response
+
+    from tests.e2e.conftest import FAKE_TMDB_TAGS, FakeTmdbTag
+
+    monkeypatch.setattr(
+        "shortlist.server.services.context_builder.local_now", lambda: datetime(2026, 10, 15, tzinfo=UTC)
+    )
+    if qualifying_metadata:
+        # Explicit external-data scenario: the fake metadata service lists Se7en under Halloween.
+        monkeypatch.setitem(FAKE_TMDB_TAGS, 3335, FakeTmdbTag("halloween", movies_in_library=(9009,)))
+    uploaded_posters = []
+    original_fake = make_fake_plex
+
+    def plex_with_poster_boundary(state):
+        fake = original_fake(state)
+
+        @fake.post("/library/metadata/{rating_key}/posters")
+        async def capture_poster(rating_key: int, request: Request):
+            assert rating_key in state.collections
+            uploaded_posters.append((rating_key, await request.body()))
+            return Response(status_code=200)
+
+        return fake
+
+    monkeypatch.setattr(__name__ + ".make_fake_plex", plex_with_poster_boundary)
+    with _wire_app(tmp_path, monkeypatch, configured_provider=False) as (wire, app, state):
+        with httpx.Client(base_url=state.pms_url) as external:
+            for account in (201, 202):
+                response = external.get(
+                    "/:/scrobble",
+                    params={"key": 109, "identifier": "com.plexapp.plugins.library"},
+                    headers={"X-Plex-Token": f"server-{account}"},
+                )
+                assert response.status_code == 200
+        with app.state.sessions() as session:
+            for person in session.query(User):
+                person.enabled = person.username in {"sarah", "mike"}
+            people = [person.id for person in session.query(User).filter(User.enabled.is_(True))]
+            row = Collection(
+                slug="halloween-fixture",
+                name="{season_emoji} {season} Nights",
+                build="shared",
+                audience="everyone",
+                enabled=True,
+                library_keys=["1"],
+                media="movie",
+                min_watchers=2,
+                seasons=["halloween"],
+                schedule="",
+                poster={"mode": "text", "title": "Halloween night"},
+            )
+            session.add(row)
+            session.commit()
+            row_id = row.id
+        plan = wire.exercise(
+            [
+                (
+                    "shortlist_plan_run",
+                    {
+                        "row_ids": [row_id],
+                        "person_ids": people,
+                        "include_shared": True,
+                        "dry_run": False,
+                        "max_provider_calls": 0,
+                        "max_images": 0,
+                        "max_acquisitions": 0,
+                    },
+                )
+            ]
+        )["shortlist_plan_run"]["data"]
+        operation = _wait_for_operation(wire, _apply(wire, plan["change_id"], "halloween-outcome")["operation_id"])
+        assert operation["status"] == "completed"
+        run_id = operation["result"]["run_id"]
+        with app.state.sessions() as session:
+            saved = session.get(RunSharedRow, (run_id, "halloween-fixture"))
+            assert saved.status == "ok"
+            if qualifying_metadata:
+                assert [pick["tmdb_id"] for pick in saved.picks] == [9009]
+                assert len(state.collections) == 1
+                collection = next(iter(state.collections.values()))
+                assert collection.item_keys == [109]
+                assert "Halloween" in collection.title
+                assert collection.promoted_shared_home and collection.promoted_recommended
+                assert len(uploaded_posters) == 1 and uploaded_posters[0][0] == collection.rating_key
+                assert uploaded_posters[0][1].startswith(b"\x89PNG\r\n\x1a\n")
+            else:
+                assert saved.picks == []
+                assert "Halloween films" in saved.reason and "nothing to show" in saved.reason
+                assert state.collections == {} and uploaded_posters == []
+        result = wire.exercise([("shortlist_get_run_report", {"id": run_id})])["shortlist_get_run_report"]["data"]
+        assert result["dry_run"] is False
+        outcome = result["shared_rows"][0]
+        assert outcome["pick_count"] == (1 if qualifying_metadata else 0)
+        assert outcome["reason_code"] == (None if qualifying_metadata else "no_picks")
+        if not qualifying_metadata:
+            assert outcome["guidance"]
+        assert operation["run_usage"]["provider_calls_started"] == 0
+        assert operation["run_usage"]["images_started"] == 0
+        assert operation["run_usage"]["acquisitions_started"] == 0
+
+
+@pytest.mark.parametrize("sections_unavailable", [False, True])
+def test_mcp_sdk_library_scope_changes_use_verified_server_sections(tmp_path, monkeypatch, sections_unavailable):
+    """The public row patch needs no internal snapshot and narrows only the removed library."""
+    with _wire_app(tmp_path, monkeypatch, configured_provider=False) as (wire, app, state):
+        with app.state.sessions() as session:
+            row = session.get(Collection, 10)
+            row.theme_id = None
+            row.media = "movie"
+            row.library_keys = ["1"]
+            row.name = "Library scope roundtrip"
+            person_id = session.query(User).filter(User.username == "sarah").one().id
+            session.commit()
+        libraries = wire.exercise([("shortlist_list_libraries", {})])["shortlist_list_libraries"]["data"]["items"]
+        assert {item["key"] for item in libraries} == {"1", "2"}
+        values = {
+            "media": "both",
+            "library_keys": ["1", "2"],
+            "hub_anchor": {
+                "1": {"anchor": "movie.recentlyadded", "before": True},
+                "2": {"anchor": "movie.recentlyadded", "before": True},
+            },
+        }
+        if sections_unavailable:
+            from shortlist.engine.clients.plex_pms import PlexClient
+
+            def unavailable(_self):
+                raise RuntimeError("PRIVATE_UPSTREAM_SENTINEL")
+
+            monkeypatch.setattr(PlexClient, "sections", unavailable)
+            denied = wire.expect_error("shortlist_plan_row", {"action": "update", "row_id": 10, "values": values})
+            assert "PRIVATE_UPSTREAM_SENTINEL" not in str(denied)
+            with app.state.sessions() as session:
+                assert session.get(Collection, 10).library_keys == ["1"]
+                assert session.get(Collection, 10).media == "movie"
+                assert session.query(AssistantChange).count() == 0
+            assert state.collections == {}
+            return
+        plan = wire.exercise([("shortlist_plan_row", {"action": "update", "row_id": 10, "values": values})])[
+            "shortlist_plan_row"
+        ]["data"]
+        operation = _wait_for_operation(wire, _apply(wire, plan["change_id"], "widen-libraries")["operation_id"])
+        assert operation["status"] == "completed"
+        readback = wire.exercise([("shortlist_get_row", {"id": 10})])["shortlist_get_row"]["data"]
+        assert readback["fields"]["media"] == "both"
+        assert readback["fields"]["library_keys"] == ["1", "2"]
+        assert set(readback["fields"]["hub_anchor"]) == {"1", "2"}
+        enable = wire.exercise(
+            [("shortlist_plan_row", {"action": "update", "row_id": 10, "values": {"enabled": True}})]
+        )["shortlist_plan_row"]["data"]
+        assert (
+            _wait_for_operation(wire, _apply(wire, enable["change_id"], "enable-library-row")["operation_id"])["status"]
+            == "completed"
+        )
+        run = wire.exercise(
+            [
+                (
+                    "shortlist_plan_run",
+                    {
+                        "row_ids": [10],
+                        "person_ids": [person_id],
+                        "dry_run": False,
+                        "max_provider_calls": 0,
+                        "max_images": 0,
+                        "max_acquisitions": 0,
+                    },
+                )
+            ]
+        )["shortlist_plan_run"]["data"]
+        assert (
+            _wait_for_operation(wire, _apply(wire, run["change_id"], "build-library-row")["operation_id"])["status"]
+            == "completed"
+        )
+        assert {collection.section_id for collection in state.collections.values()} == {1, 2}
+        movie_key = next(key for key, collection in state.collections.items() if collection.section_id == 1)
+        narrow = wire.exercise(
+            [
+                (
+                    "shortlist_plan_row",
+                    {"action": "update", "row_id": 10, "values": {"media": "movie", "library_keys": ["1"]}},
+                )
+            ]
+        )["shortlist_plan_row"]["data"]
+        assert (
+            _wait_for_operation(wire, _apply(wire, narrow["change_id"], "narrow-library-row")["operation_id"])["status"]
+            == "completed"
+        )
+        assert set(state.collections) == {movie_key}
+        with app.state.sessions() as session:
+            assert session.get(Collection, 10).library_keys == ["1"]
+            assert session.get(Collection, 10).media == "movie"
+
+
+@pytest.mark.parametrize("prior_library_keys", [["1", "2"], []], ids=["explicit-libraries", "all-libraries"])
+def test_mcp_sdk_narrowing_library_scope_requires_authority_for_removed_collections(
+    tmp_path, monkeypatch, prior_library_keys
+):
+    """Narrowing is a write to the former library, even though it leaves the target scope."""
+    with _wire_app(tmp_path, monkeypatch, configured_provider=False) as (wire, app, state):
+        # Isolate the authority regression using the supported verification seam;
+        # the adjacent test separately proves fresh real PMS library discovery.
+        app.state.assistant_library_snapshot = [{"key": "1", "type": "movie"}, {"key": "2", "type": "show"}]
+        with app.state.sessions() as session:
+            row = session.get(Collection, 10)
+            row.theme_id = None
+            row.media = "both"
+            row.library_keys = prior_library_keys
+            row.enabled = True
+            person_id = session.query(User).filter(User.username == "sarah").one().id
+            session.commit()
+        run = wire.exercise(
+            [
+                (
+                    "shortlist_plan_run",
+                    {
+                        "row_ids": [10],
+                        "person_ids": [person_id],
+                        "dry_run": False,
+                        "max_provider_calls": 0,
+                        "max_images": 0,
+                        "max_acquisitions": 0,
+                    },
+                )
+            ]
+        )["shortlist_plan_run"]["data"]
+        assert (
+            _wait_for_operation(wire, _apply(wire, run["change_id"], "scope-build")["operation_id"])["status"]
+            == "completed"
+        )
+        assert {collection.section_id for collection in state.collections.values()} == {1, 2}
+        before_collections = deepcopy(state.collections)
+        movie_key = next(key for key, collection in state.collections.items() if collection.section_id == 1)
+        repository = app.state.assistant_auth.repository
+        grant = repository.find_grant_for_client("mcp-wire-matrix")
+        repository.replace_grant_authority(
+            grant.grant_id,
+            capabilities=grant.capabilities,
+            constraints=replace(
+                grant.constraints,
+                row_ids=frozenset({10}),
+                library_keys=frozenset({"1"}),
+                include_future_rows=False,
+                include_future_libraries=False,
+            ),
+            expected_revision=grant.revision,
+        )
+        plan = wire.exercise(
+            [
+                (
+                    "shortlist_plan_row",
+                    {"action": "update", "row_id": 10, "values": {"media": "movie", "library_keys": ["1"]}},
+                )
+            ]
+        )["shortlist_plan_row"]["data"]
+        assert plan["authorization"]["can_apply"] is False
+        wire.expect_error(
+            "shortlist_apply_change", {"change_id": plan["change_id"], "idempotency_key": _idempotency("scope-denied")}
+        )
+        with app.state.sessions() as session:
+            assert session.get(Collection, 10).media == "both"
+            assert session.get(Collection, 10).library_keys == prior_library_keys
+            stored = session.get(AssistantChange, plan["change_id"])
+            assert stored.requirements["dynamic_libraries"] is (not prior_library_keys)
+            assert stored.summary["future_scope"]["includes_future_libraries"] is False
+            if prior_library_keys:
+                assert set(stored.requirements["library_keys"]) == {"1", "2"}
+        assert state.collections == before_collections
+        _approve_owner_change(wire, app, plan["change_id"])
+        approved = wire.exercise([("shortlist_get_change", {"change_id": plan["change_id"]})])["shortlist_get_change"][
+            "data"
+        ]
+        assert approved["authorization"] == {"can_apply": True, "approved": True}
+        assert approved["summary"] == {"message": "This change requires owner review."}
+        assert (
+            _wait_for_operation(wire, _apply(wire, plan["change_id"], "scope-approved")["operation_id"])["status"]
+            == "completed"
+        )
+        assert set(state.collections) == {movie_key}
+        with app.state.sessions() as session:
+            assert session.get(Collection, 10).media == "movie"
+            assert session.get(Collection, 10).library_keys == ["1"]
+
+
+def test_mcp_sdk_library_snapshot_drift_rejects_stale_cleanup_and_reuses_verified_apply_snapshot(tmp_path, monkeypatch):
+    """A new remote library changes the reviewed cleanup footprint before any local mutation."""
+    from shortlist.engine.clients.plex_pms import PlexClient
+
+    with _wire_app(tmp_path, monkeypatch, configured_provider=False) as (wire, app, state):
+        with app.state.sessions() as session:
+            row = session.get(Collection, 10)
+            row.theme_id = None
+            row.media = "both"
+            row.library_keys = []
+            session.commit()
+        reader_calls = []
+
+        def fresh_reader(*args, **kwargs):
+            reader_calls.append((args, kwargs))
+            return PlexClient(*args, **kwargs)
+
+        monkeypatch.setattr("shortlist.server.assistant.row_adapter.PlexClient", fresh_reader)
+        intent = {"action": "update", "row_id": 10, "values": {"media": "movie", "library_keys": ["1"]}}
+        plan = wire.exercise([("shortlist_plan_row", intent)])["shortlist_plan_row"]["data"]
+        assert len(reader_calls) == 1
+        state.add_section(3, "show", "New external TV library")
+        wire.expect_error(
+            "shortlist_apply_change",
+            {"change_id": plan["change_id"], "idempotency_key": _idempotency("snapshot-stale")},
+            code="stale_plan",
+        )
+        assert len(reader_calls) == 2
+        with app.state.sessions() as session:
+            assert session.get(Collection, 10).media == "both"
+            assert session.get(Collection, 10).library_keys == []
+            assert session.query(Job).count() == 0
+        assert state.collections == {}
+        fresh = wire.exercise([("shortlist_plan_row", intent)])["shortlist_plan_row"]["data"]
+        assert len(reader_calls) == 3
+        applied = _apply(wire, fresh["change_id"], "snapshot-fresh")
+        assert len(reader_calls) == 4, "Mutation must reuse the single apply-time verified projection"
+        assert all(
+            args == (state.pms_url, "synthetic-owner-token") and kwargs == {"timeout": 8, "follow_redirects": False}
+            for args, kwargs in reader_calls
+        )
+        assert _wait_for_operation(wire, applied["operation_id"])["status"] == "completed"
+        with app.state.sessions() as session:
+            assert session.get(Collection, 10).media == "movie"
+            assert session.get(Collection, 10).library_keys == ["1"]

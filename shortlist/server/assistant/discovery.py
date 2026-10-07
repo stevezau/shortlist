@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import asdict
 from datetime import datetime
 
@@ -28,9 +29,10 @@ from shortlist.server.catalogs.templates import (
     ROW_FIELD_DEFINITIONS,
     get_template_catalog,
 )
-from shortlist.server.db.models import Collection, CollectionAudience, Server, Setting, Theme, ThemeHistory, User
+from shortlist.server.db.models import Collection, CollectionAudience, Setting, Theme, ThemeHistory, User
 from shortlist.server.services.person_row_overrides import read_person_row_override_in_session
 from shortlist.server.services.row_views import ai_instructions_view, live_avoid_rows
+from shortlist.server.services.setup_workflow import setup_readiness_in_session
 from shortlist.server.settings_store import SettingsStore
 
 from .budgets import AssistantBudget
@@ -150,15 +152,38 @@ class DiscoveryService:
     def setup_status(self, principal: GrantContext) -> ToolResult:
         require_authorized(principal, [Capability.INSTANCE_READ])
         with self.state.sessions() as session:
-            server = session.scalar(select(Server).limit(1))
+            try:
+                require_authorized(
+                    principal,
+                    [Capability.CONFIG_READ],
+                    ResourceSelection(setting_groups=frozenset({"metadata"}), dynamic_libraries=True),
+                )
+                configuration_visible = True
+            except AuthorizationDenied:
+                configuration_visible = False
+            try:
+                require_authorized(principal, [Capability.PEOPLE_READ])
+                people_visible = True
+            except AuthorizationDenied:
+                people_visible = False
 
-            # Presence only: neither ciphertext nor decrypted credentials enter this response.
-            def present(key: str) -> bool:
-                setting = session.get(Setting, key)
-                return bool(setting and (setting.value or {}).get("v"))
-
-            plex_ready = bool(server and server.owner_account_id)
-            metadata_ready = present("tmdb.apikey")
+            readiness = None
+            if configuration_visible:
+                readiness = setup_readiness_in_session(session, self.state.secrets)
+                plex_ready = readiness.plex_ownership
+                metadata_ready = readiness.metadata
+                libraries_ready = readiness.libraries
+            else:
+                plex_ready = metadata_ready = libraries_ready = None
+            if people_visible:
+                people_ready = (
+                    readiness.people
+                    if readiness is not None
+                    else session.scalar(select(User.id).where(User.removed_at.is_(None)).limit(1)) is not None
+                )
+            else:
+                people_ready = None
+            completed = readiness.wizard_completion if readiness is not None else None
             checks = [
                 {
                     "id": "plex_ownership",
@@ -170,18 +195,82 @@ class DiscoveryService:
                 {
                     "id": "metadata",
                     "ready": metadata_ready,
-                    "action": None if metadata_ready else "Enter a TMDB API key directly in Shortlist Settings.",
+                    "action": None if metadata_ready else "Enter and test the TMDB key in the setup browser.",
+                },
+                {
+                    "id": "libraries",
+                    "ready": libraries_ready,
+                    "action": None
+                    if libraries_ready
+                    else (
+                        "This connection cannot inspect configured libraries. Ask the owner to review access."
+                        if not configuration_visible
+                        else "Make a movie or show library available in the setup browser."
+                    ),
+                },
+                {
+                    "id": "people",
+                    "ready": people_ready,
+                    "action": None
+                    if people_ready
+                    else (
+                        "This connection cannot inspect people. Ask the owner to review access."
+                        if not people_visible
+                        else "Prepare shortlist_plan_maintenance with task people.sync for owner review."
+                    ),
+                },
+                {
+                    "id": "wizard_completion",
+                    "ready": completed,
+                    "action": None
+                    if completed
+                    else "After setup is ready, prepare shortlist_plan_maintenance with task setup.complete.",
                 },
             ]
+            for check in checks:
+                if check["ready"] is None:
+                    check["blocked_by"] = "missing_permission"
+                    check["action"] = (
+                        "This connection cannot inspect people. Ask the owner to review people access."
+                        if check["id"] == "people"
+                        else (
+                            "This connection cannot inspect setup configuration. Ask the owner to review "
+                            "configuration and library access; do not repeat setup based on this result."
+                        )
+                    )
+        credentials_ready = plex_ready and metadata_ready
+        discovery_ready = None if libraries_ready is None or people_ready is None else libraries_ready and people_ready
+        access_missing = any(check["ready"] is None for check in checks)
+        ready = None if access_missing else credentials_ready and discovery_ready and completed
+        if access_missing:
+            summary = "Setup readiness cannot be verified with this connection's access."
+            next_action = "shortlist_get_instance"
+        elif ready:
+            summary = "Required setup is ready."
+            next_action = "shortlist_list_templates"
+        else:
+            summary = "Some setup steps need owner action."
+            next_action = "shortlist_plan_maintenance"
         return ToolResult(
-            summary="Required setup is ready."
-            if plex_ready and metadata_ready
-            else "Some setup steps need owner action.",
-            data={"checks": checks, "ready": plex_ready and metadata_ready},
+            summary=summary,
+            data={
+                "checks": checks,
+                "credentials_ready": credentials_ready,
+                "discovery_ready": discovery_ready,
+                "setup_completed": completed,
+                "ready": ready,
+                "schedule_timezone": {
+                    "value": os.environ.get("TZ", "(unset)"),
+                    "source": "deployment-managed",
+                    "writable": False,
+                },
+            },
             warnings=[
-                "Optional generation and acquisition providers are needed only when the chosen behavior uses them."
+                "Optional generation and acquisition providers are needed only when the chosen behavior uses them.",
+                "Unavailable readiness checks are null with blocked_by missing_permission, not failed setup steps.",
+                "Setup status never returns library names, people or credentials.",
             ],
-            next_action="shortlist_list_templates" if plex_ready and metadata_ready else "shortlist_get_guide",
+            next_action=next_action,
         )
 
     def guide(self, principal: GrantContext, topic: str) -> ToolResult:

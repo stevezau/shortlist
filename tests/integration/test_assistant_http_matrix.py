@@ -23,6 +23,8 @@ from sqlalchemy import select
 from shortlist.server.assistant.changes import ChangeError
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantPreset
+from shortlist.server.assistant_auth.models import AssistantOAuthCode
+from shortlist.server.assistant_auth.types import ASSISTANT_CAPABILITIES
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Event, Server, Setting
 from shortlist.server.main import create_app
@@ -238,6 +240,115 @@ def _mcp_initialize(client: TestClient, credential: str) -> Response:
             },
         },
     )
+
+
+@pytest.mark.parametrize("requested_scope", ["all_advertised", "instance.read", "config.write"])
+def test_oauth_owner_narrowed_consent_binds_code_and_token_to_approved_intersection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested_scope: str
+) -> None:
+    """Owner-selected narrower consent must not silently expand the code or bearer authority."""
+    with _owner_client(tmp_path, monkeypatch) as (client, app):
+        redirect_uri = "http://127.0.0.1:43219/callback"
+        registration = client.post(
+            "/assistant/oauth/register", json={"client_name": "Reduced consent", "redirect_uris": [redirect_uri]}
+        )
+        assert registration.status_code == 201
+        client_id = registration.json()["client_id"]
+        preset = "owner_automation" if requested_scope == "all_advertised" else "inspect"
+        created = client.post(
+            "/assistant/grants", json={"client_id": client_id, "name": "Reduced owner approval", "preset": preset}
+        )
+        assert created.status_code == 201
+        grant = created.json()
+        original_capabilities = set(grant["capabilities"])
+        requested = (
+            {capability.value for capability in ASSISTANT_CAPABILITIES}
+            if requested_scope == "all_advertised"
+            else {requested_scope}
+        )
+        approved_scopes = requested & original_capabilities
+        if requested_scope == "all_advertised":
+            assert len(requested) == 28 and len(approved_scopes) == 23
+        verifier = "reduced-consent-verifier-" + "v" * 48
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        authorization = {
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "resource": "http://localhost/mcp",
+            "scope": " ".join(sorted(requested)),
+            "state": "reduced-owner-consent",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        }
+        flow = client.post("/assistant/oauth/authorize", json=authorization)
+        assert flow.status_code == 200, flow.text
+        decision = client.post(
+            "/assistant/oauth/consent",
+            json={
+                "flow_id": flow.json()["flow_id"],
+                "csrf_token": flow.json()["csrf_token"],
+                "approved": True,
+                "grant_id": grant["id"],
+            },
+        )
+        if not approved_scopes:
+            assert decision.status_code == 400, decision.text
+            assert decision.json()["error"] == "invalid_scope"
+            with app.state.sessions() as session:
+                assert session.scalars(select(AssistantOAuthCode)).all() == []
+        else:
+            assert decision.status_code == 200, decision.text
+            query = parse_qs(urlsplit(decision.json()["redirect_to"]).query)
+            assert query["state"] == [authorization["state"]]
+            if approved_scopes != requested:
+                assert set(query["scope"][0].split()) == approved_scopes
+            with app.state.sessions() as session:
+                codes = session.scalars(select(AssistantOAuthCode)).all()
+                assert len(codes) == 1 and set(codes[0].scope.split()) == approved_scopes
+            token = client.post(
+                "/assistant/oauth/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": client_id,
+                    "redirect_uri": redirect_uri,
+                    "resource": authorization["resource"],
+                    "code": query["code"][0],
+                    "code_verifier": verifier,
+                },
+            )
+            assert token.status_code == 200, token.text
+            assert set(token.json()["scope"].split()) == approved_scopes
+            credential = token.json()["access_token"]
+            verified = app.state.assistant_auth.oauth.verify_access_token(credential)
+            assert verified is not None
+            assert set(verified.scopes) == approved_scopes
+            assert _mcp_initialize(client, credential).status_code == 200
+            name, arguments = (
+                ("shortlist_plan_maintenance", {"request": {"task": "cache.refresh"}})
+                if requested_scope == "all_advertised"
+                else ("shortlist_get_configuration", {"request": {"group": "recommendations"}})
+            )
+            denied = client.post(
+                "/mcp",
+                headers={"Authorization": f"Bearer {credential}", "Accept": "application/json"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments},
+                },
+            )
+            assert denied.status_code == 200
+            result = denied.json()["result"]
+            if requested_scope == "all_advertised":
+                data = result["structuredContent"]["data"]
+                assert "maintenance.execute" in data["required_capabilities"]
+                assert data["authorization"]["can_apply"] is False
+            else:
+                assert result["isError"] is True
+                assert "missing_permission" in str(result)
+        assert set(client.get("/assistant/grants").json()[0]["capabilities"]) == original_capabilities
 
 
 @pytest.mark.parametrize("base_path", ["", "/shortlist"])

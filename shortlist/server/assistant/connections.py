@@ -104,6 +104,7 @@ class ConnectionService:
         require_authorized(principal, [Capability.CONNECTIONS_MANAGE])
         now = time.time()
         flow_id = secrets.token_urlsafe(24)
+        navigation_effect = None
         with self.state.sessions() as session:
             revision, configured = self._snapshot(session, service)
             active = list(
@@ -119,14 +120,33 @@ class ConnectionService:
                     value={**self._identity(principal), "service": service, "initial_revision": revision},
                 )
             )
+            server = session.scalar(select(Server).limit(1))
+            incomplete_owner_setup = bool(
+                service == "tmdb"
+                and server is not None
+                and server.owner_account_id == principal.owner_account_id
+                and not SettingsStore(session, self.state.secrets).get("setup.completed")
+            )
+            if incomplete_owner_setup:
+                # The SPA deliberately resumes only persisted wizard state.  This is
+                # navigation, not a credential or completion write: preserve all
+                # state other than the exact Recommendations/history card.
+                SettingsStore(session, self.state.secrets).set_in_transaction("setup.step", 2)
+                navigation_effect = {"kind": "wizard.resume", "step": 2, "persisted": True}
             session.commit()
+        base_url = self.state.assistant_auth.oauth.resource.removesuffix("/mcp")
         browser_url = (
-            self.state.assistant_auth.oauth.resource.removesuffix("/mcp")
-            + "/settings/connections#connection-"
-            + _CONNECTIONS[service][0]
+            base_url + "/setup"
+            if navigation_effect is not None
+            else base_url + "/settings/connections#connection-" + _CONNECTIONS[service][0]
+        )
+        summary = (
+            "Resume the Recommendations & history setup card and enter the TMDB key directly there."
+            if navigation_effect is not None
+            else "Open Shortlist's browser connection card and enter credentials directly there."
         )
         return ToolResult(
-            summary="Open Shortlist's browser connection card and enter credentials directly there.",
+            summary=summary,
             data={
                 "flow_id": flow_id,
                 "service": service,
@@ -134,8 +154,19 @@ class ConnectionService:
                 "configured": configured,
                 "expires_in_seconds": _LIFETIME,
                 "connectivity_verified": False,
+                "navigation_effect": navigation_effect,
             },
-            warnings=["Do not paste credentials into chat. Configuration presence is not proof of connectivity."],
+            warnings=[
+                "Do not paste credentials into chat. Configuration presence is not proof of connectivity.",
+                *(
+                    [
+                        "This handoff changed only the saved wizard step; "
+                        "it did not change credentials or complete setup."
+                    ]
+                    if navigation_effect is not None
+                    else []
+                ),
+            ],
             next_action=browser_url,
         )
 

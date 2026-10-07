@@ -34,7 +34,12 @@ from shortlist.server.db.models import Server
 from shortlist.server.net_guard import BlockedUrl, check_url
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import actor_of, add_audit
-from shortlist.server.services.connection_choices import ArrNotConfigured, configured_arr_connection, read_arr_choices
+from shortlist.server.services.connection_choices import (
+    ArrNotConfigured,
+    configured_arr_connection,
+    read_arr_choices,
+    read_curator_models,
+)
 from shortlist.server.services.plex_reachability import error_text
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
@@ -796,7 +801,6 @@ async def curator_models(request: Request, body: CuratorModelsRequest | None = N
     in error text). Best-effort: no key yet, an offline Ollama, or a provider without a models
     endpoint returns an empty list, and the UI falls back to the free-text override.
     """
-    from loguru import logger
 
     from shortlist.server.services.context_builder import curator_kwargs
 
@@ -830,22 +834,5 @@ async def curator_models(request: Request, body: CuratorModelsRequest | None = N
 
         provider = (get("curator.provider") or "none").lower()
         kwargs = curator_kwargs(get)
-    if provider in ("none", "null", ""):
-        return {"provider": provider, "models": []}
-
-    def fetch() -> list[str]:
-        from shortlist.engine.curator import make_curator
-
-        lister = getattr(make_curator(provider, **kwargs), "list_models", None)
-        return list(lister()) if callable(lister) else []
-
-    try:
-        models = await asyncio.get_running_loop().run_in_executor(None, fetch)
-    except Exception as e:
-        # A failed listing is expected (bad/absent key, offline server) — never fatal. Log ONLY the
-        # exception class, never its message: an LLM SDK can embed the api_key in the error text in a
-        # shape redact() doesn't cover (e.g. Google's `?key=AIza…`), so the safe move is to not render
-        # it at all (rule 9). The UI just shows the free-text field.
-        logger.info("curator model list unavailable ({})", type(e).__name__)
-        models = []
-    return {"provider": provider, "models": models}
+    choices = await asyncio.get_running_loop().run_in_executor(None, read_curator_models, provider, kwargs)
+    return {"provider": provider, "models": choices.models}

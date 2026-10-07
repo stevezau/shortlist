@@ -249,3 +249,117 @@ def test_arr_choices_hide_vendor_failure_details(client: TestClient, monkeypatch
         )
 
     assert secret not in str(error.value)
+
+
+def _saved_curator(client: TestClient, provider: str = "openai_compatible") -> None:
+    with client.app.state.sessions() as session:
+        store = SettingsStore(session, client.app.state.secrets)
+        store.set("curator.provider", provider)
+        store.set("curator.openai_base_url", "https://models.example.test/")
+        store.set("curator.api_key", "synthetic-model-key")
+        store.set("curator.model", "saved-model")
+        session.commit()
+
+
+@pytest.mark.parametrize(
+    ("provider", "destination"),
+    [
+        ("openai_compatible", "https://models.example.test/v1"),
+        ("ollama", "https://models.example.test/v1"),
+        ("openai", "https://api.openai.com/v1"),
+        ("anthropic", "https://api.anthropic.com"),
+        ("google", "https://generativelanguage.googleapis.com"),
+    ],
+)
+def test_curator_model_choices_use_saved_authorized_provider_and_paginate(client, monkeypatch, provider, destination):
+    _saved_curator(client, provider)
+    calls = []
+
+    def factory(actual_provider, **kwargs):
+        calls.append((actual_provider, kwargs))
+        return SimpleNamespace(list_models=lambda: ["small", "medium", "large"])
+
+    monkeypatch.setattr("shortlist.engine.curator.make_curator", factory)
+    result = asyncio.run(
+        permitted_choices(
+            client.app.state,
+            _principal(destinations=frozenset({destination})),
+            kind="curator_models",
+            library_key=None,
+            limit=1,
+            offset=1,
+        )
+    )
+    assert result.data == {
+        "kind": "curator_models",
+        "provider": provider,
+        "items": [{"kind": "curator_model", "id": "medium"}],
+        "next_offset": 2,
+        "total": 3,
+    }
+    assert len(calls) == 1 and calls[0][0] == provider
+    assert calls[0][1]["api_key"] == "synthetic-model-key"
+    assert calls[0][1]["base_url"] == destination
+    assert calls[0][1]["model"] == "saved-model"
+    assert calls[0][1]["follow_redirects"] is False
+    assert "untrusted" in str(result.warnings).lower()
+    assert "synthetic-model-key" not in str(result)
+
+
+@pytest.mark.parametrize("denial", ["destination", "capability"])
+def test_curator_model_choices_authorize_before_constructing_provider(client, monkeypatch, denial):
+    _saved_curator(client)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("model provider was constructed before authorization")
+
+    monkeypatch.setattr("shortlist.engine.curator.make_curator", forbidden)
+    principal = _principal(
+        destinations=frozenset(
+            {"https://elsewhere.example.test" if denial == "destination" else "https://models.example.test/v1"}
+        ),
+        capabilities=frozenset({Capability.CONFIG_READ})
+        if denial == "capability"
+        else frozenset({Capability.CONNECTIONS_MANAGE}),
+    )
+    with pytest.raises(AuthorizationDenied):
+        asyncio.run(
+            permitted_choices(client.app.state, principal, kind="curator_models", library_key=None, limit=25, offset=0)
+        )
+
+
+def test_curator_model_choices_hide_vendor_failure_and_never_generate(client, monkeypatch):
+    _saved_curator(client)
+
+    def broken():
+        raise RuntimeError("synthetic-model-key PRIVATE_REMOTE_BODY")
+
+    monkeypatch.setattr(
+        "shortlist.engine.curator.make_curator", lambda *args, **kwargs: SimpleNamespace(list_models=broken)
+    )
+    result = asyncio.run(
+        permitted_choices(
+            client.app.state,
+            _principal(destinations=frozenset({"https://models.example.test/v1"})),
+            kind="curator_models",
+            library_key=None,
+            limit=25,
+            offset=0,
+        )
+    )
+    assert result.data["items"] == [] and result.data["next_offset"] is None
+    assert result.data["total"] == 0
+    assert "PRIVATE_REMOTE_BODY" not in str(result) and "synthetic-model-key" not in str(result)
+
+
+def test_curator_model_choices_schema_accepts_only_saved_provider_selection():
+    assert ChoicesInput.model_validate({"kind": "curator_models"}).kind == "curator_models"
+    for extra in (
+        {"library_key": "1"},
+        {"url": "https://unapproved.test"},
+        {"api_key": "secret"},
+        {"provider": "openai"},
+        {"limit": 101},
+    ):
+        with pytest.raises(ValidationError):
+            ChoicesInput.model_validate({"kind": "curator_models", **extra})

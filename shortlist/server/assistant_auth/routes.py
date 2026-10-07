@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -26,6 +27,34 @@ class BrowserOwner(BaseModel):
     """Owner identity established exclusively from the signed browser session."""
 
     account_id: int
+
+
+_SAFE_OAUTH_ERRORS = frozenset(
+    {
+        "access_denied",
+        "invalid_client",
+        "invalid_grant",
+        "invalid_request",
+        "invalid_scope",
+        "invalid_target",
+        "temporarily_unavailable",
+        "unauthorized_client",
+        "unsupported_response_type",
+    }
+)
+
+
+def _safe_oauth_error(response: JSONResponse) -> JSONResponse:
+    """Return a browser-safe error when Authlib cannot produce a redirect."""
+    status_code = response.status_code if 400 <= response.status_code < 500 else 400
+    error = "authorization_failed"
+    try:
+        payload = json.loads(response.body)
+    except (TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        payload = None
+    if isinstance(payload, dict) and payload.get("error") in _SAFE_OAUTH_ERRORS:
+        error = payload["error"]
+    return JSONResponse({"error": error}, status_code=status_code)
 
 
 def require_browser_owner(request: Request) -> BrowserOwner:
@@ -388,12 +417,22 @@ def create_oauth_router(
             grant_context.owner_account_id != owner.account_id or grant_context.client_id != flow.client_id
         ):
             grant_context = None
+        requested_scopes = frozenset(flow.scope.split())
+        approved_scopes = requested_scopes
+        if body.approved:
+            if grant_context is None:
+                return JSONResponse({"error": "invalid_scope"}, status_code=400)
+            approved_scopes = requested_scopes & frozenset(
+                capability.value for capability in grant_context.capabilities
+            )
+            if not approved_scopes:
+                return JSONResponse({"error": "invalid_scope"}, status_code=400)
         prepared = PreparedOAuthRequest.authorization(
             canonical_url=f"{current_oauth.issuer}/authorize",
             client_id=flow.client_id,
             redirect_uri=flow.redirect_uri,
             resource=flow.resource,
-            scope=flow.scope,
+            scope=" ".join(sorted(approved_scopes)),
             state=flow.client_state,
             code_challenge=flow.code_challenge,
             code_challenge_method=flow.code_challenge_method,
@@ -404,7 +443,15 @@ def create_oauth_router(
             grant_user=grant_context if body.approved else None,
             grant=consent_grant,
         )
-        return {"redirect_to": response.headers["location"]}
+        location = response.headers.get("location")
+        if location is None:
+            return _safe_oauth_error(response)
+        if body.approved and approved_scopes != requested_scopes:
+            parsed = urlsplit(location)
+            query = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "scope"]
+            query.append(("scope", " ".join(sorted(approved_scopes))))
+            location = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+        return {"redirect_to": location}
 
     @router.post("/token")
     async def token(request: Request) -> JSONResponse:

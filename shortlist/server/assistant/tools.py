@@ -68,7 +68,7 @@ class TitleSearchInput(StrictModel):
 class ChoicesInput(PageInput):
     """One paginated configured-service choice family with no caller-supplied endpoint."""
 
-    kind: Literal["plex_anchors", "radarr", "sonarr"] = Field(
+    kind: Literal["plex_anchors", "radarr", "sonarr", "curator_models"] = Field(
         description="The configured service to inspect; this cannot name a URL or arbitrary service."
     )
     library_key: str | None = Field(
@@ -221,7 +221,9 @@ def register_tools(server: MCPServer, state) -> None:
         "shortlist_start_connection",
         "Open a named Shortlist connection card for the owner to enter credentials directly in the browser. "
         "Returns an opaque expiring flow ID and canonical browser URL. Accepts no credentials or arbitrary URLs, "
-        "does not change configuration, and does not establish Plex ownership on an unconfigured installation.",
+        "does not establish Plex ownership on an unconfigured installation. During incomplete owner setup, "
+        "the TMDB handoff records only the Recommendations & history wizard step "
+        "so the canonical /setup URL resumes there.",
         read_only=False,
     )
     async def start_connection(request: ConnectionInput) -> ToolResult:
@@ -322,10 +324,11 @@ def register_tools(server: MCPServer, state) -> None:
     @tool(
         "shortlist_get_choices",
         (
-            "Discover one page of untrusted choice values from Shortlist's already configured Plex, Radarr or "
-            "Sonarr service. Plex anchors require a library key from shortlist_list_libraries and return only "
-            "foreign collections; Radarr and Sonarr return quality profiles and root folders. This accepts no "
-            "URL or credential and checks the exact selected library or saved destination before reading it."
+            "Discover one page of untrusted choice values from Shortlist's already configured Plex, Radarr, Sonarr "
+            "or AI provider. Plex anchors require a library key from shortlist_list_libraries and return only "
+            "foreign collections; Radarr and Sonarr return quality profiles and root folders; curator_models lists "
+            "the saved provider's model IDs without generation. This accepts no URL or credential and checks the "
+            "exact selected library or saved destination before reading it."
         ),
         external=True,
     )

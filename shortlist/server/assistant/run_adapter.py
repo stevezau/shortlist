@@ -324,7 +324,9 @@ def get_assistant_run_report(state, principal, run_id: int) -> dict:
     """Project aggregate progress for one owned run, without traces, titles or watch history."""
     from collections import Counter
 
-    from shortlist.server.db.models import RunUser, iso_utc
+    from shortlist.server.db.models import RunSharedRow, RunUser, iso_utc
+
+    from .monitoring import shared_outcome_view
 
     policy = AuthGrantPolicy()
     with state.sessions() as session:
@@ -347,6 +349,32 @@ def get_assistant_run_report(state, principal, run_id: int) -> dict:
         from .run_spend import run_usage
 
         usage = run_usage(session, run_id, actor["operation_id"])
+        contract = (run.stats or {}).get("assistant_contract") or {}
+        selected_row_ids = (contract.get("intent") or {}).get("row_ids")
+        row_ids_by_slug = dict(
+            session.execute(select(Collection.slug, Collection.id).where(Collection.id.in_(requirements.row_ids))).all()
+        )
+        shared_rows = [
+            shared_outcome_view(result, row_ids_by_slug[result.collection_slug])
+            for result in session.scalars(
+                select(RunSharedRow).where(
+                    RunSharedRow.run_id == run_id, RunSharedRow.collection_slug.in_(row_ids_by_slug)
+                )
+            )
+        ]
+        privacy_warnings = (
+            [
+                {
+                    "code": "plex_restriction_profile",
+                    "guidance": (
+                        "Plex could not apply all requested hiding filters. Personalized rows may remain visible; "
+                        "the owner should inspect Runs and Privacy before relying on per-person visibility."
+                    ),
+                }
+            ]
+            if (run.stats or {}).get("unhideable_rows")
+            else []
+        )
         return {
             "run_id": run_id,
             "status": "outcome_unknown"
@@ -358,8 +386,17 @@ def get_assistant_run_report(state, principal, run_id: int) -> dict:
             "started_at": iso_utc(run.began_at),
             "finished_at": iso_utc(run.finished_at),
             "row_ids": list(requirements.row_ids),
+            "selected_row_ids": selected_row_ids,
+            "affected_row_ids": list(requirements.row_ids),
+            "scope": (
+                "selected_row_ids identifies the requested builds (null for older records without a saved intent). "
+                "affected_row_ids, also returned as row_ids for compatibility, includes rows covered by privacy, "
+                "retirement and shelf-ordering work."
+            ),
             "person_ids": list(requirements.person_ids),
             "people_by_status": dict(Counter(result.status for result in results)),
+            "shared_rows": shared_rows,
+            "privacy_warnings": privacy_warnings,
             "cancel_requested": bool(run.stats.get("cancel_requested")),
             "usage": usage,
         }

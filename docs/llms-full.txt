@@ -3000,8 +3000,22 @@ endpoint.
 
 Shortlist must already be installed and claimed by its Plex server owner. A hosted chat cannot
 install a container through a server that does not exist, and signing into an OAuth consent page
-does not claim a new Shortlist installation. For a new install, complete the normal
-[setup wizard](https://shortlistapp.dev/getting-started/) in a browser first.
+does not claim a new Shortlist installation. Plex ownership is therefore a browser setup step.
+
+After an owner is linked, an assistant can help complete the validated setup workflow. Start with
+`shortlist_get_setup_status`; it separately reports credentials, library discovery, roster discovery
+and wizard completion. A check with `ready: null` and `blocked_by: "missing_permission"` is
+unavailable to this connection, not a failed setup step. Review the connection's access instead of
+repeating Plex login or setup based on that result. If TMDB metadata is missing, `shortlist_start_connection` for `tmdb` opens
+the canonical browser setup step for entering the key. It never accepts a key in MCP. When people
+are missing, prepare `shortlist_plan_maintenance` with `task: "people.sync"`; the owner reviews the
+exact roster/privacy reconciliation and the resulting operation queues Shortlist's existing durable
+sync. Once ownership, metadata, a usable movie or show library and a non-removed roster are ready,
+prepare `task: "setup.complete"` for owner review. That task validates the prerequisites before it
+marks the wizard complete. Do not try to write `setup.completed` through generic configuration.
+
+The setup result also names the installation timezone. It is deployment-managed, so an assistant
+can use it when planning cron schedules but cannot change it through MCP.
 
 Choose the one canonical address that clients will use. It must finish with `/mcp` and include the
 base path if Shortlist has one:
@@ -3019,6 +3033,15 @@ http://127.0.0.1:5959/mcp
 Set that exact address as `SHORTLIST_MCP_URL` on the Shortlist container and restart it. Shortlist
 does not infer this security-sensitive address from a request's `Host` or forwarding headers.
 Plain HTTP on a LAN address is refused; use HTTPS when the address is not loopback.
+
+If the setup wizard is still open, begin the OAuth connection from your MCP client. Its owner
+consent page is available after Plex ownership is linked, before the wizard is complete. Allowing
+the connection can create a grant for the requested permissions without opening Settings first.
+The initial browser grant includes future rows and libraries, but has no selected setting groups
+or destinations and permits zero provider calls. Some reads therefore remain unavailable. Use the
+documented setup handoffs and exact owner reviews; those reviews do not expand standing read access
+or provider quotas. After setup completes, the owner can adjust resources and limits in the
+connections page below.
 
 Open **Settings → AI assistants** to reach the connections page, then choose **New connection**.
 You can also search Settings for **MCP**, **ChatGPT**, **Claude** or **Codex**. Under
@@ -3045,11 +3068,20 @@ Capabilities do not override those resource limits. For example, an assistant wi
 still needs the selected settings group or library, and `connections.manage` still needs the exact
 saved destination, before Shortlist reads its configured service. `shortlist_get_choices` can page
 foreign Plex placement anchors for an allowed library or Arr quality profiles and root folders for
-an allowed saved destination; it never accepts a caller-provided URL or credential.
+an allowed saved destination. It can also page model IDs from the already saved AI provider. It
+never accepts a caller-provided URL or credential; a disabled, unsupported or unavailable provider
+is reported separately from a provider whose model list is simply empty.
 
 Extra permissions are explicit. For example, showing watch details to the assistant, sending
 history-derived context to a provider, making acquisition requests and spending an AI provider call
 are separate choices. A tool that needs several permissions needs all of them.
+
+The same rule applies to setting groups and destinations. An assistant may configure permitted
+non-secret settings, but it cannot enter provider, Arr, Plex or webhook credentials. It may set a
+configured provider and model when its recommendation group is allowed, while the owner browser
+still owns credential entry and a real provider test. It may set non-secret notification enablement,
+event selection and header name when the notifications group is allowed; the webhook URL and
+authentication value stay in the browser, and the real notification test sends a message there.
 
 The provider-call allowance is a finite lifetime total for this named connection. `0` permits no
 provider calls. A call whose outcome is unknown still consumes its reservation, because retrying it
@@ -3230,7 +3262,8 @@ A complete workflow is:
    installation and resolve title names to TMDB IDs.
 2. Ask it to prepare a theme and an inactive row together with `shortlist_plan_setup`. The theme
    can contain picks written by ChatGPT or Claude. Saving those picks makes no Shortlist provider
-   call. Include `ai_paused: true` to keep Shortlist from later topping up that theme automatically.
+   call. That trusted supplied theme makes `ai_paused: true` valid when you want to prevent later
+   top-ups; omit `ai_paused` for a non-themed row.
 3. Review the resolved plan. Apply it using its change ID and an idempotency key. Both objects
    are saved together, or neither is saved.
 4. Configure audience, libraries and automation in a separate row plan. Enabling paid recurring
@@ -3241,6 +3274,15 @@ A complete workflow is:
    an image allowance for AI artwork, and an acquisition allowance for automatic requests.
    These allowances default to zero. A preview can still spend on AI selection and search; it
    skips image rendering and acquisition sends.
+
+Read the report's `selected_row_ids` as the requested builds and `affected_row_ids` as its wider
+privacy and shelf-management footprint (`row_ids` remains a compatibility alias for that footprint).
+Shared `pick_count` counts selected candidates, not confirmed deliveries; a report with `dry_run:
+true` is a preview that writes nothing to Plex. An `ok` row with zero candidates returns `no_picks`.
+A shared row can complete no delivery because its audience lacks common viewing. Its safe
+`reason_code` and guidance explain recognized cases; unknown cases require the owner to inspect
+Runs. Review `privacy_warnings` too: Plex restriction profiles can prevent hiding other people's
+rows even when the operation completed. The report omits private history and raw provider errors.
 
 Immediate runs check the approved provider, model, destination and current permission before each
 paid request. They disable automatic retries and record uncertain outcomes. Google native Search
@@ -3262,8 +3304,10 @@ Releasing a claim does not send the title. Active claims cannot be released. Thi
 owner-browser action; an assistant cannot override its own uncertain outcome.
 
 Maintenance tools name their effects: a cache refresh is separate from removing delivered rows.
-Row cleanup removes Shortlist-owned collections and needs exact owner approval; an enabled row can
-create them again on its next run. Uninstall remains an owner-browser action.
+`people.sync` is the named, owner-reviewed roster/privacy reconciliation step; `setup.complete`
+is the named, owner-reviewed validation that finishes an eligible wizard. Row cleanup removes
+Shortlist-owned collections and needs exact owner approval; an enabled row can create them again
+on its next run. Uninstall remains an owner-browser action.
 
 For the tool families, plan lifecycle and permission boundaries, see the
 [assistant reference](https://shortlistapp.dev/reference/assistant/).
@@ -4606,14 +4650,22 @@ have been resolved through `shortlist_search_titles`; a remembered ID from a cha
 `shortlist_get_guide` and `shortlist_diagnose`. Instance discovery includes current connection
 permissions and the remaining lifetime allowance for assistant provider requests. The
 `shortlist://guides/{topic}` resource provides the setup, rows, themes, permissions and
-troubleshooting guides to clients that support resources.
+troubleshooting guides to clients that support resources. Setup status separately reports
+credentials, library discovery, roster discovery and wizard completion. A denied check returns
+`ready: null` with `blocked_by: "missing_permission"`; aggregate readiness is also null when its
+inputs are unavailable. This asks for access review, not repeated setup. A claimed installation can
+prepare the named owner-reviewed `people.sync` maintenance step to reconcile its roster, then the
+validated `setup.complete` step; it cannot set wizard flags through generic configuration. The
+installation timezone is deployment-managed and read-only to MCP.
 
 **Configuration:** `shortlist_describe_settings`, `shortlist_get_configuration`,
 `shortlist_get_choices` and `shortlist_plan_configuration`. The catalog describes settings without
 revealing secret values. `shortlist_get_choices` pages foreign Plex placement anchors for one
 permitted library, or quality profiles and root folders from one permitted saved Radarr or Sonarr
-destination. Its external names and paths are descriptive input, not trusted configuration. Only
-permitted groups can be read or changed. Secret entry uses `shortlist_start_connection` and
+destination. It also pages model IDs from the already saved AI provider; a provider that is disabled,
+does not list models, or is unavailable is reported distinctly from a successful empty list. Its
+external names, paths and model IDs are descriptive input, not trusted configuration. Only permitted
+groups can be read or changed. Secret entry uses `shortlist_start_connection` and
 `shortlist_get_connection_status`, with credentials entered in the owner browser.
 `shortlist_check_connection` runs supported non-generating probes against an authorized saved
 destination; paid provider, search and webhook tests use browser handoffs.
@@ -4623,8 +4675,15 @@ destination; paid provider, search and webhook tests use browser handoffs.
 `shortlist_plan_row` and `shortlist_plan_setup`. Setup atomically saves one theme and its new,
 disabled row with an empty schedule. Generic row creation retains the template or default cron
 unless a schedule is supplied. A stored cron does not run while the row is disabled; activation
-is a separate plan. Row plans can explicitly set `ai_paused: true` to prevent automatic theme
-top-ups.
+is a separate plan. `ai_paused: true` prevents automatic theme top-ups only for a row with a saved
+or trusted supplied theme: use `shortlist_plan_setup` or give `shortlist_plan_row` a valid
+`theme_id`; omit it for a non-themed row.
+
+For an existing row's `media` or `library_keys` change, Shortlist verifies current Plex libraries
+when preparing and applying the plan; clients supply no internal library snapshot. A changed
+snapshot makes the plan stale. Narrowing can remove collections from former libraries, so the
+authorization covers both old and new library scope. Missing authority requires exact owner review;
+the plan's `future_scope` still describes only the intended resulting row.
 
 **People, libraries and seasons:** `shortlist_list_people`, `shortlist_list_libraries`,
 `shortlist_get_person_row_settings`, `shortlist_list_seasons`, `shortlist_plan_people` and
@@ -4646,13 +4705,31 @@ automatic acquisition also need explicit usage allowances and the corresponding 
 **Requests and maintenance:** `shortlist_list_requests`, `shortlist_plan_requests` and
 `shortlist_plan_maintenance`. Request actions are reject, restore, archive and send; each plan
 has an explicit bounded set of candidate IDs. Maintenance supports named cache refresh and row
-cleanup. Cleanup removes delivered Shortlist-owned collections and requires exact review.
-Uninstall remains in the owner browser.
+cleanup, plus owner-reviewed `people.sync` and `setup.complete`. `people.sync` queues only the
+durable roster/privacy reconciliation job. `setup.complete` revalidates ownership, metadata,
+libraries and roster before finishing the wizard. Cleanup removes delivered Shortlist-owned
+collections and requires exact review. Uninstall remains in the owner browser.
 
 **Review and progress:** `shortlist_get_change`, `shortlist_apply_change`,
 `shortlist_get_operation`, `shortlist_cancel_operation`, `shortlist_list_runs`,
 `shortlist_get_run_report` and `shortlist_get_activity`. Results are filtered by current authority.
 An operation receipt can show progress without retaining access to data removed from the grant.
+For an assistant's own run, `selected_row_ids` identifies the requested builds;
+`affected_row_ids` identifies the broader authorization footprint for privacy, retirement and
+shelf-ordering work. The legacy `row_ids` field retains that footprint. Older records without a
+saved intent return `selected_row_ids: null`.
+
+Shared `pick_count` counts selected candidates in the saved result, not confirmed Plex deliveries.
+The parent report's `dry_run` flag distinguishes a preview, which writes nothing to Plex. An `ok`
+shared result with zero candidates reports `reason_code: no_picks` and generic guidance to review
+libraries, filters, the active season and audience. Confirm actual delivery separately.
+
+Shared outcomes expose a closed `reason_code` and safe guidance for recognized missing common
+history, insufficient active audience, or unsupported shared templates. Unknown reasons and errors
+require owner inspection in Runs; raw error text, viewing history and audience counts are omitted.
+An own-run `privacy_warnings` entry means Plex could not apply all requested hiding filters. Inspect
+Runs and Privacy before relying on personal visibility; a completed operation alone is not proof
+that every account can be isolated by Plex.
 
 ## Plan, approve, apply
 
@@ -4660,8 +4737,13 @@ An operation receipt can show progress without retaining access to data removed 
    and effects, and records dependency hashes. Preparation makes no provider or acquisition call.
 2. The plan supplies a change ID and identifies any missing authority or exact owner review.
    Sensitive changes open a browser review page showing the concrete plan and external effects.
+   A connection allowed to propose but not read the resolved content receives only `review_preview`:
+   closed change/action/effect categories, explicit requested usage limits and the review flag.
+   It never contains targets, names, setting values, prompts, destinations, effect payloads or
+   global counts.
 3. The owner approves that exact content and grant revision. A chat reply does not replace this
-   approval. A changed dependency or plan requires a new review.
+   approval. Approval authorizes that one apply; it does not add read capability or disclose the
+   full plan to an inspecting connection. A changed dependency or plan requires a new review.
 4. Apply reloads current ownership and permissions and validates the plan again. Local changes,
    audit entries, operation receipt and queued obligations commit together in one transaction.
 5. Follow the operation until it completes. External work runs through Shortlist's existing jobs

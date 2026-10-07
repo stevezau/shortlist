@@ -44,6 +44,51 @@ MAX_DEPENDENCIES = 1024
 PLAN_TTL = timedelta(minutes=15)
 
 
+# A review preview is deliberately derived from stable plan mechanics rather than the
+# plan's intent, summary or effect payloads.  An inspect-and-propose connection may
+# need to tell its owner what category of work awaits review, but must not learn
+# ungranted names, values, targets or destinations in doing so.
+_REVIEW_CATEGORIES = {
+    "configuration": ("configuration",),
+    "generation": ("theme_generation",),
+    "maintenance": ("maintenance",),
+    "people": ("people",),
+    "requests": ("requests",),
+    "row": ("row",),
+    "run": ("run",),
+    "seasons": ("season",),
+    "setup": ("theme", "row"),
+    "theme": ("theme",),
+}
+_REVIEW_EFFECT_CATEGORIES = {
+    "assistant.converge": "configuration_convergence",
+    "assistant.generate_theme": "provider_generation",
+    "assistant.request_send": "acquisition_dispatch",
+    "assistant.run": "bounded_run",
+}
+_REVIEW_ACTIONS = {
+    "configuration": frozenset(),
+    "generation": frozenset(),
+    "maintenance": frozenset(),
+    "people": frozenset(),
+    "requests": frozenset({"archive", "reject", "restore", "send"}),
+    "row": frozenset({"create", "delete", "update"}),
+    "run": frozenset(),
+    "seasons": frozenset({"create", "delete", "update"}),
+    "setup": frozenset(),
+    "theme": frozenset({"create", "update"}),
+}
+_REVIEW_COST_LIMIT_KEYS = frozenset(
+    {
+        "max_acquisitions",
+        "max_images",
+        "max_native_tool_uses",
+        "max_output_tokens",
+        "max_provider_calls",
+    }
+)
+
+
 @dataclass(frozen=True)
 class EffectIntent:
     """One registered job, or one ordered convergence job with typed steps in its payload."""
@@ -561,19 +606,59 @@ class ChangeService:
         return True
 
     @staticmethod
-    def _change_view(change: AssistantChange, *, can_apply: bool, disclose: bool | None = None) -> dict:
+    def _review_preview(change: AssistantChange) -> dict:
+        """Return a useful, non-content description while an owner must review a plan.
+
+        This projection intentionally never reads the plan summary, dependencies, resource
+        requirements or effect payloads.  Those can contain names, target IDs, settings or
+        destinations that an inspect-only grant is not entitled to see.
+        """
+        kind = change.kind if change.kind in _REVIEW_CATEGORIES else "change"
+        intent = change.intent if isinstance(change.intent, dict) else {}
+        candidate_action = intent.get("action")
+        action = (
+            candidate_action
+            if isinstance(candidate_action, str) and candidate_action in _REVIEW_ACTIONS.get(kind, frozenset())
+            else "prepare"
+        )
+        effects = change.effects if isinstance(change.effects, list) else []
+        effect_categories = sorted(
+            {
+                _REVIEW_EFFECT_CATEGORIES[effect["kind"]]
+                for effect in effects
+                if isinstance(effect, dict) and effect.get("kind") in _REVIEW_EFFECT_CATEGORIES
+            }
+        )
+        cost_limits = {
+            key: value
+            for key, value in intent.items()
+            if key in _REVIEW_COST_LIMIT_KEYS and type(value) is int and value >= 0
+        }
         return {
+            "kind": kind,
+            "action": action,
+            "requested_categories": list(_REVIEW_CATEGORIES.get(kind, ("change",))),
+            "effect_categories": effect_categories,
+            "cost_limits": cost_limits,
+            "requires_owner_review": True,
+        }
+
+    @staticmethod
+    def _change_view(change: AssistantChange, *, can_apply: bool, disclose: bool | None = None) -> dict:
+        can_disclose = can_apply if disclose is None else disclose
+        view = {
             "change_id": change.id,
             "kind": change.kind,
             "revision": change.content_hash,
             "expires_at": iso_utc(change.expires_at),
-            "summary": change.summary
-            if (can_apply if disclose is None else disclose)
-            else {"message": "This change requires owner review."},
+            "summary": change.summary if can_disclose else {"message": "This change requires owner review."},
             "required_capabilities": change.requirements.get("capabilities", []),
             "authorization": {"can_apply": can_apply, "approved": change.approved_at is not None},
             "operation_id": change.operation_id,
         }
+        if not can_disclose:
+            view["review_preview"] = ChangeService._review_preview(change)
+        return view
 
     @staticmethod
     def _receipt(operation: AssistantOperation, *, disclose: bool = True) -> dict:

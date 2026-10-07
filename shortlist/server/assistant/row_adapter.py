@@ -5,9 +5,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Literal
 
+from loguru import logger
 from pydantic import Field, JsonValue, model_validator
 from sqlalchemy import select
 
+from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.server.assistant_auth import Capability
 from shortlist.server.catalogs.templates import ROW_INPUT_DEFAULTS, get_template_definition
 from shortlist.server.db.models import Collection, CollectionAudience, Setting, Theme, User
@@ -113,13 +115,54 @@ class RowAdapter:
     def secrets(self):
         return getattr(self.state, "secrets", None)
 
-    def _library_sections(self) -> list | None:
+    def _library_sections(self, session, row_id: int, values: dict, *, reuse: bool = False) -> list | None:
+        row = session.get(Collection, row_id)
+        if row is None:
+            return None
+        try:
+            requested_keys = tuple(str(key) for key in values.get("library_keys", row.library_keys or []))
+        except TypeError:
+            # The shared mutation service supplies the normal field validation error.
+            return None
+        current_scope = (row.media, tuple(str(key) for key in (row.library_keys or [])))
+        if current_scope == (values.get("media", row.media), requested_keys):
+            return None
+
+        snapshot_key = fingerprint({"row_id": row_id, "values": values, "before_scope": current_scope})
+        if reuse:
+            cached = session.info.pop("assistant_row_library_sections", None)
+            if cached is not None and cached[0] == snapshot_key:
+                return cached[1]
         snapshot = getattr(self.state, "assistant_library_snapshot", None)
         if snapshot is None:
             snapshot = getattr(self.state, "assistant_library_sections", None)
         if snapshot is None:
-            return None
-        return [SimpleNamespace(**item) if isinstance(item, dict) else item for item in snapshot]
+            store = SettingsStore(session, self.secrets)
+            url, token = store.get("plex.url"), store.get("plex.token")
+            if not url or not token:
+                raise ValueError("Connect Plex in the owner browser before changing this row's libraries.")
+            try:
+                client = PlexClient(url, token, timeout=8, follow_redirects=False)
+                try:
+                    snapshot = [
+                        SimpleNamespace(key=str(section.key), type=str(section.type)) for section in client.sections()
+                    ]
+                finally:
+                    transport = getattr(getattr(client, "_server", None), "_session", None)
+                    if transport is not None:
+                        transport.close()
+            except Exception as error:
+                logger.warning("assistant row library verification failed ({})", type(error).__name__)
+                raise ValueError(
+                    "Could not verify current Plex libraries. "
+                    "Check the owner's Plex connection and prepare a new change."
+                ) from None
+        sections = [SimpleNamespace(**item) if isinstance(item, dict) else item for item in snapshot]
+        if not reuse:
+            # Apply reprojects in the same transaction. Its mutation must use exactly
+            # that snapshot, not another network read with a different cleanup scope.
+            session.info["assistant_row_library_sections"] = (snapshot_key, sections)
+        return sections
 
     @staticmethod
     def _capabilities(action: str, values: dict, *, build: str, steps: list[dict]) -> set[str]:
@@ -155,6 +198,7 @@ class RowAdapter:
         if trusted_theme is not None and body.action != "create":
             raise ValueError("A transient theme can be projected only for a new row.")
         dependencies = _json_snapshot(session)
+        library_sections = None
         if body.action == "create":
             template = get_template_definition(body.template_id or "")
             values = dict(template.effective_values)
@@ -213,12 +257,17 @@ class RowAdapter:
         elif body.action == "update":
             mutation_values = {key: value for key, value in body.values.items() if key != "ai_paused"}
             if mutation_values:
+                library_sections = self._library_sections(session, body.row_id or 0, mutation_values)
+                if library_sections is not None:
+                    dependencies["library_sections"] = fingerprint(
+                        sorted((str(section.key), str(section.type)) for section in library_sections)
+                    )
                 row, steps, diff = update_row_in_session(
                     session,
                     self.secrets,
                     body.row_id or 0,
                     mutation_values,
-                    library_sections=self._library_sections(),
+                    library_sections=library_sections,
                     apply=False,
                 )
             else:
@@ -269,6 +318,15 @@ class RowAdapter:
             dynamic_rows = False
             description = f"Delete row {row_id} and remove its delivered collections."
             diff = {"deleted": {"id": row.id, "slug": row.slug, "name": row.name}}
+
+        future_libraries = not library_keys
+        dynamic_libraries = future_libraries
+        if body.action == "update" and library_sections is not None:
+            # Narrowing can remove delivered collections in the old scope. The
+            # authority footprint covers both sides, including an old all-library scope.
+            previous_library_keys = tuple(str(key) for key in (row.library_keys or []))
+            library_keys = tuple(sorted(set(previous_library_keys) | set(library_keys)))
+            dynamic_libraries = dynamic_libraries or not previous_library_keys
 
         destination_ids: tuple[str, ...] = ()
         # These fields change selection, cadence, or the provider/acquisition inputs.
@@ -383,7 +441,7 @@ class RowAdapter:
                 destination_ids=destination_ids,
                 dynamic_rows=dynamic_rows,
                 dynamic_audience=audience_kind == "everyone",
-                dynamic_libraries=not library_keys,
+                dynamic_libraries=dynamic_libraries,
                 batch_size=1,
                 work_units=max(1, len(audience_ids)) * max(1, len(library_keys)),
                 requires_approval=bool({Capability.AI_GENERATE.value, Capability.REQUESTS_SEND.value} & capabilities),
@@ -394,7 +452,7 @@ class RowAdapter:
                 "configuration_diff": diff,
                 "future_scope": {
                     "includes_future_people": audience_kind == "everyone",
-                    "includes_future_libraries": not library_keys,
+                    "includes_future_libraries": future_libraries,
                     "recurring_schedule": normalized.get("values", {}).get("schedule"),
                 },
                 "future_effects": {
@@ -437,7 +495,7 @@ class RowAdapter:
                     self.secrets,
                     body.row_id or 0,
                     mutation_values,
-                    library_sections=self._library_sections(),
+                    library_sections=self._library_sections(session, body.row_id or 0, mutation_values, reuse=True),
                 )
             else:
                 row = session.get(Collection, body.row_id)

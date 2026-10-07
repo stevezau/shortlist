@@ -33,6 +33,7 @@ from shortlist.server.services.plex_reachability import (
     failure_reason,
 )
 from shortlist.server.services.setup_probe import run_capability_probe
+from shortlist.server.services.setup_workflow import complete_setup_in_session
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/setup", tags=["setup"])
@@ -362,9 +363,21 @@ async def put_state(body: WizardState, request: Request) -> dict:
         # anonymous caller from scribbling wizard progress — or flipping setup.completed — on an
         # empty instance. GET /state stays open so the wizard still renders pre-sign-in.
         raise HTTPException(status_code=401, detail="sign in with Plex first")
-    with request.app.state.sessions() as db:
-        store = SettingsStore(db, request.app.state.secrets)
-        store.set("setup.step", body.step)
-        store.set("setup.state", body.state)
-        store.set("setup.completed", body.completed)
-        return {"step": body.step, "completed": body.completed}
+    state = request.app.state
+
+    def save() -> None:
+        with state.sessions() as db:
+            store = SettingsStore(db, state.secrets)
+            if body.completed:
+                complete_setup_in_session(db, state.secrets)
+            else:
+                store.set_in_transaction("setup.completed", False)
+            store.set_in_transaction("setup.step", body.step)
+            store.set_in_transaction("setup.state", body.state)
+            db.commit()
+
+    try:
+        await asyncio.to_thread(save)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"step": body.step, "completed": body.completed}

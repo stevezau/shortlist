@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException
 from loguru import logger
@@ -29,6 +29,15 @@ class ArrConnection:
 
     url: str
     api_key: str
+
+
+@dataclass(frozen=True)
+class CuratorModelChoices:
+    """Safe outcome of asking an already configured provider for model identifiers."""
+
+    provider: str
+    availability: Literal["available", "disabled", "unsupported", "unavailable"]
+    models: list[str]
 
 
 def invalidate_plex_reads(state: Any) -> None:
@@ -138,3 +147,35 @@ def read_arr_choices(service: str, connection: ArrConnection) -> dict[str, list[
     target = ArrTarget(url=connection.url, api_key=connection.api_key, quality_profile_id=0, root_folder="")
     client = make_arr_client(service, target)
     return {"quality_profiles": client.quality_profiles(), "root_folders": client.root_folders()}
+
+
+def read_curator_models(provider: str, kwargs: dict[str, object]) -> CuratorModelChoices:
+    """List saved-provider model IDs without generating content or exposing provider failures.
+
+    Args:
+        provider: The configured provider name, never supplied as an endpoint by a caller.
+        kwargs: Server-owned client configuration from the settings store.
+
+    Returns:
+        A bounded-status result; unavailable and unsupported are distinct from a successful empty list.
+    """
+    if provider in ("", "none", "null"):
+        return CuratorModelChoices(provider=provider, availability="disabled", models=[])
+    try:
+        from shortlist.engine.curator import make_curator
+
+        lister = getattr(make_curator(provider, **kwargs), "list_models", None)
+    except Exception as error:
+        logger.info("curator model list unavailable ({})", type(error).__name__)
+        return CuratorModelChoices(provider=provider, availability="unavailable", models=[])
+    if not callable(lister):
+        return CuratorModelChoices(provider=provider, availability="unsupported", models=[])
+    try:
+        models = list(lister())
+    except Exception as error:
+        logger.info("curator model list unavailable ({})", type(error).__name__)
+        return CuratorModelChoices(provider=provider, availability="unavailable", models=[])
+    if any(not isinstance(model, str) or not model or len(model) > 200 for model in models):
+        logger.info("curator model list unavailable (invalid model identifier)")
+        return CuratorModelChoices(provider=provider, availability="unavailable", models=[])
+    return CuratorModelChoices(provider=provider, availability="available", models=models)

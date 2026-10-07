@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import select
 
 from shortlist.server.assistant_auth import AuthorizationDenied, Capability, require_authorized
@@ -10,6 +12,63 @@ from shortlist.server.db.models import Collection, Event, RequestCandidate, Run,
 from .contracts import ToolResult
 from .discovery import _ids, _page
 from .operation_models import AssistantChange, AssistantOperation
+
+_COMMON_HISTORY_REASON = re.compile(
+    r"No title has been watched by (?P<threshold>[1-9][0-9]*) or more of the "
+    r"[1-9][0-9]* (?:person|people) in this row's audience yet\. "
+    r"A shared row is built only from titles several people have watched, "
+    r"so it needs (?P=threshold) of them with some viewing in common\."
+)
+_SMALL_AUDIENCE_REASON = re.compile(
+    r"A shared row needs at least [1-9][0-9]* people with overlapping viewing, "
+    r"but only [1-9][0-9]* (?:person|people) (?:is|are) in this row's audience and active in runs "
+    r"\(enabled, not paused\) — so it can never build\. Add more people to the audience, "
+    r"or make this a per-person row so each of them gets their own\."
+)
+
+
+def shared_outcome_view(result: RunSharedRow, row_id: int | None) -> dict:
+    """Project only known outcome categories, never persisted free-form reasons."""
+    pick_count = len(result.picks or [])
+    reason_code = guidance = None
+    if result.status == "ok" and not result.error and pick_count == 0:
+        reason_code = "no_picks"
+        guidance = (
+            "No titles were selected. Review the row's libraries, filters, active season and audience, "
+            "or ask the owner to inspect this run in Runs."
+        )
+    elif result.status == "skipped" or result.error:
+        reason = result.reason or ""
+        reason_code = "owner_review_required"
+        guidance = "The owner should inspect this run in Runs for details; private error and history text is omitted."
+        if result.status == "skipped" and not result.error and len(reason) <= 1024:
+            if _COMMON_HISTORY_REASON.fullmatch(reason):
+                reason_code = "insufficient_common_history"
+                guidance = (
+                    "No common watch-history seeds met this row's minimum-watchers rule. "
+                    "Review its minimum watchers and enabled audience, or use a per-person row."
+                )
+            elif _SMALL_AUDIENCE_REASON.fullmatch(reason):
+                reason_code = "insufficient_active_audience"
+                guidance = (
+                    "The active audience is smaller than this shared row's minimum-watchers rule. "
+                    "Review its enabled audience and minimum watchers, or use a per-person row."
+                )
+            elif reason == ("Nobody in this row's audience is enabled, so there was no history to build it from."):
+                reason_code = "no_enabled_audience"
+                guidance = "Enable the intended people in this row's audience before rebuilding it."
+            elif reason == "An AI row can't be shared: it is built per person. Make it a per-person row.":
+                reason_code = "incompatible_shared_template"
+                guidance = "This AI row must use per-person mode; review its template and mode before rebuilding it."
+    return {
+        "row_id": row_id,
+        "row_slug": result.collection_slug,
+        "status": result.status,
+        "pick_count": pick_count,
+        "has_error": bool(result.error),
+        "reason_code": reason_code,
+        "guidance": guidance,
+    }
 
 
 class MonitoringService:
@@ -46,8 +105,9 @@ class MonitoringService:
                     "has_error": bool(result.error),
                 }
             )
+        row_ids = dict(session.execute(select(Collection.slug, Collection.id).where(Collection.slug.in_(rows))).all())
         shared = [
-            {"row_slug": result.collection_slug, "status": result.status, "has_error": bool(result.error)}
+            shared_outcome_view(result, row_ids.get(result.collection_slug))
             for result in session.scalars(
                 select(RunSharedRow).where(RunSharedRow.run_id == run.id, RunSharedRow.collection_slug.in_(rows))
             )

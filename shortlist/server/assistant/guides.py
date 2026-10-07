@@ -9,13 +9,29 @@ GUIDES = {
                 " two servers on one database."
             ),
             (
-                "Complete Plex ownership verification in Shortlist's browser setup, then create a "
-                "named assistant connection."
+                "If no Plex owner is linked, complete ownership verification in Shortlist's browser setup. "
+                "MCP cannot claim an unconfigured installation."
             ),
-            "Read setup status, permitted people, libraries and row templates. Resolve selections to returned IDs.",
             (
-                "Enter missing service credentials directly in Shortlist's browser settings. Never "
-                "paste secrets into the conversation."
+                "A readiness check with ready null and blocked_by missing_permission is unavailable to this "
+                "connection, not failed setup. Review the grant's access; do not repeat Plex login or setup "
+                "based on an unavailable check."
+            ),
+            (
+                "Read setup status. If metadata is missing, use the TMDB connection handoff; during setup it "
+                "opens the Recommendations & history browser step. Enter secrets only in that browser."
+            ),
+            (
+                "When setup status says people are missing, prepare, owner-review and apply maintenance task "
+                "people.sync. It uses Shortlist's durable roster and privacy-safe reconciliation job."
+            ),
+            (
+                "When ownership, metadata, libraries and people are ready, prepare, owner-review and apply "
+                "maintenance task setup.complete. It validates those prerequisites before completing the wizard."
+            ),
+            (
+                "Then read permitted people, libraries and row templates. Resolve selections to returned IDs. "
+                "The installation timezone is deployment-managed; do not try to set it through MCP."
             ),
             (
                 "Choose per-person or shared rows, explicit recipients, libraries, timezone, refresh "
@@ -50,6 +66,12 @@ GUIDES = {
             (
                 "Use explicit people and library IDs. Choosing everyone or all libraries also affects "
                 "future additions and needs that authority."
+            ),
+            (
+                "Changing an existing row's media or library_keys verifies current Plex libraries on the server; "
+                "do not supply an internal snapshot. Changed library facts make the plan stale. Narrowing can "
+                "remove collections from former libraries, so both old and new scope need authority or exact "
+                "owner review. future_scope describes only the resulting row."
             ),
             "New assistant-created rows start disabled unless activation is explicitly requested and permitted.",
             (
@@ -89,10 +111,15 @@ GUIDES = {
             "Keep caller-supplied token counts and billing claims out of drafts; Shortlist accounts for its own calls.",
             (
                 "To reuse saved picks without Shortlist writing paid top-ups, set the themed row's "
-                "ai_paused value to true in plan_row or plan_setup. Scheduling an unpaused fixed theme "
-                "can still spend provider tokens. Fresh autonomous authoring needs a configured provider."
+                "ai_paused value to true only on a row with a saved or trusted supplied theme: use plan_setup "
+                "or a plan_row theme_id. Non-themed rows must omit it. Scheduling an unpaused fixed theme can "
+                "still spend provider tokens. Fresh autonomous authoring needs a configured provider."
             ),
             "A ChatGPT or Claude subscription does not provide a server API credential for scheduled generation.",
+            (
+                "After an owner saves a provider, use get_choices with curator_models before setting its model. "
+                "A disabled, unsupported or unavailable provider has no safe model choice to infer."
+            ),
             (
                 "To ask Shortlist's configured provider for a draft, prepare shortlist_generate_theme first. "
                 "Its plan reserves one call with an output-token ceiling; apply and monitor the operation. "
@@ -105,9 +132,9 @@ GUIDES = {
         "steps": [
             "Every named connection has separate capabilities, selected resources, an expiry and a revocation control.",
             (
-                "Inspect reads only selected configuration groups. Manage selected rows authorizes bounded edits. "
-                "Owner automation covers broader setup, but a configured-service read also needs that exact "
-                "library or saved destination in the connection's resource scope."
+                "Configuration reads and writes need both their capability and selected settings group. "
+                "Configured-service reads also need the exact library or saved destination in the connection's "
+                "resource scope; do not treat a missing-permission result as a prompt to widen a grant."
             ),
             (
                 "Internal history use, sending history to providers, and returning history to the "
@@ -137,6 +164,15 @@ GUIDES = {
             ),
             "Distinguish a saved configuration, queued work, successful delivery, and a partial or failed delivery.",
             "Use reports only for permitted people; do not expose watch history to explain an aggregate count.",
+            (
+                "Own run reports distinguish selected_row_ids (requested builds) from affected_row_ids "
+                "(the wider privacy, retirement and shelf footprint; legacy row_ids). Shared reason_code "
+                "and guidance cover only recognized safe outcomes. Unknown cases require owner inspection "
+                "in Runs. privacy_warnings means Plex could not enforce all hiding filters; inspect Runs "
+                "and Privacy before relying on personal visibility. pick_count counts selected candidates, "
+                "not confirmed Plex deliveries. A dry_run preview writes nothing; status ok with zero "
+                "candidates reports no_picks. Confirm delivery separately."
+            ),
             (
                 "Propose fixes explicitly. Diagnosis must not silently lower rating thresholds, "
                 "broaden audiences or enable downloads."

@@ -19,9 +19,12 @@ def connections(principal):
     Base.metadata.create_all(engine)
     state = SimpleNamespace(
         sessions=sessionmaker(engine),
+        secrets=None,
         assistant_auth=SimpleNamespace(oauth=SimpleNamespace(resource="https://example.test/shortlist/mcp")),
     )
     with state.sessions() as session:
+        # These cases exercise connection cards after setup; fresh-wizard routing is covered separately.
+        session.add(Setting(key="setup.completed", value={"v": True}))
         session.add(
             Server(machine_id="connection-test", url="http://unused.invalid", token_enc="unused", owner_account_id=1)
         )
