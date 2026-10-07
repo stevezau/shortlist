@@ -31,48 +31,48 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services.row_mutations import create_row_in_session, delete_row_in_session
 from shortlist.server.services.secrets import SecretBox
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def row_identity_world(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'row-identity.db'}")
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
-    state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
-    body = CollectionIn(
-        name="Original private row",
-        enabled=False,
-        schedule="",
-        audience="subset",
-        audience_user_ids=[],
-        media="movie",
-        library_keys=["1"],
-    )
-    with sessions() as session:
-        session.add(
-            Server(machine_id="identity-test", url="http://unused.invalid", token_enc="unused", owner_account_id=42)
+    with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'row-identity.db'}")) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
+        body = CollectionIn(
+            name="Original private row",
+            enabled=False,
+            schedule="",
+            audience="subset",
+            audience_user_ids=[],
+            media="movie",
+            library_keys=["1"],
         )
-        original = create_row_in_session(session, state.secrets, body)
-        original_id = original.id
-        session.commit()
-    repository = AssistantAuthRepository(sessions, CredentialHasher(b"row-identity-regression-key-00000"))
-    principal = repository.create_grant(
-        owner_account_id=42,
-        client_id="limited-row-client",
-        name="Only the original row",
-        preset=GrantPreset.MANAGE_SELECTED_ROWS,
-        constraints=GrantConstraints(row_ids=frozenset({original_id}), library_keys=frozenset({"1"})),
-    )
-    yield SimpleNamespace(
-        state=state,
-        repository=repository,
-        principal=principal,
-        original_id=original_id,
-        body=body,
-        changes=ChangeService(sessions, {"row": RowAdapter(state)}),
-        discovery=DiscoveryService(state),
-    )
-    engine.dispose()
+        with sessions() as session:
+            session.add(
+                Server(machine_id="identity-test", url="http://unused.invalid", token_enc="unused", owner_account_id=42)
+            )
+            original = create_row_in_session(session, state.secrets, body)
+            original_id = original.id
+            session.commit()
+        repository = AssistantAuthRepository(sessions, CredentialHasher(b"row-identity-regression-key-00000"))
+        principal = repository.create_grant(
+            owner_account_id=42,
+            client_id="limited-row-client",
+            name="Only the original row",
+            preset=GrantPreset.MANAGE_SELECTED_ROWS,
+            constraints=GrantConstraints(row_ids=frozenset({original_id}), library_keys=frozenset({"1"})),
+        )
+        yield SimpleNamespace(
+            state=state,
+            repository=repository,
+            principal=principal,
+            original_id=original_id,
+            body=body,
+            changes=ChangeService(sessions, {"row": RowAdapter(state)}),
+            discovery=DiscoveryService(state),
+        )
 
 
 def _replace_row(world, *, same_configuration=False):
@@ -240,18 +240,17 @@ def test_retained_delivery_snapshot_reserves_the_deleted_row_slug(row_identity_w
 def test_personal_history_reservation_matches_exact_slug_keys(suffix):
     from shortlist.server.api.collections import _unique_slug
 
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine)
-    slug = f"history_{suffix}"
-    with sessions() as session:
-        person = User(plex_account_id=12, username="Person", slug="person")
-        run = Run(trigger="manual", status="ok")
-        session.add_all([person, run])
-        session.flush()
-        session.add(RunUser(run_id=run.id, user_id=person.id, rows_considered={slug: "not_due"}))
-        session.commit()
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine)
+        slug = f"history_{suffix}"
+        with sessions() as session:
+            person = User(plex_account_id=12, username="Person", slug="person")
+            run = Run(trigger="manual", status="ok")
+            session.add_all([person, run])
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=person.id, rows_considered={slug: "not_due"}))
+            session.commit()
 
-        assert _unique_slug(session, slug) != slug
-        assert _unique_slug(session, f"{slug}_unrelated") == f"{slug}_unrelated"
-    engine.dispose()
+            assert _unique_slug(session, slug) != slug
+            assert _unique_slug(session, f"{slug}_unrelated") == f"{slug}_unrelated"

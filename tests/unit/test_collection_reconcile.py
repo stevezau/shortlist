@@ -21,15 +21,15 @@ from shortlist.server.db.models import DEFAULT_SLUG, Collection, Delivery, Event
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services import collection_reconcile as rec
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    factory = make_session_factory(engine)
-    yield factory
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        factory = make_session_factory(engine)
+        yield factory
 
 
 def _state(sessions, plex: MagicMock, *, dry_run: bool = False) -> SimpleNamespace:

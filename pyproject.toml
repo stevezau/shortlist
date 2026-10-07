@@ -94,8 +94,12 @@ known-first-party = ["shortlist"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests.scratch enforces disk-backed storage and these bounds, including CLI overrides.
+tmp_path_retention_count = 2
+tmp_path_retention_policy = "failed"
 # e2e needs a built SPA + a browser; it runs in its own CI job via `pytest -m e2e`.
-addopts = "-n auto -m 'not e2e' --cov=shortlist --cov-report=term-missing"
+# Keep ordinary runs bounded on shared hosts, regardless of the host's CPU count.
+addopts = "-n 2 -m 'not e2e' --cov=shortlist --cov-report=term-missing"
 markers = [
     "integration: crosses module boundaries",
     "plex: requires a real Plex server (skipped in CI)",

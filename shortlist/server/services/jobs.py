@@ -27,7 +27,7 @@ import asyncio
 import functools
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -559,9 +559,59 @@ async def drain_now(state, reason: str) -> None:
         )
 
 
-#: Strong refs to in-flight background drains. A bare `create_task` can be garbage-collected
-#: mid-flight; the JOBS survive that (they are committed rows) but the attempt would not.
-_BACKGROUND_DRAINS: set[asyncio.Task] = set()
+@dataclass
+class _DrainLifecycle:
+    tasks: set[asyncio.Task] = field(default_factory=set)
+    closing: bool = False
+
+
+def _drain_lifecycle(state) -> _DrainLifecycle:
+    lifecycle = getattr(state, "_job_drain_lifecycle", None)
+    if not isinstance(lifecycle, _DrainLifecycle):
+        lifecycle = _DrainLifecycle()
+        state._job_drain_lifecycle = lifecycle
+    return lifecycle
+
+
+def _track_drain(lifecycle: _DrainLifecycle, task: asyncio.Task) -> None:
+    lifecycle.tasks.add(task)
+
+    def finished(task: asyncio.Task) -> None:
+        lifecycle.tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.warning("job drain failed ({}: {})", type(error).__name__, redact(str(error)))
+
+    task.add_done_callback(finished)
+
+
+def start_background(state) -> None:
+    """Open job admission for a new application lifespan."""
+    lifecycle = _drain_lifecycle(state)
+    if lifecycle.tasks:
+        raise RuntimeError("Cannot restart job drains while the previous lifespan still has active jobs")
+    lifecycle.closing = False
+
+
+async def shutdown_background(state) -> None:
+    """Finish this app's started jobs before its database pool is closed.
+
+    Stop admitting drains; work still queued remains durable for the next startup. Cancelling an
+    executor's await does not stop its thread, so in-flight drains must finish, not be cancelled.
+    """
+    lifecycle = _drain_lifecycle(state)
+    lifecycle.closing = True
+    cancelled = False
+    while lifecycle.tasks:
+        pending = asyncio.gather(*tuple(lifecycle.tasks), return_exceptions=True)
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                # Even a cancelled shutdown must keep the pool and writer locks alive until the
+                # executor work ends. Propagate cancellation only once cleanup is safe.
+                cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 def drain_in_background(state, reason: str) -> None:
@@ -575,9 +625,10 @@ def drain_in_background(state, reason: str) -> None:
     Nothing is lost by not waiting: the jobs are committed rows, the worker retries them with
     backoff, and they are visible in the header's activity popover while they run.
     """
-    task = asyncio.create_task(drain_now(state, reason))
-    _BACKGROUND_DRAINS.add(task)
-    task.add_done_callback(_BACKGROUND_DRAINS.discard)
+    lifecycle = _drain_lifecycle(state)
+    if lifecycle.closing:
+        return
+    _track_drain(lifecycle, asyncio.create_task(drain_now(state, reason)))
 
 
 async def queue_privacy_sync(state, reason: str) -> None:
@@ -879,11 +930,7 @@ async def drain_kind(state, kind: str) -> int:
     # happen regardless; not skipping costs five seconds of the whole app.
     if _plex_busy(state):
         return 0
-    sessions = state.sessions
-    if _DRAIN_LOCK.locked():
-        return 0
-    async with _DRAIN_LOCK:
-        return await _drain(state, sessions, only_kind=kind)
+    return await _run_tracked_drain(state, only_kind=kind)
 
 
 async def run_pending(state) -> int:
@@ -901,11 +948,25 @@ async def run_pending(state) -> int:
     the database or re-reading the roster while a run is on is harmless, and refusing to was why a
     server that ran for an hour did no maintenance at all in that time.
     """
-    sessions = state.sessions
-    if _DRAIN_LOCK.locked():
+    return await _run_tracked_drain(state)
+
+
+async def _run_tracked_drain(state, only_kind: str | None = None) -> int:
+    lifecycle = _drain_lifecycle(state)
+    if lifecycle.closing:
         return 0
-    async with _DRAIN_LOCK:
-        return await _drain(state, sessions)
+
+    async def run() -> int:
+        if lifecycle.closing or _DRAIN_LOCK.locked():
+            return 0
+        async with _DRAIN_LOCK:
+            return await _drain(state, state.sessions, only_kind=only_kind)
+
+    task = asyncio.create_task(run())
+    _track_drain(lifecycle, task)
+    # A scheduler/request cancellation must not release the Plex writer lock while its executor
+    # thread is still writing. The app owns this task until shutdown_background has awaited it.
+    return await asyncio.shield(task)
 
 
 async def _execute(state, sessions, job_id: int, kind: str) -> None:

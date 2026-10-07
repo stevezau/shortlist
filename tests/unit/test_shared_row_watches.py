@@ -45,6 +45,7 @@ from shortlist.server.services.run_persistence import (
 )
 from shortlist.server.services.watch_events import RowMembership, _as_utc, shared_credits
 from tests.conftest import freeze_clock
+from tests.db_helpers import disposing_engine
 from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
@@ -61,9 +62,9 @@ def _report_read_at(monkeypatch):
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(engine)
 
 
 @pytest.fixture

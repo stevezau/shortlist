@@ -29,6 +29,7 @@ from shortlist.server.services.watching_account import (
     transfer_watch_history,
     undo_transfer,
 )
+from tests.db_helpers import disposing_engine
 
 OLD = datetime(2024, 3, 1, tzinfo=UTC)
 NEWER = datetime(2026, 1, 1, tzinfo=UTC)
@@ -37,10 +38,9 @@ NEWER = datetime(2026, 1, 1, tzinfo=UTC)
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    factory = make_session_factory(engine)
-    yield factory
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        factory = make_session_factory(engine)
+        yield factory
 
 
 @pytest.fixture

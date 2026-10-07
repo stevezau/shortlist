@@ -26,12 +26,14 @@ from shortlist.server.db.session import make_engine, make_session_factory, run_m
 from shortlist.server.services import jobs
 from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    return make_session_factory(make_engine(tmp_path))
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 @pytest.fixture

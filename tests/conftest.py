@@ -25,6 +25,8 @@ from shortlist.engine.models import (
     WatchedItem,
 )
 
+pytest_plugins = ["tests.scratch", "tests.resources"]
+
 NOW = datetime(2026, 7, 12, tzinfo=UTC)
 
 
@@ -144,7 +146,7 @@ def _schema_template(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _preseed_schema(request, tmp_path: Path, _schema_template: Path) -> None:
+def _preseed_schema(request: pytest.FixtureRequest) -> None:
     """Hand each test a database already at head, so `run_migrations` has nothing to do.
 
     About 1040 fixtures per run call `run_migrations(tmp_path)`, and each rebuilt all 47 revisions
@@ -161,7 +163,13 @@ def _preseed_schema(request, tmp_path: Path, _schema_template: Path) -> None:
         return
     if any(m in request.node.nodeid for m in _REAL_MIGRATION_MODULES):
         return
-    shutil.copyfile(_schema_template, tmp_path / "shortlist.db")
+    # Autouse dependencies forced a 600 KiB database copy even for pure engine tests.
+    # Resolve lazily so only tests already requesting a directory pay for an isolated copy.
+    if "tmp_path" not in request.fixturenames:
+        return
+    tmp_path: Path = request.getfixturevalue("tmp_path")
+    template: Path = request.getfixturevalue("_schema_template")
+    shutil.copyfile(template, tmp_path / "shortlist.db")
 
 
 @pytest.fixture(autouse=True)

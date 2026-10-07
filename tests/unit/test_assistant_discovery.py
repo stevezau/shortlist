@@ -13,31 +13,31 @@ from shortlist.server.assistant.discovery import DiscoveryService
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantContext, GrantPreset
 from shortlist.server.catalogs.templates import ROW_INPUT_DEFAULTS
 from shortlist.server.db.models import Base, Collection, CollectionAudience, Setting, Theme, ThemeHistory, User
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def service():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine)
-    with sessions() as session:
-        session.add_all(
-            [
-                User(id=1, plex_account_id=11, username="Allowed", slug="allowed"),
-                User(id=2, plex_account_id=22, username="Private", slug="private"),
-                Collection(id=1, slug="allowed", name="Allowed row", audience="subset", library_keys=["1"]),
-                Collection(id=2, slug="private", name="Private row", audience="subset", library_keys=["2"]),
-                Setting(key="tmdb.apikey", value={"v": "never-export-this-secret"}),
-                Setting(key="api.token", value={"v": "never-export-owner-token"}),
-            ]
-        )
-        session.flush()
-        session.add_all(
-            [CollectionAudience(collection_id=1, user_id=1), CollectionAudience(collection_id=2, user_id=2)]
-        )
-        session.commit()
-    yield DiscoveryService(SimpleNamespace(sessions=sessions, secrets=None))
-    engine.dispose()
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine)
+        with sessions() as session:
+            session.add_all(
+                [
+                    User(id=1, plex_account_id=11, username="Allowed", slug="allowed"),
+                    User(id=2, plex_account_id=22, username="Private", slug="private"),
+                    Collection(id=1, slug="allowed", name="Allowed row", audience="subset", library_keys=["1"]),
+                    Collection(id=2, slug="private", name="Private row", audience="subset", library_keys=["2"]),
+                    Setting(key="tmdb.apikey", value={"v": "never-export-this-secret"}),
+                    Setting(key="api.token", value={"v": "never-export-owner-token"}),
+                ]
+            )
+            session.flush()
+            session.add_all(
+                [CollectionAudience(collection_id=1, user_id=1), CollectionAudience(collection_id=2, user_id=2)]
+            )
+            session.commit()
+        yield DiscoveryService(SimpleNamespace(sessions=sessions, secrets=None))
 
 
 @pytest.fixture

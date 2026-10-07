@@ -32,6 +32,7 @@ from shortlist.server.services.run_persistence import reconcile_from_events
 from shortlist.server.services.watch_events import RowMembership, event_credits, ingest_play_history, shared_credits
 from shortlist.server.services.watch_stream import WatchStream
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 
 OWNER_SESSION = """<MediaContainer size="1">
 <Video ratingKey="100" sessionKey="42" type="movie" duration="3000000" viewOffset="0">
@@ -42,9 +43,11 @@ OWNER_SESSION = """<MediaContainer size="1">
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(engine)
 
 
 @pytest.fixture

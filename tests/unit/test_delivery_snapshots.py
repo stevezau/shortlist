@@ -28,26 +28,27 @@ from shortlist.server.services.run_persistence import (
     prune_runs,
 )
 from shortlist.server.services.watch_events import RowMembership, tmdb_by_rating_key
+from tests.db_helpers import disposing_engine
 
 NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
 
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(engine)
-    with factory() as session:
-        session.add_all(
-            [
-                User(id=1, plex_account_id=99, username="alex", slug="alex", enabled=True),
-                User(id=2, plex_account_id=100, username="sam", slug="sam", enabled=True),
-                Collection(id=1, slug="picked", name="Picked", enabled=True),
-                Collection(id=2, slug="shared", name="Shared", enabled=True, build="shared"),
-            ]
-        )
-        session.commit()
-    return factory
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(engine)
+        with factory() as session:
+            session.add_all(
+                [
+                    User(id=1, plex_account_id=99, username="alex", slug="alex", enabled=True),
+                    User(id=2, plex_account_id=100, username="sam", slug="sam", enabled=True),
+                    Collection(id=1, slug="picked", name="Picked", enabled=True),
+                    Collection(id=2, slug="shared", name="Shared", enabled=True, build="shared"),
+                ]
+            )
+            session.commit()
+        yield factory
 
 
 def deliver(sessions, titles, *, at=NOW, shared=False, audience=None, muted=(), dry_run=False, status="ok"):

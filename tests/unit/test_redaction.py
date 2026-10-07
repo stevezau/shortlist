@@ -6,7 +6,14 @@ two of the zipped log files, in the one escaping no word-boundary pattern can ma
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+from sqlalchemy.orm import sessionmaker
+
 from shortlist.server.services.redaction import known_identifiers, redact_all, redact_literals, shape_hosts
+from tests.db_helpers import disposing_engine
 
 MACHINE_ID = "7ee8abc1bcdcc79389ad1e15c30e2692714bc940"
 
@@ -98,17 +105,18 @@ class TestRedactAll:
 
 
 class TestKnownIdentifiers:
-    def _sessions(self, tmp_path):
+    @contextmanager
+    def _sessions(self, tmp_path: Path) -> Iterator[sessionmaker]:
         from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 
         run_migrations(tmp_path)
-        return make_session_factory(make_engine(tmp_path))
+        with disposing_engine(make_engine(tmp_path)) as engine:
+            yield make_session_factory(engine)
 
     def _with_server(self, tmp_path, url: str):
         from shortlist.server.db.models import Server
 
-        sessions = self._sessions(tmp_path)
-        with sessions() as session:
+        with self._sessions(tmp_path) as sessions, sessions() as session:
             session.query(Server).delete()
             session.add(Server(machine_id=MACHINE_ID, url=url, name="SFLIX", token_enc=""))
             session.commit()
@@ -123,8 +131,7 @@ class TestKnownIdentifiers:
     def test_no_server_row_yields_nothing_rather_than_raising(self, tmp_path):
         from shortlist.server.db.models import Server
 
-        sessions = self._sessions(tmp_path)
-        with sessions() as session:
+        with self._sessions(tmp_path) as sessions, sessions() as session:
             session.query(Server).delete()
             session.commit()
             assert known_identifiers(session) == {}
@@ -142,8 +149,7 @@ class TestKnownIdentifiers:
         server the owner used to have and leave the current one exposed."""
         from shortlist.server.db.models import Server
 
-        sessions = self._sessions(tmp_path)
-        with sessions() as session:
+        with self._sessions(tmp_path) as sessions, sessions() as session:
             session.query(Server).delete()
             session.add(Server(machine_id="a" * 40, url="http://old:32400", name="old", token_enc=""))
             session.add(Server(machine_id="b" * 40, url="http://new:32400", name="new", token_enc=""))

@@ -16,15 +16,16 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.db.models import Base, CacheRow
 from shortlist.server.services.run_persistence import prune_expired_cache
+from tests.db_helpers import disposing_engine
 
 HOUR = 3600
 
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(engine)
 
 
 def _add(session, kind: str, key: str, *, expires_in: float) -> None:

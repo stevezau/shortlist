@@ -10,25 +10,25 @@ from shortlist.server.assistant.changes import ChangeError
 from shortlist.server.assistant.run_adapter import RunAdapter, RunIntent
 from shortlist.server.db.models import Base, Collection, Theme, User
 from shortlist.server.services.run_service import RunService
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def run_env(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
-    with sessions() as session:
-        session.add(User(id=1, plex_account_id=11, slug="alice", username="alice", enabled=True))
-        session.add(User(id=2, plex_account_id=22, slug="bob", username="bob", enabled=True))
-        session.add(Collection(id=1, slug="row-one", name="Picked", library_keys=["1"]))
-        session.commit()
-    from shortlist.server.services.secrets import SecretBox
+    with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'runs.db'}")) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        with sessions() as session:
+            session.add(User(id=1, plex_account_id=11, slug="alice", username="alice", enabled=True))
+            session.add(User(id=2, plex_account_id=22, slug="bob", username="bob", enabled=True))
+            session.add(Collection(id=1, slug="row-one", name="Picked", library_keys=["1"]))
+            session.commit()
+        from shortlist.server.services.secrets import SecretBox
 
-    state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path), assistant_auth=object())
-    state.run_service = RunService(sessions, SimpleNamespace(publish=lambda *a: None), tmp_path, state.secrets)
-    state.run_service.state = state
-    yield state
-    engine.dispose()
+        state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path), assistant_auth=object())
+        state.run_service = RunService(sessions, SimpleNamespace(publish=lambda *a: None), tmp_path, state.secrets)
+        state.run_service.state = state
+        yield state
 
 
 def test_run_requires_explicit_nonempty_selectors():

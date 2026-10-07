@@ -21,6 +21,7 @@ from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.poster_service import PosterStudio, _GoogleArtist, _OpenAIArtist
 from tests.conftest import make_profile
+from tests.db_helpers import disposing_engine
 
 
 class Denied(RuntimeError):
@@ -54,10 +55,9 @@ def _recording_guard(calls: list[ProviderCall]):
 @pytest.fixture
 def sessions(tmp_path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    factory = make_session_factory(engine)
-    yield factory
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        factory = make_session_factory(engine)
+        yield factory
 
 
 def test_provider_call_controls_are_frozen_and_describe_the_paid_boundary():

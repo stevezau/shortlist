@@ -12,15 +12,14 @@ from shortlist.server import notifications as notif
 from shortlist.server.db.models import Collection, Event, Job, Run, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def session(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    with make_session_factory(engine)() as db:
+    with disposing_engine(make_engine(tmp_path)) as engine, make_session_factory(engine)() as db:
         yield db
-    engine.dispose()
 
 
 @pytest.fixture(autouse=True)

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.server.assistant.theme_adapter import ThemeAdapter, ThemeIntent
 from shortlist.server.db.models import Base, CacheRow, Theme
+from tests.db_helpers import disposing_engine
 
 
 def draft():
@@ -35,27 +36,26 @@ def test_theme_nested_fields_do_not_coerce_malformed_values():
 
 
 def test_title_must_be_resolved_and_authoritative_metadata_wins():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    adapter = ThemeAdapter(None)
-    with Session(engine) as session:
-        with pytest.raises(ValueError, match="Resolve"):
-            adapter.prepare(session, draft())
-        session.add(
-            CacheRow(
-                kind="assistant_titles",
-                key="movie:12",
-                expires_at=time.time() + 3600,
-                value={"tmdb_id": 12, "media": "movie", "title": "Verified title", "year": 2003},
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        adapter = ThemeAdapter(None)
+        with Session(engine) as session:
+            with pytest.raises(ValueError, match="Resolve"):
+                adapter.prepare(session, draft())
+            session.add(
+                CacheRow(
+                    kind="assistant_titles",
+                    key="movie:12",
+                    expires_at=time.time() + 3600,
+                    value={"tmdb_id": 12, "media": "movie", "title": "Verified title", "year": 2003},
+                )
             )
-        )
-        session.flush()
-        plan = adapter.prepare(session, draft())
-        assert "ai.generate" not in plan.requirements.capabilities
-        result = adapter.apply(session, plan.normalized_intent)
-        row = session.get(Theme, result.result["theme_id"])
-        assert row.ai_tokens == 0
-        assert row.origin == "assistant"
-        assert row.picks[0]["title"] == "Verified title"
-        session.rollback()
-    engine.dispose()
+            session.flush()
+            plan = adapter.prepare(session, draft())
+            assert "ai.generate" not in plan.requirements.capabilities
+            result = adapter.apply(session, plan.normalized_intent)
+            row = session.get(Theme, result.result["theme_id"])
+            assert row.ai_tokens == 0
+            assert row.origin == "assistant"
+            assert row.picks[0]["title"] == "Verified title"
+            session.rollback()

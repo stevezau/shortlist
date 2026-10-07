@@ -16,20 +16,22 @@ from shortlist.server.assistant_auth.repository import AssistantAuthRepository
 from shortlist.server.assistant_auth.routes import ConstraintsIn, ConstraintsPatchIn, create_oauth_router
 from shortlist.server.assistant_auth.types import ASSISTANT_CAPABILITIES
 from shortlist.server.db.models import Base
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def oauth_registration_client() -> Iterator[tuple[TestClient, AssistantAuthRepository, sessionmaker]]:
     """Build the real registration router against a disposable repository."""
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(bind=engine, expire_on_commit=False)
-    repository = AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32))
-    app = FastAPI()
-    app.include_router(create_oauth_router(repository=repository))
-    with TestClient(app) as client:
-        yield client, repository, sessions
-    engine.dispose()
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(bind=engine, expire_on_commit=False)
+        repository = AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32))
+        app = FastAPI()
+        app.include_router(create_oauth_router(repository=repository))
+        with TestClient(app) as client:
+            yield client, repository, sessions
 
 
 def _registration_payload(**metadata: object) -> dict[str, object]:

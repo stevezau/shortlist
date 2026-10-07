@@ -143,6 +143,9 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        from shortlist.server.services import jobs
+
+        jobs.start_background(app.state)
         # A restore the owner queued is swapped in here, before migrations or anything else opens the
         # database: swapping it under open connections is how a restore used to be undone by the very
         # restart it asked for (see `backups.restore_backup`). The notes they had closed are read first,
@@ -359,8 +362,6 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         # `drain=`: the listener wakes the job worker the moment it queues a credit pass, instead of
         # the job sitting out the worker's 60s tick. Measured before this: 87s from pressing play to
         # the dashboard, 58.6s of it queue wait for 0.5s of work.
-        from shortlist.server.services import jobs
-
         watch_stream = WatchStream(
             app.state.sessions,
             app.state.run_service.build_context,
@@ -395,11 +396,24 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             # cancelling immediately makes that unreachable — every open session would survive the
             # restart with no `ended_at`, reading as "still playing" for ever.
             try:
-                await asyncio.wait_for(stream_task, timeout=5)
-            except (TimeoutError, asyncio.CancelledError):
-                stream_task.cancel()
-            # Close the pool, so the WAL is checkpointed now rather than whenever the interpreter gets to it.
-            engine.dispose()
+                try:
+                    await asyncio.wait_for(stream_task, timeout=5)
+                except (TimeoutError, asyncio.CancelledError):
+                    stream_task.cancel()
+                    await asyncio.gather(stream_task, return_exceptions=True)
+            finally:
+                try:
+                    await watch_stream.shutdown()
+                finally:
+                    # Cancelled callers can still own executor threads. Jobs may launch runs, so
+                    # join in that order before disposing the pool both services use.
+                    try:
+                        await jobs.shutdown_background(app.state)
+                    finally:
+                        try:
+                            await app.state.run_service.shutdown()
+                        finally:
+                            engine.dispose()
             logger.info("shutdown complete: scheduler and playback listener stopped, database closed")
 
     # The interactive API docs + schema disclose the whole API surface unauthenticated. They're off

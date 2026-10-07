@@ -20,6 +20,7 @@ from shortlist.server.assistant.changes import (
 )
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
 from shortlist.server.db.models import Base, Event, Job, Setting
+from tests.db_helpers import disposing_engine
 
 NOW = datetime(2026, 10, 5, tzinfo=UTC)
 
@@ -69,14 +70,15 @@ class SettingAdapter:
 
 @pytest.fixture
 def env(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'changes.db'}", connect_args={"timeout": 10})
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
-    adapter = SettingAdapter()
-    principal = SimpleNamespace(grant_id="grant-a", client_id="client-a", owner_account_id=42)
-    service = ChangeService(sessions, {adapter.kind: adapter}, Policy(), clock=lambda: NOW)
-    yield SimpleNamespace(sessions=sessions, adapter=adapter, principal=principal, service=service)
-    engine.dispose()
+    with disposing_engine(
+        create_engine(f"sqlite:///{tmp_path / 'changes.db'}", connect_args={"timeout": 10})
+    ) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        adapter = SettingAdapter()
+        principal = SimpleNamespace(grant_id="grant-a", client_id="client-a", owner_account_id=42)
+        service = ChangeService(sessions, {adapter.kind: adapter}, Policy(), clock=lambda: NOW)
+        yield SimpleNamespace(sessions=sessions, adapter=adapter, principal=principal, service=service)
 
 
 def test_apply_commits_config_audit_and_one_job(env):

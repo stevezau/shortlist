@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from shortlist.server.assistant.generation import BudgetedCurator, GenerationIntent, provider_destination
+from tests.db_helpers import disposing_engine
 
 
 def test_one_dispatch_and_output_ceiling_are_enforced():
@@ -71,85 +72,86 @@ def generation_env(tmp_path, monkeypatch):
     from shortlist.server.services.secrets import SecretBox
     from shortlist.server.settings_store import SettingsStore
 
-    engine = create_engine(f"sqlite:///{tmp_path / 'generation.db'}")
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
-    state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
-    repository = AssistantAuthRepository(sessions, CredentialHasher(b"test-generation-hash-key-00000000"))
-    state.assistant_auth = SimpleNamespace(repository=repository)
-    with sessions() as session:
-        session.add(
-            Server(machine_id="generation", url="http://unused.invalid", token_enc="unused", owner_account_id=42)
+    with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'generation.db'}")) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
+        repository = AssistantAuthRepository(sessions, CredentialHasher(b"test-generation-hash-key-00000000"))
+        state.assistant_auth = SimpleNamespace(repository=repository)
+        with sessions() as session:
+            session.add(
+                Server(machine_id="generation", url="http://unused.invalid", token_enc="unused", owner_account_id=42)
+            )
+            store = SettingsStore(session, state.secrets)
+            store.set_in_transaction("curator.provider", "openai")
+            store.set_in_transaction("curator.api_key", "fake-provider-secret")
+            store.set_in_transaction("tmdb.apikey", "fake-metadata-secret")
+            session.commit()
+        principal = repository.create_grant(
+            owner_account_id=42,
+            client_id="generation-test",
+            name="Generation test",
+            preset=GrantPreset.OWNER_AUTOMATION,
+            capabilities={Capability.CHANGES_PREPARE, Capability.AI_GENERATE, Capability.CATALOG_READ},
+            constraints=GrantConstraints(
+                destination_ids=frozenset({"https://api.openai.com/v1"}), max_provider_calls=1
+            ),
         )
-        store = SettingsStore(session, state.secrets)
-        store.set_in_transaction("curator.provider", "openai")
-        store.set_in_transaction("curator.api_key", "fake-provider-secret")
-        store.set_in_transaction("tmdb.apikey", "fake-metadata-secret")
-        session.commit()
-    principal = repository.create_grant(
-        owner_account_id=42,
-        client_id="generation-test",
-        name="Generation test",
-        preset=GrantPreset.OWNER_AUTOMATION,
-        capabilities={Capability.CHANGES_PREPARE, Capability.AI_GENERATE, Capability.CATALOG_READ},
-        constraints=GrantConstraints(destination_ids=frozenset({"https://api.openai.com/v1"}), max_provider_calls=1),
-    )
-    calls, factories, plex_reads = [], [], []
-    answer = json.dumps(
-        {
-            "name": "Twists",
-            "emoji": "🎬",
-            "rules": {},
-            "tags": [],
-            "genres": ["Thriller"],
-            "titles": [{"media": "movie", "title": "Memento", "year": 2000}],
-            "collections": [{"section_key": "private", "title": "Do not read this"}],
-        }
-    )
+        calls, factories, plex_reads = [], [], []
+        answer = json.dumps(
+            {
+                "name": "Twists",
+                "emoji": "🎬",
+                "rules": {},
+                "tags": [],
+                "genres": ["Thriller"],
+                "titles": [{"media": "movie", "title": "Memento", "year": 2000}],
+                "collections": [{"section_key": "private", "title": "Do not read this"}],
+            }
+        )
 
-    class Provider:
-        name = "fake"
-        can_complete = True
-        last_tokens = 11
+        class Provider:
+            name = "fake"
+            can_complete = True
+            last_tokens = 11
 
-        def complete(self, system, user, *, max_tokens):
-            calls.append({"max_tokens": max_tokens, "system": system, "user": user})
-            return answer
+            def complete(self, system, user, *, max_tokens):
+                calls.append({"max_tokens": max_tokens, "system": system, "user": user})
+                return answer
 
-    def factory(provider, **kwargs):
-        factories.append({"provider": provider, **kwargs})
-        return Provider()
+        def factory(provider, **kwargs):
+            factories.append({"provider": provider, **kwargs})
+            return Provider()
 
-    class Metadata:
-        def search(self, title, media, *, year=None):
-            return {"id": 1, "title": "Memento"}
+        class Metadata:
+            def search(self, title, media, *, year=None):
+                return {"id": 1, "title": "Memento"}
 
-        def search_all(self, title, media):
-            return [self.search(title, media)]
+            def search_all(self, title, media):
+                return [self.search(title, media)]
 
-        def search_keywords(self, query, limit=10):
-            return []
+            def search_keywords(self, query, limit=10):
+                return []
 
-        def discover_all(self, media, params):
-            return []
+            def discover_all(self, media, params):
+                return []
 
-        def list_item(self, tmdb_id, media):
-            return {"id": 1, "title": "Memento", "release_date": "2000-01-01", "vote_average": 8, "vote_count": 999}
+            def list_item(self, tmdb_id, media):
+                return {"id": 1, "title": "Memento", "release_date": "2000-01-01", "vote_average": 8, "vote_count": 999}
 
-        def details(self, tmdb_id, media):
-            return {"runtime": 113}
+            def details(self, tmdb_id, media):
+                return {"runtime": 113}
 
-    class NoPlex:
-        def __getattr__(self, name):
-            plex_reads.append(name)
-            raise AssertionError("Generation must not inspect Plex")
+        class NoPlex:
+            def __getattr__(self, name):
+                plex_reads.append(name)
+                raise AssertionError("Generation must not inspect Plex")
 
-    monkeypatch.setattr(generation, "make_curator", factory)
-    monkeypatch.setattr(generation, "TmdbClient", lambda *args, **kwargs: Metadata())
-    monkeypatch.setattr(generation, "_NoLibraryReader", NoPlex)
-    state.changes = ChangeService(sessions, {"generation": generation.GenerationAdapter(state)})
-    yield SimpleNamespace(state=state, principal=principal, calls=calls, factories=factories, plex_reads=plex_reads)
-    engine.dispose()
+        monkeypatch.setattr(generation, "make_curator", factory)
+        monkeypatch.setattr(generation, "TmdbClient", lambda *args, **kwargs: Metadata())
+        monkeypatch.setattr(generation, "_NoLibraryReader", NoPlex)
+        state.changes = ChangeService(sessions, {"generation": generation.GenerationAdapter(state)})
+        yield SimpleNamespace(state=state, principal=principal, calls=calls, factories=factories, plex_reads=plex_reads)
 
 
 def _generation_operation(env, *, principal=None, approve=False):

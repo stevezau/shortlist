@@ -60,8 +60,8 @@ SESSION_CACHE_TTL = timedelta(seconds=5)
 #: probing the file. Tautulli calls the same idea its "ignore interval".
 MIN_START_SECONDS = 60
 #: Live references to in-flight wake futures. `run_coroutine_threadsafe` hands back a future nothing
-#: else holds, and a bare one can be garbage-collected mid-flight — the same reason
-#: `jobs._BACKGROUND_DRAINS` exists.
+#: else holds, and a bare one can be garbage-collected mid-flight. Jobs likewise retain their
+#: drain tasks in each app's lifecycle.
 _WAKES: set = set()
 
 #: How far past an item's stated runtime an offset may sit and still be believed. Genuine end-of-file
@@ -203,6 +203,7 @@ class WatchStream:
         # the message loop parks behind them. One worker also serialises our own writes, so two
         # flushes for the same session can never race.
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="watch-stream")
+        self._pool_shutdown: asyncio.Future[None] | None = None
 
     # -- health --------------------------------------------------------------------------
     #
@@ -411,8 +412,32 @@ class WatchStream:
         self._stopping = True
         self._stop.set()
 
+    async def shutdown(self) -> None:
+        """Join the private worker after the listener coroutine has stopped.
+
+        Cancelling the listener's executor await cannot stop its database write. Keep the pool
+        alive until that write closes its connection, even if shutdown itself is cancelled.
+        """
+        self.stop()
+        if self._pool_shutdown is None:
+            self._pool_shutdown = asyncio.get_running_loop().run_in_executor(
+                None, lambda: self._pool.shutdown(wait=True)
+            )
+        pending = self._pool_shutdown
+        cancelled = False
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                cancelled = True
+        pending.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
     async def _in_pool(self, fn, *args):
         """Run a blocking call on OUR thread, never the shared default executor."""
+        if self._pool_shutdown is not None:
+            raise RuntimeError("Watch stream is shutting down; its worker no longer accepts work")
         return await asyncio.get_running_loop().run_in_executor(self._pool, lambda: fn(*args))
 
     async def _sleep(self, seconds: float) -> None:
@@ -728,8 +753,8 @@ class WatchStream:
           lifespan has deliberately stopped the scheduler. That let pressing play begin a
           share-filter merge during shutdown, with the drain never resuming to close the job out.
           `drain_kind` runs the read-only pass this asked for and nothing else.
-        * It does not drop the future. A bare task can be garbage-collected mid-flight, which is why
-          `jobs._BACKGROUND_DRAINS` exists; this keeps its own reference on the same pattern.
+        * It does not drop the future. A bare task can be garbage-collected mid-flight; this keeps
+          its own reference, while jobs retain the actual drain task in the app's lifecycle.
         """
         if self._drain is None or self._loop is None or self._stopping:
             return

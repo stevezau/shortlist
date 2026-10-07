@@ -25,6 +25,7 @@ from shortlist.server.db.session import make_engine, make_session_factory, run_m
 from shortlist.server.services import jobs, notify
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import PRIVATE_KEYS, SECRET_KEYS, SettingsStore
+from tests.db_helpers import disposing_engine
 
 pytestmark = pytest.mark.integration
 
@@ -35,7 +36,8 @@ ALL_EVENTS = list(notify.EVENTS)
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    return make_session_factory(make_engine(tmp_path))
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 @pytest.fixture

@@ -21,6 +21,7 @@ from sqlalchemy.pool import StaticPool
 import shortlist.server.services.watch_stream as watch_stream
 from shortlist.server.db.models import Base, Job, WatchSession
 from shortlist.server.services.watch_stream import MIN_START_SECONDS, WatchStream
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
@@ -28,9 +29,11 @@ def sessions():
     # StaticPool, because the persistence path runs in a worker thread (`asyncio.to_thread`) and
     # SQLite's default pooling hands a new thread its OWN connection — which for `sqlite://` means its
     # own empty in-memory database. Without this the writes land somewhere nothing can read.
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(engine)
 
 
 @pytest.fixture

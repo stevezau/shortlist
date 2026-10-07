@@ -12,15 +12,14 @@ from shortlist.engine.seasons import CollectionRef, DateRule, season_content_has
 from shortlist.server.db.models import SeasonDef
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.season_catalogue import load_catalogue, make_slug, season_from_row
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def session(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    with make_session_factory(engine)() as session:
+    with disposing_engine(make_engine(tmp_path)) as engine, make_session_factory(engine)() as session:
         yield session
-    engine.dispose()
 
 
 def _row(**overrides) -> SeasonDef:

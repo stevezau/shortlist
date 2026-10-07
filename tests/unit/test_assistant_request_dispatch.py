@@ -15,61 +15,65 @@ from shortlist.server.assistant_auth.repository import AssistantAuthRepository
 from shortlist.server.db.models import Base, Collection, Job, RequestCandidate, Server, User
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 from tests.unit.test_assistant_requests import candidate
 
 
 @pytest.fixture
 def request_env(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'requests.db'}")
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
-    state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
-    state.run_service = SimpleNamespace(build_requests_context=lambda: pytest.fail("separate context during planning"))
-    with sessions() as session:
-        session.add(Server(machine_id="requests", url="http://unused.invalid", token_enc="unused", owner_account_id=42))
-        session.add(User(id=1, slug="sarah", username="sarah", plex_account_id=10))
-        session.add(Collection(id=1, slug="movies", name="Movies", library_keys=["1"]))
-        item = candidate()
-        item.row_slug = "movies"
-        session.add(item)
-        store = SettingsStore(session, state.secrets)
-        for key, value in {
-            "requests.enabled": True,
-            "requests.target": "arr",
-            "requests.radarr.url": "http://radarr.test",
-            "requests.radarr.apikey": "private-request-key",
-            "requests.radarr.quality_profile_id": 7,
-            "requests.radarr.root_folder": "/movies",
-            "requests.tag": "shortlist",
-            "tmdb.apikey": "private-metadata-key",
-        }.items():
-            store.set_in_transaction(key, value)
-        session.commit()
-    repository = AssistantAuthRepository(sessions, CredentialHasher(b"request-test-key-0000000000000000"))
-    principal = repository.create_grant(
-        owner_account_id=42,
-        client_id="requests-test",
-        name="Requests test",
-        preset=GrantPreset.OWNER_AUTOMATION,
-        capabilities={
-            Capability.CHANGES_PREPARE,
-            Capability.REQUESTS_READ,
-            Capability.REQUESTS_MANAGE,
-            Capability.REQUESTS_SEND,
-        },
-        constraints=GrantConstraints(
-            row_ids=frozenset({1}),
-            person_ids=frozenset({1}),
-            library_keys=frozenset({"1"}),
-            destination_ids=frozenset({"radarr", "http://radarr.test"}),
-            max_batch_size=25,
-        ),
-    )
-    state.assistant_auth = SimpleNamespace(repository=repository)
-    adapter = RequestAdapter(state)
-    service = ChangeService(sessions, {"requests": adapter})
-    yield SimpleNamespace(state=state, adapter=adapter, service=service, principal=principal, repository=repository)
-    engine.dispose()
+    with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'requests.db'}")) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
+        state.run_service = SimpleNamespace(
+            build_requests_context=lambda: pytest.fail("separate context during planning")
+        )
+        with sessions() as session:
+            session.add(
+                Server(machine_id="requests", url="http://unused.invalid", token_enc="unused", owner_account_id=42)
+            )
+            session.add(User(id=1, slug="sarah", username="sarah", plex_account_id=10))
+            session.add(Collection(id=1, slug="movies", name="Movies", library_keys=["1"]))
+            item = candidate()
+            item.row_slug = "movies"
+            session.add(item)
+            store = SettingsStore(session, state.secrets)
+            for key, value in {
+                "requests.enabled": True,
+                "requests.target": "arr",
+                "requests.radarr.url": "http://radarr.test",
+                "requests.radarr.apikey": "private-request-key",
+                "requests.radarr.quality_profile_id": 7,
+                "requests.radarr.root_folder": "/movies",
+                "requests.tag": "shortlist",
+                "tmdb.apikey": "private-metadata-key",
+            }.items():
+                store.set_in_transaction(key, value)
+            session.commit()
+        repository = AssistantAuthRepository(sessions, CredentialHasher(b"request-test-key-0000000000000000"))
+        principal = repository.create_grant(
+            owner_account_id=42,
+            client_id="requests-test",
+            name="Requests test",
+            preset=GrantPreset.OWNER_AUTOMATION,
+            capabilities={
+                Capability.CHANGES_PREPARE,
+                Capability.REQUESTS_READ,
+                Capability.REQUESTS_MANAGE,
+                Capability.REQUESTS_SEND,
+            },
+            constraints=GrantConstraints(
+                row_ids=frozenset({1}),
+                person_ids=frozenset({1}),
+                library_keys=frozenset({"1"}),
+                destination_ids=frozenset({"radarr", "http://radarr.test"}),
+                max_batch_size=25,
+            ),
+        )
+        state.assistant_auth = SimpleNamespace(repository=repository)
+        adapter = RequestAdapter(state)
+        service = ChangeService(sessions, {"requests": adapter})
+        yield SimpleNamespace(state=state, adapter=adapter, service=service, principal=principal, repository=repository)
 
 
 def prepare_send(env):

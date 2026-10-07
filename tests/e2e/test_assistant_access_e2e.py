@@ -12,6 +12,7 @@ from sqlalchemy import select
 from shortlist.server.assistant_auth.models import AssistantGrant
 from shortlist.server.auth import SESSION_COOKIE, session_serializer
 from shortlist.server.db.session import make_engine, make_session_factory
+from tests.db_helpers import disposing_engine
 from tests.e2e.conftest import OWNER_ACCOUNT_ID, ShortlistApp
 
 pytestmark = pytest.mark.e2e
@@ -50,9 +51,8 @@ def _create_grant(app: ShortlistApp, name: str) -> dict:
 
 def _make_legacy(app: ShortlistApp, grant_id: str) -> None:
     """Seed a historical grant shape; all reads and mutations still use the real API."""
-    engine = make_engine(Path(app.config_dir))
-    sessions = make_session_factory(engine)
-    try:
+    with disposing_engine(make_engine(Path(app.config_dir))) as engine:
+        sessions = make_session_factory(engine)
         with sessions() as session:
             row = session.scalar(select(AssistantGrant).where(AssistantGrant.id == grant_id))
             assert row is not None
@@ -60,8 +60,6 @@ def _make_legacy(app: ShortlistApp, grant_id: str) -> None:
             constraints["include_future_people"] = False
             row.constraints = constraints
             session.commit()
-    finally:
-        engine.dispose()
 
 
 def _owner_context(browser: Browser, app: ShortlistApp, *, width: int):

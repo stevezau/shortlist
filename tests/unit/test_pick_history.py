@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from shortlist.engine.models import MediaType
 from shortlist.server.db.models import Base, PickRow, Run, User
 from shortlist.server.services.pick_history import DbPickHistory
+from tests.db_helpers import disposing_engine
 from tests.watch_fixtures import live_row, personal_delivery
 
 NOW = datetime(2026, 10, 4, 12, tzinfo=UTC)
@@ -19,10 +20,10 @@ TODAY = NOW.date()
 
 @pytest.fixture
 def session():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    with sessionmaker(engine)() as s:
-        yield s
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        with sessionmaker(engine)() as s:
+            yield s
 
 
 def factory_of(session):

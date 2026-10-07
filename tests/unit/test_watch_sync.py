@@ -27,6 +27,7 @@ from shortlist.server.db.session import make_engine, make_session_factory, run_m
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_cache import WatchCache
 from shortlist.server.services.watch_sync import WatchSync, _for_each_profile
+from tests.db_helpers import disposing_engine
 
 SECTIONS = [
     SimpleNamespace(key="1", type="movie", title="Movies"),
@@ -37,9 +38,8 @@ SECTIONS = [
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    yield make_session_factory(engine)
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 def _people(sessions, count: int) -> list[UserProfile]:

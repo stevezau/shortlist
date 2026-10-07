@@ -102,6 +102,10 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   (`.claude/hooks/pytest-serialize.sh`) denies a `pytest` command while another one is in flight; when
   it fires, wait and retry rather than working around it. Scoped runs stay cheap and stay encouraged —
   it is the OVERLAP that costs, not the frequency.
+- **Keep backend test scratch on disk.** The test setup defaults to a stable per-worktree
+  directory under `/var/tmp`, rejects RAM-backed locations and explicit `--basetemp`, and retains
+  at most two completed failed runs. Set `PYTEST_DEBUG_TEMPROOT` to choose another disk-backed
+  parent. Ordinary runs use two workers. Never reuse or delete another active run's scratch.
 - **Don't re-verify what a tool already told you.** No re-reading a file you just wrote, no re-running
   a suite after a formatting-only change, no full-suite run to confirm a docs edit.
 - **Keep tool output small**: `-q`, `| tail`, targeted `grep`/`sed -n` over dumping whole files.

@@ -14,19 +14,19 @@ import pytest
 from shortlist.server.db.models import Collection, Event
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.scheduler import schedule_groups
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def app(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    factory = make_session_factory(engine)
-    # The migration seeds the default 'picked' row with a cron; clear it so each test owns the set.
-    with factory() as session:
-        session.query(Collection).delete()
-        session.commit()
-    yield SimpleNamespace(state=SimpleNamespace(sessions=factory))
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        factory = make_session_factory(engine)
+        # The migration seeds the default 'picked' row with a cron; clear it so each test owns the set.
+        with factory() as session:
+            session.query(Collection).delete()
+            session.commit()
+        yield SimpleNamespace(state=SimpleNamespace(sessions=factory))
 
 
 def _add(factory, slug: str, schedule: str, *, enabled: bool = True) -> None:

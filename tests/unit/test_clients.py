@@ -31,6 +31,7 @@ from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient, TraktError
 from shortlist.engine.models import MediaType, OwnedRow, UserType
 from tests.conftest import fake_media_item
+from tests.db_helpers import disposing_engine
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 USERS_XML = (FIXTURES / "plextv_users.xml.txt").read_text()
@@ -2500,55 +2501,58 @@ class TestWatchedWindowCoverage:
         from shortlist.server.services.watch_cache import WatchCache
 
         run_migrations(tmp_path)
-        sessions = make_session_factory(make_engine(tmp_path))
-        with sessions() as session:
-            user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
-            session.add(user)
-            session.commit()
-            user_id = user.id
+        with disposing_engine(make_engine(tmp_path)) as engine:
+            sessions = make_session_factory(engine)
+            with sessions() as session:
+                user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
+                session.add(user)
+                session.commit()
+                user_id = user.id
 
-        cache = WatchCache(sessions)
-        self._mock_url(mock_plex)
-        # 100s apart, well inside CURSOR_OVERLAP (5 min) — so `Older` really is in the window the
-        # next read covers, and is therefore a genuine deletion candidate. Space them further and the
-        # cursor moves past `Older`, the delete can never reach it, and this test proves nothing.
-        everything = [(1, "Newest", self._NOW), (2, "Older", self._NOW - 100)]
-        person = SimpleNamespace(username="sarah", slug="sarah")
+            cache = WatchCache(sessions)
+            self._mock_url(mock_plex)
+            # 100s apart, well inside CURSOR_OVERLAP (5 min) — so `Older` really is in the window the
+            # next read covers, and is therefore a genuine deletion candidate. Space them further and the
+            # cursor moves past `Older`, the delete can never reach it, and this test proves nothing.
+            everything = [(1, "Newest", self._NOW), (2, "Older", self._NOW - 100)]
+            person = SimpleNamespace(username="sarah", slug="sarah")
 
-        # Seed: a healthy full read caches both titles.
-        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything, size=2, total=2)))
-        with sessions() as session:
-            cache.sync_section(
-                session,
-                person,
-                user_id,
-                "1",
-                MediaType.MOVIE,
-                lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
-                force_full=True,
+            # Seed: a healthy full read caches both titles.
+            respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything, size=2, total=2)))
+            with sessions() as session:
+                cache.sync_section(
+                    session,
+                    person,
+                    user_id,
+                    "1",
+                    MediaType.MOVIE,
+                    lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
+                    force_full=True,
+                )
+                session.commit()
+            with sessions() as session:
+                assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}
+
+            # Now the server truncates: one capped page, no totalSize. `Older` is inside the window the
+            # cursor asks for, but the walk stops before reaching it.
+            respx.get(self._URL).mock(
+                return_value=httpx.Response(200, text=self._page(everything[:1], size=1, total=None))
             )
-            session.commit()
-        with sessions() as session:
-            assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}
+            with sessions() as session:
+                cache.sync_section(
+                    session,
+                    person,
+                    user_id,
+                    "1",
+                    MediaType.MOVIE,
+                    lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
+                    now=datetime.now(UTC) + timedelta(seconds=1),
+                )
+                session.commit()
 
-        # Now the server truncates: one capped page, no totalSize. `Older` is inside the window the
-        # cursor asks for, but the walk stops before reaching it.
-        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything[:1], size=1, total=None)))
-        with sessions() as session:
-            cache.sync_section(
-                session,
-                person,
-                user_id,
-                "1",
-                MediaType.MOVIE,
-                lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
-                now=datetime.now(UTC) + timedelta(seconds=1),
-            )
-            session.commit()
-
-        with sessions() as session:
-            titles = {r.title for r in session.query(WatchedTitle).all()}
-        assert titles == {"Newest", "Older"}, "a title the walk never reached was deleted as an un-watch"
+            with sessions() as session:
+                titles = {r.title for r in session.query(WatchedTitle).all()}
+            assert titles == {"Newest", "Older"}, "a title the walk never reached was deleted as an un-watch"
 
     @respx.mock
     def test_a_truncated_COMPLETE_read_does_not_wipe_the_section(self, mock_plex, tmp_path):
@@ -2566,48 +2570,51 @@ class TestWatchedWindowCoverage:
         from shortlist.server.services.watch_cache import WatchCache
 
         run_migrations(tmp_path)
-        sessions = make_session_factory(make_engine(tmp_path))
-        with sessions() as session:
-            user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
-            session.add(user)
-            session.commit()
-            user_id = user.id
-
-        cache = WatchCache(sessions)
-        person = SimpleNamespace(username="sarah", slug="sarah")
-        everything = [(1, "Newest", self._NOW), (2, "Older", self._NOW - 100)]
-        self._mock_url(mock_plex)
-
-        def complete_read(now=None):
+        with disposing_engine(make_engine(tmp_path)) as engine:
+            sessions = make_session_factory(engine)
             with sessions() as session:
-                cache.sync_section(
-                    session,
-                    person,
-                    user_id,
-                    "1",
-                    MediaType.MOVIE,
-                    lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
-                    force_full=True,
-                    now=now,
-                )
+                user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
+                session.add(user)
                 session.commit()
+                user_id = user.id
 
-        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything, size=2, total=2)))
-        complete_read()
-        with sessions() as session:
-            assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}
-            stamped = session.query(WatchSyncState).one().last_full_at
+            cache = WatchCache(sessions)
+            person = SimpleNamespace(username="sarah", slug="sarah")
+            everything = [(1, "Newest", self._NOW), (2, "Older", self._NOW - 100)]
+            self._mock_url(mock_plex)
 
-        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything[:1], size=1, total=None)))
-        complete_read(now=datetime.now(UTC) + timedelta(seconds=1))
+            def complete_read(now=None):
+                with sessions() as session:
+                    cache.sync_section(
+                        session,
+                        person,
+                        user_id,
+                        "1",
+                        MediaType.MOVIE,
+                        lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
+                        force_full=True,
+                        now=now,
+                    )
+                    session.commit()
 
-        with sessions() as session:
-            assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}, (
-                "an unproven complete read wiped a title nobody un-watched"
+            respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything, size=2, total=2)))
+            complete_read()
+            with sessions() as session:
+                assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}
+                stamped = session.query(WatchSyncState).one().last_full_at
+
+            respx.get(self._URL).mock(
+                return_value=httpx.Response(200, text=self._page(everything[:1], size=1, total=None))
             )
-            assert session.query(WatchSyncState).one().last_full_at == stamped, (
-                "an unproven complete read reset the clock on the reconcile it never did"
-            )
+            complete_read(now=datetime.now(UTC) + timedelta(seconds=1))
+
+            with sessions() as session:
+                assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}, (
+                    "an unproven complete read wiped a title nobody un-watched"
+                )
+                assert session.query(WatchSyncState).one().last_full_at == stamped, (
+                    "an unproven complete read reset the clock on the reconcile it never did"
+                )
 
     @respx.mock
     def test_an_incremental_read_LOSES_a_series_whose_show_date_lagged_its_episodes(self, mock_plex):

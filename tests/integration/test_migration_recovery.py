@@ -20,6 +20,7 @@ from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 
 from shortlist.server.db import session as db_session
+from tests.db_helpers import disposing_engine
 
 pytestmark = pytest.mark.integration
 
@@ -52,40 +53,40 @@ def test_every_revision_is_re_runnable_after_a_crash(tmp_path: Path, revision: s
     stamp never written. The next boot re-applies it — and must reach head.
     """
     db_session.run_migrations(tmp_path)
-    engine = db_session.make_engine(tmp_path)
-    head = _version(engine)
+    with disposing_engine(db_session.make_engine(tmp_path)) as engine:
+        head = _version(engine)
 
-    with engine.begin() as conn:
-        if parent is None:
-            # A crash inside the FIRST migration: the version table exists but was never stamped.
-            conn.execute(sa.text("DELETE FROM alembic_version"))
-        else:
-            conn.execute(sa.text("UPDATE alembic_version SET version_num = :v"), {"v": parent})
+        with engine.begin() as conn:
+            if parent is None:
+                # A crash inside the FIRST migration: the version table exists but was never stamped.
+                conn.execute(sa.text("DELETE FROM alembic_version"))
+            else:
+                conn.execute(sa.text("UPDATE alembic_version SET version_num = :v"), {"v": parent})
 
-    db_session.run_migrations(tmp_path)  # must not raise
+        db_session.run_migrations(tmp_path)  # must not raise
 
-    assert _version(engine) == head
-    with engine.connect() as conn:
-        # Recovery must not duplicate the default row the initial migration seeds: a re-run finishes
-        # the job, it does not redo it. (Re-seeding would give the owner two "Picked for You" rows.)
-        assert [r[0] for r in conn.execute(sa.text("SELECT slug FROM collections")).fetchall()] == ["picked"]
+        assert _version(engine) == head
+        with engine.connect() as conn:
+            # Recovery must not duplicate the default row the initial migration seeds: a re-run finishes
+            # the job, it does not redo it. (Re-seeding would give the owner two "Picked for You" rows.)
+            assert [r[0] for r in conn.execute(sa.text("SELECT slug FROM collections")).fetchall()] == ["picked"]
 
 
 def test_a_crash_before_the_default_seed_still_seeds_it(tmp_path: Path):
     """A crash mid-initial that created the tables but lost the default-row seed: the re-run must seed
     it (the initial migration's seed is guarded by 'collections is empty', not by the version stamp)."""
     db_session.run_migrations(tmp_path)
-    engine = db_session.make_engine(tmp_path)
-    head = _version(engine)
-    with engine.begin() as conn:
-        conn.execute(sa.text("DELETE FROM collections"))  # seed lost
-        conn.execute(sa.text("DELETE FROM alembic_version"))  # stamp never written (crash before it)
+    with disposing_engine(db_session.make_engine(tmp_path)) as engine:
+        head = _version(engine)
+        with engine.begin() as conn:
+            conn.execute(sa.text("DELETE FROM collections"))  # seed lost
+            conn.execute(sa.text("DELETE FROM alembic_version"))  # stamp never written (crash before it)
 
-    db_session.run_migrations(tmp_path)
+        db_session.run_migrations(tmp_path)
 
-    with engine.connect() as conn:
-        assert _version(engine) == head  # the real head, not a literal a new migration invalidates
-        assert [r[0] for r in conn.execute(sa.text("SELECT slug FROM collections")).fetchall()] == ["picked"]
+        with engine.connect() as conn:
+            assert _version(engine) == head  # the real head, not a literal a new migration invalidates
+            assert [r[0] for r in conn.execute(sa.text("SELECT slug FROM collections")).fetchall()] == ["picked"]
 
 
 def test_no_migration_is_numbered_inside_the_reserved_squashed_range(tmp_path: Path):
@@ -105,9 +106,9 @@ def test_booting_twice_leaves_the_stamp_alone(tmp_path: Path):
     """The consequence the range guards against, asserted directly: a second boot on an up-to-date DB
     must be a no-op, not a heal-and-replay."""
     db_session.run_migrations(tmp_path)
-    engine = db_session.make_engine(tmp_path)
-    head = _version(engine)
+    with disposing_engine(db_session.make_engine(tmp_path)) as engine:
+        head = _version(engine)
 
-    db_session.run_migrations(tmp_path)
+        db_session.run_migrations(tmp_path)
 
-    assert _version(engine) == head
+        assert _version(engine) == head

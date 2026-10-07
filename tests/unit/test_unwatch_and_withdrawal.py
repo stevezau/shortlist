@@ -30,6 +30,7 @@ from shortlist.server.services.report_service import (
     resolve_outcomes,
 )
 from shortlist.server.services.run_persistence import reconcile_watched
+from tests.db_helpers import disposing_engine
 from tests.watch_fixtures import personal_delivery, shared_delivery
 
 # The real clock, deliberately not a pinned date. Every fixture here places its data RELATIVE to
@@ -43,9 +44,9 @@ NOW = datetime.now(UTC)
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(engine)
 
 
 @pytest.fixture

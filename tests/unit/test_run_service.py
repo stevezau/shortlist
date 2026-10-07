@@ -32,6 +32,7 @@ from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 from tests.watch_fixtures import personal_delivery
 
 
@@ -48,14 +49,13 @@ def _fake_ctx() -> SimpleNamespace:
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    factory = make_session_factory(engine)
-    with factory() as session:
-        session.add(User(plex_account_id=555000100, username="sarah", slug="sarah", enabled=True))
-        session.add(User(plex_account_id=555000200, username="mike", slug="mike", enabled=True))
-        session.commit()
-    yield factory
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        factory = make_session_factory(engine)
+        with factory() as session:
+            session.add(User(plex_account_id=555000100, username="sarah", slug="sarah", enabled=True))
+            session.add(User(plex_account_id=555000200, username="mike", slug="mike", enabled=True))
+            session.commit()
+        yield factory
 
 
 class TestDbCache:
@@ -1137,15 +1137,15 @@ class TestAFinishedRunStartsTheWorkItWasBlocking:
 
 
 class TestShutdownNeverStartsAWriterBesideALiveEngine:
-    """A teardown path cancels the run TASK, and task cancellation cannot stop the engine's executor thread.
+    """Cancelling a run task must retain its writer lock until the executor thread finishes.
 
-    In the shipped image the process simply dies at shutdown and no task is cancelled; Ctrl-C, uvicorn as
-    PID 1 without an init, or an in-process server are the paths that cancel it.
+    Previously, cancellation ran the task's `finally` blocks immediately: they released the writer
+    lock and dropped the cancel Event, so `is_running()` read False. The following drain could then
+    start a queued `privacy.sync` while the engine thread was still merging share filters. Two
+    overlapping read-modify-write merges drop the first one's `label!=` excludes (plex-safety rule 3).
 
-    The task's `finally` blocks still run on the way out: they release the writer lock and drop the
-    cancel Event, so `is_running()` reads False — and the drain after them used to start a queued
-    `privacy.sync` while the engine thread was still merging share filters. Two overlapping
-    read-modify-write merges drop the first one's `label!=` excludes (plex-safety rule 3).
+    Shutdown now joins owned work, and a cancelled run task requests cooperative cancellation while
+    retaining ownership until its engine settles. Neither path may start a second writer beside it.
     """
 
     def test_a_cancelled_run_task_starts_no_writer_while_its_engine_thread_runs(self, sessions, tmp_path, monkeypatch):
@@ -1176,26 +1176,30 @@ class TestShutdownNeverStartsAWriterBesideALiveEngine:
             try:
                 await service.start_run(trigger="schedule", dry_run=False)
                 (task,) = service._tasks
-                await loop.run_in_executor(None, engine_started.wait, 5)
+                assert await loop.run_in_executor(None, engine_started.wait, 5)
                 job_id = jobs.enqueue(sessions, "privacy.sync", {"scheduled": True})
 
                 task.cancel()  # what asyncio.run's teardown does to every task left after uvicorn stops
-                await asyncio.wait({task}, timeout=5)
-                assert task.done(), "the cancelled run task never finished its `finally` blocks"
+                await asyncio.sleep(0)
+                assert not task.done(), "the run must keep ownership of its live executor"
+                assert jobs.plex_writer_lock().locked(), "a live engine still owns the writer lock"
                 during_shutdown = list(writer_ran_beside_engine)
                 with sessions() as session:
                     left_queued = session.get(Job, job_id).status
                 engine_was_alive = not engine_done.is_set()
             finally:
                 release_engine.set()
-            await loop.run_in_executor(None, engine_done.wait, 5)
+                await asyncio.wait_for(service.shutdown(), timeout=10)
+            assert task.cancelled()
+            assert engine_done.is_set()
+            assert not jobs.plex_writer_lock().locked()
             # The next drain (the next boot's, in production) still finds the job and runs it.
             await jobs.drain_now(service.state, "next boot")
             return during_shutdown, left_queued, engine_was_alive
 
         during_shutdown, left_queued, engine_was_alive = asyncio.run(scenario())
 
-        assert engine_was_alive, "the scenario needs the engine thread still running when the task ends"
+        assert engine_was_alive, "the scenario needs the engine thread still running when cancellation is requested"
         assert during_shutdown == [], "a writer job started while the cancelled run's engine thread was running"
         assert left_queued == "queued", "a skipped job must stay queued for the next drain"
         assert writer_ran_beside_engine == [False], "the next drain must run it, after the engine finished"

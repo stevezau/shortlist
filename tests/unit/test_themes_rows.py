@@ -19,6 +19,7 @@ from shortlist.engine.placeholders import needs_a_run, uses_theme
 from shortlist.engine.rows import RowPolicy, _rating_key_resolver, _rows_as_seen_by, effective_row_sources, row_recipe
 from shortlist.engine.themes import ThemeCollection, ThemePick, ThemeSpec, load_theme, theme_content_hash
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
+from tests.db_helpers import disposing_engine
 
 TAG = 555
 
@@ -877,9 +878,9 @@ class TestContextBuilderWiring:
 
         from shortlist.server.db.models import Base
 
-        engine = create_engine("sqlite://")
-        Base.metadata.create_all(engine)
-        return sessionmaker(engine)
+        with disposing_engine(create_engine("sqlite://")) as engine:
+            Base.metadata.create_all(engine)
+            yield sessionmaker(engine)
 
     @pytest.fixture
     def builder(self, db, tmp_path):

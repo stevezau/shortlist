@@ -20,6 +20,7 @@ from shortlist.server.db.models import Server
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 
 ENTRYPOINT = Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh"
 
@@ -60,15 +61,14 @@ def _free_port() -> int:
 def _seed_owner_and_token(config_dir: Path, token: str) -> None:
     """Just enough for `GET /api/events` to answer 200: an owner (a linked server) and an API token."""
     run_migrations(config_dir)
-    engine = make_engine(config_dir)
-    box = SecretBox(config_dir)
-    with make_session_factory(engine)() as session:
-        session.add(
-            Server(machine_id="scratch", url="http://127.0.0.1:9", token_enc=box.encrypt("x"), owner_account_id=1)
-        )
-        session.commit()
-        SettingsStore(session, box).set(API_TOKEN_KEY, token)
-    engine.dispose()
+    with disposing_engine(make_engine(config_dir)) as engine:
+        box = SecretBox(config_dir)
+        with make_session_factory(engine)() as session:
+            session.add(
+                Server(machine_id="scratch", url="http://127.0.0.1:9", token_enc=box.encrypt("x"), owner_account_id=1)
+            )
+            session.commit()
+            SettingsStore(session, box).set(API_TOKEN_KEY, token)
 
 
 def _hold_event_stream(url: str, token: str, first_frame: threading.Event, status: list[int]) -> None:

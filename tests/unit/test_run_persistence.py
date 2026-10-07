@@ -8,13 +8,14 @@ from sqlalchemy.orm import sessionmaker
 from shortlist.engine.models import UserRunReport
 from shortlist.server.db.models import Base
 from shortlist.server.services.run_persistence import _cost_blob, reconcile_watched
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(engine)
 
 
 class TestCostBlob:
@@ -631,17 +632,16 @@ class TestReconcileCommitsPerPerson:
         from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 
         run_migrations(tmp_path)
-        engine = make_engine(tmp_path)
-        factory = make_session_factory(engine)
-        with factory() as session:
-            for n in range(3):
-                session.add(User(plex_account_id=700 + n, username=f"u{n}", slug=f"u{n}", enabled=True))
-            session.commit()
-        commits: list[int] = []
-        event.listen(engine, "commit", lambda conn: commits.append(1))
-        profiles = [type("P", (), {"slug": f"u{n}", "history": [], "history_complete": False})() for n in range(3)]
+        with disposing_engine(make_engine(tmp_path)) as engine:
+            factory = make_session_factory(engine)
+            with factory() as session:
+                for n in range(3):
+                    session.add(User(plex_account_id=700 + n, username=f"u{n}", slug=f"u{n}", enabled=True))
+                session.commit()
+            commits: list[int] = []
+            event.listen(engine, "commit", lambda conn: commits.append(1))
+            profiles = [type("P", (), {"slug": f"u{n}", "history": [], "history_complete": False})() for n in range(3)]
 
-        reconcile_watched(factory, profiles, {})
+            reconcile_watched(factory, profiles, {})
 
-        assert len(commits) >= 3
-        engine.dispose()
+            assert len(commits) >= 3

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.assistant.people_seasons import PeopleAdapter, PeopleIntent
@@ -16,48 +19,49 @@ from shortlist.server.services.person_row_overrides import (
     prepare_person_row_override_in_session,
     read_person_row_override_in_session,
 )
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def sessions():
-    engine, factory = _seed_sessions()
-    yield factory
-    engine.dispose()
+    with _seed_sessions() as (_engine, factory):
+        yield factory
 
 
-def _seed_sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(engine)
-    with factory() as session:
-        session.add_all(
-            [
-                Setting(key="row.size", value={"v": 15}),
-                Setting(key="recommendations.recent_count", value={"v": 10}),
-                # Disabled people and rows remain configurable before either is activated.
-                User(id=1, plex_account_id=11, username="Allowed", slug="allowed", enabled=False),
-                User(id=2, plex_account_id=22, username="Other", slug="other"),
-                # The default row's stored size deliberately differs from its global effective size.
-                Collection(id=1, slug="picked", name="Picked", build="per_person", size=30, recent_count=None),
-                Collection(
-                    id=2,
-                    slug="disabled",  # Disabled rows can be configured before activation.
-                    name="Disabled",
-                    build="per_person",
-                    enabled=False,
-                    audience="subset",
-                    library_keys=["2"],
-                    size=22,
-                    recent_count=7,
-                ),
-                Collection(id=3, slug="shared", name="Shared", build="shared", library_keys=["1"]),
-            ]
-        )
-        session.flush()
-        session.add(CollectionAudience(collection_id=2, user_id=1))
-        session.add(CollectionUserOverride(collection_id=1, user_id=1, muted=False, row_size=20, recent_count=4))
-        session.commit()
-    return engine, factory
+@contextmanager
+def _seed_sessions() -> Iterator[tuple[Engine, sessionmaker]]:
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(engine)
+        with factory() as session:
+            session.add_all(
+                [
+                    Setting(key="row.size", value={"v": 15}),
+                    Setting(key="recommendations.recent_count", value={"v": 10}),
+                    # Disabled people and rows remain configurable before either is activated.
+                    User(id=1, plex_account_id=11, username="Allowed", slug="allowed", enabled=False),
+                    User(id=2, plex_account_id=22, username="Other", slug="other"),
+                    # The default row's stored size deliberately differs from its global effective size.
+                    Collection(id=1, slug="picked", name="Picked", build="per_person", size=30, recent_count=None),
+                    Collection(
+                        id=2,
+                        slug="disabled",  # Disabled rows can be configured before activation.
+                        name="Disabled",
+                        build="per_person",
+                        enabled=False,
+                        audience="subset",
+                        library_keys=["2"],
+                        size=22,
+                        recent_count=7,
+                    ),
+                    Collection(id=3, slug="shared", name="Shared", build="shared", library_keys=["1"]),
+                ]
+            )
+            session.flush()
+            session.add(CollectionAudience(collection_id=2, user_id=1))
+            session.add(CollectionUserOverride(collection_id=1, user_id=1, muted=False, row_size=20, recent_count=4))
+            session.commit()
+        yield engine, factory
 
 
 def test_explicit_null_clears_only_that_numeric_override_and_omitted_values_survive(sessions):
@@ -195,8 +199,7 @@ def test_sparse_override_patch_preserves_omitted_values_and_declares_only_narrow
     supplied, muted, row_size, recent_count
 ):
     """PATCH field presence, rather than defaults, decides stored inheritance and Plex work."""
-    engine, sessions = _seed_sessions()
-    try:
+    with _seed_sessions() as (_engine, sessions):
         payload = {
             name: {"muted": muted, "row_size": row_size, "recent_count": recent_count}[name] for name in supplied
         }
@@ -218,5 +221,3 @@ def test_sparse_override_patch_preserves_omitted_values_and_declares_only_narrow
                 assert len(mutation.steps) == 1
             else:
                 assert mutation.steps == ()
-    finally:
-        engine.dispose()

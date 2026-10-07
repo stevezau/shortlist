@@ -24,6 +24,7 @@ from shortlist.server.services.theme_rotation import (
     theme_guidance,
 )
 from tests.conftest import make_profile
+from tests.db_helpers import disposing_engine
 
 NOW = datetime(2026, 10, 10, 3, 0, tzinfo=UTC)
 NAIVE_NOW = NOW.replace(tzinfo=None)
@@ -74,9 +75,11 @@ def _library_index(monkeypatch):
 @pytest.fixture
 def sessions():
     # One shared connection: the overlap test runs a second pass on another thread against the same database.
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+    with disposing_engine(
+        create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+    ) as engine:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(engine)
 
 
 def seed(sessions, *, people: int = 1, **row) -> tuple[int, list[int]]:

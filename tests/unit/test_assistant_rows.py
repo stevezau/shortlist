@@ -14,6 +14,7 @@ from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
 from shortlist.server.db.models import Base, Collection, Event, Server
 from shortlist.server.services.secrets import SecretBox
+from tests.db_helpers import disposing_engine
 
 
 def test_row_intent_rejects_ambiguous_or_unknown_shapes():
@@ -24,67 +25,64 @@ def test_row_intent_rejects_ambiguous_or_unknown_shapes():
 
 
 def test_catalog_create_defaults_disabled_and_is_rollback_safe():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    adapter = RowAdapter(SimpleNamespace(secrets=None))
-    intent = {"action": "create", "template_id": "picked-for-you", "values": {"name": "Quiet picks"}}
-    with Session(engine) as session:
-        plan = adapter.prepare(session, intent)
-        assert plan.normalized_intent["values"]["enabled"] is False
-        assert "rows.create" in plan.requirements.capabilities
-        assert session.query(Collection).count() == 0
-        result = adapter.apply(session, plan.normalized_intent)
-        assert session.get(Collection, result.created_row_ids[0]).enabled is False
-        session.rollback()
-    with Session(engine) as session:
-        assert session.query(Collection).count() == 0
-    engine.dispose()
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        adapter = RowAdapter(SimpleNamespace(secrets=None))
+        intent = {"action": "create", "template_id": "picked-for-you", "values": {"name": "Quiet picks"}}
+        with Session(engine) as session:
+            plan = adapter.prepare(session, intent)
+            assert plan.normalized_intent["values"]["enabled"] is False
+            assert "rows.create" in plan.requirements.capabilities
+            assert session.query(Collection).count() == 0
+            result = adapter.apply(session, plan.normalized_intent)
+            assert session.get(Collection, result.created_row_ids[0]).enabled is False
+            session.rollback()
+        with Session(engine) as session:
+            assert session.query(Collection).count() == 0
 
 
 def test_delete_declares_exact_row_and_ordered_cleanup():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    adapter = RowAdapter(SimpleNamespace(secrets=None))
-    with Session(engine) as session:
-        row = Collection(slug="shared-picks", name="Shared picks", build="shared")
-        session.add(row)
-        session.commit()
-        plan = adapter.prepare(session, {"action": "delete", "row_id": row.id})
-        assert plan.requirements.row_ids == (row.id,)
-        assert {"rows.delete", "runs.execute", "audiences.write"} <= set(plan.requirements.capabilities)
-        assert [step["kind"] for step in plan.effects[0].payload["steps"]] == [
-            "row.reconcile",
-            "privacy.sync",
-            "schedule.rebuild",
-        ]
-    engine.dispose()
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        adapter = RowAdapter(SimpleNamespace(secrets=None))
+        with Session(engine) as session:
+            row = Collection(slug="shared-picks", name="Shared picks", build="shared")
+            session.add(row)
+            session.commit()
+            plan = adapter.prepare(session, {"action": "delete", "row_id": row.id})
+            assert plan.requirements.row_ids == (row.id,)
+            assert {"rows.delete", "runs.execute", "audiences.write"} <= set(plan.requirements.capabilities)
+            assert [step["kind"] for step in plan.effects[0].payload["steps"]] == [
+                "row.reconcile",
+                "privacy.sync",
+                "schedule.rebuild",
+            ]
 
 
 @pytest.fixture
 def row_change_service(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'assistant-rows.db'}")
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
-    with sessions() as session:
-        session.add_all(
-            [
-                Server(machine_id="rows", url="http://unused.invalid", token_enc="unused", owner_account_id=42),
-                Collection(id=1, slug="seasonal", name="Seasonal", library_keys=["1"]),
-                Collection(id=2, slug="popular", name="Popular", library_keys=["1"]),
-            ]
+    with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'assistant-rows.db'}")) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        with sessions() as session:
+            session.add_all(
+                [
+                    Server(machine_id="rows", url="http://unused.invalid", token_enc="unused", owner_account_id=42),
+                    Collection(id=1, slug="seasonal", name="Seasonal", library_keys=["1"]),
+                    Collection(id=2, slug="popular", name="Popular", library_keys=["1"]),
+                ]
+            )
+            session.commit()
+        repository = AssistantAuthRepository(sessions, CredentialHasher(b"assistant-row-change-test-key-000"))
+        principal = repository.create_grant(
+            owner_account_id=42,
+            client_id="row-change-test",
+            name="Row change test",
+            preset=GrantPreset.OWNER_AUTOMATION,
+            constraints=GrantConstraints(row_ids=frozenset({1}), library_keys=frozenset({"1"})),
         )
-        session.commit()
-    repository = AssistantAuthRepository(sessions, CredentialHasher(b"assistant-row-change-test-key-000"))
-    principal = repository.create_grant(
-        owner_account_id=42,
-        client_id="row-change-test",
-        name="Row change test",
-        preset=GrantPreset.OWNER_AUTOMATION,
-        constraints=GrantConstraints(row_ids=frozenset({1}), library_keys=frozenset({"1"})),
-    )
-    service = ChangeService(sessions, {"row": RowAdapter(SimpleNamespace(secrets=SecretBox(tmp_path)))})
-    yield SimpleNamespace(sessions=sessions, principal=principal, service=service)
-    engine.dispose()
+        service = ChangeService(sessions, {"row": RowAdapter(SimpleNamespace(secrets=SecretBox(tmp_path)))})
+        yield SimpleNamespace(sessions=sessions, principal=principal, service=service)
 
 
 @pytest.mark.parametrize(
@@ -130,16 +128,15 @@ def test_nested_row_updates_are_plannable_and_auditable_json(row_change_service,
 def recurring_row():
     from shortlist.server.settings_store import SettingsStore
 
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    with Session(engine) as session:
-        row = Collection(slug="paid-picks", name="Paid picks", enabled=True, candidate_sources=["llm_web"])
-        session.add(row)
-        store = SettingsStore(session)
-        store.set_in_transaction("curator.provider", "openai")
-        session.commit()
-        yield session, row, RowAdapter(SimpleNamespace(secrets=None)), store
-    engine.dispose()
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            row = Collection(slug="paid-picks", name="Paid picks", enabled=True, candidate_sources=["llm_web"])
+            session.add(row)
+            store = SettingsStore(session)
+            store.set_in_transaction("curator.provider", "openai")
+            session.commit()
+            yield session, row, RowAdapter(SimpleNamespace(secrets=None)), store
 
 
 @pytest.mark.parametrize(

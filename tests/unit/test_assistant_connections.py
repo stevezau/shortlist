@@ -11,38 +11,40 @@ from shortlist.server.assistant.connections import ConnectionService
 from shortlist.server.assistant_auth import AuthorizationDenied, Capability, GrantConstraints, GrantContext, GrantPreset
 from shortlist.server.assistant_auth.models import AssistantGrant
 from shortlist.server.db.models import Base, CacheRow, Server, Setting
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def connections(principal):
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    state = SimpleNamespace(
-        sessions=sessionmaker(engine),
-        secrets=None,
-        assistant_auth=SimpleNamespace(oauth=SimpleNamespace(resource="https://example.test/shortlist/mcp")),
-    )
-    with state.sessions() as session:
-        # These cases exercise connection cards after setup; fresh-wizard routing is covered separately.
-        session.add(Setting(key="setup.completed", value={"v": True}))
-        session.add(
-            Server(machine_id="connection-test", url="http://unused.invalid", token_enc="unused", owner_account_id=1)
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        state = SimpleNamespace(
+            sessions=sessionmaker(engine),
+            secrets=None,
+            assistant_auth=SimpleNamespace(oauth=SimpleNamespace(resource="https://example.test/shortlist/mcp")),
         )
-        session.add(
-            AssistantGrant(
-                id=principal.grant_id,
-                owner_account_id=principal.owner_account_id,
-                client_id=principal.client_id,
-                name=principal.name,
-                preset=principal.preset.value,
-                capabilities=[cap.value for cap in principal.capabilities],
-                constraints=principal.constraints.as_dict(),
-                revision=1,
+        with state.sessions() as session:
+            # These cases exercise connection cards after setup; fresh-wizard routing is covered separately.
+            session.add(Setting(key="setup.completed", value={"v": True}))
+            session.add(
+                Server(
+                    machine_id="connection-test", url="http://unused.invalid", token_enc="unused", owner_account_id=1
+                )
             )
-        )
-        session.commit()
-    yield ConnectionService(state)
-    engine.dispose()
+            session.add(
+                AssistantGrant(
+                    id=principal.grant_id,
+                    owner_account_id=principal.owner_account_id,
+                    client_id=principal.client_id,
+                    name=principal.name,
+                    preset=principal.preset.value,
+                    capabilities=[cap.value for cap in principal.capabilities],
+                    constraints=principal.constraints.as_dict(),
+                    revision=1,
+                )
+            )
+            session.commit()
+        yield ConnectionService(state)
 
 
 @pytest.fixture

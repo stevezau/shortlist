@@ -38,6 +38,7 @@ from shortlist.server.db.session import make_engine, make_session_factory, run_m
 from shortlist.server.services import jobs, notify
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
+from tests.db_helpers import disposing_engine
 
 pytestmark = pytest.mark.integration
 
@@ -49,7 +50,8 @@ WEBHOOK = "https://discord.com/api/webhooks/123456789012345678/AbCdEf-GhIjKl_MnO
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    return make_session_factory(make_engine(tmp_path))
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 @pytest.fixture

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from alembic import command
@@ -136,7 +137,7 @@ def _sweep_batch_leftovers(config_dir: Path) -> None:
     db_path = config_dir / "shortlist.db"
     if not db_path.exists():
         return
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn, conn:
         leftovers = [
             row[0]
             for row in conn.execute(

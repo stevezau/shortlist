@@ -15,14 +15,14 @@ from shortlist.server.db.models import Setting
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import DEFAULTS, SECRET_KEYS, SettingsStore
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    yield make_session_factory(engine)
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 class TestAnUnreadableRowFallsBackInsteadOfRaising:

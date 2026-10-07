@@ -7,6 +7,8 @@ tests pin BOTH halves: what is refused, and what must keep working.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 
 from shortlist.server.api.settings import _FETCHED_URL_KEYS
@@ -112,6 +114,7 @@ class TestTheGuardsAreWired:
         with pytest.raises(BlockedUrl, match="metadata"):
             run_capability_probe("http://169.254.169.254", "tok", "cid")
 
+    @contextmanager
     def _client(self, tmp_path):
         """Through the real endpoint — calling `_reject_blocked_urls` directly proves the function
         works and nothing about whether the PUT handler calls it, which is the half that regresses."""
@@ -122,16 +125,15 @@ class TestTheGuardsAreWired:
         from shortlist.server.main import create_app
 
         app = create_app(config_dir=tmp_path)
-        client = TestClient(app)
-        client.__enter__()
-        with app.state.sessions() as session:
-            session.add(
-                Server(machine_id="m1", url="http://pms:32400", token_enc="x", owner_account_id=7, capabilities={})
-            )
-            session.commit()
-        client.cookies.set(SESSION_COOKIE, session_serializer(app.state.session_secret).dumps({"account_id": 7}))
-        client.headers[CSRF_HEADER] = "1"
-        return client
+        with TestClient(app) as client:
+            with app.state.sessions() as session:
+                session.add(
+                    Server(machine_id="m1", url="http://pms:32400", token_enc="x", owner_account_id=7, capabilities={})
+                )
+                session.commit()
+            client.cookies.set(SESSION_COOKIE, session_serializer(app.state.session_secret).dumps({"account_id": 7}))
+            client.headers[CSRF_HEADER] = "1"
+            yield client
 
     @pytest.mark.parametrize("key", _FETCHED_URL_KEYS)
     def test_saving_a_metadata_url_through_the_api_is_refused(self, tmp_path, key):
@@ -141,26 +143,24 @@ class TestTheGuardsAreWired:
         it just gained `requests.overseerr.url`. Testing one member proves the guard runs for that
         member; testing the tuple proves a new door cannot be added without one.
         """
-        client = self._client(tmp_path)
+        with self._client(tmp_path) as client:
+            r = client.put("/api/settings", json={"values": {key: "http://169.254.169.254"}})
 
-        r = client.put("/api/settings", json={"values": {key: "http://169.254.169.254"}})
-
-        assert r.status_code == 422
-        assert client.get("/api/settings").json().get(key) != "http://169.254.169.254"
+            assert r.status_code == 422
+            assert client.get("/api/settings").json().get(key) != "http://169.254.169.254"
 
     def test_saving_normal_self_hosted_urls_through_the_api_works(self, tmp_path):
         """The half that matters more: this app is useless if a LAN address is refused."""
-        client = self._client(tmp_path)
+        with self._client(tmp_path) as client:
+            r = client.put(
+                "/api/settings",
+                json={
+                    "values": {
+                        "requests.radarr.url": "http://192.168.1.50:7878",
+                        "curator.ollama_url": "http://ollama:11434",
+                    }
+                },
+            )
 
-        r = client.put(
-            "/api/settings",
-            json={
-                "values": {
-                    "requests.radarr.url": "http://192.168.1.50:7878",
-                    "curator.ollama_url": "http://ollama:11434",
-                }
-            },
-        )
-
-        assert r.status_code == 200
-        assert client.get("/api/settings").json()["requests.radarr.url"] == "http://192.168.1.50:7878"
+            assert r.status_code == 200
+            assert client.get("/api/settings").json()["requests.radarr.url"] == "http://192.168.1.50:7878"

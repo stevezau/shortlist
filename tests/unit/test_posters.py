@@ -21,6 +21,7 @@ from shortlist.server.services.poster_service import (
     poster_seed,
     store_upload,
 )
+from tests.db_helpers import disposing_engine
 
 
 def _profile(name: str = "Alex") -> UserProfile:
@@ -241,9 +242,9 @@ class TestImageProviderStatus:
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        yield sessionmaker(engine)
 
 
 class TestImageStorage:

@@ -9,19 +9,19 @@ from sqlalchemy.orm import sessionmaker
 from shortlist.server.api.users import UserPatch
 from shortlist.server.db.models import Base, Job, User
 from shortlist.server.services.person_changes import apply_person_in_session, prepare_person_in_session
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def people_db(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'people.db'}")
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
-    with sessions() as session:
-        session.add(User(id=1, plex_account_id=11, username="alice", slug="alice", enabled=True))
-        session.add(User(id=2, plex_account_id=22, username="owner", slug="owner", user_type="owner"))
-        session.commit()
-    yield SimpleNamespace(sessions=sessions)
-    engine.dispose()
+    with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'people.db'}")) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        with sessions() as session:
+            session.add(User(id=1, plex_account_id=11, username="alice", slug="alice", enabled=True))
+            session.add(User(id=2, plex_account_id=22, username="owner", slug="owner", user_type="owner"))
+            session.commit()
+        yield SimpleNamespace(sessions=sessions)
 
 
 def test_person_projection_is_pure_and_orders_cleanup_before_privacy(people_db):

@@ -10,6 +10,7 @@ import pytest
 from shortlist.server import whats_new
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 
 RELEASES_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "github_releases.json"
 
@@ -31,10 +32,8 @@ def _recorded_releases() -> list[dict]:
 @pytest.fixture
 def store(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    with make_session_factory(engine)() as session:
+    with disposing_engine(make_engine(tmp_path)) as engine, make_session_factory(engine)() as session:
         yield SettingsStore(session)
-    engine.dispose()
 
 
 @pytest.fixture

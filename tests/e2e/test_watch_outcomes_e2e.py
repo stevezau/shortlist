@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -73,7 +74,7 @@ def seed_outcomes(app: ShortlistApp) -> None:
         (905, 302, "show", faves_slug, "TV Shows", 20, 15, None),
         (906, 303, "show", faves_slug, "TV Shows", 20, 14, 3),  # series seen out
     ]
-    with sqlite3.connect(db) as con:
+    with closing(sqlite3.connect(db)) as con, con:
         uid = con.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()[0]
         for tmdb, rating_key, media, slug, library, d_ago, w_ago, f_ago in rows:
             con.execute(
@@ -157,7 +158,7 @@ class TestTheRealSyncStampsTheRightColumn:
         # Polled from the jobs table rather than an endpoint: there is no `/api/jobs/{id}` route
         # (only the `/api/system/jobs` list), and the status column is what the worker writes anyway.
         for _ in range(300):
-            with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+            with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
                 row = con.execute("SELECT status, error FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row and row[0] in ("done", "error"):
                 assert row[0] == "done", row
@@ -225,7 +226,7 @@ class TestTheRealSyncStampsTheRightColumn:
             engine.dispose()
 
     def _stamps(self, app: ShortlistApp, title: str) -> tuple:
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+        with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
             return con.execute("SELECT watched_at, finished_at FROM picks WHERE title = ?", (title,)).fetchone()
 
     def test_a_finished_series_and_a_part_watched_one_land_in_different_columns(
@@ -241,7 +242,7 @@ class TestTheRealSyncStampsTheRightColumn:
         state.history.append(FakeHistoryEntry(account_id=sarah.id, rating_key=302, viewed_at=int(time.time())))
         state.watch_episodes(sarah.id, 302, 2)  # two episodes in, 8 to go
 
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+        with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
             uid = con.execute("SELECT id FROM users WHERE username = 'sarah'").fetchone()[0]
         self._pick(app, uid, 7001, "show", "Seen out", rating_key=301)
         self._pick(app, uid, 7002, "show", "Two episodes in", rating_key=302)
@@ -261,7 +262,7 @@ class TestTheRealSyncStampsTheRightColumn:
         sarah = state.users[201]
         state.history.append(FakeHistoryEntry(account_id=sarah.id, rating_key=101, viewed_at=int(time.time())))
 
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+        with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
             uid = con.execute("SELECT id FROM users WHERE username = 'sarah'").fetchone()[0]
         self._pick(app, uid, 9001, "movie", "A film", rating_key=101)
 
@@ -305,7 +306,7 @@ class TestTheSplitBarsAreHonest:
         fail. Spread the watches across four weeks, then refuse to pass if nothing rendered."""
         seed_outcomes(app)
         now = datetime.now(UTC)
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+        with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
             uid = con.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()[0]
             for n, weeks_back in enumerate((2, 3, 4, 5)):
                 when = now - timedelta(weeks=weeks_back)

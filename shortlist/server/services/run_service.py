@@ -111,11 +111,26 @@ class RunService:
         # Runs whose engine has returned and whose results are being saved; see `cancel_run`.
         self._settling: set[int] = set()
         self._tasks: set[asyncio.Task] = set()  # strong refs so in-flight runs aren't GC'd
+        self._closing = False
         self._log = RunLogBuffer(session_factory)
         self._watch = WatchSync(session_factory, bus)
         # `app.state`, assigned by `main.create_app` right after this object exists. Only used to
         # drain the job queue when a run ends; None in tests that build a RunService directly.
         self.state = None
+
+    async def shutdown(self) -> None:
+        """Finish owned runs and watch syncs before the application closes its database."""
+        self._closing = True
+        cancelled = False
+        while self._tasks:
+            pending = asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
 
     # -- run narration (delegated to RunLogBuffer) ---------------------------------------
 
@@ -219,11 +234,22 @@ class RunService:
     def sync_watched_background(self) -> None:
         """Fire sync_watched as a tracked background task (the reference is kept so it isn't GC'd) —
         for the dashboard's manual 'Sync now'."""
+        if self._closing:
+            return
         task = asyncio.create_task(self.sync_watched())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
     async def sync_watched(self) -> None:
+        """Run a watch sweep owned by this service, even if its scheduler caller is cancelled."""
+        if self._closing:
+            return
+        task = asyncio.create_task(self._sync_watched())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        await asyncio.shield(task)
+
+    async def _sync_watched(self) -> None:
         """The nightly read-only watch sweep. The four collaborators are resolved HERE, per call, not
         captured when `WatchSync` was built — `build_context` in particular is replaced wholesale by
         tests and by nothing else owning it."""
@@ -286,6 +312,8 @@ class RunService:
 
     async def dispatch_queued_assistant_run(self, run_id: int) -> dict:
         """Hand off once; a committed handoff without a live task is an unknown outcome."""
+        if self._closing:
+            raise RuntimeError("Run service is shutting down")
         from shortlist.server.assistant.changes import ChangeError
         from shortlist.server.assistant.run_adapter import validate_execution_in_session
 
@@ -378,6 +406,8 @@ class RunService:
         own rows); ``None`` builds every enabled row. The leak-safe privacy sync always covers every
         account regardless, so rows not built this run stay hidden.
         """
+        if self._closing:
+            raise RuntimeError("Run service is shutting down")
         if force_dry_run() and not dry_run:
             logger.warning("SHORTLIST_DRY_RUN is set — forcing this {} run to dry-run (no Plex writes)", trigger)
             dry_run = True
@@ -398,7 +428,20 @@ class RunService:
     ) -> None:
         loop = asyncio.get_running_loop()
         try:
-            await self._run_locked(run_id, dry_run, user_ids, collection_ids, loop)
+            work = asyncio.create_task(self._run_locked(run_id, dry_run, user_ids, collection_ids, loop))
+            cancelled = False
+            while not work.done():
+                try:
+                    await asyncio.shield(work)
+                except asyncio.CancelledError:
+                    # An executor cannot be cancelled. Keep its writer lock and database alive
+                    # until the cooperative stop has settled the people already being delivered.
+                    if (cancel := self._cancels.get(run_id)) is not None:
+                        cancel.set()
+                    cancelled = True
+            work.result()
+            if cancelled:
+                raise asyncio.CancelledError
         finally:
             # A run holds the Plex writer lock, so `_plex_busy` parks every writer job behind it.
             # Nothing used to tell the queue when that ended, leaving jobs idle until the worker's
@@ -412,13 +455,8 @@ class RunService:
             # After `_run_locked` returns, so the lock is released and `_cancels` is empty: draining
             # while `is_running()` is still true would re-park every writer and achieve nothing.
             #
-            # NOT when this task is being cancelled. In the shipped image (tini as PID 1) the process
-            # dies at shutdown with no task cancelled; a teardown path cancels it — Ctrl-C, uvicorn as
-            # PID 1 without an init, an in-process server. The process lives on there for a moment,
-            # and cancellation cannot stop the engine's executor thread, yet the `finally` blocks above
-            # have already released the writer lock and dropped the Event — so a drain here would start
-            # a share-filter writer beside an engine still merging its own (rule 3). The jobs stay
-            # queued for the next drain.
+            # Do not launch more work from a cancelled caller. The engine has now settled safely,
+            # but the application may be shutting down; committed jobs remain queued for next boot.
             # `cancel_run` is not this: it lets the engine return, and that run still drains.
             task = asyncio.current_task()
             if task is None or not task.cancelling():

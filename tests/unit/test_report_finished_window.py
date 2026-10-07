@@ -13,28 +13,32 @@ tests pin the same rule across the headline, the per-user and the per-row breakd
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.db.models import Base, Collection, PickRow, User
-from shortlist.server.services.report_service import SETTLING_HOURS, effectiveness, row_effectiveness
+from shortlist.server.services.report_service import SETTLING_HOURS, _RowNamer, effectiveness, row_effectiveness
+from tests.db_helpers import disposing_engine
 
 NOW = datetime.now(UTC)
 
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(engine)
-    with factory() as session:
-        session.add(User(id=1, plex_account_id=7, username="alex", slug="alex", enabled=True))
-        session.add(Collection(slug="picked", name="Picked for You", enabled=True))
-        session.commit()
-    return factory
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(engine)
+        with factory() as session:
+            session.add(User(id=1, plex_account_id=7, username="alex", slug="alex", enabled=True))
+            session.add(Collection(slug="picked", name="Picked for You", enabled=True))
+            session.commit()
+        yield factory
 
 
 def seed(sessions, *, tmdb_id: int, delivered_ago: int, watched_ago: int | None, finished_ago: int | None) -> None:
@@ -867,24 +871,22 @@ class TestRowNamerLabel:
     stopping mid-clause that read as a truncation bug.
     """
 
-    def _namer(self, tmp_path, template: str):
+    @contextmanager
+    def _namer(self, tmp_path: Path, template: str) -> Iterator[_RowNamer]:
         from shortlist.server.db.models import Collection
         from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
-        from shortlist.server.services.report_service import _RowNamer
 
         run_migrations(tmp_path)
-        engine = make_engine(tmp_path)
-        sessions = make_session_factory(engine)
-        with sessions() as session:
-            session.add(Collection(slug="row", name="row", name_template=template, enabled=True))
-            session.commit()
-            yield _RowNamer(session, "✨ Picked for You")
-        engine.dispose()
+        with disposing_engine(make_engine(tmp_path)) as engine:
+            sessions = make_session_factory(engine)
+            with sessions() as session:
+                session.add(Collection(slug="row", name="row", name_template=template, enabled=True))
+                session.commit()
+                yield _RowNamer(session, "✨ Picked for You")
 
-    def label(self, tmp_path, template: str, library: str = "Movies") -> str:
-        for namer in self._namer(tmp_path, template):
+    def label(self, tmp_path: Path, template: str, library: str = "Movies") -> str:
+        with self._namer(tmp_path, template) as namer:
             return namer.label("row", library)
-        raise AssertionError("namer not produced")
 
     def test_the_library_placeholder_becomes_the_library(self, tmp_path):
         assert self.label(tmp_path, "👥 Popular {library_name} on SFLIX") == "👥 Popular Movies on SFLIX"
@@ -932,13 +934,12 @@ class TestEngagementPerPersonTruncation:
         from shortlist.server.services.report_service import engagement
 
         run_migrations(tmp_path)
-        engine = make_engine(tmp_path)
-        sessions = make_session_factory(engine)
-        now = datetime.now(UTC)
-        # Three days back: an outcome is only settled after 24h with no further play, so a watch
-        # stamped `now` is "watching", not "bounced"/"dropped", and would not exercise the order.
-        settled = now - timedelta(days=3)
-        try:
+        with disposing_engine(make_engine(tmp_path)) as engine:
+            sessions = make_session_factory(engine)
+            now = datetime.now(UTC)
+            # Three days back: an outcome is only settled after 24h with no further play, so a watch
+            # stamped `now` is "watching", not "bounced"/"dropped", and would not exercise the order.
+            settled = now - timedelta(days=3)
             with sessions() as session:
                 # Migration 0003 seeds the default row, so it already exists.
                 if session.query(Collection).filter_by(slug="picked").first() is None:
@@ -981,8 +982,6 @@ class TestEngagementPerPersonTruncation:
 
             with sessions() as session:
                 people = engagement(session, "all")["people"]
-        finally:
-            engine.dispose()
 
         assert people, "no people in the engagement payload"
         titles = [p["title"] for p in people[0]["picks"]]

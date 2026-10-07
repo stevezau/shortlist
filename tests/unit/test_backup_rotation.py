@@ -121,12 +121,12 @@ class TestARestoreNeverOverwritesTheOnlyCopy:
         import sqlite3
 
         chosen = self._install(tmp_path)
-        with sqlite3.connect(tmp_path / "shortlist.db") as con:
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con, con:
             con.execute("CREATE TABLE only_in_the_live_db (id INTEGER PRIMARY KEY)")
 
         assert backup_mod.restore_backup(tmp_path, chosen.name) is True
 
-        with sqlite3.connect(tmp_path / "shortlist.db") as con:
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con, con:
             tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "only_in_the_live_db" not in tables, "the chosen backup did not replace the live database"
 

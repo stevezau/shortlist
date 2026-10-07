@@ -12,6 +12,8 @@ simple, numerous, and easy to break one at a time.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 from hypothesis import example, given, settings
@@ -33,28 +35,30 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement, resolve_outcomes
 from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
+from tests.db_helpers import disposing_engine
 from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 SETTINGS = settings(max_examples=50, deadline=None)
 
 
-def fresh():
+@contextmanager
+def fresh() -> Iterator[sessionmaker]:
     """A brand-new database per EXAMPLE.
 
     Not a fixture: hypothesis runs many examples inside one test function, and a function-scoped
     fixture is created once for all of them — so the second example collided on `runs.id` and the
     failure looked like a defect in the code rather than in the harness.
     """
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(engine)
-    with factory() as s:
-        s.add(User(id=1, plex_account_id=99, username="alex", slug="alex"))
-        s.add(Collection(id=1, slug="picked", name="Picked", enabled=True))
-        s.add(Delivery(collection_slug="picked", user_slug="alex", library_key="1", rating_key=1))
-        s.commit()
-    return factory
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(engine)
+        with factory() as s:
+            s.add(User(id=1, plex_account_id=99, username="alex", slug="alex"))
+            s.add(Collection(id=1, slug="picked", name="Picked", enabled=True))
+            s.add(Delivery(collection_slug="picked", user_slug="alex", library_key="1", rating_key=1))
+            s.commit()
+        yield factory
 
 
 #: Deliveries, plays and sessions at arbitrary offsets from NOW, in any order.
@@ -126,14 +130,14 @@ class TestPickInvariants:
     @SETTINGS
     def test_a_credit_is_never_dated_before_the_row_that_carries_it(self, deliveries, plays, sess):
         """`watched_at < created_at` on the same row says a title was watched before it was delivered."""
-        sessions = fresh()
-        _seed(sessions, deliveries, plays, sess)
+        with fresh() as sessions:
+            _seed(sessions, deliveries, plays, sess)
 
-        reconcile_watched(sessions, [_profile()])
+            reconcile_watched(sessions, [_profile()])
 
-        with sessions() as s:
-            for pick in s.query(PickRow).filter(PickRow.watched_at.isnot(None)):
-                assert pick.watched_at >= pick.created_at
+            with sessions() as s:
+                for pick in s.query(PickRow).filter(PickRow.watched_at.isnot(None)):
+                    assert pick.watched_at >= pick.created_at
 
     @given(
         deliveries=st.lists(days_ago, min_size=1, max_size=4),
@@ -142,16 +146,18 @@ class TestPickInvariants:
     )
     @SETTINGS
     def test_a_completion_never_predates_its_own_credit(self, deliveries, plays, sess):
-        sessions = fresh()
-        _seed(sessions, deliveries, plays, sess)
-        history = [WatchedItem(title="T", media_type=MediaType.MOVIE, watched_at=NOW - timedelta(days=1), tmdb_id=500)]
+        with fresh() as sessions:
+            _seed(sessions, deliveries, plays, sess)
+            history = [
+                WatchedItem(title="T", media_type=MediaType.MOVIE, watched_at=NOW - timedelta(days=1), tmdb_id=500)
+            ]
 
-        reconcile_watched(sessions, [_profile(history)])
+            reconcile_watched(sessions, [_profile(history)])
 
-        with sessions() as s:
-            for pick in s.query(PickRow).filter(PickRow.finished_at.isnot(None)):
-                assert pick.watched_at is not None, "finished but never credited"
-                assert pick.finished_at >= pick.watched_at
+            with sessions() as s:
+                for pick in s.query(PickRow).filter(PickRow.finished_at.isnot(None)):
+                    assert pick.watched_at is not None, "finished but never credited"
+                    assert pick.finished_at >= pick.watched_at
 
     @given(
         deliveries=st.lists(days_ago, min_size=1, max_size=3),
@@ -160,20 +166,20 @@ class TestPickInvariants:
     @SETTINGS
     def test_progress_never_walks_backwards_across_repeated_reconciles(self, deliveries, sess):
         """The reconcile runs seven times a day forever; it must converge, not oscillate."""
-        sessions = fresh()
-        _seed(sessions, deliveries, [], sess)
+        with fresh() as sessions:
+            _seed(sessions, deliveries, [], sess)
 
-        reconcile_watched(sessions, [_profile()])
-        with sessions() as s:
-            first = {p.id: p.max_percent for p in s.query(PickRow)}
-        reconcile_watched(sessions, [_profile()])
-        with sessions() as s:
-            second = {p.id: p.max_percent for p in s.query(PickRow)}
+            reconcile_watched(sessions, [_profile()])
+            with sessions() as s:
+                first = {p.id: p.max_percent for p in s.query(PickRow)}
+            reconcile_watched(sessions, [_profile()])
+            with sessions() as s:
+                second = {p.id: p.max_percent for p in s.query(PickRow)}
 
-        for pick_id, before in first.items():
-            after = second[pick_id]
-            if before is not None:
-                assert after is not None and after >= before
+            for pick_id, before in first.items():
+                after = second[pick_id]
+                if before is not None:
+                    assert after is not None and after >= before
 
     @given(
         deliveries=st.lists(days_ago, min_size=1, max_size=3),
@@ -182,17 +188,21 @@ class TestPickInvariants:
     )
     @SETTINGS
     def test_the_reconcile_is_idempotent(self, deliveries, plays, sess):
-        sessions = fresh()
-        _seed(sessions, deliveries, plays, sess)
+        with fresh() as sessions:
+            _seed(sessions, deliveries, plays, sess)
 
-        reconcile_watched(sessions, [_profile()])
-        with sessions() as s:
-            first = [(p.id, p.watched_at, p.finished_at, p.max_percent) for p in s.query(PickRow).order_by(PickRow.id)]
-        reconcile_watched(sessions, [_profile()])
-        with sessions() as s:
-            second = [(p.id, p.watched_at, p.finished_at, p.max_percent) for p in s.query(PickRow).order_by(PickRow.id)]
+            reconcile_watched(sessions, [_profile()])
+            with sessions() as s:
+                first = [
+                    (p.id, p.watched_at, p.finished_at, p.max_percent) for p in s.query(PickRow).order_by(PickRow.id)
+                ]
+            reconcile_watched(sessions, [_profile()])
+            with sessions() as s:
+                second = [
+                    (p.id, p.watched_at, p.finished_at, p.max_percent) for p in s.query(PickRow).order_by(PickRow.id)
+                ]
 
-        assert first == second
+            assert first == second
 
     @given(
         delivered=days_ago,
@@ -210,18 +220,20 @@ class TestPickInvariants:
         today's delivery. Every other property here only inspects rows that already have `watched_at`,
         so none of them could see it.
         """
-        sessions = fresh()
-        _seed(sessions, [delivered], [], [(session_day, pct)])
-        history = [
-            WatchedItem(title="T", media_type=MediaType.MOVIE, watched_at=NOW - timedelta(days=watched), tmdb_id=500)
-        ]
+        with fresh() as sessions:
+            _seed(sessions, [delivered], [], [(session_day, pct)])
+            history = [
+                WatchedItem(
+                    title="T", media_type=MediaType.MOVIE, watched_at=NOW - timedelta(days=watched), tmdb_id=500
+                )
+            ]
 
-        reconcile_watched(sessions, [_profile(history)])
+            reconcile_watched(sessions, [_profile(history)])
 
-        with sessions() as s:
-            for pick in s.query(PickRow):
-                if pick.max_percent is not None:
-                    assert pick.watched_at is not None, "a percentage on a title nothing ever credited"
+            with sessions() as s:
+                for pick in s.query(PickRow):
+                    if pick.max_percent is not None:
+                        assert pick.watched_at is not None, "a percentage on a title nothing ever credited"
 
     @given(
         deliveries=st.lists(days_ago, min_size=1, max_size=3),
@@ -231,13 +243,13 @@ class TestPickInvariants:
     def test_a_series_never_carries_a_percentage(self, deliveries, sess):
         """An episode's progress is not the show's, and reporting it as such told the dashboard people
         abandon series just before the end."""
-        sessions = fresh()
-        _seed(sessions, deliveries, [], sess, media_type="show")
+        with fresh() as sessions:
+            _seed(sessions, deliveries, [], sess, media_type="show")
 
-        reconcile_watched(sessions, [_profile()])
+            reconcile_watched(sessions, [_profile()])
 
-        with sessions() as s:
-            assert all(p.max_percent is None for p in s.query(PickRow).filter_by(media_type="show"))
+            with sessions() as s:
+                assert all(p.max_percent is None for p in s.query(PickRow).filter_by(media_type="show"))
 
 
 class TestReportInvariants:
@@ -249,17 +261,17 @@ class TestReportInvariants:
     @SETTINGS
     def test_every_title_has_exactly_one_outcome(self, deliveries, plays, sess):
         """One person-title used to be counted as bounced AND dropped when two of its rows disagreed."""
-        sessions = fresh()
-        _seed(sessions, deliveries, plays, sess)
-        reconcile_watched(sessions, [_profile()])
+        with fresh() as sessions:
+            _seed(sessions, deliveries, plays, sess)
+            reconcile_watched(sessions, [_profile()])
 
-        with sessions() as s:
-            outcomes = resolve_outcomes(s, None)
-            data = engagement(s, "all")
+            with sessions() as s:
+                outcomes = resolve_outcomes(s, None)
+                data = engagement(s, "all")
 
-        assert all(o["outcome"] in {"finished", "dropped", "bounced", "watching"} for o in outcomes.values())
-        listed = [p for person in data["people"] for p in person["picks"]]
-        assert len(listed) == len(outcomes), "the detail page and the split must see the same set"
+            assert all(o["outcome"] in {"finished", "dropped", "bounced", "watching"} for o in outcomes.values())
+            listed = [p for person in data["people"] for p in person["picks"]]
+            assert len(listed) == len(outcomes), "the detail page and the split must see the same set"
 
     @given(
         deliveries=st.lists(days_ago, min_size=1, max_size=3),
@@ -273,16 +285,16 @@ class TestReportInvariants:
     @SETTINGS
     def test_the_histogram_always_sums_to_the_abandonments(self, deliveries, sess):
         """The tile and the chart beside it are the same quantity; they disagreed once already."""
-        sessions = fresh()
-        _seed(sessions, deliveries, [], sess)
-        reconcile_watched(sessions, [_profile()])
+        with fresh() as sessions:
+            _seed(sessions, deliveries, [], sess)
+            reconcile_watched(sessions, [_profile()])
 
-        with sessions() as s:
-            data = engagement(s, "all")
-            outcomes = resolve_outcomes(s, None).values()
+            with sessions() as s:
+                data = engagement(s, "all")
+                outcomes = resolve_outcomes(s, None).values()
 
-        abandoned = sum(1 for o in outcomes if o["outcome"] in {"bounced", "dropped"})
-        assert sum(b["count"] for b in data["stop_points"]) == abandoned
+            abandoned = sum(1 for o in outcomes if o["outcome"] in {"bounced", "dropped"})
+            assert sum(b["count"] for b in data["stop_points"]) == abandoned
 
     @given(pct=percents)
     # The boundaries, ALWAYS drawn. `st.integers(0, 100)` with 50 examples reaches an exact edge only
@@ -297,24 +309,24 @@ class TestReportInvariants:
     @example(pct=100)
     @SETTINGS
     def test_the_bounce_boundary_is_exact_and_total(self, pct):
-        sessions = fresh()
-        _seed(sessions, [2], [], [(1, pct)])
-        reconcile_watched(sessions, [_profile()])
+        with fresh() as sessions:
+            _seed(sessions, [2], [], [(1, pct)])
+            reconcile_watched(sessions, [_profile()])
 
-        with sessions() as s:
-            outcomes = list(resolve_outcomes(s, None).values())
+            with sessions() as s:
+                outcomes = list(resolve_outcomes(s, None).values())
 
-        assert len(outcomes) == 1
-        # THREE bands, not two. A film played past `FINISHED_PERCENT` is finished, not abandoned:
-        # Plex flags it watched at its own ~90% bar, so the nightly sync would say so anyway, and
-        # calling it "gave up" in the meantime states the opposite of what happened.
-        if pct >= FINISHED_PERCENT:
-            expected = "finished"
-        elif pct < BOUNCE_PERCENT:
-            expected = "bounced"
-        else:
-            expected = "dropped"
-        assert outcomes[0]["outcome"] == expected, f"{pct}% should read as {expected}"
+            assert len(outcomes) == 1
+            # THREE bands, not two. A film played past `FINISHED_PERCENT` is finished, not abandoned:
+            # Plex flags it watched at its own ~90% bar, so the nightly sync would say so anyway, and
+            # calling it "gave up" in the meantime states the opposite of what happened.
+            if pct >= FINISHED_PERCENT:
+                expected = "finished"
+            elif pct < BOUNCE_PERCENT:
+                expected = "bounced"
+            else:
+                expected = "dropped"
+            assert outcomes[0]["outcome"] == expected, f"{pct}% should read as {expected}"
 
 
 # --------------------------------------------------------------------------------------------
@@ -328,32 +340,35 @@ class TestReportInvariants:
 # --------------------------------------------------------------------------------------------
 
 
-def _world(users: int, rows: int):
+@contextmanager
+def _world(users: int, rows: int) -> Iterator[sessionmaker]:
     """A server with `users` people and `rows` rows, half of them shared."""
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(engine)
-    with factory() as s:
-        for u in range(1, users + 1):
-            s.add(User(id=u, plex_account_id=100 + u, username=f"u{u}", slug=f"u{u}", enabled=True))
-        for r in range(1, rows + 1):
-            shared = r % 2 == 0
-            s.add(
-                Collection(
-                    id=r,
-                    slug=f"row{r}",
-                    name=f"Row {r}",
-                    enabled=True,
-                    build="shared" if shared else "per_person",
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(engine)
+        with factory() as s:
+            for u in range(1, users + 1):
+                s.add(User(id=u, plex_account_id=100 + u, username=f"u{u}", slug=f"u{u}", enabled=True))
+            for r in range(1, rows + 1):
+                shared = r % 2 == 0
+                s.add(
+                    Collection(
+                        id=r,
+                        slug=f"row{r}",
+                        name=f"Row {r}",
+                        enabled=True,
+                        build="shared" if shared else "per_person",
+                    )
                 )
-            )
-            if shared:
-                s.add(Delivery(collection_slug=f"row{r}", user_slug=f"shared_row{r}", library_key="1", rating_key=r))
-            else:
-                for u in range(1, users + 1):
-                    s.add(Delivery(collection_slug=f"row{r}", user_slug=f"u{u}", library_key="1", rating_key=r))
-        s.commit()
-    return factory
+                if shared:
+                    s.add(
+                        Delivery(collection_slug=f"row{r}", user_slug=f"shared_row{r}", library_key="1", rating_key=r)
+                    )
+                else:
+                    for u in range(1, users + 1):
+                        s.add(Delivery(collection_slug=f"row{r}", user_slug=f"u{u}", library_key="1", rating_key=r))
+            s.commit()
+        yield factory
 
 
 @st.composite
@@ -452,32 +467,32 @@ class TestTheReportMeansWhatItSays:
         from shortlist.server.services.run_persistence import reconcile_from_events
 
         users, rows, titles, deliveries, plays, sess = world
-        factory = _world(users, rows)
-        _populate(factory, users, rows, titles, deliveries, plays, sess)
-        reconcile_from_events(factory)
+        with _world(users, rows) as factory:
+            _populate(factory, users, rows, titles, deliveries, plays, sess)
+            reconcile_from_events(factory)
 
-        with factory() as s:
-            for window in ("7", "30", "all"):
-                r = effectiveness(s, window)
-                o = r["overall"]
-                w = f"[{window}]"
-                assert o["finished"] <= o["watched"], f"{w} finished exceeds watched"
-                assert o["bounced"] + o["dropped"] <= o["watched"], f"{w} gave-up exceeds watched"
-                assert o["watched"] >= 0, w
-                assert r["coverage"]["users_watched"] <= r["coverage"]["users_enabled"], w
-                assert r["coverage"]["users_idle"] >= 0, w
-                assert r["coverage"]["users_idle"] <= r["coverage"]["users_with_picks"], w
-                for line in r["per_row"]:
-                    assert line["finished"] <= line["watched"], f"{w} {line['slug']}"
-                    assert line["name"], f"{w} nameless row"
-                for line in r["per_user"]:
-                    assert line["finished"] <= line["watched"], f"{w} {line['username']}"
-                for week in r["trend"]:
-                    assert week["finished"] <= week["watched"], f"{w} {week['week']}"
-                land = o["landing"]
-                assert land["watched"] <= land["delivered"], w
-                assert len(r["recent"]) <= 20, w
-                assert all(not k.startswith("_") for line in r["recent"] for k in line), w
+            with factory() as s:
+                for window in ("7", "30", "all"):
+                    r = effectiveness(s, window)
+                    o = r["overall"]
+                    w = f"[{window}]"
+                    assert o["finished"] <= o["watched"], f"{w} finished exceeds watched"
+                    assert o["bounced"] + o["dropped"] <= o["watched"], f"{w} gave-up exceeds watched"
+                    assert o["watched"] >= 0, w
+                    assert r["coverage"]["users_watched"] <= r["coverage"]["users_enabled"], w
+                    assert r["coverage"]["users_idle"] >= 0, w
+                    assert r["coverage"]["users_idle"] <= r["coverage"]["users_with_picks"], w
+                    for line in r["per_row"]:
+                        assert line["finished"] <= line["watched"], f"{w} {line['slug']}"
+                        assert line["name"], f"{w} nameless row"
+                    for line in r["per_user"]:
+                        assert line["finished"] <= line["watched"], f"{w} {line['username']}"
+                    for week in r["trend"]:
+                        assert week["finished"] <= week["watched"], f"{w} {week['week']}"
+                    land = o["landing"]
+                    assert land["watched"] <= land["delivered"], w
+                    assert len(r["recent"]) <= 20, w
+                    assert all(not k.startswith("_") for line in r["recent"] for k in line), w
 
     @settings(max_examples=40, deadline=None)
     @given(worlds())
@@ -487,22 +502,22 @@ class TestTheReportMeansWhatItSays:
         from shortlist.server.services.run_persistence import reconcile_from_events
 
         users, rows, titles, deliveries, plays, sess = world
-        factory = _world(users, rows)
-        _populate(factory, users, rows, titles, deliveries, plays, sess)
+        with _world(users, rows) as factory:
+            _populate(factory, users, rows, titles, deliveries, plays, sess)
 
-        reconcile_from_events(factory)
-        with factory() as s:
-            first = effectiveness(s, "all")["overall"]
-        reconcile_from_events(factory)
-        with factory() as s:
-            second = effectiveness(s, "all")["overall"]
+            reconcile_from_events(factory)
+            with factory() as s:
+                first = effectiveness(s, "all")["overall"]
+            reconcile_from_events(factory)
+            with factory() as s:
+                second = effectiveness(s, "all")["overall"]
 
-        # The COUNTS, not the whole payload: `landing.cohort_from`/`cohort_to` are derived from the
-        # clock at call time, so they legitimately differ by microseconds between two calls and
-        # comparing them compares the stopwatch rather than the answer.
-        keys = ("watched", "finished", "bounced", "dropped", "delivered")
-        assert {k: first[k] for k in keys} == {k: second[k] for k in keys}
-        assert first["landing"]["watched"] == second["landing"]["watched"]
+            # The COUNTS, not the whole payload: `landing.cohort_from`/`cohort_to` are derived from the
+            # clock at call time, so they legitimately differ by microseconds between two calls and
+            # comparing them compares the stopwatch rather than the answer.
+            keys = ("watched", "finished", "bounced", "dropped", "delivered")
+            assert {k: first[k] for k in keys} == {k: second[k] for k in keys}
+            assert first["landing"]["watched"] == second["landing"]["watched"]
 
     @settings(max_examples=40, deadline=None)
     @given(worlds())
@@ -514,30 +529,30 @@ class TestTheReportMeansWhatItSays:
         from shortlist.server.services.run_persistence import reconcile_from_events, reconcile_watched
 
         users, rows, titles, deliveries, plays, sess = world
-        factory = _world(users, rows)
-        _populate(factory, users, rows, titles, deliveries, plays, sess)
+        with _world(users, rows) as factory:
+            _populate(factory, users, rows, titles, deliveries, plays, sess)
 
-        reconcile_from_events(factory)
-        with factory() as s:
-            before = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}
+            reconcile_from_events(factory)
+            with factory() as s:
+                before = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}
 
-        # A full resync where Plex reports nothing watched — the harshest input withdrawal can get.
-        profiles = [
-            UserProfile(
-                username=f"u{u}",
-                plex_account_id=100 + u,
-                user_type=UserType.SHARED,
-                slug=f"u{u}",
-                history=[WatchedItem(title="X", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=99999)],
-                history_complete=True,
-            )
-            for u in range(1, users + 1)
-        ]
-        reconcile_watched(factory, profiles)
+            # A full resync where Plex reports nothing watched — the harshest input withdrawal can get.
+            profiles = [
+                UserProfile(
+                    username=f"u{u}",
+                    plex_account_id=100 + u,
+                    user_type=UserType.SHARED,
+                    slug=f"u{u}",
+                    history=[WatchedItem(title="X", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=99999)],
+                    history_complete=True,
+                )
+                for u in range(1, users + 1)
+            ]
+            reconcile_watched(factory, profiles)
 
-        with factory() as s:
-            after = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}
-        assert before <= after, "a playback-backed credit was withdrawn"
+            with factory() as s:
+                after = {p.id for p in s.query(PR).filter(PR.watched_at.isnot(None))}
+            assert before <= after, "a playback-backed credit was withdrawn"
 
 
 def _stamps(factory):
@@ -591,22 +606,24 @@ class TestTheTwoCreditPathsAgree:
 
         users, rows, titles, deliveries, plays, sess = world
 
-        live = _world(users, rows)
-        _populate(live, users, rows, titles, deliveries, plays, sess)
-        reconcile_from_events(live)
+        with _world(users, rows) as live:
+            _populate(live, users, rows, titles, deliveries, plays, sess)
+            reconcile_from_events(live)
 
-        nightly = _world(users, rows)
-        _populate(nightly, users, rows, titles, deliveries, plays, sess)
-        # An EMPTY history: whatever this pass credits can only have come from playback, which is
-        # exactly the subset the live pass can see. Anything more would be the snapshot path, and
-        # that is the one thing the two are not supposed to agree on.
-        empty = [
-            UserProfile(username=f"u{u}", plex_account_id=100 + u, user_type=UserType.SHARED, slug=f"u{u}", history=[])
-            for u in range(1, users + 1)
-        ]
-        reconcile_watched(nightly, empty)
+            with _world(users, rows) as nightly:
+                _populate(nightly, users, rows, titles, deliveries, plays, sess)
+                # An EMPTY history: whatever this pass credits can only have come from playback, which is
+                # exactly the subset the live pass can see. Anything more would be the snapshot path, and
+                # that is the one thing the two are not supposed to agree on.
+                empty = [
+                    UserProfile(
+                        username=f"u{u}", plex_account_id=100 + u, user_type=UserType.SHARED, slug=f"u{u}", history=[]
+                    )
+                    for u in range(1, users + 1)
+                ]
+                reconcile_watched(nightly, empty)
 
-        assert _stamps(live) == _stamps(nightly), "the two passes disagree about the same playback"
+                assert _stamps(live) == _stamps(nightly), "the two passes disagree about the same playback"
 
     @settings(max_examples=80, deadline=None)
     @given(worlds())
@@ -621,14 +638,14 @@ class TestTheTwoCreditPathsAgree:
             for u in range(1, users + 1)
         ]
 
-        a = _world(users, rows)
-        _populate(a, users, rows, titles, deliveries, plays, sess)
-        reconcile_from_events(a)
-        reconcile_watched(a, empty)
+        with _world(users, rows) as a:
+            _populate(a, users, rows, titles, deliveries, plays, sess)
+            reconcile_from_events(a)
+            reconcile_watched(a, empty)
 
-        b = _world(users, rows)
-        _populate(b, users, rows, titles, deliveries, plays, sess)
-        reconcile_watched(b, empty)
-        reconcile_from_events(b)
+            with _world(users, rows) as b:
+                _populate(b, users, rows, titles, deliveries, plays, sess)
+                reconcile_watched(b, empty)
+                reconcile_from_events(b)
 
-        assert _stamps(a) == _stamps(b), "the order of the two passes changed the outcome"
+                assert _stamps(a) == _stamps(b), "the order of the two passes changed the outcome"

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from shortlist.server.api.row_changes import PRIVACY_SYNC, RECONCILE, RENAME, PlannedWork
 from shortlist.server.db.models import Base, Collection
 from shortlist.server.services.row_mutations import delete_row_in_session, steps_for_row_plan
+from tests.db_helpers import disposing_engine
 
 
 def test_row_plan_becomes_one_ordered_closed_step_list():
@@ -22,19 +23,20 @@ def test_row_plan_becomes_one_ordered_closed_step_list():
 
 
 def test_delete_row_is_rollback_safe_and_clears_local_anchors():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    with Session(engine) as session:
-        gone = Collection(slug="gone", name="Gone", build="per_person")
-        follower = Collection(slug="follower", name="Follower", build="per_person", hub_anchor={"1": {"row": "gone"}})
-        session.add_all([gone, follower])
-        session.commit()
-        deleted = delete_row_in_session(session, gone.id)
-        assert deleted.slug == "gone"
-        assert session.get(Collection, gone.id) is None
-        assert session.get(Collection, follower.id).hub_anchor == {}
-        session.rollback()
-    with Session(engine) as session:
-        assert session.query(Collection).count() == 2
-        assert session.query(Collection).filter_by(slug="follower").one().hub_anchor["1"]["row"] == "gone"
-    engine.dispose()
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        with Session(engine) as session:
+            gone = Collection(slug="gone", name="Gone", build="per_person")
+            follower = Collection(
+                slug="follower", name="Follower", build="per_person", hub_anchor={"1": {"row": "gone"}}
+            )
+            session.add_all([gone, follower])
+            session.commit()
+            deleted = delete_row_in_session(session, gone.id)
+            assert deleted.slug == "gone"
+            assert session.get(Collection, gone.id) is None
+            assert session.get(Collection, follower.id).hub_anchor == {}
+            session.rollback()
+        with Session(engine) as session:
+            assert session.query(Collection).count() == 2
+            assert session.query(Collection).filter_by(slug="follower").one().hub_anchor["1"]["row"] == "gone"

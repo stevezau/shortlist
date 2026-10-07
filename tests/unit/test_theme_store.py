@@ -12,14 +12,15 @@ from shortlist.engine.themes import theme_content_hash
 from shortlist.server.api.themes import ThemeIn, ThemeSaveIn
 from shortlist.server.db.models import Base, Collection, Theme
 from shortlist.server.services import theme_store
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def session():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    with sessionmaker(engine)() as s:
-        yield s
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        Base.metadata.create_all(engine)
+        with sessionmaker(engine)() as s:
+            yield s
 
 
 def body(name: str = "Twist endings", *, tokens: int = 0, collection_id: int | None = None) -> ThemeSaveIn:
@@ -63,24 +64,24 @@ class TestSaveTheme:
         assert saved.ai_tokens == 40
 
     def test_a_concurrent_charge_is_not_lost_to_a_stale_read(self, tmp_path):
-        engine = create_engine(f"sqlite:///{tmp_path / 'tokens.db'}")
-        Base.metadata.create_all(engine)
-        sessions = sessionmaker(engine, expire_on_commit=False)
-        with sessions() as setup:
-            row = add_row(setup, ai_tokens=10)
-            setup.commit()
-            row_id = row.id
-        with sessions() as slow, sessions() as other:
-            stale = slow.get(Collection, row_id)  # read before the other charge lands
-            assert stale.ai_tokens == 10
-            theme_store.add_row_tokens(other, other.get(Collection, row_id), 5)
-            other.commit()
+        with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'tokens.db'}")) as engine:
+            Base.metadata.create_all(engine)
+            sessions = sessionmaker(engine, expire_on_commit=False)
+            with sessions() as setup:
+                row = add_row(setup, ai_tokens=10)
+                setup.commit()
+                row_id = row.id
+            with sessions() as slow, sessions() as other:
+                stale = slow.get(Collection, row_id)  # read before the other charge lands
+                assert stale.ai_tokens == 10
+                theme_store.add_row_tokens(other, other.get(Collection, row_id), 5)
+                other.commit()
 
-            theme_store.add_row_tokens(slow, stale, 40)
-            slow.commit()
+                theme_store.add_row_tokens(slow, stale, 40)
+                slow.commit()
 
-        with sessions() as check:
-            assert check.get(Collection, row_id).ai_tokens == 55
+            with sessions() as check:
+                assert check.get(Collection, row_id).ai_tokens == 55
 
     def test_slug_collision_gets_a_unique_slug(self, session):
         first = theme_store.save_theme(session, SECRETS, body())
