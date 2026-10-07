@@ -490,7 +490,7 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | wizard | resume
+    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | wizard | resume | assistant
     #: When the run was QUEUED — this row is created the moment someone presses Run.
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     #: When the engine actually began, which is not the same moment: a run waits here behind whatever
@@ -613,8 +613,8 @@ class RunSharedRow(Base):
     #: judging it against the row the run was BUILDING rather than the one Plex was still serving —
     #: which drops a credit for a title this run removed, and invents one for a title it added.
     #: `_load_per_person` derives its equivalent from `min(picks.created_at)`; a shared row writes no
-    #: picks, so it has to be stamped here. NULL on rows written before this column existed, which
-    #: fall back to `Run.started_at`.
+    #: picks, so it has to be stamped here. NULL on rows written before this column existed has no
+    #: exact delivery clock; readers must not infer one from the parent run's start time.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="shared_rows")
@@ -1065,12 +1065,16 @@ class Job(Base):
     """
 
     __tablename__ = "jobs"
+    __table_args__ = (Index("uq_jobs_operation_effect", "operation_id", "effect_key", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(48), index=True)
     # What the job needs to do its work — a user slug, a row slug, a set of account ids. Kept as
     # data, never as a closure, so a job is still runnable after the process that queued it is gone.
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    # An operation's owed work commits beside its configuration; null for existing job callers.
+    operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    effect_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # queued -> running -> done | failed. `running` at boot means the process died mid-job; startup
     # recovery requeues those (every job kind is written to be idempotent, so a partial replay is safe).
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
@@ -1199,3 +1203,9 @@ class WatchSession(Base):
         if not self.duration_ms:
             return None
         return min(100, round(100 * self.max_offset_ms / self.duration_ms))
+
+
+# Register extension tables on the shared metadata used by migrations and test schemas.
+from shortlist.server.assistant import budgets as _assistant_budget_models  # noqa: E402,F401
+from shortlist.server.assistant import operation_models as _assistant_operation_models  # noqa: E402,F401
+from shortlist.server.assistant_auth import models as _assistant_auth_models  # noqa: E402,F401

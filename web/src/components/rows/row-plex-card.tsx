@@ -1,5 +1,4 @@
-import { useLayoutEffect, useRef } from "react";
-
+import { PosterWords } from "@/components/rows/poster-words";
 import { api } from "@/lib/api";
 import { renderRowName, sampleLibraryName } from "@/lib/format";
 import { fillPlaceholders, LIBRARY_NAME, TOP_SEED, USER, usesSeason, usesTheme } from "@/lib/placeholders";
@@ -41,37 +40,6 @@ function nameCaption(input: CollectionInput, template: string): string | null {
   return perLibrary
     ? "Example only — the real library name fills in, so each library gets its own."
     : null;
-}
-
-/** Fit both lines inside a 2:3 poster, including long unbroken titles and browser zoom. */
-function PosterWords({ title, subtitle }: { title: string; subtitle: string }) {
-  const frame = useRef<HTMLDivElement>(null);
-  const words = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const fit = () => {
-      if (!frame.current || !words.current || !frame.current.clientWidth) return;
-      const box = frame.current;
-      const content = words.current;
-      const padding = Math.round(box.clientWidth * 0.09);
-      box.style.padding = `${padding}px`;
-      let size = Math.min(20, box.clientWidth * 0.145);
-      content.style.fontSize = `${size}px`;
-      while (size > 4 && (content.scrollHeight > box.clientHeight - padding * 2 || content.scrollWidth > box.clientWidth - padding * 2)) {
-        size -= 0.5;
-        content.style.fontSize = `${size}px`;
-      }
-    };
-    fit();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
-    if (frame.current) observer?.observe(frame.current);
-    return () => observer?.disconnect();
-  }, [title, subtitle]);
-  return <div ref={frame} data-poster-words className="flex size-full items-end bg-accent p-2 text-accent-foreground">
-    <div ref={words} className="w-full min-w-0 space-y-1 text-sm leading-tight [overflow-wrap:anywhere]">
-      <p className="font-semibold">{title}</p>
-      {subtitle && <p className="text-[0.75em] text-accent-foreground/80">{subtitle}</p>}
-    </div>
-  </div>;
 }
 
 /**
@@ -146,7 +114,7 @@ export function RowPlexCard({
               : "Plex’s own artwork"}
           </div>
         ) : (
-          <PosterWords title={posterTitle || shown} subtitle={posterSubtitle} />
+          <PosterWords title={posterTitle || shown} subtitle={posterSubtitle} posterStyle={input.poster.style} />
         )}
       </div>
       <p className="break-words text-sm font-medium">“{shown}”</p>

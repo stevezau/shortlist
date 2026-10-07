@@ -30,12 +30,12 @@ from shortlist.engine.placeholders import refusal
 from shortlist.engine.web_guidance import MAX_INSTRUCTIONS_CHARS
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import DEFAULT_SLUG, Collection, Server
+from shortlist.server.db.models import Server
 from shortlist.server.net_guard import BlockedUrl, check_url
-from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import actor_of, add_audit
-from shortlist.server.services.plex_reachability import describe_address, error_text, explained
+from shortlist.server.services.connection_choices import ArrNotConfigured, configured_arr_connection, read_arr_choices
+from shortlist.server.services.plex_reachability import error_text
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_owner)])
@@ -529,116 +529,21 @@ async def put_settings(
     _validate_values(update.values)
     _reject_blocked_urls(update.values)
     await _reject_a_different_server(request.app.state, update.values)
-    from shortlist.server.api.system import invalidate_plex_reads
-    from shortlist.server.scheduler import DEFAULT_CRONS
+    from shortlist.server.assistant.row_effects import queue_convergence_in_session
+    from shortlist.server.services.settings_mutations import apply_settings_in_session, prepare_settings_in_session
 
-    with request.app.state.sessions() as session:
-        store = SettingsStore(session, request.app.state.secrets)
-        # Two settings do real work on Plex, so their OLD values are read before the write. Storing
-        # them used to be the whole of it: the toggle flipped, the page said "saved", and nothing on
-        # the server changed until the next nightly run — or, for the row name, ever.
-        was_hiding = bool(store.get("privacy.hide_shared_from_disabled"))
-        old_row_name = (store.get("row.name_template") or "") if "row.name_template" in update.values else ""
-        # Read the diff BEFORE the writes: afterwards there is no record of what the value was. Every
-        # threshold here is owner-tunable and silently changeable, so "the run used different settings
-        # than the ones you are reading" is invisible without this — reconstructing one such change
-        # took a full forensic pass over settings timestamps vs run times (2026-08-01).
-        changed = _settings_diff(store, update.values)
-        # The default row's TITLE is this setting, so writing it renames that row on Plex — the same
-        # act as renaming any other row, and it owes the same clash check. Before the write loop, so a
-        # refusal leaves every setting in this request unwritten rather than half-applied.
-        proposed_row_name = str(update.values.get("row.name_template") or "").strip()
-        if proposed_row_name and proposed_row_name != old_row_name:
-            default_row = session.query(Collection).filter_by(slug=DEFAULT_SLUG).first()
-            clash = reconcile.row_titled_from(
-                session,
-                proposed_row_name,
-                secrets=request.app.state.secrets,
-                exclude_slug=DEFAULT_SLUG,
-                # The default row is per-person, and only a per-person row can share its collection.
-                build="per_person",
-                # ...and only one that can build in a library the default row reaches (issue #121). A
-                # deleted default row reaches nothing, but "both, everywhere" is the safe reading.
-                media=default_row.media if default_row else "both",
-                library_keys=(default_row.library_keys or []) if default_row else [],
-            )
-            if clash is not None:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"{proposed_row_name!r} is already the title of the row {clash.name!r} "
-                    f"({clash.slug}), which can build in the same library — two rows with the same title in one "
-                    "library become a single collection on Plex, so pick a different name",
-                )
-        for key, value in update.values.items():
-            if key in SECRET_KEYS and value == REDACTED_PLACEHOLDER:
-                continue  # redacted placeholder round-tripped from the UI — no change
-            if value is None and key in DEFAULT_CRONS:
-                # `null` on a schedulable cron means "go back to the built-in default", and the only
-                # way to say that is to REMOVE the row: for `sync.check_cron` a stored blank means
-                # OFF (scheduler._OFF_ABLE), so writing "" would switch the job off, and writing the
-                # default expression would pin a copy of it rather than inherit it.
-                store.unset(key)
-                continue
-            if key in _FETCHED_URL_KEYS and isinstance(value, str):
-                # Store what the consumers actually fetch. A stored value that differs from the
-                # parsed one is the seam a credential smuggled itself through once already.
-                value = value.strip()
-            store.set(key, value)
-        if changed:
-            # WHO, not just what. `require_owner` is already this router's dependency, so FastAPI
-            # serves the cached result rather than re-authenticating.
-            add_audit(session, "settings.change", "info", changed=changed, actor=actor_of(auth, request))
-            session.commit()
-            if "plex.url" in changed:
-                logger.info("settings: the Plex address is now {}", describe_address(str(store.get("plex.url") or "")))
-        if "log.level" in update.values:
-            # Apply immediately so a live "turn on DEBUG to watch this run" takes effect without a
-            # container restart. The file sink is preserved from boot.
-            from shortlist.logging_config import configure_logging
-
-            configure_logging(str(update.values["log.level"]))
-        # Derived from DEFAULT_CRONS, never a hand-written list: a hardcoded four-key set covered the
-        # watch/user/backup crons only, so editing `privacy.sync_cron`, `sync.check_cron` or
-        # `maintenance.prune_cron` saved the setting and left the live trigger alone until the next
-        # container restart — and the drift check is the one schedule the UI offers to switch OFF,
-        # so its off switch silently did nothing for the rest of the night.
-        if set(update.values) & (set(DEFAULT_CRONS) | {"backup.max_keep"}):
-            from shortlist.server.scheduler import rebuild_schedule
-
-            rebuild_schedule(request.app)
-        now_hiding = bool(store.get("privacy.hide_shared_from_disabled"))
-        new_row_name = (store.get("row.name_template") or "") if "row.name_template" in update.values else old_row_name
-        result = store.all_public()
-
-    # A new URL or token may point at a different server, and the library list is cached by READ
-    # rather than by server — so without this the picker would offer the previous server's libraries
-    # for up to the cache TTL. Cheap, and only on a settings write.
-    #
-    # AFTER the write commits, never before it: `/libraries` runs its read on an executor thread, so
-    # it genuinely interleaves with this handler. A read landing between an early drop and the commit
-    # re-populates the cache from the OLD url/token and pins it for the whole TTL — precisely the
-    # staleness this exists to prevent.
-    if _re_points_plex(update.values):
-        invalidate_plex_reads(request.app.state)
-
-    # Both of these change what is on somebody's Plex server, so they act NOW rather than waiting for
-    # a run. Outside the session block: each queues a job that opens its own.
-    if now_hiding != was_hiding:
-        # This toggle decides whether an opted-out account still sees the public shared rows. Flipping
-        # it on owes every disabled account a `label!=` exclude; flipping it off owes them its removal.
-        await jobs.queue_privacy_sync(request.app.state, "the 'hide shared rows from disabled users' setting changed")
-    if new_row_name != old_row_name:
-        # The default row's title IS this template, so changing it here renames every user's collection
-        # — exactly what the Rows page already does through its own rename dialog. Without it, the next
-        # run built a SECOND collection under the new name and left the old one labelled and promoted
-        # for ever, because nothing addresses a collection by a title no run will write again.
-        await reconcile.run_row_rename_from_plex(
-            request.app.state,
-            slug=DEFAULT_SLUG,
-            new_template=new_row_name,
-            old_template=old_row_name,
-            scope="settings.rename",
-        )
+    state = request.app.state
+    with state.sessions() as session:
+        mutation = prepare_settings_in_session(session, state.secrets, update.values)
+        apply_settings_in_session(session, state.secrets, mutation)
+        if mutation.changed:
+            add_audit(session, "settings.change", "info", changed=mutation.changed, actor=actor_of(auth, request))
+        if mutation.steps:
+            queue_convergence_in_session(session, list(mutation.steps), domain="settings")
+        session.commit()
+        result = SettingsStore(session, state.secrets).all_public()
+    if mutation.steps:
+        await jobs.drain_now(state, "settings changed")
     return result
 
 
@@ -685,60 +590,10 @@ async def test_connection(service: str, request: Request) -> dict:
         # reason to Fernet-decrypt every stored key just to ping one connection.
         with state.sessions() as session:
             get = SettingsStore(session, state.secrets).get
-            if service == "plex":
-                from shortlist.engine.clients.plex_pms import PlexClient
+            from shortlist.server.services.connection_checks import READ_ONLY_PROBES, probe_read_only_connection
 
-                url = get("plex.url")
-                with explained(url):
-                    plex = PlexClient(url, get("plex.token"))
-                # "PMS" is our word for it, not Plex's own UI's — an owner reading this on the
-                # Connections card has no reason to know the abbreviation.
-                return f"Connected to {plex.server_name} (Plex Media Server {plex.version})"
-            if service == "tautulli":
-                from shortlist.engine.clients.tautulli import TautulliClient
-
-                TautulliClient(get("tautulli.url"), get("tautulli.apikey")).ping()
-                return "Tautulli responded"
-            if service == "tmdb":
-                from shortlist.engine.clients.tmdb import TmdbClient
-
-                if not TmdbClient(get("tmdb.apikey")).ping():
-                    raise RuntimeError("TMDB rejected the key")
-                return "TMDB key works"
-            if service in ("radarr", "sonarr"):
-                from shortlist.engine.clients.arr import make_arr_client
-                from shortlist.engine.models import ArrTarget
-
-                prefix = f"requests.{service}"
-                url = (get(f"{prefix}.url") or "").strip()
-                api_key = get(f"{prefix}.apikey") or ""
-                if not url or not api_key:
-                    raise RuntimeError(f"{service.title()} URL and API key are both required")
-                target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
-                return make_arr_client(service, target).ping()
-            if service == "overseerr":
-                from shortlist.engine.clients.seerr import SeerrClient
-                from shortlist.engine.models import SeerrTarget
-
-                url = (get("requests.overseerr.url") or "").strip()
-                api_key = get("requests.overseerr.apikey") or ""
-                if not url or not api_key:
-                    raise RuntimeError("Overseerr URL and API key are both required")
-                return SeerrClient(SeerrTarget(url=url, api_key=api_key)).ping()
-            if service == "mdblist":
-                from shortlist.engine.clients.mdblist import MdbListClient
-
-                api_key = get("requests.mdblist.apikey") or ""
-                if not api_key:
-                    raise RuntimeError("An MDBList API key is required for IMDb/Trakt/RT/Metacritic ratings")
-                return MdbListClient(api_key).ping()
-            if service == "trakt":
-                from shortlist.engine.clients.trakt import TraktClient
-
-                client_id = get("trakt.client_id") or ""
-                if not client_id:
-                    raise RuntimeError("A Trakt API key (client id) is required")
-                return TraktClient(client_id).ping()
+            if service in READ_ONLY_PROBES:
+                return probe_read_only_connection(service, get)
             if service == "exa":
                 from shortlist.engine.clients.search import ExaClient
 
@@ -864,25 +719,15 @@ async def arr_options(service: str, request: Request) -> dict:
     if service not in ("radarr", "sonarr"):
         raise HTTPException(status_code=404, detail=f"unknown service {service!r}")
     state = request.app.state
-    with state.sessions() as session:
-        store = SettingsStore(session, state.secrets)
-        url = (store.get(f"requests.{service}.url") or "").strip()
-        api_key = store.get(f"requests.{service}.apikey") or ""
-    if not url or not api_key:
-        raise HTTPException(status_code=409, detail=f"{service.title()} isn't connected yet")
-
-    def fetch() -> dict:
-        from shortlist.engine.clients.arr import make_arr_client
-        from shortlist.engine.models import ArrTarget
-
-        target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
-        client = make_arr_client(service, target)
-        return {"quality_profiles": client.quality_profiles(), "root_folders": client.root_folders()}
+    try:
+        connection = configured_arr_connection(state, service)
+    except ArrNotConfigured as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
     try:
-        return await asyncio.get_running_loop().run_in_executor(None, fetch)
+        return await asyncio.get_running_loop().run_in_executor(None, read_arr_choices, service, connection)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=_service_error_detail(service.title(), url, e)) from e
+        raise HTTPException(status_code=502, detail=_service_error_detail(service.title(), connection.url, e)) from e
 
 
 class SeerrUserOut(PassthroughModel):

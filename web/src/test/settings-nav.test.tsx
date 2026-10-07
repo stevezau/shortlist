@@ -25,6 +25,8 @@ describe("where an old Settings anchor lives now", () => {
     ["#rating-source", "defaults"],
     ["#advanced", "system"],
     ["#api-access", "system"],
+    ["#assistant-access", "system"],
+    ["#assistant-access-heading", "system"],
     ["#danger", "system"],
     ["#danger-heading", "system"],
     ["", "connections"],
@@ -43,6 +45,9 @@ describe("where an old Settings anchor lives now", () => {
 });
 
 describe("searchSettings", () => {
+  it.each(["AI assistants", "MCP", "ChatGPT", "Claude", "Codex"])("finds assistant connections by %s", (query) => {
+    expect(searchSettings(query)).toContainEqual(expect.objectContaining({ label: "AI assistants", to: "/assistant-access" }));
+  });
   it("matches by name first, then by what it does", () => {
     const hits = searchSettings("trakt");
     expect(hits[0]?.label).toBe("Trakt");

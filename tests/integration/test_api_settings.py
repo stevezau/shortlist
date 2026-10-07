@@ -173,14 +173,15 @@ class TestSettingsValidation:
         assert "requests.min_rating" in message["changed"]
 
     def test_the_actor_distinguishes_an_api_token_from_a_browser(self, client: TestClient):
-        """The untested half, and the likelier culprit: a value that moves with nobody owning up to
-        it is more often an automation than the owner's own browser."""
-        token = client.post("/api/settings/token").json().get("token")
-        if not token:  # the endpoint shape differs across builds; skip rather than assert on it
-            import pytest as _pytest
+        """A programmatic owner mutation retains its API-token attribution in the audit record."""
+        minted = client.post("/api/system/api-token")
+        assert minted.status_code == 200, minted.text
+        token = minted.json()["token"]
 
-            _pytest.skip("no API token endpoint on this build")
-        resp = client.put(
+        # Use a separate cookie-less client: the Bearer token itself, rather than the owner browser
+        # session, must authorize the write and determine the immutable audit actor.
+        bare = TestClient(client.app)
+        resp = bare.put(
             "/api/settings",
             json={"values": {"requests.min_votes": 111}},
             headers={"Authorization": f"Bearer {token}", "User-Agent": "curl/8.4.0"},
@@ -1033,7 +1034,11 @@ class TestSettingsThatDoRealWork:
         invisible until something writes."""
         client.put("/api/settings", json={"values": {"privacy.hide_shared_from_disabled": False}})
 
-        assert [j["kind"] for j in client.get("/api/system/jobs").json()] == ["privacy.sync"]
+        queued = client.get("/api/system/jobs").json()
+        assert len(queued) == 1 and queued[0]["kind"] == "assistant.converge"
+        assert queued[0]["payload"]["steps"] == [
+            {"kind": "privacy.sync", "payload": {"reason": "the shared-row privacy setting changed"}}
+        ]
 
     def test_saving_the_same_value_queues_nothing(self, client: TestClient):
         """A settings save sends the whole form, so every unrelated edit would otherwise trigger a

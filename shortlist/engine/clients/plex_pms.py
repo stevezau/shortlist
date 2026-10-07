@@ -2115,14 +2115,16 @@ class PlexClient:
         scheme = "wss" if base.startswith("https://") else "ws"
         return f"{scheme}://{base.split('://', 1)[1]}/:/websockets/notifications"
 
-    def active_sessions(self) -> dict[str, dict]:
+    def active_sessions(self, *, owner_account_id: int | None = None) -> dict[str, dict]:
         """What is playing right now, keyed by Plex's `sessionKey`.
 
         The notification socket carries no user and no runtime — only a session key, a rating key and
         an offset — so this read is what turns an anonymous position update into "this person is 40%
-        through this title". `<User id>` here IS the plex.tv account id (verified against a live
-        server: 14136324 is the account we hold for that user), which is what makes it joinable where
-        a display name would not be.
+        through this title". Shared/Home users carry their plex.tv account ID. The server owner
+        instead carries the PMS-local ID 1 (observed during a genuine Plex Web play). Only a caller
+        that verified this server's identity may supply its canonical owner account. Without that
+        evidence the owner stays unresolved; neither a display name nor the local ID proves a
+        plex.tv identity.
         """
         r = http_retry.get(
             self._server.url("/status/sessions", includeToken=False),
@@ -2136,9 +2138,12 @@ class PlexClient:
             if not key:
                 continue
             user = el.find("User")
+            account_id = int(user.get("id")) if user is not None and (user.get("id") or "").isdigit() else None
+            if account_id == 1:
+                account_id = owner_account_id if type(owner_account_id) is int and owner_account_id > 0 else None
             grandparent = (el.get("grandparentRatingKey") or "").strip()
             out[key] = {
-                "account_id": int(user.get("id")) if user is not None and (user.get("id") or "").isdigit() else None,
+                "account_id": account_id,
                 "rating_key": int(el.get("ratingKey") or 0) or None,
                 "show_rating_key": int(grandparent) if grandparent.isdigit() else None,
                 "media_type": el.get("type") or "",

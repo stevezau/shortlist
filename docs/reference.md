@@ -2,11 +2,11 @@
 title: "Reference: settings, API and env vars"
 description: Every Shortlist configuration key, REST API endpoint, container environment variable and default value, split into settings, the API, and how Shortlist decides things.
 heading: Reference
-updated: 2026-10-03
+updated: 2026-10-05
 ---
 
-The reference is three pages. Pick the one that matches what you are looking up, or find the section
-you want in the lists below.
+Pick the reference that matches what you are looking up, or find the section you want in the lists
+below.
 
 <!-- The empty `<span id="…">` before each link is the anchor that section had while the reference
      was a single page, so an old bookmark or search result still resolves here. (The exception is
@@ -31,6 +31,8 @@ environment variables and the files under `/config` → **[Environment and files
 
 Every REST endpoint, its request and response shape, and the read-only support checks behind
 **Have an issue?** → **[API reference](reference/api.md)**
+
+Assistant tools, grants and the plan/apply lifecycle → **[MCP assistant reference](reference/assistant.md)**.
 
 - <span id="api"></span>[The whole API surface](reference/api.md)
 - <span id="sign-in-and-setup"></span>[Sign-in and setup](reference/api.md#sign-in-and-setup)

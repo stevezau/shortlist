@@ -46,7 +46,7 @@ from shortlist.server.db.models import Collection, SeasonDef
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
 from shortlist.server.services.library_index import library_index, row_sections
-from shortlist.server.services.season_catalogue import load_catalogue, make_slug, season_from_row
+from shortlist.server.services.season_catalogue import load_catalogue
 
 router = APIRouter(prefix="/seasons", tags=["seasons"], dependencies=[Depends(require_owner)])
 
@@ -279,106 +279,44 @@ async def list_presets(request: Request) -> list[dict]:
 @router.post("", status_code=201, response_model=SeasonOut)
 async def create_season(body: SeasonIn, request: Request) -> dict:
     """Save a new season. Its slug is made from its name now and never changes (D14)."""
-    if body.preset is not None and body.preset not in {preset.key for preset in PRESETS}:
-        raise HTTPException(status_code=422, detail=f"There's no ready-made season “{body.preset}”.")
-    state = request.app.state
-    today = context_builder.local_now().date()
-    with state.sessions() as session:
-        rule = _checked(session, body, editing=None)
-        # Every stored slug, not the catalogue's: a stored season the catalogue skips still owns its slug.
-        taken = set(session.scalars(select(SeasonDef.slug)))
-        row = SeasonDef(slug=make_slug(body.name, taken), preset=body.preset, **_columns(body, rule))
-        session.add(row)
-        session.flush()
-        _reject_row_title_clashes(session, state, season_from_row(row))
-        session.commit()
-        return _season_view(season_from_row(row), row, {}, today)
+    return _save_season(request.app.state, "create", body=body)
 
 
 @router.put("/{slug}", response_model=SeasonOut)
 async def update_season(slug: str, body: SeasonIn, request: Request) -> dict:
-    """Replace a custom season, keeping its slug.
-
-    A change of date or timing changes which days its rows are shown on, so it is applied to Plex now, as a
-    change to a row's own seasons is. A source change rebuilds its rows on their next build (D11).
-    """
-    if slug in BUILTIN_SEASONS:
-        raise HTTPException(status_code=403, detail="Built-in seasons can't be edited.")
-    state = request.app.state
-    now = context_builder.local_now()
-    with state.sessions() as session:
-        row = _stored(session, slug)
-        rule = _checked(session, body, editing=slug)
-        before = _calendar(row)
-        titled_before = (row.name, row.emoji)
-        catalogue_before = load_catalogue(session)
-        for column, value in _columns(body, rule).items():
-            setattr(row, column, value)
-        moved = _calendar(row) != before
-        if (row.name, row.emoji) != titled_before:
-            # Only a new name or emoji retitles a row: re-checking an unchanged one would refuse a date or
-            # source edit over a clash this edit did not make.
-            session.flush()
-            _reject_row_title_clashes(session, state, season_from_row(row))
-        session.commit()
-        catalogue_after = {**catalogue_before, slug: season_from_row(row)}
-        used_by = _used_by(session, catalogue_after)
-        following = _enabled_followers(session, slug) if moved else []
-        changed = [
-            c.slug
-            for c in following
-            if _pass_owed(_today(c, c.seasons, now, catalogue_before), _today(c, c.seasons, now, catalogue_after))
-        ]
-        view = _season_view(season_from_row(row), row, used_by, now.date())
-    if changed:
-        _apply_visibility(state, changed, f"season '{slug}' moved")
-    return view
+    """Replace a custom season and atomically record owed visibility work."""
+    return _save_season(request.app.state, "update", slug=slug, body=body)
 
 
 @router.delete("/{slug}", status_code=204)
 async def delete_season(slug: str, request: Request) -> Response:
-    """Delete a custom season and untick it in every row, in one transaction (D12).
-
-    Refused, naming the rows, while it is any row's only season: that row would be left following nothing.
-    """
-    if slug in BUILTIN_SEASONS:
-        raise HTTPException(status_code=403, detail="Built-in seasons can't be deleted.")
-    now = context_builder.local_now()
-    with request.app.state.sessions() as session:
-        row = _stored(session, slug)
-        catalogue_before = load_catalogue(session)
-        catalogue_after = {key: season for key, season in catalogue_before.items() if key != slug}
-        following = [
-            c
-            for c in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id))
-            if slug in (c.seasons or [])
-        ]
-        alone = [_row_name_in(session, c, catalogue_before[slug]) for c in following if set(c.seasons) == {slug}]
-        if alone:
-            what_to_do = (
-                "Give that row another season, or delete it, first."
-                if len(alone) == 1
-                else "Give those rows another season, or delete them, first."
-            )
-            raise HTTPException(
-                status_code=409, detail=f"“{row.name}” is the only season in {_and_list(alone)}. {what_to_do}"
-            )
-        changed = [
-            c.slug
-            for c in following
-            if c.enabled
-            and _pass_owed(
-                _today(c, c.seasons, now, catalogue_before),
-                _today(c, [s for s in c.seasons if s != slug], now, catalogue_after),
-            )
-        ]
-        for collection in following:
-            collection.seasons = [s for s in collection.seasons if s != slug]
-        session.delete(row)
-        session.commit()
-    if changed:
-        _apply_visibility(request.app.state, changed, f"season '{slug}' was deleted")
+    """Untick a custom season and save its required visibility work in one transaction."""
+    _save_season(request.app.state, "delete", slug=slug)
     return Response(status_code=204)
+
+
+def _save_season(state, action: str, *, slug: str | None = None, body=None) -> dict | None:
+    from shortlist.server.assistant.row_effects import queue_convergence_in_session
+    from shortlist.server.services.season_changes import (
+        apply_season_in_session,
+        prepare_season_in_session,
+        season_view_in_session,
+    )
+
+    with state.sessions() as session:
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        mutation = prepare_season_in_session(session, action, slug=slug, body=body)
+        row = apply_season_in_session(session, state, mutation)
+        if mutation.steps:
+            queue_convergence_in_session(session, mutation.steps, domain="seasons")
+        session.flush()
+        result = season_view_in_session(session, row) if row is not None else None
+        session.commit()
+    if mutation.steps:
+        jobs.drain_in_background(
+            state, f"season '{mutation.slug}' was deleted" if action == "delete" else f"season '{mutation.slug}' moved"
+        )
+    return result
 
 
 @router.post("/preview", response_model=SeasonPreviewOut)
@@ -505,7 +443,7 @@ def _checked(session: Session, body: SeasonIn, *, editing: str | None) -> DateRu
     # Stored normalised, so an edit to a field the kind ignores changes nothing and moves no row (`_calendar`).
     rule = rule.normalised()
     if not (body.tags or body.genre is not None or body.collections or body.picks):
-        raise HTTPException(status_code=422, detail="Add at least one tag, collection or film.")
+        raise HTTPException(status_code=422, detail="Add at least one tag, genre, collection or film.")
     # Every stored name, not just the catalogue's, and the built-ins': a row's title renders `{season}`, so two
     # seasons with one name would give two rows one title (D13).
     names = [(season.slug, season.name) for season in BUILTIN_SEASONS.values()]

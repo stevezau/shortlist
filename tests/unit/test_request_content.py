@@ -123,6 +123,20 @@ def test_blocked_movie_does_not_take_an_auto_send_slot(monkeypatch):
     assert report.queued[0].detail.startswith("music content filter:")
 
 
+def test_final_metadata_hold_stays_in_the_automatic_inbox(monkeypatch):
+    arr = FakeArr()
+    monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **kw: arr)
+    tmdb = _metadata_tmdb()
+    tmdb.details.side_effect = [{"genres": [{"id": 18}]}, RuntimeError("unavailable")]
+    title = MissingTitle(2, "Neutral B", MediaType.MOVIE, 2020, 8.5, 500, demand=3)
+    cfg = _cfg(radarr=RADARR, exclude_music_nonfiction=True)
+    report = _request_missing(cfg, tmdb, {(2, MediaType.MOVIE): title}, dry_run=False)
+    assert report.sent == []
+    assert arr.movie_calls == []
+    assert report.queued == [title]
+    assert "metadata unavailable" in report.queued[0].detail
+
+
 @pytest.mark.parametrize("dry_run", [False, True])
 @pytest.mark.parametrize("route", ["arr", "overseerr"])
 def test_existing_inbox_movie_is_checked_before_any_downloader_client_is_created(monkeypatch, dry_run, route):
@@ -136,7 +150,7 @@ def test_existing_inbox_movie_is_checked_before_any_downloader_client_is_created
     )
     title = MissingTitle(1, "Neutral A", MediaType.MOVIE, 2020, 8.0, 500)
     report = requests_mod.request_titles_by_row({"picked": cfg}, _metadata_tmdb(), [("picked", title)], dry_run=dry_run)
-    assert report.outcomes[0].status == "error"
+    assert report.outcomes[0].status == "skipped_content"
     assert report.outcomes[0].detail.startswith("music content filter:")
     factory.assert_not_called()
 
@@ -151,6 +165,55 @@ def test_disabled_policy_preserves_requests_without_additional_metadata_calls(mo
     assert RequestConfig().exclude_music_nonfiction is False
     assert arr.movie_calls == [(1, False)]
     tmdb.details.assert_not_called()
+
+
+def test_blocked_movie_never_reserves_a_durable_acquisition_claim(monkeypatch):
+    guard = Mock(side_effect=AssertionError("blocked content reserved an acquisition"))
+    factory = Mock()
+    monkeypatch.setattr(requests_mod, "RadarrClient", factory)
+    title = MissingTitle(1, "Neutral A", MediaType.MOVIE, 2020, 8.0, 500)
+    cfg = _cfg(radarr=RADARR, exclude_music_nonfiction=True)
+    outcomes = requests_mod._send_claims(
+        [("picked", title)],
+        {"picked": cfg},
+        _metadata_tmdb(),
+        dry_run=False,
+        min_write_interval=0,
+        acquisition_guard=guard,
+    )
+    assert outcomes[0].status == "skipped_content"
+    guard.assert_not_called()
+    factory.assert_not_called()
+
+
+def test_allowed_movie_keeps_the_upstream_claim_and_outcome_recording(monkeypatch):
+    from contextlib import contextmanager
+
+    arr = FakeArr()
+    monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **kw: arr)
+    recorded = []
+    entries = []
+
+    @contextmanager
+    def guard(slug, title, cfg):
+        entries.append((slug, title.tmdb_id))
+        assert arr.movie_calls == []
+        yield recorded.append
+        assert arr.movie_calls == [(2, False)]
+
+    title = MissingTitle(2, "Neutral B", MediaType.MOVIE, 2020, 8.0, 500)
+    cfg = _cfg(radarr=RADARR, exclude_music_nonfiction=True)
+    outcomes = requests_mod._send_claims(
+        [("picked", title)],
+        {"picked": cfg},
+        _metadata_tmdb(),
+        dry_run=False,
+        min_write_interval=0,
+        acquisition_guard=guard,
+    )
+    assert entries == [("picked", 2)]
+    assert recorded == outcomes
+    assert recorded[0].status == "requested"
 
 
 def test_metadata_failure_holds_without_sending_and_a_later_retry_can_succeed(monkeypatch):

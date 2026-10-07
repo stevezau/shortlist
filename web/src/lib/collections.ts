@@ -5,6 +5,10 @@ import {
 } from "@/lib/constants";
 import { effectiveSources } from "@/components/rows/row-sources-field";
 import { placementLabel } from "@/lib/placement";
+import {
+  GENERATED_OVER_TIME_DEFAULTS,
+  generatedRowInputDefaults,
+} from "@/lib/row-templates.generated";
 import { withoutWebSearchWhenSeasonal } from "@/lib/seasonal-sources";
 import { showDaysSummary } from "@/lib/show-days";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
@@ -18,99 +22,14 @@ import type {
 
 /** A fresh row definition with sensible defaults, for the "Add a row" editor. */
 export function blankInput(): CollectionInput {
-  return {
-    name: "",
-    // The editor renames inline; only the dedicated rename page defers to its own stream.
-    defer_rename: false,
-    build: "per_person",
-    audience: "everyone",
-    audience_user_ids: [],
-    enabled: true,
-    schedule: "30 3 * * *", // new rows run nightly by default; clear to "Off"
-    size: 15,
-    media: "both",
-    sort_order: 0,
-    name_template: "",
-    fallback_name: "",
-    // Empty = leave that field on Plex alone (issue #120).
-    description: "",
-    sort_title_prefix: "",
-    min_watchers: 2,
-    request_tag: "",
-    candidate_sources: [],
-    library_keys: [],
-    watched_pct: null,
-    rewatch: false,
-    // Mirrors the API default, so a row created as a rewatch row starts where the server would.
-    rewatch_cooldown_days: 30,
-    requests_row: false,
-    requests_window_days: 90,
-    requests_tag_pattern: "",
-    unstarted_only: false,
-    refresh_days: null,
-    idle_hold_days: null,
-    recency: null,
-    recent_count: null,
-    max_seeds: null,
-    max_runtime: null,
-    min_year: null,
-    max_year: null,
-    min_rating: null,
-    cold_start: null,
-    // Every request setting starts null: a new row inherits Settings > Requests entirely, and only
-    // differs once someone says so. Same contract as watched_pct / recency / cold_start above.
-    req_min_rating: null,
-    req_min_votes: null,
-    req_min_demand: null,
-    req_min_year: null,
-    req_max_year: null,
-    req_auto_send: null,
-    req_auto_min_demand: null,
-    req_auto_min_rating: null,
-    req_max_per_row: null,
-    req_radarr_quality_profile_id: null,
-    req_radarr_root_folder: null,
-    req_sonarr_quality_profile_id: null,
-    req_sonarr_root_folder: null,
-    req_sonarr_monitor: null,
-    req_language_mode: null,
-    req_preferred_languages: null,
-    req_min_rating_other: null,
-    req_auto_user_tag: null,
-    seed_window: 1,
-    pick_order: "best",
-    placement: "both",
-    placement_friends: "both",
-    show_days: [],
-    // Not seasonal: [] is every row's value unless it follows the calendar. The day counts mirror the
-    // API defaults, so a row made seasonal in the editor starts where the server would.
-    seasons: [],
-    season_lead_days: 30,
-    season_after_days: 0,
-    pin_top: false,
-    hub_anchor: {},
-    poster: { mode: "", title: "", subtitle: "", style: "" },
-    ai_instructions: { mode: "default", text: "" },
-    theme_id: null,
-    ...OVER_TIME_DEFAULTS,
-  };
+  return generatedRowInputDefaults();
 }
 
 /**
  * The AI row's Explore and over-time settings at their defaults (#138): one fixed theme, no brief, and
  * every control off. A row with no theme sends these, matching what the server resets them to.
  */
-export const OVER_TIME_DEFAULTS: Pick<
-  CollectionInput,
-  "theme_mode" | "explore_brief" | "theme_days" | "refresh_share" | "repeat_cooldown_days" | "avoid_rows"
-> = {
-  theme_mode: "fixed",
-  explore_brief: "",
-  theme_days: null,
-  refresh_share: null,
-  repeat_cooldown_days: null,
-  avoid_rows: null,
-};
+export const OVER_TIME_DEFAULTS = GENERATED_OVER_TIME_DEFAULTS;
 
 /** Project a saved collection onto the editable input shape the editor and PATCH share. */
 export function toInput(collection: Collection): CollectionInput {

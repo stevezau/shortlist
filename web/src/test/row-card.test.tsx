@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -232,8 +232,41 @@ describe("RowCard", () => {
   const POSTER = { mode: "upload", title: "", subtitle: "", style: "", has_image: true } as Collection["poster"];
   const picks = (...keys: number[]) => keys.map((rating_key) => ({ rating_key, title: `Title ${rating_key}` }));
 
-  it("shows four of the row's latest picks, through the same poster proxy as the run detail, ahead of its own poster", () => {
+  it("shows a cached configured poster ahead of four latest picks", () => {
     const { container } = renderCard(collection({ preview_titles: picks(11, 12, 13, 14), poster: POSTER }));
+    const sources = [...container.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatch(/^\/api\/collections\/1\/poster\/image/);
+    expect(container.querySelector('[title^="No poster"]')).toBeNull();
+  });
+
+  it("renders configured text with representative library and current season context instead of a collage", async () => {
+    const { container } = renderCard(
+      collection({
+        library_keys: ["2"],
+        preview_titles: picks(11, 12, 13, 14),
+        poster: {
+          mode: "text",
+          title: "{season_emoji} {season} Favourites",
+          subtitle: "From {library_name}",
+          style: "midnight cinema",
+          has_image: true,
+        },
+        season_status: {
+          showing: { slug: "christmas", name: "Christmas", emoji: "🎄", starts: "2026-12-01", ends: "2026-12-26" },
+          next: null,
+        },
+      }),
+    );
+
+    expect(await screen.findByText("🎄 Christmas Favourites")).toBeInTheDocument();
+    expect(await screen.findByText("From 4K Movies")).toBeInTheDocument();
+    expect(container.querySelectorAll("img")).toHaveLength(0);
+    expect(container.querySelector("[data-poster-words]")).toHaveAttribute("data-poster-style", "midnight cinema");
+  });
+
+  it("falls back to the latest-pick collage when no configured poster can render", () => {
+    const { container } = renderCard(collection({ preview_titles: picks(11, 12, 13, 14) }));
     const sources = [...container.querySelectorAll("img")].map((img) => img.getAttribute("src"));
     expect(sources).toEqual([
       "/api/picks/11/poster",
@@ -241,14 +274,18 @@ describe("RowCard", () => {
       "/api/picks/13/poster",
       "/api/picks/14/poster",
     ]);
-    expect(container.querySelector('[title^="No poster"]')).toBeNull();
   });
 
-  it("falls back to the row's own poster when it has fewer than four latest picks to show", () => {
-    const { container } = renderCard(collection({ preview_titles: picks(11, 12, 13), poster: POSTER }));
+  it("falls back to the latest-pick collage if a cached poster image no longer loads", () => {
+    const { container } = renderCard(collection({ preview_titles: picks(11, 12, 13, 14), poster: POSTER }));
+    fireEvent.error(container.querySelector("img")!);
     const sources = [...container.querySelectorAll("img")].map((img) => img.getAttribute("src"));
-    expect(sources).toHaveLength(1);
-    expect(sources[0]).toMatch(/^\/api\/collections\/1\/poster\/image/);
+    expect(sources).toEqual([
+      "/api/picks/11/poster",
+      "/api/picks/12/poster",
+      "/api/picks/13/poster",
+      "/api/picks/14/poster",
+    ]);
   });
 
   it("falls back to the placeholder when it has neither enough picks nor a poster", () => {

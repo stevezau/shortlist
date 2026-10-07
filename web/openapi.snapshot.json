@@ -95,6 +95,39 @@
         "title": "AccountPrivacyOut",
         "type": "object"
       },
+      "AcquisitionReleaseIn": {
+        "additionalProperties": false,
+        "description": "One owner-confirmed decision on an exact terminal acquisition record.",
+        "properties": {
+          "checked_destination": {
+            "const": true,
+            "title": "Checked Destination",
+            "type": "boolean"
+          },
+          "expected_status": {
+            "enum": [
+              "outcome_unknown",
+              "succeeded"
+            ],
+            "title": "Expected Status",
+            "type": "string"
+          },
+          "review_token": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Review Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_token",
+          "expected_status",
+          "checked_destination"
+        ],
+        "title": "AcquisitionReleaseIn",
+        "type": "object"
+      },
       "AiInstructionsIn": {
         "additionalProperties": false,
         "description": "What AI web search should look for on this row (#138). ``default`` uses the built-in wording\nplus the server-wide instructions; ``add`` appends ``text`` to them; ``own`` replaces them.",
@@ -565,6 +598,43 @@
         ],
         "title": "CapabilitiesOut",
         "type": "object"
+      },
+      "Capability": {
+        "description": "One independently enforceable assistant permission.",
+        "enum": [
+          "instance.read",
+          "config.read",
+          "catalog.read",
+          "people.read",
+          "activity.read",
+          "changes.prepare",
+          "history.use",
+          "history.providers",
+          "history.export",
+          "rows.create",
+          "rows.update",
+          "rows.activate",
+          "rows.delete",
+          "audiences.write",
+          "themes.write",
+          "seasons.write",
+          "config.write",
+          "people.write",
+          "schedules.write",
+          "connections.manage",
+          "runs.preview",
+          "runs.execute",
+          "jobs.cancel",
+          "ai.generate",
+          "requests.read",
+          "requests.manage",
+          "requests.send",
+          "maintenance.execute",
+          "secrets.read",
+          "grants.manage"
+        ],
+        "title": "Capability",
+        "type": "string"
       },
       "CleanupOut": {
         "additionalProperties": true,
@@ -2283,6 +2353,209 @@
         "title": "ConnectionTestOut",
         "type": "object"
       },
+      "ConsentDecisionIn": {
+        "additionalProperties": false,
+        "description": "One exact browser consent decision protected by an independent CSRF token.",
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "csrf_token": {
+            "title": "Csrf Token",
+            "type": "string"
+          },
+          "flow_id": {
+            "title": "Flow Id",
+            "type": "string"
+          },
+          "grant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Id"
+          }
+        },
+        "required": [
+          "flow_id",
+          "csrf_token",
+          "approved"
+        ],
+        "title": "ConsentDecisionIn",
+        "type": "object"
+      },
+      "ConstraintsIn": {
+        "additionalProperties": false,
+        "description": "Strict owner-selected resource bounds for a grant.",
+        "properties": {
+          "destination_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Destination Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "include_future_libraries": {
+            "default": true,
+            "title": "Include Future Libraries",
+            "type": "boolean"
+          },
+          "include_future_rows": {
+            "default": true,
+            "title": "Include Future Rows",
+            "type": "boolean"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "max_batch_size": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 25,
+            "title": "Max Batch Size"
+          },
+          "max_provider_calls": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Max Provider Calls",
+            "type": "integer"
+          },
+          "max_work_per_operation": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Work Per Operation"
+          },
+          "row_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Row Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "setting_groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Setting Groups",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "title": "ConstraintsIn",
+        "type": "object"
+      },
+      "ConstraintsPatchIn": {
+        "additionalProperties": false,
+        "description": "Sparse owner-selected changes to a grant's resource bounds.",
+        "properties": {
+          "destination_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Destination Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "include_future_libraries": {
+            "default": false,
+            "title": "Include Future Libraries",
+            "type": "boolean"
+          },
+          "include_future_rows": {
+            "default": false,
+            "title": "Include Future Rows",
+            "type": "boolean"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "max_batch_size": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Batch Size"
+          },
+          "max_provider_calls": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Max Provider Calls",
+            "type": "integer"
+          },
+          "max_work_per_operation": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Work Per Operation"
+          },
+          "row_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Row Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "setting_groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Setting Groups",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "title": "ConstraintsPatchIn",
+        "type": "object"
+      },
       "CoverageOut": {
         "additionalProperties": true,
         "description": "Who is actually covered. `users_enabled`/`rows_enabled` describe the server as it is NOW and\nare deliberately not windowed.",
@@ -2531,6 +2804,106 @@
         ],
         "title": "DismissedOut",
         "type": "object"
+      },
+      "DynamicClientRegistrationIn": {
+        "description": "RFC 7591 subset for public authorization-code clients.",
+        "properties": {
+          "client_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Client Name",
+            "type": "string"
+          },
+          "grant_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grant Types",
+            "type": "array"
+          },
+          "redirect_uris": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Redirect Uris",
+            "type": "array"
+          },
+          "response_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Response Types",
+            "type": "array"
+          },
+          "token_endpoint_auth_method": {
+            "default": "none",
+            "title": "Token Endpoint Auth Method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_name",
+          "redirect_uris"
+        ],
+        "title": "DynamicClientRegistrationIn",
+        "type": "object"
+      },
+      "Effect": {
+        "description": "Observable consequence classes used by planning and authorization.",
+        "enum": [
+          "local_config",
+          "local_state",
+          "scheduler_change",
+          "external_read",
+          "provider_spend",
+          "plex_read",
+          "plex_write",
+          "plex_privacy_write",
+          "acquisition_write",
+          "notification_send",
+          "credential_change",
+          "personal_data_disclosure"
+        ],
+        "title": "Effect",
+        "type": "string"
+      },
+      "EffectReferenceOut": {
+        "additionalProperties": true,
+        "description": "Public consequence description.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/EffectTiming"
+          }
+        },
+        "required": [
+          "kind",
+          "timing",
+          "description"
+        ],
+        "title": "EffectReferenceOut",
+        "type": "object"
+      },
+      "EffectTiming": {
+        "description": "When an effect can occur after a catalog-backed change.",
+        "enum": [
+          "immediate",
+          "queued",
+          "future_run",
+          "recurring"
+        ],
+        "title": "EffectTiming",
+        "type": "string"
       },
       "EffectivenessReportOut": {
         "additionalProperties": true,
@@ -2935,6 +3308,107 @@
         "title": "EventOut",
         "type": "object"
       },
+      "GrantConstraintsPatchIn": {
+        "additionalProperties": false,
+        "description": "Revision-guarded, constraints-only change to one owner grant.",
+        "properties": {
+          "approve_updated_access": {
+            "default": false,
+            "title": "Approve Updated Access",
+            "type": "boolean"
+          },
+          "constraints": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConstraintsPatchIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_revision": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "GrantConstraintsPatchIn",
+        "type": "object"
+      },
+      "GrantCreateIn": {
+        "additionalProperties": false,
+        "description": "Owner-approved named assistant grant.",
+        "properties": {
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Capability"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "client_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Client Id",
+            "type": "string"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/ConstraintsIn"
+          },
+          "expires_in_days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 90,
+            "title": "Expires In Days"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/GrantPreset"
+          }
+        },
+        "required": [
+          "client_id",
+          "name",
+          "preset"
+        ],
+        "title": "GrantCreateIn",
+        "type": "object"
+      },
+      "GrantPreset": {
+        "description": "Owner-facing starting points for a named assistant connection.",
+        "enum": [
+          "inspect",
+          "manage_selected_rows",
+          "owner_automation"
+        ],
+        "title": "GrantPreset",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -3334,6 +3808,7 @@
         "title": "JobRunOut",
         "type": "object"
       },
+      "JsonValue": {},
       "LandingOut": {
         "additionalProperties": true,
         "description": "The landing rate over a matured cohort \u2014 picks old enough to have had their chance.",
@@ -3591,6 +4066,21 @@
         "title": "LinkedOut",
         "type": "object"
       },
+      "LocalCredentialIn": {
+        "additionalProperties": false,
+        "description": "Lifetime for a one-time local credential handoff.",
+        "properties": {
+          "expires_in_days": {
+            "default": 90,
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Expires In Days",
+            "type": "integer"
+          }
+        },
+        "title": "LocalCredentialIn",
+        "type": "object"
+      },
       "LogLineOut": {
         "additionalProperties": true,
         "description": "One parsed log entry. `ts` is None for a line the parser could not date (a raw traceback).",
@@ -3796,6 +4286,112 @@
           "dismissed"
         ],
         "title": "NotificationsOut",
+        "type": "object"
+      },
+      "NumericRangeOut": {
+        "additionalProperties": true,
+        "description": "Public numeric bounds.",
+        "properties": {
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "minimum",
+          "maximum"
+        ],
+        "title": "NumericRangeOut",
+        "type": "object"
+      },
+      "OAuthAuthorizeIn": {
+        "additionalProperties": false,
+        "description": "Bounded authorization request copied from the browser URL by the SPA.",
+        "properties": {
+          "client_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Client Id",
+            "type": "string"
+          },
+          "code_challenge": {
+            "maxLength": 128,
+            "minLength": 43,
+            "title": "Code Challenge",
+            "type": "string"
+          },
+          "code_challenge_method": {
+            "default": "S256",
+            "title": "Code Challenge Method",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Redirect Uri",
+            "type": "string"
+          },
+          "resource": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Resource",
+            "type": "string"
+          },
+          "response_type": {
+            "default": "code",
+            "title": "Response Type",
+            "type": "string"
+          },
+          "scope": {
+            "default": "instance.read",
+            "maxLength": 2048,
+            "title": "Scope",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "redirect_uri",
+          "resource",
+          "state",
+          "code_challenge"
+        ],
+        "title": "OAuthAuthorizeIn",
         "type": "object"
       },
       "OverallOut": {
@@ -5572,6 +6168,16 @@
         "title": "RequestWhyOut",
         "type": "object"
       },
+      "ResetBehavior": {
+        "description": "How a caller expresses the absence of a stored setting value.",
+        "enum": [
+          "restore_default",
+          "literal_null",
+          "unavailable"
+        ],
+        "title": "ResetBehavior",
+        "type": "string"
+      },
       "RestoreRequest": {
         "properties": {
           "name": {
@@ -5950,6 +6556,8 @@
         "type": "object"
       },
       "RowOverridePatch": {
+        "additionalProperties": false,
+        "description": "PATCH-shaped stored preference values shared by REST and assistant planning.",
         "properties": {
           "muted": {
             "anyOf": [
@@ -6168,6 +6776,127 @@
         "title": "RowSourcesOut",
         "type": "object"
       },
+      "RowTemplateDefinitionOut": {
+        "additionalProperties": true,
+        "description": "Public row template metadata and creation defaults.",
+        "properties": {
+          "audience_behavior": {
+            "title": "Audience Behavior",
+            "type": "string"
+          },
+          "changed_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Fields",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "editable_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Editable Fields",
+            "type": "array"
+          },
+          "effective_values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Effective Values",
+            "type": "object"
+          },
+          "effects": {
+            "default": [
+              "local_config"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Effect"
+            },
+            "title": "Effects",
+            "type": "array"
+          },
+          "emoji": {
+            "title": "Emoji",
+            "type": "string"
+          },
+          "highlights": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Highlights",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "prerequisites": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Prerequisites",
+            "type": "array"
+          },
+          "required_capabilities": {
+            "default": [
+              "rows.create"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "required_services": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Services",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "emoji",
+          "title",
+          "summary",
+          "description",
+          "highlights",
+          "values",
+          "effective_values",
+          "changed_fields",
+          "editable_fields",
+          "audience_behavior"
+        ],
+        "title": "RowTemplateDefinitionOut",
+        "type": "object"
+      },
       "RulesIO": {
         "additionalProperties": true,
         "description": "A theme's hard limits. A missing or null one is no limit.",
@@ -6354,7 +7083,8 @@
               "schedule",
               "manual",
               "wizard",
-              "resume"
+              "resume",
+              "assistant"
             ],
             "title": "Trigger",
             "type": "string"
@@ -6855,7 +7585,8 @@
               "schedule",
               "manual",
               "wizard",
-              "resume"
+              "resume",
+              "assistant"
             ],
             "title": "Trigger",
             "type": "string"
@@ -8004,6 +8735,182 @@
           "login_required"
         ],
         "title": "SessionOut",
+        "type": "object"
+      },
+      "SettingDefinitionOut": {
+        "additionalProperties": true,
+        "description": "Document every current setting field while preserving nested additions.",
+        "properties": {
+          "assistant_writable": {
+            "default": true,
+            "title": "Assistant Writable",
+            "type": "boolean"
+          },
+          "default": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/components/schemas/EffectReferenceOut"
+            },
+            "title": "Effects",
+            "type": "array"
+          },
+          "group": {
+            "$ref": "#/components/schemas/SettingGroup"
+          },
+          "has_default": {
+            "title": "Has Default",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "nullable": {
+            "default": false,
+            "title": "Nullable",
+            "type": "boolean"
+          },
+          "options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SettingOptionOut"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "prerequisites": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SettingPrerequisiteOut"
+            },
+            "title": "Prerequisites",
+            "type": "array"
+          },
+          "range": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NumericRangeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "required_capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "reset_behavior": {
+            "$ref": "#/components/schemas/ResetBehavior",
+            "default": "restore_default"
+          },
+          "secret": {
+            "default": false,
+            "title": "Secret",
+            "type": "boolean"
+          },
+          "value_type": {
+            "$ref": "#/components/schemas/ValueType"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "description",
+          "value_type",
+          "group",
+          "has_default",
+          "effects",
+          "required_capabilities"
+        ],
+        "title": "SettingDefinitionOut",
+        "type": "object"
+      },
+      "SettingGroup": {
+        "description": "Stable groups used by settings discovery and grant constraints.",
+        "enum": [
+          "plex",
+          "metadata",
+          "recommendations",
+          "row_defaults",
+          "requests",
+          "notifications",
+          "schedules",
+          "system",
+          "setup"
+        ],
+        "title": "SettingGroup",
+        "type": "string"
+      },
+      "SettingOptionOut": {
+        "additionalProperties": true,
+        "description": "Public named option.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "SettingOptionOut",
+        "type": "object"
+      },
+      "SettingPrerequisiteOut": {
+        "additionalProperties": true,
+        "description": "Public applicability condition.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "values",
+          "description"
+        ],
+        "title": "SettingPrerequisiteOut",
         "type": "object"
       },
       "SettingsOut": {
@@ -10286,6 +11193,20 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "ValueType": {
+        "description": "JSON value shapes accepted for settings.",
+        "enum": [
+          "boolean",
+          "integer",
+          "number",
+          "string",
+          "string_list",
+          "integer_list",
+          "object"
+        ],
+        "title": "ValueType",
+        "type": "string"
+      },
       "VersionOut": {
         "additionalProperties": true,
         "description": "`GET /version`.\n\n``extra=\"allow\"`` is on EVERY response model in this file, nested ones included, and is not\noptional: a strict Pydantic response model silently DROPS any key the handler returned but the\nmodel does not declare. With it, an undeclared key passes through untouched \u2014 the model\ndocuments the shape without filtering it, so a field missed here cannot vanish from the payload\nand blank out a page.",
@@ -10981,6 +11902,117 @@
         ]
       }
     },
+    "/api/assistant/changes/{change_id}": {
+      "get": {
+        "operationId": "review_change_api_assistant_changes__change_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "title": "Change Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Change Api Assistant Changes  Change Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Change",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
+    "/api/assistant/changes/{change_id}/approve": {
+      "post": {
+        "operationId": "approve_change_api_assistant_changes__change_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "title": "Change Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Approve Change Api Assistant Changes  Change Id  Approve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Change",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
+    "/api/assistant/status": {
+      "get": {
+        "operationId": "status_api_assistant_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Status Api Assistant Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Status",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
     "/api/auth/logout": {
       "post": {
         "operationId": "logout_api_auth_logout_post",
@@ -11084,6 +12116,56 @@
         "summary": "Get Session",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/catalogs/settings": {
+      "get": {
+        "operationId": "settings_catalog_api_catalogs_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SettingDefinitionOut"
+                  },
+                  "title": "Response Settings Catalog Api Catalogs Settings Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Settings Catalog",
+        "tags": [
+          "catalogs"
+        ]
+      }
+    },
+    "/api/catalogs/templates": {
+      "get": {
+        "operationId": "template_catalog_api_catalogs_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RowTemplateDefinitionOut"
+                  },
+                  "title": "Response Template Catalog Api Catalogs Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Template Catalog",
+        "tags": [
+          "catalogs"
         ]
       }
     },
@@ -12378,6 +13460,121 @@
         ]
       }
     },
+    "/api/requests/acquisition-claims": {
+      "get": {
+        "description": "Show durable acquisition reservations and uncertain outcomes to their owner.",
+        "operationId": "acquisition_claims_api_requests_acquisition_claims_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Acquisition Claims Api Requests Acquisition Claims Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Acquisition Claims",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/acquisition-claims/{claim_id}/release": {
+      "post": {
+        "description": "Release an exact terminal claim after the owner has checked the remote destination.",
+        "operationId": "release_acquisition_claim_api_requests_acquisition_claims__claim_id__release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "claim_id",
+            "required": true,
+            "schema": {
+              "title": "Claim Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcquisitionReleaseIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Release Acquisition Claim Api Requests Acquisition Claims  Claim Id  Release Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Acquisition Claim",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
     "/api/requests/clear": {
       "post": {
         "description": "Clear the given SENT titles from the send log \u2014 hide them, don't delete them.\n\nA sent row is a load-bearing tombstone: dropping it lets a still-downloading title look \"missing\"\nand get re-requested every night (see ``delete_requests``). So \"clear\" sets ``hidden`` instead \u2014\nthe row stays ``sent`` and keeps protecting against re-request, but never shows in the inbox again.\nOnly ``sent`` rows are cleared; a pending/rejected id is ignored (those have Delete / Reject).",
@@ -12613,7 +13810,7 @@
     },
     "/api/requests/send": {
       "post": {
-        "description": "Ask Sonarr/Radarr for the chosen pending titles.\n\nA dry run previews the outcomes without asking and leaves every row pending. A real send marks a\nrow ``sent`` only when the app accepted it; a skip/error leaves it pending with the reason recorded,\nso the owner can see why it didn't go and try again.",
+        "description": "Ask Sonarr/Radarr for the chosen pending titles.\n\nA dry run previews the outcomes without asking and leaves every row pending. A real send marks a\nrow ``sent`` only when the app accepted it. Known skips leave it available for another attempt;\nuncertain outcomes keep a durable claim until the owner checks the destination and releases it.",
         "operationId": "send_requests_api_requests_send_post",
         "requestBody": {
           "content": {
@@ -13444,7 +14641,7 @@
     },
     "/api/seasons/{slug}": {
       "delete": {
-        "description": "Delete a custom season and untick it in every row, in one transaction (D12).\n\nRefused, naming the rows, while it is any row's only season: that row would be left following nothing.",
+        "description": "Untick a custom season and save its required visibility work in one transaction.",
         "operationId": "delete_season_api_seasons__slug__delete",
         "parameters": [
           {
@@ -13478,7 +14675,7 @@
         ]
       },
       "put": {
-        "description": "Replace a custom season, keeping its slug.\n\nA change of date or timing changes which days its rows are shown on, so it is applied to Plex now, as a\nchange to a row's own seasons is. A source change rebuilds its rows on their next build (D11).",
+        "description": "Replace a custom season and atomically record owed visibility work.",
         "operationId": "update_season_api_seasons__slug__put",
         "parameters": [
           {
@@ -16636,6 +17833,450 @@
         "summary": "Undo",
         "tags": [
           "watching-account"
+        ]
+      }
+    },
+    "/assistant/grants": {
+      "get": {
+        "operationId": "list_grants_assistant_grants_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Grants Assistant Grants Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Grants",
+        "tags": [
+          "assistant-access"
+        ]
+      },
+      "post": {
+        "operationId": "create_grant_assistant_grants_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantCreateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Grant Assistant Grants Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Grant",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/grants/{grant_id}": {
+      "delete": {
+        "description": "Forget an inactive connection record without deleting its audit history.",
+        "operationId": "remove_revoked_grant_assistant_grants__grant_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Revoked Grant",
+        "tags": [
+          "assistant-access"
+        ]
+      },
+      "patch": {
+        "description": "Apply explicit constraint changes without expanding grant administration.",
+        "operationId": "patch_grant_constraints_assistant_grants__grant_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantConstraintsPatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch Grant Constraints Assistant Grants  Grant Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Grant Constraints",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/grants/{grant_id}/credentials": {
+      "post": {
+        "operationId": "issue_credential_assistant_grants__grant_id__credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalCredentialIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Issue Credential Assistant Grants  Grant Id  Credentials Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Credential",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/grants/{grant_id}/revoke": {
+      "post": {
+        "operationId": "revoke_grant_assistant_grants__grant_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Revoke Grant Assistant Grants  Grant Id  Revoke Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Grant",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/oauth/authorize": {
+      "get": {
+        "description": "Hand the browser to the SPA; it initializes state after owner login.",
+        "operationId": "open_consent_assistant_oauth_authorize_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Open Consent",
+        "tags": [
+          "assistant-oauth"
+        ]
+      },
+      "post": {
+        "operationId": "begin_consent_assistant_oauth_authorize_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthAuthorizeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Begin Consent Assistant Oauth Authorize Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Begin Consent",
+        "tags": [
+          "assistant-oauth"
+        ]
+      }
+    },
+    "/assistant/oauth/consent": {
+      "post": {
+        "operationId": "decide_consent_assistant_oauth_consent_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentDecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Decide Consent Assistant Oauth Consent Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Consent",
+        "tags": [
+          "assistant-oauth"
+        ]
+      }
+    },
+    "/assistant/oauth/register": {
+      "post": {
+        "description": "Register a bounded public PKCE client; this grants no Shortlist access.",
+        "operationId": "register_assistant_oauth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DynamicClientRegistrationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Register Assistant Oauth Register Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register",
+        "tags": [
+          "assistant-oauth"
+        ]
+      }
+    },
+    "/assistant/oauth/revoke": {
+      "post": {
+        "operationId": "revoke_assistant_oauth_revoke_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Revoke",
+        "tags": [
+          "assistant-oauth"
+        ]
+      }
+    },
+    "/assistant/oauth/token": {
+      "post": {
+        "operationId": "token_assistant_oauth_token_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Token",
+        "tags": [
+          "assistant-oauth"
         ]
       }
     }

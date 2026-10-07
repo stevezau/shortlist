@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { PLACEHOLDER_SPLIT, THEME, THEME_EMOJI } from "@/lib/placeholders";
 import {
   Image as ImageIcon,
@@ -16,16 +18,17 @@ import { builtAt, mediaLabel, peopleCount, rowReach } from "@/components/rows/ro
 import { RowRunAction } from "@/components/rows/row-run-action";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { RowName } from "@/components/rows/row-name";
+import { PosterWords } from "@/components/rows/poster-words";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { TitlePoster } from "@/components/title-poster";
 import { api } from "@/lib/api";
 import { audienceSummary, rowOverrides } from "@/lib/collections";
 import { DEFAULT_ROW_SLUG } from "@/lib/constants";
-import { settingString } from "@/lib/format";
+import { renderRowName, sampleLibraryName, settingString } from "@/lib/format";
 import { seasonStatusLine } from "@/lib/seasons";
 import { useCollectionEffectiveness, useLibraries, useSettings } from "@/lib/queries";
-import type { Collection, User } from "@/lib/types";
+import type { Collection, PlexLibrary, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** Whether this name renders any chips (`RowName`), so a caller can explain what a chip IS only when
@@ -46,15 +49,60 @@ function cardName(collection: Collection): string {
 }
 
 /**
- * The row's picture in the list: four of its latest picks, else its own poster, else a neutral tile.
+ * The row's configured poster when it can be rendered locally or is already cached, otherwise four
+ * latest picks, then a neutral tile. Seeing the configured poster here must never create artwork.
  *
  * The slot is the same size whichever it shows, so every name in the list starts at the same x. The
  * picks are `preview_titles`, from the row's most recent delivery; fewer than four would leave holes
- * in the grid, so then the row's own poster stands in.
+ * in the grid, so they are the useful fallback when no configured poster is available.
  */
-export function RowCollage({ collection }: { collection: Collection }) {
+export function RowCollage({ collection, libraries = [] }: { collection: Collection; libraries?: PlexLibrary[] }) {
   const slot = "h-16 w-11 shrink-0 overflow-hidden rounded border sm:h-20 sm:w-14";
   const picks = collection.preview_titles;
+  const poster = collection.poster;
+  const version = poster
+    ? [poster.mode, poster.title, poster.subtitle, poster.style].join("|")
+    : "";
+  const [imageFailedFor, setImageFailedFor] = useState<string | null>(null);
+  const libraryName = representativeLibraryName(collection, libraries);
+  const season = collection.season_status?.showing ?? collection.season_status?.next ?? undefined;
+  const theme = collection.theme_name
+    ? { name: collection.theme_name, emoji: collection.theme_emoji ?? "" }
+    : undefined;
+
+  if (poster?.mode === "text") {
+    const rowName = renderRowName(
+      collection.name_template || collection.name,
+      "Fargo",
+      "Sarah",
+      libraryName,
+      season,
+      theme,
+    );
+    const title = renderRowName(poster.title, "Fargo", "Sarah", libraryName, season, theme);
+    const subtitle = renderRowName(poster.subtitle, "Fargo", "Sarah", libraryName, season, theme);
+    return (
+      <div aria-hidden="true" className={slot}>
+        <PosterWords
+          title={title || rowName || "Picked for You"}
+          subtitle={subtitle}
+          posterStyle={poster.style}
+        />
+      </div>
+    );
+  }
+  if (poster?.has_image && imageFailedFor !== version) {
+    return (
+      <img
+        // The API only serves existing upload/AI bytes here. It never triggers image generation.
+        src={`${api.posterImageUrl(collection.id)}?v=${encodeURIComponent(version)}`}
+        alt=""
+        aria-hidden="true"
+        className={cn(slot, "object-cover")}
+        onError={() => setImageFailedFor(version)}
+      />
+    );
+  }
   if (picks.length >= 4) {
     return (
       <div aria-hidden="true" className={cn(slot, "grid grid-cols-2 grid-rows-2 gap-px bg-border")}>
@@ -62,22 +110,6 @@ export function RowCollage({ collection }: { collection: Collection }) {
           <TitlePoster key={pick.rating_key} ratingKey={pick.rating_key} className="size-full rounded-none border-0 sm:size-full" />
         ))}
       </div>
-    );
-  }
-  if (collection.poster?.has_image) {
-    return (
-      <img
-        // Cache-bust on everything that changes the rendered image, so editing a text poster's
-        // title/style refreshes the thumbnail instead of showing the stale one.
-        src={`${api.posterImageUrl(collection.id)}?v=${encodeURIComponent(
-          [collection.poster.mode, collection.poster.title, collection.poster.subtitle, collection.poster.style].join(
-            "|",
-          ),
-        )}`}
-        alt=""
-        aria-hidden="true"
-        className={cn(slot, "object-cover")}
-      />
     );
   }
   return (
@@ -89,6 +121,16 @@ export function RowCollage({ collection }: { collection: Collection }) {
       <ImageIcon className="size-4 text-muted-foreground/60" />
     </div>
   );
+}
+
+/** One card cannot promise a different poster for every library, so use its configured library first. */
+function representativeLibraryName(
+  collection: Collection,
+  libraries: PlexLibrary[],
+): string {
+  const configured = libraries.find((library) => collection.library_keys.includes(library.key));
+  const compatible = libraries.find((library) => collection.media === "both" || library.type === collection.media);
+  return configured?.title ?? compatible?.title ?? sampleLibraryName(collection.media);
 }
 
 /** "Last built 02:30 today · 4 people", or what stands in for it when there is no build to name. */
@@ -144,7 +186,7 @@ export function RowCard({
     <Card>
       <CardContent className="flex flex-wrap items-center gap-4 p-4">
         <div className={cn(!collection.enabled && "opacity-50")}>
-          <RowCollage collection={collection} />
+          <RowCollage collection={collection} libraries={libraries.isSuccess ? libraries.data : []} />
         </div>
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">

@@ -1166,7 +1166,7 @@ class RequestOutcome:
     tmdb_id: int
     title: str
     media_type: MediaType
-    # requested | would_request | skipped_present | skipped_no_tvdb | skipped_no_target | error
+    # requested | would_request | skipped_present | skipped_no_tvdb | skipped_no_target | skipped_content | error
     status: str
     detail: str = ""
     # The arr's own titleSlug (Sonarr/Radarr) for the resolved title, so the inbox can deep-link
@@ -1537,6 +1537,8 @@ class CollectionDiff:
     rating_key: int = 0
     # Exact keys confirmed by delivery, after vanished items are omitted. None means no confirmed write.
     delivered_keys: list[int] | None = None
+    # True only after delivery reread the existing collection and needed no membership write.
+    membership_unchanged: bool = False
 
 
 @dataclass
@@ -1641,6 +1643,9 @@ class UserRunReport:
     # INTERNAL cursor, never persisted: which row `_timed_lock` charges write-lock waits to.
     # None means setup, whose wait is already inside `setup_s`.
     lock_bucket: str | None = None
+    # Earliest confirmed per-library boundaries survive a retry that loses its final breakdown.
+    # They only close older eligibility; they never claim current delivered membership.
+    delivery_boundaries: list[dict] = field(default_factory=list)
 
 
 @dataclass

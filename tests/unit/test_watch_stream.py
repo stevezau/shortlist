@@ -410,7 +410,7 @@ class TestConnectionLifecycle:
 
         async def scenario():
             task = asyncio.ensure_future(stream.run())
-            await asyncio.sleep(0.2)
+            await until(lambda: connect.calls["n"] >= 2)
             stream.stop()
             await asyncio.wait_for(task, timeout=3)
 

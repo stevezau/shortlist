@@ -32,6 +32,7 @@ from shortlist.engine.seasons import SeasonTitles
 from shortlist.engine.themes import ThemeTitles
 
 if TYPE_CHECKING:
+    from shortlist.engine.requests import AcquisitionGuard
     from shortlist.engine.requests_row import RequestLedger
 
 
@@ -152,6 +153,7 @@ class EngineContext:
     # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
     # by a later auto-send. Empty for direct engine runs, which have no inbox.
     handled_requests: set[tuple[int, str]] = field(default_factory=set)
+    acquisition_guard: AcquisitionGuard | None = None
     # MDBList client (cache-backed) for the chosen non-TMDB rating source; None when neither the
     # request gate nor row ordering asks for one, or no MDBList key is set. Built by the server
     # adapter so it shares the persistent cache.

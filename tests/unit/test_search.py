@@ -344,6 +344,8 @@ class TestSchemaSupportIsRemembered:
         curator = OpenAICurator.__new__(OpenAICurator)
         curator._model = "gpt-4o-mini"
         curator._schema_supported = True
+        curator._provider_controls = None
+        curator._destination = "https://api.openai.com/v1"
         sent: list[bool] = []
 
         class _Responses:

@@ -71,6 +71,11 @@ to the wrong person, not even briefly.
 from TMDB and Trakt. Gaps can be handed to **Radarr/Sonarr** or **Overseerr/Jellyseerr**. Kometa's
 collections are left completely alone.
 
+**An assistant can help configure it.** Optional [MCP access](docs/guides/assistant-access.md) lets
+local or hosted assistants inspect settings, draft themes, prepare rows and run permitted work.
+Each connection has its own scope, expiry and revoke switch, with browser approval for sensitive
+changes.
+
 **Requirements and limits:**
 
 - Plex only. The privacy model relies on Plex's label-based share filters, so there is nothing to

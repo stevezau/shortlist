@@ -131,6 +131,7 @@ const RUN_STATUS_LABELS: Record<string, string> = {
 const TRIGGER_LABELS: Record<string, string> = {
   schedule: "Scheduled",
   manual: "Manual",
+  assistant: "Assistant",
   wizard: "Setup",
   // A scheduled run a restart cut short, finished for the people it never reached.
   resume: "Resumed after a restart",

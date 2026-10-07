@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from loguru import logger
@@ -789,6 +789,41 @@ def titles_other_rows_build(
     return claimed
 
 
+@dataclass
+class RowDeliveryRetry:
+    """Evidence owned by one person's single row-retry chain, never reused by another delivery."""
+
+    confirmations: dict[tuple[int, str, str, str], dict] = field(default_factory=dict)
+    boundaries: dict[tuple[int, str, str, str], dict] = field(default_factory=dict)
+
+    @staticmethod
+    def _same_membership(left: dict, right: dict) -> bool:
+        def signature(entry):
+            return (
+                entry["rating_key"],
+                frozenset((p["tmdb_id"], p["media_type"], p["rating_key"]) for p in entry["picks"]),
+                None if entry["audience"] is None else frozenset(entry["audience"]),
+                frozenset(entry["muted"]),
+            )
+
+        return signature(left) == signature(right)
+
+    def confirmed(
+        self, identity: tuple[int, str, str, str], entry: dict, previous: dict | None, one: CollectionDiff
+    ) -> None:
+        """Retain the first boundary, but reuse its start only across an explicitly unchanged reread."""
+        self.boundaries.setdefault(
+            identity,
+            {key: entry[key] for key in ("row_slug", "library_key", "rating_key", "delivered_at")},
+        )
+        if {p["rating_key"] for p in entry["picks"]} != set(one.delivered_keys):
+            return  # incomplete title identity cannot establish continuous membership
+        if previous is not None and one.membership_unchanged and self._same_membership(previous, entry):
+            entry["delivery_id"] = previous["delivery_id"]
+            entry["delivered_at"] = previous["delivered_at"]
+        self.confirmations[identity] = entry
+
+
 def deliver_rows(
     plex: PlexClient,
     profile: UserProfile,
@@ -810,6 +845,7 @@ def deliver_rows(
     on_write: Callable[[dict], None] | None = None,
     on_label_stored: Callable[[], None] | None = None,
     written_details: dict[str, WrittenDetails] | None = None,
+    retry_state: RowDeliveryRetry | None = None,
 ) -> tuple[CollectionDiff, str | None]:
     """Deliver one row's picks as one collection per targeted library. Returns (diff, stored label).
 
@@ -899,6 +935,10 @@ def deliver_rows(
         ]
         if not this_section:
             continue
+        identity = (profile.plex_account_id, profile.slug, spec.slug, str(section.key))
+        # An attempt that fails before confirming must invalidate continuity. Its earlier known
+        # boundary remains separate, so an exhausted retry cannot extend the old row's eligibility.
+        previous = retry_state.confirmations.pop(identity, None) if retry_state is not None else None
         # Per-library timing: this is the one place we can see that (e.g.) a TV row costs 6x a Movies
         # row, which points straight at removeItems (one DELETE per item) on a full-turnover row. The
         # PMS timing adapter breaks each of those calls down further (perf diag 2026-07-19).
@@ -1005,6 +1045,8 @@ def deliver_rows(
                     if one.delivered_keys is None or p.rating_key in one.delivered_keys
                 ],
             }
+            if retry_state is not None and not dry_run and one.rating_key > 0 and one.delivered_keys is not None:
+                retry_state.confirmed(identity, entry, previous, one)
             breakdown.append(entry)
         # Recorded the instant the PMS confirms the label — if the NEXT library blows up, this
         # row still gets excluded on every other user's share this run.
@@ -1941,6 +1983,7 @@ def _deliver_one(
         _apply_shortlist_label(plex, collection, profile.username)
         diff.rating_key = _rating_key(collection)
         diff.delivered_keys = wanted_keys
+        diff.membership_unchanged = True
         logger.info(
             "{}: '{}' in '{}' unchanged ({} items) — no membership write",
             profile.username,

@@ -7,9 +7,7 @@ about the per-person row settings that hang off ``/users/{id}/rows``.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
 
-from shortlist.engine.models import MAX_ROW_SIZE, MIN_ROW_SIZE
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.serializers import UserPickOut, pick_dict
 from shortlist.server.auth import require_owner
@@ -21,16 +19,15 @@ from shortlist.server.db.models import (
     PickRow,
     User,
 )
+from shortlist.server.services.person_row_overrides import (
+    RowOverridePatch,
+    apply_person_row_override_in_session,
+    prepare_person_row_override_in_session,
+)
 from shortlist.server.services.run_persistence import live_pick_ids
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
-
-
-class RowOverridePatch(BaseModel):
-    muted: bool | None = None
-    row_size: int | None = Field(default=None, ge=MIN_ROW_SIZE, le=MAX_ROW_SIZE)
-    recent_count: int | None = Field(default=None, ge=1, le=25)
 
 
 class RowOverrideOut(PassthroughModel):
@@ -145,29 +142,32 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
 @router.put("/{user_id}/rows/{collection_id}", response_model=RowOverrideSavedOut)
 async def set_user_row_override(user_id: int, collection_id: int, patch: RowOverridePatch, request: Request) -> dict:
     """Mute or resize one row for one person — upserts their override."""
+    from shortlist.server.assistant.row_effects import queue_convergence_in_session
+    from shortlist.server.services import jobs
+
+    state = request.app.state
     with request.app.state.sessions() as session:
-        if session.get(User, user_id) is None:
-            raise HTTPException(status_code=404, detail="user not found")
-        if session.get(Collection, collection_id) is None:
-            raise HTTPException(status_code=404, detail="row not found")
-        override = session.get(CollectionUserOverride, (collection_id, user_id))
-        if override is None:
-            override = CollectionUserOverride(collection_id=collection_id, user_id=user_id)
-            session.add(override)
-        # Only touch fields actually present in the request, so a mute toggle that sends just
-        # {muted} never clobbers a saved size, and an explicit row_size=null (the UI's "Default"
-        # choice) really clears the override rather than being ignored.
-        sent = patch.model_fields_set
-        if "muted" in sent:
-            override.muted = bool(patch.muted)
-        if "row_size" in sent:
-            override.row_size = patch.row_size  # None -> clear, inherit the row's own size
-        if "recent_count" in sent:
-            override.recent_count = patch.recent_count  # None -> clear, inherit the row's own recent_count
+        try:
+            mutation = prepare_person_row_override_in_session(
+                session,
+                user_id,
+                collection_id,
+                patch,
+                allow_legacy_shared=True,
+            )
+        except ValueError as exc:
+            status_code = 404 if "existing person" in str(exc) or "existing row" in str(exc) else 422
+            raise HTTPException(status_code=status_code, detail=str(exc)) from None
+        override = apply_person_row_override_in_session(session, mutation)
+        if mutation.steps:
+            queue_convergence_in_session(session, mutation.steps, domain="people")
         session.commit()
-        return {
+        result = {
             "collection_id": collection_id,
-            "muted": override.muted,
-            "row_size": override.row_size,
-            "recent_count": override.recent_count,
+            "muted": bool(override and override.muted),
+            "row_size": override.row_size if override else None,
+            "recent_count": override.recent_count if override else None,
         }
+    if mutation.steps:
+        await jobs.drain_now(state, "person row override changed")
+    return result

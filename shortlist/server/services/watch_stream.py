@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.server.db.models import Job, Setting, WatchSession
 from shortlist.server.services import jobs
+from shortlist.server.services.watch_identity import verified_owner_account_id
 from shortlist.server.settings_store import SettingsStore
 
 #: How long a session may go unheard-from before we call it over. Comfortably above the ~10s cadence
@@ -582,11 +583,17 @@ class WatchStream:
         if self._snapshot_at is not None and now - self._snapshot_at < SESSION_CACHE_TTL:
             return self._snapshot
         try:
-            self._snapshot = await self._in_pool(ctx.plex.active_sessions)
+            self._snapshot = await self._in_pool(self._read_active_sessions, ctx)
             self._snapshot_at = now
         except Exception as e:
             logger.debug("watch-stream: could not read active sessions ({})", type(e).__name__)
         return self._snapshot
+
+    def _read_active_sessions(self, ctx) -> dict[str, dict]:
+        """Resolve the PMS-local owner only against the linked, authenticated server identity."""
+        with self._sessions() as session:
+            owner_account_id = verified_owner_account_id(session, ctx.plex)
+        return ctx.plex.active_sessions(owner_account_id=owner_account_id)
 
     async def _housekeep(self, ctx) -> None:
         """Close sessions that stopped talking to us.
