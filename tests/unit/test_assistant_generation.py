@@ -154,7 +154,7 @@ def generation_env(tmp_path, monkeypatch):
         yield SimpleNamespace(state=state, principal=principal, calls=calls, factories=factories, plex_reads=plex_reads)
 
 
-def _generation_operation(env, *, principal=None, approve=False):
+def _generation_operation(env, *, principal=None, approve=False, key="generation-test-key"):
     from sqlalchemy import select
 
     from shortlist.server.db.models import Job
@@ -165,7 +165,7 @@ def _generation_operation(env, *, principal=None, approve=False):
     )
     if approve:
         env.state.changes.approve(plan["change_id"], owner_account_id=42)
-    receipt = env.state.changes.apply(who, plan["change_id"], "generation-test-key")
+    receipt = env.state.changes.apply(who, plan["change_id"], key)
     with env.state.sessions() as session:
         job = session.scalars(select(Job).where(Job.operation_id == receipt["operation_id"])).one()
         job_id = job.id
@@ -257,6 +257,51 @@ def test_changed_authority_or_settings_cancels_before_any_provider_io(generation
         session.commit()
     assert dispatch_generation(env.state, {}, job_id=job_id)["status"] == "cancelled"
     assert env.calls == [] and env.factories == []
+
+
+def test_owner_profile_provider_endpoint_change_cancels_queued_work_and_new_plan_uses_current_url(generation_env):
+    from shortlist.server.assistant.generation import dispatch_generation
+    from shortlist.server.assistant.operation_models import AssistantChange
+    from shortlist.server.assistant_auth import GrantConstraints, GrantPreset
+    from shortlist.server.settings_store import SettingsStore
+
+    env = generation_env
+    repository = env.state.assistant_auth.repository
+    profile = repository.create_grant(
+        owner_account_id=42,
+        client_id="profile-generation",
+        name="Owner profile",
+        preset=GrantPreset.OWNER_AUTOMATION,
+        constraints=GrantConstraints(owner_managed=True, max_provider_calls=2),
+    )
+    assert profile.constraints.destination_ids == frozenset(
+        {"https://api.openai.com/v1", "https://api.themoviedb.org/3"}
+    )
+    _positive, _receipt, positive_job = _generation_operation(env, principal=profile, key="profile-positive")
+    assert dispatch_generation(env.state, {}, job_id=positive_job)["status"] == "completed"
+    assert len(env.calls) == 1 and env.factories[0]["base_url"] == "https://api.openai.com/v1"
+    old_plan, _receipt, job_id = _generation_operation(env, principal=profile, key="profile-stale")
+    with env.state.sessions() as session:
+        assert session.get(AssistantChange, old_plan["change_id"]).requirements["destination_ids"] == [
+            "https://api.openai.com/v1"
+        ]
+    with env.state.sessions() as session:
+        store = SettingsStore(session, env.state.secrets)
+        store.set_in_transaction("curator.provider", "openai_compatible")
+        store.set_in_transaction("curator.openai_base_url", "http://127.0.0.1:1234/v1")
+        session.commit()
+    current = repository.get_grant_context(profile.grant_id)
+    assert "http://127.0.0.1:1234/v1" in current.constraints.destination_ids
+    assert "https://api.openai.com/v1" not in current.constraints.destination_ids
+    assert dispatch_generation(env.state, {}, job_id=job_id)["status"] == "cancelled"
+    assert len(env.calls) == 1 and len(env.factories) == 1
+    new_plan = env.state.changes.prepare(
+        current, "generation", {"brief": "A different film set", "media": "movie", "max_output_tokens": 1200}
+    )
+    with env.state.sessions() as session:
+        assert session.get(AssistantChange, new_plan["change_id"]).requirements["destination_ids"] == [
+            "http://127.0.0.1:1234/v1"
+        ]
 
 
 def test_exact_approval_supplements_effect_permission_but_not_quota(generation_env):

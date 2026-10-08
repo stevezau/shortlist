@@ -52,8 +52,13 @@ def configured_destinations(session: Session) -> list[ConfiguredDestination]:
     choices: list[ConfiguredDestination] = []
 
     def add(service_id: str, label: str, purposes: list[str], destination: str) -> None:
-        host = urlsplit(destination).hostname
-        if host:
+        parsed = urlsplit(destination)
+        host = parsed.hostname
+        if (
+            host
+            and parsed.scheme in {"http", "https"}
+            and not (parsed.username or parsed.password or parsed.query or parsed.fragment)
+        ):
             choices.append(
                 ConfiguredDestination(
                     service_id=service_id,

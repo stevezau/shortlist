@@ -25,7 +25,7 @@ from .destinations import (
     configured_destinations,
 )
 from .oauth import OAuthService
-from .policy import AuthorizationDenied
+from .policy import AuthorizationDenied, owner_managed_capabilities
 from .repository import AssistantAuthRepository, GrantRemovalConflict, GrantUpdateConflict, GrantUpdateNotFound
 from .types import ASSISTANT_CAPABILITIES, Capability, GrantConstraints, GrantPreset, GrantSummary
 
@@ -134,6 +134,17 @@ class GrantCreateIn(BaseModel):
     constraints: ConstraintsIn = Field(default_factory=ConstraintsIn)
     selected_destinations: list[DestinationSelection] = Field(default_factory=list)
     expires_in_days: int | None = Field(default=90, ge=1, le=365)
+    owner_managed: bool = False
+
+    @model_validator(mode="after")
+    def owner_profile_is_server_defined(self) -> GrantCreateIn:
+        if self.owner_managed and (
+            self.preset != GrantPreset.OWNER_AUTOMATION
+            or self.selected_destinations
+            or self.constraints.model_fields_set - {"max_provider_calls"}
+        ):
+            raise ValueError("owner-managed access uses the server profile, not selected resources")
+        return self
 
 
 class ConstraintsPatchIn(BaseModel):
@@ -166,15 +177,35 @@ class GrantConstraintsPatchIn(BaseModel):
     capabilities: set[Capability] | None = None
     selected_destinations: list[DestinationSelection] = Field(default_factory=list)
     approve_updated_access: bool = False
+    upgrade_owner_managed: bool = False
+    paid_enabled: bool | None = None
+    max_provider_calls: int | None = Field(default=None, ge=0, le=100)
 
     @model_validator(mode="after")
     def require_one_change(self) -> GrantConstraintsPatchIn:
         """Keep legacy approval separate from ordinary resource edits."""
         if self.approve_updated_access and (
-            self.constraints is not None or self.capabilities is not None or self.selected_destinations
+            self.constraints is not None
+            or self.capabilities is not None
+            or self.selected_destinations
+            or self.upgrade_owner_managed
+            or self.paid_enabled is not None
+            or self.max_provider_calls is not None
         ):
             raise ValueError("approve_updated_access cannot be combined with other changes")
-        if not self.approve_updated_access and self.constraints is None and self.capabilities is None:
+        if (self.upgrade_owner_managed or self.paid_enabled is not None) and (
+            self.constraints is not None or self.capabilities is not None or self.selected_destinations
+        ):
+            raise ValueError("owner-managed updates cannot be combined with granular changes")
+        if self.paid_enabled is None and self.max_provider_calls is not None:
+            raise ValueError("paid_enabled is required with max_provider_calls")
+        if (
+            not self.approve_updated_access
+            and not self.upgrade_owner_managed
+            and self.paid_enabled is None
+            and self.constraints is None
+            and self.capabilities is None
+        ):
             raise ValueError("constraints or capabilities are required unless approving updated access")
         return self
 
@@ -199,6 +230,7 @@ class GrantConstraintsOut(PassthroughModel):
     max_batch_size: int | None
     max_work_per_operation: int | None
     max_provider_calls: int
+    owner_managed: bool
 
 
 class GrantOut(PassthroughModel):
@@ -212,6 +244,7 @@ class GrantOut(PassthroughModel):
     capabilities: list[Capability]
     constraints: GrantConstraintsOut
     requires_access_approval: bool
+    full_management: bool
     revision: int
     expires_at: datetime | None
 
@@ -297,13 +330,22 @@ def create_owner_grant_router(repository: AssistantAuthRepository | None = None)
             datetime.now(UTC) + timedelta(days=body.expires_in_days) if body.expires_in_days is not None else None
         )
         try:
+            constraints = body.constraints.to_domain()
+            if body.owner_managed:
+                constraints = GrantConstraints(
+                    owner_managed=True,
+                    include_future_rows=True,
+                    include_future_people=True,
+                    include_future_libraries=True,
+                    max_provider_calls=constraints.max_provider_calls,
+                )
             grant = current_repository.create_grant(
                 owner_account_id=owner.account_id,
                 client_id=body.client_id,
                 name=body.name,
                 preset=body.preset,
                 capabilities=body.capabilities,
-                constraints=body.constraints.to_domain(),
+                constraints=constraints,
                 selected_destinations=body.selected_destinations,
                 expires_at=expires_at,
             )
@@ -328,6 +370,15 @@ def create_owner_grant_router(repository: AssistantAuthRepository | None = None)
                     grant_id,
                     owner_account_id=owner.account_id,
                     expected_revision=body.expected_revision,
+                )
+            elif body.upgrade_owner_managed or body.paid_enabled is not None:
+                grant = current_repository.update_owner_managed(
+                    grant_id,
+                    owner_account_id=owner.account_id,
+                    expected_revision=body.expected_revision,
+                    upgrade=body.upgrade_owner_managed,
+                    paid_enabled=body.paid_enabled,
+                    max_provider_calls=body.max_provider_calls,
                 )
             else:
                 grant = current_repository.patch_grant_constraints(
@@ -640,6 +691,8 @@ def _serialize_grant(grant) -> dict[str, Any]:
         "capabilities": sorted(capability.value for capability in grant.capabilities),
         "constraints": grant.constraints.public_dict(),
         "requires_access_approval": grant.constraints.requires_access_approval,
+        "full_management": grant.constraints.owner_managed
+        and owner_managed_capabilities().issubset(grant.capabilities),
         "revision": grant.revision,
         "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
     }

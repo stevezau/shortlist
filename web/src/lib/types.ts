@@ -495,16 +495,18 @@ export interface AssistantGrantCreate {
   client_id: string;
   name: string;
   preset: AssistantGrantPreset;
+  owner_managed?: boolean;
   capabilities?: string[];
-  constraints: AssistantGrantConstraints;
+  constraints: Partial<AssistantGrantConstraints>;
   selected_destinations?: Array<{ service_id: string; destination_id: string }>;
-  expires_in_days: number | null;
+  expires_in_days?: number | null;
 }
 
 /** PATCH /assistant/grants/{grant_id}: sparse owner-selected constraint changes. */
 export type AssistantGrantUpdate =
   | { expected_revision: number; constraints?: Partial<AssistantGrantConstraints>; capabilities?: string[]; selected_destinations?: Array<{ service_id: string; destination_id: string }> }
-  | { expected_revision: number; approve_updated_access: true };
+  | { expected_revision: number; approve_updated_access: true }
+  | { expected_revision: number; upgrade_owner_managed?: boolean; paid_enabled?: boolean; max_provider_calls?: number };
 
 export interface AssistantCredentialCreated {
   credential: string;

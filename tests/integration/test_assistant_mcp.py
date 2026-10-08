@@ -310,6 +310,7 @@ def test_browser_owner_can_patch_only_explicit_grant_constraints_without_reconne
             "max_batch_size": None,
             "max_work_per_operation": 9,
             "max_provider_calls": 0,
+            "owner_managed": False,
         }
         assert updated["requires_access_approval"] is False
         authority_fields = (

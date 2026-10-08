@@ -24,6 +24,7 @@ from shortlist.server.assistant.changes import ChangeError
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantPreset
 from shortlist.server.assistant_auth.models import AssistantOAuthCode
+from shortlist.server.assistant_auth.policy import owner_managed_capabilities
 from shortlist.server.assistant_auth.types import ASSISTANT_CAPABILITIES
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Event, Server, Setting
@@ -140,6 +141,76 @@ def test_configured_service_catalog_requires_owner_browser_and_returns_no_creden
         assert client.get("/assistant/destinations", headers={"Authorization": "Bearer fake"}).status_code == 403
         client.cookies.clear()
         assert client.get("/assistant/destinations").status_code == 401
+
+
+def test_owner_profile_create_and_upgrade_are_explicit_browser_only_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _owner_client(tmp_path, monkeypatch) as (client, app):
+        ordinary = client.post(
+            "/assistant/grants",
+            json={"client_id": "legacy", "name": "Earlier", "preset": "inspect"},
+        )
+        assert ordinary.status_code == 201
+        legacy = ordinary.json()
+        assert legacy["constraints"]["owner_managed"] is False
+        assert (
+            client.patch(
+                f"/assistant/grants/{legacy['id']}",
+                json={"expected_revision": legacy["revision"], "constraints": {"owner_managed": True}},
+            ).status_code
+            == 422
+        )
+        assert (
+            client.patch(
+                f"/assistant/grants/{legacy['id']}",
+                json={"expected_revision": legacy["revision"], "upgrade_owner_managed": True},
+                headers={"Authorization": "Bearer fake"},
+            ).status_code
+            == 403
+        )
+        assert app.state.assistant_auth.repository.get_grant_context(legacy["id"]).constraints.owner_managed is False
+        upgraded = client.patch(
+            f"/assistant/grants/{legacy['id']}",
+            json={"expected_revision": legacy["revision"], "upgrade_owner_managed": True},
+        )
+        assert upgraded.status_code == 200, upgraded.text
+        assert upgraded.json()["constraints"]["owner_managed"] is True
+        assert (
+            client.patch(
+                f"/assistant/grants/{legacy['id']}",
+                json={"expected_revision": legacy["revision"], "upgrade_owner_managed": True},
+            ).status_code
+            == 409
+        )
+        new = client.post(
+            "/assistant/grants",
+            json={
+                "client_id": "new-owner-managed",
+                "name": "New",
+                "preset": "owner_automation",
+                "owner_managed": True,
+                "constraints": {"max_provider_calls": 0},
+            },
+        )
+        assert new.status_code == 201, new.text
+        assert new.json()["constraints"]["owner_managed"] is True
+        assert new.json()["constraints"]["destination_ids"] == []
+        assert "maintenance.execute" in new.json()["capabilities"]
+        assert "secrets.read" not in new.json()["capabilities"]
+        assert (
+            client.post(
+                "/assistant/grants",
+                json={
+                    "client_id": "forged",
+                    "name": "Forged",
+                    "preset": "owner_automation",
+                    "owner_managed": True,
+                    "constraints": {"destination_ids": ["https://unregistered.invalid"]},
+                },
+            ).status_code
+            == 422
+        )
 
 
 def test_grant_credential_and_stateless_mcp_contracts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -280,13 +351,17 @@ def test_oauth_owner_narrowed_consent_binds_code_and_token_to_approved_intersect
         )
         assert registration.status_code == 201
         client_id = registration.json()["client_id"]
-        preset = "owner_automation" if requested_scope == "all_advertised" else "inspect"
-        created = client.post(
-            "/assistant/grants", json={"client_id": client_id, "name": "Reduced owner approval", "preset": preset}
-        )
+        preset = "owner_automation" if requested_scope in {"all_advertised", "instance.read"} else "inspect"
+        create_body = {"client_id": client_id, "name": "Reduced owner approval", "preset": preset}
+        if requested_scope == "instance.read":
+            create_body.update(owner_managed=True, capabilities=["instance.read"])
+        created = client.post("/assistant/grants", json=create_body)
         assert created.status_code == 201
         grant = created.json()
         original_capabilities = set(grant["capabilities"])
+        if requested_scope == "instance.read":
+            assert grant["constraints"]["owner_managed"] is True
+            assert grant["full_management"] is False
         requested = (
             {capability.value for capability in ASSISTANT_CAPABILITIES}
             if requested_scope == "all_advertised"
@@ -379,10 +454,12 @@ def test_oauth_owner_narrowed_consent_binds_code_and_token_to_approved_intersect
                         f"/assistant/grants/{grant['id']}",
                         json={
                             "expected_revision": grant["revision"],
-                            "capabilities": sorted(original_capabilities | {"config.write"}),
+                            "upgrade_owner_managed": True,
                         },
                     )
                     assert widened.status_code == 200, widened.text
+                    assert widened.json()["constraints"]["owner_managed"] is True
+                    assert widened.json()["full_management"] is True
                     assert "config.write" in widened.json()["capabilities"]
                     still_denied = client.post(
                         "/mcp",
@@ -397,8 +474,10 @@ def test_oauth_owner_narrowed_consent_binds_code_and_token_to_approved_intersect
                     assert still_denied.status_code == 200
                     assert still_denied.json()["result"]["isError"] is True
                     assert "missing_permission" in str(still_denied.json()["result"])
-        expected_capabilities = original_capabilities | (
-            {"config.write"} if requested_scope == "instance.read" else set()
+        expected_capabilities = (
+            {capability.value for capability in owner_managed_capabilities()}
+            if requested_scope == "instance.read"
+            else original_capabilities
         )
         assert set(client.get("/assistant/grants").json()[0]["capabilities"]) == expected_capabilities
 

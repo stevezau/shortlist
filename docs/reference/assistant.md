@@ -302,11 +302,14 @@ The legacy owner API bearer and an assistant bearer cannot substitute for that s
 
 - `GET /api/assistant/status` reports enablement, canonical resource, issuer and available presets.
 - `GET /assistant/grants` lists named grants with conservative lifetime provider-call usage;
-  `POST /assistant/grants` creates one. `PATCH /assistant/grants/{grant_id}` updates explicit
-  constraints and permissions together under the grant revision guard.
-- `GET /assistant/destinations` lists configured, credential-free service choices for the owner.
-  A newly chosen service endpoint is checked again when its grant is saved; a changed endpoint
-  needs fresh owner review. Existing approvals keep their saved exact destination.
+  `POST /assistant/grants` creates one. New browser connections use the server-defined
+  `owner_managed` profile. `PATCH /assistant/grants/{grant_id}` can explicitly upgrade an older
+  grant or edit paid access under the grant revision guard. Older granular grants retain their
+  literal constraints until that explicit upgrade.
+- `GET /assistant/destinations` remains available for older granular grants. Full-access grants
+  resolve only currently configured, supported, credential-free service endpoints in the current
+  authorization transaction. URL and credential setup remain owner-only; a prepared plan pins its
+  destination and fails if the configured endpoint changes before dispatch.
 - `POST /assistant/grants/{grant_id}/credentials` creates a one-time local credential;
   `POST /assistant/grants/{grant_id}/revoke` revokes the grant.
 - `GET /api/assistant/changes/{change_id}` returns an owner's concrete review;

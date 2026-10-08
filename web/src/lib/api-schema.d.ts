@@ -4820,6 +4820,8 @@ export interface components {
             max_provider_calls: number;
             /** Max Work Per Operation */
             max_work_per_operation: number | null;
+            /** Owner Managed */
+            owner_managed: boolean;
             /** Row Ids */
             row_ids: number[];
             /** Setting Groups */
@@ -4842,8 +4844,17 @@ export interface components {
             constraints?: components["schemas"]["ConstraintsPatchIn"] | null;
             /** Expected Revision */
             expected_revision: number;
+            /** Max Provider Calls */
+            max_provider_calls?: number | null;
+            /** Paid Enabled */
+            paid_enabled?: boolean | null;
             /** Selected Destinations */
             selected_destinations?: components["schemas"]["DestinationSelection"][];
+            /**
+             * Upgrade Owner Managed
+             * @default false
+             */
+            upgrade_owner_managed: boolean;
         };
         /**
          * GrantCreateIn
@@ -4862,6 +4873,11 @@ export interface components {
             expires_in_days: number | null;
             /** Name */
             name: string;
+            /**
+             * Owner Managed
+             * @default false
+             */
+            owner_managed: boolean;
             preset: components["schemas"]["GrantPreset"];
             /** Selected Destinations */
             selected_destinations?: components["schemas"]["DestinationSelection"][];
@@ -4878,6 +4894,8 @@ export interface components {
             constraints: components["schemas"]["GrantConstraintsOut"];
             /** Expires At */
             expires_at: string | null;
+            /** Full Management */
+            full_management: boolean;
             /** Id */
             id: string;
             /** Name */
@@ -4915,6 +4933,8 @@ export interface components {
             created_at: string;
             /** Expires At */
             expires_at: string | null;
+            /** Full Management */
+            full_management: boolean;
             /** Id */
             id: string;
             /** Last Used At */

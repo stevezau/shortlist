@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -13,8 +14,13 @@ from shortlist.server.assistant_auth.destinations import (
     DestinationSelectionConflict,
     configured_destinations,
 )
-from shortlist.server.assistant_auth.repository import AssistantAuthRepository, GrantUpdateConflict
-from shortlist.server.assistant_auth.types import Capability, GrantConstraints, GrantPreset
+from shortlist.server.assistant_auth.policy import AuthorizationDenied, owner_managed_capabilities, require_authorized
+from shortlist.server.assistant_auth.repository import (
+    AssistantAuthRepository,
+    GrantUpdateConflict,
+    require_current_grant_in_session,
+)
+from shortlist.server.assistant_auth.types import Capability, GrantConstraints, GrantPreset, ResourceSelection
 from shortlist.server.db.models import Base, Event, Setting
 from tests.db_helpers import disposing_engine
 
@@ -229,3 +235,202 @@ def test_owner_quota_summary_preserves_uncertain_reservations_when_limit_is_zero
         assert updated.capabilities == grant.capabilities
         assert after.provider_calls_reserved == 1
         assert after.context.constraints.max_provider_calls == 0
+
+
+def test_owner_profile_resolves_current_services_and_settings_in_every_transaction() -> None:
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(bind=engine, expire_on_commit=False)
+        repository = AssistantAuthRepository(sessions, CredentialHasher(b"p" * 32))
+        grant = repository.create_grant(
+            owner_account_id=42,
+            client_id="local-client",
+            name="Full owner consent",
+            preset=GrantPreset.OWNER_AUTOMATION,
+            constraints=GrantConstraints(owner_managed=True),
+        )
+        credential = repository.issue_local_credential(grant.grant_id).take()
+        assert grant.constraints.owner_managed
+        assert grant.constraints.include_future_rows and grant.constraints.include_future_libraries
+        assert owner_managed_capabilities() == set(grant.capabilities)
+        assert Capability.MAINTENANCE_EXECUTE in grant.capabilities
+        assert Capability.HISTORY_EXPORT in grant.capabilities
+        assert Capability.HISTORY_PROVIDERS in grant.capabilities
+        assert Capability.REQUESTS_SEND in grant.capabilities
+        assert Capability.AI_GENERATE not in grant.capabilities
+        assert {Capability.SECRETS_READ, Capability.GRANTS_MANAGE}.isdisjoint(grant.capabilities)
+        assert not grant.constraints.destination_ids
+        require_authorized(
+            grant,
+            [Capability.CONFIG_WRITE],
+            ResourceSelection(setting_groups=frozenset({"row_defaults"})),
+        )
+
+        with sessions() as session:
+            session.add(Setting(key="searxng.url", value={"v": "http://localhost:8080"}))
+            session.commit()
+        fresh = repository.authenticate_local_credential(credential)
+        assert fresh is not None
+        require_authorized(
+            fresh,
+            [Capability.HISTORY_PROVIDERS],
+            ResourceSelection(destination_ids=frozenset({"http://localhost:8080"})),
+        )
+        with pytest.raises(AuthorizationDenied):
+            require_authorized(
+                fresh,
+                [Capability.HISTORY_PROVIDERS],
+                ResourceSelection(destination_ids=frozenset({"https://unregistered.invalid"})),
+            )
+        with sessions() as session:
+            current = require_current_grant_in_session(session, fresh)
+            assert "http://localhost:8080" in current.constraints.destination_ids
+            session.get(Setting, "searxng.url").value = {"v": "http://localhost:8081"}
+            session.commit()
+        with sessions() as session:
+            current = require_current_grant_in_session(session, fresh)
+            assert "http://localhost:8081" in current.constraints.destination_ids
+            assert "http://localhost:8080" not in current.constraints.destination_ids
+            session.delete(session.get(Setting, "searxng.url"))
+            session.commit()
+        assert not repository.get_grant_context(grant.grant_id).constraints.destination_ids
+
+
+def test_owner_profile_upgrade_preserves_legacy_paid_state_and_is_revision_guarded() -> None:
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(bind=engine, expire_on_commit=False)
+        repository = AssistantAuthRepository(sessions, CredentialHasher(b"p" * 32))
+        grant = repository.create_grant(
+            owner_account_id=42,
+            client_id="legacy-client",
+            name="Restricted",
+            preset=GrantPreset.INSPECT,
+            capabilities={Capability.INSTANCE_READ, Capability.AI_GENERATE},
+            constraints=GrantConstraints(include_future_people=False, max_provider_calls=0),
+        )
+        with sessions() as session:
+            session.add(AssistantBudget(grant_id=grant.grant_id, provider_calls_reserved=1))
+            session.commit()
+        assert not repository.get_grant_context(grant.grant_id).constraints.owner_managed
+        updated = repository.update_owner_managed(
+            grant.grant_id,
+            owner_account_id=42,
+            expected_revision=grant.revision,
+            upgrade=True,
+        )
+        assert updated.constraints.owner_managed
+        assert updated.constraints.max_provider_calls == 0
+        assert Capability.AI_GENERATE in updated.capabilities
+        assert updated.constraints.include_future_people
+        assert repository.list_grant_summaries(42)[0].provider_calls_reserved == 1
+        with pytest.raises(GrantUpdateConflict):
+            repository.update_owner_managed(
+                grant.grant_id,
+                owner_account_id=42,
+                expected_revision=grant.revision,
+                paid_enabled=True,
+                max_provider_calls=2,
+            )
+        assert repository.get_grant_context(grant.grant_id).constraints.max_provider_calls == 0
+        with pytest.raises(ValueError, match="exceed"):
+            repository.update_owner_managed(
+                grant.grant_id,
+                owner_account_id=42,
+                expected_revision=updated.revision,
+                paid_enabled=True,
+                max_provider_calls=1,
+            )
+        paid = repository.update_owner_managed(
+            grant.grant_id,
+            owner_account_id=42,
+            expected_revision=updated.revision,
+            paid_enabled=True,
+            max_provider_calls=2,
+        )
+        assert paid.constraints.max_provider_calls == 2
+
+
+def test_profile_marker_is_legacy_false_and_cannot_be_set_by_granular_patch() -> None:
+    from pydantic import ValidationError
+
+    from shortlist.server.assistant_auth.routes import GrantConstraintsPatchIn
+
+    assert GrantConstraints.from_dict({}).owner_managed is False
+    assert GrantConstraints.from_dict({"owner_managed": True}).owner_managed is True
+    with pytest.raises(ValidationError):
+        GrantConstraintsPatchIn.model_validate(
+            {
+                "expected_revision": 1,
+                "constraints": {"owner_managed": True},
+            }
+        )
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        Base.metadata.create_all(engine)
+        repository = AssistantAuthRepository(
+            sessionmaker(bind=engine, expire_on_commit=False), CredentialHasher(b"p" * 32)
+        )
+        grant = repository.create_grant(
+            owner_account_id=42,
+            client_id="legacy",
+            name="Legacy",
+            preset=GrantPreset.INSPECT,
+            constraints=GrantConstraints(),
+        )
+        with pytest.raises(ValueError, match="unknown assistant grant constraints"):
+            repository.patch_grant_constraints(
+                grant.grant_id,
+                owner_account_id=42,
+                expected_revision=grant.revision,
+                constraints_patch={"owner_managed": True},
+            )
+        assert not repository.get_grant_context(grant.grant_id).constraints.owner_managed
+
+
+def test_upgrade_keeps_positive_legacy_quota_unusable_without_paid_capability() -> None:
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        Base.metadata.create_all(engine)
+        sessions = sessionmaker(bind=engine, expire_on_commit=False)
+        repository = AssistantAuthRepository(sessions, CredentialHasher(b"p" * 32))
+        grant = repository.create_grant(
+            owner_account_id=42,
+            client_id="legacy",
+            name="No paid capability",
+            preset=GrantPreset.INSPECT,
+            capabilities={Capability.INSTANCE_READ},
+            constraints=GrantConstraints(max_provider_calls=5),
+        )
+        with sessions() as session:
+            session.add(AssistantBudget(grant_id=grant.grant_id, provider_calls_reserved=1))
+            session.commit()
+        upgraded = repository.update_owner_managed(
+            grant.grant_id,
+            owner_account_id=42,
+            expected_revision=grant.revision,
+            upgrade=True,
+        )
+        assert upgraded.constraints.max_provider_calls == 5
+        assert Capability.AI_GENERATE not in upgraded.capabilities
+        assert repository.list_grant_summaries(42)[0].provider_calls_reserved == 1
+
+
+def test_profile_has_maintenance_capability_but_task_still_requires_exact_owner_approval() -> None:
+    from shortlist.server.assistant.maintenance_adapter import MaintenanceAdapter
+
+    with disposing_engine(
+        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    ) as engine:
+        Base.metadata.create_all(engine)
+        with sessionmaker(bind=engine)() as session:
+            plan = MaintenanceAdapter(None).prepare(session, {"task": "cache.refresh"})
+    assert Capability.MAINTENANCE_EXECUTE in owner_managed_capabilities()
+    assert plan.requirements.capabilities == (Capability.MAINTENANCE_EXECUTE.value,)
+    assert plan.requirements.requires_approval is True

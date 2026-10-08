@@ -10,11 +10,10 @@ from datetime import UTC, datetime
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from shortlist.server.assistant.budgets import AssistantBudget
 from shortlist.server.db.models import Event
 
 from .credentials import CredentialHasher, IssuedSecret, as_utc, credential_is_active
-from .destinations import DestinationSelection, validate_selected_destinations
+from .destinations import DestinationSelection, configured_destinations, validate_selected_destinations
 from .models import (
     AssistantConsentFlow,
     AssistantGrant,
@@ -24,7 +23,7 @@ from .models import (
     AssistantOAuthRevokedFamily,
     AssistantOAuthToken,
 )
-from .policy import AuthorizationDenied, capabilities_for_preset
+from .policy import AuthorizationDenied, capabilities_for_preset, owner_managed_capabilities
 from .types import (
     ASSISTANT_CAPABILITIES,
     Capability,
@@ -75,6 +74,28 @@ def _grant_context(row: AssistantGrant) -> GrantContext:
     )
 
 
+def _effective_grant_context(session: Session, row: AssistantGrant) -> GrantContext:
+    """Resolve the reviewed profile against this transaction's configured services."""
+    context = _grant_context(row)
+    if not context.constraints.owner_managed:
+        return context
+    from shortlist.server.catalogs.settings import get_settings_catalog
+
+    constraints = replace(
+        context.constraints,
+        row_ids=frozenset(),
+        library_keys=frozenset(),
+        setting_groups=frozenset(setting.group.value for setting in get_settings_catalog()),
+        destination_ids=frozenset(choice.destination_id for choice in configured_destinations(session)),
+        include_future_rows=True,
+        include_future_people=True,
+        include_future_libraries=True,
+        max_batch_size=None,
+        max_work_per_operation=None,
+    )
+    return replace(context, constraints=constraints)
+
+
 def require_current_grant_in_session(
     session: Session,
     principal: GrantContext | StoredGrantIdentity,
@@ -101,7 +122,7 @@ def require_current_grant_in_session(
         raise AuthorizationDenied("assistant grant belongs to a previous installation owner")
     if check_revision and row.revision != principal.revision:
         raise AuthorizationDenied("assistant grant changed; re-authorize the operation")
-    current_context = _grant_context(row)
+    current_context = _effective_grant_context(session, row)
     if isinstance(principal, GrantContext):
         return replace(current_context, capabilities=current_context.capabilities & principal.capabilities)
     if isinstance(principal, StoredGrantIdentity):
@@ -130,6 +151,10 @@ def grant_created_rows_in_session(
     current = require_current_grant_in_session(session, principal, now=now)
     if Capability.ROWS_CREATE not in current.capabilities and not approved_creation:
         raise AuthorizationDenied("missing permission: rows.create")
+    if current.constraints.owner_managed:
+        # Future rows are already covered. Avoid persisting a temporary catalog
+        # snapshot back into the durable profile marker while attaching them.
+        return current
     row = session.get(AssistantGrant, principal.grant_id)
     constraints = current.constraints
     updated_constraints = GrantConstraints(
@@ -144,12 +169,13 @@ def grant_created_rows_in_session(
         max_batch_size=constraints.max_batch_size,
         max_work_per_operation=constraints.max_work_per_operation,
         max_provider_calls=constraints.max_provider_calls,
+        owner_managed=constraints.owner_managed,
     )
     row.constraints = updated_constraints.as_dict()
     row.revision += 1
     row.updated_at = _now(now)
     session.flush()
-    updated = _grant_context(row)
+    updated = _effective_grant_context(session, row)
     # Resource ownership can grow after creation without widening an OAuth token's scopes.
     return replace(updated, capabilities=updated.capabilities & current.capabilities)
 
@@ -177,6 +203,22 @@ class AssistantAuthRepository:
     ) -> GrantContext:
         """Create a named grant; callers must already have browser owner consent."""
         values = set(capabilities_for_preset(preset) if capabilities is None else capabilities)
+        if constraints.owner_managed:
+            profile = owner_managed_capabilities(paid=constraints.max_provider_calls > 0)
+            values = profile if capabilities is None else profile & values
+            constraints = replace(
+                constraints,
+                row_ids=frozenset(),
+                person_ids=frozenset(),
+                library_keys=frozenset(),
+                setting_groups=frozenset(),
+                destination_ids=frozenset(),
+                include_future_rows=True,
+                include_future_people=True,
+                include_future_libraries=True,
+                max_batch_size=None,
+                max_work_per_operation=None,
+            )
         if not ASSISTANT_CAPABILITIES.issuperset(values):
             raise AuthorizationDenied("owner secrets and grant administration cannot be delegated")
         timestamp = _now(now)
@@ -197,12 +239,12 @@ class AssistantAuthRepository:
             validate_selected_destinations(session, selected_destinations or [], set(constraints.destination_ids))
             session.add(row)
             session.flush()
-            return _grant_context(row)
+            return _effective_grant_context(session, row)
         with self.sessions() as owned:
             validate_selected_destinations(owned, selected_destinations or [], set(constraints.destination_ids))
             owned.add(row)
             owned.commit()
-            return _grant_context(row)
+            return _effective_grant_context(owned, row)
 
     def get_grant_context(
         self,
@@ -213,9 +255,9 @@ class AssistantAuthRepository:
     ) -> GrantContext | None:
         """Load an active grant."""
         if session is not None:
-            return self._active_context(session.get(AssistantGrant, grant_id), _now(now))
+            return self._active_context(session, session.get(AssistantGrant, grant_id), _now(now))
         with self.sessions() as owned:
-            return self._active_context(owned.get(AssistantGrant, grant_id), _now(now))
+            return self._active_context(owned, owned.get(AssistantGrant, grant_id), _now(now))
 
     def require_current_grant_in_session(
         self,
@@ -267,7 +309,7 @@ class AssistantAuthRepository:
                 statement = statement.where(AssistantGrant.owner_account_id == owner_account_id)
             rows = session.scalars(statement.order_by(AssistantGrant.created_at.desc())).all()
             for row in rows:
-                if context := self._active_context(row, _now(now)):
+                if context := self._active_context(session, row, _now(now)):
                     return context
         return None
 
@@ -281,6 +323,8 @@ class AssistantAuthRepository:
 
     def list_grant_summaries(self, owner_account_id: int) -> list[GrantSummary]:
         """List owner-visible status without returning credential bodies or digests."""
+        from shortlist.server.assistant.budgets import AssistantBudget
+
         with self.sessions() as session:
             counts = (
                 select(AssistantLocalCredential.grant_id, func.count(AssistantLocalCredential.id).label("count"))
@@ -391,7 +435,7 @@ class AssistantAuthRepository:
             row = session.get(AssistantGrant, grant_id)
             if row is None or row.owner_account_id != owner_account_id:
                 raise GrantUpdateNotFound("assistant grant not found")
-            if self._active_context(row, timestamp) is None or row.revision != expected_revision:
+            if self._active_context(session, row, timestamp) is None or row.revision != expected_revision:
                 raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
 
             current_constraints = GrantConstraints.from_dict(row.constraints)
@@ -450,7 +494,7 @@ class AssistantAuthRepository:
             )
             session.commit()
             session.refresh(row)
-            return _grant_context(row)
+            return _effective_grant_context(session, row)
 
     def approve_updated_access(
         self,
@@ -466,7 +510,7 @@ class AssistantAuthRepository:
             row = session.get(AssistantGrant, grant_id)
             if row is None or row.owner_account_id != owner_account_id:
                 raise GrantUpdateNotFound("assistant grant not found")
-            if self._active_context(row, timestamp) is None or row.revision != expected_revision:
+            if self._active_context(session, row, timestamp) is None or row.revision != expected_revision:
                 raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
             current = GrantConstraints.from_dict(row.constraints)
             if not current.requires_access_approval:
@@ -515,7 +559,107 @@ class AssistantAuthRepository:
             )
             session.commit()
             session.refresh(row)
-            return _grant_context(row)
+            return _effective_grant_context(session, row)
+
+    def update_owner_managed(
+        self,
+        grant_id: str,
+        *,
+        owner_account_id: int,
+        expected_revision: int,
+        upgrade: bool = False,
+        paid_enabled: bool | None = None,
+        max_provider_calls: int | None = None,
+        now: datetime | None = None,
+    ) -> GrantContext:
+        """Explicit owner profile upgrade or paid edit, atomically guarded by revision."""
+        from shortlist.server.assistant.budgets import AssistantBudget
+
+        timestamp = _now(now)
+        if expected_revision <= 0 or (paid_enabled is None and max_provider_calls is not None):
+            raise ValueError("invalid owner-managed update")
+        if paid_enabled is True and (max_provider_calls is None or not 1 <= max_provider_calls <= 100):
+            raise ValueError("paid calls require a finite allowance from 1 to 100")
+        if paid_enabled is False and max_provider_calls not in (None, 0):
+            raise ValueError("turning paid calls off requires a zero allowance")
+        with self.sessions() as session:
+            row = session.get(AssistantGrant, grant_id)
+            if row is None or row.owner_account_id != owner_account_id:
+                raise GrantUpdateNotFound("assistant grant not found")
+            if self._active_context(session, row, timestamp) is None or row.revision != expected_revision:
+                raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
+            current = GrantConstraints.from_dict(row.constraints)
+            if not upgrade and not current.owner_managed:
+                raise GrantUpdateConflict("upgrade this connection before changing its paid access")
+            if (
+                upgrade
+                and current.owner_managed
+                and owner_managed_capabilities().issubset(Capability(value) for value in row.capabilities)
+            ):
+                raise GrantUpdateConflict("connection already has full Shortlist access")
+            reserved_row = session.get(AssistantBudget, grant_id)
+            reserved = reserved_row.provider_calls_reserved if reserved_row else 0
+            if paid_enabled and max_provider_calls is not None and max_provider_calls <= reserved:
+                raise ValueError("paid allowance must exceed used or uncertain calls")
+
+            values = set(Capability(value) for value in row.capabilities)
+            if upgrade:
+                paid_before = Capability.AI_GENERATE in values
+                values = owner_managed_capabilities(paid=paid_before)
+                current = replace(
+                    current,
+                    row_ids=frozenset(),
+                    person_ids=frozenset(),
+                    library_keys=frozenset(),
+                    include_future_rows=True,
+                    include_future_people=True,
+                    include_future_libraries=True,
+                    max_batch_size=None,
+                    max_work_per_operation=None,
+                    owner_managed=True,
+                )
+            if paid_enabled is not None:
+                if paid_enabled:
+                    values.add(Capability.AI_GENERATE)
+                    current = replace(current, max_provider_calls=max_provider_calls)
+                else:
+                    values.discard(Capability.AI_GENERATE)
+                    current = replace(current, max_provider_calls=0)
+            changed = session.execute(
+                update(AssistantGrant)
+                .execution_options(synchronize_session=False)
+                .where(
+                    AssistantGrant.id == grant_id,
+                    AssistantGrant.owner_account_id == owner_account_id,
+                    AssistantGrant.revision == expected_revision,
+                    AssistantGrant.revoked_at.is_(None),
+                    or_(AssistantGrant.expires_at.is_(None), AssistantGrant.expires_at > timestamp),
+                )
+                .values(
+                    capabilities=sorted(capability.value for capability in values),
+                    constraints=current.as_dict(),
+                    revision=AssistantGrant.revision + 1,
+                    updated_at=timestamp,
+                )
+            ).rowcount
+            if changed != 1:
+                session.rollback()
+                raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
+            session.add(
+                Event(
+                    scope="assistant.grant.owner_managed",
+                    level="info",
+                    message={
+                        "grant_id": grant_id,
+                        "actor": {"via": "browser", "account_id": owner_account_id},
+                        "changed_fields": ["owner_managed"] if upgrade else ["paid_services"],
+                        "revision": expected_revision + 1,
+                    },
+                )
+            )
+            session.commit()
+            session.refresh(row)
+            return _effective_grant_context(session, row)
 
     def revoke_grant(self, grant_id: str, *, now: datetime | None = None) -> bool:
         """Immediately revoke a grant and all authentication through it."""
@@ -586,7 +730,7 @@ class AssistantAuthRepository:
         timestamp = _now(now)
         raw = self.hasher.issue("shla").take()
         with self.sessions() as session:
-            if self._active_context(session.get(AssistantGrant, grant_id), timestamp) is None:
+            if self._active_context(session, session.get(AssistantGrant, grant_id), timestamp) is None:
                 raise AuthorizationDenied("cannot issue a credential for an inactive grant")
             session.add(
                 AssistantLocalCredential(
@@ -616,7 +760,7 @@ class AssistantAuthRepository:
             )
             if row is None or not credential_is_active(row.expires_at, row.revoked_at, now=timestamp):
                 return None
-            context = self._active_context(session.get(AssistantGrant, row.grant_id), timestamp)
+            context = self._active_context(session, session.get(AssistantGrant, row.grant_id), timestamp)
             if context is None:
                 return None
             row.last_used_at = timestamp
@@ -840,7 +984,7 @@ class AssistantAuthRepository:
             # Rotation validation and Authlib's save hook are separate calls. Serialize issuance
             # with the revocation tombstone so a replay cannot resurrect a revoked family.
             session.execute(text("BEGIN IMMEDIATE"))
-            grant = self._active_context(session.get(AssistantGrant, grant_id), now)
+            grant = self._active_context(session, session.get(AssistantGrant, grant_id), now)
             if (
                 session.get(AssistantOAuthRevokedFamily, refresh_family_id) is not None
                 or grant is None
@@ -876,7 +1020,7 @@ class AssistantAuthRepository:
             )
             if token is None or not credential_is_active(token.access_expires_at, token.access_revoked_at, now=now):
                 return None
-            grant = self._active_context(session.get(AssistantGrant, token.grant_id), now)
+            grant = self._active_context(session, session.get(AssistantGrant, token.grant_id), now)
             if grant is None or token.client_id != grant.client_id:
                 return None
             token.last_used_at = now
@@ -971,9 +1115,9 @@ class AssistantAuthRepository:
             return True
 
     @staticmethod
-    def _active_context(row: AssistantGrant | None, now: datetime) -> GrantContext | None:
+    def _active_context(session: Session, row: AssistantGrant | None, now: datetime) -> GrantContext | None:
         if row is None or row.revoked_at is not None:
             return None
         if row.expires_at is not None and as_utc(row.expires_at) <= now:
             return None
-        return _grant_context(row)
+        return _effective_grant_context(session, row)

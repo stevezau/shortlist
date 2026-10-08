@@ -328,7 +328,7 @@ def register_tools(server: MCPServer, state) -> None:
             "or AI provider. Plex anchors require a library key from shortlist_list_libraries and return only "
             "foreign collections; Radarr and Sonarr return quality profiles and root folders; curator_models lists "
             "the saved provider's model IDs without generation. This accepts no URL or credential and checks the "
-            "exact selected library or saved destination before reading it."
+            "current grant's allowed library or exact configured destination before reading it."
         ),
         external=True,
     )

@@ -3418,6 +3418,10 @@
             ],
             "title": "Max Work Per Operation"
           },
+          "owner_managed": {
+            "title": "Owner Managed",
+            "type": "boolean"
+          },
           "row_ids": {
             "items": {
               "type": "integer"
@@ -3442,7 +3446,8 @@
           "include_future_libraries",
           "max_batch_size",
           "max_work_per_operation",
-          "max_provider_calls"
+          "max_provider_calls",
+          "owner_managed"
         ],
         "title": "GrantConstraintsOut",
         "type": "object"
@@ -3486,12 +3491,41 @@
             "title": "Expected Revision",
             "type": "integer"
           },
+          "max_provider_calls": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Provider Calls"
+          },
+          "paid_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Enabled"
+          },
           "selected_destinations": {
             "items": {
               "$ref": "#/components/schemas/DestinationSelection"
             },
             "title": "Selected Destinations",
             "type": "array"
+          },
+          "upgrade_owner_managed": {
+            "default": false,
+            "title": "Upgrade Owner Managed",
+            "type": "boolean"
           }
         },
         "required": [
@@ -3548,6 +3582,11 @@
             "title": "Name",
             "type": "string"
           },
+          "owner_managed": {
+            "default": false,
+            "title": "Owner Managed",
+            "type": "boolean"
+          },
           "preset": {
             "$ref": "#/components/schemas/GrantPreset"
           },
@@ -3597,6 +3636,10 @@
             ],
             "title": "Expires At"
           },
+          "full_management": {
+            "title": "Full Management",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -3630,6 +3673,7 @@
           "capabilities",
           "constraints",
           "requires_access_approval",
+          "full_management",
           "revision",
           "expires_at"
         ],
@@ -3680,6 +3724,10 @@
               }
             ],
             "title": "Expires At"
+          },
+          "full_management": {
+            "title": "Full Management",
+            "type": "boolean"
           },
           "id": {
             "title": "Id",
@@ -3750,6 +3798,7 @@
           "capabilities",
           "constraints",
           "requires_access_approval",
+          "full_management",
           "revision",
           "expires_at",
           "created_at",

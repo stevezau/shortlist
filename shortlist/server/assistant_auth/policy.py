@@ -55,6 +55,19 @@ def capabilities_for_preset(preset: GrantPreset) -> set[Capability]:
     return set(_PRESETS[preset])
 
 
+def owner_managed_capabilities(*, paid: bool = False) -> set[Capability]:
+    """The reviewed full-access profile, deliberately excluding reserved rights."""
+    values = capabilities_for_preset(GrantPreset.OWNER_AUTOMATION) | {
+        Capability.HISTORY_EXPORT,
+        Capability.HISTORY_PROVIDERS,
+        Capability.REQUESTS_SEND,
+        Capability.MAINTENANCE_EXECUTE,
+    }
+    if paid:
+        values.add(Capability.AI_GENERATE)
+    return values
+
+
 def require_authorized(
     grant: GrantContext,
     required: Iterable[Capability],

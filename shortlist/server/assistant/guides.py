@@ -142,11 +142,15 @@ GUIDES = {
     "permissions": {
         "title": "Assistant permissions",
         "steps": [
-            "Every named connection has separate capabilities, selected resources, an expiry and a revocation control.",
             (
-                "Configuration reads and writes need both their capability and selected settings group. "
-                "Configured-service reads also need the exact library or saved destination in the connection's "
-                "resource scope; do not treat a missing-permission result as a prompt to widen a grant."
+                "Every named connection has its own expiry, paid-call allowance and disconnect control. "
+                "Older connections may retain narrower permissions until the owner explicitly upgrades them."
+            ),
+            (
+                "A new owner-approved connection can use supported settings groups, all current and future "
+                "rows and libraries, and the services the owner has configured. Shortlist resolves each "
+                "registered service's exact current destination. A removed service or arbitrary caller URL "
+                "is not approved; older limited connections keep their saved resource bounds."
             ),
             (
                 "Internal history use, sending history to providers, and returning history to the "
@@ -162,7 +166,7 @@ GUIDES = {
             ),
             "Credentials and grant administration stay in the owner's browser. An assistant cannot authorize itself.",
             (
-                "The Owner automation preset still has these boundaries. An unsupported operation is not "
+                "Full Shortlist access still has these boundaries. An unsupported operation is not "
                 "made available by exact approval of another change. Releasing an uncertain acquisition for "
                 "retry requires owner inspection because it could repeat an external request."
             ),

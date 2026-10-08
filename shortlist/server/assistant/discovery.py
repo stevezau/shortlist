@@ -130,8 +130,8 @@ class DiscoveryService:
                     "reserved": reserved,
                     "remaining": max(0, principal.constraints.max_provider_calls - reserved),
                     "description": (
-                        "Conservative call reservations for assistant theme generation; not a currency limit "
-                        "or a cap on separately owner-approved recurring automation."
+                        "Conservative lifetime call reservations for direct assistant AI, search and image work; "
+                        "not a currency limit or a cap on separately owner-approved recurring automation."
                     ),
                 },
                 "expires_at": principal.expires_at.isoformat() if principal.expires_at else None,

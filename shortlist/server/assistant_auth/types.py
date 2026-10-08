@@ -73,6 +73,8 @@ class GrantConstraints:
     # Lifetime allowance for the named grant. Durable reservation/accounting is
     # performed by the operation service; zero means provider dispatch is off.
     max_provider_calls: int = 0
+    # Opt-in profile. Missing on older grants means exact legacy authority.
+    owner_managed: bool = False
 
     @property
     def requires_access_approval(self) -> bool:
@@ -91,6 +93,7 @@ class GrantConstraints:
             "max_batch_size": self.max_batch_size,
             "max_work_per_operation": self.max_work_per_operation,
             "max_provider_calls": self.max_provider_calls,
+            "owner_managed": self.owner_managed,
         }
         # Kept only for binary rollback compatibility. New authorization never
         # reads these as a per-person ACL.
@@ -110,6 +113,7 @@ class GrantConstraints:
             "max_batch_size": self.max_batch_size,
             "max_work_per_operation": self.max_work_per_operation,
             "max_provider_calls": self.max_provider_calls,
+            "owner_managed": self.owner_managed,
         }
 
     @classmethod
@@ -128,6 +132,7 @@ class GrantConstraints:
             "max_batch_size",
             "max_work_per_operation",
             "max_provider_calls",
+            "owner_managed",
         }
         unknown = value.keys() - known
         if unknown:

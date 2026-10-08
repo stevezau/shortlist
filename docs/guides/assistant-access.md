@@ -1,13 +1,13 @@
 ---
 title: Connect an assistant
-description: Enable Shortlist's MCP endpoint, give an assistant a named and limited grant, and connect local or hosted clients without sharing the owner API token.
+description: Enable Shortlist's MCP endpoint, approve one named assistant connection, and connect local or hosted clients without sharing the owner API token.
 heading: Connect an assistant
 updated: 2026-10-08
 ---
 
 Assistant access is optional. It gives an MCP client a named connection to Shortlist, with its own
-permissions, limits, expiry and revoke switch. The connection can inspect an installation, explain
-settings, prepare changes and carry out the work its grant allows.
+its own expiry and disconnect switch. A new owner-approved connection can manage Shortlist within
+the supported MCP tools. Existing limited connections keep their old permissions until upgraded.
 
 This is separate from **Settings → System → API access**. That API token has the owner's full power.
 Never put it in an MCP client. Assistant credentials begin with `shla_` and work only at the MCP
@@ -37,8 +37,7 @@ a retry could repeat a request.
 
 An assistant can explain those steps and continue after the owner completes them. It must not
 claim to have performed an unsupported action, use the unrestricted owner API token as a fallback,
-or treat one approved change as authority for unrelated actions. These boundaries apply even to
-the **Manage Shortlist** connection mode.
+or treat one approved change as authority for unrelated actions. These boundaries also apply to a full-access assistant connection.
 
 ## Before connecting
 
@@ -79,68 +78,47 @@ does not infer this security-sensitive address from a request's `Host` or forwar
 Plain HTTP on a LAN address is refused; use HTTPS when the address is not loopback.
 
 If the setup wizard is still open, begin the OAuth connection from your MCP client. Its owner
-consent page is available after Plex ownership is linked, before the wizard is complete. Allowing
-the connection can create a grant for the requested permissions without opening Settings first.
-For a management request, the browser starts with **Manage Shortlist** and the currently available
-settings groups. A read-only request starts with **Suggest changes** and no settings groups. In both
-cases, the grant covers current and future rows and libraries, selects no external services and
-permits zero paid provider calls until the owner explicitly chooses otherwise. OAuth grants only the
-intersection of the client's requested permissions and the owner's choices. Exact owner reviews do
-not expand standing access or provider quotas. The owner can adjust the connection later.
+consent page is available after Plex ownership is linked, before the wizard is complete. The
+browser names the client, explains what a full connection can do, and offers one optional finite
+allowance for direct paid services. OAuth grants only permissions the client requested; a client
+that requests only reads does not gain management powers. Existing connections selected during
+OAuth consent keep their current limits.
 
 Open **Settings → AI assistants** to reach the connections page, then choose **New connection**.
 You can also search Settings for **MCP**, **ChatGPT**, **Claude** or **Codex**. Under
 **System → AI assistants**, the card should say **Enabled**; its **Manage connections** button
 opens the same page.
 
-## Choose what the connection can do
+## Approve a connection
 
-New owner-created connections start with **Manage Shortlist**, which can set up and operate
-Shortlist within the grant's resource limits. Choose **Suggest changes** when the assistant should
-read safe information and prepare changes for owner review. Neither mode is the unrestricted owner
-API token. Existing custom grants keep their actual permissions and limits until the owner changes
-them; the page shows **Custom access** rather than presenting a preset name as current authority.
+Give the connection a name and read the full-management disclosure. The new connection covers all
+current and future people, rows and libraries; row audiences and Plex sharing rules still decide
+who sees each row. It can manage supported non-secret settings and use the services the owner has
+configured now or later, including sending relevant viewing details to them. You do not need to
+select rows, libraries, settings groups or individual services again on this page. Shortlist
+resolves the exact current service endpoints when a tool runs. A removed service is no longer
+available, and a configured URL change invalidates a prepared action that pinned the old address.
+Caller-supplied URLs never gain access from this approval.
 
-Every new connection can work with all current and future people, rows and libraries. Row audiences
-and existing Plex sharing rules still decide who can see each row. Under **Advanced access and limits**,
-choose **Selected rows** or **Selected libraries** to narrow the connection, and use **Select all**
-to select currently listed items. The **All current and future** choices also cover items added later.
-New Manage connections include all setting groups available at creation, not groups added later.
-Under **Advanced access and limits**, the owner can narrow that list or change batch, work and
-expiry limits. Choose named entries under **Services this assistant can use** for connection checks,
-search, AI or acquisition. No service is selected automatically, including when its related option
-is switched on. Each choice approves the service's current endpoint; changing a configured URL does
-not silently carry the old approval to the new destination. Previously approved endpoints that no
-longer match a configured service remain visible under Advanced until explicitly removed.
+Service addresses and credentials remain owner-only setup. An assistant can open the appropriate
+browser handoff, but cannot enter an API key, password or arbitrary endpoint through MCP. Changing
+non-secret settings still follows each setting's catalog contract. Protected maintenance and
+external effects keep their exact plan and owner-review requirements; full access does not remove
+those per-action checks.
 
-Capabilities do not override those resource limits. For example, an assistant with `config.read`
-still needs the selected settings group or library, and `connections.manage` still needs the exact
-saved destination, before Shortlist reads its configured service. `shortlist_get_choices` can page
-foreign Plex placement anchors for an allowed library or Arr quality profiles and root folders for
-an allowed saved destination. It can also page model IDs from the already saved AI provider. It
-never accepts a caller-provided URL or credential; a disabled, unsupported or unavailable provider
-is reported separately from a provider whose model list is simply empty.
+Existing restricted or custom connections keep their current permissions, expiry, paid allowance
+and usage until you explicitly choose **Upgrade to full Shortlist access**. The upgrade uses the
+connection revision, so a stale page cannot silently replace newer authority. Existing OAuth
+tokens retain their issued scope ceiling; reconnect and consent again if the client needs a newly
+available permission. **Disconnect** revokes local credentials and OAuth tokens immediately.
 
-Extra permissions are explicit. **Privacy** controls whether the assistant can see viewing details
-or send history-derived context to approved services. **Allow this assistant to use paid services**
-adds AI, search and image calls with a finite lifetime allowance. **Allow requests for missing titles** is
-a separate Manage choice. A tool that needs several permissions needs all of them.
-
-The same rule applies to setting groups and destinations. An assistant may configure permitted
-non-secret settings, but it cannot enter provider, Arr, Plex or webhook credentials. It may set a
-configured provider and model when its recommendation group is allowed, while the owner browser
-still owns credential entry and a real provider test. It may set non-secret notification enablement,
-event selection and header name when the notifications group is allowed; the webhook URL and
-authentication value stay in the browser, and the real notification test sends a message there.
-
-The paid-call allowance is a finite lifetime total for this named connection. The page shows its
-total, used or uncertain reservations, and remaining calls. The default `0` permits no paid calls.
-A call whose outcome is unknown still consumes its reservation, because retrying it could spend
-twice. This is a call count, not a dollar limit; the assistant host, search provider and request
-services can have their own charges or quotas. This allowance covers the assistant's named
-theme-generation tool and bounded immediate runs, including outgoing search and image requests.
-An immediate run permanently reserves its whole requested maximum, even when it uses fewer calls.
-It does not cap ordinary recurring row automation that an owner approves.
+**Allow this assistant to use paid services** is off on new connections. Turning it on requires a
+finite lifetime call allowance of 1–100 for direct AI, search and image calls. The page shows the
+total, used or uncertain reservations, and remaining calls. A call whose outcome is unknown keeps
+its reservation because retrying it could spend twice. This is a call count, not a currency limit.
+Saved recurring Shortlist runs use their existing owner approvals and may incur charges separately.
+An access upgrade leaves an existing connection's paid permission, allowance and usage unchanged
+unless you explicitly change the paid option.
 
 ## Connect on the same machine
 
@@ -363,9 +341,9 @@ on its next run. Uninstall remains an owner-browser action.
 For the tool families, plan lifecycle and permission boundaries, see the
 [assistant reference](../reference/assistant.md).
 
-## Revoke or stop ongoing work
+## Disconnect or stop ongoing work
 
-Return to **AI assistants** and revoke the named grant. Local credentials, OAuth access and
+Return to **AI assistants** and choose **Disconnect** on the named connection. Local credentials, OAuth access and
 refresh credentials tied to it stop working. The legacy owner API token is unaffected because it is
 a separate credential.
 

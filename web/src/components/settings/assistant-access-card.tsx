@@ -26,7 +26,7 @@ export function AssistantAccessCard() {
                 <div className="min-w-0 space-y-2">
                   <Badge variant={status.data.enabled ? "success" : "secondary"}>{status.data.enabled ? "Enabled" : "Off"}</Badge>
                   <p className="max-w-prose text-sm font-medium">Connect ChatGPT, Claude or Codex to set up and manage Shortlist.</p>
-                  <p className="max-w-prose text-sm text-muted-foreground">Connections cover all current and future people. You can narrow rows and libraries, choose permissions and limits, and revoke access at any time. Connect through MCP without sharing your owner API token.</p>
+                  <p className="max-w-prose text-sm text-muted-foreground">Approve full Shortlist access with an optional finite allowance for direct paid services. Disconnect any time. The assistant never needs your owner API token.</p>
                   {!status.data.enabled && <p className="text-xs text-muted-foreground">{status.data.configuration_error ?? status.data.configuration_hint}</p>}
                 </div>
               </div>

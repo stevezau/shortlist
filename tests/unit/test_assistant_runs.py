@@ -138,7 +138,7 @@ def test_run_insert_rolls_back_with_caller(run_env):
         assert list(session.scalars(select(Run))) == []
 
 
-def _authorized_run(run_env, *, approved=False):
+def _authorized_run(run_env, *, approved=False, owner_managed=False):
     from shortlist.server.assistant.changes import ChangeService
     from shortlist.server.assistant_auth import GrantConstraints, GrantPreset, StoredGrantIdentity
     from shortlist.server.assistant_auth.models import AssistantGrant
@@ -165,11 +165,15 @@ def _authorized_run(run_env, *, approved=False):
                 name="Test run",
                 preset=GrantPreset.OWNER_AUTOMATION.value,
                 capabilities=capabilities,
-                constraints=GrantConstraints(
-                    row_ids=frozenset({1}),
-                    person_ids=frozenset({1}),
-                    library_keys=frozenset({"1"}),
-                    include_future_libraries=True,
+                constraints=(
+                    GrantConstraints(owner_managed=True)
+                    if owner_managed
+                    else GrantConstraints(
+                        row_ids=frozenset({1}),
+                        person_ids=frozenset({1}),
+                        library_keys=frozenset({"1"}),
+                        include_future_libraries=True,
+                    )
                 ).as_dict(),
             )
         )
@@ -278,6 +282,21 @@ def test_queued_standing_run_rechecks_exact_authority_after_revision_change(run_
             contract, profiles = validate_execution_in_session(session, run_env, run)
             assert contract["intent"]["row_ids"] == [1]
             assert [profile.slug for profile in profiles] == ["alice"]
+
+
+def test_queued_owner_profile_run_reloads_dynamic_resources_before_execution(run_env):
+    from shortlist.server.assistant.run_adapter import validate_execution_in_session
+    from shortlist.server.db.models import Run
+
+    principal, _service, receipt = _authorized_run(run_env, owner_managed=True)
+    assert principal.constraints.owner_managed
+    assert principal.constraints.include_future_rows and principal.constraints.include_future_libraries
+    assert principal.constraints.row_ids == frozenset()
+    with run_env.sessions() as session:
+        run = session.get(Run, receipt["result"]["run_id"])
+        contract, profiles = validate_execution_in_session(session, run_env, run)
+        assert contract["intent"]["row_ids"] == [1]
+        assert [profile.slug for profile in profiles] == ["alice"]
 
 
 def test_exact_run_approval_cannot_survive_a_later_grant_revision(run_env):
