@@ -1,8 +1,8 @@
 ---
 title: "MCP assistant reference"
-description: Shortlist's assistant tools, scoped permissions, reviewed changes, operation receipts and external-call limits.
+description: Shortlist's assistant tools, View only and Manage Shortlist access, reviewed changes and configured runs.
 heading: MCP assistant reference
-updated: 2026-10-07
+updated: 2026-10-08
 ---
 
 Shortlist serves MCP over Streamable HTTP at its configured canonical `/mcp` endpoint. It is
@@ -42,8 +42,8 @@ have been resolved through `shortlist_search_titles`; a remembered ID from a cha
 ## Tool families
 
 **Installation and guidance:** `shortlist_get_instance`, `shortlist_get_setup_status`,
-`shortlist_get_guide` and `shortlist_diagnose`. Instance discovery includes current connection
-permissions and the remaining lifetime allowance for assistant provider requests. The
+`shortlist_get_guide` and `shortlist_diagnose`. Instance discovery includes current effective
+permissions and historical provider-call allowance where one exists. The
 `shortlist://guides/{topic}` resource provides the setup, rows, themes, permissions and
 troubleshooting guides to clients that support resources. Setup status separately reports
 credentials, library discovery, roster discovery and wizard completion. A denied check returns
@@ -111,11 +111,11 @@ Selection needs the target person's row write permissions, theme write and acces
 theme's source libraries. It does not grant permission to read personal theme details. Paid
 **Regenerate up next** remains an owner-browser action.
 
-**Generation and execution:** `shortlist_generate_theme`, `shortlist_plan_schedule`,
-`shortlist_preview_row` and `shortlist_plan_run`. Provider generation creates a draft through a
-queued operation; it does not save a theme automatically. Preview uses dry-run. Run plans require
-an explicit selection and explicit dry-run choice. Runs using AI, web search, AI posters or
-automatic acquisition also need explicit usage allowances and the corresponding permissions.
+**Schedules and runs:** `shortlist_plan_schedule`, `shortlist_preview_row` and
+`shortlist_plan_run`. A Manage Shortlist connection can preview or run selected saved rows and
+people with the configured provider, search, poster and acquisition settings. Preview uses dry-run.
+Each run requires explicit saved row and person IDs and an explicit dry-run choice. Standalone theme
+generation is available in the owner browser, not through MCP.
 
 **Requests and maintenance:** `shortlist_list_requests`, `shortlist_plan_requests` and
 `shortlist_plan_maintenance`. Request actions are reject, restore, archive and send; each plan
@@ -186,34 +186,39 @@ discard privacy and cleanup obligations already owed by a committed change.
 
 ## Permissions and costs
 
-A named grant combines capabilities with row, library, settings-group and destination limits. An
-approved connection can work with all current and future people; row audiences and sharing rules
-continue to control who receives each row. A capability alone is insufficient for a settings-group,
-library or external-service read: the corresponding selected resource must also be in the grant.
-OAuth access is additionally restricted to the token's granted scopes. Permissions are
-checked in discovery, preparation, apply and before deferred external work starts. Revocation,
-expiry or an ownership change prevents new authorized work.
+The owner selects one app-wide role for a new named connection. **View only** can read settings,
+rows, people and activity, including permitted history projections. It cannot prepare or apply
+changes, run or preview rows, cancel jobs, set up connections or dispatch requests. An earlier exact
+owner approval does not let a View only connection perform a later mutation. **Manage Shortlist**
+adds supported configuration and operations, including normal runs of selected saved rows. It
+cannot read secrets or administer grants. Owner-only credential and URL setup remains in the
+browser. Some maintenance and recurring-spend configuration still needs exact owner review.
 
-Reading watch-history details, exporting history-derived context, changing privacy, making
-acquisition requests and invoking a paid provider are separate powers. A plan needing several
-powers requires all of them. Assistant tools cannot read secrets, issue credentials, expand their
-own grant or invoke arbitrary HTTP, SQL, shell commands or job types.
+Role capabilities are an upper bound. OAuth access is further limited to scopes issued to that
+token; selecting Manage later does not widen an existing token. Reconnect to request more scopes.
+Shortlist rechecks the current owner, grant, role, token ceiling, resource scope and saved effects
+when preparing and applying work, before queued work starts, and before each new external effect.
+Revocation, expiry, role downgrade or a changed destination stops new authorized work. Assistant
+tools cannot read secrets, issue credentials, expand their own grant or invoke arbitrary HTTP, SQL,
+shell commands or job types.
 
-Theme generation and immediate runs reserve provider requests from a finite lifetime allowance
-on the grant. Reservation and operation creation are atomic. This allowance counts outgoing API
-requests; provider prices and their internal billable work determine the monetary cost. Output
-tokens are also bounded. The allowance does not cap normal row automation approved by the owner.
-An immediate run reserves its full `max_provider_calls` permanently, including unused slots and
-cache hits. There is no automatic refund; choose a small allowance appropriate to the work.
-The named theme-generation tool does not include personal watch history in its prompt. Runs can
-use a person's history and send derived context to approved providers only with those separate
-permissions.
+Manage Shortlist authorizes configured runs without a grant lifetime provider-call allowance.
+These normal runs can recur and may incur charges from the owner's saved providers, search and
+image services. Shortlist has no app-wide monetary cap for them. The engine's configured request
+bounds, timeouts, cancellation and acquisition cap still apply. The run contract pins selected
+rows and people, settings and service destinations; provider and acquisition calls keep durable
+started/outcome records. An uncertain outcome stops new effects and is not automatically retried.
 
-### Budgeted immediate runs
+Existing connections keep their actual permissions and lifetime allowance until the owner
+explicitly selects View only or Manage Shortlist. Their existing run rules and provider-call
+reservations remain in force in the meantime. Selecting a role preserves historical counters and
+usage; it does not turn old quota into new run authority. Standalone MCP theme generation is no
+longer offered, including to older connections.
 
-`shortlist_plan_run` and `shortlist_preview_row` accept explicit limits. Provider and acquisition
-allowances default to zero. Discover row and person IDs first; this example requests one run
-with up to eight provider requests, one generated image and two acquisitions:
+### Configured runs
+
+`shortlist_plan_run` and `shortlist_preview_row` accept saved selectors for a Manage Shortlist
+connection. Discover row and person IDs first. A run plan looks like this:
 
 ```json
 {
@@ -221,42 +226,23 @@ with up to eight provider requests, one generated image and two acquisitions:
     "row_ids": [1],
     "person_ids": [2],
     "dry_run": false,
-    "include_shared": false,
-    "max_provider_calls": 8,
-    "max_output_tokens": 2048,
-    "max_native_tool_uses": 2,
-    "max_images": 1,
-    "max_acquisitions": 2,
-    "allow_provider_managed_search": false
+    "include_shared": false
   }
 }
 ```
 
-The plan resolves the selected rows, people, provider models, destinations and settings. The
-worker rechecks that contract before each provider request. Changed authority or configuration
-stops new paid work. Each external search request, completion, native-search request and image
-request consumes a provider slot. An image request produces at most one image and also consumes
-its separate image allowance. Cache hits do not make provider requests. Compatible model servers
-need an explicitly configured model; a bounded run does not discover and choose one at runtime.
+The caller cannot supply a prompt, model, provider, URL, output-token cap, image allowance, search
+setting or paid budget override. The plan resolves the saved provider models, destinations and
+settings, then the worker checks that same contract before each external effect. A preview can
+spend on AI selection or search; it skips image rendering and acquisition sends. Google native
+Search can perform multiple billable internal searches inside one provider request, with no
+Shortlist monetary cap. Inspect the operation and run report before starting another run after an
+uncertain result.
 
-Output-token limits include reasoning/thinking tokens. OpenAI native search also sets
-[`max_tool_calls`](https://developers.openai.com/api/reference/resources/responses/methods/create);
-Anthropic sets the web-search tool's
-[`max_uses`](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool).
-Google native Search offers no
-search-count ceiling: one API request may generate multiple billable internal searches. Using
-that path requires `allow_provider_managed_search: true` and exact owner approval in the browser.
-The approval explains the internal-search and monetary uncertainty. Google with an external
-search provider uses the ordinary request limits. See Google's
-[Search Grounding](https://ai.google.dev/gemini-api/docs/google-search/) and
-[thinking-token limits](https://ai.google.dev/gemini-api/docs/generate-content/thinking) documentation.
-
-A preview can spend on AI selection or search. It skips image rendering and acquisition sends,
-so its image and acquisition allowances can remain zero. A run never silently switches off a
-configured paid feature to fit a missing allowance. Provider errors are not automatically retried
-under a bounded run, including schema fallback calls. An uncertain outcome consumes its slot
-and stops further paid work in that run; inspect the operation and run report before starting
-another operation.
+Older unconverted connections continue to use their existing bounded run inputs and lifetime
+provider-call allowance. Their `max_provider_calls` reservation is atomic and is not refunded when
+unused; it counts requests, not currency. That allowance does not cap normal scheduled row
+automation. The new configured-run selectors do not inherit or reset it.
 
 Recurring configuration deserves separate review. An enabled themed row can be topped up by
 Shortlist's provider even when its saved theme was authored externally. `ai_paused: true` prevents
@@ -266,8 +252,9 @@ effects. Disabling or revoking an assistant grant does not disable schedules it 
 ## External outcomes and recovery
 
 Provider calls and acquisition sends record a durable checkpoint before dispatch. A crash or
-timeout after that checkpoint can leave the outcome unknown. Shortlist preserves the reservation
-and reports uncertainty rather than automatically spending or sending again.
+timeout after that checkpoint can leave the outcome unknown. Shortlist preserves the started
+outcome record and reports uncertainty rather than automatically spending or sending again. Older
+bounded runs also retain the provider-call reservation.
 
 An acquisition plan freezes each title, destination and request configuration. Before each title
 starts, the worker rechecks the owner, grant, saved settings and candidate. A changed destination
@@ -301,12 +288,11 @@ and exact approvals require the owner browser session; mutations also require it
 The legacy owner API bearer and an assistant bearer cannot substitute for that session.
 
 - `GET /api/assistant/status` reports enablement, canonical resource, issuer and available presets.
-- `GET /assistant/grants` lists named grants with conservative lifetime provider-call usage;
-  `POST /assistant/grants` creates one. New browser connections use the server-defined
-  `owner_managed` profile. `PATCH /assistant/grants/{grant_id}` can explicitly upgrade an older
-  grant or edit paid access under the grant revision guard. Older granular grants retain their
-  literal constraints until that explicit upgrade.
-- `GET /assistant/destinations` remains available for older granular grants. Full-access grants
+- `GET /assistant/grants` lists named grants, effective access and historical provider-call usage;
+  `POST /assistant/grants` creates one with `access_role: "view"` or `"manage"`.
+  `PATCH /assistant/grants/{grant_id}` changes the role under the grant revision guard. Older
+  granular grants retain their literal constraints until that explicit role selection.
+- `GET /assistant/destinations` remains available for older granular grants. Manage grants
   resolve only currently configured, supported, credential-free service endpoints in the current
   authorization transaction. URL and credential setup remain owner-only; a prepared plan pins its
   destination and fails if the configured endpoint changes before dispatch.

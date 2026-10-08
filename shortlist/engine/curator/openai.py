@@ -207,8 +207,10 @@ class OpenAICurator:
             kwargs["text"] = _TITLES_FORMAT
         controls = self._provider_controls
         if controls is not None:
-            kwargs["max_output_tokens"] = controls.max_output_tokens
-            kwargs["max_tool_calls"] = controls.max_native_tool_uses
+            if controls.max_output_tokens is not None:
+                kwargs["max_output_tokens"] = controls.max_output_tokens
+            if controls.max_native_tool_uses is not None:
+                kwargs["max_tool_calls"] = controls.max_native_tool_uses
         with provider_call(
             controls,
             ProviderCall(

@@ -40,12 +40,11 @@ def settings_from_environment(environ: dict[str, str], *, base_path: str) -> Ass
 
 def build_change_service(state) -> ChangeService:
     """Wire the closed domain registry; each adapter has a strict typed intent."""
-    from .generation import GenerationAdapter
     from .maintenance_adapter import MaintenanceAdapter
     from .people_seasons import PeopleAdapter, SeasonsAdapter
     from .request_adapter import RequestAdapter
     from .row_adapter import RowAdapter
-    from .run_adapter import RunAdapter
+    from .run_adapter import ConfiguredRunAdapter, RunAdapter
     from .setup_adapter import SetupAdapter
 
     adapters = [
@@ -57,7 +56,7 @@ def build_change_service(state) -> ChangeService:
         RequestAdapter(state),
         MaintenanceAdapter(state),
         RunAdapter(state),
-        GenerationAdapter(state),
+        ConfiguredRunAdapter(state),
         SetupAdapter(state),
     ]
     return ChangeService(state.sessions, {adapter.kind: adapter for adapter in adapters})

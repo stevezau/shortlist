@@ -27,8 +27,10 @@ deleting rows and rewriting share filters. Rotate it from Settings â†’ System â†
 one stops working immediately.
 
 **Assistant access uses separate named grants.** A remote MCP client should use Shortlist's OAuth
-flow, with only the capabilities and resources selected for that connection. Do not give it the API
-token. Hosted clients also need additional discovery and browser routes through the proxy; see
+flow. The owner chooses View only or Manage Shortlist; OAuth scopes can narrow that role further.
+Manage can start normal saved-configuration runs that may incur provider charges. Do not give an
+assistant the owner API token. Hosted clients also need discovery and browser routes through the
+proxy; see
 [Connect an assistant](assistant-access.md#connect-a-hosted-assistant).
 
 **URLs you enter are fetched by the server**, which is the point: your Plex, Tautulli, Radarr,

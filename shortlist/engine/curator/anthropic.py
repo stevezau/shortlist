@@ -101,7 +101,11 @@ class AnthropicCurator:
         system, user = build_web_prompt(profile, seeds, k, guidance=guidance)
         controls = self._provider_controls
         output_tokens = controls.output_limit(2048) if controls is not None else 2048
-        tool_uses = min(5, controls.max_native_tool_uses) if controls is not None else 5
+        tool_uses = (
+            min(5, controls.max_native_tool_uses)
+            if controls is not None and controls.max_native_tool_uses is not None
+            else 5
+        )
         try:
             with provider_call(
                 controls,

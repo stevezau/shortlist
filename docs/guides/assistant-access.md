@@ -6,8 +6,8 @@ updated: 2026-10-08
 ---
 
 Assistant access is optional. It gives an MCP client a named connection to Shortlist, with its own
-its own expiry and disconnect switch. A new owner-approved connection can manage Shortlist within
-the supported MCP tools. Existing limited connections keep their old permissions until upgraded.
+expiry and disconnect switch. The owner chooses **View only** or **Manage Shortlist** when connecting.
+Existing connections keep their current permissions until the owner explicitly changes their access.
 
 This is separate from **Settings → System → API access**. That API token has the owner's full power.
 Never put it in an MCP client. Assistant credentials begin with `shla_` and work only at the MCP
@@ -25,8 +25,8 @@ For an existing per-person Explore row, `shortlist_plan_people` can select a sav
 `up_next_theme_id` in `row_overrides`. This replaces the queued theme without generating a new
 theme or changing Plex immediately. Inspect it with `shortlist_get_person_row_settings` when
 the connection also permits the personal theme details; a redacted read does not mean the
-selection failed. Saving an assistant-authored theme and asking Shortlist to generate one are
-separate workflows, with separate provider-call permission for the latter.
+selection failed. Assistants can save a theme they authored; provider generation remains in the
+owner browser and in configured Shortlist automation.
 
 MCP does not expose every owner API or browser action. Installation, deployment timezone and URL,
 Plex ownership, secret entry, connection permissions and exact approvals require the owner or
@@ -37,7 +37,8 @@ a retry could repeat a request.
 
 An assistant can explain those steps and continue after the owner completes them. It must not
 claim to have performed an unsupported action, use the unrestricted owner API token as a fallback,
-or treat one approved change as authority for unrelated actions. These boundaries also apply to a full-access assistant connection.
+or treat one approved change as authority for unrelated actions. These boundaries also apply to a
+Manage Shortlist connection.
 
 ## Before connecting
 
@@ -79,10 +80,9 @@ Plain HTTP on a LAN address is refused; use HTTPS when the address is not loopba
 
 If the setup wizard is still open, begin the OAuth connection from your MCP client. Its owner
 consent page is available after Plex ownership is linked, before the wizard is complete. The
-browser names the client, explains what a full connection can do, and offers one optional finite
-allowance for direct paid services. OAuth grants only permissions the client requested; a client
-that requests only reads does not gain management powers. Existing connections selected during
-OAuth consent keep their current limits.
+browser names the client and lets the owner choose View only or Manage Shortlist. OAuth grants only
+permissions the client requested within that role; a client that requests only reads does not gain
+management powers. Existing connections selected during OAuth consent keep their current limits.
 
 Open **Settings → AI assistants** to reach the connections page, then choose **New connection**.
 You can also search Settings for **MCP**, **ChatGPT**, **Claude** or **Codex**. Under
@@ -91,34 +91,31 @@ opens the same page.
 
 ## Approve a connection
 
-Give the connection a name and read the full-management disclosure. The new connection covers all
-current and future people, rows and libraries; row audiences and Plex sharing rules still decide
-who sees each row. It can manage supported non-secret settings and use the services the owner has
-configured now or later, including sending relevant viewing details to them. You do not need to
-select rows, libraries, settings groups or individual services again on this page. Shortlist
-resolves the exact current service endpoints when a tool runs. A removed service is no longer
-available, and a configured URL change invalidates a prepared action that pinned the old address.
+Give the connection a name, choose **View only** or **Manage Shortlist**, then press **Connect**.
+View only can read settings, rows, people and activity but cannot prepare or apply changes, start
+runs, cancel work or dispatch requests. Manage Shortlist covers supported changes and normal runs
+of saved rows for current and future people and libraries. Row audiences and Plex sharing rules
+still decide who sees each row. **Normal runs use Shortlist's configured services and may incur
+provider charges.** Shortlist does not set an app-wide spending cap for these runs. The assistant
+cannot supply a prompt, model, service URL or paid budget override to a configured run.
+
+Manage Shortlist resolves current service endpoints when a tool runs. A removed service is no
+longer available, and a configured URL change invalidates an action pinned to the old address.
 Caller-supplied URLs never gain access from this approval.
 
 Service addresses and credentials remain owner-only setup. An assistant can open the appropriate
 browser handoff, but cannot enter an API key, password or arbitrary endpoint through MCP. Changing
 non-secret settings still follows each setting's catalog contract. Protected maintenance and
-external effects keep their exact plan and owner-review requirements; full access does not remove
+external effects keep their exact plan and owner-review requirements; Manage access does not remove
 those per-action checks.
 
-Existing restricted or custom connections keep their current permissions, expiry, paid allowance
-and usage until you explicitly choose **Upgrade to full Shortlist access**. The upgrade uses the
-connection revision, so a stale page cannot silently replace newer authority. Existing OAuth
-tokens retain their issued scope ceiling; reconnect and consent again if the client needs a newly
-available permission. **Disconnect** revokes local credentials and OAuth tokens immediately.
-
-**Allow this assistant to use paid services** is off on new connections. Turning it on requires a
-finite lifetime call allowance of 1–100 for direct AI, search and image calls. The page shows the
-total, used or uncertain reservations, and remaining calls. A call whose outcome is unknown keeps
-its reservation because retrying it could spend twice. This is a call count, not a currency limit.
-Saved recurring Shortlist runs use their existing owner approvals and may incur charges separately.
-An access upgrade leaves an existing connection's paid permission, allowance and usage unchanged
-unless you explicitly change the paid option.
+Existing connections show **Existing access** until you explicitly select one of the two roles.
+This change is guarded by the connection revision, so a stale page cannot silently replace newer
+authority. Historical provider-call allowance and usage remain recorded; selecting Manage
+authorizes normal configured runs without resetting those counters. Older grants retain their
+existing run and lifetime allowance rules until that selection. Existing OAuth tokens retain their
+issued scope ceiling; reconnect and consent again if the client needs a newly available permission.
+**Disconnect** revokes local credentials and OAuth tokens immediately.
 
 ## Connect on the same machine
 
@@ -298,11 +295,11 @@ A complete workflow is:
 4. Configure audience, libraries and automation in a separate row plan. Enabling paid recurring
    work requires the owner's exact browser approval. Fixed themes also receive AI top-ups unless
    AI is paused; a saved list alone does not imply that automation is free.
-5. Preview a run with dry-run enabled, then apply a live run and follow its operation receipt and
-   run report. Include explicit provider-request and output-token limits for paid AI or search,
-   an image allowance for AI artwork, and an acquisition allowance for automatic requests.
-   These allowances default to zero. A preview can still spend on AI selection and search; it
-   skips image rendering and acquisition sends.
+5. Preview the saved row with dry-run enabled, then apply a live run and follow its operation
+   receipt and run report. A Manage Shortlist run uses the saved provider, search, poster and
+   acquisition settings. The assistant supplies only saved row and person IDs, `dry_run` and
+   `include_shared`. A preview can still spend on AI selection and search; it skips image
+   rendering and acquisition sends.
 
 Read the report's `selected_row_ids` as the requested builds and `affected_row_ids` as its wider
 privacy and shelf-management footprint (`row_ids` remains a compatibility alias for that footprint).
@@ -313,16 +310,12 @@ A shared row can complete no delivery because its audience lacks common viewing.
 Runs. Review `privacy_warnings` too: Plex restriction profiles can prevent hiding other people's
 rows even when the operation completed. The report omits private history and raw provider errors.
 
-Immediate runs check the approved provider, model, destination and current permission before each
-paid request. They disable automatic retries and record uncertain outcomes. Google native Search
-needs exact browser approval because Google does not expose a limit on its internal billable
-searches. The [budgeted-run reference](../reference/assistant.md#budgeted-immediate-runs) gives the
-input fields and explains which limits Shortlist can enforce.
-
-`shortlist_generate_theme` is an alternative when you want Shortlist's configured provider to
-write the draft. It reserves one provider call, limits output tokens and returns a draft through
-the operation receipt. Saving that draft is a separate change. It does not send personal watch
-history to the provider.
+Configured runs recheck the saved provider, model, destination, current role and token permissions
+before each external effect. They record started and uncertain outcomes and do not retry an
+uncertain effect. Google native Search may perform several billable searches inside one provider
+request; Shortlist cannot cap its monetary cost. The
+[run reference](../reference/assistant.md#configured-runs) shows the accepted selectors and the
+different rules retained by older connections.
 
 Other tools manage people, seasons, non-secret settings and request candidates within the grant's
 scope. Sending acquisition requests uses a fixed, reviewed batch and rechecks access before each

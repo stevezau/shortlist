@@ -470,6 +470,7 @@ export type AssistantGrantPreset =
 export type AssistantGrantConstraints = Schemas["GrantConstraintsOut"];
 
 export type AssistantGrant = {
+  access_role?: "view" | "manage" | null;
   capabilities: string[];
   created_at?: string;
   updated_at?: string;
@@ -495,15 +496,17 @@ export interface AssistantGrantCreate {
   client_id: string;
   name: string;
   preset: AssistantGrantPreset;
+  access_role?: "view" | "manage";
   owner_managed?: boolean;
   capabilities?: string[];
-  constraints: Partial<AssistantGrantConstraints>;
+  constraints?: Partial<AssistantGrantConstraints>;
   selected_destinations?: Array<{ service_id: string; destination_id: string }>;
   expires_in_days?: number | null;
 }
 
 /** PATCH /assistant/grants/{grant_id}: sparse owner-selected constraint changes. */
 export type AssistantGrantUpdate =
+  | { expected_revision: number; access_role: "view" | "manage" }
   | { expected_revision: number; constraints?: Partial<AssistantGrantConstraints>; capabilities?: string[]; selected_destinations?: Array<{ service_id: string; destination_id: string }> }
   | { expected_revision: number; approve_updated_access: true }
   | { expected_revision: number; upgrade_owner_managed?: boolean; paid_enabled?: boolean; max_provider_calls?: number };

@@ -72,9 +72,10 @@ from TMDB and Trakt. Gaps can be handed to **Radarr/Sonarr** or **Overseerr/Jell
 collections are left completely alone.
 
 **An assistant can help configure it.** Optional [MCP access](docs/guides/assistant-access.md) lets
-local or hosted assistants inspect settings, draft themes, prepare rows and run permitted work.
-Each connection has its own scope, expiry and revoke switch, with browser approval for sensitive
-changes.
+local or hosted assistants view Shortlist or manage its supported settings, rows and normal saved
+runs. The owner chooses **View only** or **Manage Shortlist** for each named connection. Normal runs
+use the configured services and may incur provider charges; sensitive changes still need browser
+approval.
 
 **Requirements and limits:**
 

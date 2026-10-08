@@ -19,6 +19,7 @@ from shortlist.server.assistant.changes import (
     fingerprint,
 )
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
+from shortlist.server.assistant_auth import GrantConstraints
 from shortlist.server.db.models import Base, Event, Job, Setting
 from tests.db_helpers import disposing_engine
 
@@ -30,11 +31,13 @@ class Policy:
         if session.get(Setting, "test.revoked"):
             raise ChangeError("missing_permission", "Connection revoked")
         revision = session.get(Setting, "test.revision")
+        access = session.get(Setting, "test.access_role")
         return SimpleNamespace(
             grant_id=principal.grant_id,
             owner_account_id=principal.owner_account_id,
             client_id=principal.client_id,
             revision=revision.value["v"] if revision else 1,
+            constraints=GrantConstraints(basic_access_v1=access.value["role"] if access else None),
         )
 
     def authorize(self, grant, requirements):
@@ -209,6 +212,50 @@ def test_exact_owner_approval_allows_only_the_prepared_plan(env):
     env.service.approve(change["change_id"], owner_account_id=42)
     receipt = env.service.apply(env.principal, change["change_id"], "request-a")
     assert receipt["authorization_basis"] == "operation_approval"
+
+
+def test_view_role_blocks_an_already_approved_change_before_any_write(env):
+    env.adapter.require_approval = True
+    change = env.service.prepare(env.principal, "test.setting", {"value": 9})
+    env.service.approve(change["change_id"], owner_account_id=42)
+    with env.sessions() as session:
+        session.add(Setting(key="test.access_role", value={"role": "view"}))
+        session.commit()
+
+    assert env.service.get_change(env.principal, change["change_id"])["authorization"]["can_apply"] is False
+    with pytest.raises(ChangeError, match="Manage Shortlist"):
+        env.service.apply(env.principal, change["change_id"], "approved-before-downgrade")
+    with env.sessions() as session:
+        assert session.get(Setting, "test.value") is None
+        assert session.scalars(select(AssistantOperation)).all() == []
+
+
+@pytest.mark.parametrize("retired_kind", ["generation", "run"])
+def test_retired_or_legacy_run_plan_does_not_advertise_apply_for_manage_role(env, retired_kind):
+    change = env.service.prepare(env.principal, "test.setting", {"value": 9})
+    with env.sessions() as session:
+        stored = session.get(AssistantChange, change["change_id"])
+        stored.kind = retired_kind
+        stored.content_hash = fingerprint(
+            {
+                "schema_version": 1,
+                "kind": retired_kind,
+                "intent": stored.intent,
+                "dependencies": stored.dependencies,
+                "requirements": stored.requirements,
+                "effects": stored.effects,
+                "summary": stored.summary,
+            }
+        )
+        session.add(Setting(key="test.access_role", value={"role": "manage"}))
+        session.commit()
+
+    response = env.service.get_change(env.principal, change["change_id"])
+    assert response["authorization"]["can_apply"] is False
+    with pytest.raises(ChangeError, match=r"saved Shortlist settings|no longer available"):
+        env.service.apply(env.principal, change["change_id"], "retired-plan")
+    with env.sessions() as session:
+        assert session.get(Setting, "test.value") is None
 
 
 def test_foreign_owner_cannot_approve_or_read_a_plan(env):

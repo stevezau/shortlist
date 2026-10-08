@@ -3456,6 +3456,21 @@
         "additionalProperties": false,
         "description": "Revision-guarded owner change to one grant's authority.",
         "properties": {
+          "access_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "view",
+                  "manage"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Role"
+          },
           "approve_updated_access": {
             "default": false,
             "title": "Approve Updated Access",
@@ -3538,6 +3553,21 @@
         "additionalProperties": false,
         "description": "Owner-approved named assistant grant.",
         "properties": {
+          "access_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "view",
+                  "manage"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Role"
+          },
           "capabilities": {
             "anyOf": [
               {
@@ -3610,6 +3640,21 @@
         "additionalProperties": true,
         "description": "Safe browser-facing named grant authority.",
         "properties": {
+          "access_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "view",
+                  "manage"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Role"
+          },
           "capabilities": {
             "items": {
               "$ref": "#/components/schemas/Capability"
@@ -3674,6 +3719,7 @@
           "constraints",
           "requires_access_approval",
           "full_management",
+          "access_role",
           "revision",
           "expires_at"
         ],
@@ -3694,6 +3740,21 @@
         "additionalProperties": true,
         "description": "Grant authority plus owner-visible activity and call accounting.",
         "properties": {
+          "access_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "view",
+                  "manage"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Role"
+          },
           "capabilities": {
             "items": {
               "$ref": "#/components/schemas/Capability"
@@ -3799,6 +3860,7 @@
           "constraints",
           "requires_access_approval",
           "full_management",
+          "access_role",
           "revision",
           "expires_at",
           "created_at",

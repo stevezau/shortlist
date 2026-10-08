@@ -1,4 +1,4 @@
-"""Owner approval stays compact while real grant, OAuth and paid boundaries hold."""
+"""Two app roles stay compact while real grants and OAuth enforce their authority."""
 
 from __future__ import annotations
 
@@ -13,12 +13,14 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 import pytest
 from playwright.sync_api import Browser, Page, expect
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from shortlist.server.assistant.budgets import AssistantBudget
+from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
 from shortlist.server.assistant_auth.destinations import ConfiguredDestination
 from shortlist.server.assistant_auth.models import AssistantGrant
 from shortlist.server.auth import SESSION_COOKIE, session_serializer
+from shortlist.server.db.models import Job, Run
 from shortlist.server.db.session import make_engine, make_session_factory
 from tests.db_helpers import disposing_engine
 from tests.e2e.conftest import OWNER_ACCOUNT_ID, ShortlistApp
@@ -73,7 +75,7 @@ def _grant_payload(name: str) -> dict:
 def _create_grant(app: ShortlistApp, name: str, **overrides) -> dict:
     response = app.api("POST", "/assistant/grants", json={**_grant_payload(name), **overrides})
     assert response.status_code == 201, response.text
-    return response.json()
+    return _saved(app, response.json()["id"])
 
 
 def _saved(app: ShortlistApp, grant_id: str) -> dict:
@@ -81,7 +83,17 @@ def _saved(app: ShortlistApp, grant_id: str) -> dict:
 
 
 def _assert_preserved(actual: dict, original: dict) -> None:
-    for key in ("id", "client_id", "owner_account_id", "capabilities", "preset", "constraints", "revision"):
+    for key in (
+        "id",
+        "client_id",
+        "owner_account_id",
+        "capabilities",
+        "preset",
+        "constraints",
+        "revision",
+        "access_role",
+        "provider_call_quota",
+    ):
         assert actual[key] == original[key], key
     for key in ("expires_at",):
         assert (datetime.fromisoformat(actual[key]) if actual[key] else None) == (
@@ -134,24 +146,33 @@ def _capture_requested_view(page: Page, filename: str) -> None:
         page.screenshot(path=str(target / filename), full_page=True)
 
 
-def _assert_compact_approval(page: Page, width: int, *, paid_available: bool = True) -> None:
-    expect(page.get_by_role("checkbox")).to_have_count(1 if paid_available else 0)
-    expect(
-        page.get_by_role("button", name=re.compile("Advanced|Manage Shortlist|Suggest changes|Select all"))
-    ).to_have_count(0)
-    expect(page.get_by_role("textbox")).to_have_count(
-        1 if page.get_by_label("Connection name", exact=True).count() else 0
-    )
+VIEW_CAPABILITIES = {
+    "instance.read",
+    "config.read",
+    "catalog.read",
+    "people.read",
+    "activity.read",
+    "history.use",
+    "history.export",
+    "requests.read",
+}
+
+
+def _assert_compact_approval(page: Page, width: int) -> None:
+    expect(page.get_by_role("checkbox")).to_have_count(0)
+    expect(page.get_by_role("radio", name=re.compile(r"^View only(?:\s|$)"))).to_be_visible()
+    expect(page.get_by_role("radio", name=re.compile(r"^Manage Shortlist(?:\s|$)"))).to_be_visible()
+    expect(page.get_by_role("button", name=re.compile("Advanced|Select all|Paid access"))).to_have_count(0)
     expect(page.locator("textarea")).to_have_count(0)
-    expect(page.get_by_label(re.compile("Max batch|Max work|Connection expires"))).to_have_count(0)
-    expect(page.get_by_text("Passwords and API keys stay in Shortlist.", exact=False)).to_be_visible()
+    expect(page.get_by_role("spinbutton")).to_have_count(0)
+    expect(
+        page.get_by_label(re.compile("Max batch|Max work|Connection expires|Lifetime call allowance"))
+    ).to_have_count(0)
     expect(page.locator("body")).to_have_js_property("scrollWidth", width)
 
 
-def _mcp_capabilities(app: ShortlistApp, token: str) -> set[str]:
-    """Use only the bearer, without the fixture's browser cookie, for actual MCP authority."""
-    # The fixture publishes the canonical MCP URL without the internal uvicorn port.
-    # Match that Host when connecting to its ephemeral local listener, as a proxy does.
+def _mcp_request(app: ShortlistApp, token: str, method: str, params: dict) -> dict:
+    """Use only the issued bearer, with the fixture's canonical MCP Host."""
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json, text/event-stream",
@@ -174,39 +195,114 @@ def _mcp_capabilities(app: ShortlistApp, token: str) -> set[str]:
         assert initialized.status_code == 200
         response = client.post(
             "/mcp",
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "shortlist_get_instance", "arguments": {}},
-            },
+            json={"jsonrpc": "2.0", "id": 2, "method": method, "params": params},
         )
         assert response.status_code == 200
-        result = response.json()["result"]
-        assert result.get("isError") is not True
-        return set(result["structuredContent"]["data"]["capabilities"])
+        return response.json()
 
 
-def test_owner_explicitly_upgrades_legacy_access_and_removes_revoked_connection(app: ShortlistApp, page: Page) -> None:
+def _mcp_call(app: ShortlistApp, token: str, name: str, arguments: dict) -> dict:
+    response = _mcp_request(app, token, "tools/call", {"name": name, "arguments": arguments})
+    assert "error" not in response, response
+    return response["result"]
+
+
+def _mcp_capabilities(app: ShortlistApp, token: str) -> set[str]:
+    result = _mcp_call(app, token, "shortlist_get_instance", {})
+    assert result.get("isError") is not True
+    return set(result["structuredContent"]["data"]["capabilities"])
+
+
+def _work_counts(app: ShortlistApp) -> tuple[int, ...]:
+    with disposing_engine(make_engine(Path(app.config_dir))) as engine, make_session_factory(engine)() as session:
+        return tuple(
+            session.scalar(select(func.count()).select_from(model))
+            for model in (
+                AssistantChange,
+                AssistantOperation,
+                Job,
+                Run,
+            )
+        )
+
+
+def _assert_read_only_bearer(app: ShortlistApp, token: str) -> None:
+    before = _work_counts(app)
+    read = _mcp_call(app, token, "shortlist_list_rows", {"request": {}})
+    assert read.get("isError") is not True
+    for name, request in (
+        ("shortlist_plan_row", {"action": "update", "row_id": 1, "values": {"enabled": False}}),
+        ("shortlist_plan_run", {"row_ids": [1], "person_ids": [1], "dry_run": False}),
+        ("shortlist_preview_row", {"row_id": 1, "person_ids": [1]}),
+    ):
+        result = _mcp_call(app, token, name, {"request": request})
+        assert result.get("isError") is True, (name, result)
+        # A real role rejection must not be mistaken for a malformed-input pass.
+        text = str(result).lower()
+        assert any(word in text for word in ("permission", "access role", "read-only", "view only")), result
+    assert _work_counts(app) == before
+
+
+def _assert_standalone_generation_removed(app: ShortlistApp, token: str) -> None:
+    inventory = _mcp_request(app, token, "tools/list", {})
+    assert "error" not in inventory
+    assert "shortlist_generate_theme" not in {tool["name"] for tool in inventory["result"]["tools"]}
+    before = _work_counts(app)
+    response = _mcp_request(
+        app,
+        token,
+        "tools/call",
+        {
+            "name": "shortlist_generate_theme",
+            "arguments": {
+                "request": {
+                    "action": "prepare",
+                    "definition": {
+                        "brief": "A public uplifting film night",
+                        "media": "movie",
+                        "max_output_tokens": 256,
+                    },
+                }
+            },
+        },
+    )
+    assert "error" in response or response["result"].get("isError") is True
+    assert _work_counts(app) == before
+
+
+def _change_role(page: Page, app: ShortlistApp, original: dict, role: str) -> dict:
+    card = page.get_by_role("article").filter(has_text=original["name"])
+    card.get_by_role("button", name="Change access", exact=True).click()
+    form = page.locator("form").filter(
+        has=page.get_by_role("heading", name=f"Change access for {original['name']}", exact=True)
+    )
+    form.get_by_role(
+        "radio", name=re.compile(r"^View only(?:\s|$)" if role == "view" else r"^Manage Shortlist(?:\s|$)")
+    ).check()
+    with page.expect_request(
+        lambda request: request.method == "PATCH" and request.url.endswith(f"/assistant/grants/{original['id']}")
+    ) as update:
+        form.get_by_role("button", name="Save access", exact=True).click()
+    assert update.value.post_data_json == {"expected_revision": original["revision"], "access_role": role}
+    expect(page.get_by_role("status")).to_contain_text("Connection updated")
+    return _saved(app, original["id"])
+
+
+def test_owner_explicitly_changes_legacy_access_and_removes_revoked_connection(app: ShortlistApp, page: Page) -> None:
     legacy = _create_grant(app, "Legacy owner")
     _make_legacy(app, legacy["id"])
+    legacy = _saved(app, legacy["id"])
     revoked = _create_grant(app, "Disconnected owner")
     assert app.api("POST", f"/assistant/grants/{revoked['id']}/revoke").status_code == 200
     _open_assistant_access(page)
     card = page.get_by_role("article").filter(has_text=legacy["name"])
-    expect(card.get_by_text("Approval required", exact=True)).to_be_visible()
-    card.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-    with page.expect_request(
-        lambda request: request.method == "PATCH" and request.url.endswith(f"/assistant/grants/{legacy['id']}")
-    ) as approval:
-        page.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-    assert approval.value.post_data_json == {"expected_revision": legacy["revision"], "upgrade_owner_managed": True}
-    expect(page.get_by_role("status")).to_contain_text("Connection updated")
-    upgraded = _saved(app, legacy["id"])
-    assert upgraded["constraints"]["owner_managed"] is True
-    assert upgraded["requires_access_approval"] is False
-    assert upgraded["constraints"]["max_provider_calls"] == 0
-    assert "ai.generate" not in upgraded["capabilities"]
+    expect(card.get_by_text("Existing access", exact=False)).to_be_visible()
+    _assert_preserved(_saved(app, legacy["id"]), legacy)
+    managed = _change_role(page, app, legacy, "manage")
+    assert managed["access_role"] == "manage"
+    assert managed["requires_access_approval"] is False
+    assert managed["constraints"]["max_provider_calls"] == 0
+    assert "ai.generate" not in managed["capabilities"]
     page.get_by_role("article").filter(has_text=revoked["name"]).get_by_role(
         "button", name="Remove", exact=True
     ).click()
@@ -222,8 +318,9 @@ def test_owner_explicitly_upgrades_legacy_access_and_removes_revoked_connection(
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "mobile"])
-def test_compact_owner_consent_creates_full_access_and_requires_explicit_upgrade(
-    browser: Browser, app: ShortlistApp, nine_services: list[ConfiguredDestination], width: int
+@pytest.mark.parametrize("role", ["view", "manage"])
+def test_compact_roles_create_and_change_only_the_explicitly_selected_connection(
+    browser: Browser, app: ShortlistApp, nine_services: list[ConfiguredDestination], width: int, role: str
 ) -> None:
     assert len(app.api("GET", "/assistant/destinations").json()) == len(nine_services) == 9
     constraints = {
@@ -243,146 +340,105 @@ def test_compact_owner_consent_creates_full_access_and_requires_explicit_upgrade
         _assert_preserved(_saved(app, restricted["id"]), restricted)
         page.get_by_role("button", name="New connection", exact=True).click()
         _assert_compact_approval(page, width)
-        paid = page.get_by_role("checkbox", name="Allow this assistant to use paid services", exact=True)
-        expect(paid).not_to_be_checked()
-        expect(page.get_by_label("Lifetime call allowance", exact=True)).to_have_count(0)
+        expect(page.get_by_role("radio", name=re.compile(r"^Manage Shortlist(?:\s|$)"))).to_be_checked()
+        page.get_by_role(
+            "radio", name=re.compile(r"^View only(?:\s|$)" if role == "view" else r"^Manage Shortlist(?:\s|$)")
+        ).check()
+        if role == "manage":
+            expect(
+                page.get_by_text(re.compile(r"Runs may incur provider charges under your Shortlist settings\."))
+            ).to_be_visible()
         for service in nine_services:
             expect(page.get_by_role("checkbox", name=service.label, exact=True)).to_have_count(0)
         page.get_by_label("Connection name", exact=True).fill("Simple connection")
-        _capture_requested_view(page, f"assistant-create-{width}.png")
+        _capture_requested_view(page, f"assistant-create-{role}-{width}.png")
         button = page.get_by_role("button", name="Connect", exact=True)
-        assert button.bounding_box()["y"] + button.bounding_box()["height"] <= 900
+        box = button.bounding_box()
+        assert box and box["y"] + box["height"] <= 900
         with page.expect_request(
             lambda request: request.method == "POST" and request.url.endswith("/assistant/grants")
         ) as creation:
             button.click()
         body = creation.value.post_data_json
-        assert body["owner_managed"] is True
-        assert body["preset"] == "owner_automation"
-        assert body["constraints"] == {"max_provider_calls": 0}
-        assert "capabilities" not in body and "expires_in_days" not in body
+        assert body["access_role"] == role
+        assert (
+            not {"capabilities", "constraints", "paid_enabled", "max_provider_calls", "expires_in_days"} & body.keys()
+        )
         expect(page.get_by_role("article").filter(has_text="Simple connection")).to_be_visible()
         saved = next(
             grant for grant in app.api("GET", "/assistant/grants").json() if grant["name"] == "Simple connection"
         )
-        assert saved["constraints"]["owner_managed"] is True
+        assert saved["access_role"] == role
         assert saved["constraints"]["include_future_rows"] and saved["constraints"]["include_future_libraries"]
-        assert saved["constraints"]["max_batch_size"] is None and saved["constraints"]["max_work_per_operation"] is None
         assert saved["provider_call_quota"] == {"lifetime_limit": 0, "reserved": 0, "remaining": 0}
-        assert {"history.export", "history.providers", "requests.send", "maintenance.execute"} <= set(
-            saved["capabilities"]
-        )
         assert {"ai.generate", "secrets.read", "grants.manage"}.isdisjoint(saved["capabilities"])
-        assert saved["expires_at"] is not None
-
+        if role == "view":
+            assert set(saved["capabilities"]) == VIEW_CAPABILITIES
+        else:
+            assert {"history.providers", "requests.send", "maintenance.execute", "runs.execute", "rows.update"} <= set(
+                saved["capabilities"]
+            )
         card = page.get_by_role("article").filter(has_text=restricted["name"])
-        card.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
+        expect(card.get_by_text("Existing access", exact=False)).to_be_visible()
+        card.get_by_role("button", name="Change access", exact=True).click()
         _assert_compact_approval(page, width)
         form = page.locator("form").filter(
-            has=page.get_by_role("heading", name=f"Upgrade {restricted['name']} to full Shortlist access", exact=True)
+            has=page.get_by_role("heading", name=f"Change access for {restricted['name']}", exact=True)
         )
         expect(form).to_have_count(1)
         other_card = page.get_by_role("article").filter(has_text="Simple connection")
-        expect(other_card).to_have_count(1)
         expect(other_card.locator("form")).to_have_count(0)
-        expect(form).not_to_contain_text("Simple connection")
         expect(other_card).not_to_contain_text(restricted["name"])
-        _capture_requested_view(page, f"assistant-upgrade-{width}.png")
-        page.get_by_role("button", name="Cancel", exact=True).click()
+        if role == "manage":
+            _capture_requested_view(page, f"assistant-change-{role}-{width}.png")
+        form.get_by_role("button", name="Cancel", exact=True).click()
         _assert_preserved(_saved(app, restricted["id"]), restricted)
         card.get_by_role("button", name="New local credential", exact=True).click()
         expect(page.get_by_role("dialog")).to_be_visible()
         page.get_by_role("button", name="I saved it", exact=True).click()
         _assert_preserved(_saved(app, restricted["id"]), restricted)
-        card.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-        with page.expect_request(
-            lambda request: request.method == "PATCH" and request.url.endswith(f"/assistant/grants/{restricted['id']}")
-        ) as upgrade:
-            page.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-        assert upgrade.value.post_data_json == {
-            "expected_revision": restricted["revision"],
-            "upgrade_owner_managed": True,
-        }
-        expect(page.get_by_role("status")).to_contain_text("Connection updated")
-        upgraded = _saved(app, restricted["id"])
-        assert upgraded["revision"] == restricted["revision"] + 1
-        assert upgraded["constraints"]["owner_managed"] is True
-        assert upgraded["constraints"]["include_future_rows"] and upgraded["constraints"]["include_future_libraries"]
-        assert upgraded["provider_call_quota"] == {"lifetime_limit": 0, "reserved": 0, "remaining": 0}
-        for key in ("id", "client_id", "owner_account_id", "expires_at"):
-            assert upgraded[key] == restricted[key]
+        changed = _change_role(page, app, restricted, role)
+        assert changed["revision"] == restricted["revision"] + 1
+        assert changed["access_role"] == role
+        assert changed["provider_call_quota"] == restricted["provider_call_quota"]
+        for key in ("id", "client_id", "owner_account_id"):
+            assert changed[key] == restricted[key]
+        assert datetime.fromisoformat(changed["expires_at"]) == datetime.fromisoformat(restricted["expires_at"])
         _assert_preserved(_saved(app, saved["id"]), saved)
 
 
-def test_paid_validation_and_explicit_upgrade_preserve_historical_usage(page: Page, app: ShortlistApp) -> None:
-    original = _create_grant(app, "Historical paid connection", capabilities=["instance.read", "ai.generate"])
-    _reserve_historical_call(app, original["id"])
-    _open_assistant_access(page)
-    card = page.get_by_role("article").filter(has_text=original["name"])
-    card.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-    paid = page.get_by_role("checkbox", name="Allow this assistant to use paid services", exact=True)
-    expect(paid).not_to_be_checked()
-    expect(page.get_by_text("Used or uncertain: 1 · Remaining: 0", exact=True)).to_be_visible()
-    page.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-    expect(page.get_by_role("status")).to_contain_text("Connection updated")
-    upgraded = _saved(app, original["id"])
-    assert "ai.generate" in upgraded["capabilities"]
-    assert upgraded["provider_call_quota"] == {"lifetime_limit": 0, "reserved": 1, "remaining": 0}
-    card.get_by_role("button", name="Paid access", exact=True).click()
-    paid.check()
-    allowance = page.get_by_label("Lifetime call allowance", exact=True)
-    expect(allowance).to_have_value("2")
-    for invalid in ("", "1", "1.5", "101"):
-        allowance.fill(invalid)
-        expect(allowance).to_be_visible()
-        page.get_by_role("button", name="Save paid access", exact=True).click()
-        expect(allowance).to_be_focused()
-        assert allowance.evaluate("element => element.validity.valid") is False
-        _assert_preserved(_saved(app, original["id"]), upgraded)
-    allowance.fill("2")
-    page.get_by_role("button", name="Save paid access", exact=True).click()
-    expect(card.get_by_role("button", name="Paid access", exact=True)).to_be_visible()
-    enabled = _saved(app, original["id"])
-    assert enabled["provider_call_quota"] == {"lifetime_limit": 2, "reserved": 1, "remaining": 1}
-    assert enabled["capabilities"] == upgraded["capabilities"]
-    card.get_by_role("button", name="Paid access", exact=True).click()
-    paid.uncheck()
-    page.get_by_role("button", name="Save paid access", exact=True).click()
-    expect(card.get_by_role("button", name="Paid access", exact=True)).to_be_visible()
-    disabled = _saved(app, original["id"])
-    assert disabled["provider_call_quota"] == {"lifetime_limit": 0, "reserved": 1, "remaining": 0}
-    assert set(disabled["capabilities"]) == set(upgraded["capabilities"]) - {"ai.generate"}
-
-
-def test_legacy_allowance_without_ai_permission_stays_off_through_upgrade(page: Page, app: ShortlistApp) -> None:
+@pytest.mark.parametrize("limit,had_ai", [(0, True), (3, False)])
+def test_role_changes_preserve_historical_accounting_without_paid_controls(
+    page: Page, app: ShortlistApp, limit: int, had_ai: bool
+) -> None:
     original = _create_grant(
         app,
-        "Legacy unused allowance",
-        capabilities=["instance.read"],
-        constraints={**_grant_payload("unused")["constraints"], "max_provider_calls": 3},
+        "Historical connection",
+        capabilities=["instance.read", *(["ai.generate"] if had_ai else [])],
+        constraints={**_grant_payload("unused")["constraints"], "max_provider_calls": limit},
     )
     _reserve_historical_call(app, original["id"])
+    original = _saved(app, original["id"])
     _open_assistant_access(page)
-    card = page.get_by_role("article").filter(has_text=original["name"])
-    expect(card.get_by_text("0 paid calls available", exact=False)).to_be_visible()
-    card.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-    expect(
-        page.get_by_role("checkbox", name="Allow this assistant to use paid services", exact=True)
-    ).not_to_be_checked()
-    page.get_by_role("button", name="Cancel", exact=True).click()
     _assert_preserved(_saved(app, original["id"]), original)
-    card.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-    page.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-    expect(page.get_by_role("status")).to_contain_text("Connection updated")
-    updated = _saved(app, original["id"])
-    assert "ai.generate" not in updated["capabilities"]
-    assert updated["provider_call_quota"] == {"lifetime_limit": 3, "reserved": 1, "remaining": 2}
-    expect(card.get_by_text("0 paid calls available", exact=False)).to_be_visible()
+    for role in ("view", "manage"):
+        changed = _change_role(page, app, original, role)
+        assert changed["provider_call_quota"] == {
+            "lifetime_limit": limit,
+            "reserved": 1,
+            "remaining": max(0, limit - 1),
+        }
+        assert "ai.generate" not in changed["capabilities"]
+        assert changed["access_role"] == role
+        assert changed["revision"] == original["revision"] + 1
+        expect(page.get_by_role("checkbox")).to_have_count(0)
+        expect(page.get_by_role("spinbutton")).to_have_count(0)
+        original = changed
 
 
 @pytest.mark.parametrize("width", [1280, 390], ids=["desktop", "mobile"])
-@pytest.mark.parametrize("mode", ["limited", "full", "existing-custom"])
-def test_oauth_consent_keeps_actual_bearer_scopes_and_existing_grants(
+@pytest.mark.parametrize("mode", ["view", "manage", "readonly-request", "partial-manage", "existing-custom"])
+def test_oauth_roles_enforce_real_bearer_authority_and_keep_existing_grants(
     browser: Browser, app: ShortlistApp, nine_services: list[ConfiguredDestination], width: int, mode: str
 ) -> None:
     assert len(app.api("GET", "/assistant/destinations").json()) == len(nine_services) == 9
@@ -403,34 +459,37 @@ def test_oauth_consent_keeps_actual_bearer_scopes_and_existing_grants(
     client_id = registration.json()["client_id"]
     verifier = "browser-consent-proof-" + "x" * 43
     challenge = urlsafe_b64encode(sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    requested = {"instance.read", "config.read"}
-    if mode == "full":
-        advertised = app.api("GET", "/.well-known/oauth-authorization-server")
-        assert advertised.status_code == 200, advertised.text
-        requested = set(advertised.json()["scopes_supported"])
-        assert {"rows.update", "ai.generate", "history.export", "requests.send"} <= requested
-    elif mode == "existing-custom":
-        requested.update({"rows.update", "ai.generate", "history.export", "requests.send"})
-    expected = requested - {"ai.generate"}
+    advertised = app.api("GET", "/.well-known/oauth-authorization-server")
+    assert advertised.status_code == 200
+    requested = set(advertised.json()["scopes_supported"])
+    assert {"rows.update", "runs.execute", "history.export", "requests.send"} <= requested
+    role = "view" if mode in {"view", "readonly-request"} else "manage"
+    expected = VIEW_CAPABILITIES if role == "view" else requested - {"ai.generate", "secrets.read", "grants.manage"}
+    if mode == "readonly-request":
+        requested = {"instance.read", "config.read"}
+        expected = requested
+    if mode == "partial-manage":
+        requested = {"instance.read", "config.read", "rows.update"}
+        expected = requested
     original = None
     if mode == "existing-custom":
+        requested = {"instance.read", "config.read", "rows.update", "history.export", "requests.send"}
         expected = {"instance.read", "config.read", "rows.update"}
-        constraints = {
-            **_grant_payload("unused")["constraints"],
-            "row_ids": [1],
-            "library_keys": ["1"],
-            "setting_groups": ["system"],
-            "destination_ids": ["https://previously-approved.example"],
-            "include_future_rows": False,
-            "include_future_libraries": False,
-            "max_batch_size": 7,
-        }
         original = _create_grant(
             app,
             "Existing custom client",
             client_id=client_id,
             capabilities=sorted(expected | {"history.providers"}),
-            constraints=constraints,
+            constraints={
+                **_grant_payload("unused")["constraints"],
+                "row_ids": [1],
+                "library_keys": ["1"],
+                "setting_groups": ["system"],
+                "destination_ids": ["https://previously-approved.example"],
+                "include_future_rows": False,
+                "include_future_libraries": False,
+                "max_batch_size": 7,
+            },
         )
     query = urlencode(
         {
@@ -460,46 +519,28 @@ def test_oauth_consent_keeps_actual_bearer_scopes_and_existing_grants(
         expect(page.get_by_role("button", name="Allow connection", exact=True)).to_be_enabled()
         if original:
             expect(page.get_by_role("radio", name=re.compile("^Existing custom client"))).to_be_checked()
-            expect(page.get_by_text("Your saved connection keeps its existing access.", exact=False)).to_be_visible()
-            expect(
-                page.get_by_text("Approving this sign-in does not upgrade the connection.", exact=False)
-            ).to_be_visible()
             expect(page.get_by_role("checkbox")).to_have_count(0)
         else:
-            _assert_compact_approval(page, width, paid_available=mode != "limited")
-            paid = page.get_by_role("checkbox", name="Allow this assistant to use paid services", exact=True)
-            if mode == "limited":
-                expect(paid).to_have_count(0)
-                expect(page.get_by_text("It cannot change your setup.", exact=False)).to_be_visible()
-            else:
-                expect(paid).not_to_be_checked()
-                expect(page.get_by_text("It cannot gain more through this approval.", exact=False)).to_have_count(0)
-                expect(page.get_by_text("It cannot change your setup.", exact=False)).to_have_count(0)
-            if mode == "full" and width == 1280:
-                paid.check()
-                allowance = page.get_by_label("Lifetime call allowance", exact=True)
-                for invalid in ("", "1.5", "101"):
-                    allowance.fill(invalid)
-                    page.get_by_role("button", name="Allow connection", exact=True).click()
-                    expect(allowance).to_be_focused()
-                    assert allowance.evaluate("element => element.validity.valid") is False
-                    assert writes == []
-                paid.uncheck()
-        _capture_requested_view(page, f"assistant-oauth-{mode}-{width}.png")
+            _assert_compact_approval(page, width)
+            page.get_by_role(
+                "radio", name=re.compile(r"^View only(?:\s|$)" if role == "view" else r"^Manage Shortlist(?:\s|$)")
+            ).check()
+        if (mode, width) in {("view", 390), ("manage", 1280)}:
+            _capture_requested_view(page, f"assistant-oauth-{mode}-{width}.png")
         page.get_by_role("button", name="Allow connection", exact=True).click()
         page.wait_for_url(callback + "*")
-        callback_values = parse_qs(urlsplit(page.url).query)
-        assert callback_values["state"] == ["browser-consent-proof"]
+        values = parse_qs(urlsplit(page.url).query)
+        assert values["state"] == ["browser-consent-proof"]
         saved = next(grant for grant in app.api("GET", "/assistant/grants").json() if grant["client_id"] == client_id)
         if original:
             assert writes == []
             _assert_preserved(saved, original)
         else:
             assert len(writes) == 1
-            assert writes[0].post_data_json["owner_managed"] is True
+            assert writes[0].post_data_json["access_role"] == role
             assert set(writes[0].post_data_json["capabilities"]) == requested
-            assert writes[0].post_data_json["constraints"] == {"max_provider_calls": 0}
-            assert saved["constraints"]["owner_managed"] is True
+            assert not {"constraints", "paid_enabled", "max_provider_calls"} & writes[0].post_data_json.keys()
+            assert saved["access_role"] == role
             assert set(saved["capabilities"]) == expected
             assert saved["provider_call_quota"] == {"lifetime_limit": 0, "reserved": 0, "remaining": 0}
         token = app.api(
@@ -510,7 +551,7 @@ def test_oauth_consent_keeps_actual_bearer_scopes_and_existing_grants(
                 "client_id": client_id,
                 "redirect_uri": callback,
                 "resource": "http://127.0.0.1/mcp",
-                "code": callback_values["code"][0],
+                "code": values["code"][0],
                 "code_verifier": verifier,
             },
         )
@@ -518,22 +559,15 @@ def test_oauth_consent_keeps_actual_bearer_scopes_and_existing_grants(
         assert set(token.json()["scope"].split()) == expected
         credential = token.json()["access_token"]
         assert _mcp_capabilities(app, credential) == expected
-        if original or mode == "limited":
+        if role == "view":
+            _assert_read_only_bearer(app, credential)
+        _assert_standalone_generation_removed(app, credential)
+        if original or role == "view" or mode == "partial-manage":
             _open_assistant_access(page)
-            card = page.get_by_role("article").filter(has_text=saved["name"])
-            expect(card.get_by_text("Existing limited access", exact=False)).to_be_visible()
-            card.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-            with page.expect_request(
-                lambda request: request.method == "PATCH" and request.url.endswith(f"/assistant/grants/{saved['id']}")
-            ) as upgrade:
-                page.get_by_role("button", name="Upgrade to full Shortlist access", exact=True).click()
-            assert upgrade.value.post_data_json == {
-                "expected_revision": saved["revision"],
-                "upgrade_owner_managed": True,
-            }
-            expect(page.get_by_role("status")).to_contain_text("Connection updated")
-            updated = _saved(app, saved["id"])
+            updated = _change_role(page, app, saved, "manage")
             assert "requests.send" in updated["capabilities"]
             assert updated["provider_call_quota"] == saved["provider_call_quota"]
             assert updated["expires_at"] == saved["expires_at"]
             assert _mcp_capabilities(app, credential) == expected
+            if role == "view":
+                _assert_read_only_bearer(app, credential)

@@ -359,6 +359,7 @@ class RunService:
         from shortlist.engine.provider_calls import ProviderCallControls
         from shortlist.server.assistant.changes import ChangeError
         from shortlist.server.assistant.run_adapter import (
+            CONFIGURED_RUN_POLICY,
             config_fingerprint,
             validate_execution_in_session,
         )
@@ -370,11 +371,15 @@ class RunService:
             contract, profiles = validate_execution_in_session(session, self.state, run)
             intent = contract["intent"]
             guard = RunSpendGuard(self.state, run_id)
-            controls = ProviderCallControls(
-                guard=guard,
-                max_output_tokens=intent["max_output_tokens"],
-                max_native_tool_uses=intent["max_native_tool_uses"],
-                allow_provider_managed_search=intent["allow_provider_managed_search"],
+            controls = (
+                ProviderCallControls(guard=guard, allow_provider_managed_search=True)
+                if contract.get("policy") == CONFIGURED_RUN_POLICY
+                else ProviderCallControls(
+                    guard=guard,
+                    max_output_tokens=intent["max_output_tokens"],
+                    max_native_tool_uses=intent["max_native_tool_uses"],
+                    allow_provider_managed_search=intent["allow_provider_managed_search"],
+                )
             )
             ctx = self.build_context(
                 dry_run=dry_run,

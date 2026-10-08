@@ -120,22 +120,31 @@ class DiscoveryService:
                 "version": __version__,
                 "grant_id": principal.grant_id,
                 "connection_name": principal.name,
+                "access_role": principal.constraints.basic_access_v1,
                 "preset": principal.preset.value,
                 "capabilities": sorted(c.value for c in principal.capabilities),
                 "constraints": principal.constraints.public_dict(),
                 "requires_access_approval": principal.constraints.requires_access_approval,
                 "grant_revision": principal.revision,
-                "provider_call_quota": {
-                    "lifetime_limit": principal.constraints.max_provider_calls,
-                    "reserved": reserved,
-                    "remaining": max(0, principal.constraints.max_provider_calls - reserved),
-                    "description": (
-                        "Conservative lifetime call reservations for direct assistant AI, search and image work; "
-                        "not a currency limit or a cap on separately owner-approved recurring automation."
-                    ),
-                },
+                **(
+                    {
+                        "provider_call_quota": {
+                            "lifetime_limit": principal.constraints.max_provider_calls,
+                            "reserved": reserved,
+                            "remaining": max(0, principal.constraints.max_provider_calls - reserved),
+                            "description": "Historical lifetime reservation for this legacy connection.",
+                        }
+                    }
+                    if principal.constraints.basic_access_v1 is None
+                    else {}
+                ),
                 "expires_at": principal.expires_at.isoformat() if principal.expires_at else None,
-                "workflow": ["discover", "plan", "review", "apply", "monitor"],
+                "workflow": (
+                    ["discover", "read"]
+                    if principal.constraints.basic_access_v1 == "view"
+                    or Capability.CHANGES_PREPARE not in principal.capabilities
+                    else ["discover", "plan", "review", "apply", "monitor"]
+                ),
                 "guides": sorted(GUIDES),
             },
             warnings=(

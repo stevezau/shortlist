@@ -75,6 +75,19 @@ class RunIntent(RunLimits):
     include_shared: bool = False
 
 
+class ConfiguredRunIntent(StrictModel):
+    """Only selectors for a normal run of the owner's saved configuration."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    row_ids: list[int] = Field(min_length=1, max_length=100)
+    person_ids: list[int] = Field(min_length=1, max_length=100)
+    dry_run: bool
+    include_shared: bool = False
+
+
+CONFIGURED_RUN_POLICY = "configured_run_v1"
+
+
 def _serializable(value):
     if dataclasses.is_dataclass(value):
         return _serializable(dataclasses.asdict(value))
@@ -122,6 +135,9 @@ class RunAdapter:
 
     def project(self, session, intent: dict):
         body = RunIntent.model_validate(intent)
+        return self._project(session, body, configured=False)
+
+    def _project(self, session, body: RunIntent | ConfiguredRunIntent, *, configured: bool):
         body.row_ids = sorted(set(body.row_ids))
         body.person_ids = sorted(set(body.person_ids))
         rows = list(session.scalars(select(Collection).where(Collection.id.in_(body.row_ids)).order_by(Collection.id)))
@@ -146,10 +162,14 @@ class RunAdapter:
         from .run_effects import paid_effect_contract
 
         spend = paid_effect_contract(
-            config, SettingsStore(session, self.state.secrets), body, config_hash=config_fingerprint
+            config,
+            SettingsStore(session, self.state.secrets),
+            body,
+            config_hash=config_fingerprint,
+            configured=configured,
         )
         capabilities = ["runs.preview" if effective_dry else "runs.execute", "history.use", "history.providers"]
-        if body.max_provider_calls:
+        if not configured and body.max_provider_calls:
             capabilities.append(Capability.AI_GENERATE.value)
         if spend["acquisitions"]:
             capabilities.append("requests.send")
@@ -160,6 +180,9 @@ class RunAdapter:
         # The current engine's auxiliary privacy, retirement and shelf passes cover all rows.
         # Declare that footprint instead of treating build_only as a security boundary.
         touched_rows = list(session.scalars(select(Collection).order_by(Collection.id))) if not effective_dry else rows
+        acquisitions_limit = (
+            (config.requests.max_per_run if config.requests is not None else 0) if configured else body.max_acquisitions
+        )
         requirements = AccessRequirements(
             capabilities=tuple(capabilities),
             row_ids=tuple(row.id for row in touched_rows),
@@ -167,12 +190,14 @@ class RunAdapter:
             library_keys=tuple(sorted({str(key) for row in touched_rows for key in row.library_keys})),
             dynamic_libraries=True,
             destination_ids=tuple(sorted(destinations)),
-            batch_size=max(len(rows), body.max_acquisitions),
-            work_units=max(len(rows) * len(people), body.max_acquisitions),
-            provider_calls=body.max_provider_calls,
-            requires_approval=spend["provider_managed_search"],
+            batch_size=max(len(rows), acquisitions_limit),
+            work_units=max(len(rows) * len(people), acquisitions_limit),
+            provider_calls=None if configured else body.max_provider_calls,
+            requires_approval=spend["provider_managed_search"] and not configured,
         )
         contract = {
+            **({"policy": CONFIGURED_RUN_POLICY} if configured else {}),
+            **({"acquisition_limit": acquisitions_limit} if configured else {}),
             "intent": body.model_dump(mode="json"),
             "dependencies": dependencies,
             "config_hash": config_fingerprint(config),
@@ -236,6 +261,40 @@ class RunAdapter:
         )
 
 
+class ConfiguredRunAdapter(RunAdapter):
+    """Queue a normal saved-configuration run under explicit Manage consent."""
+
+    kind = "configured_run"
+
+    def project(self, session, intent: dict):
+        body = ConfiguredRunIntent.model_validate(intent)
+        return self._project(session, body, configured=True)
+
+    def prepare(self, session, intent: dict) -> DomainPlan:
+        body, requirements, contract, _ = self.project(session, intent)
+        return DomainPlan(
+            normalized_intent=body.model_dump(mode="json"),
+            dependencies=contract["dependencies"],
+            requirements=requirements,
+            effects=(EffectIntent("assistant.run", {"run_id": {"$ref": "run_id"}}, "run", max_attempts=1),),
+            summary={
+                "description": "Queue one run of the saved Shortlist configuration.",
+                "row_ids": body.row_ids,
+                "person_ids": body.person_ids,
+                "dry_run": contract["effective_dry_run"],
+                "include_shared": body.include_shared,
+                "external_generation": bool(contract["spend"]["providers"]),
+                "provider_calls": contract["spend"]["providers"],
+                "acquisition_requests": bool(contract["spend"]["acquisitions"]),
+                "acquisition_destinations": sorted({item["destination"] for item in contract["spend"]["acquisitions"]}),
+                "billing": "Normal runs use Shortlist's configured services and may incur provider charges.",
+                "provider_managed_search": contract["spend"]["provider_managed_search"],
+                "work_units": requirements.work_units,
+                "library_scope": "The engine reads all available library indexes.",
+            },
+        )
+
+
 def validate_execution_in_session(session, state, run: Run):
     """Revalidate a queued run's identity, exact effects and configuration in one snapshot."""
     if getattr(state, "assistant_auth", None) is None:
@@ -270,12 +329,18 @@ def validate_execution_in_session(session, state, run: Run):
         grant,
         capabilities=grant.capabilities & frozenset(Capability(value) for value in actor["effective_capabilities"]),
     )
+    configured = contract.get("policy") == CONFIGURED_RUN_POLICY
+    if "policy" in contract and not configured:
+        raise ChangeError("missing_permission", "The run has an unknown authorization policy.")
+    if configured and grant.constraints.basic_access_v1 != "manage":
+        raise ChangeError("missing_permission", "Configured runs require current Manage Shortlist access.")
     requirements = AccessRequirements(**actor["requirements"])
     if fingerprint(dataclasses.asdict(requirements)) != actor["requirements_hash"]:
         raise ChangeError("stale_plan", "The run's effect contract changed.")
-    if actor["authorization_basis"] != "operation_approval":
+    if configured or actor["authorization_basis"] != "operation_approval":
         require_authorized(grant, (Capability(value) for value in requirements.capabilities), requirements.selection())
-    _, current_requirements, projected, profiles = RunAdapter(state).project(session, contract["intent"])
+    adapter = ConfiguredRunAdapter(state) if configured else RunAdapter(state)
+    _, current_requirements, projected, profiles = adapter.project(session, contract["intent"])
     if projected != contract or fingerprint(dataclasses.asdict(current_requirements)) != fingerprint(
         dataclasses.asdict(requirements)
     ):

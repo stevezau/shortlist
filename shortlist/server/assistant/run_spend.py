@@ -20,7 +20,7 @@ from shortlist.server.services.request_actions import (
 from .budgets import AssistantBudget
 from .operation_models import AssistantOperation, AssistantRequestDispatch, AssistantRunCall
 from .policy import ChangeError
-from .run_adapter import config_fingerprint, validate_execution_in_session
+from .run_adapter import CONFIGURED_RUN_POLICY, config_fingerprint, validate_execution_in_session
 
 
 class RunSpendGuard:
@@ -55,12 +55,15 @@ class RunSpendGuard:
             raise ChangeError("missing_permission", "The run is stopped or is no longer active.")
         contract, _profiles = validate_execution_in_session(session, self.state, run)
         actor = run.stats["assistant_actor"]
-        grant = session.get(AssistantGrant, actor["grant_id"])
-        maximum = GrantConstraints.from_dict(grant.constraints).max_provider_calls
-        budget = session.get(AssistantBudget, actor["grant_id"])
-        reserved = budget.provider_calls_reserved if budget else 0
-        if reserved > maximum or reserved < contract["intent"]["max_provider_calls"]:
-            raise ChangeError("budget_exceeded", "The connection's reserved provider-call budget is no longer valid.")
+        if contract.get("policy") != CONFIGURED_RUN_POLICY:
+            grant = session.get(AssistantGrant, actor["grant_id"])
+            maximum = GrantConstraints.from_dict(grant.constraints).max_provider_calls
+            budget = session.get(AssistantBudget, actor["grant_id"])
+            reserved = budget.provider_calls_reserved if budget else 0
+            if reserved > maximum or reserved < contract["intent"]["max_provider_calls"]:
+                raise ChangeError(
+                    "budget_exceeded", "The connection's reserved provider-call budget is no longer valid."
+                )
         return run, contract, actor
 
     def _stop(self, session, run, code, *, unknown=False):
@@ -94,6 +97,8 @@ class RunSpendGuard:
             raise ChangeError(
                 "missing_permission", "The provider, model, or destination was not approved for this run."
             )
+        if contract.get("policy") == CONFIGURED_RUN_POLICY:
+            return
         if call.kind in {"completion", "native_search"} and (
             type(call.output_tokens) is not int or not 0 < call.output_tokens <= intent["max_output_tokens"]
         ):
@@ -117,9 +122,10 @@ class RunSpendGuard:
                 count = session.scalar(
                     select(func.count()).select_from(AssistantRunCall).where(AssistantRunCall.run_id == self.run_id)
                 )
-                if count >= contract["intent"]["max_provider_calls"]:
+                configured = contract.get("policy") == CONFIGURED_RUN_POLICY
+                if not configured and count >= contract["intent"]["max_provider_calls"]:
                     raise ChangeError("budget_exceeded", "The run's provider-call budget is exhausted.")
-                if call.kind == "image":
+                if call.kind == "image" and not configured:
                     images = session.scalar(
                         select(func.count())
                         .select_from(AssistantRunCall)
@@ -221,7 +227,9 @@ class RunSpendGuard:
                             AssistantRequestDispatch.origin == "assistant_run",
                         )
                     )
-                    if count >= contract["intent"]["max_acquisitions"]:
+                    configured = contract.get("policy") == CONFIGURED_RUN_POLICY
+                    limit = contract["acquisition_limit"] if configured else contract["intent"]["max_acquisitions"]
+                    if count >= limit:
                         raise ChangeError("budget_exceeded", "The run's acquisition budget is exhausted.")
                     body["candidate_id"] = candidate.id if candidate else None
                     claim = AssistantRequestDispatch(

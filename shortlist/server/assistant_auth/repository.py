@@ -23,7 +23,7 @@ from .models import (
     AssistantOAuthRevokedFamily,
     AssistantOAuthToken,
 )
-from .policy import AuthorizationDenied, capabilities_for_preset, owner_managed_capabilities
+from .policy import AuthorizationDenied, basic_role_capabilities, capabilities_for_preset, owner_managed_capabilities
 from .types import (
     ASSISTANT_CAPABILITIES,
     Capability,
@@ -61,14 +61,18 @@ def _opaque_id(prefix: str) -> str:
 
 
 def _grant_context(row: AssistantGrant) -> GrantContext:
+    constraints = GrantConstraints.from_dict(row.constraints)
+    capabilities = frozenset(Capability(value) for value in row.capabilities)
+    if constraints.basic_access_v1 is not None:
+        capabilities &= frozenset(basic_role_capabilities(constraints.basic_access_v1))
     return GrantContext(
         grant_id=row.id,
         owner_account_id=row.owner_account_id,
         client_id=row.client_id,
         name=row.name,
         preset=GrantPreset(row.preset),
-        capabilities=frozenset(Capability(value) for value in row.capabilities),
-        constraints=GrantConstraints.from_dict(row.constraints),
+        capabilities=capabilities,
+        constraints=constraints,
         revision=row.revision,
         expires_at=as_utc(row.expires_at).astimezone(UTC) if row.expires_at is not None else None,
     )
@@ -203,9 +207,14 @@ class AssistantAuthRepository:
     ) -> GrantContext:
         """Create a named grant; callers must already have browser owner consent."""
         values = set(capabilities_for_preset(preset) if capabilities is None else capabilities)
-        if constraints.owner_managed:
-            profile = owner_managed_capabilities(paid=constraints.max_provider_calls > 0)
+        if constraints.basic_access_v1 is not None:
+            profile = basic_role_capabilities(constraints.basic_access_v1)
             values = profile if capabilities is None else profile & values
+            constraints = replace(constraints, owner_managed=True, max_provider_calls=0)
+        if constraints.owner_managed:
+            if constraints.basic_access_v1 is None:
+                profile = owner_managed_capabilities(paid=constraints.max_provider_calls > 0)
+                values = profile if capabilities is None else profile & values
             constraints = replace(
                 constraints,
                 row_ids=frozenset(),
@@ -370,6 +379,10 @@ class AssistantAuthRepository:
         values = sorted({capability.value for capability in capabilities})
         if not ASSISTANT_CAPABILITIES.issuperset(Capability(value) for value in values):
             raise AuthorizationDenied("owner secrets and grant administration cannot be delegated")
+        if constraints.basic_access_v1 is not None and not basic_role_capabilities(
+            constraints.basic_access_v1
+        ).issuperset(Capability(value) for value in values):
+            raise AuthorizationDenied("capabilities exceed the selected access role")
         with self.sessions() as session:
             current = session.get(AssistantGrant, grant_id)
             if current is not None and GrantConstraints.from_dict(current.constraints).requires_access_approval:
@@ -439,6 +452,8 @@ class AssistantAuthRepository:
                 raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
 
             current_constraints = GrantConstraints.from_dict(row.constraints)
+            if current_constraints.basic_access_v1 is not None:
+                raise GrantUpdateConflict("change this connection's access role instead")
             if current_constraints.requires_access_approval:
                 raise GrantUpdateConflict("owner approval is required before changing this legacy grant")
             merged_constraints = current_constraints.as_dict()
@@ -589,6 +604,8 @@ class AssistantAuthRepository:
             if self._active_context(session, row, timestamp) is None or row.revision != expected_revision:
                 raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
             current = GrantConstraints.from_dict(row.constraints)
+            if current.basic_access_v1 is not None:
+                raise GrantUpdateConflict("change this connection's access role instead")
             if not upgrade and not current.owner_managed:
                 raise GrantUpdateConflict("upgrade this connection before changing its paid access")
             if (
@@ -653,6 +670,78 @@ class AssistantAuthRepository:
                         "grant_id": grant_id,
                         "actor": {"via": "browser", "account_id": owner_account_id},
                         "changed_fields": ["owner_managed"] if upgrade else ["paid_services"],
+                        "revision": expected_revision + 1,
+                    },
+                )
+            )
+            session.commit()
+            session.refresh(row)
+            return _effective_grant_context(session, row)
+
+    def set_basic_access(
+        self,
+        grant_id: str,
+        *,
+        owner_account_id: int,
+        expected_revision: int,
+        access_role: str,
+        now: datetime | None = None,
+    ) -> GrantContext:
+        """Apply one explicit owner role decision without changing historical paid usage."""
+        values = basic_role_capabilities(access_role)
+        if expected_revision <= 0:
+            raise ValueError("expected revision must be positive")
+        timestamp = _now(now)
+        with self.sessions() as session:
+            row = session.get(AssistantGrant, grant_id)
+            if row is None or row.owner_account_id != owner_account_id:
+                raise GrantUpdateNotFound("assistant grant not found")
+            if self._active_context(session, row, timestamp) is None or row.revision != expected_revision:
+                raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
+            current = GrantConstraints.from_dict(row.constraints)
+            updated = replace(
+                current,
+                row_ids=frozenset(),
+                person_ids=frozenset(),
+                library_keys=frozenset(),
+                setting_groups=frozenset(),
+                destination_ids=frozenset(),
+                include_future_rows=True,
+                include_future_people=True,
+                include_future_libraries=True,
+                max_batch_size=None,
+                max_work_per_operation=None,
+                owner_managed=True,
+                basic_access_v1=access_role,
+            )
+            changed = session.execute(
+                update(AssistantGrant)
+                .execution_options(synchronize_session=False)
+                .where(
+                    AssistantGrant.id == grant_id,
+                    AssistantGrant.owner_account_id == owner_account_id,
+                    AssistantGrant.revision == expected_revision,
+                    AssistantGrant.revoked_at.is_(None),
+                    or_(AssistantGrant.expires_at.is_(None), AssistantGrant.expires_at > timestamp),
+                )
+                .values(
+                    capabilities=sorted(capability.value for capability in values),
+                    constraints=updated.as_dict(),
+                    revision=AssistantGrant.revision + 1,
+                    updated_at=timestamp,
+                )
+            ).rowcount
+            if changed != 1:
+                session.rollback()
+                raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
+            session.add(
+                Event(
+                    scope="assistant.grant.basic_access",
+                    level="info",
+                    message={
+                        "grant_id": grant_id,
+                        "actor": {"via": "browser", "account_id": owner_account_id},
+                        "access_role": access_role,
                         "revision": expected_revision + 1,
                     },
                 )

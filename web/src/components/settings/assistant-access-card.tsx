@@ -25,8 +25,8 @@ export function AssistantAccessCard() {
                 <Bot aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 space-y-2">
                   <Badge variant={status.data.enabled ? "success" : "secondary"}>{status.data.enabled ? "Enabled" : "Off"}</Badge>
-                  <p className="max-w-prose text-sm font-medium">Connect ChatGPT, Claude or Codex to set up and manage Shortlist.</p>
-                  <p className="max-w-prose text-sm text-muted-foreground">Approve full Shortlist access with an optional finite allowance for direct paid services. Disconnect any time. The assistant never needs your owner API token.</p>
+                  <p className="max-w-prose text-sm font-medium">Connect ChatGPT, Claude or Codex to view or manage Shortlist.</p>
+                  <p className="max-w-prose text-sm text-muted-foreground">Choose View only or Manage Shortlist for each connection. Runs use your saved settings and may incur provider charges. Disconnect any time; the assistant never needs your owner API token.</p>
                   {!status.data.enabled && <p className="text-xs text-muted-foreground">{status.data.configuration_error ?? status.data.configuration_hint}</p>}
                 </div>
               </div>

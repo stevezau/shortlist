@@ -4834,6 +4834,8 @@ export interface components {
          * @description Revision-guarded owner change to one grant's authority.
          */
         GrantConstraintsPatchIn: {
+            /** Access Role */
+            access_role?: ("view" | "manage") | null;
             /**
              * Approve Updated Access
              * @default false
@@ -4861,6 +4863,8 @@ export interface components {
          * @description Owner-approved named assistant grant.
          */
         GrantCreateIn: {
+            /** Access Role */
+            access_role?: ("view" | "manage") | null;
             /** Capabilities */
             capabilities?: components["schemas"]["Capability"][] | null;
             /** Client Id */
@@ -4887,6 +4891,8 @@ export interface components {
          * @description Safe browser-facing named grant authority.
          */
         GrantOut: {
+            /** Access Role */
+            access_role: ("view" | "manage") | null;
             /** Capabilities */
             capabilities: components["schemas"]["Capability"][];
             /** Client Id */
@@ -4921,6 +4927,8 @@ export interface components {
          * @description Grant authority plus owner-visible activity and call accounting.
          */
         GrantSummaryOut: {
+            /** Access Role */
+            access_role: ("view" | "manage") | null;
             /** Capabilities */
             capabilities: components["schemas"]["Capability"][];
             /** Client Id */

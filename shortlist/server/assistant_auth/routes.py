@@ -7,7 +7,7 @@ import secrets
 import time
 from collections import deque
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -135,9 +135,16 @@ class GrantCreateIn(BaseModel):
     selected_destinations: list[DestinationSelection] = Field(default_factory=list)
     expires_in_days: int | None = Field(default=90, ge=1, le=365)
     owner_managed: bool = False
+    access_role: Literal["view", "manage"] | None = None
 
     @model_validator(mode="after")
     def owner_profile_is_server_defined(self) -> GrantCreateIn:
+        if self.access_role is not None and (
+            self.preset != GrantPreset.OWNER_AUTOMATION
+            or self.selected_destinations
+            or self.constraints.model_fields_set
+        ):
+            raise ValueError("basic access uses the server profile, not selected resources")
         if self.owner_managed and (
             self.preset != GrantPreset.OWNER_AUTOMATION
             or self.selected_destinations
@@ -180,10 +187,23 @@ class GrantConstraintsPatchIn(BaseModel):
     upgrade_owner_managed: bool = False
     paid_enabled: bool | None = None
     max_provider_calls: int | None = Field(default=None, ge=0, le=100)
+    access_role: Literal["view", "manage"] | None = None
 
     @model_validator(mode="after")
     def require_one_change(self) -> GrantConstraintsPatchIn:
         """Keep legacy approval separate from ordinary resource edits."""
+        if self.access_role is not None:
+            if (
+                self.approve_updated_access
+                or self.upgrade_owner_managed
+                or self.paid_enabled is not None
+                or self.max_provider_calls is not None
+                or self.constraints is not None
+                or self.capabilities is not None
+                or self.selected_destinations
+            ):
+                raise ValueError("access role cannot be combined with other changes")
+            return self
         if self.approve_updated_access and (
             self.constraints is not None
             or self.capabilities is not None
@@ -245,6 +265,7 @@ class GrantOut(PassthroughModel):
     constraints: GrantConstraintsOut
     requires_access_approval: bool
     full_management: bool
+    access_role: Literal["view", "manage"] | None
     revision: int
     expires_at: datetime | None
 
@@ -331,7 +352,15 @@ def create_owner_grant_router(repository: AssistantAuthRepository | None = None)
         )
         try:
             constraints = body.constraints.to_domain()
-            if body.owner_managed:
+            if body.access_role is not None:
+                constraints = GrantConstraints(
+                    owner_managed=True,
+                    basic_access_v1=body.access_role,
+                    include_future_rows=True,
+                    include_future_people=True,
+                    include_future_libraries=True,
+                )
+            elif body.owner_managed:
                 constraints = GrantConstraints(
                     owner_managed=True,
                     include_future_rows=True,
@@ -365,7 +394,14 @@ def create_owner_grant_router(repository: AssistantAuthRepository | None = None)
         """Apply explicit constraint changes without expanding grant administration."""
         current_repository = repository or _runtime(request).repository
         try:
-            if body.approve_updated_access:
+            if body.access_role is not None:
+                grant = current_repository.set_basic_access(
+                    grant_id,
+                    owner_account_id=owner.account_id,
+                    expected_revision=body.expected_revision,
+                    access_role=body.access_role,
+                )
+            elif body.approve_updated_access:
                 grant = current_repository.approve_updated_access(
                     grant_id,
                     owner_account_id=owner.account_id,
@@ -693,6 +729,7 @@ def _serialize_grant(grant) -> dict[str, Any]:
         "requires_access_approval": grant.constraints.requires_access_approval,
         "full_management": grant.constraints.owner_managed
         and owner_managed_capabilities().issubset(grant.capabilities),
+        "access_role": grant.constraints.basic_access_v1,
         "revision": grant.revision,
         "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
     }

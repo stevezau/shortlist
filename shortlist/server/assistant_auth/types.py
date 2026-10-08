@@ -75,6 +75,8 @@ class GrantConstraints:
     max_provider_calls: int = 0
     # Opt-in profile. Missing on older grants means exact legacy authority.
     owner_managed: bool = False
+    # Explicit owner-selected role; absence retains the grant's legacy authority.
+    basic_access_v1: str | None = None
 
     @property
     def requires_access_approval(self) -> bool:
@@ -99,6 +101,8 @@ class GrantConstraints:
         # reads these as a per-person ACL.
         result["person_ids"] = sorted(self.person_ids)
         result["include_future_people"] = self.include_future_people is True
+        if self.basic_access_v1 is not None:
+            result["basic_access_v1"] = self.basic_access_v1
         return result
 
     def public_dict(self) -> dict:
@@ -133,10 +137,13 @@ class GrantConstraints:
             "max_work_per_operation",
             "max_provider_calls",
             "owner_managed",
+            "basic_access_v1",
         }
         unknown = value.keys() - known
         if unknown:
             raise ValueError(f"unknown assistant grant constraints: {', '.join(sorted(unknown))}")
+        if value.get("basic_access_v1") not in (None, "view", "manage"):
+            raise ValueError("invalid basic access role")
         legacy_people = frozenset(value.pop("person_ids", ()))
         legacy_future_people = value.pop("include_future_people", False) is True
         for name in ("row_ids", "library_keys", "setting_groups", "destination_ids"):

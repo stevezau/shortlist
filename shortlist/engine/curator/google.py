@@ -204,7 +204,8 @@ class GoogleCurator:
         if controls is not None:
             if not controls.allow_provider_managed_search:
                 raise ProviderCallRefused("Google native search requires provider-managed search approval.")
-            config["max_output_tokens"] = controls.max_output_tokens
+            if controls.max_output_tokens is not None:
+                config["max_output_tokens"] = controls.max_output_tokens
         if with_schema:
             config["response_mime_type"] = "application/json"
             config["response_schema"] = _TITLES_SCHEMA

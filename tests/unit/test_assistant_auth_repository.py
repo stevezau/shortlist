@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from shortlist.server.assistant.budgets import AssistantBudget
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantPreset, StoredGrantIdentity
 from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.models import (
@@ -19,7 +20,7 @@ from shortlist.server.assistant_auth.models import (
     AssistantOAuthCode,
     AssistantOAuthToken,
 )
-from shortlist.server.assistant_auth.policy import AuthorizationDenied
+from shortlist.server.assistant_auth.policy import AuthorizationDenied, basic_role_capabilities
 from shortlist.server.assistant_auth.repository import (
     AssistantAuthRepository,
     GrantUpdateConflict,
@@ -114,6 +115,87 @@ def test_reducing_a_grant_increments_revision_and_invalidates_old_context() -> N
 
         assert updated.revision == grant.revision + 1
         assert updated.capabilities == frozenset({Capability.INSTANCE_READ})
+
+
+def test_explicit_basic_role_change_preserves_legacy_identity_expiry_and_paid_history() -> None:
+    with _repository() as (repository, sessions):
+        expires_at = NOW + timedelta(days=40)
+        grant = repository.create_grant(
+            owner_account_id=42,
+            client_id="legacy-client",
+            name="Legacy assistant",
+            preset=GrantPreset.OWNER_AUTOMATION,
+            capabilities={Capability.INSTANCE_READ, Capability.AI_GENERATE, Capability.RUNS_EXECUTE},
+            constraints=GrantConstraints(max_provider_calls=3),
+            expires_at=expires_at,
+            now=NOW,
+        )
+        with sessions() as session:
+            session.add(AssistantBudget(grant_id=grant.grant_id, provider_calls_reserved=1))
+            session.commit()
+
+        viewed = repository.set_basic_access(
+            grant.grant_id, owner_account_id=42, expected_revision=grant.revision, access_role="view", now=NOW
+        )
+
+        assert viewed.revision == grant.revision + 1
+        assert viewed.capabilities == frozenset(basic_role_capabilities("view"))
+        assert viewed.constraints.basic_access_v1 == "view"
+        assert viewed.constraints.owner_managed is True
+        assert viewed.constraints.max_provider_calls == 3
+        assert (viewed.owner_account_id, viewed.client_id, viewed.name, viewed.expires_at) == (
+            grant.owner_account_id,
+            grant.client_id,
+            grant.name,
+            expires_at,
+        )
+        with sessions() as session:
+            assert session.get(AssistantBudget, grant.grant_id).provider_calls_reserved == 1
+
+        with pytest.raises(GrantUpdateConflict):
+            repository.set_basic_access(
+                grant.grant_id, owner_account_id=42, expected_revision=grant.revision, access_role="manage", now=NOW
+            )
+        with pytest.raises(GrantUpdateNotFound):
+            repository.set_basic_access(
+                grant.grant_id, owner_account_id=7, expected_revision=viewed.revision, access_role="manage", now=NOW
+            )
+
+        managed = repository.set_basic_access(
+            grant.grant_id, owner_account_id=42, expected_revision=viewed.revision, access_role="manage", now=NOW
+        )
+        assert managed.capabilities == frozenset(basic_role_capabilities("manage"))
+        assert Capability.AI_GENERATE not in managed.capabilities
+        assert managed.constraints.max_provider_calls == 3
+        with sessions() as session:
+            assert session.get(AssistantBudget, grant.grant_id).provider_calls_reserved == 1
+
+
+def test_explicit_same_manage_role_save_restores_an_oauth_limited_grant_without_resetting_usage() -> None:
+    with _repository() as (repository, sessions):
+        grant = repository.create_grant(
+            owner_account_id=42,
+            client_id="limited-oauth-client",
+            name="Limited OAuth",
+            preset=GrantPreset.OWNER_AUTOMATION,
+            capabilities={Capability.INSTANCE_READ, Capability.CHANGES_PREPARE},
+            constraints=GrantConstraints(owner_managed=True, basic_access_v1="manage"),
+            now=NOW,
+        )
+        assert grant.capabilities == frozenset({Capability.INSTANCE_READ, Capability.CHANGES_PREPARE})
+        with sessions() as session:
+            session.add(AssistantBudget(grant_id=grant.grant_id, provider_calls_reserved=1))
+            session.commit()
+
+        restored = repository.set_basic_access(
+            grant.grant_id, owner_account_id=42, expected_revision=grant.revision, access_role="manage", now=NOW
+        )
+        assert restored.capabilities == frozenset(basic_role_capabilities("manage"))
+        assert Capability.AI_GENERATE not in restored.capabilities
+        assert restored.revision == grant.revision + 1
+        assert restored.constraints.max_provider_calls == 0
+        with sessions() as session:
+            assert session.get(AssistantBudget, grant.grant_id).provider_calls_reserved == 1
 
 
 def test_constraints_patch_is_owner_scoped_cas_and_preserves_other_grant_authority() -> None:

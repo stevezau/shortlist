@@ -303,12 +303,30 @@ class ChangeService:
             return False
         return not requirements.requires_approval
 
+    @staticmethod
+    def _require_role_for_change(grant, kind: str) -> None:
+        constraints = getattr(grant, "constraints", None)
+        role = constraints.basic_access_v1 if constraints is not None else None
+        if role == "view":
+            raise ChangeError("missing_permission", "Choose Manage Shortlist in AI assistants to change Shortlist.")
+        if role is not None and kind == "run":
+            raise ChangeError(
+                "missing_permission", "Manage Shortlist runs use saved Shortlist settings. Plan a new run."
+            )
+        if kind in {"generation", "assistant.generate_theme"}:
+            raise ChangeError(
+                "missing_permission", "Direct theme generation through assistants is no longer available."
+            )
+        if kind == "configured_run" and role != "manage":
+            raise ChangeError("missing_permission", "Choose Manage Shortlist before starting a configured run.")
+
     def prepare(self, principal: Principal, kind: str, intent: dict) -> dict:
         """Persist a bounded proposal without changing product configuration or issuing jobs."""
         now = _utc(self.clock())
         with self.sessions() as session:
             session.execute(text("BEGIN IMMEDIATE"))
             grant = self.policy.current_grant(session, principal, now)
+            self._require_role_for_change(grant, kind)
             self.policy.authorize(grant, AccessRequirements(capabilities=("changes.prepare",)))
             plan = self._project(session, kind, intent)
             data = json.loads(_canonical(_plan_data(plan)))
@@ -355,6 +373,7 @@ class ChangeService:
                 raise ChangeError("invalid_selection", "The change is not available to this owner.")
             principal = StoredGrantIdentity(change.grant_id, owner_account_id, change.client_id, change.grant_revision)
             grant = self.policy.current_grant(session, principal, now)
+            self._require_role_for_change(grant, change.kind)
             self._valid(change, grant, now)
             if change.operation_id is not None:
                 raise ChangeError("operation_conflict", "The change has already been applied.")
@@ -370,6 +389,7 @@ class ChangeService:
         with self.sessions() as lookup:
             grant = self.policy.current_grant(lookup, principal, _utc(self.clock()))
             change = self._owned(lookup, principal, change_id)
+            self._require_role_for_change(grant, change.kind)
             if change.operation_id is None:
                 self._valid(change, grant, _utc(self.clock()))
             adapter = self._adapter(change.kind)
@@ -394,6 +414,7 @@ class ChangeService:
             now = _utc(self.clock())
             grant = self.policy.current_grant(session, principal, now)
             change = self._owned(session, principal, change_id)
+            self._require_role_for_change(grant, change.kind)
             request_hash = fingerprint({"change_id": change.id, "content_hash": change.content_hash})
             key_identity = (grant.grant_id, grant.client_id, idempotency_key)
             known_key = session.get(AssistantOperationKey, key_identity)
@@ -553,6 +574,10 @@ class ChangeService:
             grant = self.policy.current_grant(session, principal, _utc(self.clock()))
             change = self._owned(session, principal, change_id)
             self._valid(change, grant, _utc(self.clock()))
+            try:
+                self._require_role_for_change(grant, change.kind)
+            except ChangeError:
+                return self._change_view(change, can_apply=False, disclose=False)
             requirements = AccessRequirements(**change.requirements)
             return self._change_view(
                 change,

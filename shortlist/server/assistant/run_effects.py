@@ -12,8 +12,12 @@ from .generation import provider_destination
 from .policy import ChangeError
 
 
-def paid_effect_contract(config, store, intent, *, config_hash):
-    """Resolve finite allowed descriptors without constructing any network client."""
+def paid_effect_contract(config, store, intent, *, config_hash, configured: bool = False):
+    """Resolve saved effect descriptors without constructing any network client.
+
+    ``configured`` is supplied only by the trusted configured-run adapter. It omits
+    legacy assistant budget demands while retaining the exact effect projection.
+    """
     provider = str(store.get("curator.provider") or "none")
     if provider == "ollama":
         provider = "openai_compatible"
@@ -28,7 +32,7 @@ def paid_effect_contract(config, store, intent, *, config_hash):
         descriptors.append(asdict(ProviderCall(kind, name, destination, model)))
 
     if web:
-        if intent.max_provider_calls == 0:
+        if not configured and intent.max_provider_calls == 0:
             raise ChangeError("budget_exceeded", "AI generation and search require an explicit provider-call budget.")
         if mode in {"exa", "searxng"}:
             if mode == "exa":
@@ -66,14 +70,14 @@ def paid_effect_contract(config, store, intent, *, config_hash):
                     "invalid_selection", "Compatible providers require a configured external search backend."
                 )
             if kind == "native_search" and provider == "google":
-                if not intent.allow_provider_managed_search:
+                if not configured and not intent.allow_provider_managed_search:
                     raise ChangeError(
                         "missing_permission", "Google native search requires explicit provider-managed-search approval."
                     )
                 managed_search = True
             append(kind, provider, provider_destination(store), model)
     if images:
-        if intent.max_provider_calls == 0 or intent.max_images == 0:
+        if not configured and (intent.max_provider_calls == 0 or intent.max_images == 0):
             raise ChangeError("budget_exceeded", "AI posters require explicit provider-call and image budgets.")
         from shortlist.server.services.poster_service import GOOGLE_IMAGE_MODEL, OPENAI_IMAGE_MODEL
 
@@ -109,7 +113,7 @@ def paid_effect_contract(config, store, intent, *, config_hash):
                             "config_hash": config_hash(cfg),
                         }
                     )
-        if acquisitions and intent.max_acquisitions == 0:
+        if acquisitions and not configured and intent.max_acquisitions == 0:
             raise ChangeError(
                 "budget_exceeded", "Configured automatic requests require an explicit acquisition budget."
             )

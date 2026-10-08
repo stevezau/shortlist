@@ -31,14 +31,13 @@ from .contracts import (
     ToolResult,
 )
 from .discovery import DiscoveryService
-from .generation import GenerateThemeInput
 from .maintenance_adapter import MaintenanceIntent
 from .monitoring import MonitoringService
 from .people_seasons import PeopleIntent, SeasonsIntent
 from .policy import AuthGrantPolicy
 from .request_adapter import RequestIntent
 from .row_adapter import RowIntent
-from .run_adapter import RunIntent, RunLimits
+from .run_adapter import ConfiguredRunIntent
 from .settings_adapter import SettingsIntent
 from .setup_adapter import ThemeRowIntent
 from .theme_adapter import ThemeIntent
@@ -106,7 +105,7 @@ class ScheduleInput(StrictModel):
     )
 
 
-class PreviewRowInput(RunLimits):
+class PreviewRowInput(StrictModel):
     row_id: int = Field(gt=0)
     person_ids: list[int] = Field(min_length=1, max_length=100)
     include_shared: bool = False
@@ -125,7 +124,8 @@ def _guard(function):
                     {
                         "code": "missing_permission",
                         "message": (
-                            "This connection does not permit that action or selection. Review its access in Shortlist."
+                            "This connection cannot do that. Choose Manage Shortlist in Settings → AI assistants, "
+                            "or reconnect an OAuth client to request the needed access."
                         ),
                         "retryable": False,
                     }
@@ -465,33 +465,6 @@ def register_tools(server: MCPServer, state) -> None:
         return planned(principal(), "setup", request.model_dump(mode="json"))
 
     @tool(
-        "shortlist_generate_theme",
-        "Prepare or apply one explicit paid theme-generation operation using Shortlist's configured provider. "
-        "Prepare first to see the fixed destination, model, output-token ceiling and one-call quota reservation. "
-        "Apply the resulting change ID with a stable idempotency key. The operation returns a draft through "
-        "get_operation; saving it needs plan_theme. This sends no watch history, performs no Plex writes and "
-        "does not retry an uncertain provider call. A call quota is not a currency spending limit.",
-        read_only=False,
-        external=True,
-    )
-    async def generate_theme(request: GenerateThemeInput) -> ToolResult:
-        from shortlist.server.services import jobs
-
-        who = principal()
-        if request.action == "prepare":
-            return planned(who, "generation", request.definition.model_dump(mode="json"))
-        change = state.assistant_changes.get_change(who, request.change_id)
-        if change["kind"] != "generation":
-            raise ValueError("This tool can apply only a prepared generation change.")
-        receipt = state.assistant_changes.apply(who, request.change_id, request.idempotency_key)
-        jobs.drain_in_background(state, "an assistant generation was applied")
-        return ToolResult(
-            summary="Generation was queued under the reviewed one-call reservation.",
-            data=receipt,
-            next_action="shortlist_get_operation",
-        )
-
-    @tool(
         "shortlist_plan_row",
         "Prepare a row creation, update or deletion using a catalog template and explicit fields. "
         "Resolves audience, libraries, shared themes, activation and ordered protective effects. "
@@ -541,31 +514,28 @@ def register_tools(server: MCPServer, state) -> None:
 
     @tool(
         "shortlist_plan_run",
-        "Prepare a one-shot run for explicit rows and people. dry_run is required: even previews "
-        "can read private history and contact external services. Shared rows require the complete "
-        "resolved eligible roster. Paid work requires finite provider-call, output-token, image "
-        "and acquisition limits; "
-        "the full provider allowance is reserved against the lifetime quota without refunds for cache hits. "
-        "These are request limits, not currency limits. Google native search additionally needs exact owner approval. "
-        "Nothing executes until the exact plan is applied.",
+        "Prepare one run using saved Shortlist rows, people and provider settings. Even a dry run can "
+        "contact configured services and incur provider charges. Shared rows need the complete eligible "
+        "roster. Nothing runs until the exact plan is applied. Manage Shortlist access is required.",
         read_only=False,
     )
-    async def plan_run(request: RunIntent) -> ToolResult:
-        return planned(principal(), "run", request.model_dump(mode="json"))
+    async def plan_run(request: ConfiguredRunIntent) -> ToolResult:
+        who = principal()
+        kind = "configured_run" if who.constraints.basic_access_v1 == "manage" else "run"
+        return planned(who, kind, request.model_dump(mode="json"))
 
     @tool(
         "shortlist_preview_row",
-        "Prepare a dry-run plan for one row and explicit people. This tool only prepares the plan; "
-        "it does not contact Plex or generation providers. Apply the returned change to execute "
-        "the preview, whose history, provider and work permissions are checked separately. Search and generation "
-        "can cost money even during a preview; use explicit max_provider_calls and max_output_tokens. "
-        "Preview delivery creates no images or acquisition requests.",
+        "Prepare a dry run for one saved row and explicit people. The plan itself makes no provider "
+        "or Plex call; applying it may contact configured services and incur provider charges. "
+        "Manage Shortlist access is required.",
         read_only=False,
     )
     async def preview_row(request: PreviewRowInput) -> ToolResult:
+        who = principal()
         return planned(
-            principal(),
-            "run",
+            who,
+            "configured_run" if who.constraints.basic_access_v1 == "manage" else "run",
             {
                 "row_ids": [request.row_id],
                 **request.model_dump(mode="json", exclude={"row_id"}),

@@ -63,8 +63,8 @@ describe("AssistantAccessCard", () => {
       "/assistant-access",
     );
     expect(screen.getByText(/never needs your owner API token/i)).toBeVisible();
-    expect(screen.getByText(/set up and manage Shortlist/i)).toBeVisible();
-    expect(screen.getByText(/optional finite allowance/i)).toBeVisible();
+    expect(screen.getByText(/view or manage Shortlist/i)).toBeVisible();
+    expect(screen.getByText(/View only or Manage Shortlist/i)).toBeVisible();
   });
 
   it("explains how to enable the endpoint without offering a credential", async () => {

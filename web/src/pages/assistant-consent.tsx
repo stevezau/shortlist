@@ -3,7 +3,7 @@ import { ShieldAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Logo } from "@/components/brand";
-import { AssistantPermissionFields, type PaidDecision } from "@/components/assistant-permissions";
+import { AssistantPermissionFields, type AssistantAccessRole } from "@/components/assistant-permissions";
 import { PlexPinButton } from "@/components/plex-pin-button";
 import { ErrorState } from "@/components/query-boundary";
 import { Button } from "@/components/ui/button";
@@ -38,11 +38,14 @@ export function AssistantConsentPage() {
   const initialized = useRef(false);
   const [flow, setFlow] = useState<AssistantConsentFlow | null>(null);
   const [selectedGrant, setSelectedGrant] = useState<string | null>(null);
-  const [paid, setPaid] = useState<PaidDecision>({ enabled: false, limit: "0", changed: false });
+  const [role, setRole] = useState<AssistantAccessRole | null>("manage");
   const params = useMemo(() => Object.fromEntries(new URLSearchParams(window.location.search)), []);
   const grants = useQuery({ queryKey: ["assistant", "grants", flow?.client.id], queryFn: api.getAssistantGrants, enabled: flow !== null });
   const status = useQuery({ queryKey: ["assistant", "status"], queryFn: api.getAssistantStatus, enabled: flow !== null });
-  const begin = useMutation({ mutationFn: () => api.beginAssistantConsent(params), onSuccess: setFlow });
+  const begin = useMutation({ mutationFn: () => api.beginAssistantConsent(params), onSuccess: (nextFlow) => {
+    setFlow(nextFlow);
+    setRole(nextFlow.requested_scopes.every((scope) => READ_ONLY_SCOPES.has(scope)) ? "view" : "manage");
+  } });
   const decide = useMutation({
     mutationFn: async (approved: boolean) => {
       if (!flow) throw new Error("The authorization request is not ready.");
@@ -55,9 +58,8 @@ export function AssistantConsentPage() {
           client_id: flow.client.id,
           name: flow.client.name,
           preset: "owner_automation",
-          owner_managed: true,
+          access_role: role ?? "view",
           capabilities: flow.requested_scopes,
-          constraints: { max_provider_calls: paid.enabled ? Number(paid.limit) : 0 },
         });
         grantId = created.id;
       }
@@ -98,7 +100,7 @@ export function AssistantConsentPage() {
   ]);
   const limitedScopes = [...baseProfileScopes].some((scope) => !flow.requested_scopes.includes(scope));
   const readOnlyScopes = flow.requested_scopes.every((scope) => READ_ONLY_SCOPES.has(scope));
-  const profileScopes = new Set([...baseProfileScopes, ...(paid.enabled ? ["ai.generate"] : [])]);
+  const profileScopes = role === "view" ? READ_ONLY_SCOPES : baseProfileScopes;
   const approvedScopes = flow.requested_scopes.filter((scope) =>
     selectedExisting ? selectedExisting.capabilities.includes(scope) : profileScopes.has(scope),
   );
@@ -107,10 +109,10 @@ export function AssistantConsentPage() {
     <CardHeader><div className="flex items-start gap-3"><ShieldAlert aria-hidden="true" className="mt-0.5 h-5 w-5 text-warning" /><div><CardTitle>{flow.client.name} wants to connect</CardTitle><CardDescription className="mt-1">Review its access before you allow it.</CardDescription></div></div></CardHeader>
     <CardContent><form className="space-y-5" onSubmit={(event) => { event.preventDefault(); decide.mutate(true); }}>
       {compatible.length > 0 && <section className="space-y-2"><h2 className="text-sm font-semibold">Connection</h2>
-        {compatible.map((grant) => <label key={grant.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-3"><span><span className="block text-sm font-medium">{grant.name}</span><span className="text-xs text-muted-foreground">{grant.full_management ? "Full Shortlist access" : "Existing limited access"} · Expires {grant.expires_at ? formatDate(grant.expires_at) : "never"}</span></span><input type="radio" name="grant" checked={effectiveGrant === grant.id} onChange={() => setSelectedGrant(grant.id)} className="h-4 w-4 accent-primary" /></label>)}
+        {compatible.map((grant) => <label key={grant.id} className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-3"><span><span className="block text-sm font-medium">{grant.name}</span><span className="text-xs text-muted-foreground">{grant.access_role === "view" ? "View only" : grant.access_role === "manage" ? (grant.full_management ? "Manage Shortlist" : "Limited client access") : "Existing access"} · Expires {grant.expires_at ? formatDate(grant.expires_at) : "never"}</span></span><input type="radio" name="grant" checked={effectiveGrant === grant.id} onChange={() => setSelectedGrant(grant.id)} className="h-4 w-4 accent-primary" /></label>)}
         <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md border px-3 py-3 text-sm"><span>Create a new connection</span><input type="radio" name="grant" checked={effectiveGrant === "new"} onChange={() => setSelectedGrant("new")} className="h-4 w-4 accent-primary" /></label>
       </section>}
-      {selectedExisting ? <p className="text-sm text-muted-foreground">{readOnlyScopes ? "This sign-in is read-only. Your saved connection keeps its existing access." : "This sign-in can use only the permissions the client requested. Your saved connection keeps its existing access."} Approving this sign-in does not upgrade the connection.</p> : <AssistantPermissionFields paid={paid} setPaid={setPaid} paidAvailable={flow.requested_scopes.includes("ai.generate")} limitedScopes={limitedScopes} readOnlyScopes={readOnlyScopes} />}
+      {selectedExisting ? <p className="text-sm text-muted-foreground">{readOnlyScopes ? "This sign-in is read-only. Your saved connection keeps its existing access." : "This sign-in can use only the permissions the client requested. Your saved connection keeps its existing access."} Approving this sign-in does not change the connection’s access.</p> : <AssistantPermissionFields role={role} setRole={setRole} manageAvailable={!readOnlyScopes} limitedScopes={limitedScopes} readOnlyScopes={readOnlyScopes} />}
       {approvedScopes.length === 0 && <p className="text-xs text-muted-foreground">This connection cannot use any permission it requested.</p>}
       {(status.isError || grants.isError) && <p role="alert" className="text-sm text-destructive-text">Could not load current connection choices. Reload this page and try again.</p>}
       {decide.isError && <p role="alert" className="text-sm text-destructive-text">{apiErrorMessage(decide.error, "Could not finish this authorization request.")}</p>}

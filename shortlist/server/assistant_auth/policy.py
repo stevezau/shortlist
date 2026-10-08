@@ -68,6 +68,29 @@ def owner_managed_capabilities(*, paid: bool = False) -> set[Capability]:
     return values
 
 
+_VIEW_CAPABILITIES = frozenset(
+    {
+        Capability.INSTANCE_READ,
+        Capability.CONFIG_READ,
+        Capability.CATALOG_READ,
+        Capability.PEOPLE_READ,
+        Capability.ACTIVITY_READ,
+        Capability.HISTORY_USE,
+        Capability.HISTORY_EXPORT,
+        Capability.REQUESTS_READ,
+    }
+)
+
+
+def basic_role_capabilities(role: str) -> set[Capability]:
+    """Return the closed authority ceiling for an explicitly selected app role."""
+    if role == "view":
+        return set(_VIEW_CAPABILITIES)
+    if role == "manage":
+        return owner_managed_capabilities()
+    raise ValueError("invalid basic access role")
+
+
 def require_authorized(
     grant: GrantContext,
     required: Iterable[Capability],
@@ -85,7 +108,11 @@ def require_authorized(
     Raises:
         AuthorizationDenied: The grant lacks a capability or exceeds a constraint.
     """
-    missing = set(required) - grant.capabilities
+    required_set = set(required)
+    missing = required_set - grant.capabilities
+    role = grant.constraints.basic_access_v1
+    if role is not None and not basic_role_capabilities(role).issuperset(required_set):
+        raise AuthorizationDenied("the selected access role does not permit this operation")
     if missing:
         names = ", ".join(sorted(capability.value for capability in missing))
         raise AuthorizationDenied(f"missing permission: {names}")

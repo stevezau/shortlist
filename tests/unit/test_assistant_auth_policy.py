@@ -12,6 +12,7 @@ from shortlist.server.assistant_auth import (
     capabilities_for_preset,
     require_authorized,
 )
+from shortlist.server.assistant_auth.policy import basic_role_capabilities
 
 
 def _grant(
@@ -59,6 +60,34 @@ class TestGrantPresets:
 
 
 class TestGrantConstraints:
+    def test_versioned_roles_have_closed_read_and_manage_authority(self) -> None:
+        view = basic_role_capabilities("view")
+        manage = basic_role_capabilities("manage")
+
+        assert {Capability.CONFIG_READ, Capability.HISTORY_EXPORT, Capability.REQUESTS_READ} <= view
+        assert {Capability.CHANGES_PREPARE, Capability.RUNS_PREVIEW, Capability.RUNS_EXECUTE}.isdisjoint(view)
+        assert {Capability.CONFIG_WRITE, Capability.RUNS_EXECUTE, Capability.MAINTENANCE_EXECUTE} <= manage
+        assert {Capability.AI_GENERATE, Capability.SECRETS_READ, Capability.GRANTS_MANAGE}.isdisjoint(manage)
+
+    def test_versioned_view_ceiling_rejects_injected_mutation_capability(self) -> None:
+        grant = _grant(
+            GrantPreset.OWNER_AUTOMATION,
+            constraints=GrantConstraints(basic_access_v1="view"),
+            extra={Capability.MAINTENANCE_EXECUTE},
+        )
+
+        require_authorized(grant, {Capability.HISTORY_USE})
+        with pytest.raises(AuthorizationDenied, match="access role"):
+            require_authorized(grant, {Capability.CHANGES_PREPARE})
+        with pytest.raises(AuthorizationDenied, match="access role"):
+            require_authorized(grant, {Capability.MAINTENANCE_EXECUTE})
+
+    def test_missing_role_marker_is_legacy_and_invalid_role_is_rejected(self) -> None:
+        assert GrantConstraints.from_dict({}).basic_access_v1 is None
+        assert "basic_access_v1" not in GrantConstraints().as_dict()
+        with pytest.raises(ValueError, match="basic access role"):
+            GrantConstraints.from_dict({"basic_access_v1": "admin"})
+
     def test_selected_row_grant_cannot_use_an_unlisted_row_or_library(self) -> None:
         grant = _grant(
             GrantPreset.MANAGE_SELECTED_ROWS,

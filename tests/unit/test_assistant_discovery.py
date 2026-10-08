@@ -283,3 +283,15 @@ def test_instance_projects_only_own_lifetime_provider_reservations(service, prin
     assert (quota["lifetime_limit"], quota["reserved"], quota["remaining"]) == (3, 2, 1)
     reduced = replace(principal, constraints=replace(principal.constraints, max_provider_calls=1))
     assert service.instance(reduced).data["provider_call_quota"]["remaining"] == 0
+
+
+def test_instance_workflow_reflects_effective_oauth_scope_within_manage_role(service, principal):
+    limited_token = replace(
+        principal,
+        capabilities=frozenset({Capability.INSTANCE_READ}),
+        constraints=replace(principal.constraints, basic_access_v1="manage"),
+    )
+    data = service.instance(limited_token).data
+    assert data["access_role"] == "manage"
+    assert data["workflow"] == ["discover", "read"]
+    assert "provider_call_quota" not in data

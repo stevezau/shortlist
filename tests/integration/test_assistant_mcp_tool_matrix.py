@@ -80,7 +80,6 @@ REGISTERED_TOOLS = frozenset(
         "shortlist_plan_configuration",
         "shortlist_plan_theme",
         "shortlist_plan_setup",
-        "shortlist_generate_theme",
         "shortlist_plan_row",
         "shortlist_plan_requests",
         "shortlist_plan_maintenance",
@@ -130,7 +129,6 @@ EXERCISED_BY_GROUP = {
         "shortlist_plan_configuration",
         "shortlist_plan_theme",
         "shortlist_plan_setup",
-        "shortlist_generate_theme",
         "shortlist_plan_row",
         "shortlist_plan_requests",
         "shortlist_plan_maintenance",
@@ -270,26 +268,7 @@ def _wire_app(
     monkeypatch.setattr("shortlist.server.api.setup.PLEXTV", plex_tv_url)
     monkeypatch.setattr("shortlist.server.services.setup_probe.PLEXTV", plex_tv_url)
     monkeypatch.setattr("shortlist.engine.clients.tmdb.API", tmdb_url)
-    from shortlist.server.assistant import generation
-
-    first_movie = next(iter(state.movies.values()))
     provider_calls: list[dict] = []
-
-    class _FakeProvider:
-        name = "loopback-fake"
-        can_complete = True
-        last_tokens = 17
-
-        def complete(self, _system: str, _user: str, *, max_tokens: int | None = None) -> str:
-            provider_calls.append({"max_tokens": max_tokens})
-            return (
-                '{"name":"SDK generated","emoji":"S","rules":{},"tags":[],"genres":["Drama"],'
-                f'"titles":[{{"title":"{first_movie.title}","year":{first_movie.year},"media":"movie"}}]}}'
-            )
-
-    # The provider class is the external boundary.  Its job, reservation and response
-    # checkpoint remain real; it has no network route other than the local fake suite.
-    monkeypatch.setattr(generation, "make_curator", lambda _provider, **_kwargs: _FakeProvider())
 
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -389,6 +368,37 @@ def _assert_inventory() -> None:
 
 def _idempotency(name: str) -> str:
     return f"mcp-wire-matrix-{name}".replace("_", "-")
+
+
+def test_mcp_public_run_tool_uses_configured_policy_for_manage_and_rejects_budget_overrides(tmp_path, monkeypatch):
+    """The public SDK request is selectors only; legacy grants keep their old run adapter."""
+    with _wire_app(tmp_path, monkeypatch, configured_provider=False) as (wire, app, _state):
+        with app.state.sessions() as session:
+            person_id = session.query(User).order_by(User.id).first().id
+        selectors = {"row_ids": [10], "person_ids": [person_id], "dry_run": True}
+        legacy = wire.exercise([("shortlist_plan_run", selectors)])["shortlist_plan_run"]["data"]
+        with app.state.sessions() as session:
+            assert session.get(AssistantChange, legacy["change_id"]).kind == "run"
+
+        repository = app.state.assistant_auth.repository
+        grant = repository.find_grant_for_client("mcp-wire-matrix")
+        assert grant is not None
+        managed = repository.set_basic_access(
+            grant.grant_id,
+            owner_account_id=OWNER_ACCOUNT_ID,
+            expected_revision=grant.revision,
+            access_role="manage",
+        )
+        assert managed.constraints.basic_access_v1 == "manage"
+        configured = wire.exercise([("shortlist_plan_run", selectors)])["shortlist_plan_run"]["data"]
+        with app.state.sessions() as session:
+            saved = session.get(AssistantChange, configured["change_id"])
+            assert saved.kind == "configured_run"
+            assert saved.requirements["provider_calls"] is None
+        wire.expect_error("shortlist_plan_run", {**selectors, "max_provider_calls": 1})
+        wire.expect_error("shortlist_plan_run", {**selectors, "provider": "another"})
+        assert "shortlist_generate_theme" not in wire.schemas()
+        assert app.state.matrix_provider_calls == []
 
 
 def _apply(wire: McpWire, change_id: str, name: str) -> dict:
@@ -1029,34 +1039,8 @@ def test_mcp_sdk_plan_apply_and_real_worker_matrix(tmp_path, monkeypatch):
             next(item for item in fresh_libraries if item["key"] == library_key)["title"]
             == "Freshly renamed matrix library"
         )
-        generation_plan = wire.exercise(
-            [
-                (
-                    "shortlist_generate_theme",
-                    {
-                        "action": "prepare",
-                        "definition": {"brief": "A synthetic local theme", "media": "movie", "max_output_tokens": 256},
-                    },
-                )
-            ]
-        )["shortlist_generate_theme"]["data"]
-        generation = wire.exercise(
-            [
-                (
-                    "shortlist_generate_theme",
-                    {
-                        "action": "apply",
-                        "change_id": generation_plan["change_id"],
-                        "idempotency_key": _idempotency("generate"),
-                    },
-                )
-            ]
-        )["shortlist_generate_theme"]["data"]
-        generated = _wait_for_operation(wire, generation["operation_id"])
-        assert generated["status"] == "completed"
-        assert generated["result"]["generation_stage"] == "completed"
-        assert generated["result"]["draft"]["name"] == "SDK generated"
-        assert app.state.matrix_provider_calls == [{"max_tokens": 256}]
+        assert "shortlist_generate_theme" not in wire.schemas()
+        assert app.state.matrix_provider_calls == []
         preview_plan = wire.exercise(
             [
                 (
@@ -1064,9 +1048,6 @@ def test_mcp_sdk_plan_apply_and_real_worker_matrix(tmp_path, monkeypatch):
                     {
                         "row_id": row_id,
                         "person_ids": [person_id],
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]
@@ -1086,9 +1067,6 @@ def test_mcp_sdk_plan_apply_and_real_worker_matrix(tmp_path, monkeypatch):
                         "row_ids": [row_id],
                         "person_ids": [person_id],
                         "dry_run": True,
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]
@@ -1152,9 +1130,6 @@ def test_mcp_sdk_durable_monitoring_and_negative_matrix(tmp_path, monkeypatch):
                         "row_ids": [row_id],
                         "person_ids": [person_id],
                         "dry_run": True,
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]
@@ -1216,9 +1191,6 @@ def test_mcp_sdk_cancellation_stops_a_queued_run_before_worker_handoff(tmp_path,
                         "row_ids": [10],
                         "person_ids": [person_id],
                         "dry_run": True,
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]
@@ -1721,9 +1693,6 @@ def test_mcp_sdk_run_report_distinguishes_build_scope_and_safe_outcomes(tmp_path
                         "person_ids": people,
                         "include_shared": True,
                         "dry_run": False,
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]
@@ -1847,9 +1816,6 @@ def test_mcp_sdk_seasonal_run_reports_zero_picks_and_delivers_only_qualifying_ti
                         "person_ids": people,
                         "include_shared": True,
                         "dry_run": False,
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]
@@ -1946,9 +1912,6 @@ def test_mcp_sdk_library_scope_changes_use_verified_server_sections(tmp_path, mo
                         "row_ids": [10],
                         "person_ids": [person_id],
                         "dry_run": False,
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]
@@ -2002,9 +1965,6 @@ def test_mcp_sdk_narrowing_library_scope_requires_authority_for_removed_collecti
                         "row_ids": [10],
                         "person_ids": [person_id],
                         "dry_run": False,
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]

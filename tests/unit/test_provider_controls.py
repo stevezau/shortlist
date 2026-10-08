@@ -70,6 +70,61 @@ def test_provider_call_controls_are_frozen_and_describe_the_paid_boundary():
     assert controls.allow_provider_managed_search is False
 
 
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "google"])
+def test_guard_only_controls_keep_normal_configured_request_defaults(provider):
+    from shortlist.engine.curator.anthropic import AnthropicCurator
+    from shortlist.engine.curator.google import GoogleCurator
+    from shortlist.engine.curator.openai import OpenAICurator
+
+    calls: list[ProviderCall] = []
+    controls = ProviderCallControls(guard=_recording_guard(calls), allow_provider_managed_search=True)
+    constructors = {"openai": OpenAICurator, "anthropic": AnthropicCurator, "google": GoogleCurator}
+    curator = constructors[provider](api_key="fake-key", model="configured-test-model", provider_controls=controls)
+    curator._client = MagicMock()
+    answer = '[{"title":"Silo","year":2023,"media":"show"}]'
+    if provider == "openai":
+        curator._client.base_url = "https://api.openai.com/v1"
+        request = curator._client.responses.create
+        request.return_value = SimpleNamespace(output_text=answer, usage=None)
+    elif provider == "anthropic":
+        curator._client.base_url = "https://api.anthropic.com"
+        request = curator._client.messages.create
+        request.return_value = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=answer)],
+            usage=SimpleNamespace(input_tokens=1, output_tokens=2),
+        )
+    else:
+        request = curator._client.models.generate_content
+        request.return_value = SimpleNamespace(text=answer, usage_metadata=None)
+
+    titles = curator.recommend_web(make_profile(), [], k=1)
+    assert len(titles) == 1 and titles[0]["title"] == "Silo"
+    request.assert_called_once()
+    kwargs = request.call_args.kwargs
+    assert kwargs["model"] == "configured-test-model"
+    if provider == "openai":
+        assert "max_output_tokens" not in kwargs and "max_tool_calls" not in kwargs
+        assert kwargs["tools"] == [{"type": "web_search", "search_context_size": "high"}]
+    elif provider == "anthropic":
+        assert kwargs["max_tokens"] == 2048
+        assert kwargs["tools"][0]["max_uses"] == 5
+    else:
+        assert kwargs["config"].max_output_tokens is None
+        assert any(tool.google_search is not None for tool in kwargs["config"].tools)
+    assert len(calls) == 1
+    assert (calls[0].kind, calls[0].provider, calls[0].model) == ("native_search", provider, "configured-test-model")
+    assert (
+        calls[0].destination
+        == {
+            "openai": "https://api.openai.com/v1",
+            "anthropic": "https://api.anthropic.com",
+            "google": "https://generativelanguage.googleapis.com",
+        }[provider]
+    )
+    assert calls[0].output_tokens == (2048 if provider == "anthropic" else None)
+    assert calls[0].native_tool_uses == (5 if provider == "anthropic" else None)
+
+
 def test_openai_native_call_is_capped_and_guarded():
     from shortlist.engine.curator.openai import OpenAICurator
 

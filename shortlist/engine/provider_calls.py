@@ -32,12 +32,14 @@ class ProviderCallControls:
     """Bound individual requests; the supplied guard owns durable admission/counting."""
 
     guard: ProviderCallGuard
-    max_output_tokens: int
-    max_native_tool_uses: int
+    max_output_tokens: int | None = None
+    max_native_tool_uses: int | None = None
     allow_provider_managed_search: bool = False
 
-    def output_limit(self, requested: int | None = None) -> int:
+    def output_limit(self, requested: int | None = None) -> int | None:
         """Return the lower of the requested output and this invocation's ceiling."""
+        if self.max_output_tokens is None:
+            return requested
         return self.max_output_tokens if requested is None else min(requested, self.max_output_tokens)
 
 
