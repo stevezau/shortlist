@@ -321,15 +321,30 @@ def test_startup_marks_interrupted_provider_call_unknown_without_replay(run_env)
     assert service.get_operation(principal, receipt["operation_id"])["status"] == "outcome_unknown"
 
 
-def test_preview_tool_exposes_the_same_bounded_limits():
-    from shortlist.server.assistant.run_adapter import RunIntent, RunLimits
+def test_public_run_and_preview_accept_only_saved_selectors_while_legacy_intent_keeps_its_limits():
+    from pydantic import ValidationError
+
+    from shortlist.server.assistant.run_adapter import ConfiguredRunIntent, RunIntent, RunLimits
     from shortlist.server.assistant.tools import PreviewRowInput
 
+    assert set(ConfiguredRunIntent.model_json_schema()["properties"]) == {
+        "row_ids",
+        "person_ids",
+        "dry_run",
+        "include_shared",
+    }
+    assert set(PreviewRowInput.model_json_schema()["properties"]) == {"row_id", "person_ids", "include_shared"}
+    preview = {"row_id": 1, "person_ids": [1]}
     for field in RunLimits.model_fields:
-        assert (
-            PreviewRowInput.model_json_schema()["properties"][field]
-            == RunIntent.model_json_schema()["properties"][field]
-        )
+        with pytest.raises(ValidationError):
+            PreviewRowInput.model_validate({**preview, field: getattr(RunLimits(), field)})
+    assert set(RunLimits.model_fields) <= set(RunIntent.model_fields)
+    assert (
+        RunIntent.model_validate(
+            {"row_ids": [1], "person_ids": [1], "dry_run": True, "max_provider_calls": 1}
+        ).max_provider_calls
+        == 1
+    )
 
 
 def test_frozen_context_receives_live_guards_before_any_network_client_is_used(run_env, monkeypatch):

@@ -48,9 +48,6 @@ def test_sdk_cancellation_stops_an_actually_running_engine_and_releases_the_writ
                         "row_ids": [10],
                         "person_ids": [1],
                         "dry_run": True,
-                        "max_provider_calls": 0,
-                        "max_images": 0,
-                        "max_acquisitions": 0,
                     },
                 )
             ]
