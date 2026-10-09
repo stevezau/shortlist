@@ -7,9 +7,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { describeCron } from "@/lib/cron";
 import { latestFinishedRun, nextRowRun } from "@/lib/dashboard-status";
-import { plural, runStatusLabel, timeAgo, timeUntil } from "@/lib/format";
+import { plural, timeAgo, timeUntil } from "@/lib/format";
 import { useRecentRuns, useSchedule, useStartRun, useUsers } from "@/lib/queries";
-import { hasPrivacyWarning } from "@/lib/run-privacy";
+import { runHealth } from "@/lib/run-status";
 
 /**
  * The nightly rows run, first on the Jobs tab: it is the product's core job, and the upkeep jobs
@@ -27,8 +27,7 @@ export function NightlyRunCard() {
   const scheduledRows = (schedule.data?.rows ?? []).filter((group) => group.cron).reduce((n, group) => n + group.rows.length, 0);
   const people = users.data?.filter((user) => user.enabled && !user.departed).length;
   const last = latestFinishedRun(runs.data);
-  const warned = last ? hasPrivacyWarning(last) : false;
-  const failed = last?.status === "error";
+  const health = last ? runHealth(last) : null;
 
   const plan = schedule.isPending
     ? null
@@ -55,8 +54,10 @@ export function NightlyRunCard() {
             {last && (
               <p className="flex flex-wrap items-center gap-2 pt-1 text-sm">
                 Last result
-                <Badge variant={failed ? "destructive" : warned ? "warning" : "success"}>
-                  {warned ? "OK with warnings" : runStatusLabel(last.status)}
+                <Badge
+                  variant={health?.tone === "error" ? "destructive" : health?.tone === "warn" ? "warning" : "success"}
+                >
+                  {health?.label}
                 </Badge>
                 <Link
                   to={`/runs/${last.id}`}

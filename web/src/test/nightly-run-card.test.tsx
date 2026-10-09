@@ -62,3 +62,19 @@ it("starts a real run from Run now", async () => {
 
   expect(startRun).toHaveBeenCalledWith({});
 });
+
+it("names the last run's warnings the same way the dashboard and Runs list do", async () => {
+  getRuns.mockResolvedValue([
+    {
+      id: 7,
+      status: "ok",
+      dry_run: false,
+      finished_at: new Date().toISOString(),
+      stats: {},
+      privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] },
+    },
+  ]);
+  renderCard();
+
+  expect(await screen.findByText("OK · 1 warning")).toBeInTheDocument();
+});
