@@ -159,6 +159,10 @@ export function ActivityIndicator({
   const failing = jobs.filter((job) => job.status === "failed").length;
   const runActive = useRunActive(queued.length > 0);
 
+  // Idle: no button, because the Activity nav item already goes to the same place. Returning here,
+  // after every hook, keeps this component mounted as the job queue's single observer (the toasts).
+  if (inFlight.length === 0) return null;
+
   return (
     <HeaderPopover open={open} onOpenChange={setOpen} align={align} label="Background work" className="p-3" trigger={
       <Button
