@@ -117,6 +117,25 @@ describe("UninstallPage", () => {
     expect(counts.compareDocumentPosition(confirm) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("lists what will be deleted by library, then person, instead of one run-on string", async () => {
+    answer({
+      ...PREVIEW,
+      collections_deleted: ["✨ Picked", "✨ Picked", "✨ Picked"],
+      collections_detail: [
+        { library: "Movies", person: "sarah", title: "✨ Picked" },
+        { library: "Movies", person: "mike", title: "✨ Picked" },
+        { library: "TV", person: "sarah", title: "✨ Picked" },
+      ],
+    });
+    renderPage();
+
+    await screen.findByText(/^Restores /);
+    expect(screen.getByRole("heading", { name: "Movies" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "TV" })).toBeInTheDocument();
+    expect(screen.getAllByText("sarah")).toHaveLength(2);
+    expect(screen.queryByText(/·/)).not.toBeInTheDocument();
+  });
+
   it("uses singular words for a count of one", async () => {
     answer({ ...PREVIEW, filters_restored: 1, collections_deleted: ["✨ Picked for You"], rows_disabled: 1 });
     renderPage();

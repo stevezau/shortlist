@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, apiErrorMessage } from "@/lib/api";
-import { groupTitles } from "@/lib/group-titles";
+import { groupCollections, groupTitles } from "@/lib/group-titles";
 import { useSSE } from "@/lib/sse";
 import type { UninstallResult } from "@/lib/types";
 
@@ -55,6 +55,34 @@ function PlanSummary({ result }: { result: UninstallResult }) {
       Restores {filters}, deletes {plural(result.collections_deleted.length, "collection", "collections")} and
       switches off {plural(result.rows_disabled, "row", "rows")}.
     </p>
+  );
+}
+
+/** The collections the preview will delete, by library and person. A server that does not send the
+ *  per-collection detail still gets its titles. */
+function CollectionsToDelete({ result }: { result: UninstallResult }) {
+  const detail = result.collections_detail ?? [];
+  if (detail.length === 0) {
+    return result.collections_deleted.length > 0 ? (
+      <p className="text-muted-foreground">{groupTitles(result.collections_deleted).join(", ")}</p>
+    ) : null;
+  }
+  return (
+    <div className="space-y-3 py-2">
+      {groupCollections(detail).map(({ library, people }) => (
+        <section key={library} className="space-y-1">
+          <h3 className="text-sm font-medium">{library}</h3>
+          <ul className="space-y-0.5 text-muted-foreground">
+            {people.map(({ person, titles }) => (
+              <li key={person} className="flex flex-wrap gap-x-2">
+                <span className="text-foreground">{person}</span>
+                <span>{titles.join(", ")}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -214,11 +242,7 @@ export function UninstallPage() {
             {preview.data && (
               <div className="space-y-1 border-y py-3 text-sm">
                 <PlanSummary result={preview.data} />
-                {preview.data.collections_deleted.length > 0 && (
-                  <p className="text-muted-foreground">
-                    {groupTitles(preview.data.collections_deleted).join(" · ")}
-                  </p>
-                )}
+                <CollectionsToDelete result={preview.data} />
                 <p className="text-muted-foreground">{preview.data.message}</p>
                 <div className="pt-1">
                   <AccountsNotRestored result={preview.data} preview />

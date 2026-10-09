@@ -521,12 +521,21 @@ class UninstallUnreachableOut(PassthroughModel):
     reason: str
 
 
+class UninstallCollectionOut(PassthroughModel):
+    """One Shortlist collection the uninstall deletes, by where it lives and whose it is."""
+
+    library: str
+    person: str  # the owner's name when we know the label's slug, otherwise the slug itself
+    title: str
+
+
 class UninstallOut(PassthroughModel):
     filters_restored: int
     filters_skipped: list[UninstallSkippedOut]  # gone for good — named so the report is honest
     filters_unreachable: list[UninstallUnreachableOut]  # roster disagreed with us — worth retrying
     filters_failed: list[UninstallFailedOut]
     collections_deleted: list[str]  # titles, so the preview names what would go
+    collections_detail: list[UninstallCollectionOut] = []  # the same collections, with library and person
     rows_disabled: int
     dry_run: bool
     message: str
@@ -661,6 +670,7 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
         failed: list[dict] = []
         accounts_listed = 0
         deleted: list[str] = []
+        deleted_detail: list[dict] = []
 
         def report() -> dict:
             # Built from whatever has actually happened so far, so a run that dies partway still
@@ -671,6 +681,7 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
                 "filters_unreachable": unreachable_out,
                 "filters_failed": failed,
                 "collections_deleted": deleted,
+                "collections_detail": deleted_detail,
                 "rows_disabled": rows_disabled,
                 "dry_run": body.dry_run,
                 # How many of our snapshotted accounts plex.tv's roster carried. Stripped from the
@@ -699,10 +710,23 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
         # restore-first wins.
         try:
             emit("Reading your Plex libraries to find Shortlist collections…")
+            with state.sessions() as session:
+                names_by_slug = {u.slug: u.username for u in session.query(User).all()}
             for section in ctx.plex.sections():
                 for collection in section.collections():
-                    if any(label.tag.lower().startswith("shortlist_") for label in collection.labels):
+                    owner_labels = [
+                        label.tag for label in collection.labels if label.tag.lower().startswith("shortlist_")
+                    ]
+                    if owner_labels:
                         deleted.append(collection.title)
+                        slug = owner_labels[0][len("shortlist_") :].lower()
+                        deleted_detail.append(
+                            {
+                                "library": section.title,
+                                "person": names_by_slug.get(slug, slug),
+                                "title": collection.title,
+                            }
+                        )
                         if not body.dry_run:
                             emit(f"Deleting collection “{collection.title}” from Plex…")
                             ctx.plex.delete_owned_collection(collection, "shortlist")

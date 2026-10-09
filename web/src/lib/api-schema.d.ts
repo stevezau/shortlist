@@ -7867,6 +7867,20 @@ export interface components {
             snapshot_id: number;
         };
         /**
+         * UninstallCollectionOut
+         * @description One Shortlist collection the uninstall deletes, by where it lives and whose it is.
+         */
+        UninstallCollectionOut: {
+            /** Library */
+            library: string;
+            /** Person */
+            person: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * UninstallFailedOut
          * @description An account plex.tv refused. The rest of the uninstall still ran (issue #96).
          */
@@ -7882,6 +7896,11 @@ export interface components {
         UninstallOut: {
             /** Collections Deleted */
             collections_deleted: string[];
+            /**
+             * Collections Detail
+             * @default []
+             */
+            collections_detail: components["schemas"]["UninstallCollectionOut"][];
             /** Dry Run */
             dry_run: boolean;
             /** Filters Failed */
