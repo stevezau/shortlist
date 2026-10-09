@@ -3,7 +3,7 @@ title: "Requests: Radarr and Sonarr for Plex recommendations"
 description: Let Shortlist ask Radarr or Sonarr for titles your people want that the library doesn't have yet, with an approval inbox and guardrails.
 heading: Requests (Radarr and Sonarr)
 nav_order: 6
-updated: 2026-10-03
+updated: 2026-10-09
 ---
 
 ## Reviewing the inbox
@@ -253,6 +253,30 @@ Why a run can rate so much less than it wanted to: it rates titles **most-wanted
 them **on their score**. On a large library the most-wanted _missing_ titles are often the ones
 nobody thought worth adding, so the top of the list can be the worst-rated part of it, and the titles
 that would pass sit further down. A bigger budget reaches them.
+
+## Keeping concerts and other kinds out of auto-send
+
+Concert films, music documentaries and stand-up specials often carry fan-inflated ratings, so they
+can clear the auto-send bar easily. To stop that, open **Settings → Defaults → Requests**, find
+**Don't request these automatically**, and pick what to keep out:
+
+- **Genres.** TMDB's movie genres, such as Documentary. Genres are broad: Music also covers musicals
+  like _A Star Is Born_.
+- **TMDB tags.** The keywords TMDB attaches to films. Search for one, or click a suggestion: _concert
+  film_, _live performance_, _music documentary_, _stand-up comedy_, _behind the scenes_. A tag is
+  usually more precise than a genre. The broad _concert_ tag, for one, is also on _A Star Is Born_ and
+  _Almost Famous_.
+
+A movie with **any** genre or tag you picked is never sent automatically. It waits in the Requests
+inbox, marked **Held by your request filter**, and doesn't use an automatic slot. **Send** still
+sends it, so making an exception takes one click.
+
+Under your picks, a preview lists which movies waiting in your inbox right now would be held. A
+story film in that list is flagged: that usually means a pick is broader than you meant.
+
+This applies to movies only, and only while **Send the strongest titles without asking** is on.
+With it off, everything waits for you anyway. If TMDB can't be read during a run, the movie waits
+too, and the next run checks it again.
 
 ## Too many subtitles
 

@@ -64,6 +64,8 @@ SETTING_VALUES = {
     "requests.max_year": 2030,
     "requests.max_per_run": 3,
     "requests.auto_send": False,
+    "requests.hold_genres": [99, 10402],
+    "requests.hold_tags": {"156205": "concert film"},
     "requests.auto_min_demand": 4,
     "requests.auto_min_rating": 8.5,
     "requests.tag": "sdk-reviewed",
@@ -99,7 +101,7 @@ SETTING_VALUES = {
 def test_the_roundtrip_cases_cover_exactly_every_advertised_writable_setting():
     writable = {item.key for item in get_settings_catalog() if item.assistant_writable}
     assert set(SETTING_VALUES) == writable
-    assert len(writable) == 70
+    assert len(writable) == 72
 
 
 @pytest.mark.parametrize(

@@ -156,6 +156,9 @@ export type SeasonCollection = Schemas["CollectionIO"];
 export type SeasonPick = Schemas["PickIO"];
 /** The editor's three searches: TMDB tags, Plex collections, and titles in the libraries. */
 export type TmdbTag = Schemas["TagOut"];
+/** Which waiting inbox movies draft "don't request automatically" picks would hold (POST /api/requests/hold-preview). */
+export type HoldPreviewInput = Schemas["HoldPreviewIn"];
+export type HoldPreview = Schemas["HoldPreviewOut"];
 export type PlexCollectionMatch = Schemas["PlexCollectionOut"];
 export type LibraryTitle = Schemas["LibraryTitleOut"];
 export type RowEffectiveness = Schemas["RowEffectivenessOut"];

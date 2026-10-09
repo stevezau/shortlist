@@ -273,6 +273,40 @@ def _optional_bounded_float(low: float, high: float):
     return check
 
 
+_MAX_HOLD_TAGS = 50
+_MAX_TAG_NAME = 200
+
+
+def _movie_genre_ids(value: object) -> str | None:
+    """TMDB movie genre ids, each once: the settings page offers only TMDB's fixed list."""
+    from shortlist.engine.themes import MOVIE_GENRE_IDS
+
+    if not isinstance(value, list) or not all(type(v) is int for v in value):
+        return "must be a list of TMDB movie genre ids"
+    if len(set(value)) != len(value):
+        return "lists a genre twice"
+    unknown = [v for v in value if v not in MOVIE_GENRE_IDS]
+    return f"unknown TMDB movie genre id(s) {unknown}" if unknown else None
+
+
+def _tmdb_tags(value: object) -> str | None:
+    """``{"<TMDB tag id>": "<its name>"}``, as the settings page's TMDB tag search returns them.
+
+    The name is stored beside the id so the page can show it without asking TMDB again; the run matches
+    on the id alone.
+    """
+    if not isinstance(value, dict):
+        return "must map TMDB tag ids to their names"
+    if len(value) > _MAX_HOLD_TAGS:
+        return f"too many tags (max {_MAX_HOLD_TAGS})"
+    for tag_id, name in value.items():
+        if not (isinstance(tag_id, str) and tag_id.isascii() and tag_id.isdigit() and int(tag_id) > 0):
+            return f"{tag_id!r} is not a TMDB tag id"
+        if not isinstance(name, str) or not name.strip() or len(name) > _MAX_TAG_NAME:
+            return f"tag {tag_id} needs a name of 1-{_MAX_TAG_NAME} characters"
+    return None
+
+
 def _known_sources(value: object) -> str | None:
     from shortlist.engine.candidates import KNOWN_SOURCES
 
@@ -335,6 +369,8 @@ VALIDATORS = {
     "requests.enabled": _is_bool,
     "requests.target": _one_of(*REQUEST_TARGETS),
     "requests.auto_send": _is_bool,
+    "requests.hold_genres": _movie_genre_ids,
+    "requests.hold_tags": _tmdb_tags,
     "candidates.sources": _known_sources,
     "llm_web.search_provider": _one_of("native", "exa", "searxng"),
     "llm_web.instructions": _text_at_most(MAX_INSTRUCTIONS_CHARS),

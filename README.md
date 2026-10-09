@@ -156,7 +156,7 @@ but nobody pictured here watched anything.</sub>
 - 📥 **Fills its own gaps (optional).** When a great pick isn't in your library, Shortlist can ask
   **Radarr/Sonarr** for it, or file a request in **Overseerr/Jellyseerr**. Off by default and
   cautious: the strongest few auto-send each night, and the rest wait in a **Requests** inbox for
-  one-click approval.
+  one-click approval. Genres and TMDB tags you pick (concert films, say) never auto-send.
 - 📬 **A "Your requests" row.** What each person asked for in Overseerr (or tagged with their name in
   Radarr/Sonarr), once it's on Plex and until they've watched it. Private per person, newest first,
   no AI. A person with nothing ready simply has no row.

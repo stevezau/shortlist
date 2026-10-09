@@ -217,3 +217,42 @@ class TestDangerZone:
         assert {user.id: dict(user.filters) for user in state.users.values()} == before_filters
         # (The committed uninstall lives in test_privacy_uninstall_e2e.py — this test is only
         # about the promise that a PREVIEW costs nothing.)
+
+
+def test_held_tags_preview_the_inbox_and_survive_a_reload(page: Page, app: ShortlistApp):
+    """Pick a TMDB tag, see which waiting movies it would hold, and find it still picked after a reload."""
+    from pathlib import Path
+
+    from shortlist.server.db.models import RequestCandidate
+    from shortlist.server.db.session import make_engine, make_session_factory
+    from tests.db_helpers import disposing_engine
+    from tests.e2e.conftest import THANKSGIVING_TAG
+
+    app.api("PUT", "/api/settings", json={"values": {"requests.enabled": True, "requests.auto_send": True}})
+    with disposing_engine(make_engine(Path(app.config_dir))) as engine, make_session_factory(engine)() as session:
+        # 9011 carries the fake's thanksgiving tag; 9999 carries none.
+        session.add(RequestCandidate(tmdb_id=9011, media_type="movie", title="Tagged film", status="pending", demand=3))
+        session.add(
+            RequestCandidate(tmdb_id=9999, media_type="movie", title="Untagged film", status="pending", demand=2)
+        )
+        session.commit()
+
+    _open_settings(page, "requests")
+    expect(page.get_by_text("Nothing picked, so any movie can be requested automatically")).to_be_visible(timeout=LOAD)
+    page.get_by_label("Search TMDB tags").fill("thanks")
+    page.get_by_role("button", name="Add tag thanksgiving", exact=True).click()
+
+    held = page.get_by_role("list", name="Movies these picks would hold")
+    expect(page.get_by_text("Would hold 1 of the 2 movies waiting in your inbox:")).to_be_visible(timeout=LOAD)
+    expect(held).to_contain_text("Tagged film")
+    expect(held).to_contain_text("tag “thanksgiving”")
+    expect(held).not_to_contain_text("Untagged film")
+
+    for _ in range(24):
+        stored = app.api("GET", "/api/settings").json()
+        if stored.get("requests.hold_tags"):
+            break
+        page.wait_for_timeout(250)
+    assert stored["requests.hold_tags"] == {str(THANKSGIVING_TAG): "thanksgiving"}
+    page.reload()
+    expect(page.get_by_role("button", name="Remove tag thanksgiving")).to_be_visible(timeout=LOAD)

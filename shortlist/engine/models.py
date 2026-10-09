@@ -1024,6 +1024,10 @@ class RequestConfig:
     # A long-running show on "all" backfills every season the night it is added (issue #100), where a
     # taster ("firstSeason") or a catch-up-from-here ("none", added unmonitored) is often what was meant.
     sonarr_monitor: str = "all"
+    # TMDB movie genre ids and tag (keyword) ids the owner never wants requested automatically. A movie
+    # with any of them waits in the inbox instead (`request_holds`); empty, the default, holds nothing.
+    hold_genres: frozenset[int] = frozenset()
+    hold_tags: frozenset[int] = frozenset()
 
     def __post_init__(self) -> None:
         if self.max_per_row is None:

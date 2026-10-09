@@ -723,6 +723,27 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
         capabilities=(Capability.REQUESTS_SEND,),
     ),
     _setting(
+        "requests.hold_genres",
+        "Genres never requested automatically",
+        "TMDB movie genre ids. A movie in any of them waits in the request inbox instead of being sent "
+        "automatically; the owner can still send it from there.",
+        SettingGroup.REQUESTS,
+        value_type=ValueType.INTEGER_LIST,
+        prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
+        "requests.hold_tags",
+        "TMDB tags never requested automatically",
+        'TMDB tag (keyword) ids mapped to their names, e.g. {"156205": "concert film"}. A movie carrying any '
+        "of them waits in the request inbox instead of being sent automatically.",
+        SettingGroup.REQUESTS,
+        prerequisites=(_prerequisite("requests.auto_send", (True,), "Used only when automatic sending is enabled."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
         "requests.auto_min_demand",
         "Automatic request demand",
         "Distinct people who must want a title before automatic sending is allowed.",

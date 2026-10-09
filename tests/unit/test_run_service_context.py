@@ -2777,3 +2777,23 @@ class TestRowVisibilitySchedule:
 
         assert spec.placement == "off"
         assert spec.hidden_by_schedule is True
+
+
+class TestBuildRequestHolds:
+    """The owner's held genres and tags reach the engine as id sets; none set holds nothing."""
+
+    def test_picks_reach_the_engine_as_id_sets(self, sessions, tmp_path):
+        values = {
+            "requests.enabled": True,
+            "requests.hold_genres": [99, 10402],
+            "requests.hold_tags": {"156205": "concert film", "9716": "stand-up comedy"},
+        }
+        with TestBuildRequests()._store(sessions, tmp_path, values) as store:
+            cfg = ContextBuilder._build_requests(store)
+        assert cfg.hold_genres == frozenset({99, 10402})
+        assert cfg.hold_tags == frozenset({156205, 9716})
+
+    def test_unset_holds_nothing(self, sessions, tmp_path):
+        with TestBuildRequests()._store(sessions, tmp_path, {"requests.enabled": True}) as store:
+            cfg = ContextBuilder._build_requests(store)
+        assert cfg.hold_genres == frozenset() and cfg.hold_tags == frozenset()

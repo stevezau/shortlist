@@ -489,6 +489,9 @@ function RowMoreMenu({
   );
 }
 
+/** The opening words of a hold's reason, as `request_holds.HOLD_REASON_PREFIX` writes them. */
+const HELD_PREFIX = "held by your request filter";
+
 function PendingRow({
   item,
   viaSeerr,
@@ -613,6 +616,14 @@ function PendingRow({
                 does not have — the same failure the app-name fix was made for, one word deeper. */}
             {viaSeerr ? "blocklist" : "import exclusion"}). Shortlist never
             sends it for you; clear it in {app} if you want it back.
+          </p>
+        ) : null}
+        {/* The owner's "don't request these automatically" picks held it (`request_holds`). Sending it from
+            here is the way through, so the note says so rather than reading like an error. */}
+        {item.detail?.startsWith(HELD_PREFIX) ? (
+          <p className="order-4 text-xs text-warning sm:col-span-2">
+            Held by your request filter ({item.detail.slice(HELD_PREFIX.length).replace(/^\s*—\s*/, "")}), so it
+            won&rsquo;t be sent automatically. Send it yourself if you want it.
           </p>
         ) : null}
         {/* Decide this title on its own. The toolbar above still handles batches — these exist for

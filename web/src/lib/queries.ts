@@ -23,6 +23,7 @@ import type {
   RunRequest,
   SeasonInput,
   SeasonPreviewInput,
+  HoldPreviewInput,
   Settings,
   User,
   UserPatch,
@@ -84,6 +85,7 @@ export const queryKeys = {
   seasonCreate: ["season-create"] as const,
   seasonPresets: ["season-presets"] as const,
   seasonPreview: (draft: SeasonPreviewInput) => ["season-preview", draft] as const,
+  holdPreview: (draft: HoldPreviewInput) => ["hold-preview", draft] as const,
   seasonNextDate: (rule: DateRule) => ["season-next-date", rule] as const,
   themeCapabilities: ["theme-capabilities"] as const,
   themePrompts: ["theme-prompts"] as const,
@@ -630,6 +632,19 @@ export function useSeasonPreview(
     // the TMDB key, and coming back is the moment to count again.
     refetchOnWindowFocus: (query) => needsSetup(query.state.error),
     placeholderData: keepPrevious ? keepPreviousData : undefined,
+    enabled,
+  });
+}
+
+/** Which waiting inbox movies draft hold picks would catch — the request settings' live check. */
+export function useHoldPreview(draft: HoldPreviewInput, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.holdPreview(draft),
+    queryFn: () => api.previewHolds(draft),
+    staleTime: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+    placeholderData: keepPreviousData,
     enabled,
   });
 }

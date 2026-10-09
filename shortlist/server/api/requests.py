@@ -22,6 +22,7 @@ from sqlalchemy import text
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.models import MediaType
 from shortlist.engine.request_config import resolve_request_config
+from shortlist.engine.request_holds import is_story_film, match_hold
 from shortlist.engine.requests import RequestBatch, request_titles_by_row
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.assistant_auth.routes import BrowserOwnerDep
@@ -462,6 +463,83 @@ class RowSourcesOut(PassthroughModel):
     tagged_shows: int
     people: list[PersonReadyOut]
     tags: list[TagMatchOut]
+
+
+#: The inbox's movies a hold preview reads, most-wanted first. Each costs up to two TMDB reads the first
+#: time (cached after), so an inbox of thousands must not turn one chip click into a minute of calls.
+HOLD_PREVIEW_LIMIT = 100
+_HOLD_PREVIEW_WORKERS = 8
+
+
+class HoldPreviewIn(BaseModel):
+    """Genres and tags the owner is considering, before they are saved."""
+
+    genres: list[int] = Field(default_factory=list, max_length=30)
+    tags: list[int] = Field(default_factory=list, max_length=60)
+
+
+class HeldTitleOut(PassthroughModel):
+    tmdb_id: int
+    title: str
+    year: int | None
+    reason: str  # "genre Music" | "tag “concert film”"
+    story: bool  # a story film the picks catch — a sign a pick is broader than meant
+
+
+class HoldPreviewOut(PassthroughModel):
+    checked: int  # pending movies read (at most HOLD_PREVIEW_LIMIT)
+    held: list[HeldTitleOut]
+    unread: int  # pending movies TMDB couldn't answer for; a run would hold them too
+
+
+@router.post("/hold-preview", response_model=HoldPreviewOut)
+async def hold_preview(body: HoldPreviewIn, request: Request) -> dict:
+    """Which movies waiting in the inbox these genres/tags would hold — the settings page's live check.
+
+    Reads TMDB through the shared cache, so a title a run already looked at costs nothing. Nothing is saved.
+    """
+    with request.app.state.sessions() as session:
+        rows = (
+            session.query(RequestCandidate.tmdb_id, RequestCandidate.title, RequestCandidate.year)
+            .filter(
+                ~RequestCandidate.hidden,
+                RequestCandidate.status == "pending",
+                RequestCandidate.media_type == MediaType.MOVIE.value,
+            )
+            .order_by(RequestCandidate.demand.desc(), RequestCandidate.rating.desc(), RequestCandidate.id)
+            .limit(HOLD_PREVIEW_LIMIT)
+            .all()
+        )
+    genres, tags = frozenset(body.genres), frozenset(body.tags)
+    if not (genres or tags):
+        return {"checked": len(rows), "held": [], "unread": 0}
+    tmdb = request.app.state.run_service.build_tmdb_only()
+    if tmdb is None:
+        raise HTTPException(status_code=503, detail="Add a TMDB API key in Settings first.")
+
+    def judge(tmdb_id: int) -> tuple[str, bool] | None:
+        """``(reason, story)`` for a held movie, ``("", False)`` for an allowed one, None if TMDB can't say."""
+        try:
+            reason = match_hold(tmdb, tmdb_id, genres=genres, tags=tags)
+            if not reason:
+                return "", False
+            genre_ids = [g["id"] for g in tmdb.details(tmdb_id, MediaType.MOVIE).get("genres") or [] if "id" in g]
+            return reason, is_story_film(genre_ids)
+        except Exception as e:
+            logger.debug("hold preview: TMDB read for {} failed ({})", tmdb_id, type(e).__name__)
+            return None
+
+    def judge_all() -> list[tuple[str, bool] | None]:
+        with ThreadPoolExecutor(max_workers=_HOLD_PREVIEW_WORKERS, thread_name_prefix="hold-preview") as pool:
+            return list(pool.map(lambda tid: contextvars.copy_context().run(judge, tid), [r.tmdb_id for r in rows]))
+
+    verdicts = await asyncio.to_thread(judge_all)
+    held = [
+        {"tmdb_id": r.tmdb_id, "title": r.title, "year": r.year, "reason": v[0], "story": v[1]}
+        for r, v in zip(rows, verdicts, strict=True)
+        if v is not None and v[0]
+    ]
+    return {"checked": len(rows), "held": held, "unread": sum(v is None for v in verdicts)}
 
 
 @router.get("/row-sources", response_model=RowSourcesOut)

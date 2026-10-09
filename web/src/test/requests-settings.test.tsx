@@ -60,6 +60,8 @@ vi.mock("@/lib/api", () => {
       getArrOptions: () =>
         Promise.resolve({ quality_profiles: [], root_folders: [] }),
       getSeerrOptions: () => getSeerrOptions(),
+      previewHolds: () => Promise.resolve({ checked: 0, held: [], unread: 0 }),
+      getTmdbTags: () => Promise.resolve([]),
     },
   };
 });
@@ -171,6 +173,31 @@ describe("RequestsSettings", () => {
     expect(payload).not.toHaveProperty("requests.radarr.url");
     expect(payload).not.toHaveProperty("requests.sonarr.apikey");
     expect(payload).not.toHaveProperty("requests.sonarr.url");
+  });
+
+  it("saves held genres and tags, and loads the ones already saved", async () => {
+    renderPanel({
+      "requests.enabled": true,
+      "requests.hold_genres": [99],
+      "requests.hold_tags": { "9716": "stand-up comedy" },
+    });
+    expect(await screen.findByRole("button", { name: "Documentary" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /Remove tag stand-up comedy/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Music" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add tag concert film" }));
+    await waitFor(() =>
+      expect(putSettings.mock.calls.at(-1)?.[0]).toMatchObject({
+        "requests.hold_genres": [99, 10402],
+        "requests.hold_tags": { "9716": "stand-up comedy", "156205": "concert film" },
+      }),
+    );
+  });
+
+  it("hides the hold picks while auto-send is off, when every title waits anyway", async () => {
+    renderPanel({ "requests.enabled": true, "requests.auto_send": false });
+    await screen.findByText(/Send on its own, or ask me first/i);
+    expect(screen.queryByText(/Don.t request these automatically/i)).toBeNull();
   });
 
   it("saves the tag-by-person switch, off unless the owner turns it on", async () => {

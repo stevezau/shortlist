@@ -363,6 +363,17 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
             "total_results": len(listing),
         }
 
+    # Declared before the two-segment catch-all below, which would answer it with a suggestion list.
+    @app.get("/movie/{tmdb_id}/keywords")
+    def movie_keywords(tmdb_id: int) -> dict:
+        """A film's tags, shaped as TMDB serves `/movie/{id}/keywords`: `keywords`, not `results`."""
+        tags = [
+            {"id": tag_id, "name": tag.name}
+            for tag_id, tag in FAKE_TMDB_TAGS.items()
+            if tmdb_id in tag.movies_in_library
+        ]
+        return {"id": tmdb_id, "keywords": tags}
+
     @app.get("/movie/{tmdb_id}/{endpoint}")
     def movie_suggestions(tmdb_id: int, endpoint: str) -> dict:
         return _suggest(movies, tmdb_id, "title")

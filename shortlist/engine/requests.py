@@ -44,6 +44,7 @@ from shortlist.engine.models import (
     SeerrTarget,
 )
 from shortlist.engine.request_alloc import allocate
+from shortlist.engine.request_holds import HOLD_REASON_PREFIX, hold_reason
 
 AcquisitionGuard = Callable[
     [str, MissingTitle, RequestConfig], AbstractContextManager[Callable[[RequestOutcome], None] | None]
@@ -208,6 +209,7 @@ QUEUE_REASON_PREFIXES = (
     "this row's own limit",
     "on an Arr exclusion list",
     "on the blocklist",  # the same fact, on the *seerr route
+    HOLD_REASON_PREFIX,
     "Radarr isn't fully set up",
     "Sonarr isn't fully set up",
     "no TheTVDB id",
@@ -410,6 +412,7 @@ def _auto_eligible(
     survivors: list[MissingTitle],
     blocked: Counter[str],
     no_tvdb: set[tuple[int, MediaType]] | None = None,
+    holds: dict[tuple[int, MediaType], str] | None = None,
 ) -> tuple[list[MissingTitle], list[MissingTitle]]:
     """Split one row's qualifying titles into ``(eligible, held_back)`` on its auto-send bar.
 
@@ -424,7 +427,8 @@ def _auto_eligible(
     A title that can never land is held here, BEFORE allocation, rather than skipped at the send: a
     skip is recorded nowhere, so the same title qualified again the next night and took a slot again.
     That covers a media type with no usable Arr on the Arr route, and ``no_tvdb`` — the shows Sonarr
-    can never be sent (see :func:`_shows_without_tvdb`).
+    can never be sent (see :func:`_shows_without_tvdb`). ``holds`` are the movies the owner's genre/tag
+    filter keeps out of auto-send (see :mod:`request_holds`), each with what matched.
     """
     eligible: list[MissingTitle] = []
     held_back: list[MissingTitle] = []
@@ -454,6 +458,8 @@ def _auto_eligible(
                 reason = "on the blocklist"
             else:
                 reason = "on an Arr exclusion list"
+        elif hold := (holds or {}).get((m.tmdb_id, m.media_type)):
+            reason = f"held by your request filter — {hold}"
         elif m.demand < cfg.auto_min_demand:
             reason = f"demand below auto_min_demand ({cfg.auto_min_demand})"
         elif m.rating < cfg.auto_min_rating:
@@ -550,6 +556,7 @@ def request_missing(
     blocked: Counter[str] = Counter()
     auto_by_row: list[tuple[str, list[MissingTitle]]] = []
     cfg_by_row: dict[str, RequestConfig] = {}
+    hold_memo: dict[tuple[int, MediaType], str] = {}
     for slug, cfg, qualifying in gated:
         survivors = [m for m in qualifying if (m.tmdb_id, m.media_type) in kept_keys]
         report.considered += len(survivors)
@@ -559,7 +566,8 @@ def request_missing(
         # Both routes end at Sonarr for a show: the *seerr passes it on by TVDB id, and deletes it when
         # it has none (see `_request_one_seerr`).
         no_tvdb = _shows_without_tvdb(tmdb, survivors) if cfg.target == "overseerr" or cfg.sonarr else set()
-        eligible, held_back = _auto_eligible(cfg, survivors, blocked, no_tvdb)
+        holds = _holds(tmdb, survivors, cfg, hold_memo)
+        eligible, held_back = _auto_eligible(cfg, survivors, blocked, no_tvdb, holds)
         report.queued.extend(held_back)
         auto_by_row.append((slug, eligible))
 
@@ -762,6 +770,30 @@ def _dedupe_queued(queued: list[MissingTitle], sent: set[tuple[int, MediaType]])
             if reason not in keeper.why:
                 keeper.why.append(reason)
     return list(first.values())
+
+
+def _holds(
+    tmdb: TmdbClient,
+    titles: list[MissingTitle],
+    cfg: RequestConfig,
+    memo: dict[tuple[int, MediaType], str],
+) -> dict[tuple[int, MediaType], str]:
+    """Which of one row's titles the owner's genre/tag filter holds, and on what.
+
+    Only asked when something could auto-send: with auto-send off every title waits anyway, so the
+    filter has nothing to decide and costs no TMDB call. ``memo`` spans the run's rows — the picks are
+    global, so a title several rows offer is judged once.
+    """
+    if not cfg.auto_send or not (cfg.hold_genres or cfg.hold_tags):
+        return {}
+    held: dict[tuple[int, MediaType], str] = {}
+    for m in titles:
+        key = (m.tmdb_id, m.media_type)
+        if key not in memo:
+            memo[key] = hold_reason(tmdb, m, genres=cfg.hold_genres, tags=cfg.hold_tags)
+        if memo[key]:
+            held[key] = memo[key]
+    return held
 
 
 def _enrich(tmdb: TmdbClient, titles: list[MissingTitle]) -> None:

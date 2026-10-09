@@ -920,6 +920,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/requests/hold-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hold Preview
+         * @description Which movies waiting in the inbox these genres/tags would hold — the settings page's live check.
+         *
+         *     Reads TMDB through the shared cache, so a title a run already looked at costs nothing. Nothing is saved.
+         */
+        post: operations["hold_preview_api_requests_hold_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/requests/reject": {
         parameters: {
             query?: never;
@@ -5001,6 +5023,42 @@ export interface components {
         HealthOut: {
             /** Status */
             status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** HeldTitleOut */
+        HeldTitleOut: {
+            /** Reason */
+            reason: string;
+            /** Story */
+            story: boolean;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HoldPreviewIn
+         * @description Genres and tags the owner is considering, before they are saved.
+         */
+        HoldPreviewIn: {
+            /** Genres */
+            genres?: number[];
+            /** Tags */
+            tags?: number[];
+        };
+        /** HoldPreviewOut */
+        HoldPreviewOut: {
+            /** Checked */
+            checked: number;
+            /** Held */
+            held: components["schemas"]["HeldTitleOut"][];
+            /** Unread */
+            unread: number;
         } & {
             [key: string]: unknown;
         };
@@ -9807,6 +9865,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeletedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hold_preview_api_requests_hold_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HoldPreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HoldPreviewOut"];
                 };
             };
             /** @description Validation Error */

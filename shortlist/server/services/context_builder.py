@@ -1629,6 +1629,8 @@ class ContextBuilder:
             auto_min_rating=float(store.get("requests.auto_min_rating")),
             auto_user_tag=bool(store.get("requests.auto_user_tag")),
             sonarr_monitor=store.get("requests.sonarr.monitor") or "all",
+            hold_genres=frozenset(int(g) for g in store.get("requests.hold_genres") or []),
+            hold_tags=frozenset(int(t) for t in store.get("requests.hold_tags") or {}),
             language_mode=store.get("requests.language_mode") or "any",
             preferred_languages=normalise_languages(store.get("requests.preferred_languages")),
             # Read WITHOUT `or`: None means "follow min_rating + the gap" and 0.0 is a real bar, so

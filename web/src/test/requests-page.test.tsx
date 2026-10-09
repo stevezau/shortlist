@@ -222,6 +222,17 @@ describe("RequestsPage", () => {
     expect(await screen.findByText(/Nothing waiting/i)).toBeTruthy();
   });
 
+  it("says a waiting movie was held by the owner's request filter, and how to send it anyway", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "BTS: Permission to Dance on Stage", detail: "held by your request filter — tag “concert film”" }),
+      candidate({ id: 2, title: "A drama", detail: "demand below auto_min_demand (4)" }),
+    ]);
+    renderPage();
+    expect(await screen.findByText("BTS: Permission to Dance on Stage")).toBeTruthy();
+    expect(screen.getAllByText(/Held by your request filter \(tag “concert film”\)/)).toHaveLength(1);
+    expect(screen.getByText(/Send it yourself if you want it/i)).toBeTruthy();
+  });
+
   it("warns when a waiting title is on the arr's exclusion list, naming the right app", async () => {
     listRequests.mockResolvedValue([
       candidate({

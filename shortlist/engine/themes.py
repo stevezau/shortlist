@@ -60,6 +60,7 @@ _MOVIE_GENRE_IDS: dict[str, int] = {
     "war": 10752,
     "western": 37,
 }
+MOVIE_GENRE_IDS = frozenset(_MOVIE_GENRE_IDS.values())
 
 
 @dataclass(frozen=True)

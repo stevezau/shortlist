@@ -40,6 +40,8 @@ import type {
   WebPromptPreviewInput,
   SeasonPreview,
   SeasonPreviewInput,
+  HoldPreview,
+  HoldPreviewInput,
   TmdbTag,
   Theme,
   ThemeCapabilities,
@@ -715,6 +717,11 @@ export const api = {
   /** When a date rule next falls, from the rule alone: no TMDB key or Plex needed. */
   getSeasonNextDate: (rule: DateRule): Promise<SeasonDate> =>
     request("/api/seasons/next-date", { method: "POST", body: JSON.stringify(rule) }),
+
+  /** Which movies waiting in the inbox these genres/tags would hold. Saves nothing; the first call can
+   *  take a few seconds while TMDB is read. */
+  previewHolds: (body: HoldPreviewInput): Promise<HoldPreview> =>
+    request("/api/requests/hold-preview", { method: "POST", body: JSON.stringify(body) }),
 
   /** TMDB tags whose name matches, each with how many films TMDB gives it. */
   getTmdbTags: (q: string): Promise<TmdbTag[]> =>

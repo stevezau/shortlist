@@ -3900,6 +3900,97 @@
         "title": "HealthOut",
         "type": "object"
       },
+      "HeldTitleOut": {
+        "additionalProperties": true,
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "story": {
+            "title": "Story",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "title",
+          "year",
+          "reason",
+          "story"
+        ],
+        "title": "HeldTitleOut",
+        "type": "object"
+      },
+      "HoldPreviewIn": {
+        "description": "Genres and tags the owner is considering, before they are saved.",
+        "properties": {
+          "genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 30,
+            "title": "Genres",
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 60,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "title": "HoldPreviewIn",
+        "type": "object"
+      },
+      "HoldPreviewOut": {
+        "additionalProperties": true,
+        "properties": {
+          "checked": {
+            "title": "Checked",
+            "type": "integer"
+          },
+          "held": {
+            "items": {
+              "$ref": "#/components/schemas/HeldTitleOut"
+            },
+            "title": "Held",
+            "type": "array"
+          },
+          "unread": {
+            "title": "Unread",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checked",
+          "held",
+          "unread"
+        ],
+        "title": "HoldPreviewOut",
+        "type": "object"
+      },
       "HomeUserOut": {
         "additionalProperties": true,
         "description": "A Home user that could become the owner's watching account.",
@@ -14175,6 +14266,48 @@
           }
         },
         "summary": "Delete Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/hold-preview": {
+      "post": {
+        "description": "Which movies waiting in the inbox these genres/tags would hold \u2014 the settings page's live check.\n\nReads TMDB through the shared cache, so a title a run already looked at costs nothing. Nothing is saved.",
+        "operationId": "hold_preview_api_requests_hold_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HoldPreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HoldPreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hold Preview",
         "tags": [
           "requests"
         ]
