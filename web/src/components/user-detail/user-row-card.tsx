@@ -4,7 +4,6 @@ import { Link } from "react-router";
 import { MutationAlert } from "@/components/mutation-alert";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { RecentCountField } from "@/components/recent-count-field";
-import { RowName } from "@/components/rows/row-name";
 import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
 import { Badge } from "@/components/ui/badge";
@@ -15,9 +14,21 @@ import { Switch } from "@/components/ui/switch";
 import { GroupedPicks } from "@/components/user-detail/grouped-picks";
 import { useAutosave } from "@/lib/autosave";
 import { LIBRARY_NAME } from "@/lib/placeholders";
+import { resolveRowName } from "@/lib/run-rows";
 import { useSetUserRowOverride, useUserRows } from "@/lib/queries";
 import type { User, UserRow } from "@/lib/types";
 import { userState } from "@/lib/user-state";
+
+/** The title an owner reads for one of a person's rows: this library and this person's lead seed
+ *  where they exist, plain words where the row has built nothing yet. */
+function personRowName(row: UserRow): string {
+  const template =
+    row.library && !row.name.includes(LIBRARY_NAME)
+      ? `${row.name} — ${row.library}`
+      : row.name;
+  const topSeed = row.picks.find((pick) => pick.seed_title)?.seed_title ?? undefined;
+  return resolveRowName(template, { library: row.library || undefined, topSeed });
+}
 
 /** One of a person's rows: its live picks, and a per-person customization drawer. */
 function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
@@ -78,14 +89,7 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
               {/* This card is one library's copy of the row, so `{library_name}` has exactly one
                   value here — and a name that carries it already says which library, so the
                   suffix stays only for a name that does not. */}
-              <RowName
-                name={
-                  row.library && !row.name.includes(LIBRARY_NAME)
-                    ? `${row.name} — ${row.library}`
-                    : row.name
-                }
-                libraryName={row.library || undefined}
-              />
+              <span className="font-medium">{personRowName(row)}</span>
               {row.is_default && <Badge variant="outline">default</Badge>}
               {muted && <Badge variant="secondary">muted</Badge>}
             </div>
@@ -241,7 +245,7 @@ function OffRowsList({ rows, name }: { rows: UserRow[]; name: string }) {
           <li key={`${row.collection_id}-${row.section_key}`} className="space-y-3 px-6 py-4">
             <div className="flex items-center justify-between gap-4 opacity-60">
               <div>
-                <div className="font-medium text-muted-foreground">{row.name}</div>
+                <div className="font-medium text-muted-foreground">{personRowName(row)}</div>
                 <div className="text-sm text-faint-foreground">
                   {row.media === "both" ? "movies & shows" : `${row.media}s`}
                 </div>

@@ -999,14 +999,14 @@ describe("JobsPage — one place for everything on a timer", () => {
     );
   });
 
-  it("preserves full row titles with readable placeholder chips", async () => {
+  it("shows a row title in plain words, never a placeholder chip", async () => {
     // A row is configured as a template, so this chip used to read "✨ {library_name} Picked for
     // You" — which looks like a substitution that failed, on a page that is otherwise all plain
     // English. Same treatment the run pages give it (`rowDisplayName`).
     renderPage();
 
     const link = await screen.findByRole("link", { name: /Picked for You/ });
-    expect(link.textContent).toBe("✨ library name Picked for You");
+    expect(link.textContent).toBe("✨ Picked for You");
     expect(link.textContent).not.toContain("{");
     expect(link).toHaveAttribute("title", "Edit ✨ {library_name} Picked for You");
   });

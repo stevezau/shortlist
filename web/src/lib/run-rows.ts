@@ -114,6 +114,25 @@ export function rowDisplayName(name: string): string {
 }
 
 /**
+ * A row's name as an owner reads it: the template with whatever is known filled in, and plain words
+ * for what is not. `{top_seed}` becomes an ellipsis ("Because you watched …") and a missing
+ * `{library_name}` simply drops out, re-capitalising what follows ("You've already seen"). Unlike
+ * `RowName` it never draws a token chip, so it is safe in a title that should read as a name.
+ */
+export function resolveRowName(
+  template: string,
+  known: { library?: string; topSeed?: string } = {},
+): string {
+  const filled = template
+    .replaceAll("{library_name}", known.library ?? "")
+    .replaceAll("{top_seed}", known.topSeed ?? "…");
+  const name = rowDisplayName(filled);
+  // What a dropped leading `{library_name}` leaves behind starts in lower case; the first LETTER
+  // (an emoji prefix has none) is the one to raise.
+  return name.replace(/^([^\p{L}]*)(\p{Ll})/u, (_, lead: string, letter: string) => lead + letter.toUpperCase());
+}
+
+/**
  * Group a run by ROW rather than by person, scoped to the rows the run actually ran.
  *
  * @param run The run detail payload.
