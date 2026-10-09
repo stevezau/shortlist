@@ -85,7 +85,7 @@ function TemplatePreview({ template }: { template: RowTemplate }) {
 
   return (
     <div className="hidden rounded-lg border bg-background p-3 md:block">
-      <div className="mb-3 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+      <div className="mb-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="uppercase tracking-wider">On their Plex home</span>
         <span>Illustrative preview</span>
       </div>
@@ -106,7 +106,7 @@ function TemplatePreview({ template }: { template: RowTemplate }) {
           <span className="relative text-[10px] font-semibold uppercase leading-tight tracking-widest">Wild<br />coast</span>
         </div>
       </div>
-      <p className="mt-2 text-[10px] text-muted-foreground">
+      <p className="mt-2 text-xs text-muted-foreground">
         {template.values.requests_row
           ? "Their requests appear once they’re on Plex."
           : "Titles will be picked from your libraries."}
@@ -148,7 +148,7 @@ function TemplateDetails({ template, needsRequestSource }: {
           <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
             <Icon className="size-5" aria-hidden />
           </span>
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          <span className="text-xs uppercase tracking-widest text-muted-foreground">
             Selected template
           </span>
         </div>
@@ -156,7 +156,7 @@ function TemplateDetails({ template, needsRequestSource }: {
         <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{template.blurb}</p>
         <ul className="mt-3 flex flex-wrap gap-1.5" aria-label="Template highlights">
           {template.highlights.map((highlight) => (
-            <li key={highlight} className="rounded-md bg-muted px-2 py-1 text-[10px] text-muted-foreground">
+            <li key={highlight} className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
               {highlight}
             </li>
           ))}
@@ -244,7 +244,7 @@ function TemplatePicker({ onPick, onClose, noSource }: {
               </Button>
             ))}
           </div>
-          <div className="mb-3 flex items-center justify-between gap-3 text-[10px] text-muted-foreground">
+          <div className="mb-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
             <p role="status" className="uppercase tracking-widest">
               {visible.length} {visible.length === 1 ? "template" : "templates"}
             </p>
@@ -273,7 +273,7 @@ function TemplatePicker({ onPick, onClose, noSource }: {
                   </span>
                   <span className="min-w-0">
                     <span className="block text-xs font-medium">{template.title}</span>
-                    <span className="mt-1 block text-[11px] leading-snug text-muted-foreground">{template.summary}</span>
+                    <span className="mt-1 block text-xs leading-snug text-muted-foreground">{template.summary}</span>
                   </span>
                   {active && <Check className="absolute right-1.5 top-1.5 size-3 text-primary" aria-hidden />}
                 </button>
