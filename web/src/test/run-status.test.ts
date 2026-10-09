@@ -15,6 +15,22 @@ describe("runHealth", () => {
     const two = { ...flagged, unreadable_filters: ["jess"] };
     expect(runHealth({ status: "ok", privacy: two as never }).label).toBe("OK · 2 warnings");
   });
+  it("warns when a run could not save someone's hide rules or could not look through their account", () => {
+    const failed = { ...clean, write_failed: ["jess"], unchecked: [], left_alone: [] };
+    expect(runHealth({ status: "ok", privacy: failed as never })).toEqual({
+      tone: "warn",
+      label: "OK · 1 warning",
+      warnings: 1,
+    });
+    const unchecked = { ...clean, write_failed: [], unchecked: ["kid", "Jess"], left_alone: [] };
+    expect(runHealth({ status: "ok", privacy: unchecked as never }).label).toBe("OK · 2 warnings");
+  });
+  it("counts a name once when several checks flag it, and does not warn for a left-alone account", () => {
+    const both = { ...flagged, write_failed: ["Kid"], unchecked: [], left_alone: [] };
+    expect(runHealth({ status: "ok", privacy: both as never }).warnings).toBe(1);
+    const left = { ...clean, write_failed: [], unchecked: [], left_alone: ["dad"] };
+    expect(runHealth({ status: "ok", privacy: left as never }).label).toBe("OK");
+  });
   it("keeps a clean ok run OK and a failed run Failed", () => {
     expect(runHealth({ status: "ok", privacy: clean as never }).label).toBe("OK");
     expect(runHealth({ status: "error", privacy: flagged as never })).toEqual({ tone: "error", label: "Failed", warnings: 0 });

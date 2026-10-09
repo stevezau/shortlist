@@ -1,5 +1,5 @@
 import { runStatusLabel } from "@/lib/format";
-import { hasPrivacyWarning, privacyFindings } from "@/lib/run-privacy";
+import { hasPrivacyWarning, privacyWarnings } from "@/lib/run-privacy";
 import type { Run, RunsSummary } from "@/lib/types";
 
 export type RunHealth = { tone: "ok" | "warn" | "error" | "neutral"; label: string; warnings: number };
@@ -14,7 +14,7 @@ export function runHealth(run: { status: string; privacy?: Run["privacy"] }): Ru
   if (run.status === "error") return { tone: "error", label: "Failed", warnings: 0 };
   if (run.status === "ok") {
     if (!hasPrivacyWarning(run)) return { tone: "ok", label: "OK", warnings: 0 };
-    const warnings = privacyFindings(run.privacy).length;
+    const warnings = privacyWarnings(run.privacy).length;
     return { tone: "warn", label: `OK · ${warnings} ${warnings === 1 ? "warning" : "warnings"}`, warnings };
   }
   return { tone: "neutral", label: runStatusLabel(run.status), warnings: 0 };
