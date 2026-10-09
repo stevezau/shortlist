@@ -1,9 +1,8 @@
 import { Check, CircleSlash, Clock, Copy, Telescope } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
-import { TitleLinkIcons } from "@/components/title-link-icons";
 import { TitlePoster } from "@/components/title-poster";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
@@ -190,7 +189,23 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
                 .filter(Boolean)
                 .join(" · ")}
             </span>
-            <TitleLinkIcons title={pick} labelled />
+            {links.length > 0 && (
+              <span className="inline-flex items-center gap-1.5">
+                {links.map((link, index) => (
+                  <Fragment key={link.label}>
+                    {index > 0 && <span aria-hidden="true">·</span>}
+                    <a
+                      href={link.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
+                    >
+                      {link.label}
+                    </a>
+                  </Fragment>
+                ))}
+              </span>
+            )}
           </span>
         )}
       </span>
@@ -308,7 +323,7 @@ function ResultsLegend() {
         <span className="line-through">Title</span> Rotated out for variety
       </span>
       <span className="inline-flex items-center gap-1.5">
-        <span className="font-semibold tabular-nums text-amber-400">#1–3</span>{" "}
+        <span className="font-semibold tabular-nums text-foreground">#1–3</span>{" "}
         Top picks
       </span>
     </div>

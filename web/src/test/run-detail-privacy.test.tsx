@@ -160,13 +160,14 @@ describe("the run summary's Result", () => {
 });
 
 describe("the run summary's Privacy cell", () => {
-  it("counts the accounts that hide every row and links to Privacy naming the one that does not", async () => {
+  it("counts the accounts that hide every row and points at the callout that names the one that does not", async () => {
     getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED } }));
     renderDetail();
 
     const summary = await strip();
     expect(within(summary).getByText("3 of 4 accounts hide every row")).toBeInTheDocument();
-    expect(within(summary).getByRole("link", { name: /kid can see others’ rows/ })).toHaveAttribute("href", "/privacy");
+    expect(within(summary).getByText("Details below")).toBeInTheDocument();
+    expect(within(summary).queryByRole("link")).toBeNull();
   });
 
   it("says every account hides every row when the run measured and flagged nobody", async () => {
@@ -248,7 +249,7 @@ describe("the run summary's Privacy cell, for accounts the run could not vouch f
 
     const summary = await strip();
     expect(within(summary).getByText("2 of 4 accounts hide every row")).toBeInTheDocument();
-    expect(within(summary).getByRole("link", { name: /kid can see others’ rows/ })).toBeInTheDocument();
+    expect(within(summary).getByText(/Details below/)).toBeInTheDocument();
     expect(within(summary).getByText(/You left sharing alone for jess/)).toBeInTheDocument();
   });
 
