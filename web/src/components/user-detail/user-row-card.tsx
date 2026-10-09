@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
-import { PickList } from "@/components/pick-list";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { RecentCountField } from "@/components/recent-count-field";
 import { RowName } from "@/components/rows/row-name";
@@ -13,10 +12,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { GroupedPicks } from "@/components/user-detail/grouped-picks";
 import { useAutosave } from "@/lib/autosave";
 import { LIBRARY_NAME } from "@/lib/placeholders";
 import { useSetUserRowOverride, useUserRows } from "@/lib/queries";
 import type { User, UserRow } from "@/lib/types";
+import { userState } from "@/lib/user-state";
 
 /** One of a person's rows: its live picks, and a per-person customization drawer. */
 function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
@@ -135,7 +136,7 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
 
         {!muted &&
           (row.picks.length > 0 ? (
-            <PickList picks={row.picks} collapseAfter={5} />
+            <GroupedPicks picks={row.picks} collapseAfter={10} />
           ) : (
             <p className="text-sm text-muted-foreground">
               No picks in this row yet — use Run now above, or wait for the next
@@ -227,9 +228,37 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
   );
 }
 
+/**
+ * An Off person's rows: listed, but plainly not applying. Their switches are shown off and locked,
+ * because nothing is built for them and these controls would otherwise claim it is.
+ */
+function OffRowsList({ rows, name }: { rows: UserRow[]; name: string }) {
+  return (
+    <Card>
+      <ul className="divide-y">
+        {rows.map((row) => (
+          <li key={row.collection_id} className="flex items-center justify-between gap-4 px-6 py-4 opacity-60">
+            <div>
+              <div className="font-medium text-muted-foreground">{row.name}</div>
+              <div className="text-sm text-faint-foreground">
+                {row.media === "both" ? "movies & shows" : `${row.media}s`}
+              </div>
+            </div>
+            <label className="flex items-center gap-4 text-sm text-muted-foreground">
+              Not built &mdash; {name} is off
+              <Switch checked={false} disabled aria-label={`${row.name} does not apply while ${name} is off`} />
+            </label>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 /** All the rows that reach one user, each with its picks and per-person customization. */
 export function UserRowsSection({ user }: { user: User }) {
   const query = useUserRows(user.id);
+  const off = userState(user) === "off";
   return (
     <QueryBoundary
       query={query}
@@ -247,13 +276,17 @@ export function UserRowsSection({ user }: { user: User }) {
         />
       }
     >
-      {(rows) => (
+      {(rows) =>
+        off ? (
+          <OffRowsList rows={rows} name={user.display_name || user.username} />
+        ) : (
         <div className="space-y-3">
           {rows.map((row) => (
             <UserRowCard key={row.collection_id} userId={user.id} row={row} />
           ))}
         </div>
-      )}
+        )
+      }
     </QueryBoundary>
   );
 }
