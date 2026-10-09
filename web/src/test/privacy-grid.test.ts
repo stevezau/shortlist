@@ -64,20 +64,20 @@ describe("gridCell", () => {
   it("does not call an unmeasured account of the same kind hidden when a run saw Plex ignoring the rule", () => {
     const s = status({ measured: true, not_enforced: { sarah: [21] } });
     s.accounts = [account(), account({ user: "bob", slug: "bob", user_id: 8 })];
-    const bob = s.accounts[1];
+    const bob = s.accounts[1]!;
     expect(gridCell(bob, "shortlist_mike", s)).toBe("stored_not_applied");
   });
 
   it("leaves an account of a different kind hidden", () => {
     const s = status({ measured: true, not_enforced: { sarah: [21] } });
     s.accounts = [account(), account({ user: "kid", slug: "kid", user_id: 9, user_type: "managed" })];
-    expect(gridCell(s.accounts[1], "shortlist_mike", s)).toBe("hidden");
+    expect(gridCell(s.accounts[1]!, "shortlist_mike", s)).toBe("hidden");
   });
 
   it("covers every non-owner account when the flagged name is on no account", () => {
     const s = status({ measured: true, not_enforced: { ghost: [21] } });
     s.accounts = [account({ user_type: "managed" })];
-    expect(gridCell(s.accounts[0], "shortlist_mike", s)).toBe("stored_not_applied");
+    expect(gridCell(s.accounts[0]!, "shortlist_mike", s)).toBe("stored_not_applied");
   });
 
   it("does not claim a profiled account sees a row a run found it could not see", () => {

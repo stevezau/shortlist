@@ -140,9 +140,9 @@ describe("rowsNotTheirs", () => {
 describe("privacyGlance with a run that saw Plex ignoring the rules", () => {
   it("does not count an unmeasured account of the flagged kind as private", () => {
     const s = status("not_enforced", ["hiding", "hiding"]);
-    s.accounts[1] = { ...s.accounts[1], user: "bob", slug: "bob", user_id: 2 };
+    s.accounts[1] = { ...account("hiding"), user: "bob", slug: "bob", user_id: 2 };
     s.rows_on_plex = ["shortlist_sarah"];
-    s.enforcement = { measured: true, not_enforced: { sarah: [21] } } as PrivacyStatus["enforcement"];
+    s.enforcement = { measured: true, not_enforced: { sarah: [21] } } as unknown as PrivacyStatus["enforcement"];
     const glance = privacyGlance(s);
     expect(glance).toMatchObject({ kind: "counted", hiding: 0, total: 2 });
   });
