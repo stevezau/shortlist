@@ -284,7 +284,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
   const shown = trend.find((t) => t.week === hovered) ?? last;
 
   return (
-    <div className="space-y-1.5">
+    <div className="flex flex-1 flex-col gap-1.5">
       {/* The chart is aria-hidden (hover reaches a mouse and nothing else), so a screen reader gets
           NOTHING from it without a text alternative — this is that alternative. */}
       <p className="sr-only">
@@ -315,7 +315,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
       </p>
 
       <div
-        className="flex h-20 items-stretch gap-1"
+        className="flex min-h-20 flex-1 items-stretch gap-1"
         aria-hidden="true"
         onMouseLeave={() => setHovered(null)}
       >
@@ -907,8 +907,8 @@ function ReportBody({
       {impact(<Verdict overall={overall} coverage={coverage} reportWindow={reportWindow} />)}
 
       <div className={cn("space-y-4", dim)}>
-        <div className="grid items-start gap-4 lg:grid-cols-2">
-          <Section title="Watches per week" hint="Last 16 weeks, regardless of the window above">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Section title="Watches per week" hint="Last 16 weeks, regardless of the window above" fill>
             <Trend trend={report.trend} />
           </Section>
           <WhoIsWatching report={report} reportWindow={reportWindow} />
@@ -979,10 +979,21 @@ function RequestsSummary({ requests, reportWindow }: { requests: EffectivenessRe
     >
       <h2 className="text-base font-semibold tracking-tight">Requests</h2>
       <p className="text-sm text-muted-foreground">
-        <span data-testid="requests-sent">{requests.sent}</span> sent · {requests.watched_after_sent} watched since
-        {/* App-neutral on purpose — see run-stat-tiles: the route is a setting this line cannot see. */}
-        <span className="sr-only"> in {WINDOW_PHRASE[reportWindow]}</span>
-        {" · "}
+        {/* Only the figures that are not zero: "0 sent · 0 watched since" is a row of nothing. */}
+        {requests.sent > 0 && (
+          <>
+            <span data-testid="requests-sent">{requests.sent}</span> sent
+            {requests.watched_after_sent > 0 && (
+              <>
+                {" · "}
+                {requests.watched_after_sent} watched since
+                {/* App-neutral on purpose — see run-stat-tiles: the route is a setting this line cannot see. */}
+                <span className="sr-only"> in {WINDOW_PHRASE[reportWindow]}</span>
+              </>
+            )}
+            {" · "}
+          </>
+        )}
         {requests.pending > 0 && (
           <>
             <span className="font-semibold text-warning">{requests.pending} awaiting approval</span>
@@ -990,12 +1001,16 @@ function RequestsSummary({ requests, reportWindow }: { requests: EffectivenessRe
             <Link to="/requests" className="text-foreground underline-offset-4 hover:underline">
               Review →
             </Link>
-            {" · "}
           </>
         )}
-        <Link to="/requests?tab=sent" className="text-foreground underline-offset-4 hover:underline">
-          Send log →
-        </Link>
+        {requests.sent > 0 && (
+          <>
+            {requests.pending > 0 && " · "}
+            <Link to="/requests?tab=sent" className="text-foreground underline-offset-4 hover:underline">
+              Send log →
+            </Link>
+          </>
+        )}
       </p>
     </section>
   );
