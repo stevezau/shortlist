@@ -194,3 +194,33 @@ describe("StepUsers — the owner's own line", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("StepUsers — reasons and the quiet header", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+    syncUsers.mockClear();
+    setAllUsersEnabled.mockClear();
+  });
+
+  it("gives every switched-off person a reason and drops the empty History column", async () => {
+    getUsers.mockResolvedValue([
+      { ...SARAH, enabled: true },
+      { ...SARAH, id: 5, username: "kid", slug: "kid", restricted: true, enabled: false },
+      { ...SARAH, id: 6, username: "steve", slug: "steve", user_type: "owner", enabled: false },
+      { ...SARAH, id: 7, username: "jess", slug: "jess", enabled: false },
+    ]);
+    renderStep();
+
+    expect(await screen.findByText(/This is you\. Switch on to get a row of your own/)).toBeInTheDocument();
+    expect(screen.getByText(/Has a Plex restriction profile/)).toBeInTheDocument();
+    expect(screen.getByText(/Switched off, so they get no row/)).toBeInTheDocument();
+    expect(screen.queryByText("History")).not.toBeInTheDocument();
+    expect(screen.queryByText("unknown yet")).not.toBeInTheDocument();
+  });
+
+  it("keeps the owner warning to one line with the rest behind Why?", async () => {
+    getUsers.mockResolvedValue([SARAH]);
+    renderStep();
+    expect(await screen.findByText("Why?")).toBeInTheDocument();
+  });
+});

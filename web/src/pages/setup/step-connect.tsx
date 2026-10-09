@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { api, ApiError, apiErrorMessage } from "@/lib/api";
 import { PlexPinButton } from "@/components/plex-pin-button";
 import { queryKeys, useSession } from "@/lib/queries";
+import { cn } from "@/lib/utils";
 import type { PlexServer, ProbeCheck, ProbeResult } from "@/lib/types";
 
 import type { StepProps } from "./step-props";
@@ -138,6 +139,11 @@ export function StepConnect({ data, update }: StepProps) {
     );
   }
 
+  const needsManualAddress =
+    servers.isError ||
+    (servers.data !== undefined &&
+      !servers.data.some((server) => server.connections.some((c) => c.ok)));
+
   const requiredChecksPass =
     probe.data !== undefined &&
     probe.data.checks.pms_version.ok &&
@@ -245,16 +251,19 @@ export function StepConnect({ data, update }: StepProps) {
                     <Button
                       key={connection.uri}
                       type="button"
-                      variant={
-                        plexUrl === connection.uri ? "default" : "outline"
-                      }
+                      variant="outline"
                       size="sm"
                       aria-pressed={plexUrl === connection.uri}
                       // Unreachable addresses stay clickable: discovery only probed the plex.direct
                       // hostname, so selecting one fills the URL and re-runs the real check — and the
                       // owner can then edit it to their LAN address if that hostname won't route.
                       onClick={() => setPlexUrl(connection.uri)}
-                      className="h-auto w-full items-start justify-start gap-2 whitespace-normal break-all py-1.5 text-left font-mono text-xs disabled:opacity-50"
+                      className={cn(
+                        "h-auto w-full items-start justify-start gap-2 whitespace-normal break-all py-1.5 text-left font-mono text-xs disabled:opacity-50",
+                        // Selected is the raised recipe, never a filled amber bar: amber is the one
+                        // primary action on the screen, "Link this server".
+                        plexUrl === connection.uri && "bg-raised shadow-selected-y",
+                      )}
                     >
                       {connection.ok ? (
                         <Check
@@ -283,55 +292,61 @@ export function StepConnect({ data, update }: StepProps) {
         </div>
       </section>
 
-      <div className="space-y-2">
-        <Label htmlFor={urlId}>Plex server URL</Label>
-        <Input
-          id={urlId}
-          value={plexUrl}
-          onChange={(event) => setPlexUrl(event.target.value)}
-          placeholder="http://192.168.1.10:32400"
-          autoComplete="off"
-          className="font-mono"
-        />
-        {/* "Always editable — auto-discovery never traps you" was a design principle spoken
-            aloud: it describes a decision we made, not anything the reader does. The field being
-            editable is visible; what they need is the one case where they should edit it. */}
-        <p className="text-sm text-muted-foreground">
-          Filled in from Plex, and you can change it. If the secure address
-          won’t connect, use the plain{" "}
-          <span className="font-mono">http://</span> address on your home
-          network instead.
-        </p>
-      </div>
+      {/* The common case needs none of this: the first address that answered is already chosen and
+          checked. It stays reachable, and opens by itself when discovery found nothing that works. */}
+      <details className="group rounded-lg border bg-card" open={needsManualAddress || undefined}>
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-muted-foreground">
+          Advanced
+        </summary>
+        <div className="space-y-4 border-t px-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor={urlId}>Plex server URL</Label>
+            <Input
+              id={urlId}
+              value={plexUrl}
+              onChange={(event) => setPlexUrl(event.target.value)}
+              placeholder="http://192.168.1.10:32400"
+              autoComplete="off"
+              className="font-mono"
+            />
+            <p className="text-sm text-muted-foreground">
+              Filled in from Plex, and you can change it. If the secure address
+              won’t connect, use the plain{" "}
+              <span className="font-mono">http://</span> address on your home
+              network instead.
+            </p>
+          </div>
+          {probe.isPending ? null : (
+            <Button
+              variant="outline"
+              onClick={() => probe.mutate()}
+              disabled={!plexUrl}
+            >
+              {probe.data || probe.isError ? "Re-run checks" : "Run checks"}
+            </Button>
+          )}
+        </div>
+      </details>
 
-      <div className="flex flex-wrap items-center gap-2">
-        {probe.isPending ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            Checking this server…
-          </p>
-        ) : (
-          <Button
-            variant="outline"
-            onClick={() => probe.mutate()}
-            disabled={!plexUrl}
-          >
-            {probe.data || probe.isError ? "Re-run checks" : "Run checks"}
-          </Button>
-        )}
-        {requiredChecksPass && probe.data ? (
-          <Button
-            variant="default"
-            onClick={() => link.mutate(probe.data)}
-            disabled={link.isPending}
-          >
-            {link.isPending ? (
-              <Loader2 className="animate-spin" aria-hidden="true" />
-            ) : null}
-            Link this server
-          </Button>
-        ) : null}
-      </div>
+      {probe.isPending ? (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Checking this server…
+        </p>
+      ) : null}
+
+      {requiredChecksPass && probe.data ? (
+        <Button
+          variant="default"
+          onClick={() => link.mutate(probe.data)}
+          disabled={link.isPending}
+        >
+          {link.isPending ? (
+            <Loader2 className="animate-spin" aria-hidden="true" />
+          ) : null}
+          Link this server
+        </Button>
+      ) : null}
 
       {probe.isError ? (
         <div className="space-y-3">

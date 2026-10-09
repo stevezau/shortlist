@@ -92,15 +92,14 @@ The wizard has **7 steps**:
         alt="The Connect Plex step after running checks: the discovered server with its reachable and unreachable addresses, and a checklist confirming the Plex version, Plex Pass and two libraries">
 
    Every address Plex advertises for your server is tried from where Shortlist actually runs, and
-   the one that answered is preselected. You can always type a different one.
+   the one that answered is preselected. You can always type a different one under Advanced.
 
-3. **Recommendations & history**. Choose where picks come from and save the required TMDB key.
-   Watch history comes straight from Plex with no setup. Tautulli is optional, and only improves
-   the names people are shown by.
-4. **Choose your AI provider** — Claude / GPT / Gemini / a local server / **None**. Keys stay
+3. **Add a free TMDB key**. Three short steps walk you through getting the key, then Test key
+   unlocks Next. Watch history comes straight from Plex with no setup. Tautulli sits in a closed
+   optional section, and only improves the names people are shown by.
+4. **Choose your AI provider** — Claude / GPT / Gemini / a local server / **None** (preselected). Keys stay
    yours: stored encrypted, and hidden again once saved. Picking None is a perfectly good choice.
-5. **Pick your users** — everyone you share with, with badges showing how much history each
-   person has.
+5. **Pick your users** — everyone you share with, with a reason under anyone switched off.
 6. **Make it yours** — choose the row's name, how many titles it holds and its refresh cadence.
    Each row keeps its own schedule. A live title preview shows the name as you type, and
    **Save & continue** saves the name and size before moving on.

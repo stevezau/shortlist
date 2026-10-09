@@ -53,12 +53,8 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
     why: "Shortlist reads watch history and writes rows on your server.",
   },
   {
-    title: "Recommendations & history",
-    // One line, because both halves of the old one were restated verbatim by the fields directly
-    // beneath it — "TMDB is a free film and TV catalogue…" and "Tautulli is only used for the
-    // friendlier names it knows people by". A step header should say what the step is for; the
-    // field that needs explaining is right there to explain itself.
-    why: "One required key, and one optional connection.",
+    title: "Add a free TMDB key",
+    why: "TMDB (The Movie Database) is where Shortlist finds titles similar to what each person watches. The key is free and takes about 2 minutes.",
   },
   {
     title: "Add an AI provider (optional)",

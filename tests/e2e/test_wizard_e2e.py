@@ -58,10 +58,10 @@ def _connect_plex(page: Page, pms_url: str) -> None:
     unreachable = page.locator("button", has_text="10.255.255.1").first
     expect(unreachable).to_contain_text("reach")
 
-    # It preselects the address that worked, so the common case is one click.
+    # It preselects the address that worked and runs the checks itself, so the common case is one
+    # click. The URL field and "Run checks" live under "Advanced", closed unless nothing answered.
     url_field = page.get_by_label("Plex server URL")
     expect(url_field).to_have_value(pms_url, timeout=LOAD)
-    page.get_by_role("button", name="Run checks").click()
 
     # The capability checklist is the whole point of this step — assert every line, and that
     # the libraries the fake PMS actually reports come back through the real probe endpoint.
@@ -77,23 +77,23 @@ def _connect_plex(page: Page, pms_url: str) -> None:
 
 
 def _skip_history(page: Page) -> None:
-    """Step 2: TMDB is required, Tautulli is not.
+    """Step 2: TMDB is required, Tautulli is not (it sits in a closed "optional" disclosure).
 
     Without a TMDB key there is nothing to recommend FROM — every run dies at the first user
     with a 401 — so the wizard must not let you past this step until a key is on file. Tautulli
     stays optional (it only supplies friendlier display names); skipping uses Plex usernames.
     """
     page.get_by_role("button", name="Next").click()
-    expect(page.get_by_role("heading", name="Recommendations & history")).to_be_visible()
+    expect(page.get_by_role("heading", name="Add a free TMDB key")).to_be_visible()
 
-    # The gate: you cannot leave, or even skip Tautulli, without TMDB.
-    expect(page.get_by_role("button", name="Skip — use Plex usernames")).to_be_disabled()
+    # The gate: you cannot leave without a key that tests OK. Tautulli is a closed disclosure.
+    expect(page.get_by_role("button", name="Next")).to_be_disabled()
 
-    page.get_by_label("The Movie Database (TMDB) API key (required)").fill("fake-tmdb-key")
-    page.get_by_role("button", name="Save TMDB key").click()
+    page.get_by_label("TMDB API key").fill("fake-tmdb-key")
+    page.get_by_role("button", name="Test key").click()
     expect(page.get_by_text("TMDB key works")).to_be_visible(timeout=LOAD)
 
-    page.get_by_role("button", name="Skip — use Plex usernames").click()
+    page.get_by_role("button", name="Next").click()
 
 
 def _choose_no_curator(page: Page) -> None:
@@ -180,7 +180,7 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     expect(page.get_by_role("heading", name="First run")).to_be_visible(timeout=LOAD)
     page.get_by_role("button", name="Build my rows").click()
 
-    expect(page.get_by_text("Rows are live on Plex")).to_be_visible(timeout=SLOW)
+    expect(page.get_by_text("Your rows are on Plex")).to_be_visible(timeout=SLOW)
     expect(page.get_by_text("run ok")).to_be_visible()
 
     # Every person's final counts remain visible, including the cold-start picks. A candidate set
@@ -191,7 +191,7 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     expect(page.get_by_text(re.compile(r"^row built — \d+ picks"))).to_have_count(2)
     expect(page.get_by_text(re.compile(r"^popular-title picks — 20 found"))).to_have_count(1)
 
-    page.get_by_role("button", name="Finish setup").click()
+    page.get_by_role("button", name="Go to dashboard").click()
     expect(page.get_by_role("heading", name="Dashboard")).to_be_visible(timeout=LOAD)
 
     # --- What actually happened on the server ---------------------------------------------

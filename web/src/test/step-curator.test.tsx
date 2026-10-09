@@ -29,7 +29,7 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-function renderStep(provider: CuratorProvider) {
+function renderStep(provider: CuratorProvider | undefined) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -128,5 +128,21 @@ describe("StepCurator", () => {
         "http://gpu-box:8080/v1",
       ),
     );
+  });
+
+  it("preselects None when nothing is chosen and nothing but the default is saved", async () => {
+    const { update } = renderStep(undefined);
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith({ curator_provider: "none", curator_ready: true }),
+    );
+    expect(screen.getByText(/Skip this and Shortlist works the same/)).toBeInTheDocument();
+  });
+
+  it("leaves an already-saved provider alone", async () => {
+    getSettings.mockResolvedValueOnce({ "curator.provider": "anthropic" } as Settings);
+    const { update } = renderStep(undefined);
+    await screen.findByText(/Skip this and Shortlist works the same/);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(update).not.toHaveBeenCalled();
   });
 });

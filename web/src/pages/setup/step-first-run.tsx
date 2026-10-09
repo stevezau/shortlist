@@ -9,19 +9,21 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router";
 
 import { ErrorState, QueryBoundary } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TitlePoster } from "@/components/title-poster";
 import { runOutcome } from "@/lib/run-outcome";
 import type { RunFinishedEvent } from "@/lib/types";
 import { api, apiErrorMessage } from "@/lib/api";
 import { useRun, useUsers } from "@/lib/queries";
 import { describeCounts, RUN_STAGES, STAGE_LABELS } from "@/lib/run-stages";
 import { useSSE } from "@/lib/sse";
-import type { RunUserStageEvent, User } from "@/lib/types";
+import type { Pick, RunUserStageEvent, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import type { StepProps } from "./step-props";
@@ -65,10 +67,12 @@ function ProgressCard({
   user,
   progress,
   runFinished,
+  picks,
 }: {
   user: User;
   progress: UserProgress | undefined;
   runFinished: boolean;
+  picks: Pick[];
 }) {
   const stage = progress?.stage;
   const terminal = stage === "done" || stage === "cold_start" || stage === "error" || stage === "skipped";
@@ -100,7 +104,8 @@ function ProgressCard({
 
   return (
     <Card>
-      <CardContent className="flex items-center justify-between gap-3 p-4">
+      <CardContent className="space-y-3 p-4">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <p className="font-medium">{user.display_name || user.username}</p>
@@ -137,6 +142,20 @@ function ProgressCard({
             aria-hidden="true"
           />
         )}
+      </div>
+      {/* The owner never otherwise sees a pick during setup: a strip of what each person got is the
+          proof the run did something. Posters come from the owner's own Plex via the pick proxy. */}
+      {runFinished && picks.length > 0 && (
+        <div className="grid grid-cols-6 gap-2" data-testid={`picks-${user.slug}`}>
+          {picks.slice(0, 6).map((pick) => (
+            <TitlePoster
+              key={`${pick.rank}-${pick.rating_key}`}
+              ratingKey={pick.rating_key}
+              className="h-auto w-full sm:h-auto sm:w-full aspect-[2/3]"
+            />
+          ))}
+        </div>
+      )}
       </CardContent>
     </Card>
   );
@@ -149,7 +168,9 @@ function ProgressCard({
  * owner can leave at any point — the run keeps going server-side.
  */
 export function StepFirstRun({ data, update, complete }: StepProps) {
+  const navigate = useNavigate();
   const usersQuery = useUsers();
+  const willGetRow = (usersQuery.data ?? []).filter((user) => user.enabled);
   const [progress, setProgress] = useState<Record<string, UserProgress>>({});
   const [eventStatus, setFinishedStatus] = useState<
     RunFinishedEvent["status"] | null
@@ -171,7 +192,9 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
   const finishedStatus = eventStatus ?? (storedStatus === "ok" || storedStatus === "error" || storedStatus === "aborted" ? storedStatus : null);
   const finishedError = eventError ?? savedRun.data?.error;
   const recordedProgress: Record<string, UserProgress> = {};
+  const recordedPicks: Record<string, Pick[]> = {};
   for (const person of savedRun.data?.users ?? []) {
+    recordedPicks[person.slug] = person.picks;
     recordedProgress[person.slug] = {
       stage: person.status === "ok" ? "done" : person.status,
       counts: { picks: person.picks.length, ...(person.duration_ms ? { seconds: Math.round(person.duration_ms / 1000) } : {}) },
@@ -214,14 +237,37 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
       {started && <p className="text-sm text-muted-foreground">Run #{runId} · progress is saved, so you can return to this step.</p>}
       {started && savedRun.isError && <ErrorState error={savedRun.error} onRetry={() => void savedRun.refetch()} />}
       {!started && (
-        <div className="space-y-3">
+        <div className="space-y-6">
           <p className="text-sm text-muted-foreground">
             This looks at what everyone has watched, finds titles they should
             enjoy, and adds a row to each person&rsquo;s Plex. You can watch it
             happen as rows are built. Shortlist applies sharing rules before promoting
             rows; the owner and parental-profile limitations still apply.
           </p>
-          <div className="flex flex-wrap items-center gap-3">
+          {/* No time estimate: nothing recorded before a first run says how long this server takes,
+              and a number guessed from the people count would be invented. */}
+          <Card>
+            <CardContent className="space-y-2 p-4">
+              <p className="text-sm font-medium">
+                {usersQuery.data === undefined
+                  ? "Checking who gets a row…"
+                  : willGetRow.length === 0
+                    ? "No one is switched on yet"
+                    : `${willGetRow.length} ${willGetRow.length === 1 ? "person gets" : "people get"} a row`}
+              </p>
+              {willGetRow.length > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {willGetRow.map((user) => user.display_name || user.username).join(", ")}
+                </p>
+              )}
+              {usersQuery.data !== undefined && willGetRow.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Go back to step 5 and switch someone on, or skip this and add people later.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
             <Button
               size="lg"
               onClick={() => run.mutate()}
@@ -236,13 +282,14 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
             </Button>
             {/* Finishing without a run is fine — nothing needs the first run to have happened.
                 The nightly schedule builds rows anyway, and "Build my rows" waits on the Runs page. */}
-            <Button
-              variant="ghost"
+            <button
+              type="button"
+              className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline disabled:opacity-50"
               onClick={() => void complete()}
               disabled={run.isPending}
             >
               Skip for now — I&rsquo;ll run it later
-            </Button>
+            </button>
           </div>
           {run.isError && (
             <p role="alert" className="text-sm text-destructive-text">
@@ -282,6 +329,7 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
                     user={user}
                     progress={userProgress(user)}
                     runFinished={finished}
+                    picks={recordedPicks[user.slug] ?? []}
                   />
                 ))}
                 {enabled.length === 0 && (
@@ -324,21 +372,14 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
       )}
 
       {finished && (
-        <div
-          role="status"
-          className={
-            failed
-              ? "space-y-3 rounded-lg border border-destructive/50 bg-destructive/10 p-5"
-              : stopped
-                ? "space-y-3 rounded-lg border border-warning/50 bg-warning/10 p-5"
-                : "space-y-3 rounded-lg border border-success/50 bg-success/10 p-5"
-          }
-        >
+        <div role="status" className="space-y-4">
           <p
             className={
               failed
                 ? "inline-flex items-center gap-2 text-lg font-semibold text-destructive-text"
-                : "inline-flex items-center gap-2 text-lg font-semibold text-success"
+                : stopped
+                  ? "inline-flex items-center gap-2 text-lg font-semibold text-warning"
+                  : "inline-flex items-center gap-2 text-lg font-semibold text-success"
             }
           >
             {failed || stopped ? (
@@ -350,7 +391,7 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
               ? "The run needs attention"
               : stopped
                 ? "Stopped — the rows built before you stopped it are live"
-                : hasBuiltRows ? "Rows are live on Plex" : "First run complete"}
+                : hasBuiltRows ? "Your rows are on Plex" : "First run complete"}
           </p>
           {/* "warning", not "destructive", for a stop: the owner did it on purpose. */}
           <Badge
@@ -369,7 +410,7 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
               ? "Check the per-person results before trying again. The Runs page keeps the full result and error details."
               : stopped
                 ? "Everyone the run reached kept their row, and their privacy filters were applied. Run it again whenever you like — it picks up from where things are."
-                : hasBuiltRows ? "Review each person’s result above, then check their rows in Plex. Skipped accounts may need a different setup before they can receive a row." : "No built rows were recorded for the people in this run. Review their results and check the full run details after finishing setup."}
+                : hasBuiltRows ? "Review each person’s result above. They will see their row on Home next time they open Plex. Skipped accounts may need a different setup before they can receive a row." : "No built rows were recorded for the people in this run. Review their results and check the full run details after finishing setup."}
           </p>
           {failed && finishedError && (
             <div className="space-y-1">
@@ -382,16 +423,35 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
               </p>
             </div>
           )}
-          {!failed && (
+          {!failed && hasBuiltRows && (
             <p className="text-sm text-muted-foreground">
-              Want more? In Settings you can add extra recommendation sources
-              (Trakt, AI web search), auto-request missing titles via
-              Sonarr/Radarr or Overseerr, and add more rows.
+              You will see everyone&rsquo;s rows in each library&rsquo;s Collections tab: Plex never
+              filters the server owner.
             </p>
           )}
-          <Button onClick={() => void complete()}>
-            {failed ? "Finish setup anyway" : "Finish setup"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t pt-6">
+            <Button onClick={() => void complete()}>
+              {failed ? "Finish setup anyway" : "Go to dashboard"}
+            </Button>
+            {!failed && (
+              <>
+                <button
+                  type="button"
+                  className="text-sm text-muted-foreground hover:text-foreground"
+                  onClick={() => void complete().then(() => navigate("/rows/new"))}
+                >
+                  Add more rows
+                </button>
+                <button
+                  type="button"
+                  className="text-sm text-muted-foreground hover:text-foreground"
+                  onClick={() => void complete().then(() => navigate("/settings#requests"))}
+                >
+                  Set up requests
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

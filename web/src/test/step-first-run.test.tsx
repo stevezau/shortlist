@@ -1,11 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
 import { StepFirstRun } from "@/pages/setup/step-first-run";
 import type { SSEHandlers } from "@/lib/sse";
 const state = vi.hoisted(() => ({ run: undefined as unknown, start: vi.fn(), handlers: {} as SSEHandlers, refetch: vi.fn() }));
-vi.mock("@/lib/api", () => ({ api: { startRun: () => state.start() }, apiErrorMessage: (_e: unknown, fallback: string) => fallback }));
+vi.mock("@/lib/api", () => ({ apiUrl: (path: string) => path, api: { startRun: () => state.start() }, apiErrorMessage: (_e: unknown, fallback: string) => fallback }));
 vi.mock("@/lib/queries", () => ({
   useUsers: () => ({ data: [{ id: 1, slug: "sam", username: "sam", display_name: "Sam", enabled: true }] }),
   useRun: () => ({ data: state.run, refetch: state.refetch }),
@@ -13,7 +14,7 @@ vi.mock("@/lib/queries", () => ({
 vi.mock("@/lib/sse", () => ({ useSSE: (handlers: SSEHandlers) => { state.handlers = handlers; } }));
 function mount(id?: number) {
   const update = vi.fn();
-  render(<QueryClientProvider client={new QueryClient()}><StepFirstRun data={{ first_run_id: id }} update={update} next={vi.fn()} complete={vi.fn()} /></QueryClientProvider>);
+  render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><StepFirstRun data={{ first_run_id: id }} update={update} next={vi.fn()} complete={vi.fn()} /></MemoryRouter></QueryClientProvider>);
   return update;
 }
 beforeEach(() => { state.run = undefined; state.start.mockReset(); state.refetch.mockReset(); });
@@ -22,14 +23,14 @@ it("resumes the recorded run after reload and preserves each person's skipped re
   mount(42);
   expect(screen.queryByRole("button", { name: "Build my rows" })).not.toBeInTheDocument();
   expect(screen.getByText(/skipped — no row was due/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Finish setup" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Go to dashboard" })).toBeInTheDocument();
   expect(screen.getByText("First run complete")).toBeInTheDocument();
-  expect(screen.queryByText("Rows are live on Plex")).not.toBeInTheDocument();
+  expect(screen.queryByText("Your rows are on Plex")).not.toBeInTheDocument();
 });
 it("ignores completion events belonging to another run", () => {
   mount(42);
   act(() => state.handlers.onRunFinished?.({ run_id: 99, status: "ok" }));
-  expect(screen.queryByText("Rows are live on Plex")).not.toBeInTheDocument();
+  expect(screen.queryByText("Your rows are on Plex")).not.toBeInTheDocument();
   expect(state.refetch).not.toHaveBeenCalled();
 });
 it("records the run identity immediately after start so reload cannot offer a duplicate build", async () => {
@@ -51,11 +52,29 @@ it("describes cold-start picks without claiming they were delivered", () => {
   expect(screen.getByText("popular-title picks — 1 found")).toBeInTheDocument();
   act(() => state.handlers.onRunUserStage?.({ run_id: 42, seq: 1, user: "sam", stage: "done", counts: { picks: 1 } }));
   expect(screen.getByText("First run complete")).toBeInTheDocument();
-  expect(screen.queryByText("Rows are live on Plex")).not.toBeInTheDocument();
+  expect(screen.queryByText("Your rows are on Plex")).not.toBeInTheDocument();
 });
 
 it("claims live rows only when the recorded result contains delivered or retained titles", () => {
   state.run = { id: 42, status: "ok", users: [{ slug: "sam", status: "cold_start", picks: [{ id: 1 }], diff: { added: ["A film"] } }] };
   mount(42);
-  expect(screen.getByText("Rows are live on Plex")).toBeInTheDocument();
+  expect(screen.getByText("Your rows are on Plex")).toBeInTheDocument();
+});
+
+it("says who will get a row before the run, with no invented time estimate", () => {
+  mount();
+  expect(screen.getByText("1 person gets a row")).toBeInTheDocument();
+  expect(screen.getByText("Sam")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Build my rows" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Skip for now/ })).toBeInTheDocument();
+  expect(screen.queryByText(/minutes|seconds/)).not.toBeInTheDocument();
+});
+
+it("shows a poster strip of each built person's picks once the run is finished", () => {
+  state.run = {
+    id: 42, status: "ok",
+    users: [{ slug: "sam", status: "ok", picks: [{ rank: 1, rating_key: 11 }, { rank: 2, rating_key: 12 }], diff: { added: ["A film"] } }],
+  };
+  mount(42);
+  expect(screen.getByTestId("picks-sam").querySelectorAll("img")).toHaveLength(2);
 });
