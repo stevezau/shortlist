@@ -71,7 +71,7 @@ const DEFAULTS_FIELDS = [
 ];
 
 /** System's controls, each with an id so search can land on it. */
-const SYSTEM_FIELDS = ["runs-retention", "events-retention", "log-level", "run-concurrency", "plex-timeout"];
+const SYSTEM_FIELDS = ["runs-retention", "events-retention", "log-level", "run-concurrency", "plex-timeout", "pause-all"];
 
 /**
  * The tab and element an anchor names, or `null` when it is not one Settings knows by name (a
@@ -147,7 +147,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   { label: "Plex request timeout", keywords: "timeout seconds slow", to: at("system", "plex-timeout"), where: "System" },
   { label: "What Shortlist has on your Plex", keywords: "audit leftovers collections check plex", to: at("system", "advanced"), where: "System" },
   { label: "API access", keywords: "token api scripts", to: at("system", "api-access"), where: "System" },
-  { label: "Pause all users", keywords: "pause resume stop danger", to: at("system", "danger"), where: "System" },
+  { label: "Pause all users", keywords: "pause resume stop", to: at("system", "pause-all"), where: "System" },
   { label: "Full uninstall", keywords: "uninstall remove restore danger", to: at("system", "danger"), where: "System" },
   {
     label: "Disabled users see nothing",

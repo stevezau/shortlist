@@ -50,7 +50,7 @@ function SystemTab({ settings }: { settings: Settings }) {
         <AdvancedSection settings={settings} />
         <ApiAccessCard />
         <AssistantAccessCard />
-        <DangerZoneSection settings={settings} />
+        <DangerZoneSection />
       </div>
       <SaveBar />
     </SaveBarProvider>

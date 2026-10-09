@@ -3,12 +3,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
-import { DangerZoneSection } from "@/components/settings/danger-zone-section";
+import { PauseAllRow } from "@/components/settings/pause-all-row";
 import { api } from "@/lib/api";
 
 it("keeps Pause all available and explains a failed pause without claiming success", async () => {
   const save = vi.spyOn(api, "putSettings").mockRejectedValue(new Error("offline"));
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}><MemoryRouter><DangerZoneSection settings={{ paused_all: false }} /></MemoryRouter></QueryClientProvider>);
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}><MemoryRouter><PauseAllRow settings={{ paused_all: false }} /></MemoryRouter></QueryClientProvider>);
   await userEvent.click(screen.getByRole("button", { name: "Pause all" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/couldn’t change/i);
   expect(screen.getByRole("button", { name: "Pause all" })).toBeEnabled();
