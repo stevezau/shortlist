@@ -100,6 +100,10 @@ export function RowPlexCard({
       <p className="text-xs uppercase tracking-wide text-muted-foreground">
         On Plex
       </p>
+      {compact && mode === "" ? (
+        // No box to leave empty: Plex draws this artwork itself once the row exists.
+        <p className="text-sm text-muted-foreground">Plex draws the artwork from the row’s titles.</p>
+      ) : (
       <div className={compact ? "float-left mr-3 aspect-[2/3] w-28 max-w-full overflow-hidden rounded-md border bg-muted" : "aspect-[2/3] w-full max-w-44 overflow-hidden rounded-md border bg-muted"}>
         {mode === "upload" && collectionId !== null && hasImage ? (
           <img
@@ -117,6 +121,7 @@ export function RowPlexCard({
           <PosterWords title={posterTitle || shown} subtitle={posterSubtitle} posterStyle={input.poster.style} />
         )}
       </div>
+      )}
       <p className="break-words text-sm font-medium">“{shown}”</p>
       {description && (
         <p className="whitespace-pre-line break-words text-xs text-muted-foreground">

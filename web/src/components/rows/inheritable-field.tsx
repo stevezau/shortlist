@@ -69,7 +69,6 @@ export function InheritableField({
         name={label}
         inheriting={inheriting}
         globalValue={globalValue}
-        settingsHash="recommendations"
         onChange={onToggle}
         disabledReason={toggleDisabledReason}
       />

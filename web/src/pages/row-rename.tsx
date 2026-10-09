@@ -3,7 +3,6 @@ import { Check, Clock, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
@@ -213,11 +212,16 @@ export function RowRenamePage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to="/rows" label="Rows" />
       <PageHeader
         className="mb-0"
         title={
           <>
+            <Link to="/rows" className="font-normal text-muted-foreground hover:text-foreground">
+              Rows
+            </Link>
+            <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
+              /
+            </span>
             {confirmed ? "Renaming " : "Rename "}
             {collection?.name ? <RowName name={collection.name} className="" /> : "row"}
           </>
