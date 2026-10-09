@@ -13,13 +13,14 @@ import { profileName } from "@/lib/user-profile";
  */
 export function ProfileExposureBanner({ user }: { user: User }) {
   const privacy = usePrivacyStatus();
+  const profile = user.restriction_profile ? profileName(user) : "";
+  if (!profile) return null;
+
   const name = user.display_name || user.username;
-  const account = privacy.data?.accounts.find((a) => a.user_id === user.id);
+  const account = privacy.data?.accounts?.find((a) => a.user_id === user.id);
   const live = account && privacy.data && !privacy.data.error && !privacy.data.rows_error;
   const exposed = live ? rowsNotHidden(account, privacy.data) : 0;
   const lastRun = user.unhidden_rows;
-  const profile = user.restriction_profile ? profileName(user) : "";
-  if (!profile) return null;
 
   if (live ? exposed === 0 : privacy.isPending || lastRun === 0) return null;
 
