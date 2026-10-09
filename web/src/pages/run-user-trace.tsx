@@ -29,6 +29,7 @@ import { MutationAlert } from "@/components/mutation-alert";
 import { BackLink } from "@/components/back-link";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { RowName } from "@/components/rows/row-name";
+import { rowDisplayName } from "@/lib/run-rows";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -243,7 +244,7 @@ export function TraceView({
       <div className="space-y-6">
         <header className="space-y-1">
           <h1 className="break-words text-2xl font-semibold tracking-tight">
-            How we picked for {sharedRow ? <RowName name={name} /> : name}
+            How we picked for {sharedRow ? rowDisplayName(name) || name : name}
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
             {sharedRow
@@ -389,7 +390,7 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
                     {/* The release-date multiplier actually applied — the answer to "why did a 2003
                         title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
                     {t.age_weight != null && t.age_weight !== 1 && (
-                      <span className="font-mono text-muted-foreground">
+                      <span className="tabular-nums text-muted-foreground">
                         release date &times;{t.age_weight.toFixed(2)}
                       </span>
                     )}
@@ -1148,8 +1149,22 @@ function seedGroups(seeds: TraceSeed[]): { label: string; seeds: TraceSeed[] }[]
 }
 
 function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
+  // One toggle reveals the per-seed block buttons: eight identical "Don’t seed" buttons made the
+  // list read as a wall of actions when most visits only read it.
+  const [editing, setEditing] = useState(false);
   return (
     <div className="space-y-3">
+      {userId !== undefined && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs text-muted-foreground"
+          aria-pressed={editing}
+          onClick={() => setEditing((on) => !on)}
+        >
+          {editing ? "Done" : "Edit seeds"}
+        </Button>
+      )}
       {seedGroups(seeds).map((group, i) => (
         <div key={`${group.label}-${i}`} className="space-y-1.5">
           {group.label && (
@@ -1165,7 +1180,7 @@ function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
                 {/* This is where a bad seed is actually noticed — the page that says "these are the
                     watches your picks came from". Blocking anywhere else means remembering a title and
                     going to find it. */}
-                {userId !== undefined && (
+                {userId !== undefined && editing && (
                   <BlockSeedButton seed={s} userId={userId} />
                 )}
               </li>
@@ -1988,7 +2003,7 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
             </span>
             <span>{pick.title}</span>
             {pick.affinity != null && (
-              <span className="font-mono text-muted-foreground">
+              <span className="tabular-nums text-muted-foreground">
                 match {pick.affinity.toFixed(2)}
               </span>
             )}

@@ -116,20 +116,22 @@ describe("RunRowsTab", () => {
     // run looked like it had touched rows the operator never chose.
     renderTab();
 
-    expect(screen.getByText("✨ Picked for You")).toBeInTheDocument();
+    expect(screen.getAllByText("✨ Movies Picked for You").length).toBeGreaterThan(0);
     expect(
       screen.queryByText("🎯 Because you watched"),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/1 row wasn.t in this run/i)).toBeInTheDocument();
   });
 
-  it("marks {library_name} in the row header as a placeholder, the way the Rows page does", () => {
-    // The header spans every library the row built, so no one library's name can fill the token —
-    // and silently dropping it turned "📬 {library_name} you asked for" into "📬 you asked for".
+  it("fills {library_name} in the row header with each library, never a placeholder chip", () => {
+    // The header spans every library the row built, so it names one title per library instead of
+    // drawing the token as a "library name" chip.
     renderTab();
 
     const header = screen.getByRole("button", { name: /Picked for You/ });
-    expect(within(header).getByText("library name")).toBeInTheDocument();
+    expect(within(header).getByText("✨ Movies Picked for You")).toBeInTheDocument();
+    expect(within(header).getByText("✨ TV Shows Picked for You")).toBeInTheDocument();
+    expect(within(header).queryByText("library name")).toBeNull();
     expect(within(header).queryByText(/\{library_name\}/)).toBeNull();
   });
 
@@ -146,15 +148,11 @@ describe("RunRowsTab", () => {
     expect(screen.getByText(/Because you watched \(out of season\)/)).toBeInTheDocument();
   });
 
-  it("names a multi-library row once, with its libraries beside it", () => {
-    // Movies looked like it never ran because the row took its name from whichever delivered title
-    // arrived last. The row has ONE name; the libraries are their own field.
+  it("names every library a multi-library row built, so Movies never looks like it did not run", () => {
     renderTab();
 
-    expect(screen.getByText("Movies · TV Shows")).toBeInTheDocument();
-    expect(
-      screen.queryByText("✨ TV Shows Picked for You"),
-    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("✨ Movies Picked for You").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("✨ TV Shows Picked for You").length).toBeGreaterThan(0);
   });
 
   it("opens the row a deep-linked person is in, with them selected", () => {
@@ -250,7 +248,7 @@ describe("RunRowsTab", () => {
       } as unknown as Partial<RunDetail>),
     );
 
-    expect(screen.getByText("👥 Popular on SFLIX")).toBeInTheDocument();
+    expect(screen.getByText("👥 Popular Movies on SFLIX")).toBeInTheDocument();
     // One library here, so no tab strip — with two it switches instead of stacking, which is what
     // kept a 40-pick row from scrolling for pages.
     expect(screen.getByText("Dune")).toBeInTheDocument();

@@ -1013,7 +1013,7 @@ describe("TraceView for a shared row", () => {
     );
 
     expect(
-      screen.getByRole("heading", { name: /How we picked for 👥 Popular library name on SFLIX/ }),
+      screen.getByRole("heading", { name: /How we picked for 👥 Popular on SFLIX/ }),
     ).toBeInTheDocument();
     expect(screen.getByText(/for this shared row/i)).toBeInTheDocument();
     expect(screen.queryByText(/for this person/i)).not.toBeInTheDocument();
@@ -1193,6 +1193,8 @@ describe("Trace seed action feedback", () => {
     const block = vi.spyOn(api, "blockSeed").mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ blocked_seeds: [] });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><TraceView data={okTrace()} userId={7} /></QueryClientProvider>);
+    expect(screen.queryByRole("button", { name: "Don’t seed" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Edit seeds" }));
     await userEvent.click(screen.getByRole("button", { name: "Don’t seed" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t block this seed");
     expect(screen.queryByRole("button", { name: "Seed blocked" })).not.toBeInTheDocument();

@@ -1548,12 +1548,12 @@ describe("RunDetailPage — header actions", () => {
     expect(download).toHaveAttribute("download");
   });
 
-  it("starts a new run from Run now and opens it", async () => {
+  it("starts a new run from Run again and opens it", async () => {
     getRun.mockResolvedValue(run([]));
     renderDetail();
 
     const header = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
-    await userEvent.click(within(header).getByRole("button", { name: /Run now/ }));
+    await userEvent.click(within(header).getByRole("button", { name: /Run again/ }));
 
     expect(startRun).toHaveBeenCalledWith({});
     await waitFor(() => expect(getRun).toHaveBeenCalledWith(42));
@@ -1564,7 +1564,7 @@ describe("RunDetailPage — header actions", () => {
     renderDetail();
 
     const header = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
-    expect(within(header).queryByRole("button", { name: /Run now/ })).toBeNull();
+    expect(within(header).queryByRole("button", { name: /Run again/ })).toBeNull();
     expect(within(header).getByRole("button", { name: /Cancel run/ })).toBeInTheDocument();
   });
 });
