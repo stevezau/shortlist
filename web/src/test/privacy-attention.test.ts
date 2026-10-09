@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { privacyNeedsAttention, rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
+import { privacyGlance, privacyNeedsAttention, rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import type { AccountPrivacy, PrivacyStatus } from "@/lib/types";
 
 function account(state: string): AccountPrivacy {
@@ -134,5 +134,16 @@ describe("rowsNotTheirs", () => {
 
   it("says one row in the singular", () => {
     expect(rowsNotTheirs(1)).toBe("can see 1 row that isn’t theirs");
+  });
+});
+
+describe("privacyGlance with a run that saw Plex ignoring the rules", () => {
+  it("does not count an unmeasured account of the flagged kind as private", () => {
+    const s = status("not_enforced", ["hiding", "hiding"]);
+    s.accounts[1] = { ...s.accounts[1], user: "bob", slug: "bob", user_id: 2 };
+    s.rows_on_plex = ["shortlist_sarah"];
+    s.enforcement = { measured: true, not_enforced: { sarah: [21] } } as PrivacyStatus["enforcement"];
+    const glance = privacyGlance(s);
+    expect(glance).toMatchObject({ kind: "counted", hiding: 0, total: 2 });
   });
 });

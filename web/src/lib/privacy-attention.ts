@@ -68,11 +68,29 @@ export function privacyGlance(status: PrivacyStatus): PrivacyGlance {
     (account) => account.state !== "owner" && account.state !== "left_alone",
   );
   if (expected.length === 0) return { kind: "no_accounts" };
-  const notEnforced = status.enforcement?.measured ? (status.enforcement.not_enforced ?? {}) : {};
-  const exposed = expected.filter(
-    (account) => account.state !== "hiding" || (notEnforced[account.user]?.length ?? 0) > 0,
-  );
+  const exposed = expected.filter((account) => account.state !== "hiding" || rulesNotApplied(account, status));
   return { kind: "counted", hiding: expected.length - exposed.length, total: expected.length, exposed };
+}
+
+/**
+ * Whether a run's spot-check says Plex is not applying this account's stored rules.
+ *
+ * The run looks through ONE shared and ONE managed account, so a flagged name stands for its whole
+ * kind: every account of the same `user_type` is covered, not only the one named. A flagged name that
+ * matches no account (kind unknown) covers every account that isn't the owner.
+ */
+export function rulesNotApplied(account: AccountPrivacy, status: PrivacyStatus): boolean {
+  const enforcement = status.enforcement;
+  if (!enforcement?.measured) return false;
+  const flagged = Object.entries(enforcement.not_enforced ?? {})
+    .filter(([, keys]) => keys.length > 0)
+    .map(([name]) => name.toLowerCase());
+  if (flagged.length === 0 || account.state === "owner") return false;
+  if (flagged.includes(account.user.toLowerCase())) return true;
+  const kinds = new Set(
+    status.accounts.filter((a) => flagged.includes(a.user.toLowerCase())).map((a) => a.user_type),
+  );
+  return kinds.size === 0 || kinds.has(account.user_type);
 }
 
 /** Accounts Shortlist cannot hide rows from at all: Plex refuses the rule, or fails on the filter. */

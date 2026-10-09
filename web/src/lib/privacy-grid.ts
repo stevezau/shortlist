@@ -1,4 +1,4 @@
-import { rowsNotHidden } from "@/lib/privacy-attention";
+import { rowsNotHidden, rulesNotApplied } from "@/lib/privacy-attention";
 import type { AccountPrivacy, PrivacyStatus } from "@/lib/types";
 
 /** What one account can do with one row, as far as the live reading can say. */
@@ -51,12 +51,7 @@ export function gridCell(account: AccountPrivacy, label: string, status: Privacy
     return account.state === "refused_by_plex" && rowsNotHidden(account, status) === 0 ? "refused" : "sees";
   }
   if (lower(account.hides).includes(wanted)) {
-    const seen = status.enforcement?.measured
-      ? Object.entries(status.enforcement.not_enforced ?? {}).some(
-          ([name, keys]) => name.toLowerCase() === account.user.toLowerCase() && keys.length > 0,
-        )
-      : false;
-    return seen ? "stored_not_applied" : "hidden";
+    return rulesNotApplied(account, status) ? "stored_not_applied" : "hidden";
   }
   return "unknown";
 }
