@@ -52,8 +52,8 @@ if (typeof globalThis.EventSource === "undefined") {
 // It bit the v1.2.0 tag build, on a commit whose web suite had already passed three times, so it is
 // a genuine race rather than a broken test. `issue.tsx` is the only rAF caller in the app (its check
 // panel defers a frame so the scroll target has real geometry), and in jsdom that deferral buys
-// nothing — there is no layout, `matchMedia` doesn't exist, and `scrollIntoView` is optional-chained
-// away. Running the callback inline removes the window in which it can outlive its environment.
+// nothing — there is no layout, `matchMedia` doesn't exist, and `scrollIntoView` is a no-op (below).
+// Running the callback inline removes the window in which it can outlive its environment.
 globalThis.requestAnimationFrame = (cb: FrameRequestCallback): number => {
   cb(performance.now());
   return 0;
@@ -63,6 +63,15 @@ globalThis.cancelAnimationFrame = (): void => {};
 // Several tests stub these by assigning over the prototype/window (jsdom has neither, so a spy has
 // nothing to wrap). Put back what jsdom shipped after every test, so a stub cannot leak into the
 // next test in the same worker; vitest's per-file isolation otherwise hides the leak.
+//
+// jsdom ships no `scrollIntoView`, so "put back what jsdom shipped" used to mean `undefined`. A
+// hash-scroll effect still pending when a test ended (settings' `section-layout.tsx`) then ran during
+// unmount and threw "scrollIntoView is not a function" — only when CI was slow enough, which made it
+// look like a flaky test. `?.` there guards a missing element, not a missing method. A no-op baseline
+// keeps the reset callable; tests that assert on scrolling still install their own `vi.fn()`.
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = function scrollIntoView(): void {};
+}
 const originalScrollIntoView = Element.prototype.scrollIntoView;
 const originalMatchMedia = window.matchMedia;
 afterEach(() => {
