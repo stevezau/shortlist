@@ -21,6 +21,7 @@ If you already run Shortlist and want to know which button does what, you want t
 | How do I get rows that feel like Netflix's?           | [Recommendations from watch history](plex-recommendations-watch-history.md#if-what-you-want-is-like-netflix) |
 | Can each user have their own home screen rows?        | [Per-user collections](plex-per-user-collections.md#what-each-account-can-already-change-for-itself) |
 | Can I make a collection only one person can see?      | [Per-user collections](plex-per-user-collections.md)                        |
+| Can Kometa give each user their own recommendations? | [Kometa and per-user rows](kometa-per-user-recommendations.md)              |
 | Does AI actually help here?                           | [AI recommendations for Plex](plex-ai-recommendations.md)                   |
 | Which tool should I actually install?                 | [Plex recommendation tools compared](plex-recommendation-tools.md)          |
 

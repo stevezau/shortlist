@@ -109,6 +109,7 @@ Every page below, concatenated into one file, is at [llms-full.txt]({{ '/llms-fu
 - [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling
 - [Plex how-to]({{ '/plex-how-to' | absolute_url }}): what Plex itself can and cannot do about recommendations and per-user rows
 - [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks; what managed users, pinned sources and published collections change; what it costs at your server's size
+- [Can Kometa give each Plex user their own recommendations?]({{ '/kometa-per-user-recommendations' | absolute_url }}): Kometa's collections are library-wide; what it can't do per user and how to run it alongside Shortlist
 - [How to improve Plex recommendations]({{ '/improve-plex-recommendations' | absolute_url }}): what the Manage Recommendations menu really changes, which settings help, and where the built-in tools stop
 - [Plex recommendations based on each user's watch history]({{ '/plex-recommendations-watch-history' | absolute_url }}): what Plex does with watch history, why smart collections are not personal, how to build rows that are, and Netflix-style rows
 - [AI recommendations for Plex]({{ '/plex-ai-recommendations' | absolute_url }}): why asking a model for titles hallucinates, the candidates-from-library-then-rank shape that works, local models, cost

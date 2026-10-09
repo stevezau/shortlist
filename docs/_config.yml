@@ -150,6 +150,8 @@ nav:
         url: /plex-ai-recommendations/
       - title: Tools compared
         url: /plex-recommendation-tools/
+      - title: Kometa and per-user rows
+        url: /kometa-per-user-recommendations/
 
 # jekyll-redirect-from keeps the URLs of merged pages working: a page's `redirect_from:` front matter
 # publishes a small redirect page at each old address. It is on the GitHub Pages allow-list.
