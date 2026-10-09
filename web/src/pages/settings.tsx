@@ -35,11 +35,16 @@ function DefaultsTab({ settings }: { settings: Settings }) {
         <RecommendationsSection settings={settings} />
         <DefaultsSection settings={settings} />
         <RowPlacementSection settings={settings} />
-        <RequestsSection settings={settings} />
       </SectionsWithJumps>
       <SaveBar />
     </SaveBarProvider>
   );
+}
+
+/** Requests: filling gaps in a library through Radarr, Sonarr or Overseerr. It had been the last
+ *  section of Defaults, about 1,700px of that tab on its own. */
+function RequestsTab({ settings }: { settings: Settings }) {
+  return <RequestsSection settings={settings} />;
 }
 
 /** System: how Shortlist runs, the API token, and the danger zone. */
@@ -58,7 +63,8 @@ function SystemTab({ settings }: { settings: Settings }) {
 }
 
 /**
- * Settings: three tabs at `/settings/connections`, `/settings/defaults` and `/settings/system`.
+ * Settings: four tabs at `/settings/connections`, `/settings/defaults`, `/settings/requests` and
+ * `/settings/system`.
  * `/settings` and the old single-page `/settings#section` links land on the tab that section lives
  * on now (see `SettingsTabs`).
  */
@@ -82,6 +88,7 @@ export function SettingsPage() {
             content={{
               connections: <ConnectionsTab settings={settings} />,
               defaults: <DefaultsTab settings={settings} />,
+              requests: <RequestsTab settings={settings} />,
               system: <SystemTab settings={settings} />,
             }}
           />

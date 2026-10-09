@@ -20,7 +20,7 @@ describe("where an old Settings anchor lives now", () => {
     ["#defaults", "defaults"],
     ["#row-defaults", "defaults"],
     ["#placement", "defaults"],
-    ["#requests", "defaults"],
+    ["#requests", "requests"],
     ["#watched-pct", "defaults"],
     ["#rating-source", "defaults"],
     ["#advanced", "system"],
@@ -83,6 +83,14 @@ describe("the Defaults jump list", () => {
       </MemoryRouter>,
     );
   }
+
+  it("offers a Jump to select for a phone, with every section in it", () => {
+    renderJumps("/settings/defaults#refresh");
+    const select = screen.getByRole("combobox", { name: "Defaults sections" });
+    expect(Array.from(select.querySelectorAll("option")).map((option) => option.textContent)).toEqual(
+      DEFAULTS_SECTIONS.map((section) => section.label),
+    );
+  });
 
   it("follows the section being read after scrolling past the address's anchor", () => {
     const tops: Record<string, number> = { sources: 0, refresh: 1500, "row-defaults": 3000, placement: 4500, requests: 6000 };

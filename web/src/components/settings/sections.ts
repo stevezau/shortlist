@@ -1,7 +1,8 @@
-/** The three Settings tabs, in display order. Each is its own address: `/settings/<value>`. */
+/** The four Settings tabs, in display order. Each is its own address: `/settings/<value>`. */
 export const SETTINGS_TABS = [
   { value: "connections", label: "Connections" },
   { value: "defaults", label: "Defaults" },
+  { value: "requests", label: "Requests" },
   { value: "system", label: "System" },
 ] as const;
 
@@ -17,7 +18,6 @@ export const DEFAULTS_SECTIONS = [
   { id: "refresh", label: "Refresh & variety" },
   { id: "row-defaults", label: "Row defaults" },
   { id: "placement", label: "Row placement" },
-  { id: "requests", label: "Requests" },
 ] as const;
 
 /**
@@ -42,8 +42,8 @@ const ANCHORS: Record<string, { tab: SettingsTab; anchor?: string }> = {
   "row-defaults": { tab: "defaults" },
   placement: { tab: "defaults" },
   "placement-heading": { tab: "defaults", anchor: "placement" },
-  requests: { tab: "defaults" },
-  "requests-heading": { tab: "defaults", anchor: "requests" },
+  requests: { tab: "requests" },
+  "requests-heading": { tab: "requests", anchor: "requests" },
   advanced: { tab: "system" },
   "advanced-heading": { tab: "system", anchor: "advanced" },
   "api-access": { tab: "system" },
@@ -139,7 +139,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   { label: "Row name template", keywords: "row name library name user top seed", to: at("defaults", "row-defaults"), where: "Defaults" },
   { label: "How many titles", keywords: "row size length", to: at("defaults", "row-defaults"), where: "Defaults" },
   { label: "Let Shortlist order the Recommended shelf", keywords: "shelf order placement kometa agregarr", to: at("defaults", "placement"), where: "Defaults" },
-  { label: "Fill in the gaps automatically", keywords: "requests radarr sonarr overseerr missing", to: at("defaults", "requests"), where: "Defaults" },
+  { label: "Fill in the gaps automatically", keywords: "requests radarr sonarr overseerr missing", to: at("requests", "requests"), where: "Defaults" },
   { label: "Runs kept", keywords: "history retention months", to: at("system", "runs-retention"), where: "System" },
   { label: "Change log kept", keywords: "events audit retention", to: at("system", "events-retention"), where: "System" },
   { label: "Console log detail", keywords: "log level debug trace docker logs", to: at("system", "log-level"), where: "System" },

@@ -3,6 +3,11 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { SaveStatus } from "@/components/save-status";
+import {
+  countModified,
+  useModifiedMarks,
+  useReportModifiedCount,
+} from "@/components/settings/modified";
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import { SettingRow, SettingsPanel, SettingsSection } from "@/components/settings/section-layout";
 import { Button } from "@/components/ui/button";
@@ -30,9 +35,17 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
 
   const inSaveBar = useSaveBarReport("placement", save);
 
+  const mark = useModifiedMarks();
+  const mOrder = mark("rows.manage_shelf_order", manageOrder, {
+    label: (on) => (on ? "on" : "off"),
+    reset: setManageOrder,
+  });
+  useReportModifiedCount("placement", countModified([mOrder]));
+
   return (
     <SettingsSection
       id="placement"
+      modifiedCount={countModified([mOrder])}
       title="Row placement"
       description="Where Shortlist’s rows sit on each library’s Recommended shelf."
     >
@@ -47,6 +60,7 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
       )}
       <SettingsPanel>
         <SettingRow
+          modified={mOrder}
           title="Let Shortlist order the Recommended shelf"
           control={
             <Switch

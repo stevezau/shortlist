@@ -590,6 +590,9 @@ export const api = {
   // --- Settings ---
   getSettings: (): Promise<Settings> => request("/api/settings"),
 
+  /** Built-in default of every setting (no secrets), for the "Modified" markers. */
+  getSettingDefaults: (): Promise<Settings> => request("/api/settings/defaults"),
+
   /** PUT /api/settings — send only the keys being changed; the server merges. */
   putSettings: (values: Settings): Promise<Settings> =>
     request("/api/settings", {

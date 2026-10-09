@@ -62,11 +62,12 @@ describe("Settings tabs", () => {
   });
 
   it("repeats a jump when its hash is already in the address", async () => {
-    renderTabs("/settings/defaults#requests", {
+    renderTabs("/settings/requests#requests", {
       connections: null,
-      defaults: (
+      defaults: null,
+      requests: (
         <>
-          <Link to="/settings/defaults#requests">Requests</Link>
+          <Link to="/settings/requests#requests">Requests</Link>
           <section id="requests" />
         </>
       ),

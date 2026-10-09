@@ -510,6 +510,20 @@ class TestSettingsApi:
         assert r.json()["row.size"] == 20
         assert client.put("/api/settings", json={"values": {"evil.key": 1}}).status_code == 422
 
+    def test_defaults_are_served_unchanged_by_what_has_been_saved_and_never_carry_a_secret(self, client: TestClient):
+        """The Settings page marks a value that differs from its default, so these must be the
+        built-in ones even after the owner has changed them, and nothing secret may ride along."""
+        client.put("/api/settings", json={"values": {"row.size": 20, "tmdb.apikey": "real-key"}})
+
+        defaults = client.get("/api/settings/defaults")
+
+        assert defaults.status_code == 200
+        body = defaults.json()
+        assert body["row.size"] == 15
+        assert "tmdb.apikey" not in body
+        assert "plex.token" not in body
+        assert "real-key" not in defaults.text
+
     def test_every_stored_setting_survives_the_response_model(self, client: TestClient):
         """This endpoint's key set is genuinely dynamic — `DEFAULTS` plus whatever the DB holds — so
         its response model declares no fields at all and relies on `extra="allow"` to pass them

@@ -15400,6 +15400,28 @@
         ]
       }
     },
+    "/api/settings/defaults": {
+      "get": {
+        "description": "Every setting's built-in default, so the page can mark one the owner has changed.\n\nSecrets and private keys are left out: a default carries no credential, and what is stored under\nthose keys is never this endpoint's to say.",
+        "operationId": "get_setting_defaults_api_settings_defaults_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Setting Defaults",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
     "/api/settings/overseerr/options": {
       "get": {
         "description": "The instance's accounts, so the UI can offer a \"request as\" dropdown.\n\nThe *seerr equivalent of ``arr_options``, and deliberately much smaller: quality profiles and\nroot folders are Overseerr's business on this route, so the only choice left to Shortlist is\nwhose name the request goes out under.",

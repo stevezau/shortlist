@@ -518,6 +518,16 @@ async def get_settings(request: Request) -> dict:
         return SettingsStore(session, request.app.state.secrets).all_public()
 
 
+@router.get("/defaults", response_model=SettingsOut)
+async def get_setting_defaults() -> dict:
+    """Every setting's built-in default, so the page can mark one the owner has changed.
+
+    Secrets and private keys are left out: a default carries no credential, and what is stored under
+    those keys is never this endpoint's to say.
+    """
+    return {key: value for key, value in DEFAULTS.items() if key not in PRIVATE_KEYS and key not in SECRET_KEYS}
+
+
 @router.put("", response_model=SettingsOut)
 async def put_settings(
     update: SettingsUpdate,
