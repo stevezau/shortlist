@@ -67,3 +67,6 @@ tests/e2e/assets/posters/
 .impeccable/review/
 .impeccable/critique/
 .impeccable/mocks/
+
+# Personal deployment notes moved out of CLAUDE.local.md — never commit
+.claude/docs/local/

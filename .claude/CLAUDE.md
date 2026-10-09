@@ -84,9 +84,6 @@ See shortlist-architecture.md §2–§4 for the full tree, DB schema, and API su
 
 Long sessions are the single biggest cost: every turn re-sends the whole conversation. So:
 
-- **Say when a `/clear` is due.** When the next request is a genuinely new task — a different
-  feature, a different bug, a different area — say so in one line before starting, and let the owner
-  decide. Don't nag mid-task; the cost of losing context you still need is higher than the tokens.
 - **Write the test first, then run only that test** (owner decision 2026-09-12). What made testing
   feel like it set the pace of development was running the WHOLE suite mid-edit. Writing the test
   before the code fixes that: it gives you one file to run, and one file is ~3.5s.
@@ -108,20 +105,8 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   parent. Ordinary runs use two workers. Never reuse or delete another active run's scratch.
 - **Don't re-verify what a tool already told you.** No re-reading a file you just wrote, no re-running
   a suite after a formatting-only change, no full-suite run to confirm a docs edit.
-- **Keep tool output small**: `-q`, `| tail`, targeted `grep`/`sed -n` over dumping whole files.
-- **Say when a cheaper model would do.** Before starting a chunk of work, if it is mechanical —
-  renames, updating test fixtures to a changed signature, docs, log wording, copy, dependency
-  bumps, boilerplate — suggest `/model sonnet` in one line and carry on. Stay on the strong model
-  without asking for: diagnosis, anything privacy/migration/identity-shaped, design decisions,
-  reviewing someone else's assumptions, and debugging behaviour that isn't yet understood.
-- **Run subagents on the cheapest model that can do the job** (`model:` on the Agent tool). Mechanical
-  fan-out — grepping, collecting, applying a known edit across many files — is `haiku` or `sonnet`.
-  The Architecture Review agent stays on the strong model: its value is catching assumptions nobody
-  questioned (it found `immutable=1` unsafe on a WAL database and an episode/show key-space
-  mismatch, neither visible without real reasoning). Make it RARE, not cheap.
-- **Answer at the length the question deserves.** A yes/no question gets a yes/no and the one caveat
-  that matters. Save the long write-up for a diagnosis, a design decision, or something that went
-  wrong. Never re-explain what was just said.
+- **Architecture Review is the only strong-model subagent** (a hook blocks other Opus/Fable subagents). It found
+  `immutable=1` unsafe on a WAL database and an episode/show key-space mismatch; make it RARE, not cheap.
 - Prove a test has teeth by breaking the code when the logic is **risky or subtle** — not for every
   test. Never use `git checkout <file>` to undo it: that wipes uncommitted work (done twice). Copy to
   a backup first, or re-apply by hand.
@@ -150,33 +135,10 @@ terminal:
 
 ## Conventions
 
-- **Branch model** (mirrors media_preview_generator): `dev` is the default/working branch — commit
-  and push here; every green `dev` push publishes `ghcr.io/stevezau/shortlist:dev`. `master` is the
-  stable branch, advanced only by promoting `dev` → `master` via PR at release time. A `master` push
-  runs NOTHING: master only advances by merging a PR that just ran the whole workflow on the same
-  content, and the release tag points at that very merge commit, so master and the tag were testing
-  one identical SHA twice (v1.7.0 ran the full suite four times over one tree before this was cut).
-  The two runs that gate a release are the PR and the tag. Releases are cut by tagging `vX.Y.Z` on
-  `master` (CI builds `:latest` + `:X.Y.Z` + `:dev`). Publishing is gated on lint+tests+e2e green.
-- **Branch protection.** Force-pushes and deletions are blocked on both branches. `master` also
-  requires `lint`/`test-python`/`test-web`/`e2e` — which are GATE jobs (`test-python`/`e2e` just
-  assert their `*-shard` matrix legs passed), so the shard count can change without touching branch
-  protection. Sharding those jobs under their old names is what blocked the v1.7.0 release PR with
-  all checks green: the required contexts had been renamed out of existence and nothing noticed,
-  because `dev` requires no checks. `dev` has no required checks on purpose — they
-  would block the direct pushes that are how you work on it. `enforce_admins` is off on both,
-  leaving an override for a genuine emergency.
-
-  Required checks alone do **not** require a pull request, and this file used to claim they did
-  ("only advances via a green PR"). They don't: `v1.0.0` was committed straight to `master` on
-  2026-08-04 under exactly that config. Commit the release on `dev` and promote it — a commit that
-  lands on `master` alone diverges the branches for real, and the next `dev` → `master` PR reverts
-  it silently, because `dev` never had it.
-
-  Ignore GitHub's "`master` is N commits ahead of `dev`". Every PR merge mints a merge commit that
-  lives only on the base branch, so that counter can never read 0 and is not drift. The real check
-  is content: `git fetch origin && git diff --quiet origin/master origin/dev`.
-
+- **Branch model**: `dev` is the working branch — commit and push there; every green `dev` push publishes
+  `ghcr.io/stevezau/shortlist:dev`. `master` advances only by a `dev` → `master` PR at release time; release
+  tags `vX.Y.Z` go on `master`. Never commit straight to `master`. A `master` push runs nothing. Before
+  promoting, tagging, or touching branch protection, read `.claude/docs/release-and-branching.md`.
 - **Conventional Commits** (`feat:`, `fix:`, `docs:`, `test:`, `chore:`)
 - **Architecture Review — by risk, not by habit.** The agent
   (`.claude/agents/architecture-review.md`) costs ~100k tokens a run, so spend it where bugs are
@@ -191,9 +153,7 @@ terminal:
   Skip it for UI-only, docs, logging, comments, test-only, and dependency-bump commits — CI and the
   test suite already cover those, and a review there finds style, not bugs.
 
-  NOT "before the PR" alone: a `dev` push deploys to the maintainer's server and to every `:dev`
-  user, so risky code is already live by then. The 0032 migration that was a no-op on every real
-  database sat on `dev` for days before any PR existed.
+  Run it before the push, not just before the PR: a `dev` push deploys to the maintainer's server and every `:dev` user.
 
 - Settings live in the DB (`settings` table via `settings_store`); env vars are one-time seeds
   migrated on first boot (infrastructure vars like `PORT`, `TZ`, `PUID/PGID`, `APP_BASE_PATH` stay live)

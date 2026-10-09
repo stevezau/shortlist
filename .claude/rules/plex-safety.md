@@ -1,7 +1,3 @@
----
-globs: "shortlist/engine/{privacy,delivery}*.py,shortlist/engine/clients/plex*.py"
----
-
 # Plex Safety Rules (non-negotiable)
 
 Shortlist modifies other people's Plex views and share permissions. These rules govern every code

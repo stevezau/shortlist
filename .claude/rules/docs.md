@@ -1,5 +1,9 @@
 ---
-globs: "**/*.md"
+paths:
+  - "shortlist/**"
+  - "web/src/**"
+  - "Dockerfile"
+  - "pyproject.toml"
 ---
 
 # Documentation Updates

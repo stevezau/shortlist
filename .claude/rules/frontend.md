@@ -1,5 +1,8 @@
 ---
-globs: "web/**/*.{ts,tsx,css}"
+paths:
+  - "web/**/*.ts"
+  - "web/**/*.tsx"
+  - "web/**/*.css"
 ---
 
 # Frontend Conventions (React + TypeScript)
