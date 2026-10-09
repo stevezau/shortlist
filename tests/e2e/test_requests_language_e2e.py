@@ -66,17 +66,16 @@ def test_the_second_bar_follows_the_owners_own_floor_and_saves_as_null(page: Pag
 
     # The Requests tab keeps its own "Saved" readout beside the form (it has no save bar).
     expect(page.get_by_role("status").get_by_text("Saved", exact=True)).to_be_visible(timeout=LOAD)
-    page.wait_for_timeout(2000)
+    app.wait_for_setting("requests.language_mode", "prefer")
 
     saved = app.api("GET", "/api/settings").json()
-    assert saved["requests.language_mode"] == "prefer"
     assert saved["requests.min_rating_other"] is None, "the bar must keep following, not be pinned"
 
     # Move the floor the bar derives from; the bar must move with it, still without being stored.
     minimum = page.get_by_label(re.compile(r"^Minimum .* rating$", re.I))
     minimum.fill("6")
     expect(page.get_by_label(OTHER_BAR)).to_have_value("7.5", timeout=LOAD)
-    page.wait_for_timeout(2000)
+    app.wait_for_setting("requests.min_rating", 6.0)
     assert app.api("GET", "/api/settings").json()["requests.min_rating_other"] is None
 
 
@@ -87,12 +86,10 @@ def test_typing_a_bar_stops_it_following_and_it_can_be_put_back(page: Page, app:
     bar = page.get_by_label(OTHER_BAR)
     expect(bar).to_have_value("8.5", timeout=LOAD)
     bar.fill("9.2")
-    page.wait_for_timeout(2000)
-    assert app.api("GET", "/api/settings").json()["requests.min_rating_other"] == 9.2
+    app.wait_for_setting("requests.min_rating_other", 9.2)
 
     page.get_by_role("button", name=re.compile("Follow my minimum rating again", re.I)).click()
-    page.wait_for_timeout(2000)
-    assert app.api("GET", "/api/settings").json()["requests.min_rating_other"] is None
+    app.wait_for_setting("requests.min_rating_other", None)
     expect(page.get_by_label(OTHER_BAR)).to_have_value("8.5")
 
 
@@ -108,7 +105,7 @@ def test_only_mode_hides_the_bar_and_warns_on_an_empty_list(page: Page, app: Sho
     page.get_by_role("button", name=re.compile("Remove English", re.I)).click()
     expect(page.get_by_text(re.compile("will never ask for anything", re.I))).to_be_visible()
 
-    page.wait_for_timeout(2000)
+    app.wait_for_setting("requests.preferred_languages", [])
     saved = app.api("GET", "/api/settings").json()
     assert saved["requests.language_mode"] == "only"
     assert saved["requests.preferred_languages"] == []
@@ -119,8 +116,7 @@ def test_adding_a_language_saves_it(page: Page, app: ShortlistApp):
     page.goto("/settings#requests")
 
     page.get_by_label("Add a language").select_option("ja", timeout=LOAD)
-    page.wait_for_timeout(2000)
-    assert app.api("GET", "/api/settings").json()["requests.preferred_languages"] == ["en", "ja"]
+    app.wait_for_setting("requests.preferred_languages", ["en", "ja"])
 
     page.reload()
     expect(page.get_by_text("Japanese")).to_be_visible(timeout=LOAD)
@@ -144,11 +140,8 @@ def test_a_row_can_be_stricter_than_the_server(page: Page, app: ShortlistApp):
 
     mode.select_option("only")
     page.get_by_role("button", name="Save changes").click()
-    page.wait_for_timeout(2000)
-
-    rows = {c["slug"]: c for c in app.api("GET", "/api/collections").json()}
-    assert rows["picked"]["req_language_mode"] == "only"
-    assert rows["picked"]["req_preferred_languages"] == ["en"]
+    row = app.wait_for_row_field("picked", "req_language_mode", "only")
+    assert row["req_preferred_languages"] == ["en"]
 
     _open_row_requests(page)
     expect(page.locator("#row-req-language-mode")).to_have_value("only", timeout=LOAD)
@@ -177,9 +170,6 @@ def test_clearing_the_row_override_puts_it_back_on_the_global(page: Page, app: S
     page.get_by_role("button", name="Reset Language for this row", exact=True).click(timeout=LOAD)
 
     page.get_by_role("button", name="Save changes").click()
-    page.wait_for_timeout(2000)
-
-    row = {c["slug"]: c for c in app.api("GET", "/api/collections").json()}["picked"]
-    assert row["req_language_mode"] is None
+    row = app.wait_for_row_field("picked", "req_language_mode", None)
     assert row["req_preferred_languages"] is None
     assert row["req_min_rating_other"] is None

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import socket
-import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -22,7 +21,6 @@ from pathlib import Path
 import httpx
 import httpx2
 import pytest
-import uvicorn
 from fastapi import FastAPI, Request
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
@@ -52,6 +50,7 @@ from shortlist.server.main import create_app
 from shortlist.server.settings_store import SettingsStore
 from tests.e2e.conftest import OWNER_ACCOUNT_ID, PMS_VERSION, _make_fake_tmdb
 from tests.fakes.fake_plex import FakeCollection, FakePlexState, make_fake_plex, make_fake_plextv, seed_state
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.integration
 
@@ -151,30 +150,6 @@ EXERCISED_BY_GROUP = {
 }
 
 
-class _ThreadedServer(threading.Thread):
-    def __init__(self, app, port: int):
-        super().__init__(daemon=True)
-        self.server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-        self.port = port
-
-    def run(self) -> None:
-        self.server.run()
-
-    def wait_until_up(self, path: str, timeout_s: float = 20) -> None:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            try:
-                httpx.get(f"http://127.0.0.1:{self.port}{path}", timeout=1).raise_for_status()
-                return
-            except httpx.HTTPError:
-                time.sleep(0.05)
-        raise AssertionError(f"loopback server on port {self.port} did not become ready")
-
-    def stop(self) -> None:
-        self.server.should_exit = True
-        self.join(timeout=10)
-
-
 def _port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -253,9 +228,9 @@ def _wire_app(
 
     assert Path(shortlist.__file__).resolve().is_relative_to(Path(__file__).resolve().parents[2])
     state = seed_state()
-    pms = _ThreadedServer(make_fake_plex(state), _port())
-    plex_tv = _ThreadedServer(make_fake_plextv(state), _port())
-    tmdb = _ThreadedServer(_make_fake_tmdb(state), _port())
+    pms = UvicornThread(make_fake_plex(state), _port())
+    plex_tv = UvicornThread(make_fake_plextv(state), _port())
+    tmdb = UvicornThread(_make_fake_tmdb(state), _port())
     for server, health in ((pms, "/identity"), (plex_tv, "/api/users"), (tmdb, "/configuration")):
         server.start()
         server.wait_until_up(health)
@@ -278,13 +253,7 @@ def _wire_app(
     monkeypatch.delenv("APP_BASE_PATH", raising=False)
     app = create_app(config_dir=tmp_path)
     app.state.matrix_provider_calls = provider_calls
-    app_server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
-    app_thread = threading.Thread(target=lambda: app_server.run(sockets=[sock]), daemon=True)
-    app_thread.start()
-    deadline = time.monotonic() + 15
-    while not app_server.started and app_thread.is_alive() and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert app_server.started, "the disposable MCP app did not start"
+    app_server = UvicornThread(app, sock=sock, log_level="error", access_log=False).start()
     try:
         with app.state.sessions() as session:
             store = SettingsStore(session, app.state.secrets)
@@ -355,9 +324,7 @@ def _wire_app(
         credential = repository.issue_local_credential(grant.grant_id).take()
         yield McpWire(url=url, credential=credential), app, state
     finally:
-        app_server.should_exit = True
-        app_thread.join(timeout=10)
-        sock.close()
+        app_server.stop()
         for server in (tmdb, plex_tv, pms):
             server.stop()
 
@@ -639,7 +606,7 @@ def test_mcp_sdk_configured_choices_read_real_loopback_service_shapes(tmp_path, 
         assert endpoint == "rootfolder"
         return [{"id": 9, "path": f"/media/{service}", "ignored_vendor_field": "not public"}]
 
-    boundary = _ThreadedServer(arr, _port())
+    boundary = UvicornThread(arr, _port())
     boundary.start()
     boundary.wait_until_up("/health")
     try:
@@ -709,7 +676,7 @@ def test_mcp_sdk_curator_model_choices_use_real_saved_provider_http(tmp_path, mo
             ],
         }
 
-    boundary = _ThreadedServer(provider, _port())
+    boundary = UvicornThread(provider, _port())
     boundary.start()
     boundary.wait_until_up("/v1/models")
     calls.clear()
@@ -774,7 +741,7 @@ def test_mcp_sdk_curator_models_never_follow_redirect_outside_approved_destinati
             "data": [{"id": "unapproved-model", "object": "model", "created": 1, "owned_by": "fixture"}],
         }
 
-    target = _ThreadedServer(remote, _port())
+    target = UvicornThread(remote, _port())
     target.start()
     target.wait_until_up("/v1/models")
     contacted.clear()
@@ -784,7 +751,7 @@ def test_mcp_sdk_curator_models_never_follow_redirect_outside_approved_destinati
     def redirect():
         return RedirectResponse(f"http://127.0.0.1:{target.port}/v1/models", status_code=307)
 
-    boundary = _ThreadedServer(source, _port())
+    boundary = UvicornThread(source, _port())
     boundary.start()
     # A redirect is itself the expected source response, not a readiness failure.
     boundary.wait_until_up("/docs")

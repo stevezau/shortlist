@@ -15,13 +15,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
 from shortlist.server.db.models import Collection, Delivery, PickRow, User
 from shortlist.server.services.run_persistence import live_pick_ids, reconcile_watched
-from tests.db_helpers import create_schema, disposing_engine
 from tests.watch_fixtures import personal_delivery
 
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
@@ -70,13 +67,6 @@ class TestIsFinished:
 
     def test_a_series_reporting_zero_watched_episodes_is_not_finished(self):
         assert watched_item(MediaType.SHOW, viewed=0, leaf=12).is_finished is False
-
-
-@pytest.fixture
-def sessions():
-    with disposing_engine(create_engine("sqlite://")) as engine:
-        create_schema(engine)
-        yield sessionmaker(engine)
 
 
 #: The run that last delivered alex's row — its picks are what `live_pick_ids` calls live.

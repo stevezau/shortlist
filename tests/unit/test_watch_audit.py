@@ -12,8 +12,6 @@ from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.clients.plex_pms import PlayEvent
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
@@ -41,7 +39,6 @@ from shortlist.server.services.watch_events import (
     tmdb_by_rating_key,
 )
 from tests.conftest import freeze_clock
-from tests.db_helpers import create_schema, disposing_engine
 from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
@@ -54,13 +51,6 @@ REPORTED_AT = NOW + timedelta(days=2)
 @pytest.fixture(autouse=True)
 def _report_read_at(monkeypatch):
     freeze_clock(monkeypatch, report_service, REPORTED_AT)
-
-
-@pytest.fixture
-def sessions():
-    with disposing_engine(create_engine("sqlite://")) as engine:
-        create_schema(engine)
-        yield sessionmaker(engine)
 
 
 @pytest.fixture

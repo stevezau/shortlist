@@ -14,13 +14,10 @@ phase, which reports the rows they can see but nothing can hide (#76).
 from __future__ import annotations
 
 import re
-import threading
-import time
 from dataclasses import replace
 
 import httpx
 import pytest
-import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 
@@ -58,6 +55,7 @@ from tests.fakes.fake_plex import (
     tag_name,
 )
 from tests.fakes.file_stores import FileSnapshotStore
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.integration
 
@@ -124,39 +122,15 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
     return app
 
 
-class _UvicornThread:
-    """Run a FastAPI app on an ephemeral loopback port in a daemon thread."""
-
-    def __init__(self, app: FastAPI):
-        self._server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
-        self._thread = threading.Thread(target=self._server.run, daemon=True)
-        self.url = ""
-
-    def start(self) -> _UvicornThread:
-        self._thread.start()
-        deadline = time.monotonic() + 10
-        while not self._server.started:
-            if time.monotonic() > deadline:
-                raise RuntimeError("uvicorn did not start within 10s")
-            time.sleep(0.01)
-        port = self._server.servers[0].sockets[0].getsockname()[1]
-        self.url = f"http://127.0.0.1:{port}"
-        return self
-
-    def stop(self) -> None:
-        self._server.should_exit = True
-        self._thread.join(timeout=10)
-
-
 @pytest.fixture
 def fakes(monkeypatch):
     """Seeded state + three live fake servers, with the engine's absolute URLs pointed at them."""
     state = seed_state()
     tmdb_app = _make_fake_tmdb(state)
     servers = [
-        _UvicornThread(make_fake_plex(state)).start(),
-        _UvicornThread(make_fake_plextv(state)).start(),
-        _UvicornThread(tmdb_app).start(),
+        UvicornThread(make_fake_plex(state)).start(),
+        UvicornThread(make_fake_plextv(state)).start(),
+        UvicornThread(tmdb_app).start(),
     ]
     pms, plextv, tmdb = servers
     monkeypatch.setattr("shortlist.engine.clients.plextv.PLEXTV", plextv.url)

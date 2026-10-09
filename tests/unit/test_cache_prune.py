@@ -10,22 +10,10 @@ from __future__ import annotations
 
 import time
 
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-
 from shortlist.server.db.models import CacheRow
 from shortlist.server.services.run_persistence import prune_expired_cache
-from tests.db_helpers import create_schema, disposing_engine
 
 HOUR = 3600
-
-
-@pytest.fixture
-def sessions():
-    with disposing_engine(create_engine("sqlite://")) as engine:
-        create_schema(engine)
-        yield sessionmaker(engine)
 
 
 def _add(session, kind: str, key: str, *, expires_in: float) -> None:

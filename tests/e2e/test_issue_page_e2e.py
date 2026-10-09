@@ -143,7 +143,9 @@ class TestNoConsoleErrors:
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
         page.goto("/issue")
         page.get_by_role("button", name=re.compile("switch on the checks", re.IGNORECASE)).click()
-        page.wait_for_timeout(3000)
+        # The page has finished reacting once the unlocked state shows and the network goes quiet.
+        expect(page.get_by_text(re.compile("checks are switched on", re.IGNORECASE))).to_be_visible(timeout=20_000)
+        page.wait_for_load_state("networkidle")
         assert not errors, errors
 
 

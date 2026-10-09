@@ -6,8 +6,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.delivery import apply_poster, render_poster_text
 from shortlist.engine.models import LABEL_PREFIX, PosterSpec, UserProfile, UserType
@@ -20,7 +18,6 @@ from shortlist.server.services.poster_service import (
     poster_seed,
     store_upload,
 )
-from tests.db_helpers import create_schema, disposing_engine
 
 
 def _profile(name: str = "Alex") -> UserProfile:
@@ -237,13 +234,6 @@ class TestImageProviderStatus:
 
     def test_google_with_key_is_capable(self):
         assert image_provider_status(self._Store({"curator.provider": "google", "curator.api_key": "k"}))["capable"]
-
-
-@pytest.fixture
-def sessions():
-    with disposing_engine(create_engine("sqlite://")) as engine:
-        create_schema(engine)
-        yield sessionmaker(engine)
 
 
 class TestImageStorage:

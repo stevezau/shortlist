@@ -27,9 +27,6 @@ ENTRYPOINT = Path(__file__).resolve().parents[2] / "docker" / "entrypoint.sh"
 #: Docker's default `docker stop` grace before it SIGKILLs.
 DOCKER_STOP_GRACE_S = 10
 
-#: Well inside the entrypoint's `--timeout-graceful-shutdown 3`: reaching it means the backstop fired.
-STREAM_CLOSED_BY_SIGNAL_S = 2.5
-
 
 def _uvicorn_launches() -> list[str]:
     """Every command in the entrypoint that starts uvicorn, with its `\\` continuations joined."""
@@ -152,7 +149,10 @@ def test_docker_stop_with_a_browser_tab_open_still_runs_the_lifespan_shutdown(tm
     # The stop signal ends the stream itself (`close_on_stop_signals`), so the graceful-shutdown timeout is
     # a backstop that never fires. When it did, every stop with a tab open logged two ERRORs and a
     # CancelledError traceback — read as a crash — because the stream was ended by cancellation.
-    assert took < STREAM_CLOSED_BY_SIGNAL_S, tail
+    # Asserted from the log, not from how long the stop took: a wall-clock bound flaked on a loaded
+    # host without the backstop ever firing; the backstop leaves "timeout graceful shutdown exceeded"
+    # (asserted below) and a CancelledError traceback when it does.
+    assert "CancelledError" not in log_text, tail
     # uvicorn re-raises the signal it handled once it has shut down, so a clean stop dies of SIGTERM (143).
     assert code == -signal.SIGTERM, tail
     assert "Application shutdown complete." in log_text, tail

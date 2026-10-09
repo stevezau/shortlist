@@ -115,11 +115,7 @@ class TestDefaults:
         url.fill("http://llama.local:8080")
         page.get_by_role("button", name="Save").first.click()
 
-        for _ in range(20):
-            settings = app.api("GET", "/api/settings").json()
-            if settings.get("curator.provider") == "openai_compatible":
-                break
-            page.wait_for_timeout(250)
+        app.wait_for_setting("curator.provider", "openai_compatible", timeout_s=5)
         settings = app.api("GET", "/api/settings").json()
         assert settings["curator.provider"] == "openai_compatible"
         assert settings["curator.openai_base_url"] == "http://llama.local:8080"
@@ -137,14 +133,8 @@ class TestDefaults:
         row_size.fill("22")
         row_size.blur()
         # No Save button — the section auto-saves (debounced). Poll until it reaches the database.
-        for _ in range(24):
-            stored = app.api("GET", "/api/settings").json()
-            if stored.get("row.name_template") == "🍿 Tonight's picks for {top_seed}" and stored.get("row.size") == 22:
-                break
-            page.wait_for_timeout(250)
-        stored = app.api("GET", "/api/settings").json()
-        assert stored["row.name_template"] == "🍿 Tonight's picks for {top_seed}"
-        assert stored["row.size"] == 22
+        app.wait_for_setting("row.name_template", "🍿 Tonight's picks for {top_seed}", timeout_s=6)
+        app.wait_for_setting("row.size", 22, timeout_s=6)
 
         # Reload: only a value that reached the database can come back.
         page.reload()
@@ -160,11 +150,7 @@ class TestDefaults:
 
         # It persisted...
         expect(page.get_by_role("alert")).to_have_count(0, timeout=LOAD)
-        for _ in range(20):
-            if app.api("GET", "/api/settings").json().get("paused_all") is True:
-                break
-            page.wait_for_timeout(250)
-        assert app.api("GET", "/api/settings").json()["paused_all"] is True
+        app.wait_for_setting("paused_all", True, timeout_s=5)
 
         # ...and a run now processes nobody, while every user stays enabled.
         run_id = app.api("POST", "/api/runs", json={"dry_run": True}).json()["run_id"]
@@ -248,11 +234,6 @@ def test_held_tags_preview_the_inbox_and_survive_a_reload(page: Page, app: Short
     expect(held).to_contain_text("tag “thanksgiving”")
     expect(held).not_to_contain_text("Untagged film")
 
-    for _ in range(24):
-        stored = app.api("GET", "/api/settings").json()
-        if stored.get("requests.hold_tags"):
-            break
-        page.wait_for_timeout(250)
-    assert stored["requests.hold_tags"] == {str(THANKSGIVING_TAG): "thanksgiving"}
+    app.wait_for_setting("requests.hold_tags", {str(THANKSGIVING_TAG): "thanksgiving"}, timeout_s=6)
     page.reload()
     expect(page.get_by_role("button", name="Remove tag thanksgiving")).to_be_visible(timeout=LOAD)

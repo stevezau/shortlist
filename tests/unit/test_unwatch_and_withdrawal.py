@@ -11,8 +11,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
 from shortlist.server.db.models import (
@@ -29,7 +27,6 @@ from shortlist.server.services.report_service import (
     resolve_outcomes,
 )
 from shortlist.server.services.run_persistence import reconcile_watched
-from tests.db_helpers import create_schema, disposing_engine
 from tests.watch_fixtures import personal_delivery, shared_delivery
 
 # The real clock, deliberately not a pinned date. Every fixture here places its data RELATIVE to
@@ -39,13 +36,6 @@ from tests.watch_fixtures import personal_delivery, shared_delivery
 # bug in code nobody had touched. Nothing in this file needs a fixed calendar date; it needs the
 # same "now" the SUT sees.
 NOW = datetime.now(UTC)
-
-
-@pytest.fixture
-def sessions():
-    with disposing_engine(create_engine("sqlite://")) as engine:
-        create_schema(engine)
-        yield sessionmaker(engine)
 
 
 @pytest.fixture

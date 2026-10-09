@@ -1,79 +1,19 @@
 """Acquisition claims belong to the apply transaction and uncertain sends are never repeated."""
 
-from types import SimpleNamespace
+# ruff: noqa: F811 -- a test requests the imported fixture by name, which reads as a redefinition
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
 
-from shortlist.server.assistant.changes import ChangeError, ChangeService
+from shortlist.server.assistant.changes import ChangeError
 from shortlist.server.assistant.operation_models import AssistantOperation, AssistantRequestDispatch
-from shortlist.server.assistant.request_adapter import RequestAdapter, dispatch_assistant_requests
-from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantPreset
-from shortlist.server.assistant_auth.credentials import CredentialHasher
-from shortlist.server.assistant_auth.repository import AssistantAuthRepository
-from shortlist.server.db.models import Collection, Job, RequestCandidate, Server, User
-from shortlist.server.services.secrets import SecretBox
+from shortlist.server.assistant.request_adapter import dispatch_assistant_requests
+from shortlist.server.db.models import Job, RequestCandidate, Server
 from shortlist.server.settings_store import SettingsStore
-from tests.db_helpers import create_schema, disposing_engine
-from tests.unit.test_assistant_requests import candidate
-
-
-@pytest.fixture
-def request_env(tmp_path):
-    with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'requests.db'}")) as engine:
-        create_schema(engine)
-        sessions = sessionmaker(engine, expire_on_commit=False)
-        state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
-        state.run_service = SimpleNamespace(
-            build_requests_context=lambda: pytest.fail("separate context during planning")
-        )
-        with sessions() as session:
-            session.add(
-                Server(machine_id="requests", url="http://unused.invalid", token_enc="unused", owner_account_id=42)
-            )
-            session.add(User(id=1, slug="sarah", username="sarah", plex_account_id=10))
-            session.add(Collection(id=1, slug="movies", name="Movies", library_keys=["1"]))
-            item = candidate()
-            item.row_slug = "movies"
-            session.add(item)
-            store = SettingsStore(session, state.secrets)
-            for key, value in {
-                "requests.enabled": True,
-                "requests.target": "arr",
-                "requests.radarr.url": "http://radarr.test",
-                "requests.radarr.apikey": "private-request-key",
-                "requests.radarr.quality_profile_id": 7,
-                "requests.radarr.root_folder": "/movies",
-                "requests.tag": "shortlist",
-                "tmdb.apikey": "private-metadata-key",
-            }.items():
-                store.set_in_transaction(key, value)
-            session.commit()
-        repository = AssistantAuthRepository(sessions, CredentialHasher(b"request-test-key-0000000000000000"))
-        principal = repository.create_grant(
-            owner_account_id=42,
-            client_id="requests-test",
-            name="Requests test",
-            preset=GrantPreset.OWNER_AUTOMATION,
-            capabilities={
-                Capability.CHANGES_PREPARE,
-                Capability.REQUESTS_READ,
-                Capability.REQUESTS_MANAGE,
-                Capability.REQUESTS_SEND,
-            },
-            constraints=GrantConstraints(
-                row_ids=frozenset({1}),
-                person_ids=frozenset({1}),
-                library_keys=frozenset({"1"}),
-                destination_ids=frozenset({"radarr", "http://radarr.test"}),
-                max_batch_size=25,
-            ),
-        )
-        state.assistant_auth = SimpleNamespace(repository=repository)
-        adapter = RequestAdapter(state)
-        service = ChangeService(sessions, {"requests": adapter})
-        yield SimpleNamespace(state=state, adapter=adapter, service=service, principal=principal, repository=repository)
+from tests.unit.assistant_fixtures import (
+    candidate,
+    request_env,  # noqa: F401
+)
 
 
 def prepare_send(env):

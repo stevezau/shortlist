@@ -15,6 +15,7 @@ from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serialize
 from shortlist.server.db.models import Server
 from shortlist.server.main import create_app
 from tests.assistant_oauth import issue_pair
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.integration
 
@@ -520,11 +521,8 @@ def test_official_sdk_client_round_trip_over_loopback(tmp_path, monkeypatch, mod
     import os
     import socket
     import sys
-    import threading
-    import time
 
     import httpx2
-    import uvicorn
     from mcp import Client, StdioServerParameters
     from mcp.client.streamable_http import streamable_http_client
 
@@ -535,14 +533,9 @@ def test_official_sdk_client_round_trip_over_loopback(tmp_path, monkeypatch, mod
     monkeypatch.setenv("SHORTLIST_MCP_URL", url)
     monkeypatch.delenv("APP_BASE_PATH", raising=False)
     app = create_app(config_dir=tmp_path)
-    server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
-    thread = threading.Thread(target=lambda: server.run(sockets=[sock]), daemon=True)
-    thread.start()
+    server = UvicornThread(app, sock=sock, log_level="error", access_log=False)
     try:
-        deadline = time.monotonic() + 10
-        while not server.started and thread.is_alive() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        assert server.started, "The local MCP application did not start."
+        server.start()
         with app.state.sessions() as session:
             session.add(
                 Server(machine_id="sdk-test", url="http://unused.invalid", token_enc="unused", owner_account_id=42)
@@ -605,10 +598,8 @@ def test_official_sdk_client_round_trip_over_loopback(tmp_path, monkeypatch, mod
 
         asyncio.run(exercise())
     finally:
-        server.should_exit = True
-        thread.join(timeout=10)
-        sock.close()
-    assert not thread.is_alive()
+        server.stop()
+    assert not server.is_alive()
     assert app.state.assistant_transport is None
 
 

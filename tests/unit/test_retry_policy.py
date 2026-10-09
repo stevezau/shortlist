@@ -202,6 +202,13 @@ class TestEveryBackoffIsJittered:
     used a bare `delay * 2`.
     """
 
+    @pytest.fixture(autouse=True)
+    def _seeded_jitter(self, monkeypatch):
+        """A fixed seed makes the statistical assertions below reproducible instead of merely unlikely to fail."""
+        import random
+
+        monkeypatch.setattr(http_retry, "random", random.Random(20261010))
+
     def test_the_helper_actually_spreads_the_delay(self):
         spread = {http_retry.jittered(10.0) for _ in range(200)}
         assert len(spread) > 100, "jittered() returned a near-constant value"

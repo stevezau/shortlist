@@ -15,7 +15,7 @@ from shortlist.server.services.request_actions import (
     request_send_entry,
     reserve_request_dispatches,
 )
-from tests.unit.test_assistant_request_dispatch import request_env  # noqa: F401
+from tests.unit.assistant_fixtures import request_env  # noqa: F401
 
 
 def automatic_title():

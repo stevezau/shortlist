@@ -1790,21 +1790,25 @@ class TestARunSettlesOffTheEventLoop:
     def test_the_loop_keeps_ticking_while_a_slow_context_is_built(self, sessions, tmp_path, monkeypatch):
         service = self._service(sessions, tmp_path, monkeypatch)
 
+        release = threading.Event()
+
         def slow_context(**kw):
-            time.sleep(0.6)  # stands in for the PMS request
+            # Stands in for the PMS request: it stays blocked until the loop has demonstrably ticked.
+            # If the build ran ON the loop, no tick could happen and the wait would time out empty.
+            release.wait(5)
             return _fake_ctx()
 
         monkeypatch.setattr(service, "build_context", slow_context)
-        gaps: list[float] = []
-        deadline = time.monotonic() + 1.5  # outlives the 0.6s context build; ends on its own
+        ticks_during_build: list[int] = []
 
         async def ticker():
-            last = time.monotonic()
-            while time.monotonic() < deadline:
-                await asyncio.sleep(0.02)
-                now = time.monotonic()
-                gaps.append(now - last)
-                last = now
+            ticks = 0
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+                ticks += 1
+                if ticks >= 5:
+                    release.set()
+            ticks_during_build.append(ticks)
 
         async def scenario():
             tick = asyncio.create_task(ticker())
@@ -1814,7 +1818,7 @@ class TestARunSettlesOffTheEventLoop:
 
         asyncio.run(scenario())
 
-        assert max(gaps) < 0.4, f"the loop stalled for {max(gaps):.2f}s"
+        assert ticks_during_build and ticks_during_build[0] >= 5, "the loop stalled while the context was built"
 
 
 class TestAFinishedRunDropsTheCachedReport:

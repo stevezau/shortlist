@@ -717,12 +717,29 @@ class TestUserSync:
         """The accounts are already saved and the nightly run is still the backstop, so a Plex
         outage here must not fail the sync the operator asked for."""
 
-        def explode(state, dry_run):
+        attempts: list[bool] = []
+
+        def explode(**kwargs):
+            attempts.append(True)
             raise RuntimeError("Plex is down")
 
         monkeypatch.setattr(client.app.state.run_service, "build_context", explode)
 
-        assert client.post("/api/users/sync").status_code == 200
+        response = client.post("/api/users/sync")
+
+        assert response.status_code == 200
+        # `build_context` runs in the queued `privacy.sync` job, never in this request: the sync is
+        # already inside the drain, so the share-filter pass waits for the next one.
+        assert attempts == []
+        queued = [j for j in client.get("/api/system/jobs").json() if j["kind"] == "privacy.sync"]
+        assert [j["status"] for j in queued] == ["queued"]
+
+        # Drain it now. The job must reach `build_context`, fail there, and be recorded as failed
+        # (retried with backoff) — not read as done, and not take the drain down.
+        assert client.post("/api/system/jobs", json={"kind": "sync.check"}).status_code < 500
+        assert attempts, "the share-filter job never reached build_context"
+        filters = [j for j in client.get("/api/system/jobs").json() if j["kind"] == "privacy.sync"]
+        assert filters and all(j["status"] != "done" for j in filters)
 
     def test_a_home_read_blip_never_wipes_a_stored_restriction_profile(self, client: TestClient, plextv, monkeypatch):
         """`/api/home/users` is a best-effort enrichment: when it fails, every profile comes back "".

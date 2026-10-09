@@ -13,27 +13,16 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import shortlist.server.services.watch_stream as watch_stream
 from shortlist.server.db.models import Job, WatchSession
 from shortlist.server.services.watch_stream import MIN_START_SECONDS, WatchStream
-from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
-def sessions():
-    # StaticPool, because the persistence path runs in a worker thread (`asyncio.to_thread`) and
-    # SQLite's default pooling hands a new thread its OWN connection — which for `sqlite://` means its
-    # own empty in-memory database. Without this the writes land somewhere nothing can read.
-    with disposing_engine(
-        create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    ) as engine:
-        create_schema(engine)
-        yield sessionmaker(engine)
+def sessions(threaded_sessions):
+    return threaded_sessions
 
 
 @pytest.fixture

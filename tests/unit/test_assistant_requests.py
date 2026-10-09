@@ -11,22 +11,7 @@ from shortlist.server.assistant.request_adapter import RequestAdapter, RequestIn
 from shortlist.server.db.models import Collection, RequestCandidate, User
 from shortlist.server.services.request_actions import apply_request_action_in_session
 from tests.db_helpers import create_schema, disposing_engine
-
-
-def candidate(candidate_id: int = 1) -> RequestCandidate:
-    return RequestCandidate(
-        id=candidate_id,
-        tmdb_id=100 + candidate_id,
-        media_type="movie",
-        title=f"Title {candidate_id}",
-        rating=8.0,
-        vote_count=1000,
-        demand=2,
-        status="pending",
-        tags=["shortlist"],
-        wanters=["sarah"],
-        why=[],
-    )
+from tests.unit.assistant_fixtures import candidate
 
 
 def test_request_intent_rejects_duplicates_and_unbounded_batches():

@@ -6,9 +6,7 @@ import itertools
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 from shortlist.engine.models import MediaType, RowLimits, UserProfile
 from shortlist.engine.themes import ThemeSpec
@@ -21,10 +19,10 @@ from shortlist.server.services.theme_rotation import (
     RotationOutcome,
     recent_theme_names,
     rotate_themes,
+    target_lock,
     theme_guidance,
 )
 from tests.conftest import make_profile
-from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime(2026, 10, 10, 3, 0, tzinfo=UTC)
 NAIVE_NOW = NOW.replace(tzinfo=None)
@@ -73,13 +71,8 @@ def _library_index(monkeypatch):
 
 
 @pytest.fixture
-def sessions():
-    # One shared connection: the overlap test runs a second pass on another thread against the same database.
-    with disposing_engine(
-        create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    ) as engine:
-        create_schema(engine)
-        yield sessionmaker(engine)
+def sessions(threaded_sessions):
+    return threaded_sessions
 
 
 def seed(sessions, *, people: int = 1, **row) -> tuple[int, list[int]]:
@@ -477,18 +470,25 @@ class TestHelpers:
 class TestConcurrentPasses:
     def test_two_overlapping_passes_leave_one_current_and_one_ai_call(self, sessions):
         import threading
-        import time
 
         row_id, (uid,) = seed(sessions)
         author = FakeAuthor()
         second: list = []
         inner = author.__call__
+        second_pass_running = threading.Event()
+
+        def run_second_pass() -> None:
+            second_pass_running.set()
+            second.append(rotate(sessions, author))
 
         def overlapping(**kwargs):
-            # The second pass starts after this AI call began and before the first commits.
-            t = threading.Thread(target=lambda: second.append(rotate(sessions, author)))
+            # The second pass starts after this AI call began and before the first commits. The first pass
+            # holds the (row, person) lock for the whole call, so wherever the second one is when this
+            # returns, it can only get the lock after the commit: no sleep needed to order them.
+            assert target_lock(row_id, uid).locked()
+            t = threading.Thread(target=run_second_pass)
             t.start()
-            time.sleep(0.3)
+            assert second_pass_running.wait(10)
             overlapping.thread = t
             return inner(**kwargs)
 

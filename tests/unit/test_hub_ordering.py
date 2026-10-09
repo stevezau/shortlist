@@ -20,6 +20,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from shortlist.engine.clients.plex_pms import PlexClient
+from tests.unit.plex_fakes import FakeColl
 
 _UNSET = "UNSET"  # sentinel: move() was never called on this hub
 
@@ -57,18 +58,6 @@ class FakeHub:
         self.moves += 1
         if self.shelf is not None:
             self.shelf.apply(self, after)
-
-
-class FakeLabel:
-    def __init__(self, tag: str):
-        self.tag = tag
-
-
-class FakeColl:
-    def __init__(self, title: str, tags: list[str], rating_key: int = 0):
-        self.title = title
-        self.labels = [FakeLabel(t) for t in tags]
-        self.ratingKey = rating_key
 
 
 class FakeSection:

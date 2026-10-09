@@ -15,7 +15,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from shortlist.engine.delivery import strip_marker
-from tests.e2e.conftest import ShortlistApp, _free_port, _ThreadedServer
+from tests.e2e.conftest import ShortlistApp, _free_port
 from tests.fakes.fake_arr import (
     ARR_API_KEY,
     REQUESTED_MOVIE_KEY,
@@ -26,6 +26,7 @@ from tests.fakes.fake_arr import (
     make_fake_seerr,
 )
 from tests.fakes.fake_plex import FakePlexState
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.e2e
 
@@ -46,9 +47,9 @@ def fake_request_sources(fake_plex) -> Iterator[RequestSourceUrls]:
     """Fake Overseerr, Radarr and Sonarr, booted once for the module beside the fake Plex."""
     _, _, state = fake_plex
     servers = {
-        "overseerr": _ThreadedServer(make_fake_seerr(state), _free_port()),
-        "radarr": _ThreadedServer(make_fake_arr("radarr", state), _free_port()),
-        "sonarr": _ThreadedServer(make_fake_arr("sonarr", state), _free_port()),
+        "overseerr": UvicornThread(make_fake_seerr(state), _free_port()),
+        "radarr": UvicornThread(make_fake_arr("radarr", state), _free_port()),
+        "sonarr": UvicornThread(make_fake_arr("sonarr", state), _free_port()),
     }
     for server in servers.values():
         server.start()

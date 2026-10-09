@@ -1,5 +1,7 @@
 """A saved-configuration run has role authority without a legacy lifetime allowance."""
 
+# ruff: noqa: F811 -- a test requests the imported fixture by name, which reads as a redefinition
+
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -18,7 +20,7 @@ from shortlist.server.assistant_auth.repository import require_current_grant_in_
 from shortlist.server.db.models import Collection, Run, Server
 from shortlist.server.settings_store import SettingsStore
 from tests.conftest import make_profile
-from tests.unit.test_assistant_runs import run_env as run_env
+from tests.unit.assistant_fixtures import run_env  # noqa: F401
 
 
 def _configured_run(

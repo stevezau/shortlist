@@ -1,5 +1,7 @@
 """Actual outbound run checkpoints retain money/privacy limits across failures and races."""
 
+# ruff: noqa: F811 -- a test requests the imported fixture by name, which reads as a redefinition
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
@@ -15,7 +17,7 @@ from shortlist.server.assistant_auth.models import AssistantGrant
 from shortlist.server.assistant_auth.repository import require_current_grant_in_session
 from shortlist.server.db.models import Collection, Run, Server
 from shortlist.server.settings_store import SettingsStore
-from tests.unit.test_assistant_runs import run_env as run_env
+from tests.unit.assistant_fixtures import run_env  # noqa: F401
 
 
 def _paid_run(

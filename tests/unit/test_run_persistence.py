@@ -2,19 +2,10 @@ from datetime import UTC, datetime
 from typing import ClassVar
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import UserRunReport
 from shortlist.server.services.run_persistence import _cost_blob, reconcile_watched
-from tests.db_helpers import create_schema, disposing_engine
-
-
-@pytest.fixture
-def sessions():
-    with disposing_engine(create_engine("sqlite://")) as engine:
-        create_schema(engine)
-        yield sessionmaker(engine)
+from tests.db_helpers import disposing_engine
 
 
 class TestCostBlob:

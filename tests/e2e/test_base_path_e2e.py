@@ -18,7 +18,8 @@ import pytest
 from playwright.sync_api import Browser
 
 from shortlist.server.main import create_app
-from tests.e2e.conftest import _free_port, _ThreadedServer
+from tests.e2e.conftest import _free_port
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.e2e
 
@@ -29,7 +30,7 @@ BASE = "/shortlist"
 def prefixed_url(tmp_path, monkeypatch) -> Iterator[str]:
     """A real server that believes it lives at `/shortlist`, as a forwarding proxy would present it."""
     monkeypatch.setenv("APP_BASE_PATH", BASE)
-    server = _ThreadedServer(create_app(config_dir=tmp_path), _free_port())
+    server = UvicornThread(create_app(config_dir=tmp_path), _free_port())
     server.start()
     server.wait_until_up(f"{BASE}/api/system/health")
     yield f"http://127.0.0.1:{server.port}"

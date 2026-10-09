@@ -59,13 +59,10 @@ def test_the_global_amount_of_a_show_saves_and_survives_a_reload(page: Page, app
     monitor.select_option("firstSeason")
     expect(page.get_by_text(re.compile("Season 1 only"))).to_be_visible()
 
-    # Autosave has no button; the "Saved" readout below is the real wait, the pause only lets the write settle.
+    # Autosave has no button; the stored value is the real wait.
     # The Requests tab keeps its own "Saved" readout beside the form (it has no save bar).
     expect(page.get_by_role("status").get_by_text("Saved", exact=True)).to_be_visible(timeout=LOAD)
-    page.wait_for_timeout(2000)
-
-    saved = app.api("GET", "/api/settings").json()
-    assert saved["requests.sonarr.monitor"] == "firstSeason"
+    app.wait_for_setting("requests.sonarr.monitor", "firstSeason")
 
     page.reload()
     expect(page.get_by_label("How much of a show to grab")).to_have_value("firstSeason", timeout=LOAD)
@@ -86,10 +83,7 @@ def test_a_row_can_take_less_of_a_show_than_the_global(page: Page, app: Shortlis
     row_monitor.select_option("pilot")
 
     page.get_by_role("button", name="Save changes").click()
-    page.wait_for_timeout(2000)
-
-    rows = {c["slug"]: c for c in app.api("GET", "/api/collections").json()}
-    assert rows["picked"]["req_sonarr_monitor"] == "pilot"
+    app.wait_for_row_field("picked", "req_sonarr_monitor", "pilot")
 
     _open_row_requests(page)
     expect(page.locator("#row-req-sonarr-monitor")).to_have_value("pilot", timeout=LOAD)
@@ -115,7 +109,4 @@ def test_clearing_the_row_override_puts_it_back_on_the_global(page: Page, app: S
     page.get_by_role("button", name="Reset How much of a show this row grabs", exact=True).click(timeout=LOAD)
 
     page.get_by_role("button", name="Save changes").click()
-    page.wait_for_timeout(2000)
-
-    rows = {c["slug"]: c for c in app.api("GET", "/api/collections").json()}
-    assert rows["picked"]["req_sonarr_monitor"] is None
+    app.wait_for_row_field("picked", "req_sonarr_monitor", None)

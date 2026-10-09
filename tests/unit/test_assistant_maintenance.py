@@ -1,5 +1,7 @@
 """Maintenance is a finite named action with exact owner approval and durable effects."""
 
+# ruff: noqa: F811 -- a test requests the imported fixture by name, which reads as a redefinition
+
 from types import SimpleNamespace
 
 import pytest
@@ -8,7 +10,7 @@ from sqlalchemy import select
 from shortlist.server.assistant.changes import ChangeError, ChangeService
 from shortlist.server.assistant.maintenance_adapter import MaintenanceAdapter, MaintenanceIntent
 from shortlist.server.db.models import Collection, Job
-from tests.unit.test_assistant_setup_transactions import setup_env  # noqa: F401
+from tests.unit.assistant_fixtures import setup_env  # noqa: F401
 
 
 @pytest.mark.parametrize(
@@ -26,7 +28,7 @@ def test_maintenance_rejects_arbitrary_dispatch_and_ambiguous_targets(intent):
         MaintenanceIntent.model_validate(intent)
 
 
-def test_maintenance_requires_exact_approval_and_leaves_configuration_intact(setup_env):  # noqa: F811
+def test_maintenance_requires_exact_approval_and_leaves_configuration_intact(setup_env):
     env = setup_env
     state = SimpleNamespace(sessions=env.sessions, secrets=None)
     service = ChangeService(env.sessions, {"maintenance": MaintenanceAdapter(state)})
@@ -50,7 +52,7 @@ def test_maintenance_requires_exact_approval_and_leaves_configuration_intact(set
         assert job.payload["steps"][0]["payload"]["slug"] == "owned-row"
 
 
-def test_uninstall_has_no_hidden_assistant_execution_path(setup_env):  # noqa: F811
+def test_uninstall_has_no_hidden_assistant_execution_path(setup_env):
     env = setup_env
     adapter = MaintenanceAdapter(SimpleNamespace(sessions=env.sessions, secrets=None))
     service = ChangeService(env.sessions, {"maintenance": adapter})
@@ -62,7 +64,7 @@ def test_uninstall_has_no_hidden_assistant_execution_path(setup_env):  # noqa: F
         assert list(session.scalars(select(Job))) == []
 
 
-def test_cache_refresh_is_bounded_and_cannot_smuggle_a_job_payload(setup_env):  # noqa: F811
+def test_cache_refresh_is_bounded_and_cannot_smuggle_a_job_payload(setup_env):
     env = setup_env
     adapter = MaintenanceAdapter(SimpleNamespace(sessions=env.sessions, secrets=None))
     with env.sessions() as session:
