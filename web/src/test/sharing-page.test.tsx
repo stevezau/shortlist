@@ -143,19 +143,33 @@ describe("the sharing page's four states", () => {
     expect(await screen.findByText(/no plex accounts to check/i)).toBeVisible();
   });
 
-  it("reports a healthy server without over-counting the rows", async () => {
-    // No NUMBER any more. "hides all N rows" was read off `rows_on_plex`, which includes each
-    // account's OWN row — so on a 40-user server the banner claimed "hides all 40" while every line
-    // in the table below read "Hides 39 of 39". The claim is qualitative because the honest number
-    // is per-account.
+  it("reports a healthy server as a grid of hidden cells, with the reading's time", async () => {
     renderPage();
 
-    expect(
-      await screen.findByText(
-        /every account hides the rows that aren.t theirs/i,
-      ),
-    ).toBeVisible();
-    expect(screen.getByText(/read from plex.tv at/i)).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Who sees what" })).toBeVisible();
+    expect(screen.getByRole("columnheader", { name: "mike’s rows" })).toBeVisible();
+    expect(screen.getByText("Hidden")).toBeVisible();
+    expect(screen.getByText(/read from plex.tv \d/i)).toBeVisible();
+    expect(screen.queryByText(/every account hides/i)).toBeNull();
+  });
+
+  it("puts each account's own row, other people's rows and the owner's view in the right cells", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      status({
+        rows_on_plex: ["shortlist_mike", "shortlist_sarah"],
+        accounts: [
+          account({ display_name: "Steve", account_id: 9, state: "owner", user_type: "owner", hides: [], missing: [] }),
+          account({ hides: ["shortlist_mike"], should_hide: ["shortlist_mike"] }),
+        ],
+      }),
+    );
+    renderPage();
+
+    const sarah = (await screen.findByRole("link", { name: "Sarah" })).closest("tr") as HTMLElement;
+    expect(within(sarah).getByText("Own")).toBeVisible();
+    expect(within(sarah).getByText("Hidden")).toBeVisible();
+    const steve = screen.getByText("Steve").closest("tr") as HTMLElement;
+    expect(within(steve).getAllByText("Sees all")).toHaveLength(2);
   });
 });
 
@@ -196,10 +210,12 @@ describe("what the page refuses to claim", () => {
     expect(screen.queryByText(/hiding every row —/i)).toBeNull();
   });
 
-  it("a missing hide rule names the rows and what to do about it", async () => {
+
+  it("a missing hide rule says what the account sees, in rows, on its own line", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({
         summary: "missing",
+        rows_on_plex: ["shortlist_mike", "shortlist_dan"],
         accounts: [
           account({
             state: "missing",
@@ -213,174 +229,132 @@ describe("what the page refuses to claim", () => {
 
     renderPage();
 
-    expect(
-      await screen.findByText(/sarah can see a row that isn't theirs/i),
-    ).toBeVisible();
-    expect(screen.getByText(/shortlist_mike, shortlist_dan/)).toBeVisible();
-    expect(screen.getByText(/next run merges it back in/i)).toBeVisible();
+    expect(await screen.findAllByText("Sees it")).toHaveLength(2);
+    expect(screen.getByText(/missing hide rules/i)).toBeVisible();
+    expect(screen.getByText(/next run merges them back in/i)).toBeVisible();
   });
 
-  it("the owner row explains the Plex limitation instead of showing a fault", async () => {
+  it("the owner line explains the Plex limitation instead of showing a fault", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({
         accounts: [
-          account({
-            display_name: "Steve",
-            state: "owner",
-            user_type: "owner",
-            hides: [],
-            missing: [],
-          }),
-          account(),
+          account({ display_name: "Steve", state: "owner", user_type: "owner", hides: [], missing: [] }),
+          account({ account_id: 2 }),
         ],
       }),
     );
 
     renderPage();
 
-    expect(await screen.findByText(/you own the server/i)).toBeVisible();
-    expect(screen.getByText(/that's plex, not a fault/i)).toBeVisible();
-    // The headline stays clean: an owner row must not make the server look broken.
-    expect(screen.queryByText(/can see a row that isn't theirs/i)).toBeNull();
+    expect(await screen.findByText("Sees all")).toBeVisible();
+    expect(screen.getByText("Plex limit", { selector: "span.rounded-full" })).toBeVisible();
+    expect(screen.queryByText(/missing hide rules/i)).toBeNull();
   });
 
   it("a left-alone account reads as a setting, not a failure", async () => {
     getPrivacyStatus.mockResolvedValue(
-      status({
-        accounts: [
-          account({ state: "left_alone", manage_sharing: false, hides: [] }),
-        ],
-      }),
+      status({ accounts: [account({ state: "left_alone", manage_sharing: false, hides: [] })] }),
     );
 
     renderPage();
 
-    expect(await screen.findByText(/left alone by choice/i)).toBeVisible();
-    expect(screen.getByText(/that's the setting, not a fault/i)).toBeVisible();
+    expect(await screen.findByText(/asked shortlist to leave this account.s plex sharing alone/i)).toBeVisible();
+    expect(screen.getByText("Left alone")).toBeVisible();
   });
 
   it("an account Plex can't read a filter for names the fix, and never promises the next run", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({
         summary: "filter_unreadable",
-        accounts: [
-          account({
-            state: "unreadable_filter",
-            hides: [],
-            missing: ["shortlist_mike"],
-          }),
-        ],
+        accounts: [account({ state: "unreadable_filter", hides: [], missing: ["shortlist_mike"] })],
       }),
     );
 
     renderPage();
 
-    expect(
-      await screen.findByText(/plex can't read the restrictions on sarah/i),
-    ).toBeVisible();
+    expect(await screen.findByText(/plex can.t read this account.s restrictions/i)).toBeVisible();
     expect(screen.getAllByText(/rename/i).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/next run merges it back in/i)).toBeNull();
+    expect(screen.queryByText(/next run merges them back in/i)).toBeNull();
   });
 
-  it("a parental-profile account says Plex refuses the rule and how to fix it", async () => {
+  it("a parental-profile account is explained once, on its own line, in rows", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({
+        summary: "unhideable",
+        rows_on_plex: ["shortlist_mike", "shortlist_dan", "shortlist_ann"],
         accounts: [
           account({
+            display_name: "kid",
+            user: "kid",
             state: "refused_by_plex",
-            restriction_profile: "little_kid",
+            restriction_profile: "older_kid",
             hides: [],
+            missing: ["shortlist_mike", "shortlist_dan", "shortlist_ann"],
           }),
         ],
+        // Two libraries per row: the run counts 6 collections for the same 3 rows.
+        enforcement: { ...UNMEASURED, unhideable: { kid: [1, 2, 3, 4, 5, 6] }, unhideable_measured: true, unhideable_run_id: 420 },
       }),
     );
 
     renderPage();
 
-    expect(
-      await screen.findByText(/plex won't accept hide rules for this account/i),
-    ).toBeVisible();
-    expect(screen.getByText(/clear the profile in plex/i)).toBeVisible();
+    const note = await screen.findByText(/plex rejects hide rules for restriction profiles/i);
+    expect(note).toHaveTextContent("kid can see 3 rows that aren’t theirs");
+    expect(note).toHaveTextContent(/clear it in plex/i);
+    expect(within(screen.getByRole("table")).queryByText(/collection/i)).toBeNull();
+    // The explanation is not repeated in a banner above the grid.
+    expect(screen.getAllByText(/restriction profiles/i)).toHaveLength(1);
   });
 
-  it("counts rules as a number, so '1 of 1' and '0 of 0' cannot look alike", async () => {
+  it("a stored rule a run saw Plex ignore is not drawn as hidden", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({
-        accounts: [account({ hides: [], should_hide: [], state: "hiding" })],
+        summary: "not_enforced",
+        enforcement: { ...UNMEASURED, measured: true, run_id: 419, not_enforced: { sarah: [21] } },
       }),
     );
 
     renderPage();
 
-    // The noun is part of the assertion now: "Hides 2 of 2" left the reader to guess two of what
-    // (audit finding, Sep 2026).
-    expect(await screen.findByText("Hides 0 of 0 rows")).toBeVisible();
-  });
-
-  it("says 'row', singular, when only one row is in play", async () => {
-    getPrivacyStatus.mockResolvedValue(
-      status({
-        accounts: [
-          account({ hides: ["r1"], should_hide: ["r1"], state: "hiding" }),
-        ],
-      }),
-    );
-
-    renderPage();
-
-    expect(await screen.findByText("Hides 1 of 1 row")).toBeVisible();
+    expect(await screen.findByText("Rule stored, not applied")).toBeVisible();
+    expect(screen.queryByText("Hidden")).toBeNull();
   });
 
   it("shows the account's own filter conditions, so rule 3's preservation is visible", async () => {
     getPrivacyStatus.mockResolvedValue(
-      status({
-        accounts: [
-          account({ other_conditions: ["filterMovies: label!=Kids"] }),
-        ],
-      }),
+      status({ accounts: [account({ other_conditions: ["filterMovies: label!=Kids"] })] }),
     );
 
     renderPage();
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: /show their own filters/i }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: /show their own filters/i }));
 
     expect(screen.getByText("filterMovies: label!=Kids")).toBeVisible();
   });
 });
 
-describe("the enforcement panel", () => {
-  it("an unmeasured check says 'not checked recently', not 'all clear'", async () => {
-    getPrivacyStatus.mockResolvedValue(
-      status({
-        enforcement: {
-          measured: false,
-          run_id: null,
-          measured_at: null,
-          not_enforced: {},
-          unhideable: {},
-          unhideable_measured: false,
-          unhideable_run_id: null,
-          unhideable_measured_at: null,
-        },
-      }),
-    );
+describe("proof first", () => {
+  it("the 'is Plex applying the rules' check sits above the grid, with the Home-only limit once", async () => {
+    renderPage();
+
+    const check = await screen.findByRole("region", { name: /plex was applying the rules when last checked/i });
+    const grid = screen.getByRole("heading", { name: "Who sees what" });
+    expect(check.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(check).getByText(/collections tab and related shelves can.t be checked/i)).toBeVisible();
+    expect(screen.getAllByText(/collections tab/i)).toHaveLength(1);
+  });
+
+  it("an unmeasured check says it hasn't been checked, as a warning, not 'all clear'", async () => {
+    getPrivacyStatus.mockResolvedValue(status({ enforcement: UNMEASURED }));
 
     renderPage();
 
-    // Said twice on purpose: in the status strip and on the panel that offers to fix it.
-    expect((await screen.findAllByText(/not checked recently/i))[0]).toBeVisible();
-    expect(screen.queryByText(/plex was applying the hide rules/i)).toBeNull();
-    // A status with nothing to do about it is a dead end on the panel an owner opens when they are
-    // already worried (audit finding, Sep 2026). The check rides a RUN, so say when it happens
-    // again and offer the page that starts one.
-    // "tries again ... may answer it", not "will". `_verify_filters_enforced` returns early on a
-    // dry run and can end unmeasured whenever a token or hub read fails, so the next run is not a
-    // guarantee — and this paragraph only renders when the last ones already failed to measure.
+    const headline = await screen.findByText(/hasn.t been checked applying these rules/i);
+    expect(headline.className).toMatch(/warning/);
+    expect(screen.queryByText(/plex was applying the/i)).toBeNull();
+    // "may answer it", not "will": the check can end unmeasured whenever a token or hub read fails.
     expect(screen.getByText(/every run tries.*again/is)).toBeVisible();
-    // The staleness is a WARNING, not grey: nothing here says the rules are applied.
-    expect(screen.getAllByText("Not checked recently").length).toBeGreaterThan(0);
   });
 
   it("'Verify now' starts a run — and says so — then opens it", async () => {
@@ -388,11 +362,9 @@ describe("the enforcement panel", () => {
     renderPage();
 
     const verify = await screen.findByRole("button", { name: "Verify now" });
-    expect(screen.getByText(/starts a run/i)).toBeVisible();
+    expect(screen.getByText(/starts a run of every row/i)).toBeVisible();
     await userEvent.click(verify);
 
-    // The same request as Runs' "Run all rows now": the check rides a run, so there is no lighter
-    // call to make, and pretending otherwise would be a button that cannot do what it says.
     await waitFor(() => expect(startRun).toHaveBeenCalledWith({}));
     await waitFor(() => expect(screen.getByLabelText("Address")).toHaveTextContent("/runs/512"));
   });
@@ -401,103 +373,35 @@ describe("the enforcement panel", () => {
     renderPage();
 
     expect(await screen.findByText(/checked in run #418/i)).toBeVisible();
-    expect(
-      screen.getByText(
-        /plex was applying the hide rules on the accounts checked/i,
-      ),
-    ).toBeVisible();
+    expect(screen.getByText(/plex was applying the hide rules on the accounts checked/i)).toBeVisible();
   });
 
-  it("reports an exposure as something to file, not a setting to change", async () => {
-    getPrivacyStatus.mockResolvedValue(
-      status({
-        summary: "not_enforced",
-        enforcement: {
-          measured: true,
-          run_id: 419,
-          measured_at: "2026-09-05T01:00:00+00:00",
-          not_enforced: { sarah: [21, 22] },
-          unhideable: {},
-          unhideable_measured: false,
-          unhideable_run_id: null,
-          unhideable_measured_at: null,
-        },
-      }),
-    );
-
-    renderPage();
-
-    expect(
-      await screen.findByText(/plex is ignoring the privacy filter/i),
-    ).toBeVisible();
-    expect(screen.getByText(/please open an issue/i)).toBeVisible();
-  });
-
-  it("a measured exposure turns the HEADLINE red, not just the panel", async () => {
-    // The whole point of the summary. `_verify_filters_enforced` only spot-checks accounts that
-    // ALREADY carry our excludes, so in this state every account is legitimately `hiding` with
-    // `missing: []` — and the headline used to read "Every account hides all 1 row that aren't
-    // theirs" directly above the red panel saying Plex was ignoring the filter.
+  it("reports an exposure as something to file, and leads the page in red", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({
         summary: "not_enforced",
         accounts: [account({ state: "hiding", missing: [] })],
-        enforcement: {
-          measured: true,
-          run_id: 419,
-          measured_at: "2026-09-05T01:00:00+00:00",
-          not_enforced: { sarah: [21, 22] },
-          unhideable: {},
-          unhideable_measured: false,
-          unhideable_run_id: null,
-          unhideable_measured_at: null,
-        },
+        enforcement: { ...UNMEASURED, measured: true, run_id: 419, not_enforced: { sarah: [21, 22] } },
       }),
     );
 
     renderPage();
 
-    expect(
-      await screen.findByText(/plex saved every hide rule and is showing/i),
-    ).toBeVisible();
-    expect(screen.queryByText(/every account hides all/i)).toBeNull();
-    // Not the "missing hide rule" wording either: these filters are complete.
-    expect(screen.queryByText(/missing a hide rule/i)).toBeNull();
+    const headline = await screen.findByText(/plex is ignoring the privacy filter/i);
+    expect(headline.className).toMatch(/destructive/);
+    expect(screen.getByText(/please open an issue/i)).toBeVisible();
+    expect(screen.queryByText(/every account hides/i)).toBeNull();
   });
 
   it("a verdict this build doesn't know says so plainly, never green — and keeps the raw code out of the sentence", async () => {
-    // The SPA trusts the server's ranking, so a seventh state nobody wired up here must not fall
-    // through to "Every account hides all N rows" — the one direction this page must never default.
-    //
-    // The second half is the audit finding: the token was interpolated straight into the English
-    // ("couldn't interpret this reading (rows_unknown)"). It is still on the page, because a
-    // server/SPA mismatch is exactly what a bug report needs — but as a labelled code to quote.
-    getPrivacyStatus.mockResolvedValue(
-      status({ summary: "some_future_state" }),
-    );
+    getPrivacyStatus.mockResolvedValue(status({ summary: "some_future_state" }));
 
     renderPage();
 
     const sentence = await screen.findByText(/doesn’t recognise the verdict/i);
     expect(sentence).toBeVisible();
     expect(sentence.textContent).not.toContain("some_future_state");
-    expect(screen.queryByText(/every account hides all/i)).toBeNull();
-
-    const code = screen.getByText("some_future_state");
-    expect(code.tagName).toBe("CODE");
-  });
-
-  it("states the Home-only scope once, and never claims the Collections tab", async () => {
-    renderPage();
-
-    expect(
-      await screen.findByText(/these checks cover the home screen/i),
-    ).toBeVisible();
-    expect(
-      screen.getByText(
-        /no way to confirm what plex does on the collections tab/i,
-      ),
-    ).toBeVisible();
+    expect(screen.getByText("some_future_state").tagName).toBe("CODE");
   });
 });
 
@@ -505,76 +409,25 @@ describe("the Privacy header", () => {
   it("says what the page reads, and 'Read again' reads it again", async () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Privacy", level: 1 })).toBeVisible();
-    expect(screen.getByText("Which rows each Plex account can see, read live from plex.tv.")).toBeVisible();
-    await screen.findByText(/every account hides/i);
+    expect(screen.getByText("Who can see which row on Plex, read live from plex.tv.")).toBeVisible();
+    await screen.findByText("Who sees what");
     expect(getPrivacyStatus).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Read again" }));
     await waitFor(() => expect(getPrivacyStatus).toHaveBeenCalledTimes(2));
   });
 });
 
-describe("the status strip", () => {
-  const strip = async () => within(await screen.findByRole("region", { name: "Privacy status" }));
-
-  it("counts the accounts hiding every row out of the accounts that can be filtered, owner left out", async () => {
-    getPrivacyStatus.mockResolvedValue(
-      status({
-        summary: "unhideable",
-        accounts: [
-          account({ display_name: "sarah", account_id: 1 }),
-          account({ display_name: "mike", account_id: 2 }),
-          account({ display_name: "kid", account_id: 3, state: "refused_by_plex", restriction_profile: "older_kid", hides: [] }),
-          account({ display_name: "Steve", account_id: 4, state: "owner", user_id: null }),
-        ],
-      }),
-    );
-    renderPage();
-    const cells = await strip();
-    expect(cells.getByText("2 of 3")).toBeVisible();
-    expect(cells.getByText("sarah and mike")).toBeVisible();
-    expect(cells.getByText("1")).toBeVisible();
-    expect(cells.getByText(/kid · Restriction Profile/)).toBeVisible();
-  });
-
-  it("reads 'Not checked recently' as a warning when no run has measured enforcement", async () => {
-    getPrivacyStatus.mockResolvedValue(status({ enforcement: UNMEASURED }));
-    renderPage();
-    const pill = (await strip()).getByText("Not checked recently");
-    expect(pill.className).toMatch(/warning/);
-  });
-
-  it("names the run that last verified", async () => {
-    renderPage();
-    expect((await strip()).getByText("Run #418")).toBeVisible();
-  });
-
-  it("never says '0 of 0', NaN or a warning when there is nobody to hide rows from", async () => {
-    getPrivacyStatus.mockResolvedValue(
-      status({ accounts: [account({ state: "owner", display_name: "Steve" })], rows_on_plex: [] }),
-    );
-    renderPage();
-    const cells = await strip();
-    expect(cells.queryByText(/0 of 0/)).toBeNull();
-    expect(cells.queryByText(/NaN/)).toBeNull();
-    expect(cells.getByText("No shared or managed accounts")).toBeVisible();
-  });
-
-  it("says 'Unknown' rather than a count off a failed plex.tv read", async () => {
-    getPrivacyStatus.mockResolvedValue(
-      status({ summary: "unreadable", error: "plex.tv timed out", accounts: [account({ state: "unknown" })] }),
-    );
-    renderPage();
-    const cells = await strip();
-    expect(cells.getAllByText("Unknown").length).toBe(2);
-    expect(cells.queryByText(/of 1/)).toBeNull();
-  });
-
+describe("the snapshot line", () => {
   it("counts the share-filter snapshots uninstall restores from", async () => {
     getPrivacyStatus.mockResolvedValue(status({ snapshots_kept: 4 }));
     renderPage();
-    const cell = (await strip()).getByText("Snapshots kept").closest("div")!;
-    expect(within(cell).getByText("4")).toBeVisible();
-    expect(within(cell).getByText("Restored on uninstall")).toBeVisible();
+    expect(await screen.findByText(/4 snapshots kept/)).toBeVisible();
+  });
+
+  it("says 'snapshot' for one", async () => {
+    getPrivacyStatus.mockResolvedValue(status({ snapshots_kept: 1 }));
+    renderPage();
+    expect(await screen.findByText(/1 snapshot kept/)).toBeVisible();
   });
 
   it("still counts the snapshots when plex.tv cannot be read, since they are Shortlist's own records", async () => {
@@ -582,18 +435,17 @@ describe("the status strip", () => {
       status({ summary: "unreadable", error: "plex.tv timed out", accounts: [], snapshots_kept: 3 }),
     );
     renderPage();
-    const cell = (await strip()).getByText("Snapshots kept").closest("div")!;
-    expect(within(cell).getByText("3")).toBeVisible();
+    expect(await screen.findByText(/3 snapshots kept/)).toBeVisible();
   });
 });
 
 describe("the Policy panel", () => {
-  it("carries 'Disabled users see nothing' and saves it the moment it is flipped", async () => {
+  it("carries 'Disabled people see no rows at all' and saves it the moment it is flipped", async () => {
     getSettings.mockResolvedValue({ "privacy.hide_shared_from_disabled": true });
     renderPage();
     const toggle = await screen.findByRole("switch", { name: "Hide shared rows from disabled users" });
     expect(toggle).toBeChecked();
-    expect(screen.getByText("Disabled users see nothing")).toBeVisible();
+    expect(screen.getByText("Disabled people see no rows at all")).toBeVisible();
 
     await userEvent.click(toggle);
 
@@ -617,28 +469,11 @@ describe("the Policy panel", () => {
     renderPage();
     expect(await screen.findByText("Your own account sees every row")).toBeVisible();
     expect(screen.getByText("Plex limit")).toBeVisible();
-    expect(screen.getByText(/Plex cannot filter its own account/)).toBeVisible();
+    expect(screen.getByText(/Plex never filters the account that owns the server/)).toBeVisible();
   });
 });
 
-describe("the Privacy alert and the account list", () => {
-  it("states the unhideable verdict as one paragraph led by a bold sentence", async () => {
-    getPrivacyStatus.mockResolvedValue(
-      status({
-        summary: "unhideable",
-        accounts: [account({ display_name: "kid", user: "kid", state: "refused_by_plex", restriction_profile: "older_kid", hides: [] })],
-        enforcement: { ...UNMEASURED, unhideable: { kid: [11, 12] }, unhideable_measured: true, unhideable_run_id: 420 },
-      }),
-    );
-    renderPage();
-
-    const lead = await screen.findByText(/Plex will not hide other people.s rows from kid at all/);
-    expect(lead.tagName).toBe("STRONG");
-    const paragraph = lead.closest("p") as HTMLElement;
-    expect(paragraph).toHaveTextContent(/Restriction Profile to None/);
-    expect(paragraph).toHaveTextContent(/Read from plex\.tv at/);
-  });
-
+describe("the account lines", () => {
   it("names each account's kind beside its name", async () => {
     getPrivacyStatus.mockResolvedValue(
       status({
@@ -650,9 +485,9 @@ describe("the Privacy alert and the account list", () => {
     );
     renderPage();
 
-    const sarah = (await screen.findByRole("link", { name: "sarah" })).closest("li") as HTMLElement;
+    const sarah = (await screen.findByRole("link", { name: "sarah" })).closest("tr") as HTMLElement;
     expect(within(sarah).getByText("Shared")).toBeVisible();
-    const jess = screen.getByRole("link", { name: "jess" }).closest("li") as HTMLElement;
+    const jess = screen.getByRole("link", { name: "jess" }).closest("tr") as HTMLElement;
     expect(within(jess).getByText("Managed")).toBeVisible();
   });
 });
