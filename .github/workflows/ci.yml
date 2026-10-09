@@ -213,7 +213,7 @@ jobs:
       # pin pnpm 10 while the image build floated to latest, so pnpm 11's minimumReleaseAge default
       # (1440min, 0 before v11) rejected fresh transitive deps in the publish job that all four PR
       # checks had passed. Green CI must mean the image builds.
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: web/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -255,7 +255,7 @@ jobs:
           cache-dependency-glob: requirements.lock
       # Same pnpm setup as test-web — version comes from web/package.json's `packageManager`, so the
       # two jobs and the Dockerfile cannot drift apart.
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: web/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
