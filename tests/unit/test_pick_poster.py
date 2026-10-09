@@ -25,8 +25,8 @@ from plexapi.exceptions import NotFound
 
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Server
-from shortlist.server.main import create_app
 from shortlist.server.settings_store import SettingsStore
+from tests.shared_app import app_for
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -58,7 +58,7 @@ def _clear_thumb_memo():
 @pytest.fixture
 def app_client(tmp_path):
     """The real app, a linked server, and Plex credentials in settings."""
-    app = create_app(config_dir=tmp_path)
+    app = app_for(tmp_path)
     with TestClient(app) as test_client:
         with app.state.sessions() as session:
             session.add(

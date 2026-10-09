@@ -145,6 +145,10 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         from shortlist.server.services import jobs
 
+        # Read at startup rather than closed over, so one app can be started against a fresh config
+        # dir each time: the test suite reuses one app per worker, because FastAPI builds every
+        # route's request state on an app's first request (~0.12s for ~190 routes).
+        config_dir: Path = app.state.config_dir
         jobs.start_background(app.state)
         # A restore the owner queued is swapped in here, before migrations or anything else opens the
         # database: swapping it under open connections is how a restore used to be undone by the very
@@ -162,7 +166,6 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         secret_box = SecretBox(config_dir)
         bus = EventBus()
 
-        app.state.config_dir = config_dir
         app.state.sessions = sessions
         app.state.secrets = secret_box
         app.state.bus = bus
@@ -427,6 +430,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         docs_url="/api/docs" if docs_enabled else None,
         openapi_url="/api/openapi.json" if docs_enabled else None,
     )
+    app.state.config_dir = config_dir
     app.add_middleware(_SecurityHeaders)
 
     # Added last so it runs first, before routing.

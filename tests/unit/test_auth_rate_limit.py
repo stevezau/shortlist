@@ -116,9 +116,9 @@ class TestApiTokenBruteForce:
     def _client(self, tmp_path):
         from starlette.testclient import TestClient
 
-        from shortlist.server.main import create_app
+        from tests.shared_app import app_for
 
-        return TestClient(create_app(config_dir=tmp_path))
+        return TestClient(app_for(tmp_path))
 
     def test_repeated_bad_tokens_start_getting_429(self, tmp_path, monkeypatch):
         from shortlist.server import auth

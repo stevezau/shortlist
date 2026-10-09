@@ -107,9 +107,9 @@ class TestTheGuardsAreWired:
 
         from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
         from shortlist.server.db.models import Server
-        from shortlist.server.main import create_app
+        from tests.shared_app import app_for
 
-        app = create_app(config_dir=tmp_path)
+        app = app_for(tmp_path)
         with TestClient(app) as client:
             with app.state.sessions() as session:
                 session.add(

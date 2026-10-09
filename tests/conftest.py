@@ -191,6 +191,15 @@ def _preseed_schema(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _reset_shared_apps():
+    """Hand the worker's shared app (`tests.shared_app`) to the next test as `create_app` left it."""
+    yield
+    from tests.shared_app import reset_shared_apps
+
+    reset_shared_apps()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_report_cache():
     """The dashboard report is cached per process; every test starts (and ends) with it empty."""
     from shortlist.server.services.report_cache import invalidate_report_cache

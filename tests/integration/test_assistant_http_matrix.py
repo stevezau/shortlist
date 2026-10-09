@@ -28,7 +28,7 @@ from shortlist.server.assistant_auth.policy import basic_role_capabilities, owne
 from shortlist.server.assistant_auth.types import ASSISTANT_CAPABILITIES
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Event, Server, Setting
-from shortlist.server.main import create_app
+from tests.shared_app import app_for
 
 pytestmark = pytest.mark.integration
 
@@ -69,7 +69,7 @@ def _owner_client(
 ) -> Iterator[tuple[TestClient, FastAPI]]:
     monkeypatch.setenv("APP_BASE_PATH", base_path)
     monkeypatch.setenv("SHORTLIST_MCP_URL", f"http://localhost{base_path}/mcp")
-    app = create_app(config_dir=tmp_path)
+    app = app_for(tmp_path)
     with TestClient(app, base_url="http://localhost") as client:
         with app.state.sessions() as session:
             session.add(Server(machine_id="http-matrix", url="http://plex.invalid", token_enc="x", owner_account_id=42))

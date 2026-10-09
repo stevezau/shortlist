@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Server, User
-from shortlist.server.main import create_app
+from tests.shared_app import app_for
 
 OWNER_ID = 555000001
 
@@ -30,7 +30,7 @@ OWNER_JSON = {
 def client(tmp_path: Path):
     """The default `client` fixture (test_requests_api.py defines its own): a real app + TestClient,
     a linked server (so owner checks are active), and two pre-seeded users (sarah, mike)."""
-    app = create_app(config_dir=tmp_path)
+    app = app_for(tmp_path)
     with TestClient(app) as test_client:
         # Link a server so owner checks are active, and add users.
         with app.state.sessions() as session:

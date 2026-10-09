@@ -14,7 +14,7 @@ from shortlist.engine import requests as requests_mod
 from shortlist.engine.models import ArrTarget, MediaType, RequestConfig, SeerrTarget
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Collection, RequestCandidate, Server
-from shortlist.server.main import create_app
+from tests.shared_app import app_for
 
 pytestmark = pytest.mark.integration
 
@@ -23,7 +23,7 @@ OWNER_ID = 555000001
 
 @pytest.fixture
 def client(tmp_path: Path):
-    app = create_app(config_dir=tmp_path)
+    app = app_for(tmp_path)
     with TestClient(app) as test_client:
         with app.state.sessions() as session:
             session.add(

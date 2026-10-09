@@ -15,6 +15,7 @@ from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serialize
 from shortlist.server.db.models import Server
 from shortlist.server.main import create_app
 from tests.assistant_oauth import issue_pair
+from tests.shared_app import app_for
 from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.integration
@@ -27,7 +28,7 @@ def _client(tmp_path, monkeypatch, *, prefix="", enabled=True, capabilities=None
         monkeypatch.setenv("SHORTLIST_MCP_URL", f"http://localhost{prefix}/mcp")
     else:
         monkeypatch.delenv("SHORTLIST_MCP_URL", raising=False)
-    app = create_app(config_dir=tmp_path)
+    app = app_for(tmp_path)
     with TestClient(app, base_url="http://localhost") as client:
         with app.state.sessions() as session:
             session.add(

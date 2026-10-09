@@ -14,12 +14,13 @@ from starlette.testclient import TestClient
 
 from shortlist.server.auth import CSRF_HEADER
 from shortlist.server.main import create_app
+from tests.shared_app import app_for
 
 pytestmark = pytest.mark.integration
 
 
 def _client(tmp_path: Path, **env) -> TestClient:
-    app = create_app(config_dir=tmp_path)
+    app = app_for(tmp_path)
     with TestClient(app) as client:
         client._env = env
         yield_client = client

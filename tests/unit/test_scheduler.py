@@ -507,9 +507,9 @@ class TestScheduledWorkIsDurable:
         """A real `app.state` — sessions, run_service, config_dir — so the handlers run for real."""
         from starlette.testclient import TestClient
 
-        from shortlist.server.main import create_app
+        from tests.shared_app import app_for
 
-        application = create_app(config_dir=tmp_path / "live")
+        application = app_for(tmp_path / "live")
         with TestClient(application):
             self._state = application.state
             yield
@@ -677,10 +677,10 @@ class TestSyncUsersOnAnUnlinkedServer:
         from starlette.testclient import TestClient
 
         from shortlist.server.db.models import Job
-        from shortlist.server.main import create_app
         from shortlist.server.services import jobs
+        from tests.shared_app import app_for
 
-        application = create_app(config_dir=tmp_path / "unlinked")
+        application = app_for(tmp_path / "unlinked")
         with TestClient(application):
             state = application.state
             job_id = jobs.enqueue(state.sessions, "sync.users", {})

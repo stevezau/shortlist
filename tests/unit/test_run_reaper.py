@@ -22,7 +22,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from shortlist.server.db.models import Run
-from shortlist.server.main import create_app
+from tests.shared_app import app_for
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +32,7 @@ def boot() -> Iterator[Callable[[Path], TestClient]]:
     with ExitStack() as engines:
 
         def start(tmp_path: Path) -> TestClient:
-            app = create_app(config_dir=tmp_path)
+            app = app_for(tmp_path)
 
             def dispose() -> None:
                 sessions = getattr(app.state, "sessions", None)
