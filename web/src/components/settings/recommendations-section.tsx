@@ -13,6 +13,8 @@ import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { SettingDisclosure } from "@/components/settings/setting-disclosure";
 import { SettingsNumberField } from "@/components/settings/number-field";
+import { countModified, useModifiedMarks, useReportModifiedCount } from "@/components/settings/modified-marks";
+import { ModifiedBadge, ModifiedDefault } from "@/components/settings/modified";
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import {
   SettingBlock,
@@ -217,14 +219,86 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
 
   const inSaveBar = useSaveBarReport("recommendations", save);
 
+  // Each setting that differs from its built-in default, in the units this section holds it in.
+  // `reset` goes through the section's own state, so the usual auto-save writes it.
+  const mark = useModifiedMarks();
+  const asPercent = (raw: unknown) => Math.round(Number(raw) * 100);
+  const sortedSources = [...enabled].sort();
+  const mSources = mark("candidates.sources", sortedSources, {
+    fromDefault: (raw) => [...(raw as string[])].sort(),
+    label: (ids) => ids.map((id) => SOURCES.find((source) => source.id === id)?.label ?? id).join(", ") || "none",
+    reset: setEnabled,
+  });
+  const mRefresh = mark("recommendations.refresh_days", refreshDays, {
+    fromDefault: Number,
+    label: (days) => `${days} ${days === 1 ? "day" : "days"}`,
+    reset: setRefreshDays,
+  });
+  const mWatched = mark("recommendations.watched_pct", watchedPct, {
+    fromDefault: asPercent,
+    label: (pct) => `up to ${pct}%`,
+    reset: setWatchedPct,
+  });
+  const mRecency = mark("recommendations.recency", recency, {
+    fromDefault: asPercent,
+    label: (pct) => `${pct}% preference`,
+    reset: setRecency,
+  });
+  const mIdle = mark("recommendations.idle_hold_days", idleHoldDays, {
+    fromDefault: Number,
+    label: (days) => (days === 0 ? "off" : `${days} days`),
+    reset: setIdleHoldDays,
+  });
+  const mMaxSeeds = mark("recommendations.max_seeds", maxSeeds, {
+    fromDefault: Number,
+    label: (count) => `${count} watches`,
+    reset: setMaxSeeds,
+  });
+  const mRecentCount = mark("recommendations.recent_count", recentCount, {
+    fromDefault: Number,
+    label: (count) => `${count} watches`,
+    reset: setRecentCount,
+  });
+  const mRatings = mark("recommendations.use_plex_ratings", usePlexRatings, {
+    label: (on) => (on ? "on" : "off"),
+    reset: setUsePlexRatings,
+  });
+  const mDislike = mark("recommendations.dislike_threshold", dislikeThreshold, {
+    fromDefault: Number,
+    label: (value) => `${value / 2} stars and below`,
+    reset: setDislikeThreshold,
+  });
+  const mMinHistory = mark("recommendations.min_history", minHistory, {
+    fromDefault: Number,
+    label: (count) => `${count} watched titles`,
+    reset: setMinHistory,
+  });
+  const mColdStart = mark("recommendations.cold_start", coldStart, {
+    fromDefault: asColdStart,
+    label: (choice) => COLD_START_LABELS[choice],
+    reset: setColdStart,
+  });
+  const mRatingSource = mark("recommendations.rating_source", ratingSource, {
+    fromDefault: asRatingSource,
+    label: (source) => RATING_LABELS[source],
+    reset: setRatingSource,
+  });
+  useReportModifiedCount("sources", countModified([mSources]));
+  useReportModifiedCount(
+    "refresh",
+    countModified([mRefresh, mWatched, mRecency, mIdle, mMaxSeeds, mRecentCount, mRatings, mDislike, mMinHistory, mColdStart, mRatingSource]),
+  );
+
   return (
     <>
       <SettingsSection
         id="sources"
+        modifiedCount={countModified([mSources])}
         title="Title sources"
         description="Where each person’s candidates come from before they’re ranked. These are defaults; each row can override them in its editor."
       >
         {!inSaveBar && <SaveStatus isPending={save.isPending} isError={save.isError} error={save.error} saved={save.saved} onRetry={save.retry} />}
+        <ModifiedDefault modified={mSources} name="Title sources" />
         <SettingsPanel>
           {SIMPLE_SOURCES.map((source) => (
             <SettingRow
@@ -245,25 +319,31 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
         </SettingsPanel>
       </SettingsSection>
 
-      <SettingsSection id="refresh" title="Refresh & variety" description="When a row changes, and how much of it may be familiar.">
+      <SettingsSection
+        id="refresh"
+        modifiedCount={countModified([mRefresh, mWatched, mRecency, mIdle, mMaxSeeds, mRecentCount, mRatings, mDislike, mMinHistory, mColdStart, mRatingSource])}
+        title="Refresh & variety" description="When a row changes, and how much of it may be familiar."
+      >
         <SettingsPanel>
           <SettingBlock
             title="Titles refresh every"
             htmlFor="refresh-days"
+            modified={mRefresh}
             description="Longer is stickier and cheaper, shorter is fresher. Each row keeps its own schedule; its Order setting decides the order."
           >
             <RefreshDaysField id="refresh-days" value={refreshDays} onChange={setRefreshDays} />
           </SettingBlock>
-          <SettingBlock title="Already-watched titles" htmlFor="watched-pct" description="How much of a row may be familiar." value={`Up to ${watchedPct}%`}>
+          <SettingBlock title="Already-watched titles" htmlFor="watched-pct" modified={mWatched} description="How much of a row may be familiar." value={`Up to ${watchedPct}%`}>
             <WatchedSlider id="watched-pct" value={watchedPct} onChange={setWatchedPct} />
           </SettingBlock>
-          <SettingBlock title="Recent releases" htmlFor="recency" description="Give newer titles more weight without filtering older ones out." value={`${recency}% preference`}>
+          <SettingBlock title="Recent releases" htmlFor="recency" modified={mRecency} description="Give newer titles more weight without filtering older ones out." value={`${recency}% preference`}>
             <RecencySlider id="recency" value={recency} onChange={setRecency} />
           </SettingBlock>
           <SettingDisclosure title="More recommendation controls" value="Show" description="Watch history, ratings and inactive viewers. Plex ratings are server-wide and do not change shared rows.">
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="idle-hold-days">
                 Hold rows for inactive viewers
+                <ModifiedBadge modified={mIdle} />
               </Label>
               <p className="text-sm text-muted-foreground">
                 Someone who hasn&rsquo;t watched anything since their row was
@@ -271,6 +351,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 — which also saves a write to Plex for every row held. Off by
                 default.
               </p>
+              <ModifiedDefault modified={mIdle} name="Hold rows for inactive viewers" />
               <IdleHoldField
                 id="idle-hold-days"
                 value={idleHoldDays}
@@ -280,12 +361,16 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               />
             </div>
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="max-seeds">{MAX_SEEDS_LABEL}</Label>
+              <Label htmlFor="max-seeds">
+                {MAX_SEEDS_LABEL}
+                <ModifiedBadge modified={mMaxSeeds} />
+              </Label>
               <p className="text-sm text-muted-foreground">
                 How far back Shortlist looks when working out someone&rsquo;s
                 taste. Applies to every source. Fewer makes a row tighter and
                 more about a couple of things; more covers more of their taste.
               </p>
+              <ModifiedDefault modified={mMaxSeeds} name={MAX_SEEDS_LABEL} />
               <div className="flex items-center gap-2">
                 <SettingsNumberField
                   id="max-seeds"
@@ -299,7 +384,10 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 <span className="text-sm text-muted-foreground">watches</span>
               </div>
               <div className="space-y-2 pt-2">
-                <Label htmlFor="recent-count">{RECENT_COUNT_LABEL}</Label>
+                <Label htmlFor="recent-count">
+                  {RECENT_COUNT_LABEL}
+                  <ModifiedBadge modified={mRecentCount} />
+                </Label>
                 {/* No "cached for 7 days" here any more: the AI web search card above owns the
                     cost story and already says it, in more detail. */}
                 <p className="text-sm text-muted-foreground">
@@ -307,6 +395,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                   watch if you liked X&rdquo; search for, newest first. Higher
                   than the number above changes nothing.
                 </p>
+                <ModifiedDefault modified={mRecentCount} name={RECENT_COUNT_LABEL} />
                 <div className="flex items-center gap-2">
                   <SettingsNumberField
                     id="recent-count"
@@ -326,7 +415,10 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             <div className="space-y-2 border-t pt-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-0.5">
-                  <Label htmlFor="use-plex-ratings">Respect Plex ratings</Label>
+                  <Label htmlFor="use-plex-ratings">
+                    Respect Plex ratings
+                    <ModifiedBadge modified={mRatings} />
+                  </Label>
                   {/* Every other setting in this card advertises "any row can choose its own", so
                       staying silent about scope reads as "presumably also per row". Say it: a
                       rating is a fact about a PERSON, and "respect what they disliked on the movies
@@ -337,6 +429,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                     ignore ratings entirely &mdash; one person&rsquo;s opinion
                     shouldn&rsquo;t reshape a row everyone sees.
                   </p>
+                  <ModifiedDefault modified={mRatings} name="Respect Plex ratings" />
                 </div>
                 <Switch
                   id="use-plex-ratings"
@@ -349,11 +442,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 <div className="space-y-2 pt-2">
                   <Label htmlFor="dislike-threshold">
                     Treat as &ldquo;didn&rsquo;t like it&rdquo;
+                    <ModifiedBadge modified={mDislike} />
                   </Label>
                   <p className="text-sm text-muted-foreground">
                     At or below this rating, a title stops shaping their picks.
                     A thumbs-down in Plex counts as 1 star.
                   </p>
+                  <ModifiedDefault modified={mDislike} name="Treat as didn’t like it" />
                   <div className="flex items-center gap-2">
                     <SettingsNumberField
                       id="dislike-threshold"
@@ -378,12 +473,16 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             {/* Threshold and consequence together: the number is meaningless without knowing what
                 happens below it, and the choice is meaningless without knowing where the line is. */}
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="min-history">Enough watch history</Label>
+              <Label htmlFor="min-history">
+                Enough watch history
+                <ModifiedBadge modified={mMinHistory} />
+              </Label>
               <p className="text-sm text-muted-foreground">
                 How many titles someone needs watched before Shortlist
                 recommends from <strong>their</strong> taste. Below it they get
                 whatever you choose next.
               </p>
+              <ModifiedDefault modified={mMinHistory} name="Enough watch history" />
               <div className="flex items-center gap-2">
                 <SettingsNumberField
                   id="min-history"
@@ -402,6 +501,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="cold-start">
                 When someone hasn&rsquo;t watched enough
+                <ModifiedBadge modified={mColdStart} />
               </Label>
               <p className="text-sm text-muted-foreground">
                 A row named after one title (
@@ -409,6 +509,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 worth skipping &mdash; it has no favourite to name itself after,
                 so it falls back to a plain title.
               </p>
+              <ModifiedDefault modified={mColdStart} name="When someone hasn’t watched enough" />
               <select
                 id="cold-start"
                 value={coldStart}
@@ -426,7 +527,10 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               </p>
             </div>
             <div className="space-y-1.5 border-t pt-4">
-              <Label htmlFor="rating-source">Rate titles using</Label>
+              <Label htmlFor="rating-source">
+                Rate titles using
+                <ModifiedBadge modified={mRatingSource} />
+              </Label>
               <p className="text-sm text-muted-foreground">
                 Which score a row set to <strong>Highest rated</strong> sorts
                 on. Anything but TMDB needs an MDBList key in{" "}
@@ -438,6 +542,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 </Link>
                 , and falls back to TMDB without one.
               </p>
+              <ModifiedDefault modified={mRatingSource} name="Rate titles using" />
               <select
                 id="rating-source"
                 value={ratingSource}

@@ -47,6 +47,16 @@ describe("ConnectionsSection", () => {
     getRuns.mockResolvedValue([]);
   });
 
+  it("says Not set up for the AI card when the provider is None, never a green Connected", async () => {
+    renderSection({ "curator.provider": "none" });
+    const card = screen.getByTestId("connection-llm");
+    await act(async () => {});
+
+    expect(within(card).getByText("Not set up")).toBeInTheDocument();
+    expect(within(card).queryByText("Connected")).not.toBeInTheDocument();
+    expect(within(card).getByText(/built-in picker\. Nothing to test/i)).toBeInTheDocument();
+  });
+
   describe("the Webhook card", () => {
     const saved = {
       "notify.webhook.url": "•••••",

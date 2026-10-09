@@ -1481,6 +1481,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Setting Defaults
+         * @description Every setting's built-in default, so the page can mark one the owner has changed.
+         *
+         *     Secrets and private keys are left out: a default carries no credential, and what is stored under
+         *     those keys is never this endpoint's to say.
+         */
+        get: operations["get_setting_defaults_api_settings_defaults_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/overseerr/options": {
         parameters: {
             query?: never;
@@ -7867,6 +7890,20 @@ export interface components {
             snapshot_id: number;
         };
         /**
+         * UninstallCollectionOut
+         * @description One Shortlist collection the uninstall deletes, by where it lives and whose it is.
+         */
+        UninstallCollectionOut: {
+            /** Library */
+            library: string;
+            /** Person */
+            person: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * UninstallFailedOut
          * @description An account plex.tv refused. The rest of the uninstall still ran (issue #96).
          */
@@ -7882,6 +7919,11 @@ export interface components {
         UninstallOut: {
             /** Collections Deleted */
             collections_deleted: string[];
+            /**
+             * Collections Detail
+             * @default []
+             */
+            collections_detail: components["schemas"]["UninstallCollectionOut"][];
             /** Dry Run */
             dry_run: boolean;
             /** Filters Failed */
@@ -10629,6 +10671,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_setting_defaults_api_settings_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
                 };
             };
         };

@@ -10737,6 +10737,31 @@
         "title": "UndoIn",
         "type": "object"
       },
+      "UninstallCollectionOut": {
+        "additionalProperties": true,
+        "description": "One Shortlist collection the uninstall deletes, by where it lives and whose it is.",
+        "properties": {
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "person": {
+            "title": "Person",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "person",
+          "title"
+        ],
+        "title": "UninstallCollectionOut",
+        "type": "object"
+      },
       "UninstallFailedOut": {
         "additionalProperties": true,
         "description": "An account plex.tv refused. The rest of the uninstall still ran (issue #96).",
@@ -10765,6 +10790,14 @@
               "type": "string"
             },
             "title": "Collections Deleted",
+            "type": "array"
+          },
+          "collections_detail": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/UninstallCollectionOut"
+            },
+            "title": "Collections Detail",
             "type": "array"
           },
           "dry_run": {
@@ -15362,6 +15395,28 @@
           }
         },
         "summary": "Curator Models",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/defaults": {
+      "get": {
+        "description": "Every setting's built-in default, so the page can mark one the owner has changed.\n\nSecrets and private keys are left out: a default carries no credential, and what is stored under\nthose keys is never this endpoint's to say.",
+        "operationId": "get_setting_defaults_api_settings_defaults_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Setting Defaults",
         "tags": [
           "settings"
         ]

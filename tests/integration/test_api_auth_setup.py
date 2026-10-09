@@ -568,7 +568,7 @@ class TestUninstall:
 
         collection = MagicMock(title="Picked for You", labels=[SimpleNamespace(tag="shortlist_sarah")])
         plex = MagicMock()
-        plex.sections.return_value = [SimpleNamespace(collections=lambda: [collection])]
+        plex.sections.return_value = [SimpleNamespace(title="Movies", collections=lambda: [collection])]
         monkeypatch.setattr(
             client.app.state.run_service, "build_context", lambda **kw: SimpleNamespace(plex=plex, plextv=MagicMock())
         )
@@ -583,6 +583,7 @@ class TestUninstall:
             "filters_unreachable",  # roster disagreed with our records — retryable, and NOT the same
             "filters_failed",
             "collections_deleted",
+            "collections_detail",  # the same collections by library and person, for the preview
             "rows_disabled",
             "dry_run",
             "message",

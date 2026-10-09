@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { TestResult } from "@/components/test-result";
+import { plainTestMessage } from "@/lib/plain-test-error";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -113,6 +114,8 @@ export function ConnectionCard({
   footnote,
   testLabel = "Test",
   unsetLabel,
+  builtInOnly = false,
+  headerExtra,
 }: {
   service: TestableService;
   /** False for a service whose probe is too expensive to run unasked. The dot then stays amber
@@ -149,6 +152,12 @@ export function ConnectionCard({
   /** What the pill says while an optional service is not set up. "Optional" by default; a service
    *  that another feature waits on (a request app, the webhook) says "Not set up" instead. */
   unsetLabel?: "Optional" | "Not set up";
+  /** True when the saved choice is "no AI": rows use the built-in picker, which has nothing to
+   *  connect. Said as "Not set up" rather than a green "Connected" beside a provider of "None". */
+  builtInOnly?: boolean;
+  /** A control that belongs to this service but is not part of connecting it (the webhook's alerts
+   *  switch), shown on the header row beside the buttons. */
+  headerExtra?: ReactNode;
 }) {
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
   const save = useSaveSettings();
@@ -210,8 +219,9 @@ export function ConnectionCard({
 
   // One pill says the state in words: whether it works when it is set up, and whether Shortlist
   // needs it when it isn't. "Connected" only ever comes from a test that passed.
-  const pill: { label: string; tone: PillTone } =
-    test.isSuccess && test.data.ok
+  const pill: { label: string; tone: PillTone } = builtInOnly
+    ? { label: "Not set up", tone: "neutral" }
+    : test.isSuccess && test.data.ok
       ? { label: "Connected", tone: "ok" }
       : test.isSuccess || test.isError
         ? { label: "Connection failed", tone: "bad" }
@@ -294,12 +304,18 @@ export function ConnectionCard({
               </h3>
               <p className="max-w-prose text-sm text-muted-foreground">{purpose}</p>
               {next && <p className="max-w-prose text-sm text-muted-foreground">{next}</p>}
-              {configured && !editing && <p className="break-words text-sm text-foreground/80">{summary}</p>}
-              {test.isSuccess && test.data.ok && !testRequested && !editing && (
+              {configured && !editing && (
+                <p className="break-words text-sm text-foreground/80">
+                  {builtInOnly ? "Rows use the built-in picker. Nothing to test." : summary}
+                </p>
+              )}
+              {test.isSuccess && test.data.ok && !testRequested && !editing && !builtInOnly && (
                 <TestResult result={test.data} className="text-sm [&>svg]:h-3.5 [&>svg]:w-3.5" />
               )}
             </div>
           </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
+          {!editing && headerExtra}
           {!editing &&
             (confirmRemove ? (
               // Inline confirm on the idle row — the destructive tap and its "keep it" escape sit
@@ -361,6 +377,7 @@ export function ConnectionCard({
                 Set up
               </Button>
             ))}
+          </div>
         </div>
       </CardHeader>
       {(editing || testRequested || test.isError || (test.isSuccess && !test.data.ok) || footnote) && <CardContent className="px-4 pb-4 pt-0 sm:pl-16 sm:pr-5">
@@ -503,7 +520,11 @@ export function ConnectionCard({
         ) : test.isSuccess ? (
           // A passing background check is already shown, small, under the summary above; only the
           // footnote opened this section, so don't say it twice.
-          test.data.ok && !testRequested ? null : <TestResult result={test.data} />
+          test.data.ok && !testRequested ? null : (
+            <TestResult
+              result={{ ...test.data, message: plainTestMessage(test.data, title, /^https?:\/\//.test(summary) ? summary : undefined) }}
+            />
+          )
         ) : test.isError ? (
           <TestResult error={test.error} />
         ) : null}

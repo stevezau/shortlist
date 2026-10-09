@@ -769,10 +769,10 @@ describe("Requests connection shortcuts across the Settings tabs", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const settings: Settings = { "requests.enabled": true, "requests.target": target, "requests.rating_source": "imdb",
       ...(connectedMdblist ? { "requests.mdblist.apikey": "•••••" } : {}) };
-    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/settings/defaults?view=sections#requests"]}>
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/settings/requests?view=sections#requests"]}>
       <CurrentSettingsLocation />
       <Routes>
-        <Route path="/settings/:tab?" element={<SettingsTabs content={{ connections: <p>Connection controls</p>, defaults: <section id="requests"><RequestsSettings settings={settings} /></section>, system: null }} />} />
+        <Route path="/settings/:tab?" element={<SettingsTabs content={{ connections: <p>Connection controls</p>, requests: <section id="requests"><RequestsSettings settings={settings} /></section>, system: null }} />} />
       </Routes>
     </MemoryRouter></QueryClientProvider>);
     const provider = screen.getByRole("button", { name: target === "overseerr" ? "Overseerr / Jellyseerr" : "Radarr & Sonarr" });
@@ -780,7 +780,7 @@ describe("Requests connection shortcuts across the Settings tabs", () => {
     await waitFor(() => expect(screen.getByLabelText("Current settings URL")).toHaveTextContent("/settings/connections?view=sections#connections"));
     expect(screen.getByText("Connection controls")).toBeVisible();
     expect(provider).not.toBeVisible();
-    await userEvent.click(screen.getByRole("tab", { name: "Defaults" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Requests" }));
     expect(provider).toBeVisible();
     expect(provider).toHaveAttribute("aria-pressed", "true");
   });

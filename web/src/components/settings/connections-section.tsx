@@ -7,7 +7,8 @@ import {
   TmdbGlyph,
 } from "@/components/brand-glyphs";
 import { ConnectionCard } from "@/components/connection-card";
-import { NotificationsSection } from "@/components/settings/notifications-section";
+import { NotificationsSection, WebhookAlertsSwitch } from "@/components/settings/notifications-section";
+import { useWebhookAlerts } from "@/components/settings/webhook-alerts";
 import { settingBool, settingString } from "@/lib/format";
 import { CURATOR_PROVIDERS, findProvider } from "@/lib/providers";
 import { useRuns } from "@/lib/queries";
@@ -268,6 +269,9 @@ function ConnectionGroup({
 export function ConnectionsSection({ settings }: { settings: Settings }) {
   const runs = useRuns();
   const lastFinishedRun = runs.data?.find((r) => r.finished_at);
+  // "No AI" is a choice, not a connection: rows use the built-in picker and there is nothing to test.
+  const searchBuiltInOnly = settingString(settings, "curator.provider") === "none" && !hasExternalSearch(settings);
+  const alerts = useWebhookAlerts(settings);
   const summaries = {
     plex: settingString(settings, "plex.url"),
     tmdb: settingString(settings, "tmdb.apikey") ? "API key saved" : "",
@@ -334,7 +338,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           id="connections-discovery"
           title="Discovery & watch history"
           description="Each one widens where picks come from, or how people are named. Rows build fine without them."
-          count={setUpCount([summaries.search, summaries.tautulli, summaries.trakt, summaries.mdblist])}
+          count={setUpCount([searchBuiltInOnly ? "" : summaries.search, summaries.tautulli, summaries.trakt, summaries.mdblist])}
         >
 <ConnectionCard
           service={testableSearchService(settings)}
@@ -344,6 +348,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           purpose="Finds what critics and “what to watch next” articles are recommending right now, and keeps only the titles you already own. Optional — without it, rows are built from your library alone."
           settings={settings}
           summary={summaries.search}
+          builtInOnly={searchBuiltInOnly}
           glyph={<Globe aria-hidden className="text-primary" />}
           footnote={searchFootnote(
             settings,
@@ -585,6 +590,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           purpose="Where Shortlist sends its alerts: a Discord or Slack channel, ntfy, Gotify, Home Assistant, n8n, or anything else that accepts a webhook."
           settings={settings}
           footnote={<WebhookNextStep settings={settings} />}
+          headerExtra={<WebhookAlertsSwitch alerts={alerts} />}
           summary={summaries.webhook}
           unsetLabel="Not set up"
           glyph={<Webhook aria-hidden className="text-primary" />}
@@ -616,7 +622,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           ]}
         />
           {/* The switch and the events sit with the webhook they send to: one Webhook, one place. */}
-          <NotificationsSection settings={settings} />
+          <NotificationsSection settings={settings} alerts={alerts} />
         </ConnectionGroup>
       {/* Required by the TMDB API terms of use whenever their data is displayed. */}
       <p className="text-xs text-muted-foreground">

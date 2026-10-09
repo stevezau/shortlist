@@ -323,6 +323,15 @@ export function useSettings() {
   return useQuery({ queryKey: queryKeys.settings, queryFn: api.getSettings });
 }
 
+/** The built-in default of every setting. They never change while the app runs, so fetch once. */
+export function useSettingDefaults() {
+  return useQuery({
+    queryKey: [...queryKeys.settings, "defaults"] as const,
+    queryFn: api.getSettingDefaults,
+    staleTime: Infinity,
+  });
+}
+
 export function useSyncs() {
   return useQuery({ queryKey: queryKeys.syncs, queryFn: api.getSyncs });
 }

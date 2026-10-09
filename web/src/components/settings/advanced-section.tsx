@@ -6,6 +6,7 @@ import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
 import { CleanupAuditCard } from "@/components/settings/cleanup-audit-card";
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
+import { PauseAllRow } from "@/components/settings/pause-all-row";
 import { SettingBlock, SettingsPanel, SettingsSection } from "@/components/settings/section-layout";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -210,6 +211,7 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
               />
             </div>
           </SettingBlock>
+          <PauseAllRow settings={settings} />
         </SettingsPanel>
       </SettingsSection>
 

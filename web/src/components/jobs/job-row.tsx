@@ -64,25 +64,20 @@ function StatusChip({
 /**
  * What a job CHANGES, said on the line rather than three clicks in.
  *
- * "Run now" mixes a read-only history sweep with one job that writes corrections to Plex and can
+ * "Run" mixes a read-only history sweep with one job that writes corrections to Plex and can
  * delete a collection — and until this, the only way to tell them apart was to expand each row and
- * read a paragraph. A destructive button that looks exactly like a harmless one is the problem;
- * `destructive` is what makes that one look different at a glance.
+ * read a paragraph. The tag says it in words on the line; it is plain text, not a red badge, so the
+ * rows that merely touch Shortlist's own data don't read as alarms.
  */
 function EffectTag({
   tag,
 }: {
-  tag: { text: string; title: string; destructive?: boolean; note?: string };
+  tag: { text: string; title: string; note?: string };
 }) {
   return (
     <span
       title={tag.title}
-      className={cn(
-        "shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium",
-        tag.destructive
-          ? "border-destructive/40 bg-destructive/10 text-destructive-text"
-          : "border-border bg-muted text-muted-foreground",
-      )}
+      className="shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
     >
       {tag.text}
     </span>
@@ -117,7 +112,6 @@ export function JobRow({
   tag?: {
     text: string;
     title: string;
-    destructive?: boolean;
     note?: string;
   };
   /** Live progress, shown under the line WITHOUT expanding — a running job must be visible while
@@ -220,9 +214,9 @@ export function JobRow({
         {action && (
           <Button
             size="sm"
-            variant="outline"
-            // One width for "Run" and "Back up now" alike, so the status and next-run columns
-            // line up down the list on a desktop.
+            variant="ghost"
+            // One width for every job's "Run", so the status and next-run columns line up down the
+            // list on a desktop.
             className="col-start-2 row-start-2 justify-self-end sm:order-5 sm:min-w-[6.5rem]"
             loading={action.pending}
             onClick={action.run}

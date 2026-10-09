@@ -183,7 +183,7 @@ export function WatchingAccountPage() {
 
       </div></details>
 
-      <Step n={1} title="Choose how you want to watch">
+      <Step title="Choose how you want to watch">
         <OptionCard
           title="Take the rows off the library shelf"
           // `collectionsQuery.data ?? []` cannot tell "no row is on the shelf" from "nobody has
@@ -223,7 +223,9 @@ export function WatchingAccountPage() {
                     aria-hidden="true"
                   />
                 )}
-                Do this for me
+                {affected.length > 1
+                  ? `Take ${affected.length} rows off the library shelf`
+                  : "Take the row off the library shelf"}
               </Button>
             )
           }
@@ -285,7 +287,7 @@ export function WatchingAccountPage() {
         )}
       </Step>
 
-      {chose === "transfer" && <TransferSteps />}
+      {chose === "transfer" && <TransferSteps numbered={false} />}
     </div>
   );
 }

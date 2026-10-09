@@ -1,7 +1,8 @@
-/** The three Settings tabs, in display order. Each is its own address: `/settings/<value>`. */
+/** The four Settings tabs, in display order. Each is its own address: `/settings/<value>`. */
 export const SETTINGS_TABS = [
   { value: "connections", label: "Connections" },
   { value: "defaults", label: "Defaults" },
+  { value: "requests", label: "Requests" },
   { value: "system", label: "System" },
 ] as const;
 
@@ -17,7 +18,6 @@ export const DEFAULTS_SECTIONS = [
   { id: "refresh", label: "Refresh & variety" },
   { id: "row-defaults", label: "Row defaults" },
   { id: "placement", label: "Row placement" },
-  { id: "requests", label: "Requests" },
 ] as const;
 
 /**
@@ -42,8 +42,8 @@ const ANCHORS: Record<string, { tab: SettingsTab; anchor?: string }> = {
   "row-defaults": { tab: "defaults" },
   placement: { tab: "defaults" },
   "placement-heading": { tab: "defaults", anchor: "placement" },
-  requests: { tab: "defaults" },
-  "requests-heading": { tab: "defaults", anchor: "requests" },
+  requests: { tab: "requests" },
+  "requests-heading": { tab: "requests", anchor: "requests" },
   advanced: { tab: "system" },
   "advanced-heading": { tab: "system", anchor: "advanced" },
   "api-access": { tab: "system" },
@@ -71,7 +71,7 @@ const DEFAULTS_FIELDS = [
 ];
 
 /** System's controls, each with an id so search can land on it. */
-const SYSTEM_FIELDS = ["runs-retention", "events-retention", "log-level", "run-concurrency", "plex-timeout"];
+const SYSTEM_FIELDS = ["runs-retention", "events-retention", "log-level", "run-concurrency", "plex-timeout", "pause-all"];
 
 /**
  * The tab and element an anchor names, or `null` when it is not one Settings knows by name (a
@@ -139,7 +139,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   { label: "Row name template", keywords: "row name library name user top seed", to: at("defaults", "row-defaults"), where: "Defaults" },
   { label: "How many titles", keywords: "row size length", to: at("defaults", "row-defaults"), where: "Defaults" },
   { label: "Let Shortlist order the Recommended shelf", keywords: "shelf order placement kometa agregarr", to: at("defaults", "placement"), where: "Defaults" },
-  { label: "Fill in the gaps automatically", keywords: "requests radarr sonarr overseerr missing", to: at("defaults", "requests"), where: "Defaults" },
+  { label: "Fill in the gaps automatically", keywords: "requests radarr sonarr overseerr missing", to: at("requests", "requests"), where: "Defaults" },
   { label: "Runs kept", keywords: "history retention months", to: at("system", "runs-retention"), where: "System" },
   { label: "Change log kept", keywords: "events audit retention", to: at("system", "events-retention"), where: "System" },
   { label: "Console log detail", keywords: "log level debug trace docker logs", to: at("system", "log-level"), where: "System" },
@@ -147,7 +147,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   { label: "Plex request timeout", keywords: "timeout seconds slow", to: at("system", "plex-timeout"), where: "System" },
   { label: "What Shortlist has on your Plex", keywords: "audit leftovers collections check plex", to: at("system", "advanced"), where: "System" },
   { label: "API access", keywords: "token api scripts", to: at("system", "api-access"), where: "System" },
-  { label: "Pause all users", keywords: "pause resume stop danger", to: at("system", "danger"), where: "System" },
+  { label: "Pause all users", keywords: "pause resume stop", to: at("system", "pause-all"), where: "System" },
   { label: "Full uninstall", keywords: "uninstall remove restore danger", to: at("system", "danger"), where: "System" },
   {
     label: "Disabled users see nothing",

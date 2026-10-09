@@ -77,6 +77,7 @@ def fake_context(monkeypatch, client: TestClient) -> tuple[MagicMock, MagicMock]
     kometa.title = "Kometa Trending"
     kometa.labels = [SimpleNamespace(tag="Overlay")]
     section = MagicMock()
+    section.title = "Movies"
     section.collections.return_value = [ours, kometa]
     plex.sections.return_value = [section]
 
@@ -104,6 +105,13 @@ class TestUninstall:
         assert "Preview only" in body["message"]
         plex.delete_owned_collection.assert_not_called()
         plextv.update_user_filters.assert_not_called()  # engine restore honored dry_run
+
+    def test_preview_names_each_collection_by_library_and_person(self, client: TestClient, monkeypatch):
+        fake_context(monkeypatch, client)
+
+        body = client.post("/api/system/uninstall", json={"dry_run": True}).json()
+
+        assert body["collections_detail"] == [{"library": "Movies", "person": "sarah", "title": "✨ Picked for You"}]
 
     def test_real_uninstall_restores_filters_and_deletes_only_ours(self, client: TestClient, monkeypatch):
         plex, plextv = fake_context(monkeypatch, client)

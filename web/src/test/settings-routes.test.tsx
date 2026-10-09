@@ -74,7 +74,7 @@ describe("Settings addresses", () => {
     ["#recommendations", "defaults", "/settings/defaults#sources"],
     ["#defaults", "defaults", "/settings/defaults#row-defaults"],
     ["#placement", "defaults", "/settings/defaults#placement"],
-    ["#requests", "defaults", "/settings/defaults#requests"],
+    ["#requests", "requests", "/settings/requests#requests"],
     ["#min-history", "defaults", "/settings/defaults#min-history"],
     ["#advanced", "system", "/settings/system#advanced"],
     ["#api-access", "system", "/settings/system#api-access"],
@@ -138,14 +138,12 @@ describe("the tab strip", () => {
       "Refresh & variety",
       "Row defaults",
       "Row placement",
-      "Requests",
     ]);
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/settings/defaults#sources",
       "/settings/defaults#refresh",
       "/settings/defaults#row-defaults",
       "/settings/defaults#placement",
-      "/settings/defaults#requests",
     ]);
   });
 });
