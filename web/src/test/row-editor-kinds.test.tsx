@@ -8,6 +8,7 @@ import { RowEditor } from "@/components/rows/row-editor";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { ApiError } from "@/lib/api";
 import type * as ApiModule from "@/lib/api";
+import { overrideName } from "@/test/override-name";
 import { blankInput, toInput } from "@/lib/collections";
 import {
   applyRowKind,
@@ -696,18 +697,20 @@ describe("Because you watched: Based on", () => {
     expect(screen.getByText(/Picks new titles every night, so it keeps up/)).toBeInTheDocument();
   });
 
-  it("puts the name for someone new directly under when someone hasn't watched enough", () => {
+  it("keeps the name for someone new with the row's own settings and the cold-start choice in the server defaults", () => {
     renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
     const coldStart = document.querySelector('[data-setting="cold_start"]');
-    const fallback = document.querySelector('[data-setting="fallback_name"]');
-    expect(coldStart?.nextElementSibling).toBe(fallback);
+    expect(coldStart?.closest("[data-override-row]")).toBe(coldStart);
+    expect(screen.getByText("Server defaults").parentElement?.parentElement).toContainElement(coldStart as HTMLElement);
+    expect(document.querySelector('[data-setting="fallback_name"]')).not.toBeNull();
   });
 });
 
 describe("wording", () => {
   it("counts someone as new by the live history threshold, and links to where it's set", async () => {
     settingsData.current = { "recommendations.min_history": 12 };
-    renderEditor(row());
+    // The wording sits under the control, which a row shows once it overrides the default.
+    renderEditor(row({ cold_start: "skip" }));
 
     expect(await screen.findByText(/Someone counts as new until they’ve watched 12 titles/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "change it in Settings" })).toHaveAttribute("href", "/settings#min-history");
@@ -721,8 +724,11 @@ describe("wording", () => {
   it("groups a Watch it again row's fill-up settings under their own heading", () => {
     renderEditor(row({ rewatch: true, watched_pct: 1 }));
     const fillUp = screen.getByRole("region", { name: "When their finished titles run out" });
-    for (const key of ["max_seeds", "candidate_sources", "recency"]) {
-      expect(fillUp.querySelector(`[data-setting="${key}"]`)).not.toBeNull();
+    expect(fillUp.querySelector('[data-setting="candidate_sources"]')).not.toBeNull();
+    // The two dials that can follow the server sit in its list, not in this group.
+    for (const key of ["max_seeds", "recency"]) {
+      expect(fillUp.querySelector(`[data-setting="${key}"]`)).toBeNull();
+      expect(document.querySelector(`[data-setting="${key}"][data-override-row]`)).not.toBeNull();
     }
   });
 });
@@ -1153,7 +1159,7 @@ describe("Picked for You's watch count with a global of 1 or 2", () => {
   it("won't follow the global, which would make it a Because you watched row, and says why", async () => {
     settingsData.current = { "recommendations.max_seeds": 2 };
     renderEditor(row({ max_seeds: 5 }));
-    const toggle = screen.getByRole("switch", { name: /global default for how many recent watches to match/i });
+    const toggle = screen.getByRole("button", { name: overrideName(/how many recent watches/) });
 
     await waitFor(() => expect(toggle).toBeDisabled());
     expect(toggle).toHaveAccessibleDescription(
@@ -1166,9 +1172,9 @@ describe("Picked for You's watch count with a global of 1 or 2", () => {
     renderEditor(row({ max_seeds: null }));
     // Only once settings have loaded does the toggle name the global it follows.
     expect(await screen.findByText("3 watches")).toBeInTheDocument();
-    const toggle = screen.getByRole("switch", { name: /global default for how many recent watches to match/i });
+    const toggle = screen.getByRole("button", { name: overrideName(/how many recent watches/) });
     expect(toggle).toBeEnabled();
-    expect(toggle).toBeChecked();
+    expect(toggle).toHaveTextContent("Override");
   });
 });
 

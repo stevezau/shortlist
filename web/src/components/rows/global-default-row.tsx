@@ -2,11 +2,11 @@ import { useId, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 
 /**
  * One inheritable setting's line: its name, what it is set to, whether this row overrides it, and
- * the switch that decides.
+ * the button that switches between the two.
  *
  * The global's ACTUAL value is spelled out while the row follows it. Without the value, a row that
  * inherits tells you only that it inherits — you would have to leave the page, find the setting, and
@@ -14,8 +14,7 @@ import { Switch } from "@/components/ui/switch";
  */
 export function GlobalDefaultToggle({
   heading,
-  label = "Use the server default",
-  ariaLabel,
+  name,
   inheriting,
   globalValue,
   settingsHash,
@@ -24,49 +23,51 @@ export function GlobalDefaultToggle({
 }: {
   /** The setting's name, which leads the line. */
   heading: ReactNode;
-  /** What the switch says it does. */
-  label?: string;
-  ariaLabel: string;
+  /** The same name as plain text, for the button's accessible name. */
+  name: string;
   inheriting: boolean;
   /** The resolved global, already formatted for reading ("0% — never re-suggest"). Null while
-   *  settings are still loading, which renders the toggle with no claim about the value. */
+   *  settings are still loading, which renders the line with no claim about the value. */
   globalValue: string | null;
   /** Anchor on the settings page, e.g. "recommendations". */
   settingsHash: string;
+  /** True to follow the global again (Reset), false to set the row's own (Override). */
   onChange: (inheriting: boolean) => void;
-  /** Why the toggle can't be used on this row right now; null when it can. */
+  /** Why the row can't go back to the global right now; null when it can. */
   disabledReason?: string | null;
 }) {
   const reasonId = useId();
+  const verb = inheriting ? "Override" : "Reset";
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="min-w-0 text-sm font-medium sm:w-52">{heading}</div>
         {inheriting && globalValue !== null && (
-          <span className="min-w-0 text-sm">
-            <strong className="font-normal">{globalValue}</strong>
-          </span>
+          <span className="min-w-0 text-sm">{globalValue}</span>
         )}
         <Badge variant={inheriting ? "outline" : "default"} className="font-normal text-muted-foreground">
           {inheriting ? "server default" : "overridden here"}
         </Badge>
-        <span className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+        <span className="ml-auto flex items-center gap-3">
           {inheriting && (
             <Link
               to={`/settings#${settingsHash}`}
-              className="underline underline-offset-2 hover:text-foreground"
+              className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
             >
               Change the default
             </Link>
           )}
-          <span aria-hidden="true">{label}</span>
-          <Switch
-            checked={inheriting}
-            onCheckedChange={onChange}
-            aria-label={ariaLabel}
+          <Button
+            type="button"
+            variant={inheriting ? "outline" : "ghost"}
+            size="sm"
+            aria-label={`${verb} ${name}`}
             disabled={disabledReason !== null}
             aria-describedby={disabledReason !== null ? reasonId : undefined}
-          />
+            onClick={() => onChange(!inheriting)}
+          >
+            {verb}
+          </Button>
         </span>
       </div>
       {disabledReason !== null && (

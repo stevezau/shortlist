@@ -1,22 +1,25 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { GlobalDefaultToggle } from "@/components/rows/global-default-row";
+import { overrideOrder, useOverridesTarget } from "@/components/rows/overrides-target";
 import { Label } from "@/components/ui/label";
 import type { RowSettingKey } from "@/lib/row-kinds";
+import { cn } from "@/lib/utils";
 
 /**
- * One "leave on the global default, or override it here" field in the row editor.
+ * One "leave on the server's default, or override it here" setting in the row editor.
  *
  * The same shape is used for every inheritable dial (already-watched cap, cadence, recent-watches,
- * watch count, cold start…): a label, a description, the `GlobalDefaultToggle`, and the field itself
- * once the row overrides it. Each call site states only what's different — its copy and its control.
+ * watch count, cold start…): a one-line row with the setting, its server value and Override / Reset,
+ * and the control itself once the row overrides it. Each call site states only what's different —
+ * its copy and its control. The row goes into the editor's "Server defaults" list when there is one.
  */
 export function InheritableField({
   setting,
   label,
   labelFor,
   description,
-  ariaLabel,
   inheriting,
   globalValue,
   onToggle,
@@ -31,22 +34,28 @@ export function InheritableField({
   /** Set only when the field it labels has a matching `id` — some of these fields (RecentCountField,
    *  MaxSeedsField) already wire their own internal `<Label>`, so this heading stays a plain string. */
   labelFor?: string;
+  /** Shown once the row overrides the setting, above its control. */
   description: ReactNode;
-  ariaLabel: string;
   inheriting: boolean;
   globalValue: string | null;
   onToggle: (usesGlobal: boolean) => void;
-  /** Why the "use the global default" toggle can't be used on this row; null when it can. */
+  /** Why the row can't go back to the global; null when it can. */
   toggleDisabledReason?: string | null;
-  /** Extra content between the description and the toggle (the {top_seed} warning). */
+  /** Extra content between the line and the control (the {top_seed} warning). */
   before?: ReactNode;
-  /** Extra content after the field, shown regardless of inheriting (the unstarted-only switch). */
+  /** Extra content after the control, shown regardless of inheriting (the unstarted-only switch). */
   after?: ReactNode;
   /** The control shown once the row overrides the global. */
   children: ReactNode;
 }) {
-  return (
-    <div data-setting={setting} className="space-y-3 border-t pt-4">
+  const target = useOverridesTarget();
+  const row = (
+    <div
+      data-setting={setting}
+      data-override-row=""
+      style={target ? ({ order: overrideOrder(setting) } satisfies CSSProperties) : undefined}
+      className={cn("space-y-3 border-t py-3", target ? "px-5" : "pt-4", !inheriting && "bg-raised/40")}
+    >
       <GlobalDefaultToggle
         heading={
           labelFor ? (
@@ -57,17 +66,22 @@ export function InheritableField({
             label
           )
         }
-        ariaLabel={ariaLabel}
+        name={label}
         inheriting={inheriting}
         globalValue={globalValue}
         settingsHash="recommendations"
         onChange={onToggle}
         disabledReason={toggleDisabledReason}
       />
-      <p className="text-sm text-muted-foreground">{description}</p>
       {before}
-      {!inheriting && children}
+      {!inheriting && (
+        <>
+          <p className="text-sm text-muted-foreground">{description}</p>
+          {children}
+        </>
+      )}
       {after}
     </div>
   );
+  return target ? createPortal(row, target) : row;
 }

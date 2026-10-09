@@ -10,6 +10,8 @@ import { RowRequestSettings } from "@/components/rows/row-request-settings";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { InheritableField } from "@/components/rows/inheritable-field";
 import { LibraryPicker } from "@/components/rows/library-picker";
+import { OverridesList } from "@/components/rows/overrides-list";
+import { OverridesTarget } from "@/components/rows/overrides-target";
 import { PlacementSeen } from "@/components/rows/placement-seen";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
@@ -47,6 +49,8 @@ import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, hasUnsavedChanges, OVER_TIME_DEFAULTS, toInput } from "@/lib/collections";
 import { LIBRARY_NAME } from "@/lib/placeholders";
+import { showDaysSummary } from "@/lib/show-days";
+import { hasHome, hasLibrary } from "@/lib/placement";
 import { describeCron } from "@/lib/cron";
 import { settingString } from "@/lib/format";
 import {
@@ -284,6 +288,8 @@ export function RowEditor({
   // would leave showing the discarded edit.
   const [draftVersion, setDraftVersion] = useState(0);
   const isDefault = collection?.slug === "picked";
+  // Where the inheritable settings' one-line rows are collected (see `OverridesList`).
+  const [overridesList, setOverridesList] = useState<HTMLElement | null>(null);
 
   // Live on Plex's on/off switch saves straight away, so what it saved is the saved row's `enabled`
   // from then on — and the form's, or Save would send back the value the page opened with and undo
@@ -505,6 +511,12 @@ export function RowEditor({
     collection && input.schedule.trim() === (collection.schedule ?? "").trim()
       ? (scheduleGroup?.next_run ?? null)
       : null;
+  const onShelf = hasLibrary(input.placement) || hasLibrary(input.placement_friends);
+  const onHome = hasHome(input.placement) || hasHome(input.placement_friends);
+  const days = showDaysSummary(input.show_days);
+  const placementLine = `Recommended shelf ${onShelf ? "on" : "off"} · Home screen ${onHome ? "on" : "off"} · ${
+    days === "Every day" ? "every day" : days
+  }`;
   const effectiveCadence = input.refresh_days ?? refreshDaysGlobalValue(settings.data);
 
   const submit = () => {
@@ -625,6 +637,8 @@ export function RowEditor({
   };
 
   const whatGoesInHint = overridesHint(input, [
+    "refresh_days",
+    "idle_hold_days",
     "watched_pct",
     "recent_count",
     "recency",
@@ -635,14 +649,13 @@ export function RowEditor({
     "min_rating",
     "max_runtime",
   ]);
-  const scheduleHint = overridesHint(input, ["refresh_days", "idle_hold_days"]);
   const requestKeys = (Object.keys(input) as (keyof CollectionInput)[]).filter((key) => key.startsWith("req_"));
   const sections: RowSection[] = [
     { id: "name-and-look", label: "Name & look" },
     { id: "who-gets-it", label: "Who gets it" },
     { id: "what-goes-in", label: "What goes in", hint: whatGoesInHint ?? undefined },
     ...(aiRow ? [{ id: "try-it", label: "Try it" }] : []),
-    { id: "schedule", label: "Schedule", hint: scheduleHint ?? undefined },
+    { id: "schedule", label: "Schedule" },
     { id: "placement", label: "Placement" },
     // A Your requests row never searches, so it has nothing to ask for and nothing to set here, and
     // an empty section would only be somewhere to be wrong. An AI row is library-only and never asks either.
@@ -752,6 +765,7 @@ export function RowEditor({
 
         {/* `min-w-0`: a grid item's default `min-width: auto` resolves to its min-content width,
             and the widest unbreakable thing inside once pushed a 320px page 60px sideways. */}
+        <OverridesTarget.Provider value={overridesList}>
         <fieldset disabled={addingSeason} aria-label="Row settings" className="mt-6 min-w-0 space-y-10 lg:mt-0">
           <EditorSection
             id="name-and-look"
@@ -1085,6 +1099,7 @@ export function RowEditor({
                 )
               }
             />
+            <OverridesList onTarget={setOverridesList} />
           </EditorSection>
 
           {aiRow && (
@@ -1118,7 +1133,6 @@ export function RowEditor({
                 label="Titles refresh every…"
                 labelFor="row-refresh-days"
                 description="How often this row swaps some of its titles for new ones."
-                ariaLabel="Use the global refresh cadence"
                 inheriting={input.refresh_days === null}
                 globalValue={refreshDaysGlobal(settings.data)}
                 onToggle={(on) =>
@@ -1156,7 +1170,6 @@ export function RowEditor({
                 label="Hold when they aren't watching"
                 labelFor="row-idle-hold-days"
                 description="How long this row waits when the person it belongs to hasn't watched anything since it was built."
-                ariaLabel="Use the global hold for inactive viewers"
                 inheriting={input.idle_hold_days === null}
                 globalValue={idleHoldGlobal(settings.data)}
                 onToggle={(on) =>
@@ -1208,6 +1221,15 @@ export function RowEditor({
                 return person ? person.display_name || person.username : null;
               })()}
             />
+            {/* Closed, the line above says where the row shows; the controls open with "Edit placement". */}
+            <details data-settings-group="Placement" className="group border-t pt-4">
+              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <span className="min-w-0 text-sm text-muted-foreground">{placementLine}</span>
+                <span className="shrink-0 whitespace-nowrap rounded-md border border-border-strong bg-elevated px-3 py-1.5 text-sm font-medium hover:bg-raised">
+                  Edit placement
+                </span>
+              </summary>
+              <div className="space-y-4 pt-4">
             <div data-setting="placement" className="space-y-3 border-t pt-4">
               <Label>Where it shows</Label>
               <PlacementToggles
@@ -1251,6 +1273,8 @@ export function RowEditor({
                 onChange={(sort_title_prefix) => set({ sort_title_prefix })}
               />
             </div>
+              </div>
+            </details>
           </EditorSection>
 
           {!input.requests_row && !aiRow && (
@@ -1314,6 +1338,7 @@ export function RowEditor({
             </p>
           )}
         </fieldset>
+        </OverridesTarget.Provider>
       </div>
 
       <RowSaveBar

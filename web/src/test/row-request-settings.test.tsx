@@ -15,6 +15,7 @@ import {
   type RowRequestInput,
 } from "@/components/rows/row-request-settings";
 import type { Settings } from "@/lib/types";
+import { overrideName } from "@/test/override-name";
 
 const INHERITS: RowRequestInput = {
   req_min_rating: null,
@@ -89,16 +90,16 @@ function renderSection(
 /** Radarr's group is anchored by its root-folder field; Sonarr's by its folder OR monitor field —
  *  both are hidden together, so either is proof the whole group is there. */
 function radarrShown() {
-  return screen.queryByLabelText("Use the global Radarr folder for this row") !== null;
+  return screen.queryByLabelText(overrideName(/where films from this row land/)) !== null;
 }
 function sonarrShown() {
   return (
-    screen.queryByLabelText("Use the global Sonarr folder for this row") !== null
+    screen.queryByLabelText(overrideName(/where shows from this row land/)) !== null
   );
 }
 function tagShown() {
   return (
-    screen.queryByLabelText("Use the global tag-by-person setting for this row") !==
+    screen.queryByLabelText(overrideName(/tag requests with who/)) !==
     null
   );
 }
@@ -135,7 +136,7 @@ describe("RowRequestSettings", () => {
     // not to work at all.
     const set = renderSection();
     await userEvent.click(
-      screen.getByLabelText("Use the global minimum rating for this row"),
+      screen.getByLabelText(overrideName(/minimum rating/)),
     );
     expect(set).toHaveBeenCalledWith({ req_min_rating: 7 });
   });
@@ -143,7 +144,7 @@ describe("RowRequestSettings", () => {
   it("turning it back on clears to null so the row inherits again", async () => {
     const set = renderSection({ req_min_rating: 6 });
     await userEvent.click(
-      screen.getByLabelText("Use the global minimum rating for this row"),
+      screen.getByLabelText(overrideName(/minimum rating/)),
     );
     expect(set).toHaveBeenCalledWith({ req_min_rating: null });
   });
@@ -167,9 +168,7 @@ describe("RowRequestSettings", () => {
     // null would read as "inherit" on the next paint and the global would switch it straight back on.
     const set = renderSection();
     await userEvent.click(
-      screen.getByLabelText(
-        "Use the global tag-by-person setting for this row",
-      ),
+      screen.getByLabelText(overrideName(/tag requests with who/)),
     );
     expect(set).toHaveBeenCalledWith({ req_auto_user_tag: false });
   });
@@ -193,9 +192,7 @@ describe("RowRequestSettings", () => {
   it("overriding seeds a real mode, since inheriting 'all' would look like nothing happened", async () => {
     const set = renderSection();
     await userEvent.click(
-      screen.getByLabelText(
-        "Use the global amount-of-a-show setting for this row",
-      ),
+      screen.getByLabelText(overrideName(/how much of a show/)),
     );
     expect(set).toHaveBeenCalledWith({ req_sonarr_monitor: "firstSeason" });
   });
@@ -290,7 +287,7 @@ describe("RowRequestSettings", () => {
       // does should not quietly start throwing candidates away.
       const set = renderSection();
       await userEvent.click(
-        screen.getByLabelText("Use the global language setting for this row"),
+        screen.getByLabelText(overrideName(/language for this row/)),
       );
       expect(set).toHaveBeenCalledWith({
         req_language_mode: "prefer",
@@ -335,7 +332,7 @@ describe("RowRequestSettings", () => {
         req_min_rating_other: 9,
       });
       await userEvent.click(
-        screen.getByLabelText("Use the global language setting for this row"),
+        screen.getByLabelText(overrideName(/language for this row/)),
       );
       expect(set).toHaveBeenCalledWith({
         req_language_mode: null,
