@@ -3,13 +3,8 @@ import { useId, useState } from "react";
 
 import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
-import {
-  countModified,
-  ModifiedBadge,
-  ModifiedDefault,
-  useModifiedMarks,
-  useReportModifiedCount,
-} from "@/components/settings/modified";
+import { countModified, useModifiedMarks, useReportModifiedCount } from "@/components/settings/modified-marks";
+import { ModifiedBadge, ModifiedDefault } from "@/components/settings/modified";
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import { SettingsPanel, SettingsSection } from "@/components/settings/section-layout";
 import { Input } from "@/components/ui/input";

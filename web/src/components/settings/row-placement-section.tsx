@@ -3,11 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { SaveStatus } from "@/components/save-status";
-import {
-  countModified,
-  useModifiedMarks,
-  useReportModifiedCount,
-} from "@/components/settings/modified";
+import { countModified, useModifiedMarks, useReportModifiedCount } from "@/components/settings/modified-marks";
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import { SettingRow, SettingsPanel, SettingsSection } from "@/components/settings/section-layout";
 import { Button } from "@/components/ui/button";

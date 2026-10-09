@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 export function DangerZoneSection() {
   return (
     <section id="danger" aria-labelledby="danger-heading" className="scroll-mt-32 space-y-3 md:scroll-mt-8">
-      <h2 id="danger-heading" className="text-base font-semibold tracking-tight text-destructive-text">
+      <h2 id="danger-heading" className="text-lg font-semibold tracking-tight text-destructive-text">
         Danger zone
       </h2>
       <Card className="border-destructive/40">

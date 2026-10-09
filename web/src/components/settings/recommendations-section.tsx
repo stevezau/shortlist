@@ -13,13 +13,8 @@ import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { SettingDisclosure } from "@/components/settings/setting-disclosure";
 import { SettingsNumberField } from "@/components/settings/number-field";
-import {
-  countModified,
-  ModifiedBadge,
-  ModifiedDefault,
-  useModifiedMarks,
-  useReportModifiedCount,
-} from "@/components/settings/modified";
+import { countModified, useModifiedMarks, useReportModifiedCount } from "@/components/settings/modified-marks";
+import { ModifiedBadge, ModifiedDefault } from "@/components/settings/modified";
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import {
   SettingBlock,

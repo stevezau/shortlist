@@ -2,7 +2,8 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { useActiveSection } from "@/components/settings/active-section";
-import { type Modified, ModifiedBadge, ModifiedCountContext, ModifiedDefault } from "@/components/settings/modified";
+import { type Modified, ModifiedCountContext } from "@/components/settings/modified-marks";
+import { ModifiedBadge, ModifiedDefault } from "@/components/settings/modified";
 import {
   isSettingsTab,
   resolveSettingsAnchor,

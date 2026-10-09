@@ -14,7 +14,7 @@ export function AssistantAccessCard() {
 
   return (
     <section id="assistant-access" aria-labelledby="assistant-access-heading" className="scroll-mt-32 space-y-3 md:scroll-mt-8">
-      <h2 id="assistant-access-heading" className="text-base font-semibold tracking-tight">AI assistants</h2>
+      <h2 id="assistant-access-heading" className="text-lg font-semibold tracking-tight">AI assistants</h2>
       <Card>
         <CardContent className="pt-6">
           {status.isPending ? <Skeleton className="h-24" /> : status.isError ? (
