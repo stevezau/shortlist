@@ -186,7 +186,7 @@ describe("run report pick line — look-it-up links", () => {
     );
   });
 
-  it("marks each link with its service's icon, as the requests inbox does", () => {
+  it("shows the links as one muted text line, with no service logos", () => {
     render(
       <UserPanel
         run={RUN}
@@ -194,10 +194,9 @@ describe("run report pick line — look-it-up links", () => {
       />,
     );
     for (const name of ["TMDB", "IMDb", "Trakt"]) {
-      // The glyph is decorative — the link keeps its plain name — so it is found as an svg inside it.
-      expect(
-        screen.getByRole("link", { name }).querySelector("svg"),
-      ).not.toBeNull();
+      const link = screen.getByRole("link", { name });
+      expect(link.textContent).toBe(name);
+      expect(link.querySelector("svg")).toBeNull();
     }
   });
 
