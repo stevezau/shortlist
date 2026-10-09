@@ -8,11 +8,18 @@ from typing import Literal
 from pydantic import ConfigDict, Field, model_validator
 from sqlalchemy import select
 
-from shortlist.server.api.seasons import CollectionIO, TagIO
-from shortlist.server.api.themes import RulesIO, ThemeIn, ThemePickIO, ThemeSaveIn, _refuse_unusable
 from shortlist.server.assistant_auth import Capability
 from shortlist.server.db.models import CacheRow, Collection, CollectionAudience, Theme, ThemeHistory, User
 from shortlist.server.services import theme_store
+from shortlist.server.services.theme_models import (
+    CollectionIO,
+    RulesIO,
+    TagIO,
+    ThemeIn,
+    ThemePickIO,
+    ThemeSaveIn,
+    refuse_unusable,
+)
 
 from .changes import AccessRequirements, DomainPlan, DomainResult, fingerprint
 from .contracts import StrictModel
@@ -64,7 +71,7 @@ class ThemeIntent(StrictModel):
         return self
 
 
-def _resolved_body(session, intent: ThemeIntent) -> ThemeSaveIn:
+def resolved_theme_body(session, intent: ThemeIntent) -> ThemeSaveIn:
     data = intent.draft.model_dump(mode="json")
     existing = session.get(Theme, intent.theme_id) if intent.theme_id else None
     if existing is not None:
@@ -80,7 +87,7 @@ def _resolved_body(session, intent: ThemeIntent) -> ThemeSaveIn:
         pick["title"] = row.value["title"]
         pick["year"] = row.value.get("year")
     draft = ThemeIn.model_validate(data)
-    _refuse_unusable(draft)
+    refuse_unusable(draft)
     return ThemeSaveIn(draft=draft, tokens=0)
 
 
@@ -92,7 +99,7 @@ class ThemeAdapter:
 
     def prepare(self, session, intent: dict) -> DomainPlan:
         body = ThemeIntent.model_validate(intent)
-        resolved = _resolved_body(session, body)
+        resolved = resolved_theme_body(session, body)
         existing = session.get(Theme, body.theme_id) if body.theme_id else None
         if body.theme_id and existing is None:
             raise ValueError("theme not found")
@@ -178,7 +185,7 @@ class ThemeAdapter:
     def apply(self, session, intent: dict) -> DomainResult:
         body = ThemeIntent.model_validate(intent)
         existing = session.get(Theme, body.theme_id) if body.theme_id else None
-        row = theme_store.save_theme(session, self.secrets, _resolved_body(session, body), existing=existing)
+        row = theme_store.save_theme(session, self.secrets, resolved_theme_body(session, body), existing=existing)
         row.origin = "assistant"
         session.flush()
         return DomainResult(

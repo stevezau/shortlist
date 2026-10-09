@@ -419,7 +419,7 @@ class TestPlexTvClient:
             self._client().update_user_filters(100, {"filterMovies": "x=y"})
 
     @respx.mock
-    def test_canary_token_exchange_flow(self):
+    def test_home_user_token_exchange_flow(self):
         respx.get("https://plex.tv/api/v2/home/users").mock(
             return_value=httpx.Response(
                 200,
@@ -442,13 +442,13 @@ class TestPlexTvClient:
                 ],
             )
         )
-        token = self._client().canary_server_token(555000100)
+        token = self._client().home_user_server_token(555000100)
         assert token == "server-tok"
         # The resources exchange must run AS the switched user (Phase 0 finding: owner token 401s).
         assert resources.calls.last.request.headers["X-Plex-Token"] == "switch-tok"
 
     @respx.mock
-    def test_pin_protected_canary_refused(self):
+    def test_pin_protected_home_user_refused(self):
         respx.get("https://plex.tv/api/v2/home/users").mock(
             return_value=httpx.Response(
                 200,
@@ -460,7 +460,7 @@ class TestPlexTvClient:
             )
         )
         with pytest.raises(PermissionError, match="PIN-protected"):
-            self._client().canary_server_token(1)
+            self._client().home_user_server_token(1)
 
     @respx.mock
     def test_shared_server_tokens_maps_each_users_id_to_their_server_token(self):
@@ -1669,28 +1669,28 @@ class TestPlexClient:
 
 
 class TestUserHubs:
-    """Fetch hubs AS another user (a canary token) — the visibility-check read."""
+    """Fetch hubs AS another user (that user's server token) — the visibility-check read."""
 
     _URL = "http://pms:32400/hubs"
 
     @respx.mock
-    def test_reads_hubs_as_the_canary_user(self, mock_plex: PlexClient):
+    def test_reads_hubs_as_the_given_user(self, mock_plex: PlexClient):
         mock_plex._server.url.return_value = self._URL
         respx.get(self._URL).mock(
             return_value=httpx.Response(200, json={"MediaContainer": {"Hub": [{"title": "Home"}]}})
         )
 
-        hubs = mock_plex.user_hubs("CANARY-TOK")
+        hubs = mock_plex.user_hubs("USER-TOK")
 
         assert hubs == [{"title": "Home"}]
         request = respx.calls.last.request
-        assert request.headers["X-Plex-Token"] == "CANARY-TOK"
+        assert request.headers["X-Plex-Token"] == "USER-TOK"
 
     @respx.mock
     def test_a_missing_hub_container_is_an_empty_list_not_an_error(self, mock_plex: PlexClient):
         mock_plex._server.url.return_value = self._URL
         respx.get(self._URL).mock(return_value=httpx.Response(200, json={"MediaContainer": {}}))
-        assert mock_plex.user_hubs("CANARY-TOK") == []
+        assert mock_plex.user_hubs("USER-TOK") == []
 
     def test_the_configured_timeout_reaches_the_raw_read(self, mock_plex: PlexClient, monkeypatch):
         """This used to hardcode `timeout=30`, ignoring the operator's configured `plex.timeout_s`."""
@@ -1705,7 +1705,7 @@ class TestUserHubs:
             return httpx.Response(200, json={"MediaContainer": {}}, request=httpx.Request("GET", self._URL))
 
         monkeypatch.setattr(plex_pms.http_retry, "get", fake_get)
-        mock_plex.user_hubs("CANARY-TOK")
+        mock_plex.user_hubs("USER-TOK")
         assert seen == [77]
 
 

@@ -856,8 +856,8 @@ class TestThereIsOneSourceOfTruthForEveryCronDefault:
     def test_every_schedulable_key_is_writable_through_the_settings_api(self):
         """`PUT /api/settings` builds its allowlist from `DEFAULTS`, so a cron the scheduler honours
         but the settings dict has never heard of is a schedule the owner cannot change."""
-        from shortlist.server.api.settings import KNOWN_KEYS
         from shortlist.server.scheduler import DEFAULT_CRONS
+        from shortlist.server.services.settings_validation import KNOWN_KEYS
 
         assert set(DEFAULT_CRONS) <= KNOWN_KEYS
 

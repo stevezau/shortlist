@@ -18,6 +18,7 @@ from shortlist.engine.seasons import BUILTIN_SEASONS, DateRule, Season
 from shortlist.server.db.adapters import DbCache
 from shortlist.server.db.models import CacheRow
 from shortlist.server.services import library_index as library_index_mod
+from shortlist.server.services import season_rules
 
 
 @pytest.fixture(autouse=True)
@@ -402,10 +403,11 @@ class TestWhetherASeasonEditOwesAPass:
         return {**BUILTIN_SEASONS, "moved": moved}
 
     def _owed(self, now: datetime, before: tuple, after: tuple, seasons: tuple[str, ...] = ("moved",)) -> bool:
-        from shortlist.server.api import seasons as seasons_api
 
-        answers = [seasons_api._today(self.ROW, list(seasons), now, self._catalogue(*rule)) for rule in (before, after)]
-        return seasons_api._pass_owed(*answers)
+        answers = [
+            season_rules.shown_today(self.ROW, list(seasons), now, self._catalogue(*rule)) for rule in (before, after)
+        ]
+        return season_rules.pass_owed(*answers)
 
     @pytest.mark.parametrize(
         ("now", "before", "after"),

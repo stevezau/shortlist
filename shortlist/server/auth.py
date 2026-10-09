@@ -261,7 +261,7 @@ def _plextv_json(response: httpx.Response, what: str):
         ) from e
 
 
-def _check_csrf(request: Request) -> None:
+def check_csrf(request: Request) -> None:
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
         raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
 
@@ -319,7 +319,7 @@ def require_owner(request: Request) -> dict:
         logger.warning("rejected an invalid or revoked API token")
         _rate_limit_token_failures()
         raise HTTPException(status_code=401, detail="invalid or revoked API token")
-    _check_csrf(request)
+    check_csrf(request)
     session = read_session(request)
     if session is None:
         raise HTTPException(status_code=401, detail="not signed in — use Login with Plex")
@@ -345,7 +345,7 @@ def require_setup_access(request: Request) -> dict:
     CSRF is required for mutations in every state — otherwise any page you visited could drive a
     stranger's wizard.
     """
-    _check_csrf(request)
+    check_csrf(request)
     session = read_session(request)
     owner_id = request.app.state.owner_account_id()
     if owner_id is not None:
@@ -549,8 +549,8 @@ async def logout(request: Request, response: Response) -> dict:
     # Logout changes state from a cookie, so it needs the same guard every other mutation here has:
     # without it any other site could sign the owner out with a cross-origin form post. It is only a
     # nuisance rather than data loss, which is presumably why it was missed — but this was the one
-    # state-changing auth route not going through `_check_csrf`.
-    _check_csrf(request)
+    # state-changing auth route not going through `check_csrf`.
+    check_csrf(request)
     # Same path as the one it was set with, or the browser keeps the cookie and logout does nothing.
     response.delete_cookie(SESSION_COOKIE, path=_cookie_path(request))
     return {"ok": True}

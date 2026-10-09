@@ -3,8 +3,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from shortlist.server.api.row_changes import PRIVACY_SYNC, RECONCILE, RENAME, PlannedWork
 from shortlist.server.db.models import Collection
+from shortlist.server.services.row_changes import PRIVACY_SYNC, RECONCILE, RENAME, PlannedWork
 from shortlist.server.services.row_mutations import delete_row_in_session, steps_for_row_plan
 from tests.db_helpers import create_schema, disposing_engine
 

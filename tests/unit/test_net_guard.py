@@ -11,8 +11,8 @@ from contextlib import contextmanager
 
 import pytest
 
-from shortlist.server.api.settings import _FETCHED_URL_KEYS
-from shortlist.server.net_guard import BlockedUrl, check_url, safe_backup_name
+from shortlist.server.net_guard import BlockedUrl, check_url
+from shortlist.server.services.settings_validation import FETCHED_URL_KEYS
 
 
 class TestUrlsSelfHostersNeed:
@@ -75,22 +75,6 @@ class TestWhatIsRefused:
         check_url("http://not-up-yet.local:32400")
 
 
-class TestBackupNames:
-    """`config_dir / "backups" / name` with an unvalidated name escapes the directory, and restore
-    then copies whatever it finds over the database."""
-
-    @pytest.mark.parametrize(
-        "name",
-        ["../../etc/passwd", "../shortlist.db", "sub/dir.db", "..\\..\\windows", "/etc/passwd", "..", ""],
-    )
-    def test_traversal_is_refused(self, name):
-        with pytest.raises(ValueError):
-            safe_backup_name(name)
-
-    def test_a_real_backup_name_passes(self):
-        assert safe_backup_name("shortlist_20260729_002652_pre-migration.db").endswith(".db")
-
-
 class TestTheGuardsAreWired:
     """A guard nothing calls is a guard that does not exist. These pin the call sites."""
 
@@ -117,7 +101,7 @@ class TestTheGuardsAreWired:
 
     @contextmanager
     def _client(self, tmp_path):
-        """Through the real endpoint — calling `_reject_blocked_urls` directly proves the function
+        """Through the real endpoint — calling `reject_blocked_urls` directly proves the function
         works and nothing about whether the PUT handler calls it, which is the half that regresses."""
         from starlette.testclient import TestClient
 
@@ -136,11 +120,11 @@ class TestTheGuardsAreWired:
             client.headers[CSRF_HEADER] = "1"
             yield client
 
-    @pytest.mark.parametrize("key", _FETCHED_URL_KEYS)
+    @pytest.mark.parametrize("key", FETCHED_URL_KEYS)
     def test_saving_a_metadata_url_through_the_api_is_refused(self, tmp_path, key):
         """Parameterised over the tuple itself, not over one hand-picked key.
 
-        `_FETCHED_URL_KEYS` is the whole list of settings the SERVER later fetches, and it grows —
+        `FETCHED_URL_KEYS` is the whole list of settings the SERVER later fetches, and it grows —
         it just gained `requests.overseerr.url`. Testing one member proves the guard runs for that
         member; testing the tuple proves a new door cannot be added without one.
         """

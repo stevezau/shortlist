@@ -10,7 +10,7 @@ from shortlist.server.assistant_auth import AuthorizationDenied, Capability, req
 from shortlist.server.db.models import Collection, Event, RequestCandidate, Run, RunSharedRow, RunUser, User, iso_utc
 
 from .contracts import ToolResult
-from .discovery import _ids, _page
+from .discovery import paginate, restrict_to_ids
 from .operation_models import AssistantChange, AssistantOperation
 
 _COMMON_HISTORY_REASON = re.compile(
@@ -80,7 +80,7 @@ class MonitoringService:
         people = set(session.scalars(select(User.id)))
         rows = set(
             session.scalars(
-                _ids(
+                restrict_to_ids(
                     select(Collection.slug),
                     Collection.id,
                     principal.constraints.row_ids,
@@ -149,7 +149,7 @@ class MonitoringService:
             ]
         return ToolResult(
             summary="Recent run outcomes restricted to permitted people and rows.",
-            data=_page(reports, limit, offset),
+            data=paginate(reports, limit, offset),
             warnings=[
                 "At most the newest 1,000 runs are scanned. Raw logs, seed titles and history traces are omitted."
             ],
@@ -198,7 +198,7 @@ class MonitoringService:
                     }
                 )
         return ToolResult(
-            summary="This connection's redacted plan and operation audit trail.", data=_page(entries, limit, offset)
+            summary="This connection's redacted plan and operation audit trail.", data=paginate(entries, limit, offset)
         )
 
     def requests(self, principal, *, limit: int = 25, offset: int = 0) -> ToolResult:
@@ -231,7 +231,7 @@ class MonitoringService:
                 )
         return ToolResult(
             summary="Permitted acquisition candidates and their recorded status.",
-            data=_page(entries, limit, offset),
+            data=paginate(entries, limit, offset),
             warnings=[
                 "Personal request provenance and seed titles are omitted. Recorded status may lag the external service."
             ],

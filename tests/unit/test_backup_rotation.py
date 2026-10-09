@@ -444,3 +444,19 @@ class TestRestoreChecksIntegrity:
 
         assert not (tmp_path / "staged.db-wal").exists()
         assert not (tmp_path / "staged.db-shm").exists()
+
+
+class TestBackupNames:
+    """`config_dir / "backups" / name` with an unvalidated name escapes the directory, and restore
+    then copies whatever it finds over the database."""
+
+    @pytest.mark.parametrize(
+        "name",
+        ["../../etc/passwd", "../shortlist.db", "sub/dir.db", "..\\..\\windows", "/etc/passwd", "..", ""],
+    )
+    def test_traversal_is_refused(self, name):
+        with pytest.raises(ValueError):
+            backup_mod.safe_backup_name(name)
+
+    def test_a_real_backup_name_passes(self):
+        assert backup_mod.safe_backup_name("shortlist_20260729_002652_pre-migration.db").endswith(".db")

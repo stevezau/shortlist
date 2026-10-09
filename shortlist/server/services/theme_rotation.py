@@ -26,7 +26,6 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserProfile
 from shortlist.engine.web_guidance import AiInstructions
-from shortlist.server.api.themes import ThemeIn, ThemeSaveIn, _refuse_unusable, _row_view, _spec_view, _TagNames
 from shortlist.server.db.models import (
     Collection,
     CollectionAudience,
@@ -41,6 +40,7 @@ from shortlist.server.db.models import (
 from shortlist.server.services.audit import add_audit
 from shortlist.server.services.library_index import library_index
 from shortlist.server.services.theme_author import BUILD_SYSTEM_GUIDANCE, ThemeAuthorError, ThemeDraft, author_theme
+from shortlist.server.services.theme_models import TagNames, ThemeIn, ThemeSaveIn, refuse_unusable, row_view, spec_view
 from shortlist.server.services.theme_store import (
     RowPaused,
     ThemeStoreError,
@@ -74,7 +74,7 @@ _TARGET_LOCKS: dict[tuple[int, int], threading.Lock] = {}
 _TARGET_LOCKS_GUARD = threading.Lock()
 
 
-def _target_lock(collection_id: int, user_id: int) -> threading.Lock:
+def target_lock(collection_id: int, user_id: int) -> threading.Lock:
     """One lock per (row, person). The kind reads only, so the job queue may run two passes at once; both would
     see "no current theme", both would call the AI, and both would insert one. The second now waits, then reads
     what the first committed and finds nothing to do."""
@@ -87,28 +87,23 @@ def rotate_themes(
     *,
     now: datetime,
     secrets=None,
-    unavailable: str = "",
     author=author_theme,
-    curator=None,
-    tmdb=None,
-    plex=None,
-    tools: Callable[[], AuthoringTools] | None = None,
+    tools: Callable[[], AuthoringTools],
     profile_for: Callable[[Session, int], UserProfile],
 ) -> list[RotationOutcome]:
     """Run one pass over every enabled explore row and each person in its audience.
 
     ``tools`` builds the AI provider, TMDB client and Plex reader the first time a person actually needs a theme
-    written (it overrides ``curator``/``tmdb``/``plex``/``unavailable``). A pass that only promotes, or finds
-    nothing to do, never connects to anything.
+    written. A pass that only promotes, or finds nothing to do, never connects to anything.
     """
     moment = _naive_utc(now)
     targets = rotation_targets(sessions)
-    tools = _once(tools) if tools is not None else None
+    tools = call_once(tools)
     outcomes: list[RotationOutcome] = []
     for collection_id, user_id in targets:
         spent: list[int] = []
         try:
-            with _target_lock(collection_id, user_id), sessions() as session:
+            with target_lock(collection_id, user_id), sessions() as session:
                 action = _rotate_one(
                     session,
                     collection_id,
@@ -116,11 +111,7 @@ def rotate_themes(
                     moment,
                     sessions=sessions,
                     secrets=secrets,
-                    unavailable=unavailable,
                     author=author,
-                    curator=curator,
-                    tmdb=tmdb,
-                    plex=plex,
                     tools=tools,
                     profile_for=profile_for,
                     spent=spent,
@@ -133,7 +124,7 @@ def rotate_themes(
     return outcomes
 
 
-def _once[T](build: Callable[[], T]) -> Callable[[], T]:
+def call_once[T](build: Callable[[], T]) -> Callable[[], T]:
     """``build`` called at most once, its failure remembered too: a Plex that is down is tried once a pass, not
     once a person."""
     box: list = []
@@ -343,7 +334,7 @@ def author_for_person(
         media=collection.media or "both",
         library_keys=[str(k) for k in collection.library_keys or []],
     )
-    names = _TagNames(tmdb)
+    names = TagNames(tmdb)
     draft = author(
         brief=explore_brief_for(session, collection, user_id),
         media=media,
@@ -359,7 +350,7 @@ def author_for_person(
         spent.append(draft.tokens)
     try:
         body = _save_in(collection, draft, names.seen)
-        _refuse_unusable(body.draft)
+        refuse_unusable(body.draft)
     except HTTPException as e:
         raise ThemeAuthorError(str(e.detail)) from None
     except ValidationError:
@@ -370,21 +361,17 @@ def author_for_person(
 
 
 def _rotate_one(
-    session,
-    collection_id,
-    user_id,
-    now,
+    session: Session,
+    collection_id: int,
+    user_id: int,
+    now: datetime,
     *,
-    sessions,
+    sessions: Callable[[], Session],
     secrets,
-    unavailable,
     author,
-    curator,
-    tmdb,
-    plex,
-    tools,
-    profile_for,
-    spent,
+    tools: Callable[[], AuthoringTools],
+    profile_for: Callable[[Session, int], UserProfile],
+    spent: list[int],
 ) -> Action:
     collection = session.get(Collection, collection_id)
     rows = _history(session, collection_id, user_id)
@@ -392,11 +379,7 @@ def _rotate_one(
     deps = {
         "sessions": sessions,
         "secrets": secrets,
-        "unavailable": unavailable,
         "author": author,
-        "curator": curator,
-        "tmdb": tmdb,
-        "plex": plex,
         "tools": tools,
         "profile_for": profile_for,
         "spent": spent,
@@ -443,7 +426,15 @@ def _rotate_one(
     return _author(session, collection, user_id, "current", now, current, **deps)
 
 
-def _author(session, collection, user_id, state: str, now, current, **deps) -> Action:
+def _author(
+    session: Session,
+    collection: Collection,
+    user_id: int,
+    state: str,
+    now: datetime,
+    current: ThemeHistory | None,
+    **deps,
+) -> Action:
     # The owner may have switched the row off, or off Explore, while earlier people were being written.
     session.refresh(collection)
     if not collection.enabled or collection.theme_mode != "explore":
@@ -459,10 +450,8 @@ def _author(session, collection, user_id, state: str, now, current, **deps) -> A
             detail="AI is paused for this row, so its theme was not changed.",
         )
         return "skipped_paused"
-    tools = deps.pop("tools")
-    if tools is not None:
-        built = tools()
-        deps.update(unavailable=built.unavailable, curator=built.curator, tmdb=built.tmdb, plex=built.plex)
+    built = deps.pop("tools")()
+    deps.update(unavailable=built.unavailable, curator=built.curator, tmdb=built.tmdb, plex=built.plex)
     try:
         theme = author_for_person(session, collection=collection, user_id=user_id, **deps)
     except RowPaused:
@@ -585,7 +574,7 @@ def _row_media(collection: Collection) -> tuple[MediaType, ...]:
 
 def _save_in(collection: Collection, draft: ThemeDraft, tag_names: dict[int, str]) -> ThemeSaveIn:
     """The author's draft as the save the themes API takes, so both paths store a theme the same way."""
-    view = _spec_view(draft.spec, brief=draft.brief, origin="ai", titles=draft.titles, tag_names=tag_names)
+    view = spec_view(draft.spec, brief=draft.brief, origin="ai", titles=draft.titles, tag_names=tag_names)
     view["brief"] = (collection.explore_brief or "").strip() or _DEFAULT_BRIEF
     return ThemeSaveIn(
         draft=ThemeIn.model_validate(view),
@@ -770,7 +759,7 @@ def top_up_themes(
     Returns how many themes were topped up. A dry run makes no call and writes nothing.
     """
     moment = _naive_utc(now)
-    tools = _once(tools)
+    tools = call_once(tools)
     done = 0
     for collection_id in top_up_rows(sessions):
         with sessions() as session:
@@ -789,7 +778,7 @@ def top_up_themes(
                 logger.info("[dry-run] theme {} on row {} is low: would top it up once", theme_id, collection_id)
                 continue
             try:
-                with _target_lock(0, -theme_id), sessions() as session:
+                with target_lock(0, -theme_id), sessions() as session:
                     done += _top_up_one(session, collection_id, theme_id, moment, sessions, secrets, author, tools)
             except Exception as e:
                 # Not marked: the failure came before any AI call was made.
@@ -811,7 +800,7 @@ def _top_up_one(session, collection_id, theme_id, moment, sessions, secrets, aut
     if tool.unavailable:
         logger.info("theme top-up: theme {} waits ({})", theme_id, tool.unavailable)
         return 0
-    names = _TagNames(tool.tmdb)
+    names = TagNames(tool.tmdb)
     index = library_index(
         tool.plex,
         sessions,
@@ -888,7 +877,7 @@ def _merge_new_picks(session, secrets, collection: Collection, theme: Theme, dra
         for p in draft.spec.picks
         if p.origin == "ai" and (p.tmdb_id, p.media.value) not in have
     ]
-    view = _row_view(theme)
+    view = row_view(theme)
     view["picks"] = [*view["picks"], *added]
     body = ThemeSaveIn(draft=ThemeIn.model_validate(view), tokens=draft.tokens, collection_id=collection.id)
     saved = save_theme(session, secrets, body, existing=theme)

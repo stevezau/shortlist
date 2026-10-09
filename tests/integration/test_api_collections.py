@@ -37,7 +37,7 @@ def _plex_jobs(client: TestClient) -> list[dict]:
 # FILTERS the payload, so every model here sets `extra="allow"`; naming every key is what fails if
 # that config is ever stripped, or if a default starts inventing a key the handler never sent.
 
-#: Every key `collections._serialize` renders — `GET`, `POST` and `PATCH /api/collections` alike.
+#: Every key `row_editing.serialize_row` renders — `GET`, `POST` and `PATCH /api/collections` alike.
 COLLECTION_KEYS = {
     "ai_instructions",
     "ai_paused",
@@ -131,7 +131,7 @@ COLLECTION_KEYS = {
     "preview_incomplete",
 }
 
-#: Every key `collections._poster_view` renders, nested under `poster`.
+#: Every key `row_editing.poster_view` renders, nested under `poster`.
 POSTER_KEYS = {"mode", "title", "subtitle", "style", "has_image"}
 
 

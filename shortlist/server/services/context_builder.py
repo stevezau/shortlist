@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from contextlib import nullcontext
-from datetime import UTC, datetime
+from datetime import datetime
 
 from loguru import logger
 from sqlalchemy import and_, case, func, or_
@@ -79,6 +79,7 @@ from shortlist.server.db.models import (
     utcnow,
 )
 from shortlist.server.prefs import blocked_ids
+from shortlist.server.services.delivery_snapshots import utc
 from shortlist.server.services.pick_history import DbPickHistory
 from shortlist.server.services.plex_reachability import explained
 from shortlist.server.services.poster_service import load_upload, make_studio
@@ -89,7 +90,7 @@ from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 #: The season editor's PMS reads (#137). A page waits on them, so a stalled server fails in seconds rather
-#: than holding the tab for a run's `plex.timeout_s` — `connection_choices._INTERACTIVE_TIMEOUT_S`'s reasoning.
+#: than holding the tab for a run's `plex.timeout_s` — `connection_choices.INTERACTIVE_TIMEOUT_S`'s reasoning.
 #: A library scan pages through the PMS, so no single read in it is long.
 EDITOR_PLEX_TIMEOUT_S = 8
 
@@ -267,16 +268,6 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
     return overrides if overrides != RequestOverrides() else None
 
 
-def _utc(value: datetime | None) -> datetime | None:
-    """SQLite hands a ``DateTime(timezone=True)`` column back naive; the engine compares it against
-    the run's own aware clock, and mixing the two raises. Normalised here, at the boundary, for the
-    same reason `watch_cache._aware` normalises the watched-title columns. The DB stores UTC.
-    """
-    if value is None:
-        return None
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
-
-
 #: How the watched page identifies ONE TITLE across the library copies of it (issue #111).
 #:
 #: ``(tmdb_id, media_type)`` is the identity every other module uses — never the id alone, because
@@ -396,6 +387,11 @@ def _merge_watched_copies(rows: list[WatchedTitle]) -> dict:
         # dropped: a row from before 0087 knows no name, and "" would render as a stray separator.
         "libraries": sorted({row.library for row in rows if row.library}),
     }
+
+
+def _app_address(store: SettingsStore, prefix: str) -> tuple[str, str]:
+    """The ``(url, api key)`` stored under a ``requests.*`` app prefix; empty strings when unset."""
+    return (store.get(f"{prefix}.url") or "").strip(), store.get(f"{prefix}.apikey") or ""
 
 
 class ContextBuilder:
@@ -549,7 +545,7 @@ class ContextBuilder:
                 delivered_details=delivered_details,
                 delivered_seasons=delivered_seasons,
                 pms_for_user=_pms_for_user,
-                # Same token `_pms_for_user` builds its client from — including the canary fallback
+                # Same token `_pms_for_user` builds its client from — including the switch-and-exchange fallback
                 # for a Home profile that was never separately shared.
                 token_for_user=lambda profile, _history=history: _history.server_token_for(profile),
                 disabled_account_ids=disabled_account_ids,
@@ -653,7 +649,7 @@ class ContextBuilder:
         with self._sessions() as session:
             store = SettingsStore(session, self._secrets)
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
-            return self._build_requests(store), tmdb
+            return self.build_requests(store), tmdb
 
     def build_tmdb_only(self) -> TmdbClient | None:
         """A TMDB client on the shared cache, or None when no API key is set. Touches no network."""
@@ -691,7 +687,7 @@ class ContextBuilder:
                 u.plex_account_id: u.id
                 for u in session.query(User).filter(User.departed_at.is_(None), User.removed_at.is_(None)).all()
             }
-            return self._build_request_sources(store), profiles, db_ids
+            return self.build_request_sources(store), profiles, db_ids
 
     def profile_with_history(self, session: Session, user_id: int) -> UserProfile:
         """One person's profile with their watch history read the way a run reads it — for authoring a theme.
@@ -983,7 +979,7 @@ class ContextBuilder:
                     # Dropped here and the engine sees every carried row as unstamped, which reads as
                     # "unknown" and silently falls back to the plain cadence: the feature goes inert
                     # on a live server with nothing failing.
-                    built_at=_utc(r.built_at),
+                    built_at=utc(r.built_at),
                     # The watch a `{top_seed}` row was built from. `_seed_moved` compares it with tonight's
                     # for a row whose picks carried no seed; dropped here, such a row never sees its watch
                     # move on and carries the old watch's picks forward under the new name (issue #133).
@@ -1097,7 +1093,7 @@ class ContextBuilder:
         return out
 
     @staticmethod
-    def _audience_maps(session: Session) -> tuple[dict[int, int], dict[int, set[int]]]:
+    def audience_maps(session: Session) -> tuple[dict[int, int], dict[int, set[int]]]:
         """(user_id → plex_account_id, collection_id → {user_id}) — the two lookups both the build and
         retire passes need to resolve a 'subset' row's audience to the plex account ids the engine matches on."""
         account_by_user = {u.id: u.plex_account_id for u in session.query(User).all()}
@@ -1107,7 +1103,7 @@ class ContextBuilder:
         return account_by_user, audience_by_collection
 
     @staticmethod
-    def _subset_audience(collection, account_by_user: dict, audience_by_collection: dict) -> set[int] | None:
+    def subset_audience(collection, account_by_user: dict, audience_by_collection: dict) -> set[int] | None:
         """The plex account ids a 'subset' row is limited to; None for any other audience (= everyone)."""
         if collection.audience != "subset":
             return None
@@ -1208,8 +1204,8 @@ class ContextBuilder:
             # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
             # delivery only — classification/sync/sweep/promotion above still see the full list.
             build_only=self._build_only_slugs(session, collection_ids, dry_run=dry_run),
-            requests=self._build_requests(store),
-            request_sources=self._build_request_sources(store),
+            requests=self.build_requests(store),
+            request_sources=self.build_request_sources(store),
             seasons=catalogue,
         )
 
@@ -1234,7 +1230,7 @@ class ContextBuilder:
         ``include_ids`` are switched-off rows built anyway, for a dry run that names them; a dry run writes
         nothing, so nothing reaches Plex for a row the owner has not switched on.
         """
-        account_by_user, audience_by_collection = self._audience_maps(session)
+        account_by_user, audience_by_collection = self.audience_maps(session)
 
         muted_by_collection: dict[int, set[int]] = {}
         for collection_id, user_id in session.query(
@@ -1255,7 +1251,7 @@ class ContextBuilder:
         now = local_now()
         for collection in collections:
             shared = collection.build == "shared"
-            audience = self._subset_audience(collection, account_by_user, audience_by_collection)
+            audience = self.subset_audience(collection, account_by_user, audience_by_collection)
             is_default = collection.slug == DEFAULT_SLUG
             # "When it appears" (issue #102) resolved into the placement the engine already
             # understands. `off` is Shortlist's existing "show this row nowhere" state, so a
@@ -1334,13 +1330,13 @@ class ContextBuilder:
                     sort_title_prefix=collection.sort_title_prefix or "",
                     seasons=list(collection.seasons or []),
                     season=season,
-                    theme=self._theme_spec(session, collection),
+                    theme=self.theme_spec(session, collection),
                     over_time=OverTime(
                         refresh_share=collection.refresh_share,
                         repeat_cooldown_days=collection.repeat_cooldown_days,
                         avoid_rows=tuple(collection.avoid_rows or ()),
                     ),
-                    person_themes=self._person_themes(session, collection, audience_by_collection),
+                    person_themes=self.person_themes_for(session, collection, audience_by_collection),
                     requests_row=bool(collection.requests_row),
                     requests_window_days=int(
                         collection.requests_window_days if collection.requests_window_days is not None else 90
@@ -1351,7 +1347,7 @@ class ContextBuilder:
         return specs
 
     @staticmethod
-    def _person_themes(
+    def person_themes_for(
         session: Session, collection: Collection, audience_by_collection: dict[int, set[int]]
     ) -> tuple[tuple[str, ThemeSpec], ...]:
         """Each person's own current theme on an explore row (#138); empty for any other row.
@@ -1379,7 +1375,7 @@ class ContextBuilder:
         return tuple(themes.items())
 
     @staticmethod
-    def _theme_spec(session: Session, collection: Collection) -> ThemeSpec | None:
+    def theme_spec(session: Session, collection: Collection) -> ThemeSpec | None:
         """The theme an AI row (#138) is filled from, or None for an ordinary row."""
         theme = session.get(Theme, collection.theme_id) if collection.theme_id is not None else None
         return None if theme is None else spec_from_row(theme)
@@ -1442,7 +1438,7 @@ class ContextBuilder:
         retired specs are indexed where they live (`pipeline._build_indexes`), so one would keep a library
         that nothing else targets in every run's index, and its watches seeding everyone's picks.
         """
-        account_by_user, audience_by_collection = self._audience_maps(session)
+        account_by_user, audience_by_collection = self.audience_maps(session)
 
         global_name = store.get("row.name_template") or ""
         # A stub whose only job is to let render_row_name resolve {user}; a non-empty username keeps a
@@ -1464,7 +1460,7 @@ class ContextBuilder:
             if not render_row_name(effective_template, probe, [], fallback_name=collection.fallback_name or ""):
                 logger.debug("retired row '{}' would render to the default title — left for a rebuild", collection.slug)
                 continue
-            audience = self._subset_audience(collection, account_by_user, audience_by_collection)
+            audience = self.subset_audience(collection, account_by_user, audience_by_collection)
             retired.append(_retired_spec(collection, audience))
         for collection in session.query(Collection).filter_by(enabled=True, build="shared").all():
             retired.append(_retired_spec(collection, None))
@@ -1505,25 +1501,23 @@ class ContextBuilder:
         return anchors
 
     @staticmethod
-    def _build_request_sources(store: SettingsStore) -> RequestSources | None:
+    def build_request_sources(store: SettingsStore) -> RequestSources | None:
         """Where a requests row reads from — every app with a URL and key, whatever `requests.*` says.
 
-        Independent of `_build_requests`: the owner may send nothing through Shortlist and still want
+        Independent of `build_requests`: the owner may send nothing through Shortlist and still want
         the row. Only the Overseerr account Shortlist FILES AS is excluded, and only while it actually
         files there — otherwise that account's requests are somebody's own.
         """
 
         def seerr() -> SeerrTarget | None:
-            url = (store.get("requests.overseerr.url") or "").strip()
-            key = store.get("requests.overseerr.apikey") or ""
+            url, key = _app_address(store, "requests.overseerr")
             if not (url and key):
                 return None
             request_as = int(store.get("requests.overseerr.request_as_user_id") or 0)
             return SeerrTarget(url=url, api_key=key, request_as_user_id=request_as)
 
         def arr(prefix: str) -> ArrTarget | None:
-            url = (store.get(f"{prefix}.url") or "").strip()
-            key = store.get(f"{prefix}.apikey") or ""
+            url, key = _app_address(store, prefix)
             if not (url and key):
                 return None
             # Reading needs no profile, folder or tag — those say where a NEW request is filed.
@@ -1542,7 +1536,7 @@ class ContextBuilder:
         )
 
     @staticmethod
-    def _build_requests(store: SettingsStore) -> RequestConfig | None:
+    def build_requests(store: SettingsStore) -> RequestConfig | None:
         """Build the Sonarr/Radarr request config, or None when the feature is off.
 
         A target (Radarr for movies, Sonarr for shows) is only built when BOTH its URL and its API
@@ -1560,8 +1554,7 @@ class ContextBuilder:
             Simpler than an Arr target because there is less to get right: a *seerr needs only a URL
             and a key, since the quality profile and root folder are its own business.
             """
-            url = (store.get("requests.overseerr.url") or "").strip()
-            api_key = store.get("requests.overseerr.apikey") or ""
+            url, api_key = _app_address(store, "requests.overseerr")
             if not url or not api_key:
                 msg = "Overseerr is the chosen request target but has no address or API key"
                 logger.warning("{} — nothing will be requested", msg)
@@ -1574,8 +1567,7 @@ class ContextBuilder:
             )
 
         def target(prefix: str) -> ArrTarget | None:
-            url = (store.get(f"{prefix}.url") or "").strip()
-            api_key = store.get(f"{prefix}.apikey") or ""
+            url, api_key = _app_address(store, prefix)
             if not url or not api_key:
                 return None
             quality_profile_id = int(store.get(f"{prefix}.quality_profile_id") or 0)

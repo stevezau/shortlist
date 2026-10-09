@@ -19,8 +19,6 @@ from pathlib import Path
 
 from loguru import logger
 
-from shortlist.server.net_guard import safe_backup_name
-
 DEFAULT_MAX_BACKUPS = 10
 BACKUP_SUBDIR = "backups"
 #: A backup is written under its final name plus this, and renamed only once complete. The listing and
@@ -30,6 +28,20 @@ PARTIAL_SUFFIX = ".partial"
 _PARTIAL_GLOB = f"shortlist_*.db{PARTIAL_SUFFIX}*"
 #: One backup at a time per process, so the sweep of stale partials can never take one still being written.
 _backup_lock = threading.Lock()
+
+
+def safe_backup_name(name: str) -> str:
+    """A backup filename, or raise — never a path.
+
+    ``config_dir / BACKUP_SUBDIR / name`` with an unvalidated ``name`` lets `../../etc/passwd` escape
+    the backups directory, and restore then copies whatever it finds over the database. Owner-only and
+    self-inflicted, but it costs one check to make the traversal impossible rather than merely
+    unattractive.
+    """
+    cleaned = (name or "").strip()
+    if not cleaned or cleaned != cleaned.strip("/\\") or "/" in cleaned or "\\" in cleaned or ".." in cleaned:
+        raise ValueError("backup name must be a plain filename")
+    return cleaned
 
 
 def _backup_dir(config_dir: Path) -> Path:

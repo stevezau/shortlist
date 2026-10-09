@@ -317,7 +317,7 @@ def register_tools(server: MCPServer, state) -> None:
         external=True,
     )
     async def list_libraries() -> ToolResult:
-        from shortlist.server.services.assistant_reads import permitted_libraries
+        from shortlist.server.assistant.reads import permitted_libraries
 
         return await permitted_libraries(state, principal())
 
@@ -333,7 +333,7 @@ def register_tools(server: MCPServer, state) -> None:
         external=True,
     )
     async def get_choices(request: ChoicesInput) -> ToolResult:
-        from shortlist.server.services.assistant_choices import permitted_choices
+        from shortlist.server.assistant.choices import permitted_choices
 
         return await permitted_choices(state, principal(), **request.model_dump())
 
@@ -417,7 +417,7 @@ def register_tools(server: MCPServer, state) -> None:
         external=True,
     )
     async def search_titles(request: TitleSearchInput) -> ToolResult:
-        from shortlist.server.services.assistant_reads import search_titles as search
+        from shortlist.server.assistant.reads import search_titles as search
 
         who = principal()
         require_authorized(who, [Capability.CATALOG_READ])

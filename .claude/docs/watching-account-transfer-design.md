@@ -73,7 +73,7 @@ Probed 2026-08-25 against a large production server 1.43.3.10896. Each of these 
 | any of the above                                       | `lastViewedAt` is stamped **now**. No API accepts a date.                                                                |
 
 Every cell of the write plan in §3.2 was exercised against `Tester` with `Tester`'s own server token,
-minted through the same plex.tv switch-then-exchange path `canary_server_token` uses
+minted through the same plex.tv switch-then-exchange path `home_user_server_token` uses
 (`plextv.py:330`). Specifically: show key → **35/35** (which is the One Piece bug, reproduced
 deliberately); episode key → **1/35**; `/:/progress` on a movie key and on an episode key → exact
 `viewOffset`; three back-to-back scrobbles in 28 ms → **`viewCount` 3**, so the rewatch loop needs no

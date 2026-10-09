@@ -128,7 +128,7 @@ def candidate_home_users(plextv, session: Session) -> list[dict]:
 
     Excludes the owner themselves and anyone already registered in Shortlist with a row — moving to
     an account that already has its own Picked-for-You would merge two people's taste into one.
-    PIN-protected accounts are listed but flagged: `canary_server_token` cannot switch to them, so a
+    PIN-protected accounts are listed but flagged: `home_user_server_token` cannot switch to them, so a
     transfer to one cannot mint the token it needs.
     """
     known = {u.plex_account_id for u in session.query(User).filter(User.enabled.is_(True))}
@@ -260,7 +260,7 @@ def transfer_watch_history(
         source_token: Server token to read the SOURCE as. The admin token for an OWNER source, and
             that account's OWN server token for any other — never the admin token for a non-owner, or
             the owner's history is copied while the audit row names somebody else.
-        target_token: The target's own server token, from `canary_server_token`. Every write uses it.
+        target_token: The target's own server token, from `home_user_server_token`. Every write uses it.
         dry_run: Read and plan, write nothing — including no snapshot, since there is nothing to
             protect (rule 8).
         job_id: The job this runs under, so an undo can find this transfer's snapshot rather than the

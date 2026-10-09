@@ -9,9 +9,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.themes import theme_content_hash
-from shortlist.server.api.themes import ThemeIn, ThemeSaveIn
 from shortlist.server.db.models import Collection, Theme
 from shortlist.server.services import theme_store
+from shortlist.server.services.theme_models import ThemeIn, ThemeSaveIn
 from tests.db_helpers import create_schema, disposing_engine
 
 

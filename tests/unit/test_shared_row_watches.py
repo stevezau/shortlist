@@ -133,7 +133,7 @@ def a_pick_so_the_rating_key_resolves(sessions, *, tmdb_id=550, rating_key=9001)
 
 
 def an_old_pick_so_the_attribution_floor_reaches_back(sessions):
-    """`_attribution_floor` is the oldest pick we hold, and NOTHING before it is ever scanned. Without
+    """`attribution_floor` is the oldest pick we hold, and NOTHING before it is ever scanned. Without
     a pick this old, a play from five days ago is dropped by the floor rather than by the rule under
     test — which is exactly how an earlier version of the "play predates the row" test below passed
     with the membership gate deleted."""
@@ -568,12 +568,12 @@ class TestEachRowKeepsItsOwnEarliestPlay:
 class TestTheExpensiveMapsAreBuiltOnce:
     def test_one_reconcile_builds_the_rating_key_map_once(self, world, monkeypatch):
         """`tmdb_by_rating_key` is a DISTINCT over the largest table in the schema — 158,737 pick rows
-        on a real server — and `_scan_plays` walks the whole event log. Both were being rebuilt up to
+        on a real server — and `scan_plays` walks the whole event log. Both were being rebuilt up to
         five times per pass, seven passes a day, for byte-identical results."""
         from shortlist.server.services import run_persistence, watch_events
 
         calls = {"map": 0, "scan": 0}
-        real_map, real_scan = watch_events.tmdb_by_rating_key, watch_events._scan_plays
+        real_map, real_scan = watch_events.tmdb_by_rating_key, watch_events.scan_plays
 
         def counted_map(*a, **k):
             calls["map"] += 1
@@ -585,7 +585,7 @@ class TestTheExpensiveMapsAreBuiltOnce:
 
         for mod in (watch_events, run_persistence):
             monkeypatch.setattr(mod, "tmdb_by_rating_key", counted_map, raising=False)
-            monkeypatch.setattr(mod, "_scan_plays", counted_scan, raising=False)
+            monkeypatch.setattr(mod, "scan_plays", counted_scan, raising=False)
 
         a_pick_so_the_rating_key_resolves(world)
         watch_session(world, 99, started=NOW - timedelta(hours=3), offset=1_800_000)
@@ -698,13 +698,13 @@ class TestTheTilesCannotContradictEachOther:
         """The feature this whole thread started from: "does Recently watched actually check the
         title was in their row"."""
         from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
-        from shortlist.server.services.report_service import _recent_watches, _RowNamer
+        from shortlist.server.services.report_service import RowNamer, _recent_watches
 
         self.a_shared_only_bounce(world)
 
         with world() as s:
             users = {u.id: u for u in s.query(User).all()}
-            feed = _recent_watches(s, users, _RowNamer(s, DEFAULT_ROW_TEMPLATE), None)
+            feed = _recent_watches(s, users, RowNamer(s, DEFAULT_ROW_TEMPLATE), None)
             assert [(f["username"], f["title"]) for f in feed] == [("alex", "Fight Club")]
 
 

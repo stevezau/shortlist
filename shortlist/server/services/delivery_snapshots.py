@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import overload
 
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Collection, Delivery, PickRow, RowDeliverySnapshot, Run, User
 
 
-def utc(value: datetime) -> datetime:
-    """Restore UTC on SQLite timestamps."""
+@overload
+def utc(value: datetime) -> datetime: ...
+
+
+@overload
+def utc(value: None) -> None: ...
+
+
+def utc(value: datetime | None) -> datetime | None:
+    """Restore UTC on SQLite timestamps, which come back naive; None passes through."""
+    if value is None:
+        return None
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 

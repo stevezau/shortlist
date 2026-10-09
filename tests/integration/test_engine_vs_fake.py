@@ -312,7 +312,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
 
     # Jess /hubs (switch -> resources -> server token) shows its own row and NONE of the others'
     # — including sarah's TV row, which lives in a different library than her movie row.
-    jess_token = plextv.canary_server_token(203)
+    jess_token = plextv.home_user_server_token(203)
     assert jess_token == "server-203"
     jess_hub_ids = {collection_id_from_hub(h) for h in plex.user_hubs(jess_token)}
     assert set(owned["jess"].rating_keys) <= jess_hub_ids

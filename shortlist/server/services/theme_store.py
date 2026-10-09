@@ -16,8 +16,8 @@ from shortlist.server.db.models import Collection, Theme, ThemeHistory, User
 from shortlist.server.services.audit import add_audit
 
 if TYPE_CHECKING:
-    from shortlist.server.api.themes import ThemeSaveIn
     from shortlist.server.services.theme_author import ThemeDiff
+    from shortlist.server.services.theme_models import ThemeSaveIn
 
 __all__ = [
     "RowPaused",
@@ -168,8 +168,8 @@ def reject_title_clashes(session: Session, secrets, theme: Theme) -> None:
 
     The theme is already flushed with its new name, so every row on it is checked as it would now be titled.
     """
-    # Imported here: the collections API imports this package.
-    from shortlist.server.api import collections as collections_api
+    # Imported here: `row_editing` imports this module.
+    from shortlist.server.services.row_editing import reject_duplicate_name
 
     spec = spec_from_row(theme)
     for row in session.query(Collection).filter(Collection.theme_id == theme.id):
@@ -177,7 +177,7 @@ def reject_title_clashes(session: Session, secrets, theme: Theme) -> None:
         if not uses_theme(template):
             continue
         try:
-            collections_api._reject_duplicate_name(
+            reject_duplicate_name(
                 session,
                 secrets,
                 template,

@@ -12,9 +12,9 @@ from shortlist.server.assistant_auth import GrantConstraints
 from shortlist.server.assistant_auth.models import AssistantGrant
 from shortlist.server.db.models import RequestCandidate, Run
 from shortlist.server.services.request_actions import (
-    _target_snapshot,
     ensure_request_entries_available,
     finish_request_dispatch,
+    target_snapshot,
 )
 
 from .budgets import AssistantBudget
@@ -181,7 +181,7 @@ class RunSpendGuard:
             session.connection().exec_driver_sql("BEGIN IMMEDIATE")
             try:
                 _run, contract, actor = self._current(session)
-                target = _target_snapshot(cfg, title.media_type.value)
+                target = target_snapshot(cfg, title.media_type.value)
                 descriptor = {
                     "row_slug": row_slug,
                     "media": title.media_type.value,

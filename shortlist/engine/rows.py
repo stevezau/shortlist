@@ -647,8 +647,8 @@ def _utc(value: datetime | None) -> datetime | None:
 
     SQLite hands a ``DateTime(timezone=True)`` column back NAIVE, so ``built_at`` arrives naive from
     a real server while ``run_at`` is aware — and mixing the two raises ``TypeError``, which fails
-    the whole user's run rather than just the hold. The sibling `_aware` in
-    ``server/services/watch_cache.py`` exists for the same reason; this is the engine's copy,
+    the whole user's run rather than just the hold. The sibling `utc` in
+    ``server/services/delivery_snapshots.py`` exists for the same reason; this is the engine's copy,
     because the engine may not import from the server.
     """
     if value is None:

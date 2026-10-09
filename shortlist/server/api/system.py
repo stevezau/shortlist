@@ -42,10 +42,10 @@ from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import rebuild_schedule
 from shortlist.server.services import jobs, log_reader
 from shortlist.server.services.connection_choices import (
-    _INTERACTIVE_TIMEOUT_S as _CONNECTION_INTERACTIVE_TIMEOUT_S,
+    INTERACTIVE_TIMEOUT_S as _CONNECTION_INTERACTIVE_TIMEOUT_S,
 )
 from shortlist.server.services.connection_choices import (
-    _PLEX_READ_TTL_S as _CONNECTION_PLEX_READ_TTL_S,
+    PLEX_READ_TTL_S as _CONNECTION_PLEX_READ_TTL_S,
 )
 from shortlist.server.services.connection_choices import (
     read_libraries,
@@ -56,8 +56,8 @@ from shortlist.server.settings_store import SettingsStore
 _TOKEN_CREATED_KEY = "api.token_created_at"
 
 # Kept as module names for owner API regression compatibility; shared reads own their behavior.
-_INTERACTIVE_TIMEOUT_S = _CONNECTION_INTERACTIVE_TIMEOUT_S
-_PLEX_READ_TTL_S = _CONNECTION_PLEX_READ_TTL_S
+INTERACTIVE_TIMEOUT_S = _CONNECTION_INTERACTIVE_TIMEOUT_S
+PLEX_READ_TTL_S = _CONNECTION_PLEX_READ_TTL_S
 
 #: Owner-gated. Everything except `/health` goes here — see the module docstring.
 _authed = APIRouter(dependencies=[Depends(require_owner)])

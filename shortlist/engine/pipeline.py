@@ -903,7 +903,7 @@ def _record_unhideable(
         if as_them is None:
             # No token could be minted for this account, so we cannot look AS them. Said out loud
             # for the same reason as the failed-collections-read above: silence here is read
-            # downstream as "sees none of ours". Not a rare cell — `canary_server_token` refuses a
+            # downstream as "sees none of ours". Not a rare cell — `home_user_server_token` refuses a
             # PIN-protected Home user, which is the archetype of a parental-profile account.
             logger.warning(
                 "{}: could not check what this '{}' account can see — no token could be obtained for "
@@ -1008,7 +1008,7 @@ def _verify_filters_enforced(
     exclusions for this kind of account on this server" is a property of the server and the account
     type, not of each person — so one account per `user_type` is enough to catch a systemic failure,
     at a cost of at most `_ENFORCEMENT_SPOT_CHECK_ATTEMPTS` reads per type rather than one per account
-    (plus, for an account with no share token of its own, the plex.tv canary exchange that fetching one
+    (plus, for an account with no share token of its own, the plex.tv switch-and-exchange that fetching one
     costs). A 48-account server already spends minutes in this phase; rule 6.
 
     NOT a gate, deliberately. The automatic Privacy Check that blocked writes was removed at the

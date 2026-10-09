@@ -10,14 +10,12 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from collections.abc import Callable
-from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 from pydantic import ConfigDict, Field
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 from starlette.datastructures import State
 
 import shortlist.server.services.context_builder as context_builder
@@ -25,11 +23,8 @@ from shortlist.engine import seasons as seasons_mod
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.delivery import section_kind
-from shortlist.engine.models import MediaType, RowSeason
-from shortlist.engine.placeholders import fill_season, naming_season, uses_season
-from shortlist.engine.rows import row_shown_today
+from shortlist.engine.models import MediaType
 from shortlist.engine.seasons import (
-    BUILTIN_SEASONS,
     MAX_AFTER_DAYS,
     MAX_LEAD_DAYS,
     PRESET_TAG_NAMES,
@@ -39,14 +34,18 @@ from shortlist.engine.seasons import (
     Preset,
     Season,
 )
-from shortlist.server.api.collections import row_display_name
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import Collection, SeasonDef
-from shortlist.server.services import collection_reconcile as reconcile
+from shortlist.server.db.models import SeasonDef
 from shortlist.server.services import jobs
 from shortlist.server.services.library_index import library_index, row_sections
 from shortlist.server.services.season_catalogue import load_catalogue
+from shortlist.server.services.season_rules import (
+    month_windows,
+    rows_by_season,
+    season_view,
+)
+from shortlist.server.services.theme_models import CollectionIO, TagIO
 
 router = APIRouter(prefix="/seasons", tags=["seasons"], dependencies=[Depends(require_owner)])
 
@@ -73,21 +72,6 @@ class DateRuleIO(PassthroughModel):
     nth: int = 1
     weekday: int = 0
     offset: int = 0
-
-
-class TagIO(PassthroughModel):
-    """A TMDB tag (keyword), with its name so the editor can show it without asking TMDB."""
-
-    id: int
-    name: str
-
-
-class CollectionIO(PassthroughModel):
-    """A Plex collection, by library and title — never ratingKey: Kometa recreates its seasonal ones each year."""
-
-    section_key: str
-    section_title: str
-    title: str
 
 
 class PickIO(PassthroughModel):
@@ -261,9 +245,9 @@ async def list_seasons(request: Request) -> list[dict]:
     with request.app.state.sessions() as session:
         catalogue = load_catalogue(session)
         stored = {row.slug: row for row in session.scalars(select(SeasonDef))}
-        used_by = _used_by(session, catalogue)
+        used_by = rows_by_season(session, catalogue)
         return [
-            _season_view(catalogue[slug], None if catalogue[slug].builtin else stored[slug], used_by, today)
+            season_view(catalogue[slug], None if catalogue[slug].builtin else stored[slug], used_by, today)
             for slug in seasons_mod.normalise_slugs(list(catalogue), catalogue=catalogue)
         ]
 
@@ -334,12 +318,12 @@ async def preview_season(body: SeasonPreviewIn, request: Request) -> dict:
     today = context_builder.local_now().date()
 
     def count() -> tuple[seasons_mod.SeasonPreview, set[MediaType]]:
-        plex = _plex(state)
+        plex = plex_reader(state)
         index = library_index(plex, state.sessions, media=body.media, library_keys=body.library_keys)
         kinds = {section_kind(s) for s in row_sections(plex, media=body.media, library_keys=body.library_keys)}
         return seasons_mod.preview(tmdb, plex, draft, index, today=today, workers=_PREVIEW_PAGE_WORKERS), kinds
 
-    result, kinds = await _off_loop(count, "season preview")
+    result, kinds = await off_loop(count, "season preview")
     return {
         **dataclasses.asdict(result),
         "movies": result.movies if MediaType.MOVIE in kinds else None,
@@ -369,7 +353,7 @@ async def next_date(body: DateRuleIO) -> dict:
     return {
         "next_date": seasons_mod.next_anchors(season, today, 1)[0].isoformat(),
         "rule_error": None,
-        "next_windows": _month_windows(season, today),
+        "next_windows": month_windows(season, today),
     }
 
 
@@ -382,7 +366,7 @@ async def tmdb_tags(request: Request, q: str = "") -> list[dict]:
     tmdb = request.app.state.run_service.build_tmdb_only()
     if tmdb is None:
         raise HTTPException(status_code=503, detail=_NO_TMDB)
-    return await _off_loop(lambda: tmdb.search_keywords(query), "TMDB tag search")
+    return await off_loop(lambda: tmdb.search_keywords(query), "TMDB tag search")
 
 
 @router.get("/plex-collections", response_model=list[PlexCollectionOut])
@@ -392,7 +376,7 @@ async def plex_collections(request: Request, q: str = "") -> list[dict]:
     if len(query) < _MIN_QUERY:
         return []
     state = request.app.state
-    found = await _off_loop(lambda: _plex(state).list_collections(), "Plex collection list")
+    found = await off_loop(lambda: plex_reader(state).list_collections(), "Plex collection list")
     matches = sorted(
         (c for c in found if query in c.title.casefold()), key=lambda c: (c.title.casefold(), c.section_title)
     )
@@ -416,89 +400,8 @@ async def library_search(request: Request, q: str = "") -> list[dict]:
     if len(query) < _MIN_QUERY:
         return []
     state = request.app.state
-    titles = await _off_loop(lambda: _plex(state).search_titles(query, _LIBRARY_SEARCH_LIMIT), "library search")
+    titles = await off_loop(lambda: plex_reader(state).search_titles(query, _LIBRARY_SEARCH_LIMIT), "library search")
     return [{"tmdb_id": t.tmdb_id, "media_type": t.media_type.value, "title": t.title, "year": t.year} for t in titles]
-
-
-def _checked(session: Session, body: SeasonIn, *, editing: str | None) -> DateRule:
-    """The season's date rule, once everything POST and PUT require of a season holds; 422 naming what doesn't.
-
-    Args:
-        session: For the names already taken.
-        body: The season as sent.
-        editing: The slug being replaced, whose own name is not a clash; None for a new season.
-    """
-    rule = DateRule(
-        kind=body.rule.kind,
-        month=body.rule.month,
-        day=body.rule.day,
-        nth=body.rule.nth,
-        weekday=body.rule.weekday,
-        offset=body.rule.offset,
-    )
-    try:
-        rule.validate()
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from None
-    # Stored normalised, so an edit to a field the kind ignores changes nothing and moves no row (`_calendar`).
-    rule = rule.normalised()
-    if not (body.tags or body.genre is not None or body.collections or body.picks):
-        raise HTTPException(status_code=422, detail="Add at least one tag, genre, collection or film.")
-    # Every stored name, not just the catalogue's, and the built-ins': a row's title renders `{season}`, so two
-    # seasons with one name would give two rows one title (D13).
-    names = [(season.slug, season.name) for season in BUILTIN_SEASONS.values()]
-    names += [(slug, name) for slug, name in session.execute(select(SeasonDef.slug, SeasonDef.name))]
-    wanted = body.name.casefold()
-    clash = next((name for slug, name in names if slug != editing and name.casefold() == wanted), None)
-    if clash is not None:
-        raise HTTPException(status_code=422, detail=f"There's already a season called “{clash}”.")
-    return rule
-
-
-def _columns(body: SeasonIn, rule: DateRule) -> dict:
-    """Every `SeasonDef` column a save sets, sources de-duplicated. The slug and preset are the caller's."""
-    return {
-        "name": body.name,
-        "emoji": body.emoji,
-        "rule_kind": rule.kind,
-        "month": rule.month,
-        "day": rule.day,
-        "nth": rule.nth,
-        "weekday": rule.weekday,
-        "easter_offset": rule.offset,
-        "lead_days": 0 if rule.kind == "month" else body.lead_days,
-        "after_days": 0 if rule.kind == "month" else body.after_days,
-        "tags": [{"id": t.id, "name": t.name} for t in _unique(body.tags, lambda t: t.id)],
-        "genre": body.genre,
-        "excluded_genres": list(dict.fromkeys(body.excluded_genres)),
-        "collections": [
-            {"section_key": c.section_key, "section_title": c.section_title, "title": c.title}
-            for c in _unique(body.collections, lambda c: (c.section_key, c.title))
-        ],
-        "picks": [
-            {"tmdb_id": p.tmdb_id, "media_type": p.media_type, "title": p.title, "year": p.year}
-            for p in _unique(body.picks, lambda p: (p.tmdb_id, p.media_type))
-        ],
-    }
-
-
-def _unique[T](items: list[T], key: Callable[[T], object]) -> list[T]:
-    """``items`` without repeats by ``key``, the first of each kept, in order."""
-    kept: dict[object, T] = {}
-    for item in items:
-        kept.setdefault(key(item), item)
-    return list(kept.values())
-
-
-def _calendar(row: SeasonDef) -> tuple[DateRule, int, int]:
-    """Everything that decides which days a season's rows are shown on. Normalised, so a field the rule's kind
-    ignores never reads as a move."""
-    rule = DateRule(row.rule_kind, row.month, row.day, row.nth, row.weekday, row.easter_offset)
-    return (
-        rule.normalised(),
-        0 if rule.kind == "month" else row.lead_days,
-        0 if rule.kind == "month" else row.after_days,
-    )
 
 
 def _draft(body: SeasonPreviewIn) -> Season:
@@ -523,154 +426,6 @@ def _draft(body: SeasonPreviewIn) -> Season:
         collections=tuple(dict.fromkeys(CollectionRef(c.section_key, c.title) for c in body.collections)),
         picks=tuple(dict.fromkeys((p.tmdb_id, MediaType(p.media_type)) for p in body.picks)),
     )
-
-
-def _stored(session: Session, slug: str) -> SeasonDef:
-    row = session.scalar(select(SeasonDef).where(SeasonDef.slug == slug))
-    if row is None:
-        raise HTTPException(status_code=404, detail="season not found")
-    return row
-
-
-def _row_name_in(session: Session, row: Collection, season: Season | None) -> str:
-    """What the Rows page calls a row, with ``season`` filled into it.
-
-    Anything said about one season names its rows as they read in that season: the Seasonal template's own
-    name, ``{season_emoji} {season} picks``, reads "🦃 Thanksgiving picks" beside Thanksgiving, not as its
-    placeholders.
-    """
-    name = row_display_name(session, row)
-    return name if season is None else fill_season(name, naming_season(season))
-
-
-def _used_by(session: Session, catalogue: seasons_mod.Catalogue) -> dict[str, list[dict]]:
-    """Slug -> the rows that follow it, as ``{id, name}`` with that season filled into each name, in the Rows
-    page's order."""
-    used: dict[str, list[dict]] = {}
-    for row in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id)):
-        for slug in dict.fromkeys(row.seasons or []):
-            used.setdefault(slug, []).append({"id": row.id, "name": _row_name_in(session, row, catalogue.get(slug))})
-    return used
-
-
-def _today(
-    row: Collection, seasons: list[str], now: datetime, catalogue: seasons_mod.Catalogue
-) -> tuple[bool, RowSeason | None]:
-    """What a `rows.visibility` pass works from for a row today: whether it is shown, and the season (with its
-    window) it builds for."""
-    shown = row_shown_today(
-        row.show_days, seasons, row.season_lead_days, row.season_after_days, now, catalogue=catalogue
-    )
-    season = seasons_mod.row_season_on(
-        list(seasons), row.season_lead_days, row.season_after_days, now.date(), catalogue=catalogue
-    )
-    return shown, season
-
-
-def _pass_owed(before: tuple[bool, RowSeason | None], after: tuple[bool, RowSeason | None]) -> bool:
-    """Whether a season edit owes a row a `rows.visibility` pass now.
-
-    Owed for a row shown before or after the edit whenever its shown-today answer, or the day or window of the
-    season it shows, changed. The pass decides from the delivery ledger's own record of what the row's collection
-    was built for (`RowSeason.holds`); this gate cannot, and guessing from the season's day before the edit
-    missed a second edit made before the next run (10 to 17 to 24 June was judged against the 17th, a day the
-    row was never built for). A rename or an edit to a field the rule's kind ignores moves no day, and a row
-    hidden before and after needs no pass.
-    """
-    (shown_before, season_before), (shown_after, season_after) = before, after
-    if not (shown_before or shown_after):
-        return False
-    return shown_before != shown_after or _when(season_before) != _when(season_after)
-
-
-def _when(season: RowSeason | None) -> tuple | None:
-    """The season a row shows, its day and its window: everything a season edit can move for the row. Spelled
-    out because `RowSeason` equality leaves the window out."""
-    return None if season is None else (season.slug, season.anchor, season.starts, season.ends)
-
-
-def _reject_row_title_clashes(session: Session, state: State, season: Season) -> None:
-    """422 when ``season`` would title a row what another row is already titled, in a library both can build in.
-
-    A row named ``{season}`` is titled after whichever season it shows, so a new or renamed season can give
-    it the title of a plain row beside it, and delivery would then write both rows into one Plex collection
-    (#137 I-2). The row editor refuses such a name (`collections._reject_duplicate_name`); this is the same
-    check, `collection_reconcile.rows_titled_from`, on each seasonal row's title in this season. Every row
-    named after its season, not only those that tick this one: any of them may tick it later. The season is
-    already in ``session``, so the rows checked against see its name too.
-    """
-    clashes: list[tuple[str, str, str]] = []
-    for row in session.scalars(select(Collection).order_by(Collection.sort_order, Collection.id)):
-        template = reconcile.row_template(session, row.slug, state.secrets)
-        if not uses_season(template):
-            continue
-        title = reconcile.season_title(template, season)
-        for other in reconcile.rows_titled_from(
-            session,
-            title,
-            secrets=state.secrets,
-            exclude_slug=row.slug,
-            build=row.build or "",
-            media=row.media or "both",
-            library_keys=row.library_keys or [],
-        ):
-            clashes.append((row_display_name(session, row), title, row_display_name(session, other)))
-    if not clashes:
-        return
-    which = "; and ".join(f"“{row}” “{title}”, the title “{other}” already has" for row, title, other in clashes)
-    raise HTTPException(
-        status_code=422,
-        detail=(
-            f"This season would title {which}, in a library they can share. Two rows with one title in one "
-            "library become a single collection on Plex: choose another name or emoji for the season, or "
-            "rename one of those rows."
-        ),
-    )
-
-
-def _month_windows(season: Season, today: date) -> list[dict[str, str]]:
-    """Keep leap-year and month-boundary arithmetic on the server, alongside the run's calendar."""
-    if season.rule.kind != "month":
-        return []
-    return [
-        {"start": anchor.replace(day=1).isoformat(), "end": anchor.isoformat()}
-        for anchor in seasons_mod.next_anchors(season, today)
-    ]
-
-
-def _season_view(season: Season, stored: SeasonDef | None, used_by: dict[str, list[dict]], today: date) -> dict:
-    """A `SeasonOut`. ``stored`` is the custom season's row, for its sources; None for a built-in."""
-    view = {
-        "slug": season.slug,
-        "name": season.name,
-        "emoji": season.emoji,
-        "description": season.description,
-        "builtin": season.builtin,
-        "rule": dataclasses.asdict(season.rule),
-        # Safe: every season in the catalogue has a rule that validated (`season_from_row`).
-        "rule_label": season.rule.label(),
-        "next_dates": [day.isoformat() for day in seasons_mod.next_anchors(season, today)],
-        "next_windows": _month_windows(season, today),
-        "lead_days": season.lead_days,
-        "after_days": season.after_days,
-        "preset": None,
-        "tags": [],
-        "genre": None,
-        "excluded_genres": [],
-        "collections": [],
-        "picks": [],
-        "used_by": used_by.get(season.slug, []),
-    }
-    if stored is not None:
-        view.update(
-            preset=stored.preset,
-            tags=stored.tags,
-            genre=stored.genre,
-            excluded_genres=stored.excluded_genres,
-            collections=stored.collections,
-            picks=stored.picks,
-        )
-    return view
 
 
 def _preset_view(preset: Preset) -> dict:
@@ -698,13 +453,7 @@ def _preset_view(preset: Preset) -> dict:
     }
 
 
-def _and_list(names: list[str]) -> str:
-    """“A”, “A” and “B”, “A”, “B” and “C”."""
-    quoted = [f"“{name}”" for name in names]
-    return quoted[0] if len(quoted) == 1 else f"{', '.join(quoted[:-1])} and {quoted[-1]}"
-
-
-def _plex(state: State) -> PlexClient:
+def plex_reader(state: State) -> PlexClient:
     """The owner's PMS (this connects: call it off the event loop), or 503 before setup."""
     plex = state.run_service.build_plex_reader()
     if plex is None:
@@ -712,7 +461,7 @@ def _plex(state: State) -> PlexClient:
     return plex
 
 
-async def _off_loop[T](read: Callable[[], T], what: str) -> T:
+async def off_loop[T](read: Callable[[], T], what: str) -> T:
     """``read()`` in a worker thread. A TMDB or Plex failure is a 502 whose message carries no credential."""
     try:
         return await asyncio.get_running_loop().run_in_executor(None, read)

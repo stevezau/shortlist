@@ -261,7 +261,7 @@ class PlexTvClient:
 
         The owner is NOT in this list (they own the server, not shared to it) — read the owner's own
         state with the admin token. Home users ARE included, so this one call covers the whole shared
-        roster; only a non-shared managed sub-account needs the switch path (`canary_server_token`).
+        roster; only a non-shared managed sub-account needs the switch path (`home_user_server_token`).
 
         The returned tokens are live per-user credentials (plex-safety rule 9): kept in memory for the
         run, never logged, never persisted.
@@ -364,9 +364,9 @@ class PlexTvClient:
         data = r.json()
         return data.get("users", data if isinstance(data, list) else [])
 
-    def canary_server_token(self, plex_account_id: int) -> str:
-        """Mint a server-scoped access token for a (non-PIN) Home user — lets a test view the server
-        as that user to confirm each account's Home shows only its own rows.
+    def home_user_server_token(self, plex_account_id: int) -> str:
+        """Mint a server-scoped access token for a (non-PIN) Home user — lets us read the server
+        as that user (their Home, their watch history) when they have no shared-server token of their own.
 
         Switch to the Home user, then exchange the plex.tv token for this server's
         ``accessToken`` via the resources listing (the switch token alone 401s on the PMS).
@@ -392,5 +392,5 @@ class PlexTvClient:
         r.raise_for_status()
         resource = next((x for x in r.json() if x.get("clientIdentifier") == self._machine_id), None)
         if resource is None or not resource.get("accessToken"):
-            raise LookupError(f"no server access token for canary {plex_account_id} on {self._machine_id}")
+            raise LookupError(f"no server access token for account {plex_account_id} on {self._machine_id}")
         return resource["accessToken"]

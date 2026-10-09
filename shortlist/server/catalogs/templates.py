@@ -173,7 +173,7 @@ def _build_row_field_definitions() -> dict[str, dict[str, object]]:
     # Replace default-inferred types with the accepted REST model's JSON schema.  The assistant
     # create adapter uses this same model after applying its inactive-row default, so this keeps
     # enums, bounds, unions and nested object shapes in one validation contract.
-    from shortlist.server.api.collections import CollectionIn
+    from shortlist.server.services.row_editing import CollectionIn
 
     canonical = CollectionIn.model_json_schema()
     schema_defs = canonical.get("$defs", {})

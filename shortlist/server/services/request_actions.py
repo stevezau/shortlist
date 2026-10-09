@@ -80,19 +80,19 @@ def apply_request_action_in_session(session: Session, action: str, ids: list[int
     return {"action": action, "changed": changed, "candidate_ids": list(ids)}
 
 
-def _target_snapshot(cfg: RequestConfig, media_type: str) -> dict:
+def target_snapshot(cfg: RequestConfig, media_type: str) -> dict:
     if cfg.target == "overseerr":
         target = cfg.overseerr
         return {
             "service": "overseerr",
-            "destination": _destination(target.url) if target else "",
+            "destination": service_destination(target.url) if target else "",
             "configured": target is not None,
             "request_as_user_id": target.request_as_user_id if target else 0,
         }
     target = cfg.radarr if media_type == "movie" else cfg.sonarr
     return {
         "service": "radarr" if media_type == "movie" else "sonarr",
-        "destination": _destination(target.url) if target else "",
+        "destination": service_destination(target.url) if target else "",
         "configured": target is not None,
         "quality_profile_id": target.quality_profile_id if target else None,
         "root_folder": target.root_folder if target else None,
@@ -101,7 +101,7 @@ def _target_snapshot(cfg: RequestConfig, media_type: str) -> dict:
     }
 
 
-def _destination(url: str) -> str:
+def service_destination(url: str) -> str:
     parsed = urlsplit(url)
     if (
         parsed.scheme not in {"http", "https"}
@@ -203,7 +203,7 @@ def build_request_send_payload(session: Session, ids: list[int], base: RequestCo
     destinations: set[str] = set()
     for row in rows:
         cfg = _effective_config(session, base, row.row_slug)
-        target = _target_snapshot(cfg, row.media_type)
+        target = target_snapshot(cfg, row.media_type)
         if not target["configured"]:
             raise ValueError(f"request candidate {row.id} has no configured {target['destination']} destination")
         destinations.add(target["destination"])
@@ -229,7 +229,7 @@ def request_send_entry(session: Session, row: RequestCandidate, base: RequestCon
             "demand": row.demand,
             "tags": sorted(row.tags or []),
         },
-        "target": _target_snapshot(_effective_config(session, base, row.row_slug), row.media_type),
+        "target": target_snapshot(_effective_config(session, base, row.row_slug), row.media_type),
     }
 
 
@@ -344,7 +344,7 @@ class AutomaticRequestGuard:
                     "demand": title.demand,
                     "tags": sorted(title.tags),
                 },
-                "target": _target_snapshot(cfg, title.media_type.value),
+                "target": target_snapshot(cfg, title.media_type.value),
             }
             blocked = False
             with self.sessions() as session:

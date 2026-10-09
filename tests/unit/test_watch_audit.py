@@ -32,11 +32,11 @@ from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement,
 from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
 from shortlist.server.services.watch_events import (
     RowMembership,
-    _attribution_floor,
-    _scan_plays,
     _session_starts,
+    attribution_floor,
     event_credits,
     ingest_play_history,
+    scan_plays,
     session_progress,
     tmdb_by_rating_key,
 )
@@ -1047,7 +1047,7 @@ class TestAPercentageNeverInventsACredit:
     """
 
     def test_a_watch_predating_the_row_does_not_come_back_as_a_drop(self, world):
-        # An unrelated pick from long ago, so `_attribution_floor` reaches back far enough for the old
+        # An unrelated pick from long ago, so `attribution_floor` reaches back far enough for the old
         # session below to be in scope at all. Without it the floor is today and the session is simply
         # never read — which is what made an earlier version of this test pass either way.
         pick(world, 1, 999, rating_key=99, created=NOW - timedelta(days=60))
@@ -1278,7 +1278,7 @@ class TestTheClocksAndTheMaxima:
 
 
 class TestTheAttributionFloorIsCorrectnessNotJustSpeed:
-    """`_attribution_floor` bounds every scan in the credit path, and its docstring leads with the
+    """`attribution_floor` bounds every scan in the credit path, and its docstring leads with the
     performance case — a table with no ceiling, re-read six times a day.
 
     A verification pass on 2026-08-25 found that framing dangerously incomplete: an earlier audit
@@ -1303,14 +1303,14 @@ class TestTheAttributionFloorIsCorrectnessNotJustSpeed:
         session_row(world, 10, started=NOW - timedelta(hours=6), offset=600_000)
 
         with world() as s:
-            progress = session_progress(s, _attribution_floor(s), tmdb_by_rating_key(s))
+            progress = session_progress(s, attribution_floor(s), tmdb_by_rating_key(s))
 
         assert progress, "the recent sitting should be measured"
         _started, percent = next(iter(progress.values()))
         assert percent == 10, f"a pre-floor sitting decided this pick's percentage ({percent}%)"
 
     def test_a_play_before_the_floor_is_not_scanned(self, world):
-        """`_scan_plays` feeds both the credit pass and `observed`, the set `_withdraw_unwatched`
+        """`scan_plays` feeds both the credit pass and `observed`, the set `_withdraw_unwatched`
         refuses to touch. Widening it therefore also suppresses withdrawals."""
         pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=2))
         with world() as s:
@@ -1327,17 +1327,17 @@ class TestTheAttributionFloorIsCorrectnessNotJustSpeed:
             s.commit()
 
         with world() as s:
-            scanned = _scan_plays(s, tmdb_by_rating_key(s))
+            scanned = scan_plays(s, tmdb_by_rating_key(s))
 
         assert scanned == [], "a play from before the first pick was scanned as creditable"
 
     def test_a_session_before_the_floor_is_not_a_start(self, world):
-        """The same boundary on the session path, which is the other half of what `_scan_plays`
+        """The same boundary on the session path, which is the other half of what `scan_plays`
         unions together."""
         pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=2))
         session_row(world, 10, started=NOW - timedelta(days=40), offset=1_800_000)
 
         with world() as s:
-            starts = _session_starts(s, _attribution_floor(s), tmdb_by_rating_key(s))
+            starts = _session_starts(s, attribution_floor(s), tmdb_by_rating_key(s))
 
         assert starts == [], "a sitting from before the first pick counted as a start"

@@ -659,7 +659,7 @@ class TestBuildRequests:
 
     def test_off_by_default_returns_none(self, sessions, tmp_path):
         with self._store(sessions, tmp_path, {}) as store:
-            assert ContextBuilder._build_requests(store) is None
+            assert ContextBuilder.build_requests(store) is None
 
     _SEERR: ClassVar[dict[str, object]] = {
         "requests.enabled": True,
@@ -683,7 +683,7 @@ class TestBuildRequests:
                 "requests.radarr.root_folder": "/movies",
             },
         ) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
             assert cfg.overseerr.url == "http://overseerr:5055" and cfg.overseerr.api_key == "ok"
             assert cfg.overseerr.request_as_user_id == 4
             assert cfg.radarr is None and cfg.sonarr is None
@@ -697,13 +697,13 @@ class TestBuildRequests:
             tmp_path,
             self._SEERR | {"requests.radarr.url": "http://radarr:7878", "requests.radarr.apikey": "rk"},
         ) as store:
-            assert ContextBuilder._build_requests(store).incomplete_targets == []
+            assert ContextBuilder.build_requests(store).incomplete_targets == []
 
     def test_overseerr_chosen_but_not_connected_falls_back_to_no_target(self, sessions, tmp_path):
         """Not to the Arrs. Silently routing to a different app than the owner picked is worse than
         sending nothing, which the run report already explains."""
         with self._store(sessions, tmp_path, {"requests.enabled": True, "requests.target": "overseerr"}) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
             assert cfg.overseerr is None and cfg.radarr is None and cfg.sonarr is None
             assert cfg.incomplete_targets == ["Overseerr is the chosen request target but has no address or API key"]
 
@@ -723,7 +723,7 @@ class TestBuildRequests:
                 "requests.radarr.root_folder": "/movies",
             },
         ) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
             assert cfg.radarr is None and cfg.sonarr is None and cfg.overseerr is None
             # And the run says why, rather than reporting "Radarr not fully configured" per title. The
             # route is what carries that: without it the config is byte-identical to an unconfigured Arr
@@ -744,7 +744,7 @@ class TestBuildRequests:
                 "requests.radarr.root_folder": "/movies",
             },
         ) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
             assert cfg.overseerr is None and cfg.radarr is not None
 
     def test_enabled_with_both_apps_builds_both_targets(self, sessions, tmp_path):
@@ -766,7 +766,7 @@ class TestBuildRequests:
                 "requests.max_per_run": 3,
             },
         ) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
             assert cfg is not None and cfg.enabled
             assert cfg.radarr.url == "http://radarr:7878" and cfg.radarr.api_key == "rk"
             assert cfg.radarr.quality_profile_id == 4 and cfg.radarr.root_folder == "/movies"
@@ -783,9 +783,9 @@ class TestBuildRequests:
             "requests.sonarr.root_folder": "/tv",
         }
         with self._store(sessions, tmp_path, base) as store:
-            assert ContextBuilder._build_requests(store).auto_user_tag is False
+            assert ContextBuilder.build_requests(store).auto_user_tag is False
         with self._store(sessions, tmp_path, base | {"requests.auto_user_tag": True}) as on:
-            assert ContextBuilder._build_requests(on).auto_user_tag is True
+            assert ContextBuilder.build_requests(on).auto_user_tag is True
 
     def test_a_retired_row_mode_inherits_rather_than_overriding(self, sessions, tmp_path):
         """The screen serves a retired mode as "inherits", so the run must agree — otherwise the row
@@ -814,9 +814,9 @@ class TestBuildRequests:
         }
         # Unset -> "all", which is what every add did before this setting existed.
         with self._store(sessions, tmp_path, base) as store:
-            assert ContextBuilder._build_requests(store).sonarr_monitor == "all"
+            assert ContextBuilder.build_requests(store).sonarr_monitor == "all"
         with self._store(sessions, tmp_path, base | {"requests.sonarr.monitor": "firstSeason"}) as chosen:
-            assert ContextBuilder._build_requests(chosen).sonarr_monitor == "firstSeason"
+            assert ContextBuilder.build_requests(chosen).sonarr_monitor == "firstSeason"
 
     def test_half_configured_app_is_left_as_none(self, sessions, tmp_path):
         # Radarr has a URL but no key -> its target is None (movies skipped), Sonarr is whole.
@@ -832,7 +832,7 @@ class TestBuildRequests:
                 "requests.sonarr.root_folder": "/tv",
             },
         ) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
             assert cfg.radarr is None  # no key -> not built, rather than erroring mid-run
             assert cfg.sonarr is not None
 
@@ -851,7 +851,7 @@ class TestBuildRequests:
                 "requests.sonarr.root_folder": "/tv",
             },
         ) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
             assert cfg.radarr is None  # key present but no profile/folder -> None
             assert cfg.sonarr is not None  # fully configured
             assert len(cfg.incomplete_targets) == 1
@@ -887,7 +887,7 @@ class TestBuildRequestSources:
                 "requests.tag": "shortlist",
             },
         ) as store:
-            src = ContextBuilder._build_request_sources(store)
+            src = ContextBuilder.build_request_sources(store)
             assert src.overseerr.url == "http://s" and src.radarr.url == "http://r" and src.sonarr is None
             assert src.exclude_seerr_user_id == 0  # requests are off, so no account is Shortlist's
             assert src.shortlist_tag == "shortlist"
@@ -904,11 +904,11 @@ class TestBuildRequestSources:
                 "requests.overseerr.request_as_user_id": 7,
             },
         ) as store:
-            assert ContextBuilder._build_request_sources(store).exclude_seerr_user_id == 7
+            assert ContextBuilder.build_request_sources(store).exclude_seerr_user_id == 7
 
     def test_no_sources_is_none(self, sessions, tmp_path):
         with self._store(sessions, tmp_path, {}) as store:
-            assert ContextBuilder._build_request_sources(store) is None
+            assert ContextBuilder.build_request_sources(store) is None
 
     def test_the_engine_config_carries_the_sources(self, sessions, tmp_path):
         """`_engine_config` is the seam a forgotten field hides in: the setting saves and the engine
@@ -1374,7 +1374,7 @@ class TestSyncWatched:
 
         `ShareTokenWatchSource._token_for` hands back the admin token only for an OWNER; any other
         type sends the owner's `plex_account_id` through the roster (which never lists the owner)
-        and then a canary exchange against the admin account. That failure is caught and logged as
+        and then a token exchange against the admin account. That failure is caught and logged as
         "treating as no watch history" — so it looks exactly like the empty cache this whole change
         exists to fix, and nothing would have caught it.
         """
@@ -2789,11 +2789,11 @@ class TestBuildRequestHolds:
             "requests.hold_tags": {"156205": "concert film", "9716": "stand-up comedy"},
         }
         with TestBuildRequests()._store(sessions, tmp_path, values) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
         assert cfg.hold_genres == frozenset({99, 10402})
         assert cfg.hold_tags == frozenset({156205, 9716})
 
     def test_unset_holds_nothing(self, sessions, tmp_path):
         with TestBuildRequests()._store(sessions, tmp_path, {"requests.enabled": True}) as store:
-            cfg = ContextBuilder._build_requests(store)
+            cfg = ContextBuilder.build_requests(store)
         assert cfg.hold_genres == frozenset() and cfg.hold_tags == frozenset()

@@ -494,13 +494,13 @@ class TestWritesTakeThePersonsRotationLock:
     @pytest.fixture
     def locked(self, monkeypatch) -> list[tuple[int, int]]:
         taken: list[tuple[int, int]] = []
-        real = theme_rotation._target_lock
+        real = theme_rotation.target_lock
 
         def recording(collection_id: int, user_id: int):
             taken.append((collection_id, user_id))
             return real(collection_id, user_id)
 
-        monkeypatch.setattr(theme_rotation, "_target_lock", recording)
+        monkeypatch.setattr(theme_rotation, "target_lock", recording)
         return taken
 
     def test_up_next_put_holds_the_lock(self, client: TestClient, explore, locked):

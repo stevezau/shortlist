@@ -53,9 +53,9 @@ from shortlist.server.services.delivery_snapshots import (
 from shortlist.server.services.delivery_snapshots import utc as _as_utc
 from shortlist.server.services.watch_events import (
     RowMembership,
-    _attribution_floor,
-    _scan_plays,
+    attribution_floor,
     event_credits,
+    scan_plays,
     session_progress,
     shared_credits,
     tmdb_by_rating_key,
@@ -627,7 +627,7 @@ class _CreditInputs:
         """How far each title actually got, keyed the same way the events are. Stamped onto the pick
         so the report can separate "opened and closed" from "gave it a real go" without joining
         sessions on every read."""
-        return session_progress(self._session, _attribution_floor(self._session), self._tmdb_of)
+        return session_progress(self._session, attribution_floor(self._session), self._tmdb_of)
 
     @cached_property
     def observed(self) -> dict[int, set[tuple[int, str]]]:
@@ -646,14 +646,14 @@ def _credit_inputs(session: Session) -> _CreditInputs:
     answered from the play log's exact timestamps against the delivery history in `picks` + `runs`.
 
     `tmdb_by_rating_key` is a DISTINCT over the largest table in the schema (158,737 pick rows on a
-    real server) and `_scan_plays` walks the whole event log; between them the credit path was
+    real server) and `scan_plays` walks the whole event log; between them the credit path was
     rebuilding both up to five times per pass, seven passes a day, for byte-identical results. They
     stay private to this object: they are how the credits are derived, not something a caller should
     re-derive its own answer from.
     """
     membership = RowMembership(session)
     tmdb_of = tmdb_by_rating_key(session)
-    scan = _scan_plays(session, tmdb_of)
+    scan = scan_plays(session, tmdb_of)
     return _CreditInputs(
         membership=membership,
         credits=event_credits(session, membership, scan),

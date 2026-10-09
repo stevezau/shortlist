@@ -267,7 +267,7 @@ class RowMembership:
         return self._shared_titles.get(key, "")
 
 
-def _attribution_floor(session: Session) -> datetime | None:
+def attribution_floor(session: Session) -> datetime | None:
     """The oldest moment any event could still be attributed to anything.
 
     Nothing before the first pick we hold can be credited — there was no row to have been in — so
@@ -282,10 +282,10 @@ def _attribution_floor(session: Session) -> datetime | None:
     `RunSharedRow.delivered_at` — not a pick row at all. Membership therefore does NOT independently
     reject every pre-floor play, and removing a filter has been shown to:
 
-    * mint a shared-row credit from a play that predates every pick (`_scan_plays`, `_session_starts`);
+    * mint a shared-row credit from a play that predates every pick (`scan_plays`, `_session_starts`);
     * flip an abandonment into "finished", because `session_progress` returns the MAX percentage
       across all sittings and an ancient 95% sitting then outranks a recent 10% one;
-    * suppress a withdrawal, since `_scan_plays` also builds the `observed` set that
+    * suppress a withdrawal, since `scan_plays` also builds the `observed` set that
       `_withdraw_unwatched` refuses to touch.
 
     Pinned by `TestTheAttributionFloorIsCorrectnessNotJustSpeed`.
@@ -359,7 +359,7 @@ def session_progress(
     return out
 
 
-def _scan_plays(
+def scan_plays(
     session: Session, tmdb_of: dict[int, tuple[int, str]] | None = None
 ) -> list[tuple[int, datetime, set[tuple[int, str]]]]:
     """Every credit-bearing play, oldest first: `(plex_account_id, when, resolved title keys)`.
@@ -377,7 +377,7 @@ def _scan_plays(
     # rows carry `rating_key = 0` — see `tmdb_by_rating_key` for why — so the rating key is only
     # useful as a way to LOOK UP the tmdb id, never as the thing to match on.
     tmdb_of = tmdb_by_rating_key(session) if tmdb_of is None else tmdb_of
-    floor = _attribution_floor(session)
+    floor = attribution_floor(session)
     # EVERY sitting, not just the earliest. `session_progress` collapses a title to its first start —
     # right for reporting a percentage, wrong here: once someone had any session predating the row, the
     # title could never be start-credited again, however many times they played it OFF the row
@@ -448,7 +448,7 @@ def event_credits(
         owned[user_id].add((tmdb_id, media_type))
 
     out: dict[tuple[int, int, str], tuple[datetime, frozenset[str]]] = {}
-    for account_id, when, keys in _scan_plays(session) if scan is None else scan:
+    for account_id, when, keys in scan_plays(session) if scan is None else scan:
         user = users.get(account_id)
         if user is None:
             continue
@@ -500,7 +500,7 @@ def shared_credits(
     # title and unioned the rows, so a row that only started showing the title later inherited the
     # earlier play's date and was credited for a play made before it carried it.
     out: dict[tuple[int, str, int, str], datetime] = {}
-    for account_id, when, keys in _scan_plays(session) if scan is None else scan:
+    for account_id, when, keys in scan_plays(session) if scan is None else scan:
         user = users.get(account_id)
         if user is None:
             continue

@@ -21,7 +21,7 @@ from shortlist.server.settings_store import SettingsStore
 
 from .changes import AccessRequirements, ChangeError, DomainPlan, DomainResult, EffectIntent, fingerprint
 from .contracts import StrictModel
-from .people_seasons import _dependencies, _snapshot
+from .people_seasons import table_dependencies, table_snapshot
 from .policy import AuthGrantPolicy
 
 
@@ -112,7 +112,7 @@ def config_fingerprint(config) -> str:
 
 def _run_dependencies(session) -> dict:
     """Pin owner-controlled person state while allowing the run's own derived progress writes."""
-    dependencies = _dependencies(session)
+    dependencies = table_dependencies(session)
     people = []
     for person in session.scalars(select(User).order_by(User.id)):
         record = {
@@ -123,7 +123,7 @@ def _run_dependencies(session) -> dict:
         record["prefs"] = {key: value for key, value in (person.prefs or {}).items() if key != "history_depth"}
         people.append(record)
     dependencies[User.__tablename__] = fingerprint(people)
-    dependencies.update(server=_snapshot(session, Server), themes=_snapshot(session, Theme))
+    dependencies.update(server=table_snapshot(session, Server), themes=table_snapshot(session, Theme))
     return dependencies
 
 

@@ -33,7 +33,7 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.prefs import blocked_entries
 from shortlist.server.services import jobs, report_service
-from shortlist.server.services.watch_events import _as_utc
+from shortlist.server.services.delivery_snapshots import utc
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
@@ -249,39 +249,6 @@ class UserSyncOut(PassthroughModel):
     added: int
     updated: int
     total: int
-
-
-def merged_prefs(stored: dict, sent: BaseModel) -> dict:
-    """``stored`` with the fields ``sent`` actually mentioned applied, and nothing else touched.
-
-    Read with ``model_fields_set``, never with an ``is not None`` filter. "The client did not mention
-    this field" and "the client set it to null" are different instructions, and only the first means
-    "leave it alone" — the None filter collapsed them, so a pref could be set but never CLEARED. It
-    would also have started silently clobbering the day a ``UserPrefs`` field gained a non-``None``
-    default, because ``model_dump()`` renders that default whether or not the client sent it, writing
-    it into every user on every unrelated PATCH. ``PATCH /collections`` and ``PUT …/rows`` already
-    read the request this way; this was the last partial write that did not.
-
-    ``model_dump`` rather than ``getattr``, and that is not a style choice: ``prefs`` is a JSON
-    column and ``blocked_seeds`` accepts objects, so reading the field off the model would hand
-    SQLAlchemy ``BlockSeedBody`` instances instead of dicts. ``exclude_unset`` gives exactly the
-    fields ``model_fields_set`` names, with the nested models already converted.
-
-    Args:
-        stored: The prefs mapping as it is on the user right now. Never mutated.
-        sent: The parsed request body's prefs model.
-
-    Returns:
-        A new mapping. Keys the model knows nothing about (an install's accrued ``history_depth``,
-        say) pass through untouched.
-    """
-    merged = dict(stored)
-    for key, value in sent.model_dump(exclude_unset=True).items():
-        if value is None:
-            merged.pop(key, None)  # an explicit null clears the override
-        else:
-            merged[key] = value
-    return merged
 
 
 def _watch_depths(session) -> dict[int, int]:
@@ -605,7 +572,7 @@ def user_outcomes(user_id: int, request: Request) -> list[dict]:
         # dashboard counts and this page hid, so the two disagreed about the same title. One place
         # decides what an outcome is, and it is not this one.
         mine = [(key, entry) for key, entry in outcomes.items() if key[0] == user_id]
-        namer = report_service._RowNamer(
+        namer = report_service.RowNamer(
             session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE
         )
         # Newest first: "what did they just watch" is the question, not "what did they watch in 2019".
@@ -616,7 +583,7 @@ def user_outcomes(user_id: int, request: Request) -> list[dict]:
         # reversed it sorted to the very top: an untimestamped row from any era announced as the most
         # recent thing they watched.
         floor = datetime.min.replace(tzinfo=UTC)
-        mine.sort(key=lambda kv: _as_utc(kv[1]["watched_at"] or kv[1]["finished_at"] or floor), reverse=True)
+        mine.sort(key=lambda kv: utc(kv[1]["watched_at"] or kv[1]["finished_at"] or floor), reverse=True)
         return [
             {
                 "tmdb_id": key[1],
@@ -726,28 +693,6 @@ async def user_watched(
     if page is None:
         raise HTTPException(status_code=404, detail="user not found")
     return page
-
-
-def _reject_display_name_clash(session: Session, user: User, nickname: str) -> None:
-    """Refuse a nickname that renders to the same row title as somebody else's.
-
-    `{user}` renders `display_name` (nickname → Tautulli friendly name → username). Only the
-    username is unique on Plex, so two people resolving to the same display name ask for two
-    collections with one title in one library — which PMS refuses, leaving that person's row failing
-    every night with an error that reads as a generic Plex fault. Privacy is unaffected either way
-    (collections are matched on `shortlist_<slug>` before title), so this is about a legible failure,
-    not a leak: say so at the point of entry rather than in tomorrow's run log.
-    """
-    wanted = nickname.casefold()
-    for other in session.query(User).filter(User.id != user.id):
-        theirs = other.nickname or other.friendly_name or other.username
-        if theirs.casefold() == wanted:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"{other.username} already shows up as “{theirs}” — pick a different name so their rows stay apart"
-                ),
-            )
 
 
 @router.post("/sync", response_model=UserSyncOut)

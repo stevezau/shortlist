@@ -40,7 +40,7 @@ DEFAULTS: dict[str, Any] = {
     # WHERE a request is filed. "arr" posts to Radarr/Sonarr directly (the original route, and still
     # the default so no existing install changes behaviour). "overseerr" hands the title to
     # Overseerr/Jellyseerr and lets IT drive the download apps — its quality profile, its root
-    # folder, its approval. The two are exclusive; see `_build_requests`.
+    # folder, its approval. The two are exclusive; see `build_requests`.
     "requests.target": "arr",
     "requests.overseerr.url": "",
     # Which Overseerr account the request is filed as. 0 = the API key's own (admin) account, which

@@ -63,7 +63,7 @@ class TestShareTokenWatchSource:
 
         tokens_used = {call.args[2] for call in mock_plex.watched_titles.call_args_list}
         assert tokens_used == {"SARAH-TOK"}  # never the owner's, never another user's
-        mock_plextv.canary_server_token.assert_not_called()  # already in the roster — no switch needed
+        mock_plextv.home_user_server_token.assert_not_called()  # already in the roster — no switch needed
 
     def test_the_roster_is_fetched_once_and_reused_across_users(self, mock_plex, mock_plextv):
         """One shared_servers call covers the whole roster; a 40-user run must not call it 40 times."""
@@ -77,14 +77,14 @@ class TestShareTokenWatchSource:
 
     def test_a_managed_user_absent_from_the_roster_is_read_via_a_switched_token(self, mock_plex, mock_plextv):
         """A managed sub-account with no share invite of its own isn't in shared_servers — the source
-        switches to it and exchanges for a server token (the canary path)."""
+        switches to it and exchanges for a server token (the switch-and-exchange path)."""
         source = self._source(mock_plex, mock_plextv)
         mock_plextv.shared_server_tokens.return_value = {}  # not shared to it directly
-        mock_plextv.canary_server_token.return_value = "KID-TOK"
+        mock_plextv.home_user_server_token.return_value = "KID-TOK"
 
         source.fetch(make_profile(username="kid", user_type=UserType.MANAGED, account_id=200), min_completion=0.7)
 
-        mock_plextv.canary_server_token.assert_called_once_with(200)
+        mock_plextv.home_user_server_token.assert_called_once_with(200)
         tokens_used = {call.args[2] for call in mock_plex.watched_titles.call_args_list}
         assert tokens_used == {"KID-TOK"}
 
@@ -93,7 +93,7 @@ class TestShareTokenWatchSource:
         may re-surface a title they've seen) rather than crash the run — and never read the PMS."""
         source = self._source(mock_plex, mock_plextv)
         mock_plextv.shared_server_tokens.return_value = {}
-        mock_plextv.canary_server_token.side_effect = PermissionError("PIN-protected")
+        mock_plextv.home_user_server_token.side_effect = PermissionError("PIN-protected")
 
         result = source.fetch(
             make_profile(username="pin", user_type=UserType.MANAGED, account_id=200), min_completion=0.7
@@ -109,7 +109,7 @@ class TestShareTokenWatchSource:
         history it was meant to refresh and stamps the sync a success."""
         source = self._source(mock_plex, mock_plextv)
         mock_plextv.shared_server_tokens.return_value = {}
-        mock_plextv.canary_server_token.side_effect = PermissionError("PIN-protected")
+        mock_plextv.home_user_server_token.side_effect = PermissionError("PIN-protected")
         profile = make_profile(username="pin", user_type=UserType.MANAGED, account_id=200)
 
         with pytest.raises(NoWatchToken):
@@ -121,7 +121,7 @@ class TestShareTokenWatchSource:
         """The OWNER row of the matrix is NOT vacuous here: `_token_for` returns the admin token
         without consulting the roster, so it takes a different path to the raise above and must keep
         reading normally. (SHARED-with-a-roster-miss collapses onto the MANAGED row — both fall
-        through to the same canary exchange and the same `token is None`.)"""
+        through to the same switch-and-exchange and the same `token is None`.)"""
         source = self._source(mock_plex, mock_plextv)
         profile = make_profile(username="steve", user_type=UserType.OWNER, account_id=1)
 

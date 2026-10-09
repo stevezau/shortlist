@@ -8671,7 +8671,7 @@ class TestAccountsThePrivacyLoopCannotVouchFor:
         return pipeline_mod.RunReport(started_at=datetime.now(UTC))
 
     def test_a_profiled_account_no_token_could_be_minted_for_is_recorded_as_unchecked(self, ctx: EngineContext):
-        """The archetype: `canary_server_token` refuses a PIN-protected Home user."""
+        """The archetype: `home_user_server_token` refuses a PIN-protected Home user."""
         ctx.pms_for_user = lambda profile: None
         report = self._report()
 

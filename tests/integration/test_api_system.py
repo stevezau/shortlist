@@ -8,10 +8,10 @@ from typing import ClassVar
 import pytest
 from fastapi.testclient import TestClient
 
-from shortlist.server.api.settings import REDACTED_PLACEHOLDER
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.db.models import Setting
 from shortlist.server.main import create_app
+from shortlist.server.services.settings_validation import REDACTED_PLACEHOLDER
 from shortlist.server.settings_store import SettingsStore
 from tests.conftest import plextv_user
 
@@ -646,7 +646,7 @@ class TestSystemResponseShapes:
         assert reads["n"] == 1, "the second page load must not go back to Plex"
         # The timeout is what bounds how long the single-flight lock is held. At the 20s default,
         # one page load could hold it for four retries plus backoff while everyone else waits.
-        assert built[0]["timeout"] == system_api._INTERACTIVE_TIMEOUT_S
+        assert built[0]["timeout"] == system_api.INTERACTIVE_TIMEOUT_S
 
     def test_a_plex_that_fails_after_a_good_read_serves_the_cached_copy(self, client: TestClient, monkeypatch):
         """A library list two minutes old is a far better answer than a broken page, and it is used
@@ -676,7 +676,7 @@ class TestSystemResponseShapes:
         state["fail"] = True
 
         assert client.get("/api/system/libraries").json() == good
-        assert system_api._PLEX_READ_TTL_S > 0  # the knob this behaviour hangs off still exists
+        assert system_api.PLEX_READ_TTL_S > 0  # the knob this behaviour hangs off still exists
 
     def test_an_unknown_library_leaves_no_lock_behind(self, client: TestClient, monkeypatch):
         """`key` is a caller-supplied path segment, so a lock kept per value ever asked for would

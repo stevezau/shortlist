@@ -30,7 +30,7 @@ from starlette.responses import JSONResponse, Response
 
 from .credentials import as_utc
 from .models import AssistantOAuthClient, AssistantOAuthCode, AssistantOAuthToken
-from .oauth import OAuthService, _opaque_family_id
+from .oauth import OAuthService, opaque_family_id
 from .repository import OAuthTokenIssuanceDenied
 from .types import Capability, GrantContext
 
@@ -304,7 +304,7 @@ class ASGIAuthorizationServer(AuthorizationServer):
         now = datetime.now(UTC)
         if request.authorization_code is not None:
             source = request.authorization_code
-            family_id = _opaque_family_id()
+            family_id = opaque_family_id()
             previous_token_id = None
         else:
             source = request.refresh_token

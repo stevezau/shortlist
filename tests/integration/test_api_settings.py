@@ -874,7 +874,7 @@ class TestSettingsApi:
         assert set(off) == {"ok", "message"} and set(ok) == {"ok", "message"}
 
     def test_the_webhook_address_is_ssrf_checked_but_the_sentinel_still_round_trips(self, client: TestClient):
-        """Both halves, because adding this key to `_FETCHED_URL_KEYS` creates a new combination.
+        """Both halves, because adding this key to `FETCHED_URL_KEYS` creates a new combination.
 
         It is the first setting that is BOTH a URL the server fetches AND a secret, so the redacted
         sentinel now reaches the SSRF guard. Checked as an address it fails ("must start with http"),

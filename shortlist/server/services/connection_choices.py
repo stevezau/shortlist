@@ -15,8 +15,8 @@ from shortlist.engine.clients.plex_pms import can_anchor, has_shortlist_marker
 from shortlist.engine.models import ArrTarget
 from shortlist.server.settings_store import SettingsStore
 
-_PLEX_READ_TTL_S = 120.0
-_INTERACTIVE_TIMEOUT_S = 8
+PLEX_READ_TTL_S = 120.0
+INTERACTIVE_TIMEOUT_S = 8
 
 
 class ArrNotConfigured(ValueError):
@@ -73,7 +73,7 @@ def cached_plex_read[T](state: Any, key: str, read: Callable[[], T]) -> T:
                 raise
             logger.warning("plex read {} failed ({}) — serving the cached copy", key, type(error).__name__)
             return entry[1]
-        cache[key] = (time.monotonic() + _PLEX_READ_TTL_S, value)
+        cache[key] = (time.monotonic() + PLEX_READ_TTL_S, value)
         return value
 
 
@@ -88,7 +88,7 @@ def read_libraries(state: Any) -> list[dict[str, str]]:
             url, token = store.get("plex.url"), store.get("plex.token")
         if not url or not token:
             raise HTTPException(status_code=409, detail="Plex isn't connected yet")
-        client = PlexClient(url, token, timeout=_INTERACTIVE_TIMEOUT_S)
+        client = PlexClient(url, token, timeout=INTERACTIVE_TIMEOUT_S)
         return [
             {"key": str(section.key), "title": section.title, "type": section.type} for section in client.sections()
         ]
@@ -111,7 +111,7 @@ def read_library_anchor_choices(state: Any, key: str) -> list[dict[str, str | bo
             url, token = store.get("plex.url"), store.get("plex.token")
         if not url or not token:
             raise HTTPException(status_code=409, detail="Plex isn't connected yet")
-        client = PlexClient(url, token, timeout=_INTERACTIVE_TIMEOUT_S)
+        client = PlexClient(url, token, timeout=INTERACTIVE_TIMEOUT_S)
         section = next((candidate for candidate in client.sections() if str(candidate.key) == key), None)
         if section is None:
             raise HTTPException(status_code=404, detail="library not found")

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 
-from shortlist.server.api.settings import KNOWN_KEYS
 from shortlist.server.catalogs import (
     Effect,
     ResetBehavior,
@@ -11,6 +10,7 @@ from shortlist.server.catalogs import (
     get_template_catalog,
     require_known_effects,
 )
+from shortlist.server.services.settings_validation import KNOWN_KEYS
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS
 
 

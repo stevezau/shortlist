@@ -54,7 +54,7 @@ class RowIntent(StrictModel):
         elif self.action == "update":
             if self.row_id is None or self.template_id is not None or not self.values:
                 raise ValueError("update requires row_id and at least one value")
-            from shortlist.server.api.collections import CollectionIn
+            from shortlist.server.services.row_editing import CollectionIn
 
             unknown = set(self.values) - (
                 (set(CollectionIn.model_fields) | {"ai_paused"}) - {"dry_run", "defer_rename"}
@@ -204,7 +204,7 @@ class RowAdapter:
             values = dict(template.effective_values)
             values["enabled"] = body.values.get("enabled", False)
             values.update(body.values)
-            from shortlist.server.api.collections import CollectionIn
+            from shortlist.server.services.row_editing import CollectionIn
 
             create_body = CollectionIn.model_validate(
                 {key: value for key, value in values.items() if key != "ai_paused"}
@@ -473,7 +473,7 @@ class RowAdapter:
     def apply(self, session, intent: dict) -> DomainResult:
         body = RowIntent.model_validate(intent)
         if body.action == "create":
-            from shortlist.server.api.collections import CollectionIn
+            from shortlist.server.services.row_editing import CollectionIn
 
             row = create_row_in_session(
                 session,

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from shortlist.engine.delivery import row_marker
+from shortlist.server.assistant.choices import permitted_choices
 from shortlist.server.assistant.tools import ChoicesInput
 from shortlist.server.assistant_auth import (
     AuthorizationDenied,
@@ -18,7 +19,6 @@ from shortlist.server.assistant_auth import (
     GrantContext,
     GrantPreset,
 )
-from shortlist.server.services.assistant_choices import permitted_choices
 from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration

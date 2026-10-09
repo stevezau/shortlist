@@ -62,7 +62,7 @@ def _settings_revision(session) -> str:
 
 
 def _request_config(state, session):
-    return ContextBuilder._build_requests(SettingsStore(session, state.secrets))
+    return ContextBuilder.build_requests(SettingsStore(session, state.secrets))
 
 
 class RequestAdapter:

@@ -6,7 +6,7 @@ from shortlist.engine.clients.search import DEFAULT_EXA_SEARCH_TYPE, EXA_SEARCH_
 from shortlist.engine.provider_calls import ProviderCall
 from shortlist.engine.request_config import resolve_request_config
 from shortlist.engine.rows import effective_row_sources
-from shortlist.server.services.request_actions import _destination, _target_snapshot
+from shortlist.server.services.request_actions import service_destination, target_snapshot
 
 from .generation import provider_destination
 from .policy import ChangeError
@@ -42,7 +42,7 @@ def paid_effect_contract(config, store, intent, *, config_hash, configured: bool
                 search_type = search_type if search_type in EXA_SEARCH_TYPES else DEFAULT_EXA_SEARCH_TYPE
                 append("external_search", "exa", "https://api.exa.ai", search_type)
             else:
-                append("external_search", "searxng", _destination(str(store.get("searxng.url") or "")))
+                append("external_search", "searxng", service_destination(str(store.get("searxng.url") or "")))
                 if provider in {"none", "null", ""}:
                     raise ChangeError("invalid_selection", "SearXNG recommendations also require a configured model.")
         elif provider in {"none", "null", ""}:
@@ -103,7 +103,7 @@ def paid_effect_contract(config, store, intent, *, config_hash, configured: bool
             if not cfg.auto_send or cfg.max_per_run <= 0 or cfg.max_per_row == 0:
                 continue
             for media in ("movie", "show") if row.media == "both" else (row.media,):
-                target = _target_snapshot(cfg, media)
+                target = target_snapshot(cfg, media)
                 if target["configured"]:
                     acquisitions.append(
                         {

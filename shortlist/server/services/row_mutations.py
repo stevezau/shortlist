@@ -13,15 +13,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from shortlist.engine.placeholders import uses_season
-from shortlist.server.api.row_changes import (
-    POSTER_RESET,
-    PRIVACY_SYNC,
-    RECONCILE,
-    RENAME,
-    VISIBILITY,
-    PlannedWork,
-    plan_row_changes,
-)
 from shortlist.server.assistant.row_effects import (
     poster_reset_step,
     privacy_sync_step,
@@ -32,6 +23,42 @@ from shortlist.server.assistant.row_effects import (
 )
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Theme
 from shortlist.server.services import poster_service
+from shortlist.server.services.row_changes import (
+    POSTER_RESET,
+    PRIVACY_SYNC,
+    RECONCILE,
+    RENAME,
+    VISIBILITY,
+    PlannedWork,
+    plan_row_changes,
+)
+from shortlist.server.services.row_editing import (
+    EXPLORE_COLUMNS,
+    REQUEST_COLUMNS,
+    TITLE_MOVING_FIELDS,
+    CollectionIn,
+    apply_row_patch,
+    known_seasons,
+    projected_snapshot,
+    reject_duplicate_name,
+    reject_new_person_title_clash,
+    reject_season_name_without_seasons,
+    row_change,
+    row_snapshot,
+    serialize_row,
+    set_audience,
+    stored_instructions,
+    stranded_sections,
+    unattributed_theme_tokens,
+    unique_slug,
+    validate_anchor_rows,
+    validate_audience_ids,
+    validate_explore,
+    validate_pairing,
+    validate_requests_row,
+    validate_row,
+    validate_theme,
+)
 
 
 @dataclass(frozen=True)
@@ -59,21 +86,20 @@ def set_ai_paused_in_session(session: Session, collection: Collection, paused: b
 
 def validate_create_row_in_session(session: Session, secrets, body, *, trusted_theme: Theme | None = None):
     """Validate a proposed row using only reads and return its resolved theme."""
-    from shortlist.server.api import collections as api
     from shortlist.server.services.season_catalogue import load_catalogue
     from shortlist.server.services.theme_store import spec_from_row
 
     if body.dry_run:
         raise HTTPException(status_code=422, detail="dry_run is only supported on PATCH and DELETE")
-    api._validate(body)
-    api._reject_season_name_without_seasons(
+    validate_row(body)
+    reject_season_name_without_seasons(
         body.name_template or body.name,
         body.seasons,
         row_has_theme=body.theme_id is not None or trusted_theme is not None,
     )
     catalogue = load_catalogue(session)
-    body.seasons = api._known_seasons(body.seasons, catalogue=catalogue)
-    theme = api._validate_theme(
+    body.seasons = known_seasons(body.seasons, catalogue=catalogue)
+    theme = validate_theme(
         session,
         body.theme_id,
         build=body.build,
@@ -82,15 +108,15 @@ def validate_create_row_in_session(session: Session, secrets, body, *, trusted_t
         requests_row=body.requests_row,
         trusted_theme=trusted_theme,
     )
-    api._validate_explore(
+    validate_explore(
         session,
-        {column: getattr(body, column) for column in api._EXPLORE_COLUMNS},
+        {column: getattr(body, column) for column in EXPLORE_COLUMNS},
         theme_id=None if theme is None else theme.id,
         own_slug="",
         has_theme=theme is not None,
     )
     template = body.name_template or body.name
-    api._reject_duplicate_name(
+    reject_duplicate_name(
         session,
         secrets,
         template,
@@ -100,24 +126,23 @@ def validate_create_row_in_session(session: Session, secrets, body, *, trusted_t
         library_keys=body.library_keys,
         theme=None if theme is None else spec_from_row(theme),
     )
-    api._validate_anchor_rows(session, body, editing_slug="")
+    validate_anchor_rows(session, body, editing_slug="")
     return theme
 
 
 def create_row_in_session(session: Session, secrets, body) -> Collection:
     """Validate and insert one ``CollectionIn`` without committing or external I/O."""
     from shortlist.engine.models import slugify
-    from shortlist.server.api import collections as api
 
     theme = validate_create_row_in_session(session, secrets, body)
     collection = Collection(
-        slug=api._unique_slug(session, slugify(body.name)),
+        slug=unique_slug(session, slugify(body.name)),
         name=body.name,
         build=body.build,
         audience=body.audience,
         enabled=body.enabled,
         theme_id=None if theme is None else theme.id,
-        **{column: getattr(body, column) for column in api._EXPLORE_COLUMNS},
+        **{column: getattr(body, column) for column in EXPLORE_COLUMNS},
         schedule=body.schedule.strip(),
         size=body.size,
         media=body.media,
@@ -156,15 +181,15 @@ def create_row_in_session(session: Session, secrets, body) -> Collection:
         hub_anchor={key: value.model_dump() for key, value in body.hub_anchor.items()},
         library_keys=body.library_keys,
         poster=body.poster.model_dump(),
-        prompt=api._stored_instructions(body.ai_instructions),
+        prompt=stored_instructions(body.ai_instructions),
         description=body.description,
         sort_title_prefix=body.sort_title_prefix,
-        **{column: getattr(body, column) for column in api._REQUEST_COLUMNS},
+        **{column: getattr(body, column) for column in REQUEST_COLUMNS},
     )
-    collection.ai_tokens = api._unattributed_theme_tokens(session, theme, exclude_id=None)
+    collection.ai_tokens = unattributed_theme_tokens(session, theme, exclude_id=None)
     session.add(collection)
     session.flush()
-    api._set_audience(session, collection, body)
+    set_audience(session, collection, body)
     session.flush()
     return collection
 
@@ -184,13 +209,12 @@ def update_row_in_session(
     transaction.  A narrowing that cannot be resolved from such a snapshot is
     refused rather than guessing which Plex collections may be deleted.
     """
-    from shortlist.server.api import collections as api
     from shortlist.server.services.collection_reconcile import row_template, season_title
     from shortlist.server.services.season_catalogue import load_catalogue
     from shortlist.server.services.theme_store import spec_from_row
     from shortlist.server.settings_store import SettingsStore
 
-    unknown = set(values) - set(api.CollectionIn.model_fields)
+    unknown = set(values) - set(CollectionIn.model_fields)
     if unknown:
         raise ValueError(f"unknown row fields: {sorted(unknown)}")
     if not values:
@@ -199,21 +223,21 @@ def update_row_in_session(
     if collection is None:
         raise HTTPException(status_code=404, detail="collection not found")
     catalogue = load_catalogue(session)
-    current = api._serialize(session, collection, catalogue=catalogue)
+    current = serialize_row(session, collection, catalogue=catalogue)
     merged = {
         key: current[key]
-        for key in api.CollectionIn.model_fields
+        for key in CollectionIn.model_fields
         if key in current and key not in {"dry_run", "defer_rename"}
     }
     merged.update({"dry_run": False, "defer_rename": False})
     merged.update(values)
-    body = api.CollectionIn.model_validate(merged)
+    body = CollectionIn.model_validate(merged)
     sent = set(values)
-    api._validate(body)
+    validate_row(body)
     if "seasons" in sent:
-        body.seasons = api._known_seasons(body.seasons, catalogue=catalogue)
-    api._validate_anchor_rows(session, body, editing_slug=collection.slug)
-    before = api._snapshot(session, collection)
+        body.seasons = known_seasons(body.seasons, catalogue=catalogue)
+    validate_anchor_rows(session, body, editing_slug=collection.slug)
+    before = row_snapshot(session, collection)
     is_default = collection.slug == DEFAULT_SLUG
     merged_theme_id = body.theme_id
     if is_default and merged_theme_id is not None:
@@ -221,7 +245,7 @@ def update_row_in_session(
             status_code=422,
             detail="The default row can't be an AI row — add a new row from the AI template.",
         )
-    theme = api._validate_theme(
+    theme = validate_theme(
         session,
         merged_theme_id,
         build=body.build,
@@ -229,9 +253,9 @@ def update_row_in_session(
         rewatch=body.rewatch,
         requests_row=body.requests_row,
     )
-    api._validate_explore(
+    validate_explore(
         session,
-        {column: getattr(body, column) for column in api._EXPLORE_COLUMNS},
+        {column: getattr(body, column) for column in EXPLORE_COLUMNS},
         theme_id=merged_theme_id,
         own_slug=collection.slug,
         already_avoided=tuple(collection.avoid_rows or ()),
@@ -243,16 +267,16 @@ def update_row_in_session(
                 status_code=422,
                 detail="The default row can't follow seasons — add a new row from the Seasonal template.",
             )
-        api._reject_season_name_without_seasons(body.name, [])
+        reject_season_name_without_seasons(body.name, [])
     else:
-        api._reject_season_name_without_seasons(
+        reject_season_name_without_seasons(
             body.name_template or body.name,
             body.seasons,
             row_has_theme=merged_theme_id is not None,
         )
     generic_title_fields = {"name", "name_template", "fallback_name", "build", "media", "library_keys"}
     if sent & generic_title_fields:
-        api._reject_duplicate_name(
+        reject_duplicate_name(
             session,
             secrets,
             row_template(session, collection.slug, secrets) if is_default else (body.name_template or body.name),
@@ -267,7 +291,7 @@ def update_row_in_session(
         template = body.name_template or body.name
         ticked = [slug for slug in body.seasons if slug not in (collection.seasons or [])]
         for season_slug in ticked if uses_season(template) else []:
-            api._reject_duplicate_name(
+            reject_duplicate_name(
                 session,
                 secrets,
                 season_title(template, catalogue[season_slug]),
@@ -277,8 +301,8 @@ def update_row_in_session(
                 library_keys=body.library_keys,
                 theme=merged_spec,
             )
-    if sent & api._TITLE_MOVING_FIELDS and not is_default:
-        api._reject_new_person_title_clash(
+    if sent & TITLE_MOVING_FIELDS and not is_default:
+        reject_new_person_title_clash(
             session,
             secrets,
             collection,
@@ -288,8 +312,8 @@ def update_row_in_session(
             library_keys=body.library_keys,
             theme=merged_spec,
         )
-    api._validate_pairing(rewatch=body.rewatch, unstarted_only=body.unstarted_only, media=body.media)
-    api._validate_requests_row(
+    validate_pairing(rewatch=body.rewatch, unstarted_only=body.unstarted_only, media=body.media)
+    validate_requests_row(
         requests_row=body.requests_row,
         build=body.build,
         rewatch=body.rewatch,
@@ -297,7 +321,7 @@ def update_row_in_session(
         has_theme=merged_theme_id is not None,
     )
     if sent & {"audience", "audience_user_ids"}:
-        api._validate_audience_ids(session, body)
+        validate_audience_ids(session, body)
     narrowing = (before["media"], before["libraries"]) != (body.media, tuple(str(k) for k in body.library_keys))
     if narrowing and library_sections is None:
         raise ValueError("library scope changed but no verified library snapshot was supplied")
@@ -314,10 +338,10 @@ def update_row_in_session(
             template_before, template_after = previous, proposed
     after_values = body.model_dump(mode="json")
     if not apply:
-        projected = api._projected_snapshot(session, collection, body, sent)
+        projected = projected_snapshot(session, collection, body, sent)
         if touching_name:
             template_after = body.name_template or body.name
-        change = api._row_change(
+        change = row_change(
             before,
             projected,
             template_before=template_before,
@@ -328,12 +352,12 @@ def update_row_in_session(
         steps, diff = _row_effects(change, sent, library_sections, current, after_values)
         return collection, steps, diff
     if theme is not None and "theme_id" in sent and theme.id != collection.theme_id:
-        collection.ai_tokens = (collection.ai_tokens or 0) + api._unattributed_theme_tokens(
+        collection.ai_tokens = (collection.ai_tokens or 0) + unattributed_theme_tokens(
             session,
             theme,
             exclude_id=collection.id,
         )
-    api._apply_patch(
+    apply_row_patch(
         session,
         secrets,
         collection,
@@ -343,10 +367,10 @@ def update_row_in_session(
         default_rename_to=default_rename_to,
     )
     session.flush()
-    after = api._snapshot(session, collection)
+    after = row_snapshot(session, collection)
     if touching_name:
         template_after = collection.name_template or collection.name
-    change = api._row_change(
+    change = row_change(
         before,
         after,
         template_before=template_before,
@@ -368,15 +392,14 @@ def apply_prevalidated_row_update_in_session(
     library_sections: list | None = None,
 ) -> tuple[Collection, list[dict], dict]:
     """Apply a REST-validated patch without repeating changed-field collision checks."""
-    from shortlist.server.api import collections as api
     from shortlist.server.services.season_catalogue import load_catalogue
     from shortlist.server.settings_store import SettingsStore
 
     collection = session.get(Collection, collection_id)
     if collection is None:
         raise HTTPException(status_code=404, detail="collection not found")
-    before = api._snapshot(session, collection)
-    current = api._serialize(session, collection, catalogue=load_catalogue(session))
+    before = row_snapshot(session, collection)
+    current = serialize_row(session, collection, catalogue=load_catalogue(session))
     after_values = body.model_dump(mode="json")
     is_default = collection.slug == DEFAULT_SLUG
     touching_name = before["build"] == "per_person" and not is_default and bool(sent & {"name", "name_template"})
@@ -391,10 +414,10 @@ def apply_prevalidated_row_update_in_session(
             template_before, template_after = previous, proposed
     theme = session.get(Theme, body.theme_id) if "theme_id" in sent and body.theme_id is not None else None
     if theme is not None and theme.id != collection.theme_id:
-        collection.ai_tokens = (collection.ai_tokens or 0) + api._unattributed_theme_tokens(
+        collection.ai_tokens = (collection.ai_tokens or 0) + unattributed_theme_tokens(
             session, theme, exclude_id=collection.id
         )
-    api._apply_patch(
+    apply_row_patch(
         session,
         secrets,
         collection,
@@ -404,10 +427,10 @@ def apply_prevalidated_row_update_in_session(
         default_rename_to=default_rename_to,
     )
     session.flush()
-    after = api._snapshot(session, collection)
+    after = row_snapshot(session, collection)
     if touching_name:
         template_after = collection.name_template or collection.name
-    change = api._row_change(
+    change = row_change(
         before,
         after,
         template_before=template_before,
@@ -426,10 +449,9 @@ def _row_effects(change, sent: set[str], library_sections: list | None, current:
     different effects for one change: a step one path forgets is a visibility change that never reaches
     Plex (jobs-and-runs-design section 12).
     """
-    from shortlist.server.api import collections as api
 
     def stranded() -> set[str]:
-        return api._stranded_sections(
+        return stranded_sections(
             None,
             old_media=change.media_before,
             old_keys=list(change.libraries_before),

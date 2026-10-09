@@ -1810,11 +1810,11 @@ class PlexClient:
             visible.update(int(m["ratingKey"]) for m in r.json().get("MediaContainer", {}).get("Metadata", []) or [])
         return visible & set(rating_keys)
 
-    def user_hubs(self, canary_token: str, path: str = "/hubs") -> list[dict]:
+    def user_hubs(self, user_token: str, path: str = "/hubs") -> list[dict]:
         """Fetch hubs AS another user (for visibility checks). Uses that user's server token, not the owner's."""
         r = http_retry.get(
             self._server.url(path, includeToken=False),
-            headers={"X-Plex-Token": canary_token, "Accept": "application/json"},
+            headers={"X-Plex-Token": user_token, "Accept": "application/json"},
             timeout=self._timeout,
         )
         r.raise_for_status()

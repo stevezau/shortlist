@@ -23,7 +23,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.db.models import Collection, PickRow, User
-from shortlist.server.services.report_service import SETTLING_HOURS, _RowNamer, effectiveness, row_effectiveness
+from shortlist.server.services.report_service import SETTLING_HOURS, RowNamer, effectiveness, row_effectiveness
 from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime.now(UTC)
@@ -863,7 +863,7 @@ class TestAWatchIsNotJudgedTheMomentItStarts:
 
 
 class TestRowNamerLabel:
-    """`_RowNamer.label` is read daily in four places and had no test at all.
+    """`RowNamer.label` is read daily in four places and had no test at all.
 
     It renders `{library_name}` into the library and every other placeholder into an ellipsis — the
     per-person ones (`{top_seed}`) have no single value at an aggregate level, and dropping them
@@ -872,7 +872,7 @@ class TestRowNamerLabel:
     """
 
     @contextmanager
-    def _namer(self, tmp_path: Path, template: str) -> Iterator[_RowNamer]:
+    def _namer(self, tmp_path: Path, template: str) -> Iterator[RowNamer]:
         from shortlist.server.db.models import Collection
         from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 
@@ -882,7 +882,7 @@ class TestRowNamerLabel:
             with sessions() as session:
                 session.add(Collection(slug="row", name="row", name_template=template, enabled=True))
                 session.commit()
-                yield _RowNamer(session, "✨ Picked for You")
+                yield RowNamer(session, "✨ Picked for You")
 
     def label(self, tmp_path: Path, template: str, library: str = "Movies") -> str:
         with self._namer(tmp_path, template) as namer:

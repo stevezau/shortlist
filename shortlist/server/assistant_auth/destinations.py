@@ -45,7 +45,7 @@ def _has_secret(session: Session, key: str) -> bool:
 def configured_destinations(session: Session) -> list[ConfiguredDestination]:
     """List only supported services with exact current authorization destinations."""
     from shortlist.server.assistant.generation import provider_destination
-    from shortlist.server.services.request_actions import _destination
+    from shortlist.server.services.request_actions import service_destination
     from shortlist.server.settings_store import SettingsStore
 
     store = SettingsStore(session)
@@ -88,16 +88,16 @@ def configured_destinations(session: Session) -> list[ConfiguredDestination]:
         credential = "plex.token" if service_id == "plex" else "tautulli.apikey"
         if url and _has_secret(session, credential):
             with suppress(ValueError):
-                add(service_id, label, ["connection check"], _destination(url))
+                add(service_id, label, ["connection check"], service_destination(url))
     if store.get("searxng.url"):
         with suppress(ValueError):
-            add("searxng", "SearXNG search", ["search"], _destination(str(store.get("searxng.url"))))
+            add("searxng", "SearXNG search", ["search"], service_destination(str(store.get("searxng.url"))))
     for service_id, label in (("radarr", "Radarr"), ("sonarr", "Sonarr"), ("overseerr", "Seerr")):
         prefix = f"requests.{service_id}"
         url = str(store.get(f"{prefix}.url") or "")
         if url and _has_secret(session, f"{prefix}.apikey"):
             with suppress(ValueError):
-                add(service_id, label, ["requests"], _destination(url))
+                add(service_id, label, ["requests"], service_destination(url))
     return choices
 
 

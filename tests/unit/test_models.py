@@ -149,9 +149,9 @@ class TestPoolClearsTheRowCeiling:
     def test_every_size_validator_uses_the_one_ceiling(self):
         """Three validators bound a row's size. Each must read MAX_ROW_SIZE, not restate the number —
         restating it is exactly how the pool cap drifted into matching it."""
-        from shortlist.server.api.collections import CollectionIn
-        from shortlist.server.api.settings import VALIDATORS
         from shortlist.server.api.user_rows import RowOverridePatch
+        from shortlist.server.services.row_editing import CollectionIn
+        from shortlist.server.services.settings_validation import VALIDATORS
 
         assert VALIDATORS["row.size"](MAX_ROW_SIZE) is None
         assert VALIDATORS["row.size"](MAX_ROW_SIZE + 1) is not None

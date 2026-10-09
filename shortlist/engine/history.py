@@ -98,7 +98,7 @@ class ShareTokenWatchSource:
             return token
         # Not in the shared list: a managed Home profile with no invite of its own. Switch + exchange.
         try:
-            return self._plextv.canary_server_token(user.plex_account_id)
+            return self._plextv.home_user_server_token(user.plex_account_id)
         except Exception as e:
             logger.warning(
                 "{}: no server token available ({}) — treating as no watch history", user.username, type(e).__name__

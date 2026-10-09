@@ -432,7 +432,7 @@ def _landing(session: Session, now: datetime, days: int | None) -> dict:
     }
 
 
-class _RowNamer:
+class RowNamer:
     """Renders a row slug + library into the name the dashboard shows for that line.
 
     Picks outlive the row that made them (deleting a row keeps its watch history), and a slug with no
@@ -857,7 +857,7 @@ def _title_art(session: Session, keys: set[tuple[int, str]], history_of: dict[tu
     return art
 
 
-def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, since: datetime | None) -> list[dict]:
+def _recent_watches(session: Session, users: dict[int, User], namer: RowNamer, since: datetime | None) -> list[dict]:
     """The recent-watches feed: one line per (person, title), like every other figure here.
 
     NOT one per pick row. A title re-recommended over several runs has one pick row per run, and the
@@ -1049,7 +1049,7 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
         _PERSON_TITLE,
         since,
         # A shared row has no per-library split: it is ONE collection, so its line is keyed with empty
-        # section and library, which `_RowNamer.label` renders from the row's own name.
+        # section and library, which `RowNamer.label` renders from the row's own name.
         [SharedRowWatch.collection_slug, literal("").label("section_key"), literal("").label("library")],
         _SHARED_PERSON_TITLE,
     )
@@ -1104,7 +1104,7 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     store = SettingsStore(session)
     last_watch_sync = store.get("report.watch_synced_at")  # when the daily job last ran
     users = {u.id: u for u in session.query(User).all()}
-    namer = _RowNamer(session, store.get("row.name_template") or DEFAULT_ROW_TEMPLATE)
+    namer = RowNamer(session, store.get("row.name_template") or DEFAULT_ROW_TEMPLATE)
 
     # Reach: who's actually covered. `users_enabled`/`rows_enabled` describe the server as it is
     # NOW, so they are deliberately not windowed — "3 of 11 people" only reads if 11 is current.
@@ -1532,7 +1532,7 @@ def engagement(session: Session, window: str) -> dict:
     days = WINDOWS[window]
     since = datetime.now(UTC) - timedelta(days=days) if days else None
     users = {u.id: u for u in session.query(User).all()}
-    namer = _RowNamer(session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE)
+    namer = RowNamer(session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE)
 
     people: dict[int, list[dict]] = defaultdict(list)
     per_title: dict[tuple[int, str], dict] = {}

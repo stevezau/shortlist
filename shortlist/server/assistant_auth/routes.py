@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from shortlist.server.api.schemas import PassthroughModel
-from shortlist.server.auth import _check_csrf, read_session
+from shortlist.server.auth import check_csrf, read_session
 
 from .authlib_adapter import ASGIAuthorizationServer, PreparedOAuthRequest
 from .destinations import (
@@ -73,7 +73,7 @@ def require_browser_owner(request: Request) -> BrowserOwner:
     """
     if request.headers.get("authorization"):
         raise HTTPException(status_code=403, detail="assistant access changes require the owner browser session")
-    _check_csrf(request)
+    check_csrf(request)
     browser_session = read_session(request)
     owner_account_id = request.app.state.owner_account_id()
     if browser_session is None:

@@ -337,7 +337,7 @@ class TestReconcileRowRemoval:
         )
         removed: list[str] = []
 
-        dry_run = rec._reconcile_row_removal(
+        dry_run = rec.reconcile_row_removal(
             _state(sessions, plex), slug="movienight", build="shared", dry_run=False, removed=removed
         )
 
@@ -366,7 +366,7 @@ class TestReconcileRowRemoval:
             [_collection("Movie Night")] if label == "shortlist__shared_movienight" else []
         )
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="movienight", build="shared", dry_run=dry_run, removed=[]
         )
 
@@ -390,7 +390,7 @@ class TestReconcileRowRemoval:
         plex.sections.return_value = [_section("Movies", "1"), _section("Classics", "2")]
         plex.find_owned_collections.return_value = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="movienight", build="shared", dry_run=False, removed=[], in_sections={"2"}
         )
 
@@ -429,7 +429,7 @@ class TestReconcileRowRemoval:
         removed: list[str] = []
 
         with pytest.raises(RuntimeError):
-            rec._reconcile_row_removal(
+            rec.reconcile_row_removal(
                 _state(sessions, plex), slug="movienight", build="shared", dry_run=dry_run, removed=removed
             )
 
@@ -464,7 +464,7 @@ class TestReconcileRowRemoval:
         plex.find_owned_collections.side_effect = owned
 
         with pytest.raises(RuntimeError):
-            rec._reconcile_row_removal(
+            rec.reconcile_row_removal(
                 _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=[]
             )
 
@@ -479,7 +479,7 @@ class TestReconcileRowRemoval:
         plex = MagicMock(spec=PlexClient)
         removed: list[str] = []
 
-        dry_run = rec._reconcile_row_removal(
+        dry_run = rec.reconcile_row_removal(
             _state(sessions, plex), slug="movienight", build="shared", dry_run=False, removed=removed, only_user_ids={1}
         )
 
@@ -496,7 +496,7 @@ class TestReconcileRowRemoval:
         plex.find_owned_collections.side_effect = lambda sec, label: [collection] if label == "shortlist_sarah" else []
         removed: list[str] = []
 
-        dry_run = rec._reconcile_row_removal(
+        dry_run = rec.reconcile_row_removal(
             _state(sessions, plex),
             slug="picked",
             build="per_person",
@@ -517,7 +517,7 @@ class TestReconcileRowRemoval:
         plex.sections.return_value = [_section("Movies")]
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex),
             slug="picked",
             build="per_person",
@@ -544,7 +544,7 @@ class TestReconcileRowRemoval:
         plex.find_owned_collections.side_effect = lambda sec, label: [collection] if label == "shortlist_sarah" else []
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex),
             slug="comedy",
             build="per_person",
@@ -567,7 +567,7 @@ class TestReconcileRowRemoval:
         plex.find_owned_collections.side_effect = lambda sec, label: [collection] if label == "shortlist_sarah" else []
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="picked", build="per_person", dry_run=False, removed=removed, template="My Row"
         )
 
@@ -586,7 +586,7 @@ class TestReconcileRowRemoval:
         plex.find_owned_collections.side_effect = lambda sec, label: [collection] if label == "shortlist_sarah" else []
         removed: list[str] = []
 
-        dry_run = rec._reconcile_row_removal(
+        dry_run = rec.reconcile_row_removal(
             _state(sessions, plex), slug="picked", build="per_person", dry_run=True, removed=removed, template="My Row"
         )
 
@@ -606,7 +606,7 @@ class TestReconcileRowRemoval:
         plex.find_owned_collections.side_effect = lambda sec, label: [collection] if label == "shortlist_sarah" else []
         removed: list[str] = []
 
-        dry_run = rec._reconcile_row_removal(
+        dry_run = rec.reconcile_row_removal(
             _state(sessions, plex, dry_run=True),
             slug="picked",
             build="per_person",
@@ -633,7 +633,7 @@ class TestReconcileRowRemoval:
         plex.find_owned_collections.side_effect = find
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex),
             slug="picked",
             build="per_person",
@@ -658,7 +658,7 @@ class TestReconcileRowRemoval:
         }.get(label, [])
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex),
             slug="picked",
             build="per_person",
@@ -1566,7 +1566,7 @@ class TestASeasonalSiblingClaimsEverySeasonsTitle:
         self._rows(sessions)
         plex = self._plex(_collection("Halloween picks" + self.MARK))
 
-        rec._reconcile_row_removal(_state(sessions, plex), slug="plain", build="per_person", dry_run=False, removed=[])
+        rec.reconcile_row_removal(_state(sessions, plex), slug="plain", build="per_person", dry_run=False, removed=[])
 
         plex.delete_owned_collection.assert_not_called()
 
@@ -1631,7 +1631,7 @@ class TestAnExploreSiblingClaimsEachPersonsOwnThemeTitle:
         self._rows(sessions)
         plex = self._plex(_collection("Scary nights" + self.MARK))
 
-        rec._reconcile_row_removal(_state(sessions, plex), slug="plain", build="per_person", dry_run=False, removed=[])
+        rec.reconcile_row_removal(_state(sessions, plex), slug="plain", build="per_person", dry_run=False, removed=[])
 
         plex.delete_owned_collection.assert_not_called()
 
@@ -1667,7 +1667,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         plex, movies_c, _shows_c = self._plex()
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=removed
         )
 
@@ -1683,7 +1683,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         plex, movies_c, _shows_c = self._plex()
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=removed, template="Friday"
         )
 
@@ -1706,7 +1706,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         plex, movies_c, _shows_c = self._plex()
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=removed
         )
 
@@ -1722,7 +1722,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         plex, movies_c, shows_c = self._plex()
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=removed
         )
 
@@ -1741,7 +1741,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         plex, _movies_c, _shows_c = self._plex()
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=removed
         )
 
@@ -1777,7 +1777,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         movies_c.title = shows_c.title = seeded + self.MARK
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=removed
         )
 
@@ -1811,7 +1811,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         movies_c.title = shows_c.title = worn + self.MARK
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=removed
         )
 
@@ -1844,7 +1844,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         plex, _movies_c, _shows_c = self._plex()
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex), slug="friday", build="per_person", dry_run=False, removed=removed
         )
 
@@ -1860,7 +1860,7 @@ class TestATitleAnotherRowBuildsUnderIsNeverThisRows:
         plex, _movies_c, shows_c = self._plex()
         removed: list[str] = []
 
-        rec._reconcile_row_removal(
+        rec.reconcile_row_removal(
             _state(sessions, plex),
             slug="friday",
             build="per_person",

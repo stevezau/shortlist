@@ -82,5 +82,5 @@ def _valid_pkce_value(value: str) -> bool:
     return 43 <= len(value) <= 128 and all(character.isalnum() or character in "-._~" for character in value)
 
 
-def _opaque_family_id() -> str:
+def opaque_family_id() -> str:
     return f"fam_{secrets.token_urlsafe(18)}"

@@ -10,7 +10,7 @@ from shortlist.server.services import theme_store
 from .changes import AccessRequirements, DomainPlan, DomainResult
 from .contracts import StrictModel
 from .row_adapter import RowAdapter, RowIntent
-from .theme_adapter import AssistantTheme, ThemeAdapter, ThemeIntent, _resolved_body
+from .theme_adapter import AssistantTheme, ThemeAdapter, ThemeIntent, resolved_theme_body
 
 
 class ThemeRowIntent(StrictModel):
@@ -43,7 +43,7 @@ class SetupAdapter:
         theme_intent = ThemeIntent(action="create", draft=body.theme)
         theme_plan = self.themes.prepare(session, theme_intent.model_dump(mode="json"))
         projection = Theme(slug="assistant-setup-projection")
-        theme_store.write_theme(projection, _resolved_body(session, theme_intent))
+        theme_store.write_theme(projection, resolved_theme_body(session, theme_intent))
         row_intent = body.row.model_copy(
             update={"values": {**body.row.values, "theme_id": None, "enabled": False, "schedule": ""}}
         )

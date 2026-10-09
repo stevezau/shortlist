@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from shortlist.server.api.users import merged_prefs
+from shortlist.server.services.person_changes import merged_prefs
 
 
 class _PrefsWithADefault(BaseModel):

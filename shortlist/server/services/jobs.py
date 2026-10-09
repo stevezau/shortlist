@@ -1535,8 +1535,8 @@ def _themes_rotate(state, payload: dict) -> dict:
     person who needed one keeps theirs and gets an event saying why, and the next pass tries again.
     """
     from shortlist.server.services.theme_rotation import (
-        _once,
         authoring_tools,
+        call_once,
         rotate_themes,
         rotation_targets,
         top_up_rows,
@@ -1549,7 +1549,7 @@ def _themes_rotate(state, payload: dict) -> dict:
     if not targets and not top_up_rows(state.sessions):
         return {"targets": 0}
     now = datetime.now(UTC)
-    tools = _once(lambda: authoring_tools(state))
+    tools = call_once(lambda: authoring_tools(state))
     outcomes = rotate_themes(
         state.sessions,
         now=now,
@@ -1812,10 +1812,10 @@ def _row_reconcile(state, payload: dict) -> dict:
 
     Durable for the same reason `user.cleanup` is: the previous fire-and-forget call had no retry, so
     a Plex outage at the moment of the edit left the collections on the server with nothing to ever
-    revisit them. `_reconcile_row_removal` is removal-only and re-reads the server each time, so
+    revisit them. `reconcile_row_removal` is removal-only and re-reads the server each time, so
     replaying it after a crash is safe.
     """
-    from shortlist.server.services.collection_reconcile import _reconcile_row_removal
+    from shortlist.server.services.collection_reconcile import reconcile_row_removal
 
     slug = payload["slug"]
     build = payload.get("build", "per_person")
@@ -1824,7 +1824,7 @@ def _row_reconcile(state, payload: dict) -> dict:
     # The EFFECTIVE value, back off the context the removal actually used. This audited a hardcoded
     # `False` while `build_context` had OR'd SHORTLIST_DRY_RUN in below it — so under safe mode the
     # audit trail recorded a preview as a real deletion of somebody's row.
-    dry_run = _reconcile_row_removal(
+    dry_run = reconcile_row_removal(
         state,
         slug=slug,
         build=build,
@@ -1908,7 +1908,7 @@ def _watching_account_transfer(state, payload: dict, job_id: int | None = None) 
     if not source_token:
         raise LookupError(f"no server token could be obtained for {source.username!r} — cannot read its watching")
 
-    token = ctx.plextv.canary_server_token(account_id)
+    token = ctx.plextv.home_user_server_token(account_id)
     with state.sessions() as session:
         report = transfer_watch_history(
             session,
@@ -1967,7 +1967,7 @@ def _watching_account_undo(state, payload: dict, job_id: int | None = None) -> d
 
     ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
     dry_run = bool(ctx.config.dry_run) or requested
-    token = ctx.plextv.canary_server_token(account_id)
+    token = ctx.plextv.home_user_server_token(account_id)
 
     with state.sessions() as session:
         report = undo_transfer(

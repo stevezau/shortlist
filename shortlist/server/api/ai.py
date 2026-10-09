@@ -10,9 +10,9 @@ from pydantic import Field
 from shortlist.engine.candidates import EXTERNAL_SEARCH_MODES, LLM_WEB_K
 from shortlist.engine.curator.base import builtin_guidance, builtin_template, web_system_prompt
 from shortlist.engine.web_guidance import MAX_INSTRUCTIONS_CHARS, AiInstructions, resolve_guidance
-from shortlist.server.api.collections import AiInstructionsIn
 from shortlist.server.api.schemas import PassthroughModel, StrictRequestModel
 from shortlist.server.auth import require_owner
+from shortlist.server.services.row_editing import AiInstructionsIn
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/ai", tags=["ai"], dependencies=[Depends(require_owner)])

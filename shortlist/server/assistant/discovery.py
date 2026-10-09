@@ -54,14 +54,14 @@ def row_snapshot(row: Collection) -> dict:
     }
 
 
-def _page(items: list, limit: int, offset: int) -> dict:
+def paginate(items: list, limit: int, offset: int) -> dict:
     if not 1 <= limit <= 100 or not 0 <= offset <= 100_000:
         raise ValueError("invalid pagination")
     selected = items[offset : offset + limit]
     return {"items": selected, "next_offset": offset + limit if offset + limit < len(items) else None}
 
 
-def _ids(query, column, allowed: frozenset, future: bool):
+def restrict_to_ids(query, column, allowed: frozenset, future: bool):
     return query if future else query.where(column.in_(sorted(allowed)))
 
 
@@ -301,7 +301,7 @@ class DiscoveryService:
         ]
         return ToolResult(
             summary="Authoritative settings meanings, defaults and declared effects.",
-            data=_page(items, limit, offset),
+            data=paginate(items, limit, offset),
             warnings=["Catalog discovery describes available fields; it does not grant permission to change them."],
         )
 
@@ -357,7 +357,7 @@ class DiscoveryService:
                 for person in session.scalars(query)
             ]
         return ToolResult(
-            summary="Permitted people and operational readiness; no watch history.", data=_page(items, limit, offset)
+            summary="Permitted people and operational readiness; no watch history.", data=paginate(items, limit, offset)
         )
 
     def person_row_settings(self, principal: GrantContext, person_id: int, row_id: int) -> ToolResult:
@@ -420,7 +420,7 @@ class DiscoveryService:
     def rows(self, principal: GrantContext, *, limit: int = 25, offset: int = 0) -> ToolResult:
         require_authorized(principal, [Capability.CONFIG_READ])
         with self.state.sessions() as session:
-            query = _ids(
+            query = restrict_to_ids(
                 select(Collection).order_by(Collection.id),
                 Collection.id,
                 principal.constraints.row_ids,
@@ -429,7 +429,7 @@ class DiscoveryService:
             items = [self._row_summary(row) for row in session.scalars(query)]
         return ToolResult(
             summary="Permitted row definitions and their activation state.",
-            data=_page(items, limit, offset),
+            data=paginate(items, limit, offset),
             warnings=["Enabled configuration is not evidence of successful Plex delivery."],
         )
 
@@ -510,7 +510,7 @@ class DiscoveryService:
             )
 
     def _permitted_theme_ids(self, session, principal: GrantContext) -> set[int]:
-        query = _ids(
+        query = restrict_to_ids(
             select(Collection), Collection.id, principal.constraints.row_ids, principal.constraints.include_future_rows
         )
         rows = list(session.scalars(query))
@@ -555,7 +555,7 @@ class DiscoveryService:
                 }
                 for row in session.scalars(query)
             ]
-        return ToolResult(summary="Themes used by permitted rows and people.", data=_page(items, limit, offset))
+        return ToolResult(summary="Themes used by permitted rows and people.", data=paginate(items, limit, offset))
 
     def theme(self, principal: GrantContext, theme_id: int) -> ToolResult:
         require_authorized(principal, [Capability.CONFIG_READ])

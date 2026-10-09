@@ -16,6 +16,14 @@ from sqlalchemy.orm import Session
 from shortlist.server.db.models import DEFAULT_SLUG, Collection
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services.plex_reachability import describe_address
+from shortlist.server.services.settings_validation import (
+    FETCHED_URL_KEYS,
+    KNOWN_KEYS,
+    REDACTED_PLACEHOLDER,
+    reject_blocked_urls,
+    settings_diff,
+    validate_values,
+)
 from shortlist.server.settings_store import DEFAULTS, SECRET_KEYS, SettingsStore
 
 
@@ -32,13 +40,12 @@ def prepare_settings_in_session(
 ) -> SettingsMutation:
     """Validate a complete update and derive ordered effects without changing any row."""
     # These validators also serve the existing browser's connection/probe forms.
-    from shortlist.server.api.settings import (
-        _FETCHED_URL_KEYS,
-        KNOWN_KEYS,
-        REDACTED_PLACEHOLDER,
-        _reject_blocked_urls,
-        _settings_diff,
-        _validate_values,
+    from shortlist.server.assistant.row_effects import (
+        cache_invalidate_step,
+        log_configure_step,
+        privacy_sync_step,
+        row_rename_step,
+        schedule_rebuild_step,
     )
     from shortlist.server.scheduler import DEFAULT_CRONS
 
@@ -47,8 +54,8 @@ def prepare_settings_in_session(
         raise HTTPException(status_code=422, detail=f"unknown settings: {sorted(unknown)}")
     if set(values) & set(resets):
         raise HTTPException(status_code=422, detail="A setting cannot be assigned and reset in the same change.")
-    _validate_values(values)
-    _reject_blocked_urls(values)
+    validate_values(values)
+    reject_blocked_urls(values)
     store = SettingsStore(session, secrets)
     normalized = {}
     reset_keys = set(resets)
@@ -58,8 +65,8 @@ def prepare_settings_in_session(
         if value is None and key in DEFAULT_CRONS:
             reset_keys.add(key)
         else:
-            normalized[key] = value.strip() if key in _FETCHED_URL_KEYS and isinstance(value, str) else value
-    changed = _settings_diff(store, normalized)
+            normalized[key] = value.strip() if key in FETCHED_URL_KEYS and isinstance(value, str) else value
+    changed = settings_diff(store, normalized)
     for key in reset_keys:
         if store.has_row(key):
             changed[key] = {
@@ -91,25 +98,17 @@ def prepare_settings_in_session(
 
     steps = []
     if bool(after("privacy.hide_shared_from_disabled")) != bool(store.get("privacy.hide_shared_from_disabled")):
-        steps.append({"kind": "privacy.sync", "payload": {"reason": "the shared-row privacy setting changed"}})
+        steps.append(privacy_sync_step("the shared-row privacy setting changed"))
     if new_name != old_name:
         steps.append(
-            {
-                "kind": "row.rename",
-                "payload": {
-                    "slug": DEFAULT_SLUG,
-                    "new_template": new_name,
-                    "old_template": old_name,
-                    "scope": "settings.rename",
-                },
-            }
+            row_rename_step(DEFAULT_SLUG, new_template=new_name, old_template=old_name, scope="settings.rename")
         )
     if set(changed) & (set(DEFAULT_CRONS) | {"backup.max_keep"}):
-        steps.append({"kind": "schedule.rebuild", "payload": {}})
+        steps.append(schedule_rebuild_step())
     if "log.level" in changed:
-        steps.append({"kind": "log.configure", "payload": {"level": after("log.level")}})
+        steps.append(log_configure_step(after("log.level")))
     if set(changed) & {"plex.url", "plex.token"}:
-        steps.append({"kind": "cache.invalidate", "payload": {}})
+        steps.append(cache_invalidate_step())
     return SettingsMutation(normalized, tuple(sorted(reset_keys)), changed, tuple(steps))
 
 

@@ -70,7 +70,7 @@ variables, each of which needs its full matrix:
 
 - `user_type`: shared / managed / owner
 - watch-history token acquisition: owner (admin token) / shared (own roster token) / managed (roster
-  miss, switched to a canary-exchanged token) — the one `HistorySource` implementation
+  miss, switched to a switch-exchanged token) — the one `HistorySource` implementation
   (`history.py:34`) branches on this, not on which history backend is in play; see
   `test_history.py:31,41,61,74`
 - curator provider: anthropic / openai / google / ollama / null

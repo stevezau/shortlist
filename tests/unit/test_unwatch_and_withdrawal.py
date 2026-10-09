@@ -396,7 +396,7 @@ class TestUnwatchingAndSharedRows:
     but it is only correct because of a property of `shared_credits` that nothing pinned."""
 
     def test_a_shared_credit_always_has_playback_behind_it(self, world):
-        """`shared_credits` has no snapshot path: it reads `_scan_plays` and nothing else. So every
+        """`shared_credits` has no snapshot path: it reads `scan_plays` and nothing else. So every
         shared credit is one we WATCHED HAPPEN, which is exactly the class `_withdraw_unwatched`
         refuses to take back. If a snapshot path were ever added here, shared credits would become
         withdrawable and this would need revisiting."""

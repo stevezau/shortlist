@@ -141,9 +141,7 @@ def rotate(sessions, author, now: datetime = NOW):
         now=now,
         secrets=object(),
         author=author,
-        curator="curator",
-        tmdb=_Tmdb(),
-        plex="plex",
+        tools=lambda: theme_rotation.AuthoringTools(curator="curator", tmdb=_Tmdb(), plex="plex"),
         profile_for=profile_for,
     )
 
@@ -418,11 +416,10 @@ class TestUnavailable:
             sessions,
             now=NOW,
             secrets=object(),
-            unavailable="Choosing new themes needs an AI provider. Add one in Settings.",
             author=author,
-            curator=None,
-            tmdb=None,
-            plex=None,
+            tools=lambda: theme_rotation.AuthoringTools(
+                unavailable="Choosing new themes needs an AI provider. Add one in Settings."
+            ),
             profile_for=profile_for,
         )
 

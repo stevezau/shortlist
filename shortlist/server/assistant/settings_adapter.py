@@ -103,10 +103,10 @@ class SettingsAdapter:
             ),
             "people": fingerprint(list(people)),
         }
-        from shortlist.server.api.settings import _FETCHED_URL_KEYS
+        from shortlist.server.services.settings_validation import FETCHED_URL_KEYS
 
         destinations = []
-        for key in sorted(keys & set(_FETCHED_URL_KEYS)):
+        for key in sorted(keys & set(FETCHED_URL_KEYS)):
             value = body.values.get(key) if key in body.values else get_setting_definition(key).default
             if not value or key not in mutation.changed:
                 continue

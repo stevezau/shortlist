@@ -10,7 +10,6 @@ from hypothesis import strategies as st
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from shortlist.server.api.collections import CollectionIn
 from shortlist.server.assistant.changes import ChangeError, ChangeService
 from shortlist.server.assistant.discovery import DiscoveryService
 from shortlist.server.assistant.monitoring import MonitoringService
@@ -28,6 +27,7 @@ from shortlist.server.db.models import (
     Server,
     User,
 )
+from shortlist.server.services.row_editing import CollectionIn
 from shortlist.server.services.row_mutations import create_row_in_session, delete_row_in_session
 from shortlist.server.services.secrets import SecretBox
 from tests.db_helpers import create_schema, disposing_engine
@@ -237,7 +237,7 @@ def test_retained_delivery_snapshot_reserves_the_deleted_row_slug(row_identity_w
 @settings(max_examples=12)
 @given(suffix=st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789_-\".'", min_size=1, max_size=15))
 def test_personal_history_reservation_matches_exact_slug_keys(suffix):
-    from shortlist.server.api.collections import _unique_slug
+    from shortlist.server.services.row_editing import unique_slug
 
     with disposing_engine(create_engine("sqlite://")) as engine:
         create_schema(engine)
@@ -251,5 +251,5 @@ def test_personal_history_reservation_matches_exact_slug_keys(suffix):
             session.add(RunUser(run_id=run.id, user_id=person.id, rows_considered={slug: "not_due"}))
             session.commit()
 
-            assert _unique_slug(session, slug) != slug
-            assert _unique_slug(session, f"{slug}_unrelated") == f"{slug}_unrelated"
+            assert unique_slug(session, slug) != slug
+            assert unique_slug(session, f"{slug}_unrelated") == f"{slug}_unrelated"

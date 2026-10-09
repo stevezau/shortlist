@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field, model_validator
 from sqlalchemy import and_, select
 
-from shortlist.server.api.seasons import CollectionIO, DateRuleIO, PickIO, SeasonIn, TagIO
+from shortlist.server.api.seasons import DateRuleIO, PickIO, SeasonIn
 from shortlist.server.api.users import BlockSeedBody, UserPatch, UserPrefs
 from shortlist.server.db.models import (
     Collection,
@@ -30,6 +30,7 @@ from shortlist.server.services.person_row_overrides import (
 )
 from shortlist.server.services.person_up_next import apply_up_next_in_session, prepare_up_next_in_session
 from shortlist.server.services.season_changes import apply_season_in_session, prepare_season_in_session
+from shortlist.server.services.theme_models import CollectionIO, TagIO
 from shortlist.server.services.theme_store import TitleClash
 
 from .changes import AccessRequirements, DomainPlan, DomainResult, fingerprint
@@ -121,7 +122,7 @@ class SeasonsIntent(StrictModel):
         return self
 
 
-def _snapshot(session, model, *, where=None) -> str:
+def table_snapshot(session, model, *, where=None) -> str:
     # Hash complete authoritative state, including private fields, without returning it to the assistant.
     records = []
     query = select(model).order_by(*model.__table__.primary_key.columns)
@@ -136,9 +137,9 @@ def _snapshot(session, model, *, where=None) -> str:
     return fingerprint(records)
 
 
-def _dependencies(session) -> dict[str, str]:
+def table_dependencies(session) -> dict[str, str]:
     return {
-        model.__tablename__: _snapshot(session, model)
+        model.__tablename__: table_snapshot(session, model)
         for model in (
             Collection,
             CollectionAudience,
@@ -158,12 +159,12 @@ class PeopleAdapter:
 
     @contextmanager
     def transaction_lock(self, normalized_intent: dict):
-        from shortlist.server.services.theme_rotation import _target_lock
+        from shortlist.server.services.theme_rotation import target_lock
 
         body = PeopleIntent.model_validate(normalized_intent)
         with ExitStack() as locks:
             for row_id in sorted(override.row_id for override in body.row_overrides if override.up_next_theme_id):
-                locks.enter_context(_target_lock(row_id, body.person_id))
+                locks.enter_context(target_lock(row_id, body.person_id))
             yield
 
     def _up_next(self, session, body: PeopleIntent):
@@ -230,7 +231,7 @@ class PeopleAdapter:
         steps = tuple(step for mutation in (person_mutation, *override_mutations) for step in mutation.steps)
         if any(step["kind"] == "row.reconcile" for step in steps):
             capabilities.add("runs.execute")
-        dependencies = _dependencies(session)
+        dependencies = table_dependencies(session)
         if selections:
             capabilities.add("themes.write")
             target_history = and_(
@@ -248,8 +249,8 @@ class PeopleAdapter:
                     )
                 )
             )
-            dependencies["up_next_themes"] = _snapshot(session, Theme, where=Theme.id.in_(selected_theme_ids))
-            dependencies["up_next_history"] = _snapshot(session, ThemeHistory, where=target_history)
+            dependencies["up_next_themes"] = table_snapshot(session, Theme, where=Theme.id.in_(selected_theme_ids))
+            dependencies["up_next_history"] = table_snapshot(session, ThemeHistory, where=target_history)
             diff["up_next"] = [
                 {"row_id": selection.collection.id, "person_id": body.person_id, "theme_id": selection.theme.id}
                 for selection in selections
@@ -345,7 +346,7 @@ class SeasonsAdapter:
         libraries = {str(key) for row in rows for key in row.library_keys}
         if body.definition:
             libraries.update(c.section_key for c in body.definition.collections)
-        dependencies = _dependencies(session)
+        dependencies = table_dependencies(session)
         dependencies["calendar_day"] = fingerprint(context_builder.local_now().date().isoformat())
         return DomainPlan(
             normalized_intent=body.model_dump(mode="json", exclude_unset=True),

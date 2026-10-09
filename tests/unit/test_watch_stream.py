@@ -898,7 +898,7 @@ class TestTheDiagnosticBreadcrumb:
     def test_it_is_not_writable_through_the_settings_api(self, sessions):
         """It raises a NON-dismissable alert, so a settings write that could clear it would be a way
         to silence exactly the warning that must not be silenceable."""
-        from shortlist.server.api.settings import KNOWN_KEYS
+        from shortlist.server.services.settings_validation import KNOWN_KEYS
 
         assert "watch.stream_down_since" not in KNOWN_KEYS
         assert "watch.stream_connected_at" not in KNOWN_KEYS
