@@ -261,7 +261,7 @@ function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
   return (
     <div className="space-y-3">
       <div className="flex items-baseline gap-2">
-        <h3 className="text-sm font-semibold">{active?.row_title}</h3>
+        <h2 className="text-sm font-semibold">{active?.row_title}</h2>
         {added > 0 && (
           <span className="text-xs text-success">+{added} new</span>
         )}

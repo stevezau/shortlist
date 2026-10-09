@@ -10,6 +10,7 @@ import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
 import { RowName } from "@/components/rows/row-name";
+import { LIBRARY_NAME } from "@/lib/placeholders";
 import { Segmented } from "@/components/segmented";
 import { UserPanel } from "@/components/runs/user-panel";
 import { UserTabs } from "@/components/runs/user-tabs";
@@ -41,6 +42,36 @@ const DECISION_LABEL: Record<string, string> = {
   not_due: "not due",
   out_of_season: "out of season",
 };
+
+/**
+ * The row's name in its card header. The header spans every library the row built, so the
+ * `{library_name}` token is resolved once per library ("✨ Movies Picked for You · ✨ TV Shows Picked
+ * for You") rather than drawn as a chip. A row that delivered nothing has no library to name, so its
+ * token is dropped (`group.title`) instead; any other placeholder still gets `RowName`'s chip.
+ */
+function RowHeaderName({ group, libraries }: { group: RunRowGroup; libraries: string }) {
+  if (!group.template.includes(LIBRARY_NAME)) {
+    return (
+      <>
+        <RowName name={group.template} />
+        {libraries && (
+          <span className="text-xs tracking-wide text-muted-foreground uppercase">{libraries}</span>
+        )}
+      </>
+    );
+  }
+  if (group.libraries.length === 0) return <span className="font-medium">{group.title}</span>;
+  return (
+    <>
+      {group.libraries.map((library, i) => (
+        <span key={library}>
+          {i > 0 && <span className="mr-2 text-muted-foreground">·</span>}
+          <RowName name={group.template} libraryName={library} />
+        </span>
+      ))}
+    </>
+  );
+}
 
 /** "+7 −7 · kept 8" for one library's delivery. */
 function diffLabel(entry: RunLibraryBreakdown): string {
@@ -244,14 +275,7 @@ function RowCard({
           />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              {/* The header spans every library the row built, so no one library can fill
-                  `{library_name}`; the chip says what it is instead of dropping it. */}
-              <RowName name={group.template} />
-              {libraries && (
-                <span className="text-xs tracking-wide text-muted-foreground uppercase">
-                  {libraries}
-                </span>
-              )}
+              <RowHeaderName group={group} libraries={libraries} />
             </span>
             <span className="text-xs text-muted-foreground">
               {group.kind === "shared" ? "Shared" : "Per-person"} ·{" "}

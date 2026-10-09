@@ -3,7 +3,6 @@ import { Download, Play } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import {
   QueryBoundary,
   EmptyState,
@@ -39,6 +38,7 @@ import {
 import { mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
 import { errorBucket } from "@/lib/run-format";
 import { privacyFindings } from "@/lib/run-privacy";
+import { runHealth } from "@/lib/run-status";
 import { RunProgress } from "@/components/runs/run-progress";
 import { useHashScroll } from "@/lib/use-hash-scroll";
 import { useSSE } from "@/lib/sse";
@@ -264,8 +264,6 @@ export function RunDetailPage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to="/runs" label="Runs" />
-
       {!Number.isFinite(runId) ? (
         <EmptyState
           title="That run doesn’t exist"
@@ -285,7 +283,27 @@ export function RunDetailPage() {
             <div className="space-y-6">
               <PageHeader
                 className="mb-0"
-                title={`Run #${run.id}`}
+                title={
+                  // The breadcrumb is part of the title line, so this page's title sits at the same
+                  // height as every other page's.
+                  <>
+                    <Link to="/runs" className="font-normal text-muted-foreground hover:text-foreground">
+                      Runs
+                    </Link>
+                    <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
+                      /
+                    </span>
+                    Run #{run.id}
+                    {run.finished_at && (
+                      <Badge
+                        variant={runHealth(run).tone === "warn" ? "warning" : runStatusVariant(run.status)}
+                        className="ml-3 align-middle"
+                      >
+                        {runHealth(run).label}
+                      </Badge>
+                    )}
+                  </>
+                }
                 // `runs.started_at` is stamped at INSERT — when the run was ASKED for, not when it
                 // began — so a run still waiting on the writer lock read "started 03:30 · still
                 // running" directly under a badge saying "Queued". This is also the page the Rows
@@ -351,17 +369,18 @@ export function RunDetailPage() {
                           </Button>
                         </>
                       )}
-                    {/* The screen's one filled-amber action, once there is nothing to cancel: the same
-                        mutation the Runs page uses, then straight to the new run, as the Rows page does. */}
+                    {/* Outline, not amber: a past run is a record, and re-running it is the same mutation
+                        the Runs page uses, then straight to the new run, as the Rows page does. */}
                     {run.finished_at && (
                       <Button
+                        variant="outline"
                         loading={startRun.isPending}
                         onClick={() =>
                           startRun.mutate({}, { onSuccess: (created) => void navigate(`/runs/${created.run_id}`) })
                         }
                       >
                         {!startRun.isPending && <Play aria-hidden="true" />}
-                        Run now
+                        Run again
                       </Button>
                     )}
                   </>

@@ -183,6 +183,35 @@ describe("RunsPage — the headline above the table", () => {
     expect(screen.queryByText("Failed")).toBeNull();
   });
 
+  it("does not call a run with a privacy warning clean", async () => {
+    // The strip said "all finished cleanly" for a run the dashboard and the run page call
+    // "OK with warnings".
+    getRunsSummary.mockResolvedValue({
+      total: 1,
+      ok: 1,
+      error: 0,
+      last_finished: "2026-09-04T18:00:00Z",
+      last_status: "ok",
+    });
+    getRuns.mockResolvedValue([
+      {
+        id: 7,
+        trigger: "schedule",
+        status: "ok",
+        started_at: "2026-09-04T17:58:00Z",
+        finished_at: "2026-09-04T18:00:00Z",
+        dry_run: false,
+        privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] },
+        stats: { users_ok: 3, users_error: 0 },
+      },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText("1 with warnings")).toBeInTheDocument();
+    expect(screen.queryByText(/all finished cleanly/i)).toBeNull();
+    expect(screen.getAllByText("OK with warnings").length).toBeGreaterThan(0);
+  });
+
   it("keeps the one number that cannot be derived — how many failed", async () => {
     getRunsSummary.mockResolvedValue({
       total: 12,

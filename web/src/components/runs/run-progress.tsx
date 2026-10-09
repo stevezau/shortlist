@@ -2,6 +2,7 @@ import { Check, ChevronRight, Clock3, Info } from "lucide-react";
 import { Link } from "react-router";
 
 import { RowName } from "@/components/rows/row-name";
+import { rowDisplayName } from "@/lib/run-rows";
 import { formatDuration } from "@/lib/format";
 import { currentPhase, inFlight, peopleProgress } from "@/lib/run-format";
 import { describeCounts, STAGE_LABELS } from "@/lib/run-stages";
@@ -28,7 +29,7 @@ export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogE
       <div className="space-y-3 px-4 py-4 sm:px-6">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               {run.status === "queued" ? "Waiting to start" : phase?.tail ? "Finishing up" : "In progress"}
             </p>
             <h2 className="mt-1 text-lg font-medium tracking-tight sm:text-xl">
@@ -38,7 +39,7 @@ export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogE
           {progress && (
             <p className="shrink-0 text-3xl font-semibold leading-none tracking-tight tabular-nums">
               {progress.done}<span className="ml-1.5 text-base font-normal text-muted-foreground">/ {progress.total}</span>
-              <span className="mt-0.5 block text-right text-[10px] font-normal leading-4 tracking-normal text-muted-foreground">people processed</span>
+              <span className="mt-0.5 block text-right text-xs font-normal leading-4 tracking-normal text-muted-foreground">people processed</span>
             </p>
           )}
         </div>
@@ -47,7 +48,7 @@ export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogE
             <div className="h-full rounded-full bg-primary transition-[width] motion-reduce:transition-none" style={{ width: `${percent}%` }} />
           </div>
         )}
-        <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span>{percent !== null ? `${percent}% processed · ` : ""}{working.length} {working.length === 1 ? "person" : "people"} in progress</span>
           <span className="flex flex-wrap gap-x-3">
             {elapsed !== null && <span>{formatDuration(elapsed)} elapsed</span>}
@@ -60,7 +61,7 @@ export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogE
 
       {working.length > 0 && (
         <div className="border-t border-border/60 px-4 sm:px-6">
-          <p className="pb-1 pt-3 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Working on now</p>
+          <p className="pb-1 pt-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">Working on now</p>
           <ul aria-label="In progress" className="divide-y divide-border/60">
             {working.map((person) => {
               const entry = latest.get(person.slug);
@@ -75,21 +76,21 @@ export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogE
                 <li key={person.slug}>
                   <details className="group" open={writing || undefined}>
                     <summary className="grid cursor-pointer list-none grid-cols-[1.75rem_minmax(0,1fr)_auto_0.75rem] items-center gap-2 py-2 marker:content-none sm:grid-cols-[2rem_minmax(0,1fr)_9rem_0.75rem] sm:gap-3 sm:py-1.5 [&::-webkit-details-marker]:hidden">
-                      <span aria-hidden="true" className="grid size-7 place-items-center rounded-full bg-primary/10 text-[10px] font-medium text-primary/80 sm:size-8">{initials}</span>
+                      <span aria-hidden="true" className="grid size-7 place-items-center rounded-full bg-primary/10 text-xs font-medium text-primary/80 sm:size-8">{initials}</span>
                       <span className="min-w-0">
                         <span className="block text-xs font-medium leading-4">{person.name}</span>
-                        <span className="mt-0.5 block break-words text-[10px] leading-4 text-muted-foreground">
-                          {row ? <RowName name={row} libraryName={library} className="font-normal" /> : library ?? "Preparing recommendations"}
+                        <span className="mt-0.5 block break-words text-xs leading-4 text-muted-foreground">
+                          {row ? <RowName name={library ? row : rowDisplayName(row)} libraryName={library} className="font-normal" /> : library ?? "Preparing recommendations"}
                         </span>
                       </span>
-                      <span className={`flex items-center justify-end gap-1.5 text-[10px] sm:justify-start sm:text-xs ${writing ? "text-primary" : "text-muted-foreground"}`}>
+                      <span className={`flex items-center justify-end gap-1.5 text-xs sm:justify-start sm:text-xs ${writing ? "text-primary" : "text-muted-foreground"}`}>
                         {waiting ? <Clock3 aria-hidden="true" className="size-3 shrink-0" /> : writing ? <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" /> : null}
                         {waiting ? "Waiting for Plex" : writing ? "Writing to Plex" : STAGE_LABELS[entry?.stage ?? ""] ?? entry?.stage}
                       </span>
                       <ChevronRight aria-hidden="true" className="size-3 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" />
                     </summary>
                     <div className="mb-2 ml-9 space-y-1 border-l-2 border-primary/35 pl-3 text-xs sm:ml-11">
-                      <p className="text-[11px] leading-relaxed text-muted-foreground">{waiting ? "Titles are ready. Waiting for the current Plex write to finish." : `${library ? `${library} · ` : ""}${describeCounts(Object.fromEntries(Object.entries(counts).filter(([key]) => key !== "row" && key !== "library"))) || (STAGE_LABELS[entry?.stage ?? ""] ?? entry?.stage)}`}</p>
+                      <p className="text-xs leading-relaxed text-muted-foreground">{waiting ? "Titles are ready. Waiting for the current Plex write to finish." : `${library ? `${library} · ` : ""}${describeCounts(Object.fromEntries(Object.entries(counts).filter(([key]) => key !== "row" && key !== "library"))) || (STAGE_LABELS[entry?.stage ?? ""] ?? entry?.stage)}`}</p>
                       <Link to={destination} className="inline-flex items-center gap-1 font-medium text-primary hover:underline">
                         Open {person.name}’s row and library details <ChevronRight aria-hidden="true" className="size-3" />
                       </Link>
@@ -110,7 +111,7 @@ export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogE
           <ul aria-label="Processed people" className="flex flex-wrap gap-1.5">
             {processed.map((person) => (
               <li key={person.slug}>
-                <Link to={`?user=${encodeURIComponent(person.slug)}#run-rows`} className={`inline-flex rounded-md border px-2 py-1 text-[11px] transition-colors hover:border-primary/40 hover:text-primary ${person.error ? "border-destructive/25 text-destructive-text" : person.status === "skipped" ? "border-border text-muted-foreground" : "border-success/15 bg-success/[0.035] text-foreground/80"}`}>
+                <Link to={`?user=${encodeURIComponent(person.slug)}#run-rows`} className={`inline-flex rounded-md border px-2 py-1 text-xs transition-colors hover:border-primary/40 hover:text-primary ${person.error ? "border-destructive/25 text-destructive-text" : person.status === "skipped" ? "border-border text-muted-foreground" : "border-success/15 bg-success/[0.035] text-foreground/80"}`}>
                   {person.error ? "! " : person.status === "skipped" ? "— " : "✓ "}{person.display_name || person.username || person.slug}{person.error ? " · failed" : person.status === "skipped" ? " · skipped" : ""}
                 </Link>
               </li>
@@ -118,7 +119,7 @@ export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogE
           </ul>
         </div>
       )}
-      <details className="mx-4 border-t border-border/60 py-3 text-[11px] text-muted-foreground sm:mx-6">
+      <details className="mx-4 border-t border-border/60 py-3 text-xs text-muted-foreground sm:mx-6">
         <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden"><Info aria-hidden="true" className="size-3.5" />Why a refresh can take a while<ChevronRight aria-hidden="true" className="ml-auto size-3" /></summary>
         <p className="max-w-3xl pl-5 pt-2 leading-relaxed">Plex removes titles from a collection one at a time. On a large TV library, removing several titles can take a few minutes. Unchanged rows skip that work. Open a person’s row for its library and delivery details.</p>
       </details>
