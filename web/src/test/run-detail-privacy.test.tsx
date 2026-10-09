@@ -123,11 +123,11 @@ beforeEach(() => {
 });
 
 describe("the run summary's Result", () => {
-  it("reads 'OK with warnings' when an OK run flagged an account", async () => {
+  it("reads 'OK · 1 warning' when an OK run flagged an account", async () => {
     getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], ...VOUCHED } }));
     renderDetail();
 
-    expect(within(await strip()).getByText("OK with warnings")).toBeInTheDocument();
+    expect(within(await strip()).getByText("OK · 1 warning")).toBeInTheDocument();
     expect(within(await strip()).getByText(/1 warning/)).toBeInTheDocument();
   });
 

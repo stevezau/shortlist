@@ -209,7 +209,7 @@ describe("RunsPage — the headline above the table", () => {
 
     expect(await screen.findByText("1 with warnings")).toBeInTheDocument();
     expect(screen.queryByText(/all finished cleanly/i)).toBeNull();
-    expect(screen.getAllByText("OK with warnings").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^OK · \d+ warnings?$/).length).toBeGreaterThan(0);
   });
 
   it("keeps the one number that cannot be derived — how many failed", async () => {

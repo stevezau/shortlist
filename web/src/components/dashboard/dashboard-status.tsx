@@ -16,7 +16,7 @@ import {
 } from "@/lib/format";
 import { latestFinishedRun, nextRowRun } from "@/lib/dashboard-status";
 import { cannotHide, privacyGlance, rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
-import { privacyFindings } from "@/lib/run-privacy";
+import { runHealth } from "@/lib/run-status";
 import type {
   AccountPrivacy,
   EffectivenessReport,
@@ -34,22 +34,6 @@ function Pending() {
   return <Skeleton className="h-6 w-24" />;
 }
 
-/**
- * What the Last run cell says about a finished run: its status word, and how many warnings sit
- * behind an OK. A warning is an account the run flagged (`privacyFindings`), plus one for people it
- * failed to build for. A failed run keeps saying "Failed"; an OK run with any warning never reads
- * as a plain OK.
- *
- * One function so it can be swapped for the shared run-status helper without touching the cell.
- */
-function lastRunVerdict(run: Run): { label: string; warnings: number; tone: "ok" | "warn" | "error" } {
-  const failed = run.stats.users_error ?? 0;
-  const warnings = run.status === "ok" ? privacyFindings(run.privacy).length + (failed > 0 ? 1 : 0) : 0;
-  if (run.status === "error") return { label: runStatusLabel(run.status), warnings, tone: "error" };
-  if (warnings > 0) return { label: `OK · ${warnings} ${warnings === 1 ? "warning" : "warnings"}`, warnings, tone: "warn" };
-  return { label: runStatusLabel(run.status), warnings, tone: "ok" };
-}
-
 function LastRunCell({
   report,
   runs,
@@ -65,7 +49,7 @@ function LastRunCell({
   }
   const run = latestFinishedRun(runs.data);
   if (run) {
-    const verdict = lastRunVerdict(run);
+    const verdict = runHealth(run);
     const elapsed = runElapsedMs(run.began_at, run.finished_at);
     const people = run.stats.users_ok ?? 0;
     // People the run could not build for, named in the line under the verdict.
@@ -74,7 +58,8 @@ function LastRunCell({
       <StatusCell
         testId={testId}
         label="Last run"
-        tone={verdict.tone}
+        // An OK run that failed somebody keeps its label but goes amber, as it did before the redesign.
+        tone={verdict.tone === "ok" && failed > 0 ? "warn" : verdict.tone}
         value={
           verdict.warnings > 0 ? (
             <Badge variant="warning" className="border-warning/40">

@@ -6,15 +6,18 @@ const flagged = { can_see_others: ["kid"], unreadable_filters: [], filters_not_e
 const clean = { can_see_others: [], unreadable_filters: [], filters_not_enforced: [] };
 
 describe("runHealth", () => {
-  it("calls an ok run with a privacy finding 'OK with warnings'", () => {
+  it("calls an ok run with a privacy finding 'OK · 1 warning', counting each flagged account", () => {
     expect(runHealth({ status: "ok", privacy: flagged as never })).toEqual({
       tone: "warn",
-      label: "OK with warnings",
+      label: "OK · 1 warning",
+      warnings: 1,
     });
+    const two = { ...flagged, unreadable_filters: ["jess"] };
+    expect(runHealth({ status: "ok", privacy: two as never }).label).toBe("OK · 2 warnings");
   });
   it("keeps a clean ok run OK and a failed run Failed", () => {
     expect(runHealth({ status: "ok", privacy: clean as never }).label).toBe("OK");
-    expect(runHealth({ status: "error", privacy: flagged as never })).toEqual({ tone: "error", label: "Failed" });
+    expect(runHealth({ status: "error", privacy: flagged as never })).toEqual({ tone: "error", label: "Failed", warnings: 0 });
   });
 });
 

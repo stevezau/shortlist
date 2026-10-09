@@ -14,14 +14,9 @@ import { Link } from "react-router";
 import { StatusCell, StatusRow, StatusStrip } from "@/components/status-strip";
 import { Badge } from "@/components/ui/badge";
 import { formatDuration, runElapsedMs, runStatusLabel } from "@/lib/format";
-import {
-  hasPrivacyWarning,
-  nameList,
-  privacyFindings,
-  runPrivacyVerdict,
-  type RunPrivacy,
-} from "@/lib/run-privacy";
+import { nameList, runPrivacyVerdict, type RunPrivacy } from "@/lib/run-privacy";
 import { tokenSteps } from "@/lib/run-format";
+import { runHealth } from "@/lib/run-status";
 import type { RunDetail } from "@/lib/types";
 
 /** A finished run's summary: one strip of facts read at a glance, rather than one dense text line. */
@@ -308,14 +303,14 @@ function clockTime(iso: string): string {
 }
 
 /**
- * Did the run work. "OK with warnings" is not a status of its own — the server has none (five queries
+ * Did the run work. "OK · N warnings" is not a status of its own — the server has none (five queries
  * filter on `ok`/`error`) — it is an OK run whose privacy measurement flagged somebody.
  */
 function ResultCell({ run }: { run: RunDetail }) {
   const failed = run.stats.users_error ?? 0;
   if (run.status === "ok") {
-    const warnings = privacyFindings(run.privacy).length;
-    const warned = hasPrivacyWarning(run);
+    const health = runHealth(run);
+    const warned = health.warnings > 0;
     return (
       <StatusCell
         label="Result"
@@ -323,7 +318,7 @@ function ResultCell({ run }: { run: RunDetail }) {
         value={
           warned ? (
             <Badge variant="warning" className="border-warning/40">
-              OK with warnings
+              {health.label}
             </Badge>
           ) : (
             "OK"
@@ -331,7 +326,6 @@ function ResultCell({ run }: { run: RunDetail }) {
         }
         sub={[
           failed > 0 ? `${failed} ${failed === 1 ? "person" : "people"} failed` : "No errors",
-          ...(warned ? [`${warnings} ${warnings === 1 ? "warning" : "warnings"}`] : []),
         ].join(" · ")}
       />
     );
