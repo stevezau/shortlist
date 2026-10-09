@@ -553,12 +553,12 @@ function PendingRow({
         if (!disabled) onToggle(item.id);
       }}
       className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-xl border bg-card px-4 py-4 transition-colors",
+        "flex cursor-pointer items-start gap-3 px-4 py-4 transition-colors",
         // Selection is what the whole toolbar acts on, so a picked card says so on the card itself —
         // a 4px checkbox was the only difference between "will be sent" and "won't".
         checked
-          ? "border-primary/60 bg-primary/5"
-          : "hover:border-border hover:bg-muted/50",
+          ? "bg-raised/40"
+          : "hover:bg-muted/50",
       )}
     >
       <input
@@ -1894,9 +1894,7 @@ export function RequestsPage() {
                                 onChange={toggleAll}
                                 className="h-4 w-4 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
                               />
-                              {selectedPending.length > 0
-                                ? `${selectedPending.length} selected`
-                                : `${pendingShown.length} waiting`}
+                              {`${pendingShown.length} waiting`}
                             </label>
                             {/* Send first, and separated: it is the reason the page exists, and the
                                 page's one filled amber control. Named, because the cards carry their
@@ -1912,6 +1910,13 @@ export function RequestsPage() {
                                   : "hidden"
                               }
                             >
+                              <span className="text-sm font-medium">
+                                {selectedPending.length} selected
+                              </span>
+                              <span
+                                aria-hidden="true"
+                                className="mx-1 h-5 w-px bg-border"
+                              />
                               <Button
                                 size="sm"
                                 loading={send.isPending}
@@ -1928,16 +1933,8 @@ export function RequestsPage() {
                                 title={`Ask ${viaSeerr ? "Overseerr" : "Radarr or Sonarr"} for the selected titles now.`}
                               >
                                 {!send.isPending && <Send aria-hidden="true" />}
-                                Send{" "}
-                                {selectedPending.length > 0
-                                  ? selectedPending.length
-                                  : ""}{" "}
-                                to {viaSeerr ? "Overseerr" : "Radarr/Sonarr"}
+                                Send {selectedPending.length}
                               </Button>
-                              <span
-                                aria-hidden="true"
-                                className="mx-1 h-5 w-px bg-border"
-                              />
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1996,7 +1993,7 @@ export function RequestsPage() {
                           )}
 
                           {pendingShown.length > 0 ? (
-                            <div className="space-y-2">
+                            <div className="divide-y divide-border rounded-xl border bg-card shadow-elevated">
                               {pendingShown.map((item) => (
                                 <PendingRow
                                   key={item.id}
