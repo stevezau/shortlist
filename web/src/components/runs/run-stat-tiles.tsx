@@ -388,12 +388,14 @@ function PrivacyCell({ run }: { run: RunDetail }) {
           label="Privacy"
           tone={verdict.flagged.length > 0 ? "warn" : "neutral"}
           value="Not fully measured"
-          sub={
-            flaggedLink(verdict.flagged) ??
-            (run.privacy?.unreadable_filters === null
+          sub={[
+            flaggedLink(verdict.flagged),
+            run.privacy?.unreadable_filters === null
               ? "Plex’s share filters weren’t read on this run"
-              : "From an older version that didn’t check every account")
-          }
+              : "From an older version that didn’t check every account",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         />
       );
     case "no_accounts":

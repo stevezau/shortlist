@@ -157,6 +157,15 @@ describe("the run summary's Result", () => {
     expect(within(summary).getByText("OK")).toBeInTheDocument();
     expect(within(summary).queryByText(/with warnings/)).toBeNull();
   });
+
+  it("keeps the reason beside 'Details below' when an account is flagged and the filter read did not run", async () => {
+    getRun.mockResolvedValue(run({ privacy: { can_see_others: ["kid"], unreadable_filters: null, filters_not_enforced: null, ...VOUCHED } }));
+    renderDetail();
+
+    expect(
+      within(await strip()).getByText("Details below · Plex’s share filters weren’t read on this run"),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("the run summary's Privacy cell", () => {
