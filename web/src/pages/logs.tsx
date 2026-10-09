@@ -18,8 +18,29 @@ import { cn } from "@/lib/utils";
 // No TRACE: the rotating file sink these lines are read from is opened at DEBUG
 // (`configure_logging`), so TRACE entries never reach disk and the option could only ever show the
 // same rows as DEBUG while implying something quieter was being hidden.
-const LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"] as const;
-type Level = (typeof LEVELS)[number];
+const VIEWS = [
+  { value: "debug", label: "Debug", level: "DEBUG" },
+  { value: "all", label: "All", level: "INFO" },
+  // Reads at INFO and keeps only the warnings and the lines around them, so a warning is seen next
+  // to what happened just before it rather than as a line with no story.
+  { value: "warnings", label: "Warnings", level: "INFO" },
+  { value: "errors", label: "Errors", level: "ERROR" },
+] as const;
+type View = (typeof VIEWS)[number]["value"];
+
+/** How many lines either side of a warning the Warnings view keeps. */
+const CONTEXT = 2;
+
+const isWarning = (line: LogLine) => ["WARNING", "ERROR", "CRITICAL"].includes(line.level);
+
+/** The lines a view shows: everything the server returned, or for Warnings only the warnings and
+ *  the lines within {@link CONTEXT} of one. */
+function visibleLines(lines: LogLine[], view: View): LogLine[] {
+  if (view !== "warnings") return lines;
+  return lines.filter((_, i) =>
+    lines.slice(Math.max(0, i - CONTEXT), i + CONTEXT + 1).some(isWarning),
+  );
+}
 
 const LIMIT = 1000;
 
@@ -37,6 +58,7 @@ const LEVEL_CLASS: Record<string, string> = {
 };
 
 function LogRow({ line }: { line: LogLine }) {
+  const tint = line.level === "WARNING" ? "bg-warning/10" : isWarning(line) ? "bg-destructive/10" : "odd:bg-muted/20";
   // The message can be multi-line (a folded traceback), so it wraps and preserves its own newlines
   // while the row as a whole never forces the page sideways.
   return (
@@ -44,7 +66,7 @@ function LogRow({ line }: { line: LogLine }) {
     // (5.5rem) plus gutters left the message ~137px, so every line wrapped five or six deep and
     // four log lines filled a phone screen. Below `sm` the stamp and level share one line and the
     // message gets the full width underneath.
-    <div className="px-3 py-1 odd:bg-muted/20 sm:grid sm:grid-cols-[auto_5.5rem_1fr] sm:gap-x-3">
+    <div className={cn("px-3 py-1 sm:grid sm:grid-cols-[auto_5.5rem_1fr] sm:gap-x-3", tint)}>
       {/* Opacities here are set by measured contrast, not taste: /70 put the timestamp at 4.31:1 and
           /50 put the source ref at 2.78:1, both under AA at this 12px monospace size. */}
       <span className="mr-3 whitespace-nowrap text-muted-foreground/85 sm:mr-0">
@@ -80,10 +102,11 @@ function toPlainText(lines: LogLine[]): string {
 
 /** The Log tab of the Activity page (it was the Logs page until the two merged). */
 export function LogsPanel() {
-  const [level, setLevel] = useState<Level>("INFO");
-  // The next level DOWN, for the empty state's "show me more" button — a hardcoded "DEBUG" would be
+  const [view, setView] = useState<View>("all");
+  const { level } = VIEWS.find((option) => option.value === view) ?? VIEWS[1];
+  // The next view DOWN, for the empty state's "show me more" button — a hardcoded "Debug" would be
   // a no-op when you are already on it, and the button has to disappear rather than do nothing.
-  const quieter = LEVELS[LEVELS.indexOf(level) - 1];
+  const quieter = VIEWS[VIEWS.findIndex((option) => option.value === view) - 1];
   const [search, setSearch] = useState("");
   const [follow, setFollow] = useState(true);
   const { state: copyState, copy } = useCopy();
@@ -91,7 +114,7 @@ export function LogsPanel() {
   const query = useLogs(level, debouncedSearch, LIMIT, follow);
   const paneRef = useRef<HTMLDivElement>(null);
 
-  const lines = useMemo(() => query.data?.lines ?? [], [query.data]);
+  const lines = useMemo(() => visibleLines(query.data?.lines ?? [], view), [query.data, view]);
 
   // Follow the tail as new lines arrive, but never yank the page for reduced-motion users.
   //
@@ -147,11 +170,11 @@ export function LogsPanel() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented<Level>
-          value={level}
-          onChange={setLevel}
+        <Segmented<View>
+          value={view}
+          onChange={setView}
           ariaLabel="Show lines at this level or louder"
-          options={LEVELS.map((value) => ({ value, label: value }))}
+          options={VIEWS.map(({ value, label }) => ({ value, label }))}
         />
         <Input
           type="search"
@@ -161,7 +184,15 @@ export function LogsPanel() {
           aria-label="Filter log lines"
           className="h-9 w-full sm:w-64"
         />
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+        {view === "warnings" && (
+          <span className="text-sm text-muted-foreground sm:ml-auto">Warnings, with the lines around them</span>
+        )}
+        <label
+          className={cn(
+            "flex cursor-pointer items-center gap-2 text-sm text-muted-foreground",
+            view !== "warnings" && "sm:ml-auto",
+          )}
+        >
           <Switch
             checked={follow}
             onCheckedChange={setFollow}
@@ -175,17 +206,21 @@ export function LogsPanel() {
       <QueryBoundary
         query={query}
         skeleton={<Skeleton className="h-96 w-full" />}
-        isEmpty={(page: LogPage) => page.lines.length === 0}
+        isEmpty={(page: LogPage) => visibleLines(page.lines, view).length === 0}
         // The hint states the fact; the remedies are buttons. They were prose ("Try DEBUG, or clear
         // the filter") naming two controls already on this page — an instruction to go and find
         // something, where the thing itself fits in the same space.
         empty={
           <EmptyState
-            title={search ? "Nothing matches that filter" : "No log lines yet"}
+            title={
+              search ? "Nothing matches that filter" : view === "warnings" ? "No warnings" : "No log lines yet"
+            }
             hint={
               search
                 ? `No ${level}-or-louder lines contain “${search}”.`
-                : `Nothing has been logged at ${level} or louder yet.`
+                : view === "warnings"
+                  ? "Nothing has logged a warning or an error recently."
+                  : `Nothing has been logged at ${level} or louder yet.`
             }
             action={
               search || quieter ? (
@@ -203,9 +238,9 @@ export function LogsPanel() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setLevel(quieter)}
+                      onClick={() => setView(quieter.value)}
                     >
-                      Show {quieter} and louder
+                      Show {quieter.label} and louder
                     </Button>
                   )}
                 </div>
@@ -227,7 +262,7 @@ export function LogsPanel() {
                 role="log"
                 aria-label="Application logs"
               >
-                {page.lines.map((line, i) => (
+                {lines.map((line, i) => (
                   <LogRow key={`${line.ts}-${i}`} line={line} />
                 ))}
               </div>
@@ -240,7 +275,7 @@ export function LogsPanel() {
             <p className="text-xs text-muted-foreground">
               {page.truncated
                 ? `Showing the newest ${page.lines.length} of ${page.total_matched} matching lines`
-                : `${page.lines.length} ${page.lines.length === 1 ? "line" : "lines"}`}
+                : `${lines.length} ${lines.length === 1 ? "line" : "lines"}`}
               {page.file ? ` · ${page.file}` : ""} · everything down to DEBUG is
               recorded whatever level you pick &mdash; the full history is in
               the download
