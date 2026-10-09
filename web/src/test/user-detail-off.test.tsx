@@ -85,6 +85,48 @@ describe("an Off person's page", () => {
     expect(screen.getByRole("switch", { name: /does not apply while kid is off/ })).toBeDisabled();
   });
 
+  it("offers the fix in Plex, not a Turn on that could not change anything, when a profile keeps them off", () => {
+    renderBody(KID);
+
+    expect(screen.queryByRole("button", { name: "Turn on" })).toBeNull();
+    expect(screen.getByRole("link", { name: /Fix in Plex/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("app.plex.tv"),
+    );
+  });
+
+  it("badges the profile as a neutral outline, not a red alarm", () => {
+    renderBody(KID);
+
+    const badge = screen.getByText("Restriction: Older Kid");
+    expect(badge.className).not.toMatch(/bg-destructive/);
+    expect(badge.className).toMatch(/border/);
+  });
+
+  it("leads the title with a Users breadcrumb instead of a back line above it", () => {
+    renderBody(KID);
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Users/kid");
+    expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
+  });
+
+  it("names unbuilt rows in plain words, never with raw tokens or token chips", async () => {
+    const original = userRows.current;
+    userRows.current = [
+      { collection_id: 2, slug: "because", name: "🎯 Because you watched {top_seed}", library: "", media: "movie", size: 20, recent_count: 8, is_default: false, muted: false, override: {}, picks: [] } as unknown as UserRow,
+      { collection_id: 3, slug: "seen", name: "☕ {library_name} you've already seen", library: "", media: "both", size: 15, recent_count: 8, is_default: false, muted: false, override: {}, picks: [] } as unknown as UserRow,
+    ];
+    try {
+      renderBody(KID);
+
+      expect(await screen.findByText("🎯 Because you watched …")).toBeInTheDocument();
+      expect(screen.getByText("☕ You've already seen")).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain("{");
+    } finally {
+      userRows.current = original;
+    }
+  });
+
   it("counts rows, not collections, and gives the Plex fix once", async () => {
     renderBody(KID);
 

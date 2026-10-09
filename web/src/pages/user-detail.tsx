@@ -2,7 +2,6 @@ import { Clock } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { OwnerNote } from "@/components/owner-note";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Tabs, TabPanel } from "@/components/ui/tabs";
@@ -186,7 +185,6 @@ export function UserDetailPage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to="/users" label="Users" />
       <QueryBoundary
         query={usersQuery}
         skeleton={<Skeleton className="h-64 w-full" />}
