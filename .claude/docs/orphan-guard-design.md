@@ -208,7 +208,7 @@ cheap risk reduction for a one-line config knob.
 
 ## 5. The missing test
 
-### Layer 1 — unit, `tests/unit/test_delivery.py::TestSweepBrokenRows`
+### Layer 1 — unit, `tests/unit/test_delivery_sweep.py::TestSweepBrokenRows` (split out of `test_delivery.py` 2026-10-10)
 
 The regression test that actually pins the fix (**fails against today's code** —
 `confirm_unlabelled.call_count == 2` is false today, per
@@ -308,7 +308,7 @@ PMS-shape-accurate path — which no mock-only test can promise.
 - **Mandatory Architecture Review before commit** per `.claude/CLAUDE.md`'s risk list: this touches
   the Plex write path and the orphan-deletion path specifically.
 - **Never verify against a large production server or any real server without explicit consent.** Verification with zero
-  real-server risk: `pytest tests/unit/test_delivery.py tests/integration/test_engine_vs_fake.py -q`
+  real-server risk: `pytest tests/unit/test_delivery_sweep.py tests/integration/test_engine_vs_fake.py -q`
   — everything here is fake/mock-backed. If real confirmation is wanted later it goes through
   `shortlist run --user <slug> --dry-run` and, since this path is about *deletion*, should be
   rehearsed against a disposable canary collection, never a real user's row, and only with an

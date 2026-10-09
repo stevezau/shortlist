@@ -46,22 +46,22 @@ Invalidated on run finish, the watch-sync stamp, `watch.reconcile`, `clear_delet
 
 ### Left open
 
-- **LOW — a `rebuild_schedule` that lands while the loop is stalled loses that night's run.**
+- **FIXED 2026-10-10 (c564d28e) — LOW — a `rebuild_schedule` that lands while the loop is stalled loses that night's run.**
   Precondition: it runs before a due row job has been dispatched, so the next fire time is recomputed
   from now and the due one is dropped.
-- **LOW — the "no picks produced" line still says rows are left as they are when the only removals were
+- **FIXED 2026-10-10 (c564d28e) — LOW — the "no picks produced" line still says rows are left as they are when the only removals were
   swept unhideable rows.** The sweep's removals are added to the person's diff after the line is logged.
-- **LOW — a skipped scheduled job is not a webhook event.** It reaches the bell and the events log only.
-- **LOW — sessions orphaned by a crash are closed at boot with end reason `timeout`,** the same value a
+- **FIXED 2026-10-10 (c564d28e; `job.skipped`) — LOW — a skipped scheduled job is not a webhook event.** It reaches the bell and the events log only.
+- **FIXED 2026-10-10 (c564d28e; now `orphaned`) — LOW — sessions orphaned by a crash are closed at boot with end reason `timeout`,** the same value a
   real 5-minute timeout writes. Nothing reads `end_reason` today.
-- **LOW — web search keeps a few loose ends.** A failed seed is never cached, so it is retried every
+- **FIXED 2026-10-10 (c564d28e) — LOW — web search keeps a few loose ends.** A failed seed is never cached, so it is retried every
   night; `failed_seeds` is saved in the trace but no screen shows it; `exa_searches` counts failed
   searches too.
 - **LOW — a Plex collection write that outlasts the 150s read timeout still completes on the server.**
   Worst seen 186.6s under load from another tool, so the retry repeats a write that already landed.
   Owner chose to move the row run's start time rather than change the timeout (2026-10-02).
   Owner-accepted trade-off; still open 2026-10-05.
-- **LOW — the dashboard report cache (120s) can lag on two events nothing invalidates:** live-playback
+- **FIXED 2026-10-10 (c564d28e; playback credits already invalidated) — LOW — the dashboard report cache (120s) can lag on two events nothing invalidates:** live-playback
   credits and retention pruning. Added 2026-10-05; see the cache entry above.
 
 ### Left on purpose (owner decisions 2026-10-02)
@@ -1405,11 +1405,15 @@ test_what_another_top_seed_row_was_delivered_as_is_claimed_in_that_library`.
 
 ---
 
-## OPEN — pre-release review leftovers (2026-10-09)
+## OPEN — pre-release review leftovers (2026-10-09; worked 2026-10-10)
 
 The whole-repo pre-release review (bd2bc970) fixed what it could without a full test run between
-edits. These are what its fix agents left open, with the reason. None is a confirmed bug; most are
-refactors judged too risky to make blind. Items the agents closed as "no action" are not listed.
+edits. Its leftovers were worked on 2026-10-10 (c564d28e..fa214bc2). Closed there: the web clones and
+splits, the rename stream move, the server layering moves, `assistant_reads`/`assistant_choices` under
+`assistant/`, the public `run_effects` names, `safe_backup_name`, the small consolidations,
+`canary_server_token` → `home_user_server_token`, the server-side `read_only_scopes` on the consent flow,
+the `test_api_users` teeth, the five timing flakes, the e2e sleeps, the web absence assertions, the
+largest test-file splits and the shared fixtures. What is still open:
 
 **Before the next release (owner's call):**
 
@@ -1423,58 +1427,33 @@ refactors judged too risky to make blind. Items the agents closed as "no action"
 - `braces`: no patched release yet. Re-run `pnpm -C web audit` and bump when one ships.
 - `postcss-selector-parser`: fixed only in a version that needs Tailwind 4. Clears with that upgrade.
 
-**Engine:**
+**Owner decision needed:**
 
-- Rename `canary_server_token` / `user_hubs(canary_token)`: touches plextv, history, jobs,
-  watching_account and ~8 test files; wants one coordinated rename.
+- `report_service.engagement`'s unused `losing` / `stop_points` / `observed` are in the public API
+  reference (`docs/reference/api.md`, `GET /api/report/engagement`). Removing them breaks a documented
+  response; nothing in web/ reads them.
+
+**Left for a change with a full test run and Architecture Review (Plex-writing or privacy-adjacent):**
+
 - `_surface_flags` helper for the triplicated promotion-flag tuples, and the shared paging loop in
-  `_newest_leaf_stamp` / `_newest_episode_stamps`: Plex-writing code, so only with a full test run.
+  `_newest_leaf_stamp` / `_newest_episode_stamps`.
 - Split `_run_user` and `_build_section_picks` (optional; no defect).
-
-**Server:**
-
-- Layering: `services/season_changes.py` imports private helpers from `api/seasons.py`;
-  `api/collections.py` uses private members of reconcile, context_builder, theme_rotation and
-  api.themes; other services import private helpers from `api.*`. One cross-package move.
-- Move `assistant_reads` / `assistant_choices` under `assistant/`.
-- Make the private names `run_effects.py` imports public (`_destination`, `_target_snapshot`,
-  `_FETCHED_URL_KEYS`, `_check_csrf`).
-- Move `safe_backup_name` from `net_guard.py` to `services/backup.py` (retarget its test too).
-- Split the ~270-line `lifespan` in `main.py` and the ~250-line `reconcile_row_rename_iter`
-  (privacy-adjacent; only with a full test run).
-- Drop the dead `CollectionUserOverride.prompt` column: needs a table-rebuild migration and
-  Architecture Review.
-- `report_service.engagement`: remove the unused `losing` / `stop_points` / `observed` fields
-  (API schema + generated web types + tests; confirm no external consumer).
-- Small consolidations: `_build_request_sources` / `_build_requests` dedupe; settings_mutations step-dict
-  helpers; theme_rotation's dual injection and untyped `_rotate_one`; the remaining
-  `watch_cache._aware` / `context_builder._utc` copies.
+- Split the ~270-line `lifespan` in `main.py` and the ~250-line `reconcile_row_rename_iter`.
+- Drop the dead `CollectionUserOverride.prompt` column (table-rebuild migration).
 - Assistant: fold the repeated CAS + Event + commit block in `patch_grant_constraints`,
-  `approve_updated_access`, `update_owner_managed` and `set_basic_access` (security-critical; its own
-  reviewed change).
+  `approve_updated_access`, `update_owner_managed` and `set_basic_access` (security-critical).
 
-**Web:**
+**Smaller leftovers:**
 
-- The two largest clones left: `user-tabs.tsx`, and `ai-prompts-section` /
-  `row-ai-instructions-field` (44 lines each).
-- Replace the remaining ~20 `display_name || username` copies with `personName`.
-- Split `JobsPanel`, `verdictFor` and `RequestsPage` when next touched.
-- `READ_ONLY_SCOPES` is duplicated client-side; a real fix needs a server-side read-only flag in the
-  consent-flow API.
-- Move the rename stream into `lib/api.ts` (tests that mock `@/lib/api` need updating with it).
-
-**Tests:**
-
-- `test_api_users.py` "never fails the sync" still has no teeth: find whether `build_context` runs in
-  the request or a queued job, then assert it.
-- Timing flakes: `test_entrypoint` bound, `test_run_service` tick gap, `test_theme_rotation` sleep
-  ordering, `TestRowTiming`, `test_retry_policy` jitter. Need a fake clock or an Event.
-- e2e fixed sleeps (test_app_e2e, requests_*, settings, notifications, issue_page, login) → a
-  `wait_for_setting` helper or `expect_response`.
-- Web absence assertions that still use an `act()`-flushed tick where no positive UI signal exists.
-- Split the largest files (`test_api_collections` 4,672 lines, test_clients, test_delivery,
-  test_pipeline) and move `tests/unit/test_api_collections.py` / `test_api_themes.py` to integration.
-- Consolidate shared fixtures: memory_sessions, notify/request/FakeColl helpers, the cross-imported
-  assistant fixtures (`setup_env`, `run_env`, `request_env`, `candidate`), a shared uvicorn-thread helper,
-  and the hand-built Collection builders in row-editor / rows-page / row-card tests.
+- Two services still import `api.schemas` (a pure base-model module; moving it touches ~60 files).
+  Engine privates imported across modules: `rows._started_shows`, `rows._watched_titles`,
+  `pipeline._build_indexes` / `_converge_phase` / `_order_phase`, `seasons._CollectionReader`.
+- The ~20 other `display_name || username`-like copies are NOT identical to `personName` (they fall
+  back to slug, nickname, a looked-up name or JSX); not a defect, left as they are.
+- `test_pipeline_row_overrides.py` is ~2,500 lines because `TestPerRowOverrides` alone is ~1,980; a
+  pure move cannot split a class.
+- `test_notifications_e2e` "dry run sends nothing" asserts no `notify.send` jobs; a regression that
+  queues the outcome event after the run finishes could still pass.
+- Web absence assertions with no positive signal stay on a flush (connections-section ×2,
+  row-shelf-placement re-pin, run-detail foreign SSE, connection-card `setTimeout(0)` tails).
 - `tests/fixtures/README.md` is missing rows for ~30 fixtures; each needs real provenance and date.
