@@ -103,6 +103,11 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   directory under `/var/tmp`, rejects RAM-backed locations and explicit `--basetemp`, and retains
   at most two completed failed runs. Set `PYTEST_DEBUG_TEMPROOT` to choose another disk-backed
   parent. Ordinary runs use two workers. Never reuse or delete another active run's scratch.
+- **Close test database resources.** Use `tests.db_helpers.disposing_engine` around engine setup
+  and fixture `yield`, including each property-test example. SQLite's connection context manager
+  only commits/rolls back; use `contextlib.closing` as well to close it. `tests/resources.py` fails
+  Linux tests that leave database files open in their temporary directory, and collects unreachable
+  metadata every 50 tests. Backend runs default to two workers; keep parallelism limited on this host.
 - **Don't re-verify what a tool already told you.** No re-reading a file you just wrote, no re-running
   a suite after a formatting-only change, no full-suite run to confirm a docs edit.
 - **Architecture Review is the only strong-model subagent** (a hook blocks other Opus/Fable subagents). It found
