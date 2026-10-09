@@ -1,9 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, ChevronRight, Loader2, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import {
   OWNER_SHELF_ALERT_ID,
   OWNER_SHELF_NOTE_ID,
@@ -155,9 +154,18 @@ export function WatchingAccountPage() {
 
   return (
     <div className="space-y-5">
-      <BackLink to="/users" label="Users" />
       <PageHeader
-        title="You see everyone's rows"
+        title={
+          <>
+            <Link to="/users" className="font-normal text-muted-foreground hover:text-foreground">
+              Users
+            </Link>
+            <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
+              /
+            </span>
+            You see everyone's rows
+          </>
+        }
         subtitle="Why the Recommended shelf in your libraries shows every person's row to you, and the three ways to deal with it."
       />
 

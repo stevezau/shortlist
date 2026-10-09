@@ -589,7 +589,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           title="Webhook"
           purpose="Where Shortlist sends its alerts: a Discord or Slack channel, ntfy, Gotify, Home Assistant, n8n, or anything else that accepts a webhook."
           settings={settings}
-          footnote={<WebhookNextStep settings={settings} />}
+          footnote={settingString(settings, "notify.webhook.url") ? <WebhookNextStep settings={settings} /> : undefined}
           headerExtra={<WebhookAlertsSwitch alerts={alerts} />}
           summary={summaries.webhook}
           unsetLabel="Not set up"

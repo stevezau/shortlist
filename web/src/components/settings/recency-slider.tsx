@@ -63,7 +63,7 @@ export function RecencySlider({
                 The floor keeps a near-zero weight visible as a sliver instead of vanishing. */}
             <div className="flex h-16 w-full max-w-10 items-end">
               <div
-                className="w-full rounded-sm bg-primary/70 transition-[height]"
+                className="w-full rounded-sm bg-foreground/30 transition-[height]"
                 style={{ height: `${Math.max(3, era.weight * 100)}%` }}
               />
             </div>

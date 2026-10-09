@@ -170,7 +170,8 @@ export function ConnectionCard({
     initialValues(settings, fields),
   );
   const fieldId = useId();
-  const configured = Boolean(summary);
+  // "No AI" is a choice, not something on file: it gets "Set up", never Edit / Test / Remove.
+  const configured = Boolean(summary) && !builtInOnly;
 
   // A "model" field shows the AI provider's available models in a real dropdown (plus a "Custom…"
   // escape hatch). The list is fetched for the provider + key CURRENTLY in the form (a redacted key
@@ -300,14 +301,13 @@ export function ConnectionCard({
                 {title}
                 <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
                 {/* "Optional" says whether it is needed, not whether it is set up — say that too. */}
-                {!configured && need !== "required" && <span className="sr-only">Not set up</span>}
+                {!configured && need !== "required" && pill.label !== "Not set up" && <span className="sr-only">Not set up</span>}
               </h3>
               <p className="max-w-prose text-sm text-muted-foreground">{purpose}</p>
               {next && <p className="max-w-prose text-sm text-muted-foreground">{next}</p>}
-              {configured && !editing && (
-                <p className="break-words text-sm text-foreground/80">
-                  {builtInOnly ? "Rows use the built-in picker. Nothing to test." : summary}
-                </p>
+              {configured && !editing && <p className="break-words text-sm text-foreground/80">{summary}</p>}
+              {builtInOnly && !editing && (
+                <p className="text-sm text-foreground/80">Rows use the built-in picker. Nothing to test.</p>
               )}
               {test.isSuccess && test.data.ok && !testRequested && !editing && !builtInOnly && (
                 <TestResult result={test.data} className="text-sm [&>svg]:h-3.5 [&>svg]:w-3.5" />

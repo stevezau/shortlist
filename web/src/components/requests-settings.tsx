@@ -647,7 +647,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   return (
     <Card>
       <CardContent className="space-y-5 pt-6">
-        {!inSaveBar && (
+        {!inSaveBar && (save.isPending || save.isError || save.saved) && (
           <div className="sticky top-36 z-10 bg-card/95 py-1 md:top-20"><SaveStatus
             isPending={save.isPending}
             isError={save.isError}

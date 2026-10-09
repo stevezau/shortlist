@@ -3,7 +3,6 @@ import { AlertTriangle, Check, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
 import { Link } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { PageHeader } from "@/components/page-header";
 import { MutationAlert } from "@/components/mutation-alert";
 import { Button } from "@/components/ui/button";
@@ -171,9 +170,18 @@ export function UninstallPage() {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <BackLink to="/settings" label="Settings" />
       <PageHeader
-        title="Uninstall Shortlist"
+        title={
+          <>
+            <Link to="/settings" className="font-normal text-muted-foreground hover:text-foreground">
+              Settings
+            </Link>
+            <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
+              /
+            </span>
+            Uninstall Shortlist
+          </>
+        }
         subtitle="Remove Shortlist from this server and put Plex back exactly as it was."
       />
 

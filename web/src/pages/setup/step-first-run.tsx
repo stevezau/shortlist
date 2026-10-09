@@ -4,15 +4,14 @@ import {
   Check,
   CircleSlash,
   Loader2,
-  PartyPopper,
   Play,
   TriangleAlert,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
+import { nameList } from "@/lib/run-privacy";
 import { ErrorState, QueryBoundary } from "@/components/query-boundary";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,6 +26,12 @@ import type { Pick, RunUserStageEvent, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import type { StepProps } from "./step-props";
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds} seconds`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+}
 
 /** What each stage's counts mean, phrased for humans. The queue position is left out. */
 function countsLine(counts: Record<string, number | string>): string {
@@ -52,9 +57,9 @@ function StageTrail({ stage }: { stage: string }) {
           className={cn(
             "h-1.5 w-6 rounded-full transition-colors",
             done || i < activeIndex
-              ? "bg-success"
+              ? "bg-foreground/40"
               : i === activeIndex
-                ? "animate-pulse bg-primary"
+                ? "animate-pulse bg-foreground"
                 : "bg-muted",
           )}
         />
@@ -68,11 +73,13 @@ function ProgressCard({
   progress,
   runFinished,
   picks,
+  privacyFlagged,
 }: {
   user: User;
   progress: UserProgress | undefined;
   runFinished: boolean;
   picks: Pick[];
+  privacyFlagged: boolean;
 }) {
   const stage = progress?.stage;
   const terminal = stage === "done" || stage === "cold_start" || stage === "error" || stage === "skipped";
@@ -82,7 +89,9 @@ function ProgressCard({
   if (!progress || stage === "queued") {
     const position = progress?.counts.position;
     detail = runFinished
-      ? "not recorded for this person — check the run details"
+      ? privacyFlagged
+        ? "no row — see the privacy note below"
+        : "not recorded for this person — check the run details"
       : `queued${position ? ` — #${position} in line` : ""} · rows build one user at a time`;
   } else if (stage === "done" || stage === "cold_start") {
     const picks = progress.counts.picks ?? 0;
@@ -167,7 +176,7 @@ function ProgressCard({
  * (queued → history → candidates → curating → delivering → done), and the
  * owner can leave at any point — the run keeps going server-side.
  */
-export function StepFirstRun({ data, update, complete }: StepProps) {
+export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
   const navigate = useNavigate();
   const usersQuery = useUsers();
   const willGetRow = (usersQuery.data ?? []).filter((user) => user.enabled);
@@ -231,6 +240,47 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
   const hasBuiltRows = [...(savedRun.data?.users ?? []), ...(savedRun.data?.shared_rows ?? [])].some(
     (result) => (result.diff?.added?.length ?? 0) + (result.diff?.kept?.length ?? 0) > 0,
   );
+
+  const canSee = savedRun.data?.privacy?.can_see_others ?? [];
+  const flaggedNames = new Set(canSee.map((name) => name.toLowerCase()));
+  const nameOf = (username: string) =>
+    (usersQuery.data ?? []).find((user) => user.username.toLowerCase() === username.toLowerCase())?.display_name || username;
+
+  // The finished run replaces the step's "First run" title in the shell's page header.
+  const began = savedRun.data?.began_at;
+  const ended = savedRun.data?.finished_at;
+  const seconds = began && ended ? Math.max(1, Math.round((Date.parse(ended) - Date.parse(began)) / 1000)) : null;
+  const builtFor = (savedRun.data?.users ?? []).filter((person) => person.status === "ok" || person.status === "cold_start").length;
+  const builtLine =
+    builtFor > 0 && seconds !== null
+      ? `Built for ${builtFor} ${builtFor === 1 ? "person" : "people"} in ${formatDuration(seconds)}. `
+      : "";
+  const headerTitle = failed
+    ? "The run needs attention"
+    : stopped
+      ? "Stopped — the rows built before you stopped it are live"
+      : hasBuiltRows ? "Your rows are on Plex" : "First run complete";
+  const headerWhy = failed
+    ? "Check the per-person results before trying again. The Runs page keeps the full result and error details."
+    : stopped
+      ? "Everyone the run reached kept their row, and their privacy filters were applied. Run it again whenever you like — it picks up from where things are."
+      : hasBuiltRows
+        ? `${builtLine}They will see their row on Home next time they open Plex. Skipped accounts may need a different setup before they can receive a row.`
+        : "No built rows were recorded for the people in this run. Review their results and check the full run details after finishing setup.";
+  const badgeVariant = finishedStatus === "ok" ? "success" : stopped ? "warning" : "destructive";
+  useEffect(() => {
+    if (!finished) {
+      setHeader?.(null);
+      return;
+    }
+    setHeader?.({
+      title: headerTitle,
+      why: headerWhy,
+      stepLabel: "Step 7 of 7 · Done",
+      badge: { text: `run ${finishedStatus}`, variant: badgeVariant },
+    });
+    return () => setHeader?.(null);
+  }, [finished, headerTitle, headerWhy, finishedStatus, badgeVariant, setHeader]);
 
   return (
     <div className="space-y-6">
@@ -330,6 +380,7 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
                     progress={userProgress(user)}
                     runFinished={finished}
                     picks={recordedPicks[user.slug] ?? []}
+                    privacyFlagged={flaggedNames.has(user.username.toLowerCase())}
                   />
                 ))}
                 {enabled.length === 0 && (
@@ -373,45 +424,6 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
 
       {finished && (
         <div role="status" className="space-y-4">
-          <p
-            className={
-              failed
-                ? "inline-flex items-center gap-2 text-lg font-semibold text-destructive-text"
-                : stopped
-                  ? "inline-flex items-center gap-2 text-lg font-semibold text-warning"
-                  : "inline-flex items-center gap-2 text-lg font-semibold text-success"
-            }
-          >
-            {failed || stopped ? (
-              <TriangleAlert className="h-5 w-5" aria-hidden="true" />
-            ) : (
-              <PartyPopper className="h-5 w-5" aria-hidden="true" />
-            )}
-            {failed
-              ? "The run needs attention"
-              : stopped
-                ? "Stopped — the rows built before you stopped it are live"
-                : hasBuiltRows ? "Your rows are on Plex" : "First run complete"}
-          </p>
-          {/* "warning", not "destructive", for a stop: the owner did it on purpose. */}
-          <Badge
-            variant={
-              finishedStatus === "ok"
-                ? "success"
-                : stopped
-                  ? "warning"
-                  : "destructive"
-            }
-          >
-            run {finishedStatus}
-          </Badge>
-          <p className="text-sm text-muted-foreground">
-            {failed
-              ? "Check the per-person results before trying again. The Runs page keeps the full result and error details."
-              : stopped
-                ? "Everyone the run reached kept their row, and their privacy filters were applied. Run it again whenever you like — it picks up from where things are."
-                : hasBuiltRows ? "Review each person’s result above. They will see their row on Home next time they open Plex. Skipped accounts may need a different setup before they can receive a row." : "No built rows were recorded for the people in this run. Review their results and check the full run details after finishing setup."}
-          </p>
           {failed && finishedError && (
             <div className="space-y-1">
               <p className="text-sm text-muted-foreground">
@@ -421,6 +433,22 @@ export function StepFirstRun({ data, update, complete }: StepProps) {
               <p className="rounded-md bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive-text">
                 {finishedError}
               </p>
+            </div>
+          )}
+          {canSee.length > 0 && (
+            <div
+              data-testid="first-run-privacy"
+              className="rounded-xl border border-warning/30 bg-warning/10 px-5 py-3 text-sm"
+            >
+              <span className="font-semibold text-warning">{nameList(canSee.map(nameOf))}</span>
+              {" — can see everyone else’s rows. A Plex Restriction Profile blocks the hide rules that keep rows private. "}
+              <button
+                type="button"
+                className="font-medium underline underline-offset-2"
+                onClick={() => void complete().then(() => navigate("/privacy"))}
+              >
+                How to fix →
+              </button>
             </div>
           )}
           {!failed && hasBuiltRows && (

@@ -50,7 +50,9 @@ export function NotificationsSection({ settings, alerts }: { settings: Settings;
           slot left a blank band in the middle of the block. A failure wraps onto its own line. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 [&>[role=alert]]:basis-full">
         <p className="text-sm text-muted-foreground">{hasAddress ? `${events.length} events selected · webhook configured` : "Webhook address missing"}</p>
-        <SaveStatus fallback="Couldn’t save that. Try again." isPending={save.isPending} isError={save.isError} error={save.error} saved={save.isSuccess} onRetry={retry} />
+        {(save.isPending || save.isError || save.isSuccess) && (
+          <SaveStatus fallback="Couldn’t save that. Try again." isPending={save.isPending} isError={save.isError} error={save.error} saved={save.isSuccess} onRetry={retry} />
+        )}
       </div>
 
       {enabled && !hasAddress && (
