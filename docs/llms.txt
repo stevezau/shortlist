@@ -16,6 +16,21 @@ Shortlist answers the question "can I give each of my Plex users recommendations
 watched?" — which Plex itself does not do. Plex's built-in recommendation shelves are identical for
 every account on the server.
 
+## Install
+
+```
+docker run -d --name shortlist -p 5959:5959 \
+  -e TZ=Etc/UTC -e PUID=1000 -e PGID=1000 \
+  -v /path/to/shortlist/config:/config \
+  --restart unless-stopped \
+  ghcr.io/stevezau/shortlist:latest
+```
+
+Change `/path/to/shortlist/config` to a folder on the host, then open http://your-host:5959 and follow
+the setup wizard. Requirements: Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin
+account, a free TMDB API key. Add `-e SHORTLIST_DRY_RUN=1` to see what it would do while writing
+nothing to Plex. Install guide: https://shortlistapp.dev/getting-started/
+
 ## How it differs from the tools usually suggested first
 
 People asking for this are commonly pointed at Kometa, SuggestArr or Recommendarr first. None of

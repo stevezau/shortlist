@@ -1,5 +1,5 @@
 ---
-title: People and sharing
+title: "People and sharing: who gets Plex recommendation rows"
 description: The Users page in Shortlist, turning people on, off and paused, per-person settings, leaving one account's Plex sharing alone, people who leave the server, and accounts Plex restricts.
 heading: People and sharing
 updated: 2026-10-03

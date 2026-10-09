@@ -32,6 +32,8 @@ OUT = DOCS / "llms-full.txt"
 FRONT_MATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 LIQUID_COMMENT = re.compile(r"\{%-?\s*comment\s*-?%\}.*?\{%-?\s*endcomment\s*-?%\}", re.DOTALL)
 JSON_LD = re.compile(r'<script type="application/ld\+json">.*?</script>', re.DOTALL)
+# The one include that is structured data alone; it has no prose to flatten.
+JSON_LD_INCLUDE = re.compile(r"\{%-?\s*include\s+faq-jsonld\.html\s*-?%\}\n?")
 INCLUDE = re.compile(r"\{%-?\s*include\s+([\w.-]+)((?:\s+\w+=(?:\"[^\"]*\"|'[^']*'|\w+))*)\s*-?%\}")
 INCLUDE_PARAM = re.compile(r"""(\w+)=(?:"([^"]*)"|'([^']*)'|(\w+))""")
 # The two conditionals the includes use on their own parameters. Resolved here rather than left for
@@ -183,6 +185,7 @@ def _render(body: str, front: dict, config: dict, source: Path) -> str:
     """Resolve the handful of Liquid constructs these pages use, and drop what is markup-only."""
     body = LIQUID_COMMENT.sub("", body)
     body = JSON_LD.sub("", body)
+    body = JSON_LD_INCLUDE.sub("", body)
     body = ANCHOR_SPAN.sub("", body)
     body = HTML_COMMENT.sub("", body)
     body = DEV_OPEN.sub(lambda m: f"**{m.group(1)}: {m.group(2).strip()}**\n", body)

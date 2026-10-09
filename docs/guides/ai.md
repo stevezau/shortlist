@@ -1,5 +1,5 @@
 ---
-title: AI and cost
+title: "AI and cost: AI-powered Plex recommendations"
 description: Shortlist works with no AI at all. What AI adds when you turn it on, which search backend to pick, and how to control what it costs.
 heading: AI and cost
 nav_order: 5

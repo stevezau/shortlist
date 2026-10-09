@@ -1,5 +1,5 @@
 ---
-title: Where a row shows
+title: "Where a Plex recommendation row shows"
 description: Which Plex screens a row appears on, where it sits on the Recommended shelf next to other collections, and its poster, description and sort title.
 heading: Where a row shows
 updated: 2026-10-03

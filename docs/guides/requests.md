@@ -1,5 +1,5 @@
 ---
-title: "Requests: Radarr and Sonarr"
+title: "Requests: Radarr and Sonarr for Plex recommendations"
 description: Let Shortlist ask Radarr or Sonarr for titles your people want that the library doesn't have yet, with an approval inbox and guardrails.
 heading: Requests (Radarr and Sonarr)
 nav_order: 6

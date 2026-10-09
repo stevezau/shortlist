@@ -1,5 +1,5 @@
 ---
-title: Connect an assistant
+title: "Connect an AI assistant to Shortlist (Plex recommendations)"
 description: Enable Shortlist's MCP endpoint, approve one named assistant connection, and connect local or hosted clients without sharing the owner API token.
 heading: Connect an assistant
 updated: 2026-10-08

@@ -1,5 +1,5 @@
 ---
-title: Seasonal rows
+title: "Seasonal Plex recommendation rows"
 description: "A seasonal row follows the calendar: Halloween films and horror in October, Christmas films in December, romance before Valentine's Day. Between seasons it is hidden from every Plex screen, and it comes back by itself when its next season opens."
 heading: Seasonal rows
 updated: 2026-10-05

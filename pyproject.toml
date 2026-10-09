@@ -17,7 +17,7 @@ dynamic = ["version"]
 authors = [{ name = "Steven Adams" }]
 keywords = ["plex", "plex-recommendations", "per-user", "recommendations", "recommendation-engine", "self-hosted", "selfhosted", "docker", "media-server", "plex-collections", "watch-history", "llm", "tmdb"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
 ]

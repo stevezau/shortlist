@@ -1,5 +1,5 @@
 ---
-title: What Shortlist works with
+title: "What Shortlist works with: Plex, Radarr, Sonarr and more"
 description: Every service Shortlist can talk to — Plex, TMDB, Sonarr, Radarr, Overseerr, Jellyseerr, Trakt, MDBList, Exa, SearXNG, Tautulli and the AI providers — what each one adds, and which are actually required.
 heading: What it works with
 updated: 2026-10-03

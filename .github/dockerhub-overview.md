@@ -5,6 +5,8 @@ own recommendation rows (Picked for You, Because you watched, seasonal picks, th
 for), built from what they watched and hidden from everyone else. One Docker
 container, no AI key required.
 
+Stable 1.x, running nightly on a 40-user server. `latest` is the current stable release.
+
 [Website](https://shortlistapp.dev/) ·
 [Tools compared](https://shortlistapp.dev/plex-recommendation-tools/) ·
 [Source on GitHub](https://github.com/stevezau/shortlist) ·

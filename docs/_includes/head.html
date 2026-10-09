@@ -39,7 +39,10 @@ palette on every page load, which is exactly the thing people notice on a docs s
 {%- comment -%}
 Structured data. Google reads it for rich results; AI crawlers read it to work out
 what this software is and who it's for — which is the whole reason it's here.
+Home page only, and no author: jekyll-seo-tag already emits the site's Person/Organization entities,
+so repeating them on every page doubled them.
 {%- endcomment -%}
+{%- if page.url == "/" -%}
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -55,7 +58,6 @@ what this software is and who it's for — which is the whole reason it's here.
   "license": "https://opensource.org/licenses/MIT",
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-  "author": { "@type": "Person", "name": "Steven Adams", "url": "https://github.com/stevezau" },
   "softwareRequirements": "Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin account, a free TMDB API key",
   "featureList": [
     "Per-user movie and TV recommendations built from each Plex user's own watch history",
@@ -67,3 +69,4 @@ what this software is and who it's for — which is the whole reason it's here.
   ]
 }
 </script>
+{%- endif -%}

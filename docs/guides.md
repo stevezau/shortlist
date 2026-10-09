@@ -1,5 +1,5 @@
 ---
-title: Shortlist guides
+title: "Shortlist guides: per-user Plex recommendation rows"
 description: How to do the things people actually want to do with Shortlist, from changing how often a row refreshes to sending missing films to Radarr.
 heading: Guides
 updated: 2026-10-05

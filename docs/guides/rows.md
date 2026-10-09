@@ -1,5 +1,5 @@
 ---
-title: Rows and templates
+title: "Rows and templates: Plex recommendation row types"
 description: Start a row from a template, choose what kind of row it is, and name it. What fills each kind, seasonal rows and where a row sits on Plex each have their own page.
 heading: Rows and templates
 updated: 2026-10-04

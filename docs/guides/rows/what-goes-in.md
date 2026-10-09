@@ -1,5 +1,5 @@
 ---
-title: How a row is filled
+title: "How a Plex recommendation row is filled"
 description: How Because you watched and Watch it again rows choose their titles, what people with too little watch history get, and the orders a row's titles can appear in.
 heading: How a row is filled
 updated: 2026-10-04

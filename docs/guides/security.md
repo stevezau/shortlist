@@ -1,5 +1,5 @@
 ---
-title: Exposing Shortlist to the internet
+title: "Exposing Shortlist (Plex recommendations) to the internet"
 description: "What to know before publishing Shortlist outside your network: TLS, proxies, assistant access, the API token, and what's in a backup."
 heading: Putting it on the internet
 nav_order: 8

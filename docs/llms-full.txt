@@ -16,6 +16,21 @@ Shortlist answers the question "can I give each of my Plex users recommendations
 watched?" — which Plex itself does not do. Plex's built-in recommendation shelves are identical for
 every account on the server.
 
+## Install
+
+```
+docker run -d --name shortlist -p 5959:5959 \
+  -e TZ=Etc/UTC -e PUID=1000 -e PGID=1000 \
+  -v /path/to/shortlist/config:/config \
+  --restart unless-stopped \
+  ghcr.io/stevezau/shortlist:latest
+```
+
+Change `/path/to/shortlist/config` to a folder on the host, then open http://your-host:5959 and follow
+the setup wizard. Requirements: Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin
+account, a free TMDB API key. Add `-e SHORTLIST_DRY_RUN=1` to see what it would do while writing
+nothing to Plex. Install guide: https://shortlistapp.dev/getting-started/
+
 ## How it differs from the tools usually suggested first
 
 People asking for this are commonly pointed at Kometa, SuggestArr or Recommendarr first. None of
@@ -272,7 +287,7 @@ If a row doesn't turn up, [Troubleshooting](https://shortlistapp.dev/guides/trou
 
 ---
 
-# Shortlist guides
+# Shortlist guides: per-user Plex recommendation rows
 Source: https://shortlistapp.dev/guides/
 
 How to do the things people actually want to do with Shortlist, from changing how often a row refreshes to sending missing films to Radarr.
@@ -747,7 +762,7 @@ changes.
 
 ---
 
-# People and sharing
+# People and sharing: who gets Plex recommendation rows
 Source: https://shortlistapp.dev/guides/people-and-sharing/
 
 The Users page in Shortlist, turning people on, off and paused, per-person settings, leaving one account's Plex sharing alone, people who leave the server, and accounts Plex restricts.
@@ -889,7 +904,7 @@ Shortlist, which leaves them out of rows entirely so there is nothing of anyone 
 
 ---
 
-# Rows and templates
+# Rows and templates: Plex recommendation row types
 Source: https://shortlistapp.dev/guides/rows/
 
 Start a row from a template, choose what kind of row it is, and name it. What fills each kind, seasonal rows and where a row sits on Plex each have their own page.
@@ -1105,7 +1120,7 @@ and caps the AI web-search source alone.
 
 ---
 
-# How a row is filled
+# How a Plex recommendation row is filled
 Source: https://shortlistapp.dev/guides/rows/what-goes-in/
 
 How Because you watched and Watch it again rows choose their titles, what people with too little watch history get, and the orders a row's titles can appear in.
@@ -1349,7 +1364,7 @@ writes nothing.
 
 ---
 
-# Seasonal rows
+# Seasonal Plex recommendation rows
 Source: https://shortlistapp.dev/guides/rows/seasonal/
 
 A seasonal row follows the calendar: Halloween films and horror in October, Christmas films in December, romance before Valentine's Day. Between seasons it is hidden from every Plex screen, and it comes back by itself when its next season opens.
@@ -1551,7 +1566,7 @@ left with nothing to build from.
 
 ---
 
-# Where a row shows
+# Where a Plex recommendation row shows
 Source: https://shortlistapp.dev/guides/rows/placement/
 
 Which Plex screens a row appears on, where it sits on the Recommended shelf next to other collections, and its poster, description and sort title.
@@ -1735,7 +1750,7 @@ if you add the `shortlist` label to its excluded labels.
 
 ---
 
-# Choosing what goes in a row
+# Choosing what goes in a Plex recommendation row
 Source: https://shortlistapp.dev/guides/picks/
 
 Where candidate titles come from, how often a row changes, how to override any of it per row or per person, and how to stop one watch skewing someone's picks.
@@ -1970,7 +1985,7 @@ Runs from before v1.2.1 don't carry it and show only the dropped titles, as they
 
 ---
 
-# Schedules: when rows run
+# Schedules: when Plex recommendation rows run
 Source: https://shortlistapp.dev/guides/schedules/
 
 Every row runs on its own schedule. How to set it, how to write a custom one, and which background jobs matter.
@@ -2051,7 +2066,7 @@ the server's, not your browser's.
 
 ---
 
-# AI and cost
+# AI and cost: AI-powered Plex recommendations
 Source: https://shortlistapp.dev/guides/ai/
 
 Shortlist works with no AI at all. What AI adds when you turn it on, which search backend to pick, and how to control what it costs.
@@ -2311,7 +2326,7 @@ which people cost the most, then tune with the levers above.
 
 ---
 
-# Requests: Radarr and Sonarr
+# Requests: Radarr and Sonarr for Plex recommendations
 Source: https://shortlistapp.dev/guides/requests/
 
 Let Shortlist ask Radarr or Sonarr for titles your people want that the library doesn't have yet, with an approval inbox and guardrails.
@@ -2756,7 +2771,7 @@ request source was read in full: if Overseerr or an Arr is down, every row stays
 
 ---
 
-# Troubleshooting and backups
+# Troubleshooting and backups for Plex recommendation rows
 Source: https://shortlistapp.dev/guides/troubleshooting/
 
 The common failures and what causes them, plus what Shortlist backs up and what it can't restore.
@@ -2942,7 +2957,7 @@ Two things worth knowing:
 
 ---
 
-# Exposing Shortlist to the internet
+# Exposing Shortlist (Plex recommendations) to the internet
 Source: https://shortlistapp.dev/guides/security/
 
 What to know before publishing Shortlist outside your network: TLS, proxies, assistant access, the API token, and what's in a backup.
@@ -2985,7 +3000,7 @@ file.
 
 ---
 
-# Connect an assistant
+# Connect an AI assistant to Shortlist (Plex recommendations)
 Source: https://shortlistapp.dev/guides/assistant-access/
 
 Enable Shortlist's MCP endpoint, approve one named assistant connection, and connect local or hosted clients without sharing the owner API token.
@@ -3334,7 +3349,7 @@ list. It does not erase Shortlist's activity history or audit record.
 
 ---
 
-# What Shortlist works with
+# What Shortlist works with: Plex, Radarr, Sonarr and more
 Source: https://shortlistapp.dev/integrations/
 
 Every service Shortlist can talk to — Plex, TMDB, Sonarr, Radarr, Overseerr, Jellyseerr, Trakt, MDBList, Exa, SearXNG, Tautulli and the AI providers — what each one adds, and which are actually required.
