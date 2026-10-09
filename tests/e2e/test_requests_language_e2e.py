@@ -64,10 +64,8 @@ def test_the_second_bar_follows_the_owners_own_floor_and_saves_as_null(page: Pag
     expect(bar).to_have_value("8.5", timeout=LOAD)  # 7.0 + 1.5, shown without anyone typing it
     expect(page.get_by_text(re.compile("Following your minimum rating", re.I))).to_be_visible()
 
-    # The Defaults tab reports every section's autosave in one save bar at its foot, not per card.
-    expect(page.locator("[aria-live=polite]").get_by_text(re.compile(r"^Saved|^Saving", re.I)).first).to_be_visible(
-        timeout=LOAD
-    )
+    # The Requests tab keeps its own "Saved" readout beside the form (it has no save bar).
+    expect(page.get_by_role("status").get_by_text("Saved", exact=True)).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(2000)
 
     saved = app.api("GET", "/api/settings").json()
@@ -132,12 +130,12 @@ def test_a_row_can_be_stricter_than_the_server(page: Page, app: ShortlistApp):
     _enable_requests(app, **{"requests.min_rating": 7.3, "requests.language_mode": "prefer"})
     _open_row_requests(page)
 
-    inherit = page.get_by_label("Use the global language setting for this row")
-    expect(inherit).to_be_checked(timeout=LOAD)
+    override = page.get_by_role("button", name="Override Language for this row", exact=True)
+    expect(override).to_be_visible(timeout=LOAD)
     # While inheriting, the row names the policy AND the number it derives — 7.3 + 1.5 = 8.8.
     expect(page.get_by_text(re.compile(r"prefer English, others need 8\.8"))).to_be_visible()
 
-    inherit.uncheck()
+    override.click()
     mode = page.locator("#row-req-language-mode")
     expect(mode).to_be_visible()
     # Seeded to something that DOES a thing (not "any"), but NOT to "only" — flipping a toggle to
@@ -175,9 +173,8 @@ def test_clearing_the_row_override_puts_it_back_on_the_global(page: Page, app: S
     assert resp.status_code == 200, resp.text
 
     _open_row_requests(page)
-    inherit = page.get_by_label("Use the global language setting for this row")
-    expect(inherit).not_to_be_checked(timeout=LOAD)
-    inherit.check()
+    expect(page.get_by_role("button", name="Override Language for this row", exact=True)).to_have_count(0)
+    page.get_by_role("button", name="Reset Language for this row", exact=True).click(timeout=LOAD)
 
     page.get_by_role("button", name="Save changes").click()
     page.wait_for_timeout(2000)

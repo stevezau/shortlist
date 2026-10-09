@@ -127,6 +127,8 @@ class TestTheDashboardShowsBothNumbers:
         page.goto("/")
         expect(watched_count(page)).to_be_visible(timeout=20_000)
 
+        # "Who's watching" opens on people; the per-row lines are one switch away.
+        page.get_by_role("button", name="By row").click()
         body = page.locator("body")
         expect(body).to_contain_text(re.compile(r"2 watched · 2 finished"))
         expect(body).to_contain_text(re.compile(r"3 watched · 1 finished"))
@@ -282,15 +284,14 @@ class TestTheSplitBarsAreHonest:
         expect(watched_count(page)).to_be_visible(timeout=20_000)
 
         # Every split track on the page: children must fit inside their parent. The count is
-        # asserted first because these tracks are `hidden xl:flex` — at any viewport below 1280 they
-        # have zero width, get filtered out below, and the overflow check passes measuring nothing.
-        assert page.evaluate("() => document.querySelectorAll('div.rounded-full.bg-muted').length") > 0, (
+        # asserted first so the overflow check below can never pass by measuring nothing.
+        assert page.evaluate("() => document.querySelectorAll('[data-testid=split-bar]').length") > 0, (
             "no split track rendered at this viewport — the assertion below would be vacuous"
         )
         overflows = page.evaluate(
             """() => {
                 const bad = [];
-                for (const track of document.querySelectorAll('div.rounded-full.bg-muted')) {
+                for (const track of document.querySelectorAll('[data-testid=split-bar]')) {
                     const inner = [...track.children].reduce((s, c) => s + c.getBoundingClientRect().width, 0);
                     const outer = track.getBoundingClientRect().width;
                     if (outer > 0 && inner > outer + 1) bad.push({inner, outer, html: track.outerHTML.slice(0, 120)});

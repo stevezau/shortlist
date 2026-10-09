@@ -48,8 +48,10 @@ def test_a_ready_made_season_with_a_film_picked_by_hand_is_saved_and_ticked_in_a
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
     page.get_by_role("button", name="Add a row").click()
-    page.get_by_role("group", name="Templates", exact=True).get_by_role("button", name=re.compile(r"^Seasonal")).click()
-    page.get_by_role("button", name="Use template").click()
+    page.get_by_role("group", name="Kinds of row", exact=True).get_by_role(
+        "button", name=re.compile(r"^Seasonal")
+    ).click()
+    page.get_by_role("link", name="Set every option yourself").click()
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible(timeout=LOAD)
 
     seasons = page.locator("li[data-season]")
@@ -136,8 +138,10 @@ def test_add_saves_a_ready_made_season_unchanged_and_the_row_is_saved_separately
     rows_before = app.api("GET", "/api/collections").json()
     page.goto("/rows")
     page.get_by_role("button", name="Add a row").click()
-    page.get_by_role("group", name="Templates", exact=True).get_by_role("button", name=re.compile(r"^Seasonal")).click()
-    page.get_by_role("button", name="Use template").click()
+    page.get_by_role("group", name="Kinds of row", exact=True).get_by_role(
+        "button", name=re.compile(r"^Seasonal")
+    ).click()
+    page.get_by_role("link", name="Set every option yourself").click()
     page.get_by_role("searchbox", name="Find a season").fill("Thanksgiving (US)")
     card = page.get_by_role("list", name="Ready-made seasons").get_by_role("listitem")
     expect(card).to_contain_text(preset["description"])

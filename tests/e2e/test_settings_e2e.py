@@ -125,13 +125,13 @@ class TestDefaults:
     def test_row_name_and_size_survive_a_reload(self, page: Page, app: ShortlistApp):
         _open_settings(page, "defaults")
 
-        row_name = page.get_by_label("Row name template")
+        row_name = page.get_by_role("textbox", name="Row name template")
         row_name.fill("🍿 Tonight's picks for {top_seed}")
         # The preview must show what Plex will show, not the raw template.
         expect(page.get_by_text("🍿 Tonight's picks for Fargo")).to_be_visible()
 
         # How many titles is a free number field now; blur commits the typed value.
-        row_size = page.get_by_label("How many titles")
+        row_size = page.get_by_role("spinbutton", name="How many titles")
         row_size.fill("22")
         row_size.blur()
         # No Save button — the section auto-saves (debounced). Poll until it reaches the database.
@@ -146,8 +146,10 @@ class TestDefaults:
 
         # Reload: only a value that reached the database can come back.
         page.reload()
-        expect(page.get_by_label("Row name template")).to_have_value("🍿 Tonight's picks for {top_seed}", timeout=LOAD)
-        expect(page.get_by_label("How many titles")).to_have_value("22", timeout=LOAD)
+        expect(page.get_by_role("textbox", name="Row name template")).to_have_value(
+            "🍿 Tonight's picks for {top_seed}", timeout=LOAD
+        )
+        expect(page.get_by_role("spinbutton", name="How many titles")).to_have_value("22", timeout=LOAD)
 
     def test_pause_all_stops_runs_without_disabling_anyone(self, page: Page, app: ShortlistApp):
         """The Danger Zone switch must actually pause runs — it used to 422 as an unknown key."""

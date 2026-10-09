@@ -436,7 +436,11 @@ function CountLine({
       {/* The solid part is what got finished, the faded part what is still going: one neutral at two
           intensities because the two are ordered, and the finished part is anchored left so it can
           be compared down the list by eye. */}
-      <div className="mt-2 flex h-1 overflow-hidden rounded-full bg-secondary" aria-hidden="true">
+      <div
+        data-testid="split-bar"
+        className="mt-2 flex h-1 overflow-hidden rounded-full bg-secondary"
+        aria-hidden="true"
+      >
         <div className="h-full bg-muted-foreground" style={{ width: `${max > 0 ? (finished / max) * 100 : 0}%` }} />
         <div
           className="h-full bg-muted-foreground/40"
@@ -1019,7 +1023,9 @@ function MostWatched({
         className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-2 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-8"
       >
         {titles.map((t, i) => (
-          <li key={`${t.tmdb_id}-${t.media_type}`} className="grid w-[128px] shrink-0 content-start gap-1.5 sm:w-auto">
+          // `relative` so the tile's sr-only text stays inside the scrolling shelf: absolutely
+          // positioned with no positioned ancestor, it escapes the clip and widens the page.
+          <li key={`${t.tmdb_id}-${t.media_type}`} className="relative grid w-[128px] shrink-0 content-start gap-1.5 sm:w-auto">
             <div className="relative">
               <TitlePoster
                 ratingKey={t.rating_key}

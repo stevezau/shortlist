@@ -105,7 +105,7 @@ class TestRatingSettings:
         page.goto("/settings#recommendations")
         page.wait_for_timeout(2000)
         page.get_by_text("More recommendation controls", exact=True).click()
-        threshold = page.get_by_label(re.compile("didn.t like it", re.IGNORECASE))
+        threshold = page.get_by_role("spinbutton", name=re.compile("didn.t like it", re.IGNORECASE))
         expect(threshold).to_be_visible()
 
         threshold.fill("3")
@@ -115,7 +115,7 @@ class TestRatingSettings:
         page.wait_for_timeout(2000)
         page.get_by_text("More recommendation controls", exact=True).click()
 
-        expect(page.get_by_label(re.compile("didn.t like it", re.IGNORECASE))).to_have_value("3")
+        expect(page.get_by_role("spinbutton", name=re.compile("didn.t like it", re.IGNORECASE))).to_have_value("3")
 
     def test_switching_it_off_hides_the_threshold(self, page: Page, app: ShortlistApp):
         """The threshold is meaningless with the feature off, so it must not sit there inviting an

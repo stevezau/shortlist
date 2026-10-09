@@ -60,10 +60,8 @@ def test_the_global_amount_of_a_show_saves_and_survives_a_reload(page: Page, app
     expect(page.get_by_text(re.compile("Season 1 only"))).to_be_visible()
 
     # Autosave has no button; wait for the value to reach the API rather than a fixed sleep.
-    # The Defaults tab reports every section's autosave in one save bar at its foot, not per card.
-    expect(page.locator("[aria-live=polite]").get_by_text(re.compile(r"^Saved|^Saving", re.I)).first).to_be_visible(
-        timeout=LOAD
-    )
+    # The Requests tab keeps its own "Saved" readout beside the form (it has no save bar).
+    expect(page.get_by_role("status").get_by_text("Saved", exact=True)).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(2000)
 
     saved = app.api("GET", "/api/settings").json()
@@ -77,12 +75,12 @@ def test_a_row_can_take_less_of_a_show_than_the_global(page: Page, app: Shortlis
     _connect_sonarr(app)
     _open_row_requests(page)
 
-    inherit = page.get_by_label("Use the global amount-of-a-show setting for this row")
-    expect(inherit).to_be_checked(timeout=LOAD)
+    override = page.get_by_role("button", name="Override How much of a show this row grabs", exact=True)
+    expect(override).to_be_visible(timeout=LOAD)
     # While inheriting, the row names the global in Sonarr's own words rather than a value it lacks.
     expect(page.get_by_text(re.compile("All Episodes"))).to_be_visible()
 
-    inherit.uncheck()
+    override.click()
     row_monitor = page.locator("#row-req-sonarr-monitor")
     expect(row_monitor).to_be_visible()
     row_monitor.select_option("pilot")
@@ -113,9 +111,8 @@ def test_clearing_the_row_override_puts_it_back_on_the_global(page: Page, app: S
 
     _open_row_requests(page)
 
-    inherit = page.get_by_label("Use the global amount-of-a-show setting for this row")
-    expect(inherit).not_to_be_checked(timeout=LOAD)
-    inherit.check()
+    expect(page.get_by_role("button", name="Override How much of a show this row grabs", exact=True)).to_have_count(0)
+    page.get_by_role("button", name="Reset How much of a show this row grabs", exact=True).click(timeout=LOAD)
 
     page.get_by_role("button", name="Save changes").click()
     page.wait_for_timeout(2000)

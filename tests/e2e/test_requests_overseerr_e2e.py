@@ -11,8 +11,6 @@ reloaded even when the instance behind it never replies.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 from playwright.sync_api import Page, expect
 
@@ -23,9 +21,9 @@ pytestmark = pytest.mark.e2e
 LOAD = 15_000
 
 
-def _save_bar(page: Page):
-    """The Defaults tab's one save readout (its live region), which every section reports to."""
-    return page.locator("[aria-live=polite]")
+def _saved_status(page: Page):
+    """The Requests tab's own "Saved" readout (it has no save bar)."""
+    return page.get_by_role("status").get_by_text("Saved", exact=True)
 
 
 def _panel(page: Page):
@@ -64,8 +62,7 @@ def test_switching_the_target_saves_and_survives_a_reload(page: Page, app: Short
     _panel(page).get_by_role("button", name="Overseerr / Jellyseerr", exact=True).click()
 
     # Autosave has no button; wait for the value to reach the API rather than a fixed sleep.
-    # The Defaults tab reports every section's autosave in one save bar at its foot, not per card.
-    expect(_save_bar(page).get_by_text(re.compile("^Saved|^Saving", re.I)).first).to_be_visible(timeout=LOAD)
+    expect(_saved_status(page)).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(2000)
 
     assert app.api("GET", "/api/settings").json()["requests.target"] == "overseerr"

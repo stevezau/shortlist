@@ -95,11 +95,11 @@ class TestTheSharingScreen:
         expect(page.get_by_role("heading", name="Privacy", level=1)).to_be_visible(timeout=LOAD)
         # State what the live check establishes, and name the owner exception rather than promise
         # that every account can be filtered. The provenance assertion below remains essential.
-        subtitle = page.get_by_text("Which rows each Plex account can see, read live from plex.tv", exact=False)
+        subtitle = page.get_by_text("Who can see which row on Plex, read live from plex.tv", exact=False)
         expect(subtitle).to_be_visible(timeout=LOAD)
-        expect(page.get_by_text("Plex cannot filter its own account", exact=False)).to_be_visible()
+        expect(page.get_by_text("Plex never filters the account that owns the server", exact=False)).to_be_visible()
         # The provenance is on screen: a reading without a timestamp reads as a standing guarantee.
-        expect(page.get_by_text("Read from plex.tv at", exact=False).first).to_be_visible()
+        expect(page.get_by_text("read from plex.tv", exact=False).first).to_be_visible()
 
     def test_it_names_an_exclude_plex_tv_really_is_missing(self, app: ShortlistApp, reset_fake_plex, page: Page):
         """The fault case, planted on the fake rather than mocked: take one `shortlist_*` label back
@@ -118,8 +118,10 @@ class TestTheSharingScreen:
 
         page.goto(f"{app.url}/privacy")
 
-        expect(page.get_by_text("can see a row that isn't theirs", exact=False).first).to_be_visible(timeout=LOAD)
-        expect(page.get_by_text("Can see:", exact=False).first).to_be_visible()
+        # The who-sees-what grid names the account's problem and marks the row it can now see.
+        expect(page.get_by_text("Missing hide rules", exact=False).first).to_be_visible(timeout=LOAD)
+        expect(page.get_by_text("Sees it", exact=True).first).to_be_visible()
+        expect(page.get_by_text("hiding every row that isn\u2019t theirs", exact=False)).to_be_visible()
 
     def test_it_never_claims_coverage_of_the_collections_tab(self, app: ShortlistApp, reset_fake_plex, page: Page):
         """Rule 11: there is no recorded answer for whether Plex applies a share `label!=` filter
@@ -128,8 +130,10 @@ class TestTheSharingScreen:
 
         page.goto(f"{app.url}/privacy")
 
-        expect(page.get_by_text("These checks cover the Home screen", exact=False)).to_be_visible(timeout=LOAD)
-        expect(page.get_by_text("no way to confirm what Plex does on the Collections tab", exact=False)).to_be_visible()
+        expect(page.get_by_text("Home screen only", exact=False)).to_be_visible(timeout=LOAD)
+        expect(
+            page.get_by_text("the Collections tab and Related shelves can\u2019t be checked", exact=False)
+        ).to_be_visible()
 
     def test_the_users_page_links_to_it_rather_than_burying_it_in_settings(
         self, app: ShortlistApp, reset_fake_plex, page: Page

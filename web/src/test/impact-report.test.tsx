@@ -987,6 +987,17 @@ describe("ImpactReport — titles shown as titles", () => {
     expect(within(item).queryByRole("link")).toBeNull();
   });
 
+  it("keeps each tile's screen-reader text inside the scrolling shelf", async () => {
+    // The sr-only watcher count is absolutely positioned; with no positioned tile around it, it
+    // escapes the shelf's overflow clip and widened the whole page on a phone (593px at 390).
+    renderReport();
+
+    const shelf = await screen.findByRole("list", { name: "Most watched" });
+    for (const item of within(shelf).getAllByRole("listitem")) {
+      expect(item.className).toMatch(/\brelative\b/);
+    }
+  });
+
   it("gives each recent watch its poster, title, year and time", async () => {
     // Local midday, and a watch two hours before it: "Today" in every timezone. Against the real clock
     // a watch "5 hours ago" is Yesterday between midnight and 5am, so this failed for part of every day.
