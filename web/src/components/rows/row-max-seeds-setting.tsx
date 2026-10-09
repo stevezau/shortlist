@@ -28,7 +28,6 @@ export function RowMaxSeedsSetting({
       setting="max_seeds"
       label={MAX_SEEDS_LABEL}
       description="More gives a broader mix of everything they like; fewer stays close to what they’ve watched lately."
-      ariaLabel="Use the global default for how many recent watches to match"
       inheriting={inheriting}
       globalValue={maxSeedsGlobal(settings)}
       // Only while the row has its own count: a row already following the global can always stop.

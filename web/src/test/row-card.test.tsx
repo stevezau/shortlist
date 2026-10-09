@@ -412,7 +412,7 @@ describe("RowCard", () => {
 
     expect(screen.getByText("library name")).toBeTruthy();
     expect(screen.queryByText(/\{library_name\}/)).toBeNull();
-    expect(screen.getByText(/Picked for You/)).toBeTruthy();
+    expect(within(screen.getByRole("heading")).getByText(/Picked for You/)).toBeTruthy();
   });
 
   it("leaves a token the engine does not substitute exactly as typed", () => {

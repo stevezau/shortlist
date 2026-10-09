@@ -88,7 +88,6 @@ function RequestField({
   inheriting,
   globalValue,
   onToggle,
-  ariaLabel,
   after,
   children,
 }: {
@@ -98,26 +97,29 @@ function RequestField({
   inheriting: boolean;
   globalValue: string | null;
   onToggle: (usesGlobal: boolean) => void;
-  ariaLabel: string;
   /** Extra content shown regardless of inheriting (the one-person demand warning). */
   after?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className="space-y-3 border-t pt-4 first:border-t-0 first:pt-0">
-      {labelFor ? (
-        <Label htmlFor={labelFor}>{label}</Label>
-      ) : (
-        <p className="text-sm font-medium">{label}</p>
-      )}
-      <p className="text-sm text-muted-foreground">{description}</p>
       <GlobalDefaultToggle
-        ariaLabel={ariaLabel}
+        heading={
+          labelFor ? (
+            <Label htmlFor={labelFor} className="font-medium">
+              {label}
+            </Label>
+          ) : (
+            label
+          )
+        }
+        name={label}
         inheriting={inheriting}
         globalValue={globalValue}
         settingsHash="requests"
         onChange={onToggle}
       />
+      <p className="text-sm text-muted-foreground">{description}</p>
       {!inheriting && children}
       {after}
     </div>
@@ -198,7 +200,6 @@ export function RowRequestSettings({
             hold this row back; it can never take more than the run allows.
           </>
         }
-        ariaLabel="Use the global limit for how many this row may request"
         inheriting={input.req_max_per_row === null}
         globalValue={requestMaxPerRunGlobal(settings)}
         onToggle={(on) => set({ req_max_per_row: on ? null : 1 })}
@@ -223,7 +224,6 @@ export function RowRequestSettings({
       <RequestField
         label="Send automatically, or wait for you"
         description="Automatic means this row's strongest picks go straight to Sonarr/Radarr. Waiting puts them in Requests for you to approve."
-        ariaLabel="Use the global auto-send setting for this row"
         inheriting={input.req_auto_send === null}
         globalValue={requestAutoSendGlobal(settings)}
         onToggle={(on) => set({ req_auto_send: on ? null : false })}
@@ -242,7 +242,6 @@ export function RowRequestSettings({
         label="Minimum rating"
         labelFor="row-req-rating"
         description="How well-reviewed a title must be before this row will ask for it."
-        ariaLabel="Use the global minimum rating for this row"
         inheriting={input.req_min_rating === null}
         globalValue={requestRatingGlobal(settings)}
         onToggle={(on) => set({ req_min_rating: on ? null : 7 })}
@@ -262,7 +261,6 @@ export function RowRequestSettings({
         label="How many people must want it"
         labelFor="row-req-demand"
         description="Counted within this row only — someone who wants a title in a different row doesn't count towards this one."
-        ariaLabel="Use the global demand threshold for this row"
         inheriting={input.req_min_demand === null}
         globalValue={requestDemandGlobal(settings)}
         onToggle={(on) => set({ req_min_demand: on ? null : 1 })}
@@ -289,7 +287,6 @@ export function RowRequestSettings({
       <RequestField
         label="Release years"
         description="Only ask for titles released in this range. Leave a box at 0 for no limit at that end."
-        ariaLabel="Use the global release-year range for this row"
         inheriting={input.req_min_year === null && input.req_max_year === null}
         globalValue={requestYearGlobal(settings)}
         onToggle={(on) =>
@@ -325,7 +322,6 @@ export function RowRequestSettings({
         label="Language for this row"
         labelFor="row-req-language-mode"
         description="A kids row can stay in English while the rest of the server takes anything good. Turning this off puts the row back on whatever you chose in Settings."
-        ariaLabel="Use the global language setting for this row"
         inheriting={input.req_language_mode === null}
         globalValue={requestLanguageGlobal(settings)}
         onToggle={(on) =>
@@ -446,7 +442,6 @@ export function RowRequestSettings({
         <RequestField
           label="Tag requests with who they're for"
           description="Adds each person's name as a Sonarr/Radarr tag, so you can tell at a glance in there who a title was added for. Someone with their own tag set on their user page keeps that instead."
-          ariaLabel="Use the global tag-by-person setting for this row"
           inheriting={input.req_auto_user_tag === null}
           globalValue={requestAutoUserTagGlobal(settings)}
           onToggle={(on) => set({ req_auto_user_tag: on ? null : false })}
@@ -469,7 +464,6 @@ export function RowRequestSettings({
           label="Where films from this row land"
           labelFor="row-req-radarr-folder"
           description="The Radarr root folder and quality profile for films this row asks for. Everything else about the connection stays as set in Settings."
-          ariaLabel="Use the global Radarr folder for this row"
           inheriting={
             input.req_radarr_root_folder === null &&
             input.req_radarr_quality_profile_id === null
@@ -517,7 +511,6 @@ export function RowRequestSettings({
             label="Where shows from this row land"
             labelFor="row-req-sonarr-folder"
             description="The Sonarr root folder and quality profile for shows this row asks for."
-            ariaLabel="Use the global Sonarr folder for this row"
             inheriting={
               input.req_sonarr_root_folder === null &&
               input.req_sonarr_quality_profile_id === null
@@ -562,7 +555,6 @@ export function RowRequestSettings({
             label="How much of a show this row grabs"
             labelFor="row-req-sonarr-monitor"
             description="Sonarr downloads what it monitors, so a long-running show normally arrives whole. A row that's meant as a taster can take the first season and no more."
-            ariaLabel="Use the global amount-of-a-show setting for this row"
             inheriting={input.req_sonarr_monitor === null}
             globalValue={requestSonarrMonitorGlobal(settings)}
             onToggle={(on) =>

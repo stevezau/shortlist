@@ -62,7 +62,6 @@ export function ColdStartFields({
               .
             </>
           }
-          ariaLabel="Use the global setting for people without enough watch history"
           inheriting={input.cold_start === null}
           globalValue={coldStartGlobal(settings)}
           // Turning the toggle OFF seeds "skip", not the global: the only reason to reach for this

@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { builtAt } from "@/components/rows/row-facts";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { RowRunAction } from "@/components/rows/row-run-action";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Collection, RowEffectiveness } from "@/lib/types";
 
@@ -110,10 +111,13 @@ export function RowLiveStrip({
     <section aria-labelledby="row-live-heading" className="rounded-xl border bg-card shadow-elevated">
       <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 space-y-0.5">
-          <h2 id="row-live-heading" className="flex items-center gap-2 text-base font-semibold">
-            <Zap aria-hidden="true" className="size-4 text-primary" />
-            Live on Plex
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 id="row-live-heading" className="flex items-center gap-2 text-base font-semibold">
+              <Zap aria-hidden="true" className="size-4 text-primary" />
+              Live on Plex
+            </h2>
+            <Badge variant="success">Applies immediately</Badge>
+          </div>
           <p className="text-sm text-muted-foreground">Changes here apply to Plex immediately.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

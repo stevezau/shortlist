@@ -3,6 +3,8 @@ import { useId, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { selectedClass } from "@/lib/selected";
+import { cn } from "@/lib/utils";
 import { ROW_SIZE_MAX, ROW_SIZE_MIN, clampRowSize } from "@/lib/constants";
 
 /**
@@ -48,9 +50,9 @@ export function RowSizeField({
       <Label htmlFor={id}>{label}</Label>
       <div className="flex flex-wrap items-center gap-2">
         {presets?.map((size) => (
-          <Button key={size} type="button" variant={value === size ? "default" : "outline"}
+          <Button key={size} type="button" variant="outline"
             aria-label={`${size} titles`} aria-pressed={value === size}
-            className="min-w-12" onClick={() => onChange(size)}>{size}</Button>
+            className={cn("min-w-12", value === size && selectedClass)} onClick={() => onChange(size)}>{size}</Button>
         ))}
         <Input
           id={id}

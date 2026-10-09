@@ -10,12 +10,15 @@ import { RowRequestSettings } from "@/components/rows/row-request-settings";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { InheritableField } from "@/components/rows/inheritable-field";
 import { LibraryPicker } from "@/components/rows/library-picker";
+import { OverridesList } from "@/components/rows/overrides-list";
+import { OverridesTarget } from "@/components/rows/overrides-target";
+import { PlacementSeen } from "@/components/rows/placement-seen";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowAudienceTable } from "@/components/rows/row-audience-table";
 import { RowContentsFields } from "@/components/rows/row-contents-fields";
 import { draftChanges } from "@/components/rows/row-draft-diff";
-import { mediaLabel, rowLibraries, rowReach } from "@/components/rows/row-facts";
+import { mediaLabel, overridesHint, reachedUsers, rowLibraries, rowReach } from "@/components/rows/row-facts";
 import { RowKindChangeDialog } from "@/components/rows/row-kind-change-dialog";
 import { RowBuildPicker, RowKindPicker } from "@/components/rows/row-kind-picker";
 import { RowLiveStrip } from "@/components/rows/row-live-strip";
@@ -45,6 +48,9 @@ import { Label } from "@/components/ui/label";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, hasUnsavedChanges, OVER_TIME_DEFAULTS, toInput } from "@/lib/collections";
+import { LIBRARY_NAME } from "@/lib/placeholders";
+import { showDaysSummary } from "@/lib/show-days";
+import { hasHome, hasLibrary } from "@/lib/placement";
 import { describeCron } from "@/lib/cron";
 import { settingString } from "@/lib/format";
 import {
@@ -282,6 +288,8 @@ export function RowEditor({
   // would leave showing the discarded edit.
   const [draftVersion, setDraftVersion] = useState(0);
   const isDefault = collection?.slug === "picked";
+  // Where the inheritable settings' one-line rows are collected (see `OverridesList`).
+  const [overridesList, setOverridesList] = useState<HTMLElement | null>(null);
 
   // Live on Plex's on/off switch saves straight away, so what it saved is the saved row's `enabled`
   // from then on — and the form's, or Save would send back the value the page opened with and undo
@@ -503,6 +511,12 @@ export function RowEditor({
     collection && input.schedule.trim() === (collection.schedule ?? "").trim()
       ? (scheduleGroup?.next_run ?? null)
       : null;
+  const onShelf = hasLibrary(input.placement) || hasLibrary(input.placement_friends);
+  const onHome = hasHome(input.placement) || hasHome(input.placement_friends);
+  const days = showDaysSummary(input.show_days);
+  const placementLine = `Recommended shelf ${onShelf ? "on" : "off"} · Home screen ${onHome ? "on" : "off"} · ${
+    days === "Every day" ? "every day" : days
+  }`;
   const effectiveCadence = input.refresh_days ?? refreshDaysGlobalValue(settings.data);
 
   const submit = () => {
@@ -622,21 +636,41 @@ export function RowEditor({
     onRename?.(renameDraft.trim());
   };
 
+  const whatGoesInHint = overridesHint(input, [
+    "refresh_days",
+    "idle_hold_days",
+    "watched_pct",
+    "recent_count",
+    "recency",
+    "max_seeds",
+    "cold_start",
+    "min_year",
+    "max_year",
+    "min_rating",
+    "max_runtime",
+  ]);
+  const requestKeys = (Object.keys(input) as (keyof CollectionInput)[]).filter((key) => key.startsWith("req_"));
   const sections: RowSection[] = [
     { id: "name-and-look", label: "Name & look" },
     { id: "who-gets-it", label: "Who gets it" },
-    { id: "what-goes-in", label: "What goes in" },
+    { id: "what-goes-in", label: "What goes in", hint: whatGoesInHint ?? undefined },
     ...(aiRow ? [{ id: "try-it", label: "Try it" }] : []),
     { id: "schedule", label: "Schedule" },
     { id: "placement", label: "Placement" },
     // A Your requests row never searches, so it has nothing to ask for and nothing to set here, and
     // an empty section would only be somewhere to be wrong. An AI row is library-only and never asks either.
-    ...(input.requests_row || aiRow ? [] : [{ id: "requests", label: "Requests" }]),
+    ...(input.requests_row || aiRow
+      ? []
+      : [{ id: "requests", label: "Requests", hint: overridesHint(input, requestKeys) ?? "server default" }]),
     // A row being created has nothing on Plex to remove yet.
     ...(collection ? [{ id: "danger-zone", label: "Danger zone" }] : []),
   ];
 
-  const subtitle = savedRow
+  // Each library's own Plex title, so the header can say what the row is called where people see it.
+  // A name without the library in it reads the same everywhere, so it is shown once.
+  const savedLibraries = savedRow && libraries.data ? rowLibraries(savedRow, libraries.data) : [];
+  const plexTitles = savedName.includes(LIBRARY_NAME) ? savedLibraries : savedLibraries.slice(0, 1);
+  const facts = savedRow
     ? [
         savedRow.build === "shared" ? "Shared" : "Per person",
         savedRow.audience === "everyone"
@@ -646,13 +680,33 @@ export function RowEditor({
         ...(isDefault ? ["the default row"] : []),
       ].join(" · ")
     : "Nothing reaches Plex until you add it.";
+  const subtitle = savedRow ? (
+    <>
+      {facts}
+      {plexTitles.length > 0 && (
+        <span className="mt-1.5 flex flex-wrap items-center gap-2">
+          On Plex it appears as
+          {plexTitles.map((library) => (
+            <span
+              key={library.key}
+              className="rounded-full border border-border-strong bg-elevated px-2.5 py-0.5 text-xs text-foreground"
+            >
+              <RowName name={savedName} libraryName={savedName.includes(LIBRARY_NAME) ? library.title : undefined} className="" />
+            </span>
+          ))}
+        </span>
+      )}
+    </>
+  ) : (
+    facts
+  );
 
   return (
     <div className="w-full space-y-6">
       <PageHeader
         // The name as a template, its placeholders drawn as chips: there is no single rendered name,
         // because each person and each library fills it differently.
-        title={collection ? <RowName name={savedName} className="" /> : "Add a row"}
+        title={collection ? <RowName name={savedName} libraryName="" className="" /> : "Add a row"}
         subtitle={subtitle}
         className="mb-0"
         actions={
@@ -711,6 +765,7 @@ export function RowEditor({
 
         {/* `min-w-0`: a grid item's default `min-width: auto` resolves to its min-content width,
             and the widest unbreakable thing inside once pushed a 320px page 60px sideways. */}
+        <OverridesTarget.Provider value={overridesList}>
         <fieldset disabled={addingSeason} aria-label="Row settings" className="mt-6 min-w-0 space-y-10 lg:mt-0">
           <EditorSection
             id="name-and-look"
@@ -960,6 +1015,7 @@ export function RowEditor({
                 <RowSizeField
                   value={input.size}
                   onChange={(size) => set({ size })}
+                  presets={[15, 20, 30]}
                 />
               </div>
             )}
@@ -1043,6 +1099,7 @@ export function RowEditor({
                 )
               }
             />
+            <OverridesList onTarget={setOverridesList} />
           </EditorSection>
 
           {aiRow && (
@@ -1076,7 +1133,6 @@ export function RowEditor({
                 label="Titles refresh every…"
                 labelFor="row-refresh-days"
                 description="How often this row swaps some of its titles for new ones."
-                ariaLabel="Use the global refresh cadence"
                 inheriting={input.refresh_days === null}
                 globalValue={refreshDaysGlobal(settings.data)}
                 onToggle={(on) =>
@@ -1114,7 +1170,6 @@ export function RowEditor({
                 label="Hold when they aren't watching"
                 labelFor="row-idle-hold-days"
                 description="How long this row waits when the person it belongs to hasn't watched anything since it was built."
-                ariaLabel="Use the global hold for inactive viewers"
                 inheriting={input.idle_hold_days === null}
                 globalValue={idleHoldGlobal(settings.data)}
                 onToggle={(on) =>
@@ -1158,7 +1213,24 @@ export function RowEditor({
             title="Placement"
             description="Which Plex screens it shows on, where it sits, and on which days."
           >
-            <div data-setting="placement" className="space-y-3">
+            <PlacementSeen
+              placement={input.placement}
+              placementFriends={input.placement_friends}
+              personName={(() => {
+                const person = reachedUsers(input, users)[0];
+                return person ? person.display_name || person.username : null;
+              })()}
+            />
+            {/* Closed, the line above says where the row shows; the controls open with "Edit placement". */}
+            <details data-settings-group="Placement" className="group border-t pt-4">
+              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <span className="min-w-0 text-sm text-muted-foreground">{placementLine}</span>
+                <span className="shrink-0 whitespace-nowrap rounded-md border border-border-strong bg-elevated px-3 py-1.5 text-sm font-medium hover:bg-raised">
+                  Edit placement
+                </span>
+              </summary>
+              <div className="space-y-4 pt-4">
+            <div data-setting="placement" className="space-y-3 border-t pt-4">
               <Label>Where it shows</Label>
               <PlacementToggles
                 placement={input.placement}
@@ -1201,6 +1273,8 @@ export function RowEditor({
                 onChange={(sort_title_prefix) => set({ sort_title_prefix })}
               />
             </div>
+              </div>
+            </details>
           </EditorSection>
 
           {!input.requests_row && !aiRow && (
@@ -1264,6 +1338,7 @@ export function RowEditor({
             </p>
           )}
         </fieldset>
+        </OverridesTarget.Provider>
       </div>
 
       <RowSaveBar

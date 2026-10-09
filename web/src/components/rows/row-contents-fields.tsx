@@ -84,7 +84,6 @@ export function RowContentsFields({
       setting="recent_count"
       label={RECENT_COUNT_LABEL}
       description={`AI web search looks up one watch at a time — “what to watch if you liked X”. This is how many of their most recent watches it asks about: the front slice of the same list “${MAX_SEEDS_LABEL}” sets. More gives wider results and takes more searches. It changes nothing for the other sources.`}
-      ariaLabel="Use the global recent-watches default"
       inheriting={input.recent_count === null}
       globalValue={recentCountGlobal(settings)}
       onToggle={(on) =>
@@ -147,7 +146,6 @@ export function RowContentsFields({
       label="Already-watched titles"
       labelFor="row-watched-pct"
       description="How much of this row can be things they have already finished. At 0 it is all new suggestions."
-      ariaLabel="Use the global already-watched default"
       inheriting={input.watched_pct === null}
       globalValue={watchedPctGlobal(settings)}
       onToggle={(on) =>
@@ -171,7 +169,6 @@ export function RowContentsFields({
       label="Recent releases"
       labelFor="row-recency"
       description="How much a title’s release date counts for this row — up for “new and notable”, down for one that digs up older films. Older titles are never excluded, they just have to be a better match."
-      ariaLabel="Use the global recent-releases default"
       inheriting={input.recency === null}
       globalValue={recencyGlobal(settings)}
       onToggle={(on) => set({ recency: on ? null : recencySeed(settings) })}

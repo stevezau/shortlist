@@ -11,7 +11,7 @@ import { useHashScroll } from "@/lib/use-hash-scroll";
 /**
  * The add/edit-a-row screen.
  *
- * `/rows/new?template=<id>` to add, `/rows/:id` to edit. A page rather than the dialog it used to
+ * `/rows/new/full?template=<id>` for the full add form (the plain `/rows/new` is the short one in `row-new.tsx`), `/rows/:id` to edit. A page rather than the dialog it used to
  * be: a modal is capped at 90% of the viewport, and that cap — not the number of settings — is what
  * forced every group of settings into a collapsed accordion, which in turn hid the warnings that
  * only matter before you save. A page shows every section at once, and makes a single section
