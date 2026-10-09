@@ -34,6 +34,7 @@ const KID = {
   slug: "kid",
   user_type: "managed",
   enabled: false,
+  restricted: true,
   restriction_profile: "older_kid",
   unhidden_rows: 5,
   history_depth: 0,
@@ -80,9 +81,8 @@ describe("an Off person's page", () => {
     expect(screen.getByRole("button", { name: /Run for kid/ })).toBeDisabled();
     expect(screen.getByText(/Clear kid’s Restriction Profile in Plex first/)).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: /Pause or resume/ })).toBeNull();
-    expect(await screen.findByText(/Not built — kid is off/)).toBeInTheDocument();
+    expect(await screen.findByText(/No new rows — kid is off/)).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /does not apply while kid is off/ })).toBeDisabled();
-    expect(screen.queryByText("Title 1")).toBeNull();
   });
 
   it("counts rows, not collections, and gives the Plex fix once", async () => {
@@ -95,8 +95,31 @@ describe("an Off person's page", () => {
     expect(banner).toHaveTextContent("Restriction Profile → None");
   });
 
+  it("still lists the picks of a row that is on Plex, and says no NEW rows are built", async () => {
+    renderBody(KID);
+
+    expect(await screen.findByText("Title 1")).toBeInTheDocument();
+    const banner = await screen.findByTestId("off-banner");
+    expect(banner).toHaveTextContent(/No new rows are built for kid/);
+    expect(banner).not.toHaveTextContent(/has no Shortlist row/);
+  });
+
+  it("does not call a profile added after a row existed rowless", async () => {
+    renderBody({ ...KID, enabled: true });
+
+    expect(await screen.findByTestId("off-banner")).toHaveTextContent(/No new rows are built for kid/);
+    expect(await screen.findByText("Title 1")).toBeInTheDocument();
+  });
+
+  it("is not Off for a profile on an account not reported restricted", () => {
+    renderBody({ ...KID, enabled: true, restricted: false });
+
+    expect(screen.queryByTestId("off-banner")).toBeNull();
+    expect(screen.getByRole("switch", { name: /Pause or resume kid/ })).toBeChecked();
+  });
+
   it("offers Turn on to a person who is merely switched off", () => {
-    renderBody({ ...KID, restriction_profile: "" });
+    renderBody({ ...KID, restricted: false, restriction_profile: "" });
 
     expect(screen.getByRole("button", { name: "Turn on" })).toBeInTheDocument();
     expect(screen.getByText("Turn kid on first")).toBeInTheDocument();

@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { timeAgo } from "@/lib/format";
 import { usePatchUser, useStartRun } from "@/lib/queries";
 import type { User } from "@/lib/types";
-import { userState } from "@/lib/user-state";
+import { profileBlocksRows, userState } from "@/lib/user-state";
 
 /** The user page's identity header: avatar, status badges, stats, pause toggle, and Run now. */
 export function UserDetailHeader({ user }: { user: User }) {
@@ -23,7 +23,8 @@ export function UserDetailHeader({ user }: { user: User }) {
   const off = state === "off";
   const paused = state === "paused";
   const name = user.display_name || user.username;
-  const offReason = user.restriction_profile
+  const profileBlocked = profileBlocksRows(user);
+  const offReason = profileBlocked
     ? `Clear ${name}’s Restriction Profile in Plex first`
     : `Turn ${name} on first`;
 
@@ -47,7 +48,7 @@ export function UserDetailHeader({ user }: { user: User }) {
               )}
               {user.history_depth} titles watched · last run{" "}
               {timeAgo(user.last_run_at)}
-              {off && " · rows off"}
+              {off && " · no new rows"}
               {/* Dropped, never printed as "· — picks watched": in a table cell an em dash reads as
                   "nothing to report", but in a sentence it is a hole. */}
               {user.picks_watched_30d !== null ? (
@@ -99,7 +100,7 @@ export function UserDetailHeader({ user }: { user: User }) {
             </Button>
             {off && <p className="mt-1 text-xs text-muted-foreground">{offReason}</p>}
           </div>
-          {off && !user.restriction_profile && (
+          {off && !profileBlocked && (
             <Button
               onClick={() => patchUser.mutate({ id: user.id, patch: { enabled: true } })}
               loading={patchUser.isPending}

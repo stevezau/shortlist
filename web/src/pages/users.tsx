@@ -44,7 +44,7 @@ import {
 import { api } from "@/lib/api";
 import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import { profileName, USER_TYPE_LABEL } from "@/lib/user-profile";
-import { userState, type UserState } from "@/lib/user-state";
+import { profileBlocksRows, userState, type UserState } from "@/lib/user-state";
 import type { AccountPrivacy, Collection, PrivacyStatus, RowSources, User } from "@/lib/types";
 import { timeAgo } from "@/lib/format";
 import { coarseHitArea } from "@/lib/hit-area";
@@ -83,11 +83,11 @@ const STATE_LABEL: Record<UserState, string> = { on: "On", paused: "Paused", off
 
 function stateTitle(user: User, state: UserState): string {
   if (user.departed) return "Plex no longer lists this account, so Shortlist switched them off and removed their rows.";
-  if (user.restriction_profile) {
-    return `Plex's ${profileName(user)} restriction profile is set on this account, so Shortlist builds no row for it.`;
+  if (profileBlocksRows(user)) {
+    return `Plex's ${profileName(user)} restriction profile is set on this account, so Shortlist builds no new rows for it.`;
   }
   if (state === "paused") return "Their rows are off Home and Recommended and stop updating until you resume them.";
-  if (state === "off") return "Shortlist builds no rows for them, and their rows are off Plex.";
+  if (state === "off") return "Shortlist builds no new rows for them.";
   return "Their rows run on each row's schedule.";
 }
 
@@ -219,7 +219,7 @@ function RowsCell({ user, collections }: { user: User; collections: CollectionsQ
   }
   if (userState(user) === "off") {
     return (
-      <span data-testid="user-rows" title="Off: no rows are built for them">
+      <span data-testid="user-rows" title="Off: no new rows are built for them">
         —
       </span>
     );
