@@ -23,7 +23,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { BackLink } from "@/components/back-link";
@@ -147,11 +147,11 @@ export function RunUserTracePage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to={`/runs/${runId}`} label={`Run #${runId}`} />
       {!valid ? (
         <EmptyState
           title="That trace doesn’t exist"
           hint="The link may be wrong, or the run was removed."
+          action={<BackLink to="/runs" label="Back to all runs" />}
         />
       ) : rowNotInRun ? (
         <EmptyState
@@ -183,6 +183,7 @@ export function RunUserTracePage() {
               rowNames={rowNames}
               rowWindows={rowWindows}
               sharedRow={isRow}
+              runId={runId}
             />
           )}
         </QueryBoundary>
@@ -218,6 +219,7 @@ export function TraceView({
   rowNames = {},
   rowWindows = {},
   sharedRow = false,
+  runId,
 }: {
   data: RunUserTraceResponse;
   userId?: number;
@@ -233,6 +235,8 @@ export function TraceView({
   rowWindows?: Record<string, number>;
   /** A shared row belongs to nobody, so the person-framed copy in this view is wrong for it. */
   sharedRow?: boolean;
+  /** The run this trace belongs to; when known, the title line leads with a "Run #N /" breadcrumb. */
+  runId?: number;
 }) {
   const name = rowName || data.display_name || data.username;
   const libraries = useMemo(() => buildLibraries(data), [data]);
@@ -244,6 +248,16 @@ export function TraceView({
       <div className="space-y-6">
         <header className="space-y-1">
           <h1 className="break-words text-2xl font-semibold tracking-tight">
+            {runId !== undefined && (
+              <>
+                <Link to={`/runs/${runId}`} className="font-normal text-muted-foreground hover:text-foreground">
+                  Run #{runId}
+                </Link>
+                <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
+                  /
+                </span>
+              </>
+            )}
             How we picked for {sharedRow ? rowDisplayName(name) || name : name}
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">

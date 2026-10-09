@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { describeCron } from "@/lib/cron";
 import { timeUntil } from "@/lib/format";
 import { useSchedule } from "@/lib/queries";
-import { RowName } from "@/components/rows/row-name";
+import { resolveRowName } from "@/lib/run-rows";
 
 /**
  * The rows that build on a timer, listed alongside the jobs that do.
@@ -115,7 +115,7 @@ export function RowSchedules() {
                         title={`Edit ${label}`}
                         className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
-                        <RowName name={label} className="min-w-0 break-words font-normal" />
+                        <span className="min-w-0 break-words">{resolveRowName(label)}</span>
                       </Link>
                     );
                   })}

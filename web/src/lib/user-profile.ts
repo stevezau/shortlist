@@ -13,9 +13,13 @@ const PROFILE_NAMES: Record<string, string> = {
   teen: "Teen",
 };
 
-export function profileName(user: User): string {
-  const key = user.restriction_profile ?? "";
+/** The same name from the bare profile key, for data that is not a `User` (the Privacy accounts). */
+export function profileLabel(key: string): string {
   return PROFILE_NAMES[key] ?? key;
+}
+
+export function profileName(user: User): string {
+  return profileLabel(user.restriction_profile ?? "");
 }
 
 /** A Plex account's kind as the owner reads it — Users and Privacy name it the same way. */

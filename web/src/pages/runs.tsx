@@ -337,7 +337,7 @@ export function RunsPage() {
         title="Runs"
         subtitle="Every time Shortlist rebuilt rows, and how it went."
         actions={
-          <div className="flex flex-wrap gap-2">
+          <>
             <RunRowsDialog
               onRun={(collection_ids) => startRun.mutate({ collection_ids })}
               isPending={startRun.isPending}
@@ -352,6 +352,7 @@ export function RunsPage() {
             {!rowSlug && (summary.data?.total ?? 0) > 0 && (
               <OverflowMenu
                 label="More run actions"
+                variant="outline"
                 items={[
                   {
                     label: "Clear run history",
@@ -362,7 +363,7 @@ export function RunsPage() {
                 ]}
               />
             )}
-          </div>
+          </>
         }
       />
 

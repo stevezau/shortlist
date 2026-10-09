@@ -7,7 +7,7 @@ import type { User } from "@/lib/types";
 import { profileName } from "@/lib/user-profile";
 import { profileBlocksRows } from "@/lib/user-state";
 
-const PLEX_USERS_URL = "https://app.plex.tv/desktop/#!/settings/users";
+export const PLEX_USERS_URL = "https://app.plex.tv/desktop/#!/settings/users";
 
 /**
  * Shown on the page of a person who is Off: said once, in one place, instead of a switch per row.

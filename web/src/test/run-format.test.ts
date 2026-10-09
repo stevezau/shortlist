@@ -65,9 +65,9 @@ describe("errorBucket — only the three recognised classes count as 'the same p
 });
 
 describe("rankClass", () => {
-  it("tiers 1-3, 4-10, and the rest", () => {
-    expect(rankClass(1)).toContain("amber");
-    expect(rankClass(3)).toContain("amber");
+  it("is neutral: the first ten at full strength, the rest muted", () => {
+    expect(rankClass(1)).not.toContain("amber");
+    expect(rankClass(3)).not.toContain("amber");
     expect(rankClass(4)).not.toContain("amber");
     expect(rankClass(10)).not.toContain("muted");
     expect(rankClass(11)).toContain("muted");

@@ -85,9 +85,9 @@ export function errorBucket(raw: string): ErrorClass {
   return classifyError(raw);
 }
 
-/** Rank badge colour by tier — the top picks stand out, lower ones recede. */
+/** Rank colour by tier — neutral, because amber marks the one primary action on a screen. The first
+ *  ten read at full strength and lower ones recede. */
 export function rankClass(rank: number): string {
-  if (rank <= 3) return "text-amber-400";
   if (rank <= 10) return "text-foreground";
   return "text-muted-foreground";
 }

@@ -302,6 +302,9 @@ describe("what the page refuses to claim", () => {
     const note = await screen.findByText(/plex rejects hide rules for restriction profiles/i);
     expect(note).toHaveTextContent("kid can see 3 rows that aren’t theirs");
     expect(note).toHaveTextContent(/clear it in plex/i);
+    // The profile reads as its name, and "How →" leads to the page that walks through the fix.
+    expect(screen.getByText(/Restriction Profile Older Kid/)).toBeInTheDocument();
+    expect(within(note).getByRole("link", { name: /How/ })).toHaveAttribute("href", "/users/7");
     expect(within(screen.getByRole("table")).queryByText(/collection/i)).toBeNull();
     // The explanation is not repeated in a banner above the grid.
     expect(screen.getAllByText(/restriction profiles/i)).toHaveLength(1);

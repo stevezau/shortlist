@@ -728,6 +728,16 @@ describe("ImpactReport", () => {
     ).toBeTruthy();
   });
 
+  it("leaves zero counts out of the requests strip", async () => {
+    getReport.mockResolvedValue({ ...REPORT, requests: { sent: 0, pending: 4, watched_after_sent: 0 } });
+    renderReport();
+
+    const requests = await screen.findByRole("region", { name: "Requests" });
+    expect(requests).toHaveTextContent("4 awaiting approval");
+    expect(requests).not.toHaveTextContent(/0 sent|0 watched since/);
+    expect(within(requests).queryByRole("link", { name: /Send log/ })).toBeNull();
+  });
+
   it("states a zero week rather than dividing by it", async () => {
     // The old Finished tile read "of N watched", which at N = 0 rendered "of 0 watched". The verdict
     // has no such phrasing to break: it prints the count, and "0 watched" IS the statement.

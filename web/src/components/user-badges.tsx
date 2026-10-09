@@ -51,10 +51,11 @@ export function RestrictedBadge({ user }: { user: User }) {
   if (!user.restriction_profile) return null;
   return (
     <Badge
-      variant="destructive"
+      variant="outline"
+      className="text-muted-foreground"
       title={`Plex's ${profileName(user)} restriction profile is set on this account. Plex usually hides collections from it, so no row is built — and Plex refuses privacy filters for profiled accounts. Set the Restriction Profile to None in Plex to give this person recommendations.`}
     >
-      {profileName(user)}
+      Restriction: {profileName(user)}
     </Badge>
   );
 }

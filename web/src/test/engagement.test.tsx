@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -63,6 +63,13 @@ const ENGAGEMENT: EngagementReport = {
   losing: [],
   stop_points: [],
 };
+
+/** The panel shows while its reading loads and is gone once the reading says there is nothing to flag,
+ *  so "gone" proves the query resolved — an absence check alone would pass before it did. */
+async function panelGone() {
+  await screen.findByText("Worth a look");
+  await waitFor(() => expect(screen.queryByText("Worth a look")).toBeNull());
+}
 
 function report(over: Partial<EffectivenessReport> = {}): EffectivenessReport {
   return {
@@ -222,7 +229,7 @@ describe("NeedsALook", () => {
     expect(most).toBeLessThan(half);
   });
 
-  it("says nothing is wrong rather than rendering an empty list", async () => {
+  it("takes no space at all rather than rendering an empty list", async () => {
     getEngagement.mockResolvedValue({ ...ENGAGEMENT, people: [] });
     renderPanel(
       report({
@@ -230,7 +237,7 @@ describe("NeedsALook", () => {
       } as never),
     );
 
-    expect(await screen.findByText(/no row came up empty/)).toBeInTheDocument();
+    await panelGone();
     expect(document.querySelectorAll("li").length).toBe(0);
   });
 
@@ -338,7 +345,7 @@ describe("NeedsALook — the thresholds it acts on", () => {
 
     cleanup();
     renderPanel(report({ coverage: coverage({ users_idle: 0 }), per_row: [row({ delivered: 19 })] }));
-    expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
+    await panelGone();
     expect(screen.queryByText(/delivered 19 picks/)).toBeNull();
   });
 
@@ -347,14 +354,14 @@ describe("NeedsALook — the thresholds it acts on", () => {
     // row that landed 8 picks announced as having landed none.
     renderPanel(report({ coverage: coverage({ users_idle: 0 }), per_row: [row({ watched: 1 })] }));
 
-    expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
+    await panelGone();
     expect(screen.queryByText(/none were watched/)).toBeNull();
   });
 
   it("does not nag about a row the owner already deleted", async () => {
     renderPanel(report({ coverage: coverage({ users_idle: 0 }), per_row: [row({ deleted: true })] }));
 
-    expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
+    await panelGone();
     expect(screen.queryByText(/Dud Row/)).toBeNull();
   });
 
@@ -391,14 +398,14 @@ describe("NeedsALook — the thresholds it acts on", () => {
 
     cleanup();
     renderPanel(report({ coverage: coverage({ users_idle: 0 }), requests: { ...requests, sent: 4 } }));
-    expect(await screen.findByText(/no row came up empty/i)).toBeTruthy();
+    await panelGone();
     expect(screen.queryByText(/titles were fetched/)).toBeNull();
   });
 });
 
 /** The two cards count different sets now, so they must not claim the same thing. */
 describe("NeedsALook agrees with the Verdict card", () => {
-  it("explains the give-ups rather than claiming everyone watched something", async () => {
+  it("hides, rather than claiming everyone watched something, when the only give-ups were bounces", async () => {
     // The verdict tile totals EVERY abandonment; this list leaves out the ones under 5%. On a day
     // whose only give-ups were bounces, a bare "everyone watched something" sat directly under
     // "N gave up part-way" and read as one of the two being wrong.
@@ -410,10 +417,8 @@ describe("NeedsALook agrees with the Verdict card", () => {
       } as never),
     );
 
-    expect(await screen.findByText(/all under 5% in/i)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/everyone who got a pick watched something/i),
-    ).not.toBeInTheDocument();
+    // Hidden, so the card cannot contradict the verdict tile's give-up count at all.
+    await panelGone();
   });
 
   it("says it is too early rather than that everyone watched something", async () => {
@@ -433,7 +438,7 @@ describe("NeedsALook agrees with the Verdict card", () => {
     expect(screen.queryByText(/everyone who got a pick watched something/i)).toBeNull();
   });
 
-  it("still says everyone watched something when there were no give-ups at all", async () => {
+  it("hides when there were no give-ups at all", async () => {
     getEngagement.mockResolvedValue({ ...ENGAGEMENT, people: [] });
     renderPanel(
       report({
@@ -442,12 +447,10 @@ describe("NeedsALook agrees with the Verdict card", () => {
       } as never),
     );
 
-    expect(
-      await screen.findByText(/everyone who got a pick watched something/i),
-    ).toBeInTheDocument();
+    await panelGone();
   });
 
-  it("reads correctly when there was exactly one give-up", async () => {
+  it("hides when the one give-up was too short to list", async () => {
     // The plural ternaries covered give-up/give-ups and was/were but left "all" fixed, so the
     // singular cell rendered "the 1 give-up above was all under 5% in".
     getEngagement.mockResolvedValue({ ...ENGAGEMENT, people: [] });
@@ -458,9 +461,6 @@ describe("NeedsALook agrees with the Verdict card", () => {
       } as never),
     );
 
-    expect(
-      await screen.findByText(/the one give-up above was under 5% in/i),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/was all under/i)).not.toBeInTheDocument();
+    await panelGone();
   });
 });

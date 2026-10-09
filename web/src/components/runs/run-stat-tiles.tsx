@@ -9,12 +9,11 @@ import {
 } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Link } from "react-router";
 
 import { StatusCell, StatusRow, StatusStrip } from "@/components/status-strip";
 import { Badge } from "@/components/ui/badge";
 import { formatDuration, runElapsedMs, runStatusLabel } from "@/lib/format";
-import { nameList, runPrivacyVerdict, type RunPrivacy } from "@/lib/run-privacy";
+import { nameList, runPrivacyVerdict } from "@/lib/run-privacy";
 import { tokenSteps } from "@/lib/run-format";
 import { runHealth } from "@/lib/run-status";
 import type { RunDetail } from "@/lib/types";
@@ -349,15 +348,6 @@ function ResultCell({ run }: { run: RunDetail }) {
   return <StatusCell label="Result" tone="neutral" value={runStatusLabel(run.status)} />;
 }
 
-/** The run's own words for one flagged account, for the link under the privacy count. */
-function findingPhrase(name: string, username: string, privacy: RunPrivacy): string {
-  const key = username.toLowerCase();
-  const listed = (names: string[] | null) => (names ?? []).some((n) => n.toLowerCase() === key);
-  if (listed(privacy.can_see_others)) return `${name} can see others’ rows`;
-  if (listed(privacy.unreadable_filters)) return `Plex can’t read ${name}’s restrictions`;
-  return `Plex isn’t applying ${name}’s hide rules`;
-}
-
 /**
  * How many accounts hide every row that is not theirs, as far as THIS run can vouch for.
  *
@@ -374,18 +364,9 @@ function PrivacyCell({ run }: { run: RunDetail }) {
   const displayName = (username: string) =>
     run.users.find((user) => user.username.toLowerCase() === username.toLowerCase())?.display_name ||
     username;
-  const flaggedLink = (flagged: string[]) => {
-    const first = flagged[0];
-    if (!first || !run.privacy) return null;
-    return (
-      <Link
-        to="/privacy"
-        className="rounded-sm text-accent-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {findingPhrase(displayName(first), first, run.privacy)} →
-      </Link>
-    );
-  };
+  // The callout under the strip names the account and carries the fix link, so the tile only points
+  // at it: the same warning said three times (tile, link, callout) read as three problems.
+  const flaggedLink = (flagged: string[]) => (flagged.length > 0 && run.privacy ? "Details below" : null);
 
   switch (verdict.kind) {
     case "not_measured":

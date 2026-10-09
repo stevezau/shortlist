@@ -1,7 +1,8 @@
-import { RefreshCw } from "lucide-react";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
+import { PLEX_USERS_URL } from "@/components/user-detail/off-banner";
 import { UserAvatar } from "@/components/user-avatar";
 import { UserBadges } from "@/components/user-badges";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,14 @@ export function UserDetailHeader({ user }: { user: User }) {
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight">
+                {/* The breadcrumb shares the title line, so this page's title sits at the same height as
+                    every other page's. */}
+                <Link to="/users" className="font-normal text-muted-foreground hover:text-foreground">
+                  Users
+                </Link>
+                <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
+                  /
+                </span>
                 {user.display_name || user.username}
               </h1>
               <UserBadges user={user} />
@@ -100,12 +109,23 @@ export function UserDetailHeader({ user }: { user: User }) {
             </Button>
             {off && <p className="mt-1 text-xs text-muted-foreground">{offReason}</p>}
           </div>
+          {/* "Turn on" only where it changes something. A Restriction Profile keeps the person Off
+              whatever `enabled` says (`userState`), so a Turn on there would save and still read Off:
+              the honest action is the fix in Plex. */}
           {off && !profileBlocked && (
             <Button
               onClick={() => patchUser.mutate({ id: user.id, patch: { enabled: true } })}
               loading={patchUser.isPending}
             >
               Turn on
+            </Button>
+          )}
+          {off && profileBlocked && (
+            <Button asChild>
+              <a href={PLEX_USERS_URL} target="_blank" rel="noreferrer">
+                Fix in Plex
+                <ExternalLink aria-hidden="true" />
+              </a>
             </Button>
           )}
         </div>

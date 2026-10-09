@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 
 import { panelRowClass, ReportPanel } from "@/components/dashboard/report-panel";
 import { QueryBoundary } from "@/components/query-boundary";
@@ -167,6 +167,38 @@ function gaveUp(people: EngagementReport["people"]): Problem[] {
   }));
 }
 
+/** What the panel has to say: the problems worth listing, and whether it is too early to judge. */
+function findProblems(
+  report: EffectivenessReport,
+  data: EngagementReport,
+): { tooEarly: boolean; problems: Problem[] } {
+  // A maturity gate. `landing.rate === null` is the server saying no pick has had its full N
+  // days yet. Without it a five-minute-old install showed three amber warnings that nobody had
+  // watched anything. The card says so itself when it holds them back (below) — the Impact
+  // card that used to carry "Not enough time yet" now shows a viewing share instead.
+  // `?.` because an older report — or a caller that builds `overall` by hand — may carry no
+  // landing block at all. Absent is NOT the same as `null`: null is the server saying "too
+  // early to judge", absent is no opinion, and only the first may suppress a warning.
+  const tooEarly = report.overall.landing?.rate === null;
+  const idle = tooEarly ? null : idlePeople(report.coverage);
+  // Only when the line above covers EVERYONE. "3 of 3 people got picks and watched none"
+  // followed by one line per row saying the same of each row is one fact stated three
+  // ways. When only SOME people are idle, the per-row breakdown says which rows — which is
+  // new information and the reason this list exists.
+  const idleCoversEveryone =
+    idle !== null &&
+    report.coverage.users_idle === report.coverage.users_with_picks;
+  const problems = [
+    idle,
+    ...(tooEarly || idleCoversEveryone
+      ? []
+      : deadRows(report.per_row)),
+    unwatchedRequests(report.requests),
+    ...gaveUp(data.people),
+  ].filter((p): p is Problem => p !== null);
+  return { tooEarly, problems };
+}
+
 export function NeedsALook({
   report,
   reportWindow,
@@ -175,6 +207,13 @@ export function NeedsALook({
   reportWindow: ReportWindow;
 }) {
   const engagement = useEngagement(reportWindow);
+  // "Nothing to flag" is not a panel's worth of content: it stamped an all-clear card on every healthy
+  // dashboard. While the reading loads the panel shows, so it does not pop in and shove the page down;
+  // once it answers "nothing", it is gone.
+  if (engagement.data) {
+    const { tooEarly, problems } = findProblems(report, engagement.data);
+    if (problems.length === 0 && !tooEarly) return null;
+  }
   return (
     <ReportPanel
       title="Worth a look"
@@ -190,30 +229,7 @@ export function NeedsALook({
           skeleton={<Skeleton className="m-4 h-16 sm:mx-5" />}
         >
           {(data) => {
-            // A maturity gate. `landing.rate === null` is the server saying no pick has had its full N
-            // days yet. Without it a five-minute-old install showed three amber warnings that nobody had
-            // watched anything. The card says so itself when it holds them back (below) — the Impact
-            // card that used to carry "Not enough time yet" now shows a viewing share instead.
-            // `?.` because an older report — or a caller that builds `overall` by hand — may carry no
-            // landing block at all. Absent is NOT the same as `null`: null is the server saying "too
-            // early to judge", absent is no opinion, and only the first may suppress a warning.
-            const tooEarly = report.overall.landing?.rate === null;
-            const idle = tooEarly ? null : idlePeople(report.coverage);
-            // Only when the line above covers EVERYONE. "3 of 3 people got picks and watched none"
-            // followed by one line per row saying the same of each row is one fact stated three
-            // ways. When only SOME people are idle, the per-row breakdown says which rows — which is
-            // new information and the reason this list exists.
-            const idleCoversEveryone =
-              idle !== null &&
-              report.coverage.users_idle === report.coverage.users_with_picks;
-            const problems = [
-              idle,
-              ...(tooEarly || idleCoversEveryone
-                ? []
-                : deadRows(report.per_row)),
-              unwatchedRequests(report.requests),
-              ...gaveUp(data.people),
-            ].filter((p): p is Problem => p !== null);
+            const { tooEarly, problems } = findProblems(report, data);
             // The same size as every other panel's body text: a quieter note read as a footnote to a
             // list that was not there.
             const tooEarlyNote = tooEarly ? (
@@ -224,27 +240,6 @@ export function NeedsALook({
               </p>
             ) : null;
             if (problems.length === 0 && tooEarly) return tooEarlyNote;
-            if (problems.length === 0) {
-              // The verdict card above totals EVERY abandonment, this list leaves out the ones under
-              // 5% — so on a day whose only give-ups were bounces, a bare "everyone watched
-              // something" sits directly under "N gave up part-way" and reads as one of the two
-              // being wrong. Say which, rather than letting the reader work it out.
-              const onlyBounces =
-                report.overall.dropped === 0 && report.overall.bounced > 0;
-              return (
-                <p className={cn("flex items-center gap-2 text-sm text-muted-foreground", panelRowClass)}>
-                  <CheckCircle2
-                    className="h-4 w-4 shrink-0 text-success"
-                    aria-hidden="true"
-                  />
-                  {onlyBounces
-                    ? report.overall.bounced === 1
-                      ? `Nothing worth flagging — the one give-up above was under ${BOUNCE_FLOOR_PERCENT}% in, which is too little to read anything into. No row came up empty.`
-                      : `Nothing worth flagging — the ${report.overall.bounced} give-ups above were all under ${BOUNCE_FLOOR_PERCENT}% in, which is too little to read anything into. No row came up empty.`
-                    : "Everyone who got a pick watched something, and no row came up empty."}
-                </p>
-              );
-            }
             return (
               <>
                 <ul className="divide-y">

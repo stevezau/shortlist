@@ -4,6 +4,7 @@ import {
   groupRunByRow,
   rowCounts,
   rowDisplayName,
+  resolveRowName,
   rowSummary,
   rowTimeMs,
 } from "@/lib/run-rows";
@@ -74,6 +75,20 @@ describe("rowDisplayName", () => {
     expect(rowDisplayName(CONFIG_NAMES.picked)).toBe("✨ Picked for You");
     expect(rowDisplayName(CONFIG_NAMES.because)).toBe("🎯 Because you watched");
     expect(rowDisplayName(CONFIG_NAMES.popular)).toBe("👥 Popular on SFLIX");
+  });
+});
+
+describe("resolveRowName", () => {
+  it("fills the library and the lead seed where they are known", () => {
+    expect(resolveRowName(CONFIG_NAMES.picked, { library: "Movies" })).toBe("✨ Movies Picked for You");
+    expect(resolveRowName(CONFIG_NAMES.because, { topSeed: "Fargo" })).toBe("🎯 Because you watched Fargo");
+  });
+
+  it("falls back to plain words, never braces, where no value exists yet", () => {
+    expect(resolveRowName(CONFIG_NAMES.because)).toBe("🎯 Because you watched …");
+    expect(resolveRowName("☕ {library_name} you've already seen")).toBe("☕ You've already seen");
+    expect(resolveRowName(CONFIG_NAMES.popular)).toBe("👥 Popular on SFLIX");
+    expect(resolveRowName("{user}'s picks")).not.toContain("{");
   });
 });
 
