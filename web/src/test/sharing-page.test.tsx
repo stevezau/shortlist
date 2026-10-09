@@ -405,6 +405,38 @@ describe("proof first", () => {
   });
 });
 
+describe("no green headline above an exposure", () => {
+  it.each(["missing", "filter_unreadable", "unhideable"])(
+    "says in red that accounts are exposed when the verdict is %s, and the check is not drawn green",
+    async (summary) => {
+      getPrivacyStatus.mockResolvedValue(
+        status({
+          summary,
+          rows_on_plex: ["shortlist_mike"],
+          accounts: [account({ state: "missing", hides: [], missing: ["shortlist_mike"] })],
+        }),
+      );
+
+      renderPage();
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(/1 account.*(can see|isn.t hiding|not hiding)/i);
+      const check = screen.getByRole("region", { name: /plex was applying the rules when last checked/i });
+      expect(check.querySelector(".bg-success")).toBeNull();
+    },
+  );
+
+  it("keeps the proof panel when plex.tv cannot be read, since it comes from Shortlist's own database", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      status({ summary: "unreadable", error: "plex.tv timed out", accounts: [] }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByRole("region", { name: /plex was applying the rules when last checked/i })).toBeVisible();
+  });
+});
+
 describe("the Privacy header", () => {
   it("says what the page reads, and 'Read again' reads it again", async () => {
     renderPage();
