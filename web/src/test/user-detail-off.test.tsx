@@ -199,6 +199,32 @@ describe("an Off person's page", () => {
     expect(screen.getByRole("switch", { name: /Pause or resume kid/ })).toBeChecked();
   });
 
+  it("walks through the Plex fix for a profiled account that is exposed but not Off", async () => {
+    renderBody({ ...KID, enabled: true, restricted: false });
+
+    const banner = await screen.findByTestId("profile-exposure-banner");
+    expect(await screen.findByText(/kid can see 3 rows that aren’t theirs/)).toBeInTheDocument();
+    expect(banner).toHaveTextContent("Restriction Profile → None");
+    expect(banner).not.toHaveTextContent(/\bOff\b/);
+    expect(banner).not.toHaveTextContent(/does not fix this/);
+    expect(screen.getByRole("link", { name: /Open Plex Users/ })).toBeInTheDocument();
+  });
+
+  it("shows no profile banner on a profiled account nothing is exposed on", async () => {
+    const original = privacyStatus.current;
+    privacyStatus.current = {
+      accounts: [{ user_id: 2, state: "hiding", missing: [], user: "kid" }],
+      enforcement: {},
+    } as unknown as PrivacyStatus;
+    try {
+      renderBody({ ...KID, enabled: true, restricted: false, unhidden_rows: 0 });
+      await screen.findByText("Title 1");
+      expect(screen.queryByTestId("profile-exposure-banner")).toBeNull();
+    } finally {
+      privacyStatus.current = original;
+    }
+  });
+
   it("offers Turn on to a person who is merely switched off", () => {
     renderBody({ ...KID, restricted: false, restriction_profile: "" });
 

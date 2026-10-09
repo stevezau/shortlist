@@ -8,6 +8,7 @@ import { Tabs, TabPanel } from "@/components/ui/tabs";
 import { BlockedSeedsList } from "@/components/user-detail/blocked-seeds";
 import { RecentRuns } from "@/components/user-detail/recent-runs";
 import { OffBanner } from "@/components/user-detail/off-banner";
+import { ProfileExposureBanner } from "@/components/user-detail/profile-exposure-banner";
 import { UserDetailHeader } from "@/components/user-detail/user-detail-header";
 import { UserNickname } from "@/components/user-detail/user-nickname";
 import { UserRequestTag } from "@/components/user-detail/user-request-tag";
@@ -56,7 +57,7 @@ export function UserDetailBody({ user }: { user: User }) {
       <UserDetailHeader user={user} />
 
       {user.user_type === "owner" && <OwnerNote />}
-      {userState(user) === "off" && <OffBanner user={user} />}
+      {userState(user) === "off" ? <OffBanner user={user} /> : <ProfileExposureBanner user={user} />}
 
       <Tabs
         id="user-detail"

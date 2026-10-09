@@ -60,32 +60,37 @@ export function OffBanner({ user }: { user: User }) {
           )}
         </div>
       )}
-      {profile && (
-        <div className="border-t px-6 py-4">
-          <ol className="space-y-2 text-sm">
-            <li className="flex gap-3">
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-raised text-xs font-semibold">
-                1
-              </span>
-              <span>
-                In Plex: Settings &rarr; Users &amp; Sharing &rarr; {name} &rarr; Restriction
-                Profile &rarr; None. It is set to {profile} now.
-              </span>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-raised text-xs font-semibold">
-                2
-              </span>
-              <span>The next run hides everyone else&rsquo;s rows from {name}.</span>
-            </li>
-          </ol>
-          <Button asChild variant="outline" className="mt-4">
-            <a href={PLEX_USERS_URL} target="_blank" rel="noreferrer">
-              Open Plex Users &amp; Sharing
-            </a>
-          </Button>
-        </div>
-      )}
+      {profile && <ProfileFixSteps name={name} profile={profile} />}
     </Card>
+  );
+}
+
+/** The two-step fix for a Restriction Profile, shared by the Off banner and the exposure banner. */
+export function ProfileFixSteps({ name, profile }: { name: string; profile: string }) {
+  return (
+    <div className="border-t px-6 py-4">
+      <ol className="space-y-2 text-sm">
+        <li className="flex gap-3">
+          <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-raised text-xs font-semibold">
+            1
+          </span>
+          <span>
+            In Plex: Settings &rarr; Users &amp; Sharing &rarr; {name} &rarr; Restriction
+            Profile &rarr; None. It is set to {profile} now.
+          </span>
+        </li>
+        <li className="flex gap-3">
+          <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-raised text-xs font-semibold">
+            2
+          </span>
+          <span>The next run hides everyone else&rsquo;s rows from {name}.</span>
+        </li>
+      </ol>
+      <Button asChild variant="outline" className="mt-4">
+        <a href={PLEX_USERS_URL} target="_blank" rel="noreferrer">
+          Open Plex Users &amp; Sharing
+        </a>
+      </Button>
+    </div>
   );
 }
