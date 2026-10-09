@@ -1229,9 +1229,7 @@ describe("RequestsPage", () => {
 
     expect(await screen.findByText(/Requests are off/i)).toBeTruthy();
     expect(screen.getByText("Fallout")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: /to Radarr\/Sonarr/i }),
-    ).toBeDisabled();
+    expect(toolbar().getByRole("button", { name: /^Send/ })).toBeDisabled();
     expect(toolbar().getByRole("button", { name: /Reject/i })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /Fallout/i })).toBeDisabled();
   });
@@ -2076,9 +2074,7 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     const before = getArrStatus.mock.calls.length;
 
     await userEvent.click(screen.getByRole("checkbox", { name: /Dune/i }));
-    await userEvent.click(
-      screen.getByRole("button", { name: /to Radarr\/Sonarr/i }),
-    );
+    await userEvent.click(toolbar().getByRole("button", { name: /^Send 1$/ }));
 
     await waitFor(() =>
       expect(getArrStatus.mock.calls.length).toBeGreaterThan(before),
