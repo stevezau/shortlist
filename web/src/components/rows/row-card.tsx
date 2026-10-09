@@ -8,13 +8,11 @@ import {
   Sparkles,
   TextCursorInput,
   Trash2,
-  UserCheck,
-  Users as UsersIcon,
 } from "lucide-react";
 import { Link } from "react-router";
 
 import { OverflowMenu } from "@/components/rows/overflow-menu";
-import { builtAt, mediaLabel, peopleCount, rowReach } from "@/components/rows/row-facts";
+import { builtAt, mediaLabel, peopleCount, rowKindTitle, rowReach } from "@/components/rows/row-facts";
 import { RowRunAction } from "@/components/rows/row-run-action";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { RowName } from "@/components/rows/row-name";
@@ -25,6 +23,7 @@ import { TitlePoster } from "@/components/title-poster";
 import { api } from "@/lib/api";
 import { audienceSummary, rowOverrides } from "@/lib/collections";
 import { DEFAULT_ROW_SLUG } from "@/lib/constants";
+import { describeCron } from "@/lib/cron";
 import { renderRowName, sampleLibraryName, settingString } from "@/lib/format";
 import { seasonStatusLine } from "@/lib/seasons";
 import { useCollectionEffectiveness, useLibraries, useSettings } from "@/lib/queries";
@@ -133,6 +132,12 @@ function representativeLibraryName(
   return configured?.title ?? compatible?.title ?? sampleLibraryName(collection.media);
 }
 
+/** When the row runs, in words; a row with no schedule only runs when someone presses Run now. */
+function scheduleWords(schedule: string | null): string {
+  if (!schedule?.trim()) return "Manual runs only";
+  return describeCron(schedule) || "Custom schedule";
+}
+
 /** "Last built 02:30 today · 4 people", or what stands in for it when there is no build to name. */
 function builtLine(
   collection: Collection,
@@ -198,14 +203,6 @@ export function RowCard({
                 <RowName name={cardName(collection)} className="" />
               </Link>
             </h2>
-            <Badge>
-              {collection.build === "shared" ? (
-                <UsersIcon className="size-3" aria-hidden="true" />
-              ) : (
-                <UserCheck className="size-3" aria-hidden="true" />
-              )}
-              {collection.build === "shared" ? "Shared" : "Per person"}
-            </Badge>
             {collection.theme_id !== null && collection.theme_id !== undefined && (
               <Badge>
                 <Sparkles className="size-3" aria-hidden="true" />
@@ -229,7 +226,8 @@ export function RowCard({
               ))}
           </div>
           <p className="text-sm text-muted-foreground">
-            {audienceSummary(collection, users)} · {effectiveSize} titles · {mediaLabel(collection.media)}
+            {rowKindTitle(collection, settings.data)} · {audienceSummary(collection, users)} · {effectiveSize} titles ·{" "}
+            {mediaLabel(collection.media)} · {scheduleWords(collection.schedule)}
           </p>
           {overrides.length > 0 && (
             <div className="flex flex-wrap gap-1 pt-0.5">

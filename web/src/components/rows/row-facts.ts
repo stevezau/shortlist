@@ -1,4 +1,10 @@
-import type { CollectionInput, PlexLibrary, User } from "@/lib/types";
+import { toInput } from "@/lib/collections";
+import { settingString } from "@/lib/format";
+import { DEFAULT_ROW_SLUG } from "@/lib/constants";
+import { AI_KIND_META, KIND_META } from "@/lib/row-kind-meta";
+import { maxSeedsSeed } from "@/lib/row-globals";
+import { isAiRow, rowKindOf } from "@/lib/row-kinds";
+import type { Collection, CollectionInput, PlexLibrary, Settings, User } from "@/lib/types";
 
 type Audience = Pick<CollectionInput, "audience" | "audience_user_ids">;
 
@@ -44,4 +50,23 @@ export function builtAt(iso: string, now: Date = new Date()): string {
   yesterday.setDate(now.getDate() - 1);
   if (when.toDateString() === yesterday.toDateString()) return `${time} yesterday`;
   return when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/** The row's kind in the words the kind picker uses: "Picked for You", "Seasonal", "AI row"… */
+export function rowKindTitle(collection: Collection, settings: Settings | undefined): string {
+  const input = toInput(collection);
+  if (isAiRow(input)) return AI_KIND_META.title;
+  const { kind } = rowKindOf(input, {
+    isDefault: collection.slug === DEFAULT_ROW_SLUG,
+    globalMaxSeeds: maxSeedsSeed(settings),
+    defaultRowName: settingString(settings ?? {}, "row.name_template"),
+  });
+  return KIND_META[kind].title;
+}
+
+/** "1 override", "3 overrides", or null when none of these settings departs from the server default. */
+export function overridesHint(input: CollectionInput, keys: readonly (keyof CollectionInput)[]): string | null {
+  const count = keys.filter((key) => input[key] !== null && input[key] !== undefined).length;
+  if (count === 0) return null;
+  return count === 1 ? "1 override" : `${count} overrides`;
 }
