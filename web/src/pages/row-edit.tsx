@@ -1,6 +1,5 @@
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { QueryBoundary } from "@/components/query-boundary";
 import { RowEditor } from "@/components/rows/row-editor";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,7 +34,6 @@ export function RowEditPage() {
 
   return (
     <div className="space-y-4">
-      <BackLink to="/rows" label="Rows" />
       {/* Only the collections list gates rendering. The users list feeds the audience picker and the
           reach warning, and an empty one degrades to "no audience detail" rather than blocking the
           editor — someone adding their first row has no users synced yet. */}

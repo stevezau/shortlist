@@ -93,17 +93,17 @@ function TemplatePreview({ template }: { template: RowTemplate }) {
       <div className="grid grid-cols-3 gap-2" aria-hidden="true">
         <div className="relative flex h-24 items-end overflow-hidden rounded bg-gradient-to-br from-success/40 via-success/10 to-background p-2">
           <div className="absolute -left-4 top-5 h-16 w-32 -rotate-45 border-t border-success/40 bg-success/10" />
-          <span className="relative text-[10px] font-semibold uppercase leading-tight tracking-widest">The quiet<br />tide</span>
+          <span className="relative text-xs font-semibold uppercase leading-tight tracking-wider">The quiet<br />tide</span>
         </div>
         <div className="relative flex h-24 items-end overflow-hidden rounded bg-gradient-to-br from-muted via-background to-primary/10 p-2">
           <div className="absolute left-1/2 top-5 h-7 w-7 -translate-x-1/2 rounded-full bg-primary/60" />
           <div className="absolute left-1/2 top-5 h-7 w-20 -translate-x-1/2 -rotate-45 rounded-[50%] border border-primary/30" />
-          <span className="relative text-[10px] font-semibold uppercase tracking-widest">Orbit</span>
+          <span className="relative text-xs font-semibold uppercase tracking-wider">Orbit</span>
         </div>
         <div className="relative flex h-24 items-end overflow-hidden rounded bg-gradient-to-b from-primary/30 via-muted to-background p-2">
           <div className="absolute -right-4 top-9 h-20 w-20 rotate-45 bg-success/30" />
           <div className="absolute -left-5 top-12 h-20 w-20 rotate-45 bg-background/50" />
-          <span className="relative text-[10px] font-semibold uppercase leading-tight tracking-widest">Wild<br />coast</span>
+          <span className="relative text-xs font-semibold uppercase leading-tight tracking-wider">Wild<br />coast</span>
         </div>
       </div>
       <p className="mt-2 text-xs text-muted-foreground">

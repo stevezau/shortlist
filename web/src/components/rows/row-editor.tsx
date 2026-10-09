@@ -160,7 +160,7 @@ function EditorSection({
 }: {
   id: string;
   title: string;
-  description: string;
+  description: ReactNode;
   /** An id for the card itself, so an older link to it still lands. */
   panelId?: string;
   danger?: boolean;
@@ -706,7 +706,19 @@ export function RowEditor({
       <PageHeader
         // The name as a template, its placeholders drawn as chips: there is no single rendered name,
         // because each person and each library fills it differently.
-        title={collection ? <RowName name={savedName} libraryName="" className="" /> : "Add a row"}
+        title={
+          // The breadcrumb is part of the title line, like Run #N, so this page's title sits at the
+          // same height as every other page's.
+          <>
+            <Link to="/rows" className="font-normal text-muted-foreground hover:text-foreground">
+              Rows
+            </Link>
+            <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
+              /
+            </span>
+            {collection ? <RowName name={savedName} libraryName="" className="" /> : "Add a row"}
+          </>
+        }
         subtitle={subtitle}
         className="mb-0"
         actions={
@@ -1281,7 +1293,16 @@ export function RowEditor({
             <EditorSection
               id="requests"
               title="Requests"
-              description="What this row asks Sonarr and Radarr for when a pick isn't on the server yet, and where those titles land."
+              description={
+                <>
+                  What this row asks Sonarr and Radarr for when a pick isn't on the server yet, and where those
+                  titles land. Change the defaults for every row in{" "}
+                  <Link to="/settings#requests" className="underline underline-offset-2 hover:text-foreground">
+                    Settings
+                  </Link>
+                  .
+                </>
+              }
             >
               {shown.has("requests") ? (
                 <div data-setting="requests" className="space-y-4">

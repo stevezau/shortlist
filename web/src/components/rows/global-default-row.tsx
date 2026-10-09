@@ -1,5 +1,4 @@
 import { useId, type ReactNode } from "react";
-import { Link } from "react-router";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,14 +9,13 @@ import { Button } from "@/components/ui/button";
  *
  * The global's ACTUAL value is spelled out while the row follows it. Without the value, a row that
  * inherits tells you only that it inherits — you would have to leave the page, find the setting, and
- * come back to learn what you agreed to. The link is for changing it, not for finding out what it is.
+ * come back to learn what you agreed to. Where to change the default is said once, in the list's header.
  */
 export function GlobalDefaultToggle({
   heading,
   name,
   inheriting,
   globalValue,
-  settingsHash,
   onChange,
   disabledReason = null,
 }: {
@@ -29,8 +27,6 @@ export function GlobalDefaultToggle({
   /** The resolved global, already formatted for reading ("0% — never re-suggest"). Null while
    *  settings are still loading, which renders the line with no claim about the value. */
   globalValue: string | null;
-  /** Anchor on the settings page, e.g. "recommendations". */
-  settingsHash: string;
   /** True to follow the global again (Reset), false to set the row's own (Override). */
   onChange: (inheriting: boolean) => void;
   /** Why the row can't go back to the global right now; null when it can. */
@@ -48,15 +44,7 @@ export function GlobalDefaultToggle({
         <Badge variant={inheriting ? "outline" : "default"} className="font-normal text-muted-foreground">
           {inheriting ? "server default" : "overridden here"}
         </Badge>
-        <span className="ml-auto flex items-center gap-3">
-          {inheriting && (
-            <Link
-              to={`/settings#${settingsHash}`}
-              className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            >
-              Change the default
-            </Link>
-          )}
+        <span className="ml-auto flex items-center">
           <Button
             type="button"
             variant={inheriting ? "outline" : "ghost"}

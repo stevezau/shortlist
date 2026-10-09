@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { PageHeader } from "@/components/page-header";
 import { PeopleBrowser } from "@/components/rows/people-browser";
 import { RowName } from "@/components/rows/row-name";
@@ -17,6 +16,8 @@ import { Badge } from "@/components/ui/badge";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, OVER_TIME_DEFAULTS } from "@/lib/collections";
 import { describeCron } from "@/lib/cron";
+import { sampleLibraryName } from "@/lib/format";
+import { LIBRARY_NAME } from "@/lib/placeholders";
 import {
   useRequestRowSources,
   useSaveCollection,
@@ -63,13 +64,16 @@ function KindTiles({
 }) {
   return (
     <div
-      className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+      // Two columns, every tile the height of the tallest, and the odd one out spans the row: seven
+      // tiles in three columns left one alone under six.
+      className="grid auto-rows-fr gap-3 sm:grid-cols-2"
       role="group"
       aria-label="Kinds of row"
     >
-      {GALLERY_GROUPS.map((group) => {
+      {GALLERY_GROUPS.map((group, index) => {
         const first = templatesOfKind(group.kind)[0];
         if (!first) return null;
+        const oddOneOut = index === GALLERY_GROUPS.length - 1 && GALLERY_GROUPS.length % 2 === 1;
         const active = group.kind === selectedKind;
         return (
           <button
@@ -79,6 +83,7 @@ function KindTiles({
             onClick={() => onPick(group.kind)}
             className={cn(
               "rounded-xl border bg-card p-4 text-left shadow-elevated transition-colors hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+              oddOneOut && "sm:col-span-2",
               active && selectedClass,
             )}
           >
@@ -205,7 +210,27 @@ export function RowNewPage() {
     audience_user_ids: audience === "subset" ? chosen : [],
   };
   const reach = reachedUsers(input, users);
-  const peopleForPreview = reach.slice(0, 3);
+  const perPerson = input.build !== "shared";
+  // The name as Plex shows it: {user} filled per person, {library_name} per library. {top_seed}
+  // stays a chip, because it is each person's own most-watched title and is not known until a run.
+  const libraryNames = input.media === "both" ? ["Movies", "TV Shows"] : [sampleLibraryName(input.media)];
+  const shownLibraries = name.includes(LIBRARY_NAME) ? libraryNames : libraryNames.slice(0, 1);
+  const audienceLines = perPerson
+    ? reach.slice(0, 3).map((user) => ({ id: user.id, who: personName(user) }))
+    : [{ id: 0, who: "" }];
+  const seen = name.trim()
+    ? audienceLines.flatMap(({ id, who }) =>
+        shownLibraries.map((library, index) => ({
+          key: `${id}-${library}`,
+          who: index === 0 ? who : "",
+          name: name
+            .replaceAll("{user}", who || "Sarah")
+            .replaceAll(LIBRARY_NAME, library)
+            .replace(/\s+/g, " ")
+            .trim(),
+        })),
+      )
+    : [];
   const variants = templatesOfKind(template.kind);
   const schedule = describeCron(input.schedule) || "At the next scheduled run";
   const problem = !name.trim()
@@ -230,9 +255,18 @@ export function RowNewPage() {
 
   return (
     <div className="space-y-4">
-      <BackLink to="/rows" label="Rows" />
       <PageHeader
-        title="Add a row"
+        title={
+          <>
+            <Link to="/rows" className="font-normal text-muted-foreground hover:text-foreground">
+              Rows
+            </Link>
+            <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
+              /
+            </span>
+            Add a row
+          </>
+        }
         subtitle="Pick a kind, name it, choose who gets it. Nothing reaches Plex until you add it."
         className="mb-2"
       />
@@ -247,6 +281,7 @@ export function RowNewPage() {
             {variants.length > 1 && (
               <div className="mt-4 space-y-2">
                 <p className="text-sm font-medium text-muted-foreground">Start from</p>
+                <div className="[&_button]:text-sm">
                 <Segmented
                   ariaLabel="Starting point"
                   value={template.id}
@@ -256,6 +291,7 @@ export function RowNewPage() {
                     label: `${variant.emoji} ${variant.title}`,
                   }))}
                 />
+                </div>
                 <p className="text-sm text-muted-foreground">{template.blurb}</p>
               </div>
             )}
@@ -275,19 +311,21 @@ export function RowNewPage() {
                 />
                 <TemplateVarsHint seasonal={template.kind === "seasonal"} themed={isAi} />
               </div>
-              {peopleForPreview.length > 0 && input.build !== "shared" && (
+              {seen.length > 0 && (
                 <div className="border-t">
-                  <p className="px-4 pb-1 pt-3 text-sm font-medium text-muted-foreground">What each person sees</p>
+                  <p className="px-4 pb-1 pt-3 text-sm font-medium text-muted-foreground">
+                    {perPerson ? "What each person sees" : "What people see"}
+                  </p>
                   <ul className="divide-y text-sm">
-                    {peopleForPreview.map((user) => (
-                      <li key={user.id} className="flex items-center gap-4 px-4 py-2.5">
-                        <span className="w-20 shrink-0 truncate text-muted-foreground">{personName(user)}</span>
-                        <span className="text-muted-foreground" aria-hidden="true">→</span>
-                        <RowName
-                          name={name.replaceAll("{user}", personName(user))}
-                          libraryName={input.media === "show" ? "TV Shows" : "Movies"}
-                          className="min-w-0 [overflow-wrap:anywhere]"
-                        />
+                    {seen.map((line) => (
+                      <li key={line.key} className="flex items-center gap-4 px-4 py-2.5">
+                        {line.who && (
+                          <>
+                            <span className="w-20 shrink-0 truncate text-muted-foreground">{line.who}</span>
+                            <span className="text-muted-foreground" aria-hidden="true">→</span>
+                          </>
+                        )}
+                        <RowName name={line.name} className="min-w-0 [overflow-wrap:anywhere]" />
                       </li>
                     ))}
                   </ul>

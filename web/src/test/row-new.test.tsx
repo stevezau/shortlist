@@ -107,6 +107,25 @@ describe("RowNewPage", () => {
     expect(within(preview).getByText("mike")).toBeInTheDocument();
   });
 
+  it("fills the library into a shared row's name instead of showing the token", async () => {
+    const user = userEvent.setup();
+    renderPage("/rows/new?template=popular-here");
+    const field = await screen.findByLabelText("Row name");
+    await user.clear(field);
+    await user.type(field, "{{library_name} Picks");
+    const preview = screen.getByText("What people see").closest("div")!;
+    expect(within(preview).getByText("Movies Picks")).toBeInTheDocument();
+    expect(within(preview).getByText("TV Shows Picks")).toBeInTheDocument();
+    expect(field).toHaveValue("{library_name} Picks");
+  });
+
+  it("puts Rows in the title line instead of a back link above it", async () => {
+    renderPage();
+    const heading = await screen.findByRole("heading", { level: 1 });
+    expect(within(heading).getByRole("link", { name: "Rows" })).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Rows" })).toHaveLength(1);
+  });
+
   it("sends only the people you choose", async () => {
     renderPage();
     await screen.findAllByText(/sarah, mike/);

@@ -116,7 +116,6 @@ function RequestField({
         name={label}
         inheriting={inheriting}
         globalValue={globalValue}
-        settingsHash="requests"
         onChange={onToggle}
       />
       <p className="text-sm text-muted-foreground">{description}</p>
