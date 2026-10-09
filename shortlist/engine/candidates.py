@@ -65,6 +65,7 @@ _UNPARSED_REPLY_CAP = 20_000
 # across the whole roster and short enough that tomorrow tries again.
 _MIN_CACHEABLE_TITLES = 3
 _THIN_CACHE_TTL_S = 24 * 3600
+_FAILED_CACHE_TTL_S = 3600  # an answer we could not read: long enough to span a run, short enough to retry soon
 # Bumped from `websearch:` when the cached shape changed from a bare result list to {results,titles}.
 # Old entries are never read again and age out on their own TTL.
 _WEB_SEARCH_CACHE_PREFIX = "websearch2"
@@ -99,7 +100,8 @@ class GatherStats:
 
     Keyed by source because only the AI-powered source (``llm_web``) costs tokens — the TMDB/Trakt
     sources add nothing here. ``exa_searches`` is tracked separately on purpose: Exa bills per search
-    request, not per token, so it must never be folded into a token total.
+    request, not per token (it counts every request that got an HTTP answer, even an unparseable one),
+    so it must never be folded into a token total.
 
     ``exa_cache_hits`` counts searches served from the shared 7-day cache instead of billed. It's
     tracked next to ``exa_searches`` so a run can show "1 searched · 793 from cache" — without it a
@@ -316,6 +318,12 @@ def _web_via_search(
         if cached is not None:
             stats.exa_cache_hits += 1  # served from the shared cache — not billed (see GatherStats)
             payload = json.loads(cached)
+            if isinstance(payload, dict) and payload.get("failed"):
+                # A remembered failure is still a failure: never serve it as "the web had nothing".
+                failed_seeds.append(seed.title)
+                per_seed.append([])
+                per_seed_titles.append([])
+                continue
             # A cache row is data from outside this function's control: it outlives the process and
             # survives upgrades, so a malformed one must not take down the whole source for this user
             # (the caller's guard would disable `llm_web` for them entirely).
@@ -327,6 +335,8 @@ def _web_via_search(
                 payload = _search_one_seed(search, query, per_query, structured)
                 stats.exa_searches += 1  # a real (uncached) search that answered
             except Exception as e:
+                if _is_unusable_answer(e):
+                    stats.exa_searches += 1  # an unparseable 200 is still billed
                 # One seed's failure must not cost the other nine. Exa's deeper modes take ~10s
                 # against a 100s ceiling at its CDN, and a request that exceeds it comes back as an
                 # HTML 524 — observed repeatedly while measuring. Without this, that single response
@@ -335,11 +345,11 @@ def _web_via_search(
                 logger.warning("llm_web: search failed for {!r} ({}); continuing", seed.title, type(e).__name__)
                 failed_seeds.append(seed.title)
                 if _is_unusable_answer(e):
-                    # The backend answered and the body is no use. Asking again returns the same thing, so keep it
-                    # like any thin result rather than re-billing it nightly. A transport error or an outage
-                    # (timeout, HTTP error) says nothing about the title and is never cached.
-                    empty = {"results": [], "titles": []}
-                    cache.set(key, json.dumps(empty), _cache_ttl(empty, structured))
+                    # Exa answered 200 with a body we cannot read. Remember it briefly so a stuck title is not
+                    # re-billed by every user in the same run, flagged so a served hit still counts as failed.
+                    # A transport error or an outage says nothing about the title and is never cached.
+                    failed = {"results": [], "titles": [], "failed": True}
+                    cache.set(key, json.dumps(failed), _FAILED_CACHE_TTL_S)
                 per_seed.append([])
                 per_seed_titles.append([])
                 continue
@@ -451,12 +461,13 @@ def _dedupe_by_url(items: list[dict], seen_urls: set[str]) -> list[SearchResult]
 
 
 def _is_unusable_answer(error: Exception) -> bool:
-    """Did the backend answer with a body we cannot read, as opposed to failing to answer at all?
+    """Did Exa answer 200 with a body that does not parse (a bare ``ValueError``)?
 
-    A body that does not parse raises ``ValueError`` (Exa) or a ``RuntimeError`` caused by one (SearXNG).
-    Timeouts and HTTP errors are ``httpx`` errors and do not match.
+    Timeouts and HTTP errors are ``httpx`` errors and do not match. SearXNG's "not SearXNG JSON"
+    ``RuntimeError`` deliberately does not match either: it means a wrong address or an expired
+    login page, a config fault the owner will fix, so it must never be remembered.
     """
-    return isinstance(error, ValueError) or isinstance(error.__cause__, ValueError)
+    return isinstance(error, ValueError)
 
 
 def _search_one_seed(search, query: str, per_query: int, structured: bool) -> dict:

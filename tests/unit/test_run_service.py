@@ -1791,11 +1791,13 @@ class TestARunSettlesOffTheEventLoop:
         service = self._service(sessions, tmp_path, monkeypatch)
 
         release = threading.Event()
+        released: list[bool] = []
 
         def slow_context(**kw):
             # Stands in for the PMS request: it stays blocked until the loop has demonstrably ticked.
-            # If the build ran ON the loop, no tick could happen and the wait would time out empty.
-            release.wait(5)
+            # Only the ticker releases it. If the build ran ON the loop, no tick could happen, the wait
+            # would time out, and the assertion below would fail.
+            released.append(release.wait(5))
             return _fake_ctx()
 
         monkeypatch.setattr(service, "build_context", slow_context)
@@ -1818,6 +1820,7 @@ class TestARunSettlesOffTheEventLoop:
 
         asyncio.run(scenario())
 
+        assert released == [True], "the build was never released by the ticker: the loop stalled"
         assert ticks_during_build and ticks_during_build[0] >= 5, "the loop stalled while the context was built"
 
 
