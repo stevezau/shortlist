@@ -115,7 +115,7 @@ export function RowSchedules() {
                         title={`Edit ${label}`}
                         className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
-                        <span className="min-w-0 break-words">{resolveRowName(label)}</span>
+                        <span className="min-w-0 break-words">{resolveRowName(label, { user: "each person" }) || row.slug}</span>
                       </Link>
                     );
                   })}

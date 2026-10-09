@@ -137,6 +137,19 @@ describe("an Off person's page", () => {
     expect(banner).toHaveTextContent("Restriction Profile → None");
   });
 
+  it("names the person in a row titled with {user}", async () => {
+    const original = userRows.current;
+    userRows.current = [
+      { collection_id: 4, slug: "mine", name: "{user}'s picks", library: "", media: "both", size: 15, recent_count: 8, is_default: false, muted: false, override: {}, picks: [] } as unknown as UserRow,
+    ];
+    try {
+      renderBody({ ...KID, display_name: "Kiddo" });
+      expect(await screen.findByText("Kiddo's picks")).toBeInTheDocument();
+    } finally {
+      userRows.current = original;
+    }
+  });
+
   it("still lists the picks of a row that is on Plex, and says no NEW rows are built", async () => {
     renderBody(KID);
 

@@ -90,6 +90,16 @@ describe("resolveRowName", () => {
     expect(resolveRowName(CONFIG_NAMES.popular)).toBe("👥 Popular on SFLIX");
     expect(resolveRowName("{user}'s picks")).not.toContain("{");
   });
+
+  it("fills the person where the page knows who it is for", () => {
+    expect(resolveRowName("{user}'s picks", { user: "Sam" })).toBe("Sam's picks");
+    expect(resolveRowName("{user}", { user: "Sam" })).toBe("Sam");
+    expect(resolveRowName("Next up for {user}", { user: "Sam" })).toBe("Next up for Sam");
+  });
+
+  it("never leaves a stray possessive when the person is unknown but named generically", () => {
+    expect(resolveRowName("{user}'s picks", { user: "each person" })).toBe("Each person's picks");
+  });
 });
 
 describe("groupRunByRow", () => {

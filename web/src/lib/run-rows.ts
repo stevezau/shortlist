@@ -116,16 +116,19 @@ export function rowDisplayName(name: string): string {
 /**
  * A row's name as an owner reads it: the template with whatever is known filled in, and plain words
  * for what is not. `{top_seed}` becomes an ellipsis ("Because you watched …") and a missing
- * `{library_name}` simply drops out, re-capitalising what follows ("You've already seen"). Unlike
+ * `{library_name}` simply drops out, re-capitalising what follows ("You've already seen"). `{user}`
+ * is the person the page is about; a caller that has none passes a generic word, because dropping it
+ * leaves "'S picks". Unlike
  * `RowName` it never draws a token chip, so it is safe in a title that should read as a name.
  */
 export function resolveRowName(
   template: string,
-  known: { library?: string; topSeed?: string } = {},
+  known: { library?: string; topSeed?: string; user?: string } = {},
 ): string {
   const filled = template
     .replaceAll("{library_name}", known.library ?? "")
-    .replaceAll("{top_seed}", known.topSeed ?? "…");
+    .replaceAll("{top_seed}", known.topSeed ?? "…")
+    .replaceAll("{user}", known.user ?? "");
   const name = rowDisplayName(filled);
   // What a dropped leading `{library_name}` leaves behind starts in lower case; the first LETTER
   // (an emoji prefix has none) is the one to raise.

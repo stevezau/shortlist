@@ -21,17 +21,17 @@ import { userState } from "@/lib/user-state";
 
 /** The title an owner reads for one of a person's rows: this library and this person's lead seed
  *  where they exist, plain words where the row has built nothing yet. */
-function personRowName(row: UserRow): string {
+function personRowName(row: UserRow, person: string): string {
   const template =
     row.library && !row.name.includes(LIBRARY_NAME)
       ? `${row.name} — ${row.library}`
       : row.name;
   const topSeed = row.picks.find((pick) => pick.seed_title)?.seed_title ?? undefined;
-  return resolveRowName(template, { library: row.library || undefined, topSeed });
+  return resolveRowName(template, { library: row.library || undefined, topSeed, user: person });
 }
 
 /** One of a person's rows: its live picks, and a per-person customization drawer. */
-function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
+function UserRowCard({ userId, name, row }: { userId: number; name: string; row: UserRow }) {
   // Two mutations on purpose: the mute switch and the drawer fail independently, and a failed mute
   // must never be reported (or hidden) as a failed customization.
   const mute = useSetUserRowOverride(userId);
@@ -89,7 +89,7 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
               {/* This card is one library's copy of the row, so `{library_name}` has exactly one
                   value here — and a name that carries it already says which library, so the
                   suffix stays only for a name that does not. */}
-              <span className="font-medium">{personRowName(row)}</span>
+              <span className="font-medium">{personRowName(row, name)}</span>
               {row.is_default && <Badge variant="outline">default</Badge>}
               {muted && <Badge variant="secondary">muted</Badge>}
             </div>
@@ -245,7 +245,7 @@ function OffRowsList({ rows, name }: { rows: UserRow[]; name: string }) {
           <li key={`${row.collection_id}-${row.section_key}`} className="space-y-3 px-6 py-4">
             <div className="flex items-center justify-between gap-4 opacity-60">
               <div>
-                <div className="font-medium text-muted-foreground">{personRowName(row)}</div>
+                <div className="font-medium text-muted-foreground">{personRowName(row, name)}</div>
                 <div className="text-sm text-faint-foreground">
                   {row.media === "both" ? "movies & shows" : `${row.media}s`}
                 </div>
@@ -290,7 +290,7 @@ export function UserRowsSection({ user }: { user: User }) {
         ) : (
         <div className="space-y-3">
           {rows.map((row) => (
-            <UserRowCard key={row.collection_id} userId={user.id} row={row} />
+            <UserRowCard key={row.collection_id} userId={user.id} name={user.display_name || user.username} row={row} />
           ))}
         </div>
         )
