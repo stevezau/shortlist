@@ -7919,11 +7919,8 @@ export interface components {
         UninstallOut: {
             /** Collections Deleted */
             collections_deleted: string[];
-            /**
-             * Collections Detail
-             * @default []
-             */
-            collections_detail: components["schemas"]["UninstallCollectionOut"][];
+            /** Collections Detail */
+            collections_detail?: components["schemas"]["UninstallCollectionOut"][];
             /** Dry Run */
             dry_run: boolean;
             /** Filters Failed */

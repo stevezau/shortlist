@@ -10793,7 +10793,6 @@
             "type": "array"
           },
           "collections_detail": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/UninstallCollectionOut"
             },

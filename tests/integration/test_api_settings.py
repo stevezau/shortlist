@@ -520,8 +520,9 @@ class TestSettingsApi:
         assert defaults.status_code == 200
         body = defaults.json()
         assert body["row.size"] == 15
-        assert "tmdb.apikey" not in body
-        assert "plex.token" not in body
+        from shortlist.server.settings_store import PRIVATE_KEYS, SECRET_KEYS
+
+        assert not set(body) & (SECRET_KEYS | PRIVATE_KEYS)
         assert "real-key" not in defaults.text
 
     def test_every_stored_setting_survives_the_response_model(self, client: TestClient):

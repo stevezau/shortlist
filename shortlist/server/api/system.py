@@ -30,7 +30,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import shortlist
 from shortlist.engine.clients.http_retry import redact
@@ -535,7 +535,8 @@ class UninstallOut(PassthroughModel):
     filters_unreachable: list[UninstallUnreachableOut]  # roster disagreed with us — worth retrying
     filters_failed: list[UninstallFailedOut]
     collections_deleted: list[str]  # titles, so the preview names what would go
-    collections_detail: list[UninstallCollectionOut] = []  # the same collections, with library and person
+    # The same collections, each with its library and person.
+    collections_detail: list[UninstallCollectionOut] = Field(default_factory=list)
     rows_disabled: int
     dry_run: bool
     message: str
@@ -656,7 +657,7 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
         emit(f"Switched off {rows_disabled} row{'' if rows_disabled == 1 else 's'} and cleared their schedules")
 
     def do_uninstall() -> tuple[dict, list[dict], Exception | None]:
-        from shortlist.engine.models import FilterSnapshot
+        from shortlist.engine.models import SHARED_LABEL_PREFIX, FilterSnapshot
         from shortlist.engine.privacy import (
             RestoreVerificationError,
             resolve_restore_targets,
@@ -719,11 +720,18 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
                     ]
                     if owner_labels:
                         deleted.append(collection.title)
-                        slug = owner_labels[0][len("shortlist_") :].lower()
+                        label = owner_labels[0].lower()
+                        # A shared row's label is `shortlist__shared_<slug>`; slicing off "shortlist_"
+                        # would name a person "_shared_<slug>".
+                        if label.startswith(SHARED_LABEL_PREFIX.lower()):
+                            person = "Shared row"
+                        else:
+                            slug = label[len("shortlist_") :]
+                            person = names_by_slug.get(slug, slug)
                         deleted_detail.append(
                             {
                                 "library": section.title,
-                                "person": names_by_slug.get(slug, slug),
+                                "person": person,
                                 "title": collection.title,
                             }
                         )
