@@ -64,10 +64,11 @@ function renderControl(
   start: HubAnchorMap = {},
   opts: { pinnedTop?: boolean; onConsumePin?: () => void } = {},
 ) {
-  const latest = { value: start };
+  const latest = { value: start, client: undefined as unknown as QueryClient };
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  latest.client = client;
   render(
     <QueryClientProvider client={client}>
       <Harness start={start} onChange={(m) => (latest.value = m)} {...opts} />
@@ -298,10 +299,11 @@ describe("RowShelfPlacement", () => {
     const onConsumePin = vi.fn();
     const latest = renderControl({}, { pinnedTop: true, onConsumePin });
 
-    await waitFor(() => expect(getLibraries).toHaveBeenCalled());
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 0)); // let the effect (not) fire
-    });
+    // The failed read has landed in the cache; the flush lets the effect (not) fire on it.
+    await waitFor(() =>
+      expect(latest.client.getQueryCache().getAll().some((q) => q.state.status === "error")).toBe(true),
+    );
+    await act(async () => {});
     expect(onConsumePin).not.toHaveBeenCalled(); // pin_top left intact by the editor
     expect(latest.value).toEqual({});
   });

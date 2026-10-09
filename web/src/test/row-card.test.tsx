@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowCard } from "@/components/rows/row-card";
 import type { Collection, User } from "@/lib/types";
+import { cardCollection } from "@/test/collection-builders";
 
 const updateCollection = vi.fn((_id: number, _body: unknown) =>
   Promise.resolve({}),
@@ -33,33 +34,7 @@ vi.mock("@/lib/api", () => ({
 
 const USERS: User[] = [];
 
-function collection(patch: Partial<Collection> = {}): Collection {
-  return {
-    id: 1,
-    slug: "hidden-gems",
-    name: "Hidden Gems",
-    last_run_id: null,
-    preview_titles: [],
-    build: "per_person",
-    audience: "everyone",
-    audience_user_ids: [],
-    enabled: true,
-    size: 15,
-    media: "both",
-    sort_order: 0,
-    name_template: "",
-    min_watchers: 2,
-    request_tag: "",
-    candidate_sources: [],
-    library_keys: [],
-    watched_pct: null,
-    refresh_days: null,
-    placement: "both",
-    pin_top: false,
-    hub_anchor: {},
-    ...patch,
-  } as Collection;
-}
+const collection = cardCollection;
 
 function renderCard(value: Collection) {
   const client = new QueryClient({

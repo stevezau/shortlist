@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConnectionsSection } from "@/components/settings/connections-section";
 import { findProvider } from "@/lib/providers";
+import { queryKeys } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
 const { putSettings, testConnection, getRuns } = vi.hoisted(() => ({
@@ -36,7 +37,7 @@ function renderSection(settings: Settings) {
   const { rerender } = render(ui(settings));
   // The settings page re-renders its children when the settings query refreshes after a save; a
   // test that never does that can't see anything a card derives from freshly-saved settings.
-  return { refresh: (next: Settings) => rerender(ui(next)) };
+  return { client, refresh: (next: Settings) => rerender(ui(next)) };
 }
 
 describe("ConnectionsSection", () => {
@@ -508,27 +509,21 @@ describe("ConnectionsSection", () => {
         stats: { exa_searches: 46 },
       },
     ]);
-    renderSection({});
+    const { client } = renderSection({});
     const card = screen.getByTestId("connection-llm");
     // Settle the runs query first. Asserting straight away passed whatever the component did,
     // because the note cannot be on screen before the data it renders has arrived.
-    await waitFor(() => expect(getRuns).toHaveBeenCalled());
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(client.getQueryState(queryKeys.runs)?.status).toBe("success"));
     expect(within(card).queryByText(/Last run:/)).not.toBeInTheDocument();
   });
 
   it("omits the Exa usage note when a key is saved but no run has finished yet", async () => {
     // Fresh install: key configured, but nothing has run — no count to show, so no note.
     getRuns.mockResolvedValue([]);
-    renderSection({ "exa.apikey": "•••••" });
+    const { client } = renderSection({ "exa.apikey": "•••••" });
     const card = screen.getByTestId("connection-llm");
     // Let the runs query settle so a late-arriving footnote would have rendered.
-    await waitFor(() => expect(getRuns).toHaveBeenCalled());
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(client.getQueryState(queryKeys.runs)?.status).toBe("success"));
     expect(within(card).queryByText(/Last run:/)).not.toBeInTheDocument();
   });
 });

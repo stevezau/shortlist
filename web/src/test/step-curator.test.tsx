@@ -3,6 +3,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { queryKeys } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 import type { CuratorProvider } from "@/lib/wizard";
 import { StepCurator } from "@/pages/setup/step-curator";
@@ -44,7 +45,7 @@ function renderStep(provider: CuratorProvider | undefined) {
       />
     </QueryClientProvider>,
   );
-  return { update };
+  return { update, client };
 }
 
 describe("StepCurator", () => {
@@ -140,12 +141,12 @@ describe("StepCurator", () => {
 
   it("leaves an already-saved provider alone", async () => {
     getSettings.mockResolvedValueOnce({ "curator.provider": "anthropic" } as Settings);
-    const { update } = renderStep(undefined);
+    const { update, client } = renderStep(undefined);
     await screen.findByText(/Skip this and Shortlist works the same/);
-    await waitFor(() => expect(getSettings).toHaveBeenCalled());
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    // The settings have arrived, so the effect that would (wrongly) overwrite the saved provider
+    // has had its data; the flush lets it run before the absence is checked.
+    await waitFor(() => expect(client.getQueryState(queryKeys.settings)?.status).toBe("success"));
+    await act(async () => {});
     expect(update).not.toHaveBeenCalled();
   });
 });
