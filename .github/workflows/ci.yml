@@ -330,6 +330,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          # This job doesn't log in to Docker Hub, so base images come through Google's Docker Hub mirror:
+          # anonymous pulls from shared runners hit Docker Hub's rate limit (429, 2026-10-10). BuildKit
+          # falls back to Docker Hub on a miss.
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
