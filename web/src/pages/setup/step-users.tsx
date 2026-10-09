@@ -18,12 +18,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import type { User } from "@/lib/types";
 import {
   queryKeys,
   usePatchUser,
   useSetAllUsersEnabled,
   useUsers,
 } from "@/lib/queries";
+
+/** Why this person has no row, said under their name so a switched-off switch is never a mystery. */
+function offReason(user: User): string {
+  if (user.user_type === "owner") return "This is you. Switch on to get a row of your own.";
+  if (user.restricted) {
+    return "Has a Plex restriction profile, which can limit how rows are hidden from them. Switch on to give them a row.";
+  }
+  return "Switched off, so they get no row. Switch on to give them one.";
+}
 
 /**
  * Step 4 — pick users. Syncs the user list from plex.tv on entry, then a
@@ -81,71 +91,61 @@ export function StepUsers() {
       <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-sm">
         <p className="font-medium text-primary">Heads up, server owner</p>
         <p className="mt-1 text-muted-foreground">
-          {/* Read from the switch's ACTUAL state: the pre-select only fires when nobody is enabled
-              yet, so a returning owner arrives switched OFF and must not be told otherwise. */}
-          {users?.find((user) => user.user_type === "owner")?.enabled ? (
-            <>
-              You&rsquo;re in this list too, switched on like everyone else —
-              turn yourself off below if you&rsquo;d rather not have a row.
-            </>
-          ) : (
-            <>
-              You&rsquo;re in this list too — switch yourself on below to get a
-              row of your own.
-            </>
-          )}
+          Plex cannot hide other people’s rows from you in a library’s <strong>Collections</strong> tab.
         </p>
-        {/* The caveat is its own paragraph, not a sixth line of the one above: the sentence that
-            asks the owner to DO something (switch themselves on) is the one that has to survive a
-            skim, and it stopped standing out once the caveat behind it grew to five lines. */}
-        <p className="mt-2 text-muted-foreground">
-          Your Home screen shows your own rows. Plex cannot hide other people’s rows from
-          you in a library’s <strong>Collections</strong> tab or <strong>Recommended</strong> shelf,
-          because the owner has no sharing restrictions. Managed accounts with parental
-          profiles also have limits on hiding rows.
-        </p>
-
-        {/* This used to end with "look for You see everyone's rows on the Users page" — a forward
-            reference to a page the owner has no reason to visit. Issue #85 is someone doing exactly
-            that: told twice, went to Plex days later, found 22 rows on their shelf and filed a bug.
-            The remedy now happens HERE, while they are deciding whether to watch on this account.
-
-            Inline rather than a link: until setup completes every route redirects back to /setup, so
-            the owner cannot be sent to /watching-account. `TransferSteps` is that page's own flow,
-            imported — not a second copy that would drift from it. */}
-        <p className="mt-2 text-muted-foreground">
-          <strong className="text-foreground">
-            Do you watch on this admin account?
-          </strong>{" "}
-          If so, the usual fix is to watch on a separate Plex Home account and
-          keep this one for running the server. Shortlist copies your watch
-          history across, so its picks are right from the first run.
-        </p>
-
-        {!showTransfer ? (
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-            <Button size="sm" onClick={() => setShowTransfer(true)}>
-              <UserPlus className="h-4 w-4" aria-hidden="true" />
-              Set that up now
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              Or skip it &mdash; you can do this any time from{" "}
-              <strong>Users</strong>, and Shortlist will remind you once.
-            </span>
+        <details className="group mt-2">
+          <summary className="cursor-pointer font-medium text-foreground">Why?</summary>
+          <div className="mt-2 space-y-2 text-muted-foreground">
+            <p>
+              {/* Read from the switch's ACTUAL state: the pre-select only fires when nobody is
+                  enabled yet, so a returning owner arrives switched OFF and must not be told
+                  otherwise. */}
+              {users?.find((user) => user.user_type === "owner")?.enabled ? (
+                <>
+                  You&rsquo;re in this list too, switched on like everyone else —
+                  turn yourself off below if you&rsquo;d rather not have a row.
+                </>
+              ) : (
+                <>
+                  You&rsquo;re in this list too — switch yourself on below to get a
+                  row of your own.
+                </>
+              )}{" "}
+              Your Home screen shows your own rows. The same goes for the <strong>Recommended</strong>{" "}
+              shelf: Plex cannot hide other rows from you, because the owner has no sharing
+              restrictions. Managed accounts with parental profiles also have limits on hiding rows.
+            </p>
+            {/* The remedy happens HERE, while the owner is deciding whether to watch on this
+                account (issue #85: told twice, found 22 rows on their shelf days later). Inline
+                rather than a link: until setup completes every route redirects back to /setup.
+                `TransferSteps` is the Watching account page's own flow, imported so it cannot drift. */}
+            <p>
+              <strong className="text-foreground">Do you watch on this admin account?</strong> If so,
+              the usual fix is to watch on a separate Plex Home account and keep this one for running
+              the server. Shortlist copies your watch history across, so its picks are right from the
+              first run.
+            </p>
+            {!showTransfer ? (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <Button size="sm" variant="outline" onClick={() => setShowTransfer(true)}>
+                  <UserPlus className="h-4 w-4" aria-hidden="true" />
+                  Set that up now
+                </Button>
+                <span className="text-xs">
+                  Or skip it &mdash; you can do this any time from <strong>Users</strong>, and
+                  Shortlist will remind you once.
+                </span>
+              </div>
+            ) : (
+              <div>
+                <TransferSteps numbered={false} />
+                <Button variant="ghost" size="sm" className="mt-2" onClick={() => setShowTransfer(false)}>
+                  Not now
+                </Button>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="mt-3">
-            <TransferSteps numbered={false} />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2"
-              onClick={() => setShowTransfer(false)}
-            >
-              Not now
-            </Button>
-          </div>
-        )}
+        </details>
       </div>
 
       {/* Both writes here decide who gets a row at all, and the Switch mirrors the server — so a
@@ -232,15 +232,17 @@ export function StepUsers() {
                 <TableRow>
                   <TableHead>User</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead>History</TableHead>
                   <TableHead className="text-right">Gets a row</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {users.map((user) => (
                   <TableRow key={user.id}>
-                    <TableCell className="font-medium">
-                      {user.display_name || user.username}
+                    <TableCell>
+                      <p className="font-medium">{user.display_name || user.username}</p>
+                      {!user.enabled && (
+                        <p className="mt-0.5 text-sm font-normal text-muted-foreground">{offReason(user)}</p>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
@@ -261,11 +263,6 @@ export function StepUsers() {
                           </Badge>
                         )}
                       </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {user.history_depth > 0
-                        ? `${user.history_depth} items`
-                        : "unknown yet"}
                     </TableCell>
                     <TableCell className="text-right">
                       <Switch

@@ -94,10 +94,15 @@ function Wizard() {
             <ArrowLeft aria-hidden="true" />
             Back
           </Button>
-          <Button onClick={wizard.next} disabled={!wizard.canProceed}>
-            Next
-            <ArrowRight aria-hidden="true" />
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-4">
+            {wizard.step === 2 && !wizard.canProceed && (
+              <span className="text-sm text-muted-foreground">Next unlocks when the key tests OK</span>
+            )}
+            <Button onClick={wizard.next} disabled={!wizard.canProceed}>
+              Next
+              <ArrowRight aria-hidden="true" />
+            </Button>
+          </div>
         </footer>
       )}
       {wizard.step === TOTAL_STEPS - 1 && (

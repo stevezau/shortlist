@@ -62,7 +62,7 @@ describe("StepHistory settings persistence", () => {
     );
     expect(screen.getByLabelText("Tautulli API key")).toHaveValue("•••••");
     expect(
-      screen.getByLabelText("The Movie Database (TMDB) API key (required)"),
+      screen.getByLabelText("TMDB API key"),
     ).toHaveValue("•••••");
   });
 
@@ -85,12 +85,12 @@ describe("StepHistory settings persistence", () => {
     renderStep({}, update);
     await userEvent.type(
       await screen.findByLabelText(
-        "The Movie Database (TMDB) API key (required)",
+        "TMDB API key",
       ),
       "wrong-key",
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Save TMDB key" }),
+      screen.getByRole("button", { name: "Test key" }),
     );
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith({ tmdb_set: false }),
@@ -103,7 +103,7 @@ describe("StepHistory settings persistence", () => {
     renderStep({ tmdb_set: true }, update); // already validated on a prior visit
     await userEvent.type(
       await screen.findByLabelText(
-        "The Movie Database (TMDB) API key (required)",
+        "TMDB API key",
       ),
       "x",
     );
@@ -121,5 +121,16 @@ describe("StepHistory settings persistence", () => {
         "tautulli.apikey": "•••••",
       }),
     );
+  });
+});
+
+describe("StepHistory TMDB walkthrough", () => {
+  it("links to TMDB signup and offers no Tautulli skip button", async () => {
+    getSettings.mockResolvedValue({});
+    renderStep();
+    const link = await screen.findByRole("link", { name: /themoviedb\.org\/signup/ });
+    expect(link).toHaveAttribute("href", "https://www.themoviedb.org/signup");
+    expect(screen.getByText(/not the long Read Access Token/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Skip/ })).not.toBeInTheDocument();
   });
 });

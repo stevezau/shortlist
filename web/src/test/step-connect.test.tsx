@@ -163,4 +163,25 @@ describe("StepConnect", () => {
       plex_pass: true,
     });
   });
+
+  it("keeps the URL field and Run checks behind Advanced, and Link as the only action", async () => {
+    getServers.mockResolvedValue([
+      serverWith([{ uri: UNREACHABLE, local: true, relay: false, ok: true }]),
+    ]);
+    renderStep();
+    await waitFor(() => expect(setupProbe).toHaveBeenCalledTimes(1));
+
+    const advanced = screen.getByText("Advanced").closest("details");
+    expect(advanced).not.toHaveAttribute("open");
+    expect(advanced).toContainElement(screen.getByLabelText(/Plex server URL/i));
+  });
+
+  it("opens Advanced by itself when no discovered address answered", async () => {
+    getServers.mockResolvedValue([
+      serverWith([{ uri: UNREACHABLE, local: true, relay: false, ok: false }]),
+    ]);
+    renderStep();
+    await screen.findByRole("button", { name: /172-16-10-240/i });
+    expect(screen.getByText("Advanced").closest("details")).toHaveAttribute("open");
+  });
 });
