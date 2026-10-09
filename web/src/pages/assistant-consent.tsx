@@ -14,11 +14,6 @@ import { formatDate } from "@/lib/format";
 import { queryKeys, useSession } from "@/lib/queries";
 import type { AssistantConsentFlow, AssistantGrant } from "@/lib/types";
 
-const READ_ONLY_SCOPES = new Set([
-  "instance.read", "config.read", "catalog.read", "people.read", "activity.read",
-  "history.use", "history.export", "requests.read",
-]);
-
 /** Grants this client could reuse: live, and not waiting on the owner's separate access approval. */
 function compatibleGrants(grants: AssistantGrant[] | undefined, clientId: string): AssistantGrant[] {
   return (grants ?? []).filter(
@@ -51,7 +46,8 @@ export function AssistantConsentPage() {
   const status = useQuery({ queryKey: ["assistant", "status"], queryFn: api.getAssistantStatus, enabled: flow !== null });
   const begin = useMutation({ mutationFn: () => api.beginAssistantConsent(params), onSuccess: (nextFlow) => {
     setFlow(nextFlow);
-    setRole(nextFlow.requested_scopes.every((scope) => READ_ONLY_SCOPES.has(scope)) ? "view" : "manage");
+    const readOnly = new Set(nextFlow.read_only_scopes);
+    setRole(nextFlow.requested_scopes.every((scope) => readOnly.has(scope)) ? "view" : "manage");
   } });
   const decide = useMutation({
     mutationFn: async (approved: boolean) => {
@@ -102,8 +98,9 @@ export function AssistantConsentPage() {
     "history.export", "history.providers", "requests.send", "maintenance.execute",
   ]);
   const limitedScopes = [...baseProfileScopes].some((scope) => !flow.requested_scopes.includes(scope));
-  const readOnlyScopes = flow.requested_scopes.every((scope) => READ_ONLY_SCOPES.has(scope));
-  const profileScopes = role === "view" ? READ_ONLY_SCOPES : baseProfileScopes;
+  const viewScopes = new Set(flow.read_only_scopes);
+  const readOnlyScopes = flow.requested_scopes.every((scope) => viewScopes.has(scope));
+  const profileScopes = role === "view" ? viewScopes : baseProfileScopes;
   const approvedScopes = flow.requested_scopes.filter((scope) =>
     selectedExisting ? selectedExisting.capabilities.includes(scope) : profileScopes.has(scope),
   );

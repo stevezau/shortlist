@@ -1510,7 +1510,7 @@
       },
       "CollectionOut": {
         "additionalProperties": true,
-        "description": "A curated-row definition \u2014 the response shape of :func:`_serialize`.",
+        "description": "A curated-row definition \u2014 the response shape of :func:`serialize_row` (``services/row_editing.py``).",
         "properties": {
           "ai_instructions": {
             "$ref": "#/components/schemas/AiInstructionsOut"
@@ -12901,7 +12901,7 @@
         ]
       },
       "patch": {
-        "description": "Edit a row: validate \u2192 apply \u2192 plan the Plex work \u2192 enqueue it \u2192 drain.\n\nThe decision table for \"what does this edit owe Plex\" lives in `api/row_changes.py`, not here.\nIt used to be eleven mutable flags accumulated down this handler and eight conditional\ndispatches at the bottom \u2014 untestable without a Plex context, and the place a missed branch\nsilently left someone's row on the wrong Home screen.",
+        "description": "Edit a row: validate \u2192 apply \u2192 plan the Plex work \u2192 enqueue it \u2192 drain.\n\nThe decision table for \"what does this edit owe Plex\" lives in `shortlist/server/services/row_changes.py`, not here.\nIt used to be eleven mutable flags accumulated down this handler and eight conditional\ndispatches at the bottom \u2014 untestable without a Plex context, and the place a missed branch\nsilently left someone's row on the wrong Home screen.",
         "operationId": "update_collection_api_collections__collection_id__patch",
         "parameters": [
           {

@@ -524,6 +524,7 @@ export interface AssistantConsentFlow {
   csrf_token: string;
   client: { id: string; name: string };
   requested_scopes: string[];
+  read_only_scopes: string[];
   resource: string;
   expires_at: string;
 }

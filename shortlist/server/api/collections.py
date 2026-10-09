@@ -171,7 +171,7 @@ class AiInstructionsOut(PassthroughModel):
 
 
 class CollectionOut(PassthroughModel):
-    """A curated-row definition — the response shape of :func:`_serialize`."""
+    """A curated-row definition — the response shape of :func:`serialize_row` (``services/row_editing.py``)."""
 
     id: int
     slug: str
@@ -395,7 +395,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
 async def update_collection(collection_id: int, body: CollectionIn, request: Request) -> dict:
     """Edit a row: validate → apply → plan the Plex work → enqueue it → drain.
 
-    The decision table for "what does this edit owe Plex" lives in `api/row_changes.py`, not here.
+    The decision table for "what does this edit owe Plex" lives in `shortlist/server/services/row_changes.py`, not here.
     It used to be eleven mutable flags accumulated down this handler and eight conditional
     dispatches at the bottom — untestable without a Plex context, and the place a missed branch
     silently left someone's row on the wrong Home screen.

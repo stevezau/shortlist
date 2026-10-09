@@ -27,8 +27,12 @@ const status: AssistantStatus = {
   presets: { inspect: ["instance.read"], manage_selected_rows: ["instance.read", "rows.update"], owner_automation: ["instance.read", "rows.update"] },
   setting_groups: [],
 };
+const READ_ONLY = [
+  "instance.read", "config.read", "catalog.read", "people.read", "activity.read",
+  "history.use", "history.export", "requests.read",
+];
 function flow(requested_scopes: string[]): AssistantConsentFlow {
-  return { flow_id: "flow", csrf_token: "csrf", client: { id: "client", name: "Claude" }, requested_scopes, resource: "https://shortlist.example/mcp", expires_at: "2026-10-10T00:00:00Z" };
+  return { flow_id: "flow", csrf_token: "csrf", client: { id: "client", name: "Claude" }, requested_scopes, read_only_scopes: READ_ONLY, resource: "https://shortlist.example/mcp", expires_at: "2026-10-10T00:00:00Z" };
 }
 function renderConsent() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -69,6 +73,13 @@ describe("two-role OAuth owner consent", () => {
     await waitFor(() => expect(createAssistantGrant).toHaveBeenCalledWith(expect.objectContaining({
       access_role: "view", capabilities: ["instance.read"],
     })));
+  });
+
+  it("takes which scopes are read-only from the server, not from a list of its own", async () => {
+    beginAssistantConsent.mockResolvedValue({ ...flow(["rows.update"]), read_only_scopes: ["rows.update"] });
+    renderConsent();
+    expect(await screen.findByRole("radio", { name: /View only/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Manage Shortlist/ })).toBeDisabled();
   });
 
   it("lets a wider client choose View without widening the approved scope", async () => {

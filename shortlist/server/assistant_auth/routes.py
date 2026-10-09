@@ -25,7 +25,7 @@ from .destinations import (
     configured_destinations,
 )
 from .oauth import OAuthService
-from .policy import AuthorizationDenied, owner_managed_capabilities
+from .policy import AuthorizationDenied, basic_role_capabilities, owner_managed_capabilities
 from .repository import AssistantAuthRepository, GrantRemovalConflict, GrantUpdateConflict, GrantUpdateNotFound
 from .types import ASSISTANT_CAPABILITIES, Capability, GrantConstraints, GrantPreset, GrantSummary
 
@@ -543,6 +543,8 @@ def create_oauth_router(
             "csrf_token": csrf_secret.take(),
             "client": {"id": client.client_id, "name": client.client_name},
             "requested_scopes": sorted(scopes),
+            # The View role's ceiling, so the consent page does not keep its own copy of the list.
+            "read_only_scopes": sorted(capability.value for capability in basic_role_capabilities("view")),
             "resource": body.resource,
             "expires_at": (now + timedelta(minutes=10)).isoformat(),
         }

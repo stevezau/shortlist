@@ -229,7 +229,7 @@ export interface paths {
          * Update Collection
          * @description Edit a row: validate → apply → plan the Plex work → enqueue it → drain.
          *
-         *     The decision table for "what does this edit owe Plex" lives in `api/row_changes.py`, not here.
+         *     The decision table for "what does this edit owe Plex" lives in `shortlist/server/services/row_changes.py`, not here.
          *     It used to be eleven mutable flags accumulated down this handler and eight conditional
          *     dispatches at the bottom — untestable without a Plex context, and the place a missed branch
          *     silently left someone's row on the wrong Home screen.
@@ -4147,7 +4147,7 @@ export interface components {
         };
         /**
          * CollectionOut
-         * @description A curated-row definition — the response shape of :func:`_serialize`.
+         * @description A curated-row definition — the response shape of :func:`serialize_row` (``services/row_editing.py``).
          */
         CollectionOut: {
             ai_instructions: components["schemas"]["AiInstructionsOut"];

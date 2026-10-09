@@ -24,7 +24,7 @@ from shortlist.server.assistant.changes import ChangeError
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantPreset
 from shortlist.server.assistant_auth.models import AssistantOAuthCode
-from shortlist.server.assistant_auth.policy import owner_managed_capabilities
+from shortlist.server.assistant_auth.policy import basic_role_capabilities, owner_managed_capabilities
 from shortlist.server.assistant_auth.types import ASSISTANT_CAPABILITIES
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Event, Server, Setting
@@ -654,6 +654,37 @@ def test_oauth_pkce_consent_token_rotation_and_revoke_invalidate_bearer_and_refr
         )
         assert rejected.status_code == 400 and rejected.json()["error"] == "invalid_grant"
         assert client.get("/assistant/grants").json()[0]["revoked_at"] is None
+
+
+def test_consent_flow_names_the_read_only_scopes_from_the_view_role(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The consent page used to keep its own copy of this list; the server's View role is the one source."""
+    with _owner_client(tmp_path, monkeypatch) as (client, _app):
+        redirect_uri = "http://127.0.0.1:43219/callback"
+        registered = client.post(
+            "/assistant/oauth/register", json={"client_name": "Read only", "redirect_uris": [redirect_uri]}
+        )
+        client_id = registered.json()["client_id"]
+        verifier = "read-only-verifier-" + "v" * 48
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        flow = client.post(
+            "/assistant/oauth/authorize",
+            json={
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "resource": "http://localhost/mcp",
+                "scope": "instance.read",
+                "state": "s",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+        )
+        assert flow.status_code == 200, flow.text
+        expected = sorted(capability.value for capability in basic_role_capabilities("view"))
+        assert flow.json()["read_only_scopes"] == expected
+        assert "rows.update" not in expected
 
 
 def test_owner_change_review_approval_is_exact_csrf_protected_and_durable(
