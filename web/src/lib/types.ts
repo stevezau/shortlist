@@ -924,6 +924,8 @@ export interface TraceWeb {
   unresolved?: string[];
   /** Resolved proposals with their fate through selection — kept into the row, or why they dropped. */
   proposals?: TraceWebProposal[];
+  /** Titles whose search failed this gather (timeout, HTTP error). Absent when every search worked. */
+  failed_seeds?: string[];
 }
 
 /** One candidate pool a user's rows gathered (usually one, shared across rows). */

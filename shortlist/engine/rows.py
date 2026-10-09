@@ -3685,6 +3685,7 @@ def _run_user(
     user_report: UserRunReport,
     demand: requests_mod.DemandMap | None = None,
     order_work: list[tuple] | None = None,
+    swept: int = 0,
     on_first_row: Callable[[], None] | None = None,
 ) -> bool:
     """Deliver every per-person row this user is in the audience of. Candidates are computed once
@@ -4047,8 +4048,9 @@ def _run_user(
         # Without the counts this line said only that it happened, sending the operator to the trace.
         counts = user_report.counts
         # The removal paths above record into `diff.deleted` (a dry run too, where it is a preview),
-        # so "left as they are" is only true when this run removed nothing for the person.
-        removed = len(user_report.diff.deleted) if user_report.diff else 0
+        # so "left as they are" is only true when this run removed nothing for the person. The sweep of
+        # unhideable rows is added to that diff by the caller afterwards, so it comes in as `swept`.
+        removed = (len(user_report.diff.deleted) if user_report.diff else 0) + swept
         if removed:
             verb = "would remove" if cfg.dry_run else "removed"
             outcome = f"{verb} {removed} row(s) this run; any other rows are left as they are"

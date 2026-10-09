@@ -1491,6 +1491,20 @@ class TestRetentionPruning:
         with sessions() as session:
             assert session.get(Run, run_id) is None
 
+    def test_pruning_drops_the_cached_dashboard_report(self, sessions):
+        from shortlist.server.services import report_cache
+        from shortlist.server.settings_store import SettingsStore
+
+        self._seed_old_run(sessions)
+        with sessions() as session:
+            SettingsStore(session).set("runs.retention", 1)
+            SettingsStore(session).set("events.retention", 1)
+        report_cache.store_report("30", {"x": 1})
+
+        jobs._HANDLERS["maintenance.prune"](SimpleNamespace(sessions=sessions), {})
+
+        assert report_cache.get_cached_report("30") is None
+
     def test_watch_history_ages_out_on_the_same_cutoff(self, sessions):
         """The two new tables are not tied to a run, so the run prune cannot reach them — and without
         their own sweep they are the only tables here that grow for ever (Plex's own log holds 101,604

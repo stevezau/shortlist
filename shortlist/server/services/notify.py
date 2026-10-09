@@ -56,6 +56,7 @@ EVENTS: tuple[str, ...] = (
     "job.started",
     "job.finished",
     "job.failed",
+    "job.skipped",
     "privacy.exposure",
     "requests.waiting",
     "update.available",
@@ -352,6 +353,30 @@ def enqueue_job_event(sessions, job_id: int, event: str) -> int | None:
         return _queue(sessions, event, item)
     except Exception as e:
         _could_not_queue(f"job {job_id} {event}", e)
+        return None
+
+
+def enqueue_job_skipped(sessions, job_key: str, label: str, scheduled_for: str) -> int | None:
+    """Queue `job.skipped` for a scheduled job APScheduler dropped for starting too late.
+
+    Never raises: the caller is the scheduler's listener, which must not be disturbed by an alert.
+
+    Args:
+        sessions: The session factory.
+        job_key: The scheduler's id for the job; names the alert so each skip is its own message.
+        label: What to call the job in the message.
+        scheduled_for: When it was due, ISO 8601.
+
+    Returns:
+        The queued job's id, or None when there is nothing to send.
+    """
+    try:
+        with sessions() as session:
+            if not _wanted(session, "job.skipped"):
+                return None
+        return _queue(sessions, "job.skipped", notifications.job_skipped_alert(job_key, label, scheduled_for))
+    except Exception as e:
+        _could_not_queue(f"job {job_key} skipped", e)
         return None
 
 

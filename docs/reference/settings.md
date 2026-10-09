@@ -149,7 +149,7 @@ Radarr, Sonarr and Overseerr requests. Rows can override most of these; see belo
 | --- | --- | --- |
 | <span id="key-notify-webhook-enabled"></span>`notify.webhook.enabled` | `false` | send alerts to a webhook at all |
 | <span id="key-notify-webhook-url"></span>`notify.webhook.url` | — | the webhook address. Secret: encrypted at rest, shown as dots |
-| <span id="key-notify-webhook-events"></span>`notify.webhook.events` | `["run.failed", "privacy.exposure"]` | which events are sent: `run.started`, `run.finished`, `run.partial`, `run.failed`, `run.stopped`, `job.started`, `job.finished`, `job.failed`, `privacy.exposure`, `requests.waiting`, `update.available`. See [Outgoing notifications](api.md#outgoing-notifications) |
+| <span id="key-notify-webhook-events"></span>`notify.webhook.events` | `["run.failed", "privacy.exposure"]` | which events are sent: `run.started`, `run.finished`, `run.partial`, `run.failed`, `run.stopped`, `job.started`, `job.finished`, `job.failed`, `job.skipped`, `privacy.exposure`, `requests.waiting`, `update.available`. See [Outgoing notifications](api.md#outgoing-notifications) |
 | <span id="key-notify-webhook-auth-header-name"></span>`notify.webhook.auth_header_name` | `Authorization` | the header the value below is sent in. Blank sends no header |
 | <span id="key-notify-webhook-auth-header-value"></span>`notify.webhook.auth_header_value` | — | optional key sent with every webhook POST, e.g. `Bearer …`. Secret: encrypted at rest, shown as dots |
 

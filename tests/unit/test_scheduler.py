@@ -340,6 +340,30 @@ class TestSchedulerLateness:
         assert len(schedule_groups(app)[cron]) == 2
         assert self._missed_events(app) == []
 
+    def test_a_due_row_job_still_fires_after_a_schedule_rebuild(self, app: SimpleNamespace) -> None:
+        """A rebuild that lands while the loop is stalled used to recompute the fire time from now, which
+        dropped a job that was due but not yet dispatched."""
+        from shortlist.server.scheduler import build_scheduler, rebuild_schedule
+
+        cron = "0 2 * * *"
+        _add(app.state.sessions, "a", cron)
+        due = datetime.now(UTC) - timedelta(minutes=10)
+
+        async def execute() -> datetime | None:
+            scheduler = build_scheduler(app)
+            app.state.scheduler = scheduler
+            scheduler.start(paused=True)
+            try:
+                scheduler.get_job(f"row-schedule::{cron}").modify(next_run_time=due)
+                _add(app.state.sessions, "b", cron)
+                rebuild_schedule(app)
+                return scheduler.get_job(f"row-schedule::{cron}").next_run_time
+            finally:
+                scheduler.shutdown(wait=False)
+                await asyncio.sleep(0)
+
+        assert asyncio.run(execute()) == due
+
     def test_a_missed_timer_job_is_named_from_the_jobs_catalogue(self, app: SimpleNamespace) -> None:
         from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
 
@@ -354,6 +378,27 @@ class TestSchedulerLateness:
         assert event.message["job"] == "watch-sync"
         assert event.message["name"] == "Sync watch history"
         assert event.message["scheduled_for"] == "2026-01-01T04:17:00+00:00"
+
+    def test_a_missed_job_is_queued_for_the_webhook_when_the_owner_chose_it(self, app: SimpleNamespace) -> None:
+        from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
+
+        from shortlist.server.db.models import Job
+        from shortlist.server.scheduler import build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            store = SettingsStore(session)
+            store.set("notify.webhook.enabled", True)
+            store.set("notify.webhook.events", ["job.skipped"])
+        scheduler = build_scheduler(app)
+        due = datetime(2026, 1, 1, 4, 17, tzinfo=UTC)
+
+        scheduler._dispatch_event(JobExecutionEvent(EVENT_JOB_MISSED, "watch-sync", "default", due))
+
+        with app.state.sessions() as session:
+            [job] = session.query(Job).filter(Job.kind == "notify.send").all()
+        assert job.payload["item"]["event"] == "job.skipped"
+        assert "Sync watch history" in job.payload["item"]["title"]
 
     @pytest.mark.parametrize("job_id", ["jobs.drain", "jobs.sweep"])
     def test_a_drain_tick_missed_or_skipped_writes_nothing(self, app: SimpleNamespace, job_id: str) -> None:

@@ -1584,6 +1584,7 @@ def _maintenance_prune(state, payload: dict) -> dict:
     it after a crash simply finds nothing left to delete.
     """
     from shortlist.server.assistant.retention import prune_assistant_state
+    from shortlist.server.services.report_cache import invalidate_report_cache
     from shortlist.server.services.run_persistence import prune_events, prune_expired_cache, prune_runs
 
     with state.sessions() as session:
@@ -1600,6 +1601,9 @@ def _maintenance_prune(state, payload: dict) -> dict:
         # Fixed windows, not owner settings: these rows are working state (codes, tokens, unapplied plans).
         assistant = prune_assistant_state(session, now=datetime.now(UTC))
         session.commit()
+    # Pruning can delete runs, events and watch history without counting the last; the report reads all
+    # three, so drop it rather than wait out the 120s TTL.
+    invalidate_report_cache()
     return {
         "runs": runs,
         "events": events,

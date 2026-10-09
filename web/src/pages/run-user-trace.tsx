@@ -1715,6 +1715,7 @@ function WebSourceCard({
   const resolved = new Set(web?.resolved ?? []);
   const unresolved = new Set(web?.unresolved ?? []);
   const searches = web?.searches ?? [];
+  const failedSeeds = web?.failed_seeds ?? [];
   const failed = source?.status === "failed";
   // Each resolved proposal's fate (kept into the row, or why it fell out), keyed by the same label the
   // `proposed` list uses. Absent on legacy runs — then we fall back to the plain resolved/dropped read.
@@ -1810,6 +1811,16 @@ function WebSourceCard({
               ))}
             </ul>
           </div>
+        )}
+
+        {failedSeeds.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {failedSeeds.length === 1
+              ? "1 search failed and was skipped"
+              : `${failedSeeds.length} searches failed and were skipped`}
+            , so the web had less to go on: {failedSeeds.join(", ")}. They are
+            tried again on the next run.
+          </p>
         )}
 
         {proposed.length > 0 && (

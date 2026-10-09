@@ -309,6 +309,29 @@ describe("TraceView", () => {
     expect(within(searched).getByText(/Step 2/)).toBeTruthy();
   });
 
+  it("names the titles whose web search failed, so a thin web result is not mistaken for a quiet one", () => {
+    const data = okTrace();
+    const gather = data.trace.gathers?.[0];
+    if (!gather) throw new Error("fixture must have a gather");
+    gather.sources = [
+      ...(gather.sources ?? []),
+      { source: "llm_web", status: "ok", contributed: 0, detail: "" },
+    ];
+    gather.web = {
+      mode: "exa",
+      searches: [],
+      failed_seeds: ["Dune", "Arrival"],
+    };
+    render(<TraceView data={data} />);
+    const searched = screen
+      .getByText(/Where we searched/)
+      .closest("section") as HTMLElement;
+    expect(
+      within(searched).getByText(/2 searches failed and were skipped/),
+    ).toBeTruthy();
+    expect(within(searched).getByText(/Dune, Arrival/)).toBeTruthy();
+  });
+
   it("explains how the shortlist was ordered, grounded in this library's picks — and says no AI ranks", () => {
     const data = okTrace();
     // Give the delivered pick a source + seed_title so the "grounded in this row" line has real numbers.

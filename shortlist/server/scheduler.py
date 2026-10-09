@@ -211,15 +211,23 @@ def _make_job(app, cron: str, collection_ids: list[int]):
 
 def _register(scheduler: AsyncIOScheduler, app, groups: dict[str, list[int]]) -> None:
     for cron, ids in groups.items():
+        job_id = _job_id(cron)
+        # Re-adding recomputes the next fire time from now. A rebuild that lands while the loop is stalled
+        # would drop a job that is due but not yet dispatched, so carry a past-due time over (the id is the
+        # cron, so the trigger is unchanged and only the row membership is new).
+        existing = scheduler.get_job(job_id)
+        carried = getattr(existing, "next_run_time", None)  # a pending job (scheduler not started) has none
+        extra = {"next_run_time": carried} if carried is not None and carried <= datetime.now(carried.tzinfo) else {}
         # Owner decision 2026-10-02: a late row run still runs (`None` = no grace). A restart replays nothing
         # (in-memory job store, rebuilt at boot), but a paused host/VM or a forward clock jump wakes the live
         # process past due and starts one full run (coalesced) then. Accepted: leak-safe ordering still holds.
         scheduler.add_job(
             _make_job(app, cron, ids),
             crontab_trigger(cron),
-            id=_job_id(cron),
+            id=job_id,
             misfire_grace_time=None,
             replace_existing=True,
+            **extra,
         )
 
 
@@ -489,6 +497,15 @@ def _record_missed_runs(app):
             write_audit(app.state, SCHEDULE_MISSED_SCOPE, "warning", **fields)
         except Exception:
             logger.exception("could not record that scheduled job {} was skipped", job_id)
+
+        try:
+            from shortlist.server.services.notify import enqueue_job_skipped
+
+            enqueue_job_skipped(
+                app.state.sessions, job_id, str(fields.get("name") or job_id), str(fields["scheduled_for"])
+            )
+        except Exception:
+            logger.exception("could not queue the webhook alert for skipped scheduled job {}", job_id)
 
     def listener(event: JobExecutionEvent) -> None:
         if event.job_id in _UNRECORDED_MISSES:

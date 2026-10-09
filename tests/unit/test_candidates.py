@@ -808,6 +808,71 @@ class TestWebSearchWithoutAnLlm:
 
         assert stats.trace["web"]["failed_seeds"] == ["Dune"]
 
+    def test_a_search_that_answers_with_an_unusable_body_is_cached_not_retried(self):
+        """A 200 whose body is not JSON says nothing about the title that a retry would change."""
+
+        class _GarbageBody(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                self.queries.append(query)
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        cache = _DictCache()
+        stats = GatherStats()
+        args = (NullCurator(), _GarbageBody([], []), "exa", web_profile(), [seed(1, "Dune"), seed(2, "Arrival")], 5)
+
+        with pytest.raises(RuntimeError, match="every web search failed"):
+            web_recommendations(*args, stats, cache=cache, recent_count=2)
+        again = GatherStats()
+        again_search = _GarbageBody([], [])
+        web_recommendations(
+            NullCurator(), again_search, "exa", web_profile(), [seed(1, "Dune")], 5, again, cache=cache, recent_count=2
+        )
+
+        assert again_search.queries == [], "the unusable answer was searched for again"
+        assert again.exa_cache_hits == 1
+
+    def test_a_transport_failure_is_never_cached(self):
+        class _Down(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                raise TimeoutError("Exa took too long")
+
+        cache = _DictCache()
+
+        with pytest.raises(RuntimeError, match="every web search failed"):
+            web_recommendations(
+                NullCurator(), _Down([], []), "exa", web_profile(), [seed(1, "Dune")], 5, GatherStats(), cache=cache
+            )
+
+        assert cache.store == {}
+        retry = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        web_recommendations(
+            NullCurator(), retry, "exa", web_profile(), [seed(1, "Dune")], 5, GatherStats(), cache=cache
+        )
+        assert len(retry.queries) == 1, "an outage poisoned the cache"
+
+    def test_exa_searches_counts_only_the_searches_that_worked(self):
+        class _HalfDead(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                if "Dune" in query:
+                    raise TimeoutError("Exa took too long")
+                return super().search_detailed(query, num_results=num_results)
+
+        stats = GatherStats()
+
+        web_recommendations(
+            NullCurator(),
+            _HalfDead([make_result("a", "b")], self._titles("Andor")),
+            "exa",
+            web_profile(),
+            [seed(1, "Dune"), seed(2, "Arrival")],
+            5,
+            stats,
+            cache=_DictCache(),
+            recent_count=2,
+        )
+
+        assert stats.exa_searches == 1
+
     def test_no_failed_seeds_key_when_every_search_worked(self):
         """The key's PRESENCE is the signal, so a clean run must not carry an empty one."""
         search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))

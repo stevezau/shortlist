@@ -390,11 +390,12 @@ Settings -> Connections -> Webhook (`notify.webhook.url` / `notify.webhook.auth_
      {source, version, id, severity, title, message, event, path, sent_at}, plus `content` and `text`
      carrying "title\nmessage" — the fields Discord and Slack each require — to one webhook.
      Events: run.started, run.finished, run.partial, run.failed, run.stopped, job.started,
-     job.finished, job.failed, privacy.exposure, requests.waiting, update.available ("test" for the
+     job.finished, job.failed, job.skipped, privacy.exposure, requests.waiting, update.available ("test" for the
      button). Default ["run.failed", "privacy.exposure"]; an unknown name is a 422.
      Dry runs and dry-run jobs send nothing. job.started/job.finished skip routine jobs (watch.reconcile)
      and retries, a scheduled privacy.sync never sends job.started, and one that changed nothing never
-     sends job.finished. job.failed means out of retries. notify.send never reports on itself.
+     sends job.finished. job.failed means out of retries. job.skipped is a scheduled job APScheduler dropped
+     for starting too late. notify.send never reports on itself.
      privacy.exposure is a count of accounts, never names, repeated at most once a day while true.
      requests.waiting is sent after a run when more titles wait than last time; update.available once
      per version. No message carries a person's name, a job's detail, or a job's error.

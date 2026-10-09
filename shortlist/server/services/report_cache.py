@@ -4,9 +4,9 @@ The report costs seconds on a large picks table and gates the dashboard, but its
 when something below calls :func:`invalidate_report_cache`: a run ending, whether it finished,
 failed or was cancelled while queued (``run_service``), a full watch sync completing
 (``watch_sync``), the live-playback reconcile job crediting picks (``jobs._watch_reconcile``),
-clearing deleted rows (``api/report``) and clearing run history (``api/runs.clear_runs``). The TTL
-is the backstop for changes nobody hooks (retention pruning). Per process and never persisted: a
-restart starts cold.
+clearing deleted rows (``api/report``), clearing run history (``api/runs.clear_runs``) and retention
+pruning (``jobs._maintenance_prune``). The TTL is the backstop for changes nobody hooks. Per process
+and never persisted: a restart starts cold.
 
 The live-listener status (``watch_sync.live_since``/``live_down_since``) and the next watch-sync time
 are NOT cached: the caller merges them onto each served copy.

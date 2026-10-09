@@ -7876,6 +7876,23 @@ class TestRequestsRow:
         assert len(found) == 1
         assert "would remove 1 row(s) this run; any other rows are left as they are" in found[0]
 
+    def test_the_no_picks_line_counts_rows_the_unhideable_sweep_removed(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """The sweep's removals join the person's diff only after the line is logged."""
+
+        def sweep(*args, deleted, **kwargs):
+            deleted["sarah"] = ["Broken row"]
+
+        monkeypatch.setattr(pipeline_mod, "sweep_broken_rows", sweep)
+        ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
+        ctx.request_ledger = _ledger(complete=True)
+
+        found = self._no_picks_lines(lambda: _run_one(ctx, mock_plextv, make_profile("sarah", account_id=100)))
+
+        assert len(found) == 1
+        assert "removed 1 row(s) this run; any other rows are left as they are" in found[0]
+
     def test_the_no_picks_line_keeps_its_wording_when_nothing_was_removed(self, ctx: EngineContext, mock_plextv):
         ctx.config = replace(ctx.config, rows=[_requests_spec()], rows_defined=True)
         ctx.request_ledger = _ledger(complete=True)

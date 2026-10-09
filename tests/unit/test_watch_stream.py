@@ -248,7 +248,7 @@ class TestOrphanedSessions:
 
         with sessions() as s:
             row = s.query(WatchSession).one()
-        assert row.end_reason == "timeout"
+        assert row.end_reason == "orphaned"
         # Compared naive: SQLite stores no offset, so everything read back is naive UTC. That is the
         # whole codebase's convention, not a quirk of this test.
         assert row.ended_at == last_seen.replace(tzinfo=None), "ended when we last SAW it, not when we noticed"

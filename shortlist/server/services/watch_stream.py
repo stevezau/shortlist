@@ -340,7 +340,7 @@ class WatchStream:
             rows = session.query(WatchSession).filter(WatchSession.ended_at.is_(None)).all()
             for row in rows:
                 row.ended_at = row.last_seen_at
-                row.end_reason = "timeout"
+                row.end_reason = "orphaned"
             if rows:
                 session.commit()
                 logger.info("watch-stream: closed {} session(s) left open by a restart", len(rows))

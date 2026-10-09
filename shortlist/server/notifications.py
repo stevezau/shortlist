@@ -306,6 +306,31 @@ def job_alert(event: str, job_id: int, label: str) -> dict:
     }
 
 
+def job_skipped_alert(job_key: str, label: str, scheduled_for: str) -> dict:
+    """A scheduled job was skipped for starting too late (`job.skipped`). Webhook only.
+
+    Names the job by its catalogue label (or the scheduler's id for a row run) and when it was due; a
+    row job's id is a cron expression, never a person.
+
+    Args:
+        job_key: The scheduler's id for the job.
+        label: What to call the job.
+        scheduled_for: When it was due, ISO 8601.
+
+    Returns:
+        A notification dict that names no account.
+    """
+    return {
+        "id": f"job-skipped-{re.sub(r'[^A-Za-z0-9]+', '-', f'{job_key}-{scheduled_for}')}",
+        "severity": "warning",
+        "title": f"Scheduled job skipped: {label}",
+        "body": f"It was due {scheduled_for} but started too late, so it was skipped. Open Jobs to run it now.",
+        "action_url": "/jobs",
+        "action_label": "Open Jobs",
+        "dismissable": True,
+    }
+
+
 def _newest_run_with(session: Session, key: str) -> Run | None:
     """The newest finished run whose stats carry ``key`` — the latest run that actually MEASURED it.
 

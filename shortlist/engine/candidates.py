@@ -323,9 +323,9 @@ def _web_via_search(
                 logger.warning("llm_web: ignoring a malformed cache entry for {!r}", seed.title)
                 payload = {}
         else:
-            stats.exa_searches += 1  # a real (uncached) search — count the billable request
             try:
                 payload = _search_one_seed(search, query, per_query, structured)
+                stats.exa_searches += 1  # a real (uncached) search that answered
             except Exception as e:
                 # One seed's failure must not cost the other nine. Exa's deeper modes take ~10s
                 # against a 100s ceiling at its CDN, and a request that exceeds it comes back as an
@@ -334,6 +334,12 @@ def _web_via_search(
                 # discarding every seed that had already searched successfully.
                 logger.warning("llm_web: search failed for {!r} ({}); continuing", seed.title, type(e).__name__)
                 failed_seeds.append(seed.title)
+                if _is_unusable_answer(e):
+                    # The backend answered and the body is no use. Asking again returns the same thing, so keep it
+                    # like any thin result rather than re-billing it nightly. A transport error or an outage
+                    # (timeout, HTTP error) says nothing about the title and is never cached.
+                    empty = {"results": [], "titles": []}
+                    cache.set(key, json.dumps(empty), _cache_ttl(empty, structured))
                 per_seed.append([])
                 per_seed_titles.append([])
                 continue
@@ -442,6 +448,15 @@ def _dedupe_by_url(items: list[dict], seen_urls: set[str]) -> list[SearchResult]
             seen_urls.add(url)
         kept.append(SearchResult(title=it["title"], url=url, text=it["text"]))
     return kept
+
+
+def _is_unusable_answer(error: Exception) -> bool:
+    """Did the backend answer with a body we cannot read, as opposed to failing to answer at all?
+
+    A body that does not parse raises ``ValueError`` (Exa) or a ``RuntimeError`` caused by one (SearXNG).
+    Timeouts and HTTP errors are ``httpx`` errors and do not match.
+    """
+    return isinstance(error, ValueError) or isinstance(error.__cause__, ValueError)
 
 
 def _search_one_seed(search, query: str, per_query: int, structured: bool) -> dict:

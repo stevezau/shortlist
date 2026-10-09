@@ -1187,7 +1187,8 @@ class WatchSession(Base):
     max_offset_ms: Mapped[int] = mapped_column(Integer, default=0)
     #: NULL until the runtime is known. A percentage of an unknown runtime is worse than none.
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    #: stopped | timeout | replaced. `timeout` is recorded rather than dressed up as a stop: a client
+    #: stopped | timeout | replaced | orphaned (a restart left it open; closed at boot at its last
+    #: sighting, kept apart from a real timeout). `timeout` is recorded rather than dressed up as a stop: a client
     #: that crashes or drops off the network never sends one, which is why Tautulli schedules a
     #: force-stop instead of waiting for it, and why we do too.
     end_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)

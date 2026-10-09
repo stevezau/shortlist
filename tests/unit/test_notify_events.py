@@ -195,6 +195,19 @@ class TestJobEvents:
         assert [i["event"] for i in items] == ["job.started", "job.finished"]
         assert all(jobs.BY_KIND["backup.take"].label in i["title"] for i in items)
 
+    def test_a_skipped_scheduled_job_is_announced_by_its_label(self, sessions, secrets):
+        configure(sessions, secrets, events=["job.skipped"])
+        notify.enqueue_job_skipped(sessions, "watch.sync", "Watch history sync", "2026-10-02T03:30:00+00:00")
+        [item] = queued(sessions)
+        assert item["event"] == "job.skipped"
+        assert "Watch history sync" in item["title"]
+        assert "skipped" in item["title"].lower()
+
+    def test_a_skipped_scheduled_job_queues_nothing_unless_chosen(self, sessions, secrets):
+        configure(sessions, secrets)  # defaults
+        assert notify.enqueue_job_skipped(sessions, "watch.sync", "Watch history sync", "2026-10-02") is None
+        assert queued(sessions) == []
+
     def test_routine_jobs_do_not_announce_starting_or_finishing_but_do_announce_failing(self, sessions, secrets):
         """The privacy sync runs every 30 minutes and a playback credit runs per play."""
         configure(sessions, secrets, events=ALL_EVENTS)

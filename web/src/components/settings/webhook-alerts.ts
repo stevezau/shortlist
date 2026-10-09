@@ -27,6 +27,7 @@ export const EVENT_GROUPS: {
       { id: "job.started", label: "A job started" },
       { id: "job.finished", label: "A job finished" },
       { id: "job.failed", label: "A job failed" },
+      { id: "job.skipped", label: "A scheduled job was skipped" },
     ],
   },
   {

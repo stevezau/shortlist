@@ -673,6 +673,7 @@ def _deliver_phase(
                 user_report,
                 demand,
                 order_work,
+                swept=len(swept_titles),
                 on_first_row=hide_first_row,
             )
         except Exception as e:
