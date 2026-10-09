@@ -337,7 +337,8 @@ def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(pag
     # screen starts on arrival rather than asking a second time.
     name.fill("✨ {library_name} Handpicked")
     page.get_by_role("dialog").get_by_role("button", name="Rename on Plex", exact=True).click()
-    expect(page.get_by_role("heading", name=re.compile("^Renaming "))).to_be_visible(timeout=LOAD)
+    # The title carries its breadcrumb, and a screen reader hears it as "Rows / Renaming …".
+    expect(page.get_by_role("heading", name=re.compile(r"^Rows / Renaming "))).to_be_visible(timeout=LOAD)
     expect(page.get_by_role("button", name="Rename on Plex")).to_have_count(0)
 
     # The rename triggers an SSE stream page — wait for it to finish, then check the DB.

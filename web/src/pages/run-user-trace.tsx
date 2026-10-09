@@ -253,9 +253,7 @@ export function TraceView({
                 <Link to={`/runs/${runId}`} className="font-normal text-muted-foreground hover:text-foreground">
                   Run #{runId}
                 </Link>
-                <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
-                  /
-                </span>
+                <span className="font-normal text-faint-foreground">{" / "}</span>
               </>
             )}
             How we picked for {sharedRow ? rowDisplayName(name) || name : name}

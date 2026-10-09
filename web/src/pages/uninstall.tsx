@@ -176,9 +176,7 @@ export function UninstallPage() {
             <Link to="/settings" className="font-normal text-muted-foreground hover:text-foreground">
               Settings
             </Link>
-            <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
-              /
-            </span>
+            <span className="font-normal text-faint-foreground">{" / "}</span>
             Uninstall Shortlist
           </>
         }

@@ -63,9 +63,11 @@ class TestConnectionCards:
         tmdb.get_by_role("button", name="Test").click()
         expect(tmdb).to_contain_text("TMDB key works", timeout=LOAD)
 
+        # "No AI" is a choice, not a connection: the card offers one "Set up" and no Test, because
+        # there is nothing to test until a provider is chosen.
         llm = page.get_by_test_id("connection-llm")
-        llm.get_by_role("button", name="Test").click()
-        expect(llm).to_contain_text("Built-in picker — no AI, nothing to test, always works", timeout=LOAD)
+        expect(llm.get_by_role("button", name="Set up")).to_be_visible(timeout=LOAD)
+        expect(llm.get_by_role("button", name="Test")).to_have_count(0)
 
         # An unconfigured connection says so plainly and never claims a connection it doesn't have —
         # and its Test is disabled until a key is on file (you can't test what isn't set up), rather

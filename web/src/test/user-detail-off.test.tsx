@@ -106,7 +106,8 @@ describe("an Off person's page", () => {
   it("leads the title with a Users breadcrumb instead of a back line above it", () => {
     renderBody(KID);
 
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Users/kid");
+    // The separator is spoken: a screen reader hears "Users / kid", not "Userskid".
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Users / kid");
     expect(screen.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/users");
   });
 

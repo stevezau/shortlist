@@ -42,9 +42,7 @@ export function UserDetailHeader({ user }: { user: User }) {
                 <Link to="/users" className="font-normal text-muted-foreground hover:text-foreground">
                   Users
                 </Link>
-                <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
-                  /
-                </span>
+                <span className="font-normal text-faint-foreground">{" / "}</span>
                 {user.display_name || user.username}
               </h1>
               <UserBadges user={user} />

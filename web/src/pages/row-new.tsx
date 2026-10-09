@@ -261,9 +261,7 @@ export function RowNewPage() {
             <Link to="/rows" className="font-normal text-muted-foreground hover:text-foreground">
               Rows
             </Link>
-            <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
-              /
-            </span>
+            <span className="font-normal text-faint-foreground">{" / "}</span>
             Add a row
           </>
         }

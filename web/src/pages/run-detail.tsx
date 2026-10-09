@@ -290,9 +290,7 @@ export function RunDetailPage() {
                     <Link to="/runs" className="font-normal text-muted-foreground hover:text-foreground">
                       Runs
                     </Link>
-                    <span className="mx-2 font-normal text-faint-foreground" aria-hidden="true">
-                      /
-                    </span>
+                    <span className="font-normal text-faint-foreground">{" / "}</span>
                     Run #{run.id}
                     {run.finished_at && (
                       <Badge
