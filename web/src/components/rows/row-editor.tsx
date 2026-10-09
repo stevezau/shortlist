@@ -10,12 +10,13 @@ import { RowRequestSettings } from "@/components/rows/row-request-settings";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { InheritableField } from "@/components/rows/inheritable-field";
 import { LibraryPicker } from "@/components/rows/library-picker";
+import { PlacementSeen } from "@/components/rows/placement-seen";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowAudienceTable } from "@/components/rows/row-audience-table";
 import { RowContentsFields } from "@/components/rows/row-contents-fields";
 import { draftChanges } from "@/components/rows/row-draft-diff";
-import { mediaLabel, rowLibraries, rowReach } from "@/components/rows/row-facts";
+import { mediaLabel, overridesHint, reachedUsers, rowLibraries, rowReach } from "@/components/rows/row-facts";
 import { RowKindChangeDialog } from "@/components/rows/row-kind-change-dialog";
 import { RowBuildPicker, RowKindPicker } from "@/components/rows/row-kind-picker";
 import { RowLiveStrip } from "@/components/rows/row-live-strip";
@@ -45,6 +46,7 @@ import { Label } from "@/components/ui/label";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, hasUnsavedChanges, OVER_TIME_DEFAULTS, toInput } from "@/lib/collections";
+import { LIBRARY_NAME } from "@/lib/placeholders";
 import { describeCron } from "@/lib/cron";
 import { settingString } from "@/lib/format";
 import {
@@ -622,21 +624,40 @@ export function RowEditor({
     onRename?.(renameDraft.trim());
   };
 
+  const whatGoesInHint = overridesHint(input, [
+    "watched_pct",
+    "recent_count",
+    "recency",
+    "max_seeds",
+    "cold_start",
+    "min_year",
+    "max_year",
+    "min_rating",
+    "max_runtime",
+  ]);
+  const scheduleHint = overridesHint(input, ["refresh_days", "idle_hold_days"]);
+  const requestKeys = (Object.keys(input) as (keyof CollectionInput)[]).filter((key) => key.startsWith("req_"));
   const sections: RowSection[] = [
     { id: "name-and-look", label: "Name & look" },
     { id: "who-gets-it", label: "Who gets it" },
-    { id: "what-goes-in", label: "What goes in" },
+    { id: "what-goes-in", label: "What goes in", hint: whatGoesInHint ?? undefined },
     ...(aiRow ? [{ id: "try-it", label: "Try it" }] : []),
-    { id: "schedule", label: "Schedule" },
+    { id: "schedule", label: "Schedule", hint: scheduleHint ?? undefined },
     { id: "placement", label: "Placement" },
     // A Your requests row never searches, so it has nothing to ask for and nothing to set here, and
     // an empty section would only be somewhere to be wrong. An AI row is library-only and never asks either.
-    ...(input.requests_row || aiRow ? [] : [{ id: "requests", label: "Requests" }]),
+    ...(input.requests_row || aiRow
+      ? []
+      : [{ id: "requests", label: "Requests", hint: overridesHint(input, requestKeys) ?? "server default" }]),
     // A row being created has nothing on Plex to remove yet.
     ...(collection ? [{ id: "danger-zone", label: "Danger zone" }] : []),
   ];
 
-  const subtitle = savedRow
+  // Each library's own Plex title, so the header can say what the row is called where people see it.
+  // A name without the library in it reads the same everywhere, so it is shown once.
+  const savedLibraries = savedRow && libraries.data ? rowLibraries(savedRow, libraries.data) : [];
+  const plexTitles = savedName.includes(LIBRARY_NAME) ? savedLibraries : savedLibraries.slice(0, 1);
+  const facts = savedRow
     ? [
         savedRow.build === "shared" ? "Shared" : "Per person",
         savedRow.audience === "everyone"
@@ -646,13 +667,33 @@ export function RowEditor({
         ...(isDefault ? ["the default row"] : []),
       ].join(" · ")
     : "Nothing reaches Plex until you add it.";
+  const subtitle = savedRow ? (
+    <>
+      {facts}
+      {plexTitles.length > 0 && (
+        <span className="mt-1.5 flex flex-wrap items-center gap-2">
+          On Plex it appears as
+          {plexTitles.map((library) => (
+            <span
+              key={library.key}
+              className="rounded-full border border-border-strong bg-elevated px-2.5 py-0.5 text-xs text-foreground"
+            >
+              <RowName name={savedName} libraryName={savedName.includes(LIBRARY_NAME) ? library.title : undefined} className="" />
+            </span>
+          ))}
+        </span>
+      )}
+    </>
+  ) : (
+    facts
+  );
 
   return (
     <div className="w-full space-y-6">
       <PageHeader
         // The name as a template, its placeholders drawn as chips: there is no single rendered name,
         // because each person and each library fills it differently.
-        title={collection ? <RowName name={savedName} className="" /> : "Add a row"}
+        title={collection ? <RowName name={savedName} libraryName="" className="" /> : "Add a row"}
         subtitle={subtitle}
         className="mb-0"
         actions={
@@ -960,6 +1001,7 @@ export function RowEditor({
                 <RowSizeField
                   value={input.size}
                   onChange={(size) => set({ size })}
+                  presets={[15, 20, 30]}
                 />
               </div>
             )}
@@ -1158,7 +1200,15 @@ export function RowEditor({
             title="Placement"
             description="Which Plex screens it shows on, where it sits, and on which days."
           >
-            <div data-setting="placement" className="space-y-3">
+            <PlacementSeen
+              placement={input.placement}
+              placementFriends={input.placement_friends}
+              personName={(() => {
+                const person = reachedUsers(input, users)[0];
+                return person ? person.display_name || person.username : null;
+              })()}
+            />
+            <div data-setting="placement" className="space-y-3 border-t pt-4">
               <Label>Where it shows</Label>
               <PlacementToggles
                 placement={input.placement}

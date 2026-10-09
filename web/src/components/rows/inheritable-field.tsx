@@ -47,14 +47,16 @@ export function InheritableField({
 }) {
   return (
     <div data-setting={setting} className="space-y-3 border-t pt-4">
-      {labelFor ? (
-        <Label htmlFor={labelFor}>{label}</Label>
-      ) : (
-        <p className="text-sm font-medium">{label}</p>
-      )}
-      <p className="text-sm text-muted-foreground">{description}</p>
-      {before}
       <GlobalDefaultToggle
+        heading={
+          labelFor ? (
+            <Label htmlFor={labelFor} className="font-medium">
+              {label}
+            </Label>
+          ) : (
+            label
+          )
+        }
         ariaLabel={ariaLabel}
         inheriting={inheriting}
         globalValue={globalValue}
@@ -62,6 +64,8 @@ export function InheritableField({
         onChange={onToggle}
         disabledReason={toggleDisabledReason}
       />
+      <p className="text-sm text-muted-foreground">{description}</p>
+      {before}
       {!inheriting && children}
       {after}
     </div>

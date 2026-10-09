@@ -1,17 +1,20 @@
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import { Link } from "react-router";
 
+import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 
 /**
- * The "Use the global default" toggle, with the global's ACTUAL value spelled out.
+ * One inheritable setting's line: its name, what it is set to, whether this row overrides it, and
+ * the switch that decides.
  *
- * Without the value, a row that inherits tells you only that it inherits — you have to leave the
- * dialog, find the setting, and come back to learn what you agreed to. Naming it here is the whole
- * point of this component; the link is for changing it, not for finding out what it is.
+ * The global's ACTUAL value is spelled out while the row follows it. Without the value, a row that
+ * inherits tells you only that it inherits — you would have to leave the page, find the setting, and
+ * come back to learn what you agreed to. The link is for changing it, not for finding out what it is.
  */
 export function GlobalDefaultToggle({
-  label,
+  heading,
+  label = "Use the server default",
   ariaLabel,
   inheriting,
   globalValue,
@@ -19,6 +22,9 @@ export function GlobalDefaultToggle({
   onChange,
   disabledReason = null,
 }: {
+  /** The setting's name, which leads the line. */
+  heading: ReactNode;
+  /** What the switch says it does. */
   label?: string;
   ariaLabel: string;
   inheriting: boolean;
@@ -34,30 +40,38 @@ export function GlobalDefaultToggle({
   const reasonId = useId();
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-sm">{label ?? "Use the global default"}</span>
-        <Switch
-          checked={inheriting}
-          onCheckedChange={onChange}
-          aria-label={ariaLabel}
-          disabled={disabledReason !== null}
-          aria-describedby={disabledReason !== null ? reasonId : undefined}
-        />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="min-w-0 text-sm font-medium sm:w-52">{heading}</div>
+        {inheriting && globalValue !== null && (
+          <span className="min-w-0 text-sm">
+            <strong className="font-normal">{globalValue}</strong>
+          </span>
+        )}
+        <Badge variant={inheriting ? "outline" : "default"} className="font-normal text-muted-foreground">
+          {inheriting ? "server default" : "overridden here"}
+        </Badge>
+        <span className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+          {inheriting && (
+            <Link
+              to={`/settings#${settingsHash}`}
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Change the default
+            </Link>
+          )}
+          <span aria-hidden="true">{label}</span>
+          <Switch
+            checked={inheriting}
+            onCheckedChange={onChange}
+            aria-label={ariaLabel}
+            disabled={disabledReason !== null}
+            aria-describedby={disabledReason !== null ? reasonId : undefined}
+          />
+        </span>
       </div>
       {disabledReason !== null && (
         <p id={reasonId} className="text-xs text-muted-foreground">
           {disabledReason}
-        </p>
-      )}
-      {inheriting && globalValue !== null && (
-        <p className="text-xs text-muted-foreground">
-          Currently <strong className="text-foreground">{globalValue}</strong>.{" "}
-          <Link
-            to={`/settings#${settingsHash}`}
-            className="underline underline-offset-2 hover:text-foreground"
-          >
-            Change the global default
-          </Link>
         </p>
       )}
     </div>

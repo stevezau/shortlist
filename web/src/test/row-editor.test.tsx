@@ -16,7 +16,8 @@ import { toInput } from "@/lib/collections";
 import type { Collection, User } from "@/lib/types";
 import { BUILTINS } from "@/test/season-fixtures";
 
-const { updateCollection, settingsData, startRun, scheduleData, privacyData, effectivenessData } = vi.hoisted(() => ({
+const { updateCollection, settingsData, startRun, scheduleData, privacyData, effectivenessData, librariesData } = vi.hoisted(() => ({
+  librariesData: { current: [] as unknown[] },
   // null = that endpoint fails, which is what every test that doesn't set one gets.
   scheduleData: { current: null as unknown },
   privacyData: { current: null as unknown },
@@ -37,7 +38,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       updateCollection: (id: number, body: unknown) =>
         updateCollection(id, body),
       getSettings: () => Promise.resolve(settingsData.current),
-      getLibraries: () => Promise.resolve([]),
+      getLibraries: () => Promise.resolve(librariesData.current),
       getSeasons: () => Promise.resolve(BUILTINS),
       getSeasonPresets: () => Promise.resolve([]),
       getImageProvider: () =>
@@ -1666,7 +1667,8 @@ describe("RowEditor — one page of sections, one way around it", () => {
     const nav = screen.getByRole("navigation", { name: "Row settings sections" });
     const links = within(nav).getAllByRole("link");
 
-    expect(links.map((link) => link.textContent)).toEqual(SECTIONS.map(([label]) => label));
+    // The first text node is the label; a hint such as "1 override" follows it in its own span.
+    expect(links.map((link) => link.firstChild?.textContent)).toEqual(SECTIONS.map(([label]) => label));
     expect(links.map((link) => link.getAttribute("href"))).toEqual(SECTIONS.map(([, id]) => `#${id}`));
     const regions = SECTIONS.map(([label, id]) => {
       const region = section(label);
@@ -2301,4 +2303,61 @@ it("asks before a rename discards unsaved row settings", async () => {
   expect(rename).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
   expect(screen.getByLabelText("Description")).toHaveValue("a draft description");
+});
+
+describe("RowEditor — the overview a row opens with", () => {
+  beforeEach(() => {
+    settingsData.current = {};
+    librariesData.current = [
+      { key: "1", title: "Movies", type: "movie" },
+      { key: "2", title: "TV Shows", type: "show" },
+    ];
+  });
+
+  it("names the row as written and lists what it is called in each library", async () => {
+    renderEditor(row({ name: "✨ {library_name} Picked for You", name_template: "✨ {library_name} Picked for You" }));
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent("✨ Picked for You");
+    expect(heading).not.toHaveTextContent("library name");
+    expect(await screen.findByText("✨ Movies Picked for You")).toBeInTheDocument();
+    expect(screen.getByText("✨ TV Shows Picked for You")).toBeInTheDocument();
+  });
+
+  it("counts a row's overrides beside the section they sit in, and says when it follows the server", () => {
+    renderEditor(row({ min_rating: 6.5, refresh_days: 3 }));
+
+    const nav = screen.getByRole("navigation", { name: "Row settings sections" });
+    expect(within(nav).getByRole("link", { name: /What goes in/ })).toHaveTextContent("1 override");
+    expect(within(nav).getByRole("link", { name: /Schedule/ })).toHaveTextContent("1 override");
+    expect(within(nav).getByRole("link", { name: /Requests/ })).toHaveTextContent("server default");
+  });
+
+  it("shows an inherited setting as one line with its server value, and an override as such", async () => {
+    settingsData.current = { "recommendations.refresh_days": 8 };
+    renderEditor(row({ refresh_days: null }));
+
+    const field = document.querySelector("[data-setting='refresh_days']") as HTMLElement;
+    expect(within(field).getByText("server default")).toBeInTheDocument();
+    await userEvent.click(within(field).getByRole("switch", { name: /global refresh cadence/i }));
+    expect(within(field).getByText("overridden here")).toBeInTheDocument();
+  });
+
+  it("offers the usual row sizes as one tap", async () => {
+    renderEditor(row({ size: 15 }));
+
+    await userEvent.click(screen.getByRole("button", { name: "30 titles" }));
+    expect(screen.getByRole("button", { name: "30 titles" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("reads placement back as what the people who get it see and what the owner sees", () => {
+    renderEditor(row({ placement: "library", placement_friends: "home" }), [
+      { id: 4, username: "sarah", display_name: "sarah", enabled: true, user_type: "shared", prefs: {} } as unknown as User,
+    ]);
+
+    const placement = screen.getByRole("region", { name: "Placement" });
+    expect(within(placement).getByText("What sarah sees")).toBeInTheDocument();
+    expect(within(placement).getByText(/Their own row on the Home screen\./)).toBeInTheDocument();
+    expect(within(placement).getByText(/Your own row on the Recommended shelf\./)).toBeInTheDocument();
+  });
 });

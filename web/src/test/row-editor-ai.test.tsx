@@ -324,6 +324,6 @@ describe("an ordinary row", () => {
     expect(screen.queryByRole("link", { name: "Try it" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "AI prompts" })).not.toBeInTheDocument();
     expect(api.getThemeCapabilities).not.toHaveBeenCalled();
-    expect(screen.getByRole("link", { name: "Requests" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^Requests/ })).toBeInTheDocument();
   });
 });

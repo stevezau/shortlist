@@ -105,19 +105,23 @@ function RequestField({
 }) {
   return (
     <div className="space-y-3 border-t pt-4 first:border-t-0 first:pt-0">
-      {labelFor ? (
-        <Label htmlFor={labelFor}>{label}</Label>
-      ) : (
-        <p className="text-sm font-medium">{label}</p>
-      )}
-      <p className="text-sm text-muted-foreground">{description}</p>
       <GlobalDefaultToggle
+        heading={
+          labelFor ? (
+            <Label htmlFor={labelFor} className="font-medium">
+              {label}
+            </Label>
+          ) : (
+            label
+          )
+        }
         ariaLabel={ariaLabel}
         inheriting={inheriting}
         globalValue={globalValue}
         settingsHash="requests"
         onChange={onToggle}
       />
+      <p className="text-sm text-muted-foreground">{description}</p>
       {!inheriting && children}
       {after}
     </div>
