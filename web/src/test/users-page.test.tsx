@@ -216,14 +216,17 @@ describe("UsersPage", () => {
     expect(screen.queryByText("Requests & results", { exact: true })).not.toBeInTheDocument();
   });
 
-  it("keeps select-visible and sorting together before the roster for every screen size", async () => {
+  it("keeps select-visible and the search, filter and sort row before the roster for every screen size", async () => {
     getUsers.mockResolvedValue([SARAH, MIKE]);
     renderPage();
     await screen.findByRole("link", { name: "sarah" });
     const controls = screen.getByRole("group", { name: "User list controls" });
     await userEvent.click(within(controls).getByRole("button", { name: "Select people" }));
     const select = within(controls).getByRole("checkbox", { name: "Select visible users" });
-    expect(within(controls).getByRole("combobox", { name: "Sort users" })).toBeVisible();
+    const filters = screen.getByRole("group", { name: "Filter and sort users" });
+    expect(within(filters).getByRole("combobox", { name: "Sort users" })).toBeVisible();
+    expect(within(filters).getByRole("searchbox", { name: "Search users" })).toBeVisible();
+    expect(filters.compareDocumentPosition(screen.getByRole("table")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(controls.compareDocumentPosition(screen.getByRole("table")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.type(screen.getByRole("searchbox", { name: "Search users" }), "sarah");
     await userEvent.click(select);
@@ -1063,8 +1066,11 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
     renderPage();
 
     const link = await screen.findByRole("link", { name: /kid can see 3 rows that aren’t theirs/ });
-    expect(link).toHaveTextContent("Can see 3 rows that aren’t theirs");
+    expect(link).toHaveTextContent("Fix in Plex");
     expect(link).toHaveAttribute("href", `/users/${KID.id}`);
+    const cell = link.closest("td") as HTMLElement;
+    expect(cell).toHaveTextContent("Can see 3 rows that aren’t theirs");
+    expect(cell.className).toMatch(/bg-warning/);
   });
 
   it("counts rows the way the Dashboard and Privacy do, not the run's per-library collections", async () => {

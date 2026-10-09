@@ -4,11 +4,11 @@ import { Link, useParams, useSearchParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { OwnerNote } from "@/components/owner-note";
-import { RestrictedNote } from "@/components/restricted-note";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Tabs, TabPanel } from "@/components/ui/tabs";
 import { BlockedSeedsList } from "@/components/user-detail/blocked-seeds";
 import { RecentRuns } from "@/components/user-detail/recent-runs";
+import { OffBanner } from "@/components/user-detail/off-banner";
 import { UserDetailHeader } from "@/components/user-detail/user-detail-header";
 import { UserNickname } from "@/components/user-detail/user-nickname";
 import { UserRequestTag } from "@/components/user-detail/user-request-tag";
@@ -22,6 +22,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUsers } from "@/lib/queries";
 import type { User } from "@/lib/types";
+import { userState } from "@/lib/user-state";
 
 function SectionHeading({ children }: { children: ReactNode }) {
   return <h2 className="text-lg font-semibold">{children}</h2>;
@@ -56,7 +57,7 @@ export function UserDetailBody({ user }: { user: User }) {
       <UserDetailHeader user={user} />
 
       {user.user_type === "owner" && <OwnerNote />}
-      <RestrictedNote user={user} />
+      {userState(user) === "off" && <OffBanner user={user} />}
 
       <Tabs
         id="user-detail"
