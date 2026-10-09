@@ -39,6 +39,7 @@ const LoginPage = page(() => import("@/pages/login"), "LoginPage");
 const NotFoundPage = page(() => import("@/pages/not-found"), "NotFoundPage");
 const RequestsPage = page(() => import("@/pages/requests"), "RequestsPage");
 const RowEditPage = page(() => import("@/pages/row-edit"), "RowEditPage");
+const RowNewPage = page(() => import("@/pages/row-new"), "RowNewPage");
 const RowRenamePage = page(() => import("@/pages/row-rename"), "RowRenamePage");
 const RowsPage = page(() => import("@/pages/rows"), "RowsPage");
 const RunDetailPage = page(() => import("@/pages/run-detail"), "RunDetailPage");
@@ -161,7 +162,8 @@ export function AppRoutes() {
           <Route index element={<DashboardPage />} />
           <Route path="rows" element={<RowsPage />} />
           {/* Before "rows/:id", or "new" would be parsed as a row id. */}
-          <Route path="rows/new" element={<RowEditPage />} />
+          <Route path="rows/new" element={<RowNewPage />} />
+          <Route path="rows/new/full" element={<RowEditPage />} />
           <Route path="rows/:id/rename" element={<RowRenamePage />} />
           <Route path="rows/:id" element={<RowEditPage />} />
           <Route path="users" element={<UsersPage />} />

@@ -1,7 +1,7 @@
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
@@ -114,7 +114,7 @@ function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <RowsPage />
@@ -292,14 +292,60 @@ describe("RowsPage — the day-schedule badge", () => {
 });
 
 
-it("returns keyboard focus to the template gallery opener after Escape", async () => {
+it("opens the add-a-row page from Add a row", async () => {
   getUsers.mockResolvedValue([]);
   listCollections.mockResolvedValue([SUBSET_ROW]);
-  renderPage();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={["/rows"]}>
+        <Routes>
+          <Route path="/rows" element={<RowsPage />} />
+          <Route path="/rows/new" element={<p>add a row page</p>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
   const opener = screen.getByRole("button", { name: "Add a row" });
   await waitFor(() => expect(opener).toBeEnabled());
   await userEvent.click(opener);
-  expect(screen.getByRole("dialog")).toBeVisible();
-  await userEvent.keyboard("{Escape}");
-  await waitFor(() => expect(opener).toHaveFocus());
+  expect(await screen.findByText("add a row page")).toBeInTheDocument();
+});
+
+describe("RowsPage — the chip note and the card's meta line", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+    listCollections.mockReset();
+    getUsers.mockResolvedValue([]);
+    localStorage.clear();
+  });
+
+  it("goes away for good once dismissed", async () => {
+    listCollections.mockResolvedValue([{ ...SUBSET_ROW, name: "✨ {library_name} Picked for You" }]);
+    const first = renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Dismiss this note" }));
+    expect(screen.queryByText(/are placeholders/)).toBeNull();
+    first.unmount();
+
+    renderPage();
+    await screen.findByRole("heading", { name: /Picked for You/ });
+    expect(screen.queryByText(/are placeholders/)).toBeNull();
+  });
+
+  it("still shows the note when storage is blocked", async () => {
+    const blocked = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    listCollections.mockResolvedValue([{ ...SUBSET_ROW, name: "✨ {library_name} Picked for You" }]);
+    renderPage();
+    expect(await screen.findByText(/are placeholders/)).toBeInTheDocument();
+    blocked.mockRestore();
+  });
+
+  it("gives every card a kind, an audience and a schedule", async () => {
+    listCollections.mockResolvedValue([SUBSET_ROW, { ...SUBSET_ROW, id: 2, slug: "manual", name: "Manual", schedule: "", build: "shared" }]);
+    renderPage();
+    expect(await screen.findByText(/Picked for You · .* · 15 titles · Movies & TV Shows · Every day at /)).toBeInTheDocument();
+    expect(screen.getByText(/Popular on this server · .* · Manual runs only/)).toBeInTheDocument();
+  });
 });
