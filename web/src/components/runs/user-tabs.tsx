@@ -25,6 +25,65 @@ function GroupLabel({ children }: { children: ReactNode }) {
   );
 }
 
+const STATUS_CLASS = "inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground";
+
+/** The right-hand status of a person's list row: failed, pending, skipped, not built, or done (with its time). */
+function UserStatus({
+  result,
+  cost,
+  built,
+}: {
+  result: RunUserResult;
+  cost?: RunRowCost | null;
+  built?: boolean | null;
+}) {
+  if (result.error !== null) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive-text">
+        <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+        Failed
+      </span>
+    );
+  }
+  if (result.status === "pending") {
+    return (
+      <span className={STATUS_CLASS}>
+        Pending
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+      </span>
+    );
+  }
+  if (result.status === "skipped") {
+    return (
+      <span className={STATUS_CLASS}>
+        Skipped
+        <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
+      </span>
+    );
+  }
+  if (built === false) {
+    // Nothing was written for them on THIS row — the run was cancelled before it got here, the
+    // row was muted for them, or it produced no picks. A cost exists anyway: the row timer
+    // starts before the cancel check, so this used to render a green tick beside "0s", which
+    // says "built instantly" about a row that was never built at all.
+    return (
+      <span className={STATUS_CLASS}>
+        Not built
+        <CircleDashed className="h-3.5 w-3.5" aria-hidden="true" />
+      </span>
+    );
+  }
+  // This list is row-scoped — it lives inside ONE row's card — so the duration shown here is
+  // THIS row's own time, not the person's whole-run total (`result.duration_ms`), which used
+  // to repeat the same number beside every name regardless of which row was open.
+  return (
+    <span className={STATUS_CLASS}>
+      {cost ? formatDuration(cost.duration_ms - cost.blocked_ms) : "Done"}
+      <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+    </span>
+  );
+}
+
 /** One person as a full-width list row — far more scannable at 48 users than a wall of pills:
  *  name on the left, status/duration on the right, selected row highlighted. */
 function UserRow({
@@ -80,39 +139,7 @@ function UserRow({
           not private
         </Badge>
       )}
-      {failed ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive-text">
-          <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-          Failed
-        </span>
-      ) : result.status === "pending" ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Pending
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        </span>
-      ) : result.status === "skipped" ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Skipped
-          <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
-        </span>
-      ) : built === false ? (
-        // Nothing was written for them on THIS row — the run was cancelled before it got here, the
-        // row was muted for them, or it produced no picks. A cost exists anyway: the row timer
-        // starts before the cancel check, so this used to render a green tick beside "0s", which
-        // says "built instantly" about a row that was never built at all.
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Not built
-          <CircleDashed className="h-3.5 w-3.5" aria-hidden="true" />
-        </span>
-      ) : (
-        // This list is row-scoped — it lives inside ONE row's card — so the duration shown here is
-        // THIS row's own time, not the person's whole-run total (`result.duration_ms`), which used
-        // to repeat the same number beside every name regardless of which row was open.
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          {cost ? formatDuration(cost.duration_ms - cost.blocked_ms) : "Done"}
-          <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
-        </span>
-      )}
+      <UserStatus result={result} cost={cost} built={built} />
     </button>
   );
 }

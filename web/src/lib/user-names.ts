@@ -26,7 +26,7 @@ export function displayNameLookup(
   const byUsername = new Map<string, string>();
   for (const user of users ?? []) {
     if (user.username) {
-      byUsername.set(user.username, user.display_name || user.username);
+      byUsername.set(user.username, personName(user));
     }
   }
   return (username) => byUsername.get(username) || username;

@@ -1,23 +1,11 @@
 import { Link } from "react-router";
 
-import { AiTextFields } from "@/components/rows/ai-text-fields";
+import { AiModePicker, AiTextFields, PROMPT_CLASS } from "@/components/rows/ai-text-fields";
 import { QueryBoundary } from "@/components/query-boundary";
-import { Segmented } from "@/components/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CONNECTIONS_SETTINGS } from "@/lib/row-kinds";
 import { buildPrompt, themeGuidance, useThemeCapabilities, useThemePrompts } from "@/lib/themes";
 import type { AiInstructions, CollectionInput, ThemePrompts } from "@/lib/types";
-
-type Mode = AiInstructions["mode"];
-
-const PROMPT_CLASS =
-  "max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs";
-
-const MODES: { value: Mode; label: string }[] = [
-  { value: "default", label: "Use the default" },
-  { value: "add", label: "Add to the default" },
-  { value: "own", label: "Write your own" },
-];
 
 function LoadingPrompt() {
   return (
@@ -94,7 +82,7 @@ function Prompt({
         This is what the AI is told when you press Write the list or Adjust the list. Changing it only affects lists
         written after you save.
       </p>
-      <Segmented value={value.mode} options={MODES} ariaLabel="AI guidance" onChange={(mode) => onChange({ mode, text: value.text })} />
+      <AiModePicker value={value} onChange={onChange} ariaLabel="AI guidance" />
 
       {value.mode === "default" && (
         <div className="space-y-1">

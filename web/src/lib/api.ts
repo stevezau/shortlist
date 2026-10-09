@@ -1098,6 +1098,66 @@ export const api = {
   },
 };
 
+/** One server-sent event from a row rename: a person's result, an error, or the final `done`. */
+export interface RenameEvent {
+  user?: string;
+  display_name?: string;
+  old?: string;
+  new?: string;
+  libraries?: string[];
+  library?: string;
+  /** Plex only lets a new collection share this name, so the row's next run rebuilds it under it. */
+  next_run?: boolean;
+  done?: boolean;
+  total?: number;
+  /** With `user`: that one person's collection could not be renamed, and the rest carry on. */
+  error?: string;
+}
+
+/**
+ * Rename a row's collections on Plex and read the progress stream, calling `onEvent` for each event.
+ *
+ * `onEvent` returns `false` to stop reading. Throws if the request fails or the server refuses it.
+ */
+export async function streamRename(
+  collectionId: number,
+  body: { name_template: string; old_template: string },
+  onEvent: (event: RenameEvent) => boolean | void,
+): Promise<void> {
+  const response = await fetch(apiUrl(`/api/collections/${collectionId}/rename`), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-shortlist-csrf": "1",
+    },
+    credentials: "include",
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) throw new Error(`Server returned ${response.status}`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const dataLine = chunk.split("\n").find((l) => l.startsWith("data: "));
+      if (!dataLine) continue;
+      // One malformed chunk must not abort the display: the server is still renaming on Plex.
+      let event: RenameEvent;
+      try {
+        event = JSON.parse(dataLine.slice(6));
+      } catch {
+        continue;
+      }
+      if (onEvent(event) === false) return;
+    }
+  }
+}
+
 /** URL for the shared SSE stream (used by lib/sse.ts only). */
 export function eventsUrl(): string {
   return apiUrl("/api/events");

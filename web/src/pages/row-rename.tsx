@@ -13,25 +13,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, apiUrl } from "@/lib/api";
+import { api, streamRename, type RenameEvent } from "@/lib/api";
 import { TOP_SEED } from "@/lib/placeholders";
 import { useCollections, useUsers } from "@/lib/queries";
 import type { Collection, User } from "@/lib/types";
-
-interface RenameEvent {
-  user?: string;
-  display_name?: string;
-  old?: string;
-  new?: string;
-  libraries?: string[];
-  library?: string;
-  /** Plex only lets a new collection share this name, so the row's next run rebuilds it under it. */
-  next_run?: boolean;
-  done?: boolean;
-  total?: number;
-  /** With `user`: that one person's collection could not be renamed, and the rest carry on. */
-  error?: string;
-}
 
 /**
  * How many people this row is built for: its audience, less anyone switched off or gone from the
@@ -99,61 +84,23 @@ export function RowRenamePage() {
     setRunning(true);
     setSaving(false);
     try {
-      const response = await fetch(
-        apiUrl(`/api/collections/${collectionId}/rename`),
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-shortlist-csrf": "1",
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            name_template: template,
-            old_template: prevTemplate,
-          }),
-        },
-      );
-      if (!response.ok || !response.body) {
-        setError(`Server returned ${response.status}`);
-        setRunning(false);
-        return;
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() ?? "";
-        for (const chunk of lines) {
-          const dataLine = chunk
-            .split("\n")
-            .find((l) => l.startsWith("data: "));
-          if (!dataLine) continue;
-          // One malformed chunk must not abort the display: the server is still renaming on Plex.
-          let event: RenameEvent;
-          try {
-            event = JSON.parse(dataLine.slice(6));
-          } catch {
-            continue;
-          }
-          // Only an error about the whole rename stops it. One person's refusal is theirs: the server
-          // carries on with everyone else, and stopping here hid every rename that followed it.
-          if (event.error && !event.user) {
-            setError(event.error);
-            setRunning(false);
-            return;
-          }
-          setEvents((prev) => [...prev, event]);
-          if (event.done) {
-            setRunning(false);
-            queryClient.invalidateQueries({ queryKey: ["collections"] });
-          }
+      let failed = false;
+      await streamRename(collectionId, { name_template: template, old_template: prevTemplate }, (event) => {
+        // Only an error about the whole rename stops it. One person's refusal is theirs: the server
+        // carries on with everyone else, and stopping here hid every rename that followed it.
+        if (event.error && !event.user) {
+          failed = true;
+          setError(event.error);
+          setRunning(false);
+          return false;
         }
-      }
+        setEvents((prev) => [...prev, event]);
+        if (event.done) {
+          setRunning(false);
+          queryClient.invalidateQueries({ queryKey: ["collections"] });
+        }
+      });
+      if (failed) return;
       setRunning(false);
       queryClient.invalidateQueries({ queryKey: ["collections"] });
     } catch (e) {

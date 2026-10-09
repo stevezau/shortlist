@@ -2,8 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { AiTextFields } from "@/components/rows/ai-text-fields";
-import { Segmented } from "@/components/segmented";
+import { AiModePicker, AiTextFields, PROMPT_CLASS } from "@/components/rows/ai-text-fields";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
@@ -13,13 +12,9 @@ import type { AiInstructionsInert } from "@/lib/sources";
 import type { AiInstructions } from "@/lib/types";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
-type Mode = AiInstructions["mode"];
-
 const PREVIEW_DEBOUNCE_MS = 400;
 const DEFAULTS_HREF = "/settings/defaults#sources";
 const LINK_CLASS = "underline underline-offset-2 hover:text-foreground";
-const PROMPT_CLASS =
-  "max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs";
 
 const PLACEHOLDERS_HINT = "You can use {count}, {year} and {last_year}.";
 
@@ -32,12 +27,6 @@ const PREVIEW_FOOTNOTES: Record<string, string> = {
 
 /** Native search also ends its user message by asking for recent releases, unless guidance replaces the default. */
 const RECENCY_LINE = " It ends by asking for titles released in the last two years.";
-
-const MODES: { value: Mode; label: string }[] = [
-  { value: "default", label: "Use the default" },
-  { value: "add", label: "Add to the default" },
-  { value: "own", label: "Write your own" },
-];
 
 /** "A", "A and B", "A, B and C". */
 /** What the search backend lets the instructions steer; null when there is nothing to add (native). */
@@ -90,12 +79,7 @@ export function RowAiInstructionsField({
       <p className="text-sm text-muted-foreground">
         What AI web search should look for in this row.
       </p>
-      <Segmented
-        value={value.mode}
-        options={MODES}
-        ariaLabel="AI instructions"
-        onChange={(mode) => onChange({ mode, text: value.text })}
-      />
+      <AiModePicker value={value} onChange={onChange} ariaLabel="AI instructions" />
 
       {value.mode === "default" && <DefaultInstructions backend={backend} />}
 

@@ -1,6 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  CheckCircle2,
   ChevronRight,
   Cog,
   Database,
@@ -11,27 +10,27 @@ import {
   Users as UsersIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 
 import { CronPicker } from "@/components/cron-picker";
 import { ActivityFeed } from "@/components/jobs/activity-feed";
 import { BackupPanel } from "@/components/jobs/backup-panel";
+import {
+  BackupLive,
+  DeleteOrphansDialog,
+  DriftLive,
+  PrivacySyncLive,
+  PruneLive,
+  SyncUsersLive,
+  SyncWatchedLive,
+} from "@/components/jobs/job-live";
 import { JobRow } from "@/components/jobs/job-row";
 import { MutationAlert } from "@/components/mutation-alert";
 import { NightlyRunCard } from "@/components/jobs/nightly-run-card";
 import { RowSchedules } from "@/components/jobs/row-schedules";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { driftFindings } from "@/lib/job-drift";
 import { queuedReason, useRunActive, useWritesPlex } from "@/lib/job-activity";
 import {
   queryKeys,
@@ -225,47 +224,6 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
     ((settings.data ?? {})[entry.schedule_setting] as string | undefined) ?? "";
 
   return <CronPicker value={stored} onChange={save} blankLabel={blankLabel} />;
-}
-
-// --- live slots: what is happening, or just happened, because you pressed the button -------------
-
-function SyncBar({
-  done,
-  total,
-  label,
-  line,
-}: {
-  // SSE fields are optional AND nullable (Pydantic `int | None`, not just "absent"): normalise
-  // before handing off to ProgressBar, which only knows "omit for indeterminate".
-  done?: number | null;
-  total?: number | null;
-  label: string;
-  line: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <ProgressBar
-        done={done ?? undefined}
-        total={total ?? undefined}
-        label={label}
-      />
-      <p role="status" className="text-xs text-muted-foreground">
-        {line}
-      </p>
-    </div>
-  );
-}
-
-function Succeeded({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="flex items-center gap-2 text-sm text-foreground">
-      <CheckCircle2
-        aria-hidden="true"
-        className="size-4 shrink-0 text-success"
-      />
-      {children}
-    </p>
-  );
 }
 
 /**
@@ -479,55 +437,16 @@ export function JobsPanel() {
       : undefined;
 
   const watchedRunning = watchedProgress !== null;
-  const drifted =
-    driftPreview.data?.status === "done" ? (driftPreview.data.fixed ?? []) : [];
-  const orphans =
-    driftPreview.data?.status === "done"
-      ? (driftPreview.data.orphans ?? [])
-      : [];
+  const { orphans } = driftFindings(driftPreview.data);
 
   return (
     <div className="space-y-5">
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Delete {orphans.length} collection
-              {orphans.length === 1 ? "" : "s"}?
-            </DialogTitle>
-            <DialogDescription>
-              {orphans.join(", ")} will be removed from Plex for good. Shortlist
-              no longer knows who they belong to, so it cannot hide them
-              instead. The titles themselves stay in your library. This can’t be
-              undone.
-            </DialogDescription>
-          </DialogHeader>
-          {/* Inside the dialog, not beside the button that opened it: a failure leaves this dialog
-              open, and everything behind an open dialog is aria-hidden — an alert out there would be
-              invisible to a screen reader and buried under the overlay for everyone else. */}
-          {driftFix.isError && (
-            <p role="alert" className="text-sm text-destructive-text">
-              Couldn’t fix those rows. Try again.
-            </p>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmDelete(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              loading={driftFix.isPending}
-              onClick={() =>
-                driftFix.mutate(undefined, {
-                  onSuccess: () => setConfirmDelete(false),
-                })
-              }
-            >
-              Delete and fix
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DeleteOrphansDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        orphans={orphans}
+        driftFix={driftFix}
+      />
       <NightlyRunCard />
 
       {/* Health at a glance, and only when there is something to say — a permanent "0 failed"
@@ -601,44 +520,7 @@ export function JobsPanel() {
                 }}
                 live={
                   syncUsers.isPending || syncUsers.isError || syncUsers.data ? (
-                    <div className="flex flex-col gap-3">
-                      {syncUsers.isPending && (
-                        <SyncBar
-                          label="Syncing users"
-                          done={
-                            usersProgress?.phase === "save"
-                              ? usersProgress.done
-                              : undefined
-                          }
-                          total={
-                            usersProgress?.phase === "save"
-                              ? usersProgress.total
-                              : undefined
-                          }
-                          line={
-                            usersProgress?.phase === "save" &&
-                            usersProgress.total
-                              ? `Saving ${usersProgress.done ?? 0} of ${usersProgress.total} ${usersProgress.total === 1 ? "user" : "users"}…`
-                              : "Contacting plex.tv…"
-                          }
-                        />
-                      )}
-                      {syncUsers.isError && (
-                        <MutationAlert
-                          error={syncUsers.error}
-                          fallback="Couldn't reach plex.tv to refresh the user list. Try again."
-                          onRetry={() => syncUsers.mutate()}
-                        />
-                      )}
-                      {syncUsers.data && !syncUsers.isPending && (
-                        <Succeeded>
-                          {syncUsers.data.added > 0 ||
-                          syncUsers.data.updated > 0
-                            ? `Synced ${syncUsers.data.total} ${syncUsers.data.total === 1 ? "user" : "users"} — ${syncUsers.data.added} added, ${syncUsers.data.updated} updated.`
-                            : `All ${syncUsers.data.total} ${syncUsers.data.total === 1 ? "user is" : "users are"} already up to date.`}
-                        </Succeeded>
-                      )}
-                    </div>
+                    <SyncUsersLive syncUsers={syncUsers} usersProgress={usersProgress} />
                   ) : null
                 }
                 panel={
@@ -666,57 +548,11 @@ export function JobsPanel() {
                   syncWatched.isError ||
                   watchedResult ||
                   syncWatched.isSuccess ? (
-                    <div className="flex flex-col gap-3">
-                      {watchedRunning && (
-                        <SyncBar
-                          label="Syncing watch history"
-                          done={watchedProgress.done}
-                          total={watchedProgress.total}
-                          line={
-                            watchedProgress.total
-                              ? `Syncing ${watchedProgress.done ?? 0} of ${watchedProgress.total} ${watchedProgress.total === 1 ? "user" : "users"}…`
-                              : "Syncing…"
-                          }
-                        />
-                      )}
-                      {syncWatched.isError && (
-                        <MutationAlert
-                          error={syncWatched.error}
-                          fallback="Couldn't start the sync. Check the Plex connection and try again."
-                          onRetry={() => syncWatched.mutate()}
-                        />
-                      )}
-                      {!watchedRunning && watchedResult?.ok === false && (
-                        <p
-                          role="alert"
-                          className="text-sm text-destructive-text"
-                        >
-                          The sync couldn&rsquo;t finish
-                          {watchedResult.error
-                            ? ` (${watchedResult.error})`
-                            : ""}
-                          . Check the Plex connection and try again.
-                        </p>
-                      )}
-                      {!watchedRunning && watchedResult?.ok && (
-                        <Succeeded>
-                          Synced {watchedResult.count ?? 0}{" "}
-                          {watchedResult.count === 1 ? "user" : "users"} — watch
-                          history is up to date and the effectiveness report
-                          reflects it now.
-                        </Succeeded>
-                      )}
-                      {/* No bus result yet (SSE not connected) but the POST was accepted. */}
-                      {!watchedRunning &&
-                        !watchedResult &&
-                        syncWatched.isSuccess && (
-                          <Succeeded>
-                            Sync started — it runs in the background across
-                            every user. The effectiveness report updates on its
-                            own once it finishes.
-                          </Succeeded>
-                        )}
-                    </div>
+                    <SyncWatchedLive
+                      syncWatched={syncWatched}
+                      watchedProgress={watchedProgress}
+                      watchedResult={watchedResult}
+                    />
                   ) : null
                 }
                 panel={
@@ -750,84 +586,11 @@ export function JobsPanel() {
                   driftFix.isError ||
                   driftPreview.data ||
                   driftFix.data ? (
-                    <div className="flex flex-col gap-3">
-                      {driftPreview.isError && (
-                        <MutationAlert
-                          error={driftPreview.error}
-                          fallback="Couldn't run the sync check. Try again."
-                        />
-                      )}
-                      {driftFix.isError && (
-                        <MutationAlert
-                          error={driftFix.error}
-                          fallback="Couldn't fix those rows. Try again."
-                        />
-                      )}
-                      {/* Deletions get their own callout above the summary. Folding them into the "N
-                        rows" count would hide the one irreversible action behind a number. */}
-                      {orphans.length > 0 && (
-                        <p className="rounded-md border border-dashed border-destructive/50 bg-destructive/5 p-3 text-sm text-muted-foreground">
-                          <strong className="text-foreground">
-                            This will delete {orphans.length} collection
-                            {orphans.length === 1 ? "" : "s"}
-                          </strong>{" "}
-                          &mdash; {orphans.join(", ")}. Shortlist no longer
-                          knows who they belong to, so hiding them would leave
-                          them in your Collections tab for ever. This cannot be
-                          undone.
-                        </p>
-                      )}
-                      {/* `status` matters: the queue skips a drain while a run is writing to Plex,
-                        which is exactly when someone presses this. Reporting "everything is in
-                        sync" for a check that never ran would be a lie. */}
-                      {driftPreview.data &&
-                        !driftPreview.data.error &&
-                        driftPreview.data.status !== "done" && (
-                          <p className="text-sm text-muted-foreground">
-                            Waiting for the current run to finish — the check
-                            will run straight after.
-                          </p>
-                        )}
-                      {driftPreview.data &&
-                        !driftPreview.data.error &&
-                        driftPreview.data.status === "done" && (
-                          <p className="text-sm text-muted-foreground">
-                            {drifted.length === 0 && orphans.length === 0
-                              ? "Everything is in sync — nothing to fix."
-                              : `${drifted.length} row${drifted.length === 1 ? "" : "s"} drifted onto your Home screen: ${drifted.join(", ")}`}
-                          </p>
-                        )}
-                      {drifted.length + orphans.length > 0 && (
-                        <div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            loading={driftFix.isPending}
-                            // Confirm at the CLICK when this will delete, which every other
-                            // irreversible Plex write in the app already does (row delete, row
-                            // cleanup, disable-everyone, backup restore). The callout above already
-                            // names each collection, so the audit's "no confirm at all" was half
-                            // wrong — but one verb still fired reversible demotions and an
-                            // unrecoverable delete together, with nothing between the press and the
-                            // destruction. Only when something will actually be deleted: a confirm
-                            // on every fix teaches people to click through the one that matters.
-                            onClick={() =>
-                              orphans.length > 0
-                                ? setConfirmDelete(true)
-                                : driftFix.mutate()
-                            }
-                          >
-                            Fix {drifted.length + orphans.length} row
-                            {drifted.length + orphans.length === 1 ? "" : "s"}
-                          </Button>
-                        </div>
-                      )}
-                      {driftFix.data && !driftFix.data.error && (
-                        <p className="text-sm text-muted-foreground">
-                          {driftFix.data.detail}
-                        </p>
-                      )}
-                    </div>
+                    <DriftLive
+                      driftPreview={driftPreview}
+                      driftFix={driftFix}
+                      onConfirmDelete={() => setConfirmDelete(true)}
+                    />
                   ) : null
                 }
               />
@@ -845,11 +608,7 @@ export function JobsPanel() {
                 }}
                 live={
                   privacySync.isError ? (
-                    <MutationAlert
-                      error={privacySync.error}
-                      fallback="Couldn't start that job. Try again."
-                      onRetry={() => privacySync.mutate()}
-                    />
+                    <PrivacySyncLive privacySync={privacySync} />
                   ) : null
                 }
               />
@@ -865,43 +624,7 @@ export function JobsPanel() {
                 }}
                 live={
                   backupNow.isError || backupNow.isSuccess ? (
-                    <>
-                      {/* "Backup failed." was the whole message — no cause, no next step, on the
-                          one operation whose entire purpose is to be there when something else
-                          goes wrong. The server's own detail is terse too ("backup failed"), so
-                          the standing line under it carries what the owner can actually check. */}
-                      {backupNow.isError && (
-                        <div className="space-y-1">
-                          <MutationAlert
-                            error={backupNow.error}
-                            fallback="Couldn’t take a backup."
-                            onRetry={() => backupNow.mutate()}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Backups are written next to your database, in{" "}
-                            <span className="font-mono">/config/backups</span>.
-                            Check the disk has room and that Shortlist can write
-                            there — the{" "}
-                            <Link
-                              to="/activity?tab=log"
-                              className="font-medium underline underline-offset-2"
-                            >
-                              Activity log
-                            </Link>{" "}
-                            has the reason it gave.
-                          </p>
-                        </div>
-                      )}
-                      {backupNow.isSuccess && !backupNow.isPending && (
-                        <Succeeded>
-                          Backed up as{" "}
-                          <span className="font-mono text-xs">
-                            {backupNow.data.name}
-                          </span>
-                          .
-                        </Succeeded>
-                      )}
-                    </>
+                    <BackupLive backupNow={backupNow} />
                   ) : null
                 }
                 panel={<BackupPanel />}
@@ -923,39 +646,7 @@ export function JobsPanel() {
                 }}
                 live={
                   pruneNow.isError || pruneNow.data ? (
-                    <div className="flex flex-col gap-3">
-                      {pruneNow.isError && (
-                        <MutationAlert
-                          error={pruneNow.error}
-                          fallback="Couldn't clear out old records. Try again."
-                          onRetry={() => pruneNow.mutate()}
-                        />
-                      )}
-                      {/* `status` matters here for the same reason it does on the check above: the
-                          job can come back still queued, and reporting a tidy-up that never ran
-                          would be a lie. */}
-                      {pruneNow.data &&
-                        !pruneNow.data.error &&
-                        pruneNow.data.status !== "done" && (
-                          <p className="text-sm text-muted-foreground">
-                            Queued — it will run as soon as there's a free slot.
-                          </p>
-                        )}
-                      {pruneNow.data?.status === "done" && (
-                        <Succeeded>
-                          {pruneNow.data.detail ||
-                            "There was nothing old enough to clear out."}
-                        </Succeeded>
-                      )}
-                      {pruneNow.data?.error && (
-                        <p
-                          role="alert"
-                          className="text-sm text-destructive-text"
-                        >
-                          {pruneNow.data.error}
-                        </p>
-                      )}
-                    </div>
+                    <PruneLive pruneNow={pruneNow} />
                   ) : null
                 }
                 panel={<SchedulePanel entry={entryFor("maintenance.prune")} />}

@@ -1,9 +1,40 @@
 import { useId, type ReactNode } from "react";
 
+import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { AiInstructions } from "@/lib/types";
+
+/** Styling for the read-only prompt blocks in the two AI editors. */
+export const PROMPT_CLASS =
+  "max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs";
+
+const MODES: { value: AiInstructions["mode"]; label: string }[] = [
+  { value: "default", label: "Use the default" },
+  { value: "add", label: "Add to the default" },
+  { value: "own", label: "Write your own" },
+];
+
+/** The "Use the default / Add to the default / Write your own" switch; keeps the written text when the mode changes. */
+export function AiModePicker({
+  value,
+  onChange,
+  ariaLabel,
+}: {
+  value: AiInstructions;
+  onChange: (next: AiInstructions) => void;
+  ariaLabel: string;
+}) {
+  return (
+    <Segmented
+      value={value.mode}
+      options={MODES}
+      ariaLabel={ariaLabel}
+      onChange={(mode) => onChange({ mode, text: value.text })}
+    />
+  );
+}
 
 /** The API's limit on a row's AI text. */
 const MAX_CHARS = 2000;
