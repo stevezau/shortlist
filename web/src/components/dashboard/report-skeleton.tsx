@@ -16,8 +16,8 @@ export function ReportSkeleton() {
           </div>
           <Skeleton className="h-9 w-56" />
         </div>
-        <div className="grid gap-x-8 gap-y-5 px-4 py-4 sm:grid-cols-2 sm:px-5 lg:grid-cols-3 xl:grid-cols-5">
-          {Array.from({ length: 5 }, (_, i) => (
+        <div className="grid grid-cols-2 gap-x-8 gap-y-5 px-4 py-4 sm:px-5 md:grid-cols-4">
+          {Array.from({ length: 4 }, (_, i) => (
             <div key={i} className="space-y-2">
               <Skeleton className="h-4 w-24" />
               <Skeleton className="h-9 w-20" />

@@ -9,7 +9,7 @@ import { ReportSkeleton } from "@/components/dashboard/report-skeleton";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { latestFinishedRun, nextRowRun } from "@/lib/dashboard-status";
+import { nextRowRun } from "@/lib/dashboard-status";
 import { usePrivacyGlance } from "@/lib/privacy-attention";
 import {
   useRecentRuns,
@@ -90,7 +90,7 @@ export function DashboardPage() {
         users={users.data}
       />
 
-      <PrivacyCallout status={privacy.data} lastRun={latestFinishedRun(runs.data)} />
+      <PrivacyCallout status={privacy.data} />
 
       {report.isPending ? (
         <ReportSkeleton />

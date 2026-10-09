@@ -229,18 +229,15 @@ describe("ImpactReport", () => {
     renderReport();
 
     expect(await screen.findByTestId("verdict-watched")).toBeTruthy();
-    expect(screen.getByText("People who watched a pick")).toBeTruthy();
+    expect(screen.getByText("People watching")).toBeTruthy();
     expect(screen.getByTestId("verdict-reach")).toHaveTextContent("1 of 2");
-    // Each requests figure in its OWN slot. `/sent ·/` matched the label regardless of which number
-    // sat beside it, and the fixture had two of the three equal — so any figure could appear in any
-    // slot (mutation audit 2026-08-25). The three are now distinct and each is named.
-    expect(screen.getByTestId("requests-sent")).toHaveTextContent(/^21\s*sent$/);
-    expect(screen.getByTestId("requests-watched")).toHaveTextContent(/^23\s*watched since$/);
-    expect(screen.getByTestId("requests-pending")).toHaveTextContent(/^22\s*awaiting approval$/);
-    expect(screen.getByRole("link", { name: /Review 22 waiting/ })).toHaveAttribute("href", "/requests");
-    expect(
-      screen.getByRole("link", { name: /full send log/i }),
-    ).toHaveAttribute("href", "/requests?tab=sent"); // deep-links to the send-log tab
+    // Each requests figure in its OWN slot: the three are distinct in the fixture, and the line names each.
+    const requests = screen.getByRole("region", { name: "Requests" });
+    expect(screen.getByTestId("requests-sent")).toHaveTextContent(/^21$/);
+    expect(requests).toHaveTextContent("21 sent · 23 watched since");
+    expect(requests).toHaveTextContent("22 awaiting approval");
+    expect(within(requests).getByRole("link", { name: /Review/ })).toHaveAttribute("href", "/requests");
+    expect(within(requests).getByRole("link", { name: /Send log/ })).toHaveAttribute("href", "/requests?tab=sent");
     // The DISPLAY name, which is what the UI is supposed to render — `username` is "sarah".
     expect(screen.getAllByText("Sarah H").length).toBeGreaterThan(0);
     expect(screen.queryByText("sarah")).toBeNull();
@@ -265,6 +262,7 @@ describe("ImpactReport", () => {
     expect(document.body.textContent).toMatch(/34\s*watched · 12\s*finished/);
     expect(screen.queryByText(/3 of 6/)).toBeNull();
     expect(screen.getAllByText("Dune: Part Two").length).toBeGreaterThan(0); // top titles + recent
+    await userEvent.click(screen.getByRole("button", { name: "By row" }));
     // By row is split per library: a {library_name} row reads its library in the name; a plain-named
     // row ("My Faves") carries a library badge instead.
     expect(
@@ -272,6 +270,23 @@ describe("ImpactReport", () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText("My Faves")).toBeTruthy();
     expect(screen.getByText("TV Shows")).toBeTruthy(); // the library badge on the plain-named row
+  });
+
+  it("collapses to one 'What happens next' card the morning after the first run", async () => {
+    // Rows delivered, nothing watched in any window: six half-empty panels would say "nothing" six times.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, watched: 0, finished: 0, dropped: 0, bounced: 0, avg_days_to_watch: null },
+      trend: REPORT.trend.map((week) => ({ ...week, watched: 0, finished: 0 })),
+      recent: [],
+    });
+    renderReport();
+
+    expect(await screen.findByText(/Nothing watched yet/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What happens next" })).toBeTruthy();
+    expect(screen.getByText(/Review/)).toHaveAttribute("href", "/requests");
+    expect(screen.queryByRole("heading", { name: "Who’s watching" })).toBeNull();
+    expect(screen.queryByTestId("verdict-watched")).toBeNull();
   });
 
   it("shows Finished beside Watched, never instead of it", async () => {
@@ -302,6 +317,7 @@ describe("ImpactReport", () => {
     // Asserted against the rendered text because the count and its word are separate elements.
     renderReport();
     await screen.findByTestId("verdict-watched");
+    await userEvent.click(screen.getByRole("button", { name: "By row" }));
 
     const page = document.body.textContent ?? "";
     expect(page).toContain("4 watched · 4 finished");
@@ -339,7 +355,7 @@ describe("ImpactReport", () => {
     // every other number on it carries on looking healthy.
     renderReport();
 
-    expect(await screen.findByText("Live tracking on")).toBeTruthy();
+    expect(await screen.findByText("live")).toBeTruthy();
   });
 
   it("says so, and for how long, when the listener has dropped", async () => {
@@ -355,8 +371,8 @@ describe("ImpactReport", () => {
     // "and for how long" is in this test's NAME, and it did not check it: `/Live tracking down/` is a
     // prefix that matches whatever duration follows, so reading `live_since` instead of
     // `live_down_since` — reporting "down just now" during a three-hour outage — passed.
-    expect(await screen.findByText(/Live tracking down 3h ago/)).toBeTruthy();
-    expect(screen.queryByText("Live tracking on")).toBeNull();
+    expect(await screen.findByText(/live tracking down 3h ago/)).toBeTruthy();
+    expect(screen.queryByText("live")).toBeNull();
   });
 
   it("reports a synced watch status", async () => {
@@ -372,8 +388,8 @@ describe("ImpactReport", () => {
     });
     renderReport();
 
-    expect(await screen.findByText(/Synced 2h ago/)).toBeTruthy();
-    expect(screen.queryByText(/Not synced yet/)).toBeNull();
+    expect(await screen.findByTitle("Last synced 2h ago")).toBeTruthy();
+    expect(screen.queryByTitle("Not synced yet")).toBeNull();
   });
 
   it("leaves the last run's outcome to the status strip, which already reports it", async () => {
@@ -435,7 +451,7 @@ describe("ImpactReport", () => {
     });
     renderReport();
 
-    expect(await screen.findByText("Live tracking not started")).toBeTruthy();
+    expect(await screen.findByText("not started")).toBeTruthy();
   });
 
   it("links a person to their own page, from both places they are named", async () => {
@@ -486,6 +502,7 @@ describe("ImpactReport", () => {
       ],
     });
     renderReport();
+    await userEvent.click(await screen.findByRole("button", { name: "By row" }));
 
     // Collapsed by default: a row you deleted is history, not something to scroll past.
     const toggle = await screen.findByRole("button", {
@@ -524,6 +541,7 @@ describe("ImpactReport", () => {
       ],
     });
     renderReport();
+    await userEvent.click(await screen.findByRole("button", { name: "By row" }));
 
     await userEvent.click(
       await screen.findByRole("button", { name: /Show 1 deleted row/i }),
@@ -581,6 +599,7 @@ describe("ImpactReport", () => {
       ],
     });
     renderReport();
+    await userEvent.click(await screen.findByRole("button", { name: "By row" }));
 
     await userEvent.click(
       await screen.findByRole("button", { name: /Show 1 deleted row/i }),
@@ -908,14 +927,14 @@ describe("ImpactReport — recently watched", () => {
     renderReport();
 
     expect(await screen.findByText("Title 0")).toBeInTheDocument();
-    expect(screen.getByText("Title 11")).toBeInTheDocument();
-    // The 13th onwards are folded, not discarded...
-    expect(screen.queryByText("Title 12")).toBeNull();
+    expect(screen.getByText("Title 4")).toBeInTheDocument();
+    // The sixth onwards are behind "See all", not discarded...
+    expect(screen.queryByText("Title 5")).toBeNull();
     expect(screen.queryByText("Title 19")).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: /Show 8 more/i }));
+    await userEvent.click(screen.getByRole("button", { name: /See all 20/i }));
 
-    expect(screen.getByText("Title 12")).toBeInTheDocument();
+    expect(screen.getByText("Title 5")).toBeInTheDocument();
     expect(screen.getByText("Title 19")).toBeInTheDocument();
   });
 
@@ -938,7 +957,7 @@ describe("ImpactReport — recently watched", () => {
     renderReport();
 
     expect(await screen.findByText(/newest watch/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Show .* more/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /See all/i })).toBeNull();
   });
 });
 
@@ -950,7 +969,7 @@ describe("ImpactReport — titles shown as titles", () => {
     getDeletedRows.mockResolvedValue([]);
   });
 
-  it("shows Most watched as posters with rank, year, watchers and look-up links", async () => {
+  it("shows Most watched as posters with rank, title and faces", async () => {
     // It was a bare "Ted Lasso · 10 watchers" list: nothing said what a title was, and nothing let
     // you look one up.
     renderReport();
@@ -960,20 +979,15 @@ describe("ImpactReport — titles shown as titles", () => {
     expect(item.querySelector("img")?.getAttribute("src")).toBe("/api/picks/7007/poster");
     expect(item).toHaveTextContent("1");
     expect(item).toHaveTextContent("Dune: Part Two");
-    expect(item).toHaveTextContent("2024");
     expect(item).toHaveTextContent("3 watchers");
     // Faces for the first few watchers, named for screen readers and on hover.
     expect(within(item).getByTitle("Sarah H")).toBeTruthy();
     expect(within(item).getByTitle("Mike")).toBeTruthy();
-    expect(within(item).getByRole("link", { name: "Dune: Part Two on TMDB" })).toHaveAttribute(
-      "href",
-      "https://www.themoviedb.org/movie/693134",
-    );
-    expect(within(item).getByRole("link", { name: "Dune: Part Two on IMDb" })).toBeTruthy();
-    expect(within(item).getByRole("link", { name: "Dune: Part Two on Trakt" })).toBeTruthy();
+    // No source logos on the tile: three coloured marks per poster were the loudest thing on the page.
+    expect(within(item).queryByRole("link")).toBeNull();
   });
 
-  it("gives each recent watch its poster and look-up links, grouped under its day", async () => {
+  it("gives each recent watch its poster, title, year and time", async () => {
     // Local midday, and a watch two hours before it: "Today" in every timezone. Against the real clock
     // a watch "5 hours ago" is Yesterday between midnight and 5am, so this failed for part of every day.
     const midday = new Date();
@@ -994,24 +1008,22 @@ describe("ImpactReport — titles shown as titles", () => {
 
     const feed = await screen.findByRole("list", { name: "Recently watched from Shortlist" });
     vi.useRealTimers();
-    expect(within(feed).getByText("Today")).toBeTruthy();
+    expect(within(feed).getByText("2h ago")).toBeTruthy();
     const line = within(feed).getByText("Dune: Part Two").closest("li")!;
     expect(line.querySelector("img")?.getAttribute("src")).toBe("/api/picks/7007/poster");
     expect(line).toHaveTextContent("2024");
-    expect(within(line).getByRole("link", { name: "Dune: Part Two on TMDB" })).toBeTruthy();
+    expect(within(line).queryByRole("link", { name: /on TMDB/ })).toBeNull();
   });
 
-  it("stacks Requests under Worth a look, and gives the two long lists the full width below", async () => {
-    // "Recently watched" runs to twenty lines, so a Requests card beside it floated over a column of
-    // empty space. Beside the tall By-person list, under Worth a look, it fills a gap instead.
+  it("gives the long lists the full width, with the one-line Requests summary last", async () => {
     renderReport();
 
     await screen.findByRole("list", { name: "Recently watched from Shortlist" });
     const order = screen
       .getAllByRole("heading")
       .map((h) => h.textContent)
-      .filter((t) => ["Worth a look", "Requests", "Most watched", "Recently watched from Shortlist"].includes(t ?? ""));
-    expect(order).toEqual(["Worth a look", "Requests", "Most watched", "Recently watched from Shortlist"]);
+      .filter((t) => ["Who’s watching", "Most watched", "Recently watched", "Requests"].includes(t ?? ""));
+    expect(order).toEqual(["Who’s watching", "Most watched", "Recently watched", "Requests"]);
   });
 });
 
@@ -1107,61 +1119,37 @@ describe("ImpactReport — the engagement split", () => {
     expect(screen.queryByText(/gave up part-way/)).toBeNull();
   });
 
-  it("says how much of what people watched was in their Shortlist row", async () => {
-    // Replaced "picks watched while their row still showed them" (0.7% on a real server), which divided
-    // by every title ever SHOWN and so stayed tiny whether Shortlist worked or not.
+  it("drops the share of all viewing and its paragraph", async () => {
+    // Approved removal: a ratio over every title people watched, mostly history that predates the rows.
     renderReport();
 
-    expect(await screen.findByText("15.3%")).toBeTruthy();
-    expect(screen.getByText("Share of all viewing")).toBeTruthy();
-    expect(
-      screen.getByText("82 of the 537 titles people watched were in their rows · the last 30 days"),
-    ).toBeTruthy();
-    expect(screen.queryByText(/Picks watched while their row still showed them/)).toBeNull();
+    await screen.findByTestId("verdict-watched");
+    expect(screen.queryByText("Share of all viewing")).toBeNull();
+    expect(screen.queryByText(/titles people watched were in their rows/)).toBeNull();
+    expect(screen.queryByText(/Nothing to count yet/i)).toBeNull();
   });
 
-  it("tells the two rates apart: a share of TITLES, then a count of PEOPLE", async () => {
-    // Side by side, "Of what people watched, in their Shortlist row 18.2%" and "People who watched
-    // something 34 of 46" read as two takes on one number. The owner could not tell them apart.
+  it("counts PEOPLE who watched a pick, in four facts on one row", async () => {
     renderReport();
 
-    expect(await screen.findByText("People who watched a pick")).toBeTruthy();
-    expect(
-      screen.getByText("watched at least one title from their rows · the last 30 days"),
-    ).toBeTruthy();
-    expect(screen.queryByText(/People who watched something/)).toBeNull();
+    expect(await screen.findByText("People watching")).toBeTruthy();
+    expect(screen.getByText("watched a pick")).toBeTruthy();
+    const card = screen.getByTestId("verdict");
+    expect(card).toHaveTextContent("Watched from rows");
+    expect(card).toHaveTextContent("Finished");
+    expect(card).toHaveTextContent("Time to watch");
   });
 
-  it("never reports a real share as zero", async () => {
-    getReport.mockResolvedValue({
-      ...REPORT,
-      overall: {
-        ...REPORT.overall,
-        viewing_share: { watched: 100000, from_rows: 30, rate: 0.0 },
-      },
-    });
+  it("reads the typical days to watch, and a dash when there is nothing to average", async () => {
+    getReport.mockResolvedValue({ ...REPORT, overall: { ...REPORT.overall, avg_days_to_watch: 1.9 } });
     renderReport();
-
-    expect(await screen.findByText("<0.1%")).toBeTruthy();
-    expect(screen.queryByText("0.0%")).toBeNull();
+    expect((await screen.findByTestId("verdict-time")).textContent).toBe("1.9 days");
   });
 
-  it("blames the missing watch history, not the people, when there is no share to show", async () => {
-    // The share reads the nightly watch sync; the Watched tile reads live credits. A pick credited today
-    // shows "41 watched" above a share of nothing, so "no one has watched anything" would contradict
-    // the headline on the same card. What is actually missing is synced history.
-    getReport.mockResolvedValue({
-      ...REPORT,
-      overall: {
-        ...REPORT.overall,
-        viewing_share: { watched: 0, from_rows: 0, rate: null },
-      },
-    });
+  it("shows a dash for the time to watch when no pick has been watched", async () => {
+    getReport.mockResolvedValue({ ...REPORT, overall: { ...REPORT.overall, avg_days_to_watch: null } });
     renderReport();
-
-    expect(await screen.findByText(/Nothing to count yet/i)).toBeTruthy();
-    expect(screen.queryByText(/has watched anything/i)).toBeNull();
-    expect(screen.queryByText("<0.1%")).toBeNull();
+    expect((await screen.findByTestId("verdict-time")).textContent).toBe("\u2014");
   });
 });
 
