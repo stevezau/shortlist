@@ -27,6 +27,21 @@ export function privacyFindings(privacy: RunPrivacy | null | undefined): string[
 }
 
 /**
+ * Everything that makes a run a warning: the flagged accounts plus those whose hide rules could not be
+ * saved or that nobody could look through. A left-alone account is the owner's choice, not a warning.
+ */
+export function privacyWarnings(privacy: RunPrivacy | null | undefined): string[] {
+  if (!privacy) return [];
+  const seen = new Set<string>();
+  return [...privacyFindings(privacy), ...(privacy.write_failed ?? []), ...(privacy.unchecked ?? [])].filter((name) => {
+    const key = name.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
  * "OK with warnings": an OK run whose measurement flagged somebody.
  *
  * Not a run status. Five server queries filter on `status in ("ok", "error")`, so a new status would
@@ -34,7 +49,7 @@ export function privacyFindings(privacy: RunPrivacy | null | undefined): string[
  * failed run keeps saying "Failed" — the warning never upgrades or replaces it.
  */
 export function hasPrivacyWarning(run: { status: string; privacy?: RunPrivacy | null }): boolean {
-  return run.status === "ok" && privacyFindings(run.privacy).length > 0;
+  return run.status === "ok" && privacyWarnings(run.privacy).length > 0;
 }
 
 export type RunPrivacyVerdict =

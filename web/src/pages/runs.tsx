@@ -48,7 +48,7 @@ import {
   useStartRun,
 } from "@/lib/queries";
 import { latestFinishedRun, nextRowRun } from "@/lib/dashboard-status";
-import { hasPrivacyWarning, privacyFindings } from "@/lib/run-privacy";
+import { hasPrivacyWarning, privacyWarnings } from "@/lib/run-privacy";
 import { historyHint, runHealth } from "@/lib/run-status";
 import { useSSE } from "@/lib/sse";
 import { dayTime } from "@/lib/when";
@@ -294,7 +294,7 @@ function RunsStats({ summary, runs }: { summary: RunsSummary; runs: Run[] }) {
           value={warned.length}
           sub={
             firstWarned
-              ? `Run #${firstWarned.id} · ${privacyFindings(firstWarned.privacy).join(", ")}`
+              ? `Run #${firstWarned.id} · ${privacyWarnings(firstWarned.privacy).join(", ")}`
               : "None in the runs shown"
           }
         />

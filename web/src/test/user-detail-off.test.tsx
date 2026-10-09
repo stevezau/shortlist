@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { GroupedPicks } from "@/components/user-detail/grouped-picks";
 import { UserDetailBody } from "@/pages/user-detail";
@@ -34,6 +34,7 @@ const KID = {
   slug: "kid",
   user_type: "managed",
   enabled: false,
+  restricted: true,
   restriction_profile: "older_kid",
   unhidden_rows: 5,
   history_depth: 0,
@@ -80,9 +81,8 @@ describe("an Off person's page", () => {
     expect(screen.getByRole("button", { name: /Run for kid/ })).toBeDisabled();
     expect(screen.getByText(/Clear kid’s Restriction Profile in Plex first/)).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: /Pause or resume/ })).toBeNull();
-    expect(await screen.findByText(/Not built — kid is off/)).toBeInTheDocument();
+    expect(await screen.findByText(/No new rows — kid is off/)).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /does not apply while kid is off/ })).toBeDisabled();
-    expect(screen.queryByText("Title 1")).toBeNull();
   });
 
   it("counts rows, not collections, and gives the Plex fix once", async () => {
@@ -95,8 +95,70 @@ describe("an Off person's page", () => {
     expect(banner).toHaveTextContent("Restriction Profile → None");
   });
 
+  it("still lists the picks of a row that is on Plex, and says no NEW rows are built", async () => {
+    renderBody(KID);
+
+    expect(await screen.findByText("Title 1")).toBeInTheDocument();
+    const banner = await screen.findByTestId("off-banner");
+    expect(banner).toHaveTextContent(/No new rows are built for kid/);
+    expect(banner).not.toHaveTextContent(/has no Shortlist row/);
+  });
+
+  it("does not call a profile added after a row existed rowless", async () => {
+    renderBody({ ...KID, enabled: true });
+
+    expect(await screen.findByTestId("off-banner")).toHaveTextContent(/No new rows are built for kid/);
+    expect(await screen.findByText("Title 1")).toBeInTheDocument();
+  });
+
+  it("says turning them off does not fix an exposure", async () => {
+    renderBody(KID);
+
+    const banner = await screen.findByTestId("off-banner");
+    await vi.waitFor(() => expect(banner).toHaveTextContent(/Turning kid off in Shortlist does not fix this/));
+  });
+
+  describe("when the live reading is unavailable", () => {
+    const original = privacyStatus.current;
+    afterEach(() => {
+      privacyStatus.current = original;
+    });
+
+    it("falls back to the last run's collection count, labelled as such, when plex.tv failed", async () => {
+      privacyStatus.current = { accounts: [], error: "plex.tv timed out", enforcement: {} } as unknown as PrivacyStatus;
+      renderBody(KID);
+
+      const banner = await screen.findByTestId("off-banner");
+      await vi.waitFor(() => expect(banner).toHaveTextContent(/last run/i));
+      expect(banner).toHaveTextContent(/5 collections/);
+    });
+
+    it("falls back when the account is not in the reading", async () => {
+      privacyStatus.current = { accounts: [], error: null, enforcement: {} } as unknown as PrivacyStatus;
+      renderBody(KID);
+
+      const banner = await screen.findByTestId("off-banner");
+      await vi.waitFor(() => expect(banner).toHaveTextContent(/5 collections/));
+    });
+
+    it("says it could not check when there is no run count either", async () => {
+      privacyStatus.current = { accounts: [], error: "plex.tv timed out", enforcement: {} } as unknown as PrivacyStatus;
+      renderBody({ ...KID, unhidden_rows: 0 });
+
+      const banner = await screen.findByTestId("off-banner");
+      await vi.waitFor(() => expect(banner).toHaveTextContent(/couldn.t check what kid can see/i));
+    });
+  });
+
+  it("is not Off for a profile on an account not reported restricted", () => {
+    renderBody({ ...KID, enabled: true, restricted: false });
+
+    expect(screen.queryByTestId("off-banner")).toBeNull();
+    expect(screen.getByRole("switch", { name: /Pause or resume kid/ })).toBeChecked();
+  });
+
   it("offers Turn on to a person who is merely switched off", () => {
-    renderBody({ ...KID, restriction_profile: "" });
+    renderBody({ ...KID, restricted: false, restriction_profile: "" });
 
     expect(screen.getByRole("button", { name: "Turn on" })).toBeInTheDocument();
     expect(screen.getByText("Turn kid on first")).toBeInTheDocument();

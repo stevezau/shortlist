@@ -59,7 +59,7 @@ export function SharingPage() {
       />
       {/* Proof first: whether Plex applies the rules is the question the grid below can't answer, so it
           leads. It comes from the last run's own measurement and stays reachable when plex.tv is down. */}
-      {query.data && query.data.accounts.length > 0 && <EnforcementPanel data={query.data} />}
+      {query.data && <EnforcementPanel data={query.data} />}
       <QueryBoundary
         query={query}
         skeleton={
@@ -170,6 +170,18 @@ function PolicyPanel() {
   );
 }
 
+/** Verdicts that mean an account can see rows that aren't theirs, said by the grid per account. */
+const EXPOSED_SUMMARIES = ["missing", "filter_unreadable", "unhideable"];
+
+/** Accounts the reading says are not hiding, at least one for a verdict that names none. */
+function exposedAccounts(data: PrivacyStatus): number {
+  const count = data.accounts.filter(
+    (account) =>
+      account.state === "missing" || account.state === "unreadable_filter" || rowsNotHidden(account, data) > 0,
+  ).length;
+  return Math.max(count, 1);
+}
+
 /**
  * What the page says when the reading itself cannot be trusted or has nothing to show.
  *
@@ -232,8 +244,21 @@ function Summary({
       </Banner>
     );
   }
+  // The grid says these account by account, but a clean-looking panel or a quiet top of page must
+  // never sit above an exposure, so say it once in a line here.
+  if (EXPOSED_SUMMARIES.includes(data.summary)) {
+    const exposed = exposedAccounts(data);
+    return (
+      <Banner tone="bad" role="alert">
+        <p>
+          {exposed === 1 ? "1 account isn’t" : `${exposed} accounts aren’t`} hiding every row that isn’t theirs.
+          The accounts below say which.
+        </p>
+      </Banner>
+    );
+  }
   // Verdicts the grid and the enforcement panel already say, account by account.
-  if (["clean", "missing", "filter_unreadable", "not_enforced", "unhideable"].includes(data.summary)) {
+  if (["clean", "not_enforced"].includes(data.summary)) {
     return null;
   }
   // A verdict this build does not know. Reached only if the server grows a seventh state and nobody
@@ -523,6 +548,9 @@ function EnforcementPanel({ data }: { data: PrivacyStatus }) {
   const navigate = useNavigate();
   const startRun = useStartRun();
   const ignored = measured && exposed.length > 0;
+  // A stored-but-missing rule is an exposure the run's measurement never speaks to; the dot must not
+  // read green above it.
+  const accountsExposed = EXPOSED_SUMMARIES.includes(data.summary);
 
   return (
     <Card aria-labelledby="privacy-enforcement-title" role="region">
@@ -532,7 +560,7 @@ function EnforcementPanel({ data }: { data: PrivacyStatus }) {
             aria-hidden="true"
             className={cn(
               "mt-1.5 size-2.5 shrink-0 rounded-full",
-              !measured ? "bg-warning" : ignored ? "bg-destructive" : "bg-success",
+              !measured ? "bg-warning" : ignored ? "bg-destructive" : accountsExposed ? "bg-warning" : "bg-success",
             )}
           />
           <div className="min-w-0 space-y-1">

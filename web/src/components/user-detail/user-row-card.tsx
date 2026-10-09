@@ -230,24 +230,28 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
 
 /**
  * An Off person's rows: listed, but plainly not applying. Their switches are shown off and locked,
- * because nothing is built for them and these controls would otherwise claim it is.
+ * because nothing new is built for them and these controls would otherwise claim it is. A row still
+ * on Plex (it has live picks) keeps showing them: Off stops new rows, it does not take the old ones down.
  */
 function OffRowsList({ rows, name }: { rows: UserRow[]; name: string }) {
   return (
     <Card>
       <ul className="divide-y">
         {rows.map((row) => (
-          <li key={row.collection_id} className="flex items-center justify-between gap-4 px-6 py-4 opacity-60">
-            <div>
-              <div className="font-medium text-muted-foreground">{row.name}</div>
-              <div className="text-sm text-faint-foreground">
-                {row.media === "both" ? "movies & shows" : `${row.media}s`}
+          <li key={`${row.collection_id}-${row.section_key}`} className="space-y-3 px-6 py-4">
+            <div className="flex items-center justify-between gap-4 opacity-60">
+              <div>
+                <div className="font-medium text-muted-foreground">{row.name}</div>
+                <div className="text-sm text-faint-foreground">
+                  {row.media === "both" ? "movies & shows" : `${row.media}s`}
+                </div>
               </div>
+              <label className="flex items-center gap-4 text-sm text-muted-foreground">
+                No new rows &mdash; {name} is off
+                <Switch checked={false} disabled aria-label={`${row.name} does not apply while ${name} is off`} />
+              </label>
             </div>
-            <label className="flex items-center gap-4 text-sm text-muted-foreground">
-              Not built &mdash; {name} is off
-              <Switch checked={false} disabled aria-label={`${row.name} does not apply while ${name} is off`} />
-            </label>
+            {row.picks.length > 0 && <GroupedPicks picks={row.picks} collapseAfter={10} />}
           </li>
         ))}
       </ul>

@@ -5,6 +5,7 @@ import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import { usePrivacyStatus } from "@/lib/queries";
 import type { User } from "@/lib/types";
 import { profileName } from "@/lib/user-profile";
+import { profileBlocksRows } from "@/lib/user-state";
 
 const PLEX_USERS_URL = "https://app.plex.tv/desktop/#!/settings/users";
 
@@ -19,8 +20,11 @@ export function OffBanner({ user }: { user: User }) {
   const privacy = usePrivacyStatus();
   const name = user.display_name || user.username;
   const account = privacy.data?.accounts.find((a) => a.user_id === user.id);
-  const exposed = account && privacy.data ? rowsNotHidden(account, privacy.data) : 0;
-  const profile = user.restriction_profile ? profileName(user) : "";
+  const live = account && privacy.data && !privacy.data.error && !privacy.data.rows_error;
+  const exposed = live ? rowsNotHidden(account, privacy.data) : 0;
+  // No live answer for this person: the run's own count is the only evidence left, so use it, labelled.
+  const lastRun = user.unhidden_rows;
+  const profile = profileBlocksRows(user) ? profileName(user) : "";
 
   return (
     <Card data-testid="off-banner" className="overflow-hidden p-0">
@@ -28,14 +32,32 @@ export function OffBanner({ user }: { user: User }) {
         <Badge variant="outline" className="text-muted-foreground">
           Off
         </Badge>
-        <p className="font-medium">Off &mdash; {name} has no Shortlist row.</p>
+        <p className="font-medium">Off &mdash; No new rows are built for {name}.</p>
       </div>
-      {exposed > 0 && (
+      {live && exposed > 0 && (
         <div className="border-t bg-warning/10 px-6 py-3 text-sm text-warning">
           <span className="font-medium">
             {name} {rowsNotTheirs(exposed)}.
           </span>
-          {profile && " Plex rejects hide rules for accounts with a Restriction Profile."}
+          {profile && " Plex rejects hide rules for accounts with a Restriction Profile."}{" "}
+          Turning {name} off in Shortlist does not fix this.
+        </div>
+      )}
+      {!live && !privacy.isPending && (
+        <div className="border-t bg-warning/10 px-6 py-3 text-sm text-warning">
+          {lastRun > 0 ? (
+            <>
+              <span className="font-medium">
+                Couldn&rsquo;t check live. The last run found {name} could see {lastRun}{" "}
+                {lastRun === 1 ? "collection" : "collections"} that aren&rsquo;t theirs.
+              </span>{" "}
+              Turning {name} off in Shortlist does not fix this.
+            </>
+          ) : (
+            <span className="font-medium">
+              Couldn&rsquo;t check what {name} can see right now. Read again on the Privacy page.
+            </span>
+          )}
         </div>
       )}
       {profile && (
