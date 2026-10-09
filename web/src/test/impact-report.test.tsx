@@ -641,7 +641,29 @@ describe("ImpactReport", () => {
     expect(readout).not.toHaveTextContent(/latest/i);
   });
 
-  it("shows a count and a way to see active watchers past the first 10, instead of silently hiding them", async () => {
+  it("keeps the weekly chart a fixed height, whatever the list beside it", async () => {
+    // It used to stretch to match Who's watching: on a server with ten people listed, the bars grew
+    // to ~440px and a 21-watch week filled half the screen. jsdom has no layout, so the classes are
+    // what can be pinned here.
+    getReport.mockResolvedValue({
+      ...REPORT,
+      trend: [
+        { week: "2026-27", watched: 9, finished: 4 },
+        { week: "2026-28", watched: 2, finished: 0 },
+        { week: "2026-32", watched: 5, finished: 5 },
+      ],
+    });
+    renderReport();
+
+    const [column] = await screen.findAllByTestId("trend-week");
+    const bars = (column as HTMLElement).parentElement as HTMLElement;
+    expect(bars).toHaveClass("h-36");
+    expect(bars).not.toHaveClass("flex-1");
+    const pair = bars.closest(".grid") as HTMLElement;
+    expect(pair).toHaveClass("items-start");
+  });
+
+  it("shows a count and a way to see active watchers past the first 5, instead of silently hiding them", async () => {
     // Issue 7.3: `active.slice(0, 10)` used to just drop everyone past the tenth, with no count and
     // no way to see them — unlike the IDLE half of this same list, which already got a disclosure.
     const many = Array.from({ length: 12 }, (_, i) => ({
@@ -654,19 +676,21 @@ describe("ImpactReport", () => {
     getReport.mockResolvedValue({ ...REPORT, per_user: many });
     renderReport();
 
+    // Five, so the list ends near the foot of the weekly chart beside it; ten left a chart-sized gap
+    // under the chart on a real server.
     await screen.findByText("user0");
-    expect(screen.getByText("user9")).toBeInTheDocument();
-    // The 11th and 12th are not silently dropped...
-    expect(screen.queryByText("user10")).toBeNull();
+    expect(screen.getByText("user4")).toBeInTheDocument();
+    // The rest are not silently dropped...
+    expect(screen.queryByText("user5")).toBeNull();
     expect(screen.queryByText("user11")).toBeNull();
     // ...they're named and offered, the same way idle people already were. The label is POSITIONAL
     // ("show 2 more"), not a second claim — "2 more people watched something" reused the section's
     // own verb and read as a separate finding rather than the tail of the list above it.
     const toggle = screen.getByRole("button", {
-      name: /Show 2 more people/i,
+      name: /Show 7 more people/i,
     });
     await userEvent.click(toggle);
-    expect(screen.getByText("user10")).toBeInTheDocument();
+    expect(screen.getByText("user5")).toBeInTheDocument();
     expect(screen.getByText("user11")).toBeInTheDocument();
   });
 

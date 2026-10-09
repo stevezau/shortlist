@@ -284,7 +284,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
   const shown = trend.find((t) => t.week === hovered) ?? last;
 
   return (
-    <div className="flex flex-1 flex-col gap-1.5">
+    <div className="space-y-1.5">
       {/* The chart is aria-hidden (hover reaches a mouse and nothing else), so a screen reader gets
           NOTHING from it without a text alternative — this is that alternative. */}
       <p className="sr-only">
@@ -315,7 +315,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
       </p>
 
       <div
-        className="flex min-h-20 flex-1 items-stretch gap-1"
+        className="flex h-36 items-stretch gap-1"
         aria-hidden="true"
         onMouseLeave={() => setHovered(null)}
       >
@@ -523,14 +523,17 @@ function ZeroDisclosure({
   );
 }
 
+const PEOPLE_SHOWN = 5;
+
 function ByPerson({ people }: { people: EffectivenessReport["per_user"] }) {
   const active = people.filter((p) => p.watched > 0);
   const idle = people.filter((p) => p.watched === 0);
   const max = Math.max(1, ...active.map((p) => p.watched));
-  // First 10 are shown outright; anyone past that used to just vanish with no count and no way to
-  // see them — the exact asymmetry ZeroDisclosure already fixed for the IDLE half of this list.
-  const shown = active.slice(0, 10);
-  const overflow = active.slice(10);
+  // The first few are shown outright, so the list ends near the foot of the weekly chart beside it
+  // (ten left a chart-sized gap under it on a real server). The rest sit behind a disclosure: they
+  // used to just vanish with no count — the asymmetry ZeroDisclosure already fixed for the IDLE half.
+  const shown = active.slice(0, PEOPLE_SHOWN);
+  const overflow = active.slice(PEOPLE_SHOWN);
 
   const line = (p: EffectivenessReport["per_user"][number]) => (
     <CountLine
@@ -907,8 +910,8 @@ function ReportBody({
       {impact(<Verdict overall={overall} coverage={coverage} reportWindow={reportWindow} />)}
 
       <div className={cn("space-y-4", dim)}>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Section title="Watches per week" hint="Last 16 weeks, regardless of the window above" fill>
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <Section title="Watches per week" hint="Last 16 weeks, regardless of the window above">
             <Trend trend={report.trend} />
           </Section>
           <WhoIsWatching report={report} reportWindow={reportWindow} />

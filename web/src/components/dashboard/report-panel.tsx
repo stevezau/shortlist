@@ -17,7 +17,6 @@ export function ReportPanel({
   hint,
   actions,
   flush = false,
-  fill = false,
   children,
   className,
 }: {
@@ -26,8 +25,6 @@ export function ReportPanel({
   /** A control for the head row, beside the title. */
   actions?: ReactNode;
   flush?: boolean;
-  /** The body takes whatever height a taller neighbour in the grid leaves, so a chart can grow into it. */
-  fill?: boolean;
   children: ReactNode;
   className?: string;
 }) {
@@ -36,7 +33,7 @@ export function ReportPanel({
     // resolves to its min-content width. Without it the card sized itself to its widest line (508px
     // on a 358px column), overflowed the page, and — because it then had room to spare — nothing
     // inside ever truncated. The dashboard scrolled 134px sideways on a phone.
-    <Card className={cn("min-w-0 overflow-hidden", fill && "flex flex-col", className)}>
+    <Card className={cn("min-w-0 overflow-hidden", className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b px-4 py-3.5 sm:px-5">
         <div className="min-w-0">
           <h2 className="text-base font-semibold tracking-tight">{title}</h2>
@@ -44,7 +41,7 @@ export function ReportPanel({
         </div>
         {actions}
       </div>
-      {flush ? children : <div className={cn("space-y-3 px-4 py-4 sm:px-5", fill && "flex flex-1 flex-col")}>{children}</div>}
+      {flush ? children : <div className="space-y-3 px-4 py-4 sm:px-5">{children}</div>}
     </Card>
   );
 }
