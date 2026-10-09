@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import socket
+import sqlite3
 import ssl
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -11,6 +12,8 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvUser
@@ -26,6 +29,21 @@ from shortlist.engine.models import (
 )
 
 pytest_plugins = ["tests.scratch", "tests.resources"]
+
+
+@event.listens_for(Engine, "connect")
+def _skip_fsync_in_tests(dbapi_conn, _record) -> None:
+    """Test databases are throwaway, so don't wait for the disk on every commit.
+
+    Measured on a shared dev host (encrypted SATA SSD under load): an SQLite commit cost 18 ms on
+    disk against 0.1 ms in RAM, and test_api_collections.py ran in 59s instead of 92-98s with this
+    on. The scratch stays disk-backed (tests/scratch.py); only the per-commit fsync is skipped.
+    """
+    if isinstance(dbapi_conn, sqlite3.Connection):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA synchronous=OFF")
+        cursor.close()
+
 
 NOW = datetime(2026, 7, 12, tzinfo=UTC)
 

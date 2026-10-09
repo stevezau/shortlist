@@ -2,7 +2,8 @@
 
 Findings from the nine-reviewer pre-`beta.8` sweep (July 2026) and every review since. This file is
 the worklist: sections headed **OPEN** below are unfixed (lines 79-252 as of 2026-10-09, plus the
-2026-10-02 release audit's "left open" list at line 13), and each one is judged on its own. Everything
+2026-10-02 release audit's "left open" list at line 13, and the 2026-10-09
+pre-release review leftovers at the end), and each one is judged on its own. Everything
 else is closed and is kept as the record of what was fixed, so a future reviewer who rediscovers one
 checks the history before "fixing" it again.
 
@@ -1401,3 +1402,79 @@ claim only ever blocks a title match; it never selects a collection. Static rows
 a rename writes no ledger entry, so their recorded title can go stale. Pinned by
 `test_collection_reconcile.py::TestATitleAnotherRowBuildsUnderIsNeverThisRows::
 test_what_another_top_seed_row_was_delivered_as_is_claimed_in_that_library`.
+
+---
+
+## OPEN — pre-release review leftovers (2026-10-09)
+
+The whole-repo pre-release review (bd2bc970) fixed what it could without a full test run between
+edits. These are what its fix agents left open, with the reason. None is a confirmed bug; most are
+refactors judged too risky to make blind. Items the agents closed as "no action" are not listed.
+
+**Before the next release (owner's call):**
+
+- Migrations 0102–0110 ship in it: back up `/config/shortlist.db`, upgrade a copy first, and run
+  Architecture Review on the release PR.
+- The maintainer's LAN IP, hostname and account names are scrubbed from the tree but remain in git
+  history. Removing them needs a history rewrite and force-push.
+
+**Dependency advisories with no usable fix (build-time only, never in the image):**
+
+- `braces`: no patched release yet. Re-run `pnpm -C web audit` and bump when one ships.
+- `postcss-selector-parser`: fixed only in a version that needs Tailwind 4. Clears with that upgrade.
+
+**Engine:**
+
+- Rename `canary_server_token` / `user_hubs(canary_token)`: touches plextv, history, jobs,
+  watching_account and ~8 test files; wants one coordinated rename.
+- `_surface_flags` helper for the triplicated promotion-flag tuples, and the shared paging loop in
+  `_newest_leaf_stamp` / `_newest_episode_stamps`: Plex-writing code, so only with a full test run.
+- Split `_run_user` and `_build_section_picks` (optional; no defect).
+
+**Server:**
+
+- Layering: `services/season_changes.py` imports private helpers from `api/seasons.py`;
+  `api/collections.py` uses private members of reconcile, context_builder, theme_rotation and
+  api.themes; other services import private helpers from `api.*`. One cross-package move.
+- Move `assistant_reads` / `assistant_choices` under `assistant/`.
+- Make the private names `run_effects.py` imports public (`_destination`, `_target_snapshot`,
+  `_FETCHED_URL_KEYS`, `_check_csrf`).
+- Move `safe_backup_name` from `net_guard.py` to `services/backup.py` (retarget its test too).
+- Split the ~270-line `lifespan` in `main.py` and the ~250-line `reconcile_row_rename_iter`
+  (privacy-adjacent; only with a full test run).
+- Drop the dead `CollectionUserOverride.prompt` column: needs a table-rebuild migration and
+  Architecture Review.
+- `report_service.engagement`: remove the unused `losing` / `stop_points` / `observed` fields
+  (API schema + generated web types + tests; confirm no external consumer).
+- Small consolidations: `_build_request_sources` / `_build_requests` dedupe; settings_mutations step-dict
+  helpers; theme_rotation's dual injection and untyped `_rotate_one`; the remaining
+  `watch_cache._aware` / `context_builder._utc` copies.
+- Assistant: fold the repeated CAS + Event + commit block in `patch_grant_constraints`,
+  `approve_updated_access`, `update_owner_managed` and `set_basic_access` (security-critical; its own
+  reviewed change).
+
+**Web:**
+
+- The two largest clones left: `user-tabs.tsx`, and `ai-prompts-section` /
+  `row-ai-instructions-field` (44 lines each).
+- Replace the remaining ~20 `display_name || username` copies with `personName`.
+- Split `JobsPanel`, `verdictFor` and `RequestsPage` when next touched.
+- `READ_ONLY_SCOPES` is duplicated client-side; a real fix needs a server-side read-only flag in the
+  consent-flow API.
+- Move the rename stream into `lib/api.ts` (tests that mock `@/lib/api` need updating with it).
+
+**Tests:**
+
+- `test_api_users.py` "never fails the sync" still has no teeth: find whether `build_context` runs in
+  the request or a queued job, then assert it.
+- Timing flakes: `test_entrypoint` bound, `test_run_service` tick gap, `test_theme_rotation` sleep
+  ordering, `TestRowTiming`, `test_retry_policy` jitter. Need a fake clock or an Event.
+- e2e fixed sleeps (test_app_e2e, requests_*, settings, notifications, issue_page, login) → a
+  `wait_for_setting` helper or `expect_response`.
+- Web absence assertions that still use an `act()`-flushed tick where no positive UI signal exists.
+- Split the largest files (`test_api_collections` 4,672 lines, test_clients, test_delivery,
+  test_pipeline) and move `tests/unit/test_api_collections.py` / `test_api_themes.py` to integration.
+- Consolidate shared fixtures: memory_sessions, notify/request/FakeColl helpers, the cross-imported
+  assistant fixtures (`setup_env`, `run_env`, `request_env`, `candidate`), a shared uvicorn-thread helper,
+  and the hand-built Collection builders in row-editor / rows-page / row-card tests.
+- `tests/fixtures/README.md` is missing rows for ~30 fixtures; each needs real provenance and date.
