@@ -10,11 +10,21 @@ import type { RunDetail } from "@/lib/types";
  * Amber, not red: the run still built everyone's rows, and for the commonest case (a managed account
  * with a Restriction Profile) the fix is a Plex setting only the owner can change. Reporting only —
  * every sentence restates a list the run persisted; a list the run did not measure says nothing.
+ * `displayName` names accounts the run built nothing for. `onFix` replaces the link with a button for callers that must do something before leaving the page.
  */
-export function RunPrivacyCallout({ run }: { run: RunDetail }) {
+export function RunPrivacyCallout({
+  run,
+  onFix,
+  displayName,
+}: {
+  run: RunDetail;
+  onFix?: () => void;
+  displayName?: (username: string) => string;
+}) {
   const privacy = run.privacy;
   if (!privacy) return null;
   const nameOf = (username: string) =>
+    displayName?.(username) ||
     run.users.find((user) => user.username.toLowerCase() === username.toLowerCase())?.display_name ||
     username;
   const canSee = privacy.can_see_others;
@@ -67,12 +77,19 @@ export function RunPrivacyCallout({ run }: { run: RunDetail }) {
             {notEnforced.length === 1 ? "that account’s" : "their"} Home.
           </p>
         )}
-        <Link
-          to="/privacy"
-          className="inline-block rounded-sm text-accent-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Fix in Privacy →
-        </Link>
+        {(() => {
+          const className =
+            "inline-block rounded-sm text-accent-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+          return onFix ? (
+            <button type="button" className={className} onClick={onFix}>
+              Fix in Privacy →
+            </button>
+          ) : (
+            <Link to="/privacy" className={className}>
+              Fix in Privacy →
+            </Link>
+          );
+        })()}
       </div>
     </div>
   );

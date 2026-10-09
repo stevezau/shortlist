@@ -10,7 +10,8 @@ import {
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { nameList } from "@/lib/run-privacy";
+import { RunPrivacyCallout } from "@/components/runs/run-privacy-callout";
+import { hasPrivacyWarning, nameList, privacyWarnings } from "@/lib/run-privacy";
 import { ErrorState, QueryBoundary } from "@/components/query-boundary";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -241,8 +242,11 @@ export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
     (result) => (result.diff?.added?.length ?? 0) + (result.diff?.kept?.length ?? 0) > 0,
   );
 
-  const canSee = savedRun.data?.privacy?.can_see_others ?? [];
-  const flaggedNames = new Set(canSee.map((name) => name.toLowerCase()));
+  const privacy = savedRun.data?.privacy;
+  const flaggedNames = new Set(privacyWarnings(privacy).map((name) => name.toLowerCase()));
+  const writeFailed = privacy?.write_failed ?? [];
+  const unchecked = privacy?.unchecked ?? [];
+  const privacyWarned = hasPrivacyWarning({ status: finishedStatus ?? "", privacy });
   const nameOf = (username: string) =>
     (usersQuery.data ?? []).find((user) => user.username.toLowerCase() === username.toLowerCase())?.display_name || username;
 
@@ -267,7 +271,7 @@ export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
       : hasBuiltRows
         ? `${builtLine}They will see their row on Home next time they open Plex. Skipped accounts may need a different setup before they can receive a row.`
         : "No built rows were recorded for the people in this run. Review their results and check the full run details after finishing setup.";
-  const badgeVariant = finishedStatus === "ok" ? "success" : stopped ? "warning" : "destructive";
+  const badgeVariant = finishedStatus === "ok" ? (privacyWarned ? "warning" : "success") : stopped ? "warning" : "destructive";
   useEffect(() => {
     if (!finished) {
       setHeader?.(null);
@@ -435,20 +439,19 @@ export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
               </p>
             </div>
           )}
-          {canSee.length > 0 && (
-            <div
-              data-testid="first-run-privacy"
-              className="rounded-xl border border-warning/30 bg-warning/10 px-5 py-3 text-sm"
-            >
-              <span className="font-semibold text-warning">{nameList(canSee.map(nameOf))}</span>
-              {" — can see everyone else’s rows. A Plex Restriction Profile blocks the hide rules that keep rows private. "}
-              <button
-                type="button"
-                className="font-medium underline underline-offset-2"
-                onClick={() => void complete().then(() => navigate("/privacy"))}
-              >
-                How to fix →
-              </button>
+          {privacyWarned && savedRun.data && (
+            <div data-testid="first-run-privacy" className="space-y-2">
+              <RunPrivacyCallout
+                run={savedRun.data}
+                displayName={nameOf}
+                onFix={() => void complete().then(() => navigate("/privacy"))}
+              />
+              {(writeFailed.length > 0 || unchecked.length > 0) && (
+                <p className="rounded-lg border border-warning/40 bg-warning/10 px-3.5 py-3 text-sm">
+                  {writeFailed.length > 0 && `Couldn’t save hide rules for ${nameList(writeFailed.map(nameOf))}. `}
+                  {unchecked.length > 0 && `Couldn’t check what ${nameList(unchecked.map(nameOf))} can see.`}
+                </p>
+              )}
             </div>
           )}
           {!failed && hasBuiltRows && (

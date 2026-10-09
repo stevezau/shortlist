@@ -83,12 +83,37 @@ it("replaces the unrecorded-person line with a one-line privacy note and a fix l
   state.run = {
     id: 42, status: "ok", began_at: "2026-10-09T10:00:00Z", finished_at: "2026-10-09T10:00:41Z",
     privacy: { can_see_others: ["sam"] },
-    users: [{ slug: "other", status: "ok", picks: [{ rank: 1, rating_key: 1 }], diff: { added: ["A"] } }],
+    users: [{ slug: "other", username: "other", status: "ok", picks: [{ rank: 1, rating_key: 1 }], diff: { added: ["A"] } }],
   };
   mount(42);
   expect(screen.queryByText(/not recorded for this person/)).not.toBeInTheDocument();
   expect(screen.getByText("no row — see the privacy note below")).toBeInTheDocument();
   expect(screen.getByTestId("first-run-privacy")).toHaveTextContent("Sam");
-  expect(screen.getByRole("button", { name: /How to fix/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Fix in Privacy/ })).toBeInTheDocument();
   expect(state.header).toHaveBeenLastCalledWith(expect.objectContaining({ why: expect.stringContaining("Built for 1 person in 41 seconds.") }));
+});
+
+const OK_RUN = { id: 42, status: "ok", users: [{ slug: "sam", username: "sam", display_name: "Sam", status: "ok", picks: [{ rank: 1, rating_key: 1 }], diff: { added: ["A"] } }] };
+
+it("warns on the badge and in the callout when Plex is not applying the hide rules", () => {
+  state.run = { ...OK_RUN, privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: ["sam"] } };
+  mount(42);
+  expect(screen.getByTestId("first-run-privacy")).toHaveTextContent("Plex isn’t applying the hide rules on Sam");
+  expect(state.header).toHaveBeenLastCalledWith(expect.objectContaining({ badge: { text: "run ok", variant: "warning" } }));
+});
+
+it("names an account whose hide rules could not be saved or checked", () => {
+  state.run = { ...OK_RUN, privacy: { can_see_others: [], write_failed: ["sam"], unchecked: ["pat"] } };
+  mount(42);
+  const note = screen.getByTestId("first-run-privacy");
+  expect(note).toHaveTextContent("Couldn’t save hide rules for Sam");
+  expect(note).toHaveTextContent("Couldn’t check what pat can see");
+  expect(state.header).toHaveBeenLastCalledWith(expect.objectContaining({ badge: { text: "run ok", variant: "warning" } }));
+});
+
+it("keeps the success badge and shows no privacy note when nothing was flagged", () => {
+  state.run = { ...OK_RUN, privacy: { can_see_others: [], unreadable_filters: [], filters_not_enforced: [], write_failed: [], unchecked: [] } };
+  mount(42);
+  expect(screen.queryByTestId("first-run-privacy")).not.toBeInTheDocument();
+  expect(state.header).toHaveBeenLastCalledWith(expect.objectContaining({ badge: { text: "run ok", variant: "success" } }));
 });
