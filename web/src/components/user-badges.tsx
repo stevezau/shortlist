@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 
 import { Badge } from "@/components/ui/badge";
+import { rowsNotHidden } from "@/lib/privacy-attention";
+import { usePrivacyStatus } from "@/lib/queries";
 import { profileName } from "@/lib/user-profile";
 import type { User } from "@/lib/types";
 
@@ -69,7 +71,11 @@ export function RestrictedBadge({ user }: { user: User }) {
  * it found — deliberately absent when the count is 0, so the badge means something when it appears.
  */
 export function UnhiddenRowsBadge({ user }: { user: User }) {
-  const exposed = user.unhidden_rows ?? 0;
+  const privacy = usePrivacyStatus();
+  // Rows from the live privacy reading, the figure every screen shares — never `user.unhidden_rows`,
+  // the run's per-library collection count.
+  const account = privacy.data?.accounts.find((a) => a.user_id === user.id);
+  const exposed = account && privacy.data ? rowsNotHidden(account, privacy.data) : 0;
   if (exposed < 1) return null;
   const badge = (
     <Badge
@@ -84,7 +90,7 @@ export function UnhiddenRowsBadge({ user }: { user: User }) {
   // The most alarming string in the app, and its whole 301-character remedy lives in that
   // `title` — hover-only on a desktop, unreachable on a phone. This badge is only ever shown for an
   // account with a restriction profile, which is exactly the account whose own page renders
-  // `RestrictedNote`: the same remedy, in full, as text. So make the badge the way there rather
+  // the Off banner: the same remedy, in full, as text. So make the badge the way there rather
   // than restating any of it here.
   return (
     <Link
