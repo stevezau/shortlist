@@ -16,9 +16,9 @@ from shortlist.server.assistant.row_effects import (
     queue_convergence_in_session,
     validate_convergence_steps,
 )
-from shortlist.server.db.models import Base, Job
+from shortlist.server.db.models import Job
 from shortlist.server.services import jobs
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def test_convergence_steps_are_a_closed_discriminated_union():
@@ -30,7 +30,7 @@ def test_convergence_steps_are_a_closed_discriminated_union():
 
 def test_effect_and_queue_use_one_normalized_convergence_payload():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         step = privacy_sync_step("the row audience changed")
         effect = convergence_effect([step], domain="rows", effect_key="row-12")
         assert effect.kind == "assistant.converge"
@@ -48,7 +48,7 @@ def test_effect_and_queue_use_one_normalized_convergence_payload():
 
 def test_retry_skips_checkpointed_steps(monkeypatch):
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         state = SimpleNamespace(sessions=sessions)
         ran: list[str] = []

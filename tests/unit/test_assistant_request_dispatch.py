@@ -12,17 +12,17 @@ from shortlist.server.assistant.request_adapter import RequestAdapter, dispatch_
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantPreset
 from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
-from shortlist.server.db.models import Base, Collection, Job, RequestCandidate, Server, User
+from shortlist.server.db.models import Collection, Job, RequestCandidate, Server, User
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import SettingsStore
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 from tests.unit.test_assistant_requests import candidate
 
 
 @pytest.fixture
 def request_env(tmp_path):
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'requests.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
         state.run_service = SimpleNamespace(

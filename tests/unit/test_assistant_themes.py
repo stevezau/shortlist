@@ -8,8 +8,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from shortlist.server.assistant.theme_adapter import ThemeAdapter, ThemeIntent
-from shortlist.server.db.models import Base, CacheRow, Theme
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import CacheRow, Theme
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def draft():
@@ -37,7 +37,7 @@ def test_theme_nested_fields_do_not_coerce_malformed_values():
 
 def test_title_must_be_resolved_and_authoritative_metadata_wins():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         adapter = ThemeAdapter(None)
         with Session(engine) as session:
             with pytest.raises(ValueError, match="Resolve"):

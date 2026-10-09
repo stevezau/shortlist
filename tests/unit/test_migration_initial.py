@@ -12,9 +12,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from shortlist.server.db.models import Base
 from shortlist.server.db.session import make_engine, run_migrations
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def _head_revision() -> str:
@@ -54,7 +53,7 @@ def test_initial_migration_schema_matches_the_models(tmp_path: Path):
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     with disposing_engine(make_engine(model_dir)) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
     from_models = _columns(str(model_dir / "shortlist.db"))
 
     assert from_migration == from_models, (

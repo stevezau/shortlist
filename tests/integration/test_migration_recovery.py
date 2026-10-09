@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from alembic import command
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 
@@ -111,4 +112,32 @@ def test_booting_twice_leaves_the_stamp_alone(tmp_path: Path):
 
         db_session.run_migrations(tmp_path)
 
+        assert _version(engine) == head
+
+
+def test_a_boot_at_head_does_not_run_the_upgrade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """`alembic upgrade` re-reads every revision file even when there is nothing to apply — 58 ms a
+    boot, paid by every test that boots the app. A DB already at head skips it."""
+    db_session.run_migrations(tmp_path)
+    upgrades: list[str] = []
+    monkeypatch.setattr(db_session.command, "upgrade", lambda cfg, rev: upgrades.append(rev))
+
+    db_session.run_migrations(tmp_path)
+
+    assert upgrades == []
+
+
+@pytest.mark.real_migrations
+def test_a_boot_behind_head_still_upgrades(tmp_path: Path):
+    """The skip must not swallow a real upgrade: a DB one revision behind reaches head."""
+    revisions = _revisions()
+    head, parent = revisions[-1]
+    cfg = AlembicConfig()
+    cfg.set_main_option("script_location", str(db_session.ALEMBIC_DIR))
+    cfg.set_main_option("sqlalchemy.url", db_session.db_url(tmp_path))
+    command.upgrade(cfg, parent)
+
+    db_session.run_migrations(tmp_path)
+
+    with disposing_engine(db_session.make_engine(tmp_path)) as engine:
         assert _version(engine) == head

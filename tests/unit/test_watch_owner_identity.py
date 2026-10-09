@@ -17,7 +17,6 @@ from sqlalchemy.pool import StaticPool
 
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Delivery,
     PickRow,
@@ -32,7 +31,7 @@ from shortlist.server.services.run_persistence import reconcile_from_events
 from shortlist.server.services.watch_events import RowMembership, event_credits, ingest_play_history, shared_credits
 from shortlist.server.services.watch_stream import WatchStream
 from shortlist.server.settings_store import SettingsStore
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 OWNER_SESSION = """<MediaContainer size="1">
 <Video ratingKey="100" sessionKey="42" type="movie" duration="3000000" viewOffset="0">
@@ -46,7 +45,7 @@ def sessions():
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

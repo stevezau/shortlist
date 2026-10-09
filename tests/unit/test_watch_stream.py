@@ -19,9 +19,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import shortlist.server.services.watch_stream as watch_stream
-from shortlist.server.db.models import Base, Job, WatchSession
+from shortlist.server.db.models import Job, WatchSession
 from shortlist.server.services.watch_stream import MIN_START_SECONDS, WatchStream
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def sessions():
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

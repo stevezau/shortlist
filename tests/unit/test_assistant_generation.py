@@ -10,8 +10,8 @@ from sqlalchemy.orm import sessionmaker
 from shortlist.server.assistant.budgets import AssistantBudget
 from shortlist.server.assistant.generation import dispatch_generation, provider_destination
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
-from shortlist.server.db.models import Base, Job
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import Job
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def test_local_provider_destination_is_explicit_and_credential_free():
@@ -44,7 +44,7 @@ def test_historical_queued_generation_never_replays_or_forgets_dispatch_evidence
     # A saved operation may have crossed the paid-call checkpoint before an upgrade.
     # The retired worker must preserve that uncertainty and the historical reservation.
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'retired-generation.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         state = SimpleNamespace(sessions=sessions)
         now = datetime.now(UTC)
@@ -105,7 +105,7 @@ def test_historical_queued_generation_never_replays_or_forgets_dispatch_evidence
 
 def test_retired_dispatch_rejects_an_uncorrelated_job(tmp_path):
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'no-operation.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine)
         with sessions() as session:
             job = Job(kind="assistant.generate_theme", payload={})

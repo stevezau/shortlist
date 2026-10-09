@@ -7,15 +7,15 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.api.users import UserPatch
-from shortlist.server.db.models import Base, Job, User
+from shortlist.server.db.models import Job, User
 from shortlist.server.services.person_changes import apply_person_in_session, prepare_person_in_session
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
 def people_db(tmp_path):
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'people.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         with sessions() as session:
             session.add(User(id=1, plex_account_id=11, username="alice", slug="alice", enabled=True))

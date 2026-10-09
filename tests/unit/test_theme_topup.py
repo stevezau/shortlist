@@ -12,10 +12,10 @@ from sqlalchemy.pool import StaticPool
 
 from shortlist.engine.models import MediaType, RowLimits
 from shortlist.engine.themes import ThemePick, ThemeSpec
-from shortlist.server.db.models import Base, Collection, Event, PickRow, Run, Theme, ThemeHistory, User
+from shortlist.server.db.models import Collection, Event, PickRow, Run, Theme, ThemeHistory, User
 from shortlist.server.services.theme_author import ThemeAuthorError, ThemeDraft, ThemeStats
 from shortlist.server.services.theme_rotation import TOP_UP_CHANGE, AuthoringTools, top_up_themes
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime(2026, 10, 10, 1, 30, tzinfo=UTC)
 
@@ -92,7 +92,7 @@ def sessions():
     with disposing_engine(
         create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

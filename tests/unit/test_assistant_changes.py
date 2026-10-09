@@ -20,8 +20,8 @@ from shortlist.server.assistant.changes import (
 )
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
 from shortlist.server.assistant_auth import GrantConstraints
-from shortlist.server.db.models import Base, Event, Job, Setting
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import Event, Job, Setting
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime(2026, 10, 5, tzinfo=UTC)
 
@@ -76,7 +76,7 @@ def env(tmp_path):
     with disposing_engine(
         create_engine(f"sqlite:///{tmp_path / 'changes.db'}", connect_args={"timeout": 10})
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         adapter = SettingAdapter()
         principal = SimpleNamespace(grant_id="grant-a", client_id="client-a", owner_account_id=42)

@@ -23,7 +23,6 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Delivery,
     PickRow,
@@ -35,7 +34,7 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement, resolve_outcomes
 from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
@@ -51,7 +50,7 @@ def fresh() -> Iterator[sessionmaker]:
     failure looked like a defect in the code rather than in the harness.
     """
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         factory = sessionmaker(engine)
         with factory() as s:
             s.add(User(id=1, plex_account_id=99, username="alex", slug="alex"))
@@ -344,7 +343,7 @@ class TestReportInvariants:
 def _world(users: int, rows: int) -> Iterator[sessionmaker]:
     """A server with `users` people and `rows` rows, half of them shared."""
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         factory = sessionmaker(engine)
         with factory() as s:
             for u in range(1, users + 1):

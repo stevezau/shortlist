@@ -22,9 +22,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from shortlist.server.db.models import Base, Collection, PickRow, User
+from shortlist.server.db.models import Collection, PickRow, User
 from shortlist.server.services.report_service import SETTLING_HOURS, _RowNamer, effectiveness, row_effectiveness
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime.now(UTC)
 
@@ -32,7 +32,7 @@ NOW = datetime.now(UTC)
 @pytest.fixture
 def sessions():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         factory = sessionmaker(engine)
         with factory() as session:
             session.add(User(id=1, plex_account_id=7, username="alex", slug="alex", enabled=True))

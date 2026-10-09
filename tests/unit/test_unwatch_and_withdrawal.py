@@ -16,7 +16,6 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Delivery,
     PickRow,
@@ -30,7 +29,7 @@ from shortlist.server.services.report_service import (
     resolve_outcomes,
 )
 from shortlist.server.services.run_persistence import reconcile_watched
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 from tests.watch_fixtures import personal_delivery, shared_delivery
 
 # The real clock, deliberately not a pinned date. Every fixture here places its data RELATIVE to
@@ -45,7 +44,7 @@ NOW = datetime.now(UTC)
 @pytest.fixture
 def sessions():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

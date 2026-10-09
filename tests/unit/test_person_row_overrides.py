@@ -12,14 +12,14 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.assistant.people_seasons import PeopleAdapter, PeopleIntent
-from shortlist.server.db.models import Base, Collection, CollectionAudience, CollectionUserOverride, Setting, User
+from shortlist.server.db.models import Collection, CollectionAudience, CollectionUserOverride, Setting, User
 from shortlist.server.services.person_row_overrides import (
     RowOverridePatch,
     apply_person_row_override_in_session,
     prepare_person_row_override_in_session,
     read_person_row_override_in_session,
 )
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def sessions():
 @contextmanager
 def _seed_sessions() -> Iterator[tuple[Engine, sessionmaker]]:
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         factory = sessionmaker(engine)
         with factory() as session:
             session.add_all(

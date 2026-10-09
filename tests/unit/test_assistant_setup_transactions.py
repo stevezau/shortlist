@@ -12,15 +12,15 @@ from shortlist.server.assistant.setup_adapter import SetupAdapter
 from shortlist.server.assistant_auth import GrantConstraints, GrantPreset
 from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
-from shortlist.server.db.models import Base, Collection, Job, Server, Theme, User
+from shortlist.server.db.models import Collection, Job, Server, Theme, User
 from shortlist.server.services.secrets import SecretBox
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
 def setup_env(tmp_path):
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'setup.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         with sessions() as session:
             session.add(

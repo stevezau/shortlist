@@ -24,9 +24,8 @@ from shortlist.server.assistant_auth.models import (
 from shortlist.server.assistant_auth.oauth import OAuthService
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
 from shortlist.server.assistant_auth.retention import REVOKED_FAMILY_TTL, UNUSED_CLIENT_TTL
-from shortlist.server.db.models import Base
 from shortlist.server.services import jobs
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime.now(UTC)
 REDIRECT = "http://127.0.0.1:49152/callback"
@@ -38,7 +37,7 @@ def _env(tmp_path) -> Iterator[SimpleNamespace]:
     with disposing_engine(
         create_engine(f"sqlite:///{tmp_path / 'retention.db'}", connect_args={"check_same_thread": False})
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32))
         grant = repository.create_grant(

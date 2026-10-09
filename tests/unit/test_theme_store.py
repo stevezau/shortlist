@@ -10,15 +10,15 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.themes import theme_content_hash
 from shortlist.server.api.themes import ThemeIn, ThemeSaveIn
-from shortlist.server.db.models import Base, Collection, Theme
+from shortlist.server.db.models import Collection, Theme
 from shortlist.server.services import theme_store
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
 def session():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         with sessionmaker(engine)() as s:
             yield s
 
@@ -65,7 +65,7 @@ class TestSaveTheme:
 
     def test_a_concurrent_charge_is_not_lost_to_a_stale_read(self, tmp_path):
         with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'tokens.db'}")) as engine:
-            Base.metadata.create_all(engine)
+            create_schema(engine)
             sessions = sessionmaker(engine, expire_on_commit=False)
             with sessions() as setup:
                 row = add_row(setup, ai_tokens=10)

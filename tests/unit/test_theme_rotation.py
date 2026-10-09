@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from shortlist.engine.models import MediaType, RowLimits, UserProfile
 from shortlist.engine.themes import ThemeSpec
 from shortlist.engine.web_guidance import AiInstructions
-from shortlist.server.db.models import Base, Collection, CollectionAudience, Event, Theme, ThemeHistory, User
+from shortlist.server.db.models import Collection, CollectionAudience, Event, Theme, ThemeHistory, User
 from shortlist.server.services import theme_rotation
 from shortlist.server.services.theme_author import ThemeAuthorError, ThemeDraft, ThemeStats
 from shortlist.server.services.theme_rotation import (
@@ -24,7 +24,7 @@ from shortlist.server.services.theme_rotation import (
     theme_guidance,
 )
 from tests.conftest import make_profile
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime(2026, 10, 10, 3, 0, tzinfo=UTC)
 NAIVE_NOW = NOW.replace(tzinfo=None)
@@ -78,7 +78,7 @@ def sessions():
     with disposing_engine(
         create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

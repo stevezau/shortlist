@@ -9,7 +9,6 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import UserRunReport
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Delivery,
     PickRow,
@@ -28,7 +27,7 @@ from shortlist.server.services.run_persistence import (
     prune_runs,
 )
 from shortlist.server.services.watch_events import RowMembership, tmdb_by_rating_key
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
 
@@ -36,7 +35,7 @@ NOW = datetime(2026, 10, 5, 12, tzinfo=UTC)
 @pytest.fixture
 def sessions():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         factory = sessionmaker(engine)
         with factory() as session:
             session.add_all(

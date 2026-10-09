@@ -26,8 +26,8 @@ from shortlist.server.assistant_auth.repository import (
     GrantUpdateNotFound,
     require_current_grant_in_session,
 )
-from shortlist.server.db.models import Base, Event
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import Event
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime(2026, 10, 5, tzinfo=UTC)
 
@@ -41,7 +41,7 @@ def _repository() -> Iterator[tuple[AssistantAuthRepository, sessionmaker]]:
             poolclass=StaticPool,
         )
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         yield AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32)), sessions
 

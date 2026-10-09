@@ -4,9 +4,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from shortlist.server.api.row_changes import PRIVACY_SYNC, RECONCILE, RENAME, PlannedWork
-from shortlist.server.db.models import Base, Collection
+from shortlist.server.db.models import Collection
 from shortlist.server.services.row_mutations import delete_row_in_session, steps_for_row_plan
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def test_row_plan_becomes_one_ordered_closed_step_list():
@@ -24,7 +24,7 @@ def test_row_plan_becomes_one_ordered_closed_step_list():
 
 def test_delete_row_is_rollback_safe_and_clears_local_anchors():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         with Session(engine) as session:
             gone = Collection(slug="gone", name="Gone", build="per_person")
             follower = Collection(

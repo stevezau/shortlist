@@ -14,9 +14,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from shortlist.server.db.models import Base, CacheRow
+from shortlist.server.db.models import CacheRow
 from shortlist.server.services.run_persistence import prune_expired_cache
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 HOUR = 3600
 
@@ -24,7 +24,7 @@ HOUR = 3600
 @pytest.fixture
 def sessions():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

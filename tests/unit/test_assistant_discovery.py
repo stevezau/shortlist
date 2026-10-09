@@ -12,14 +12,14 @@ from sqlalchemy.orm import sessionmaker
 from shortlist.server.assistant.discovery import DiscoveryService
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantContext, GrantPreset
 from shortlist.server.catalogs.templates import ROW_INPUT_DEFAULTS
-from shortlist.server.db.models import Base, Collection, CollectionAudience, Setting, Theme, ThemeHistory, User
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import Collection, CollectionAudience, Setting, Theme, ThemeHistory, User
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
 def service():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine)
         with sessions() as session:
             session.add_all(

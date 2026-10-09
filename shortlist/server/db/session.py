@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -102,7 +103,6 @@ def _migration_pending(cfg: AlembicConfig, config_dir: Path) -> bool:
     stamped NEWER than head — an image rollback is exactly when a copy of the current file is worth
     having.
     """
-    from alembic.script import ScriptDirectory
     from sqlalchemy import inspect
 
     engine = create_engine(db_url(config_dir))
@@ -116,7 +116,18 @@ def _migration_pending(cfg: AlembicConfig, config_dir: Path) -> bool:
             current = conn.exec_driver_sql("select version_num from alembic_version").scalar()
     finally:
         engine.dispose()
-    return current != ScriptDirectory.from_config(cfg).get_current_head()
+    return current != _head_revision(cfg.get_main_option("script_location"))
+
+
+@functools.cache
+def _head_revision(script_location: str) -> str | None:
+    """The newest revision in the migration scripts. Cached: reading them costs ~50 ms, and they never
+    change while the process runs (a test suite boots the app ~1,400 times)."""
+    from alembic.script import ScriptDirectory
+
+    cfg = AlembicConfig()
+    cfg.set_main_option("script_location", script_location)
+    return ScriptDirectory.from_config(cfg).get_current_head()
 
 
 def _sweep_batch_leftovers(config_dir: Path) -> None:
@@ -183,9 +194,11 @@ def run_migrations(config_dir: Path) -> None:
     cfg.set_main_option("sqlalchemy.url", db_url(config_dir))
 
     db_path = config_dir / "shortlist.db"
+    has_data = db_path.exists() and db_path.stat().st_size > 0
+    pending = not has_data or _migration_pending(cfg, config_dir)
     # The backup is the only way back from a migration that goes wrong. Same rule as a restore that
     # cannot take its pre-restore copy: refuse, rather than change the schema with no way back.
-    if db_path.exists() and db_path.stat().st_size > 0 and _migration_pending(cfg, config_dir):
+    if has_data and pending:
         try:
             backup = take_backup(config_dir, label="pre-migration")
         except OSError as exc:
@@ -198,5 +211,7 @@ def run_migrations(config_dir: Path) -> None:
 
     _heal_squashed_revision(cfg, config_dir)
     _sweep_batch_leftovers(config_dir)
-    command.upgrade(cfg, "head")
+    # At head, `upgrade` would apply nothing but still re-read every revision file (~50 ms).
+    if pending:
+        command.upgrade(cfg, "head")
     logger.info("database migrated to head at {}", config_dir / "shortlist.db")

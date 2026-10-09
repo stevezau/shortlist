@@ -12,9 +12,9 @@ from shortlist.server.assistant.row_adapter import RowAdapter, RowIntent
 from shortlist.server.assistant_auth import GrantConstraints, GrantPreset
 from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
-from shortlist.server.db.models import Base, Collection, Event, Server
+from shortlist.server.db.models import Collection, Event, Server
 from shortlist.server.services.secrets import SecretBox
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def test_row_intent_rejects_ambiguous_or_unknown_shapes():
@@ -26,7 +26,7 @@ def test_row_intent_rejects_ambiguous_or_unknown_shapes():
 
 def test_catalog_create_defaults_disabled_and_is_rollback_safe():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         adapter = RowAdapter(SimpleNamespace(secrets=None))
         intent = {"action": "create", "template_id": "picked-for-you", "values": {"name": "Quiet picks"}}
         with Session(engine) as session:
@@ -43,7 +43,7 @@ def test_catalog_create_defaults_disabled_and_is_rollback_safe():
 
 def test_delete_declares_exact_row_and_ordered_cleanup():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         adapter = RowAdapter(SimpleNamespace(secrets=None))
         with Session(engine) as session:
             row = Collection(slug="shared-picks", name="Shared picks", build="shared")
@@ -62,7 +62,7 @@ def test_delete_declares_exact_row_and_ordered_cleanup():
 @pytest.fixture
 def row_change_service(tmp_path):
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'assistant-rows.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         with sessions() as session:
             session.add_all(
@@ -129,7 +129,7 @@ def recurring_row():
     from shortlist.server.settings_store import SettingsStore
 
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         with Session(engine) as session:
             row = Collection(slug="paid-picks", name="Paid picks", enabled=True, candidate_sources=["llm_web"])
             session.add(row)

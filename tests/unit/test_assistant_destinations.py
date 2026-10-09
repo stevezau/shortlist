@@ -21,15 +21,15 @@ from shortlist.server.assistant_auth.repository import (
     require_current_grant_in_session,
 )
 from shortlist.server.assistant_auth.types import Capability, GrantConstraints, GrantPreset, ResourceSelection
-from shortlist.server.db.models import Base, Event, Setting
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import Event, Setting
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def test_configured_catalog_uses_exact_runtime_destinations_without_secrets() -> None:
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         with sessions() as session:
             session.add_all(
@@ -72,7 +72,7 @@ def test_selected_endpoint_change_is_rejected_without_writing_a_grant() -> None:
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32))
         with sessions() as session:
@@ -120,7 +120,7 @@ def test_capabilities_and_quota_change_in_one_revision() -> None:
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32))
         grant = repository.create_grant(
@@ -159,7 +159,7 @@ def test_stale_selected_service_rolls_back_combined_permissions_quota_and_audit(
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32))
         with sessions() as session:
@@ -208,7 +208,7 @@ def test_owner_quota_summary_preserves_uncertain_reservations_when_limit_is_zero
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32))
         grant = repository.create_grant(
@@ -241,7 +241,7 @@ def test_owner_profile_resolves_current_services_and_settings_in_every_transacti
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"p" * 32))
         grant = repository.create_grant(
@@ -302,7 +302,7 @@ def test_owner_profile_upgrade_preserves_legacy_paid_state_and_is_revision_guard
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"p" * 32))
         grant = repository.create_grant(
@@ -372,7 +372,7 @@ def test_profile_marker_is_legacy_false_and_cannot_be_set_by_granular_patch() ->
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         repository = AssistantAuthRepository(
             sessionmaker(bind=engine, expire_on_commit=False), CredentialHasher(b"p" * 32)
         )
@@ -397,7 +397,7 @@ def test_upgrade_keeps_positive_legacy_quota_unusable_without_paid_capability() 
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"p" * 32))
         grant = repository.create_grant(
@@ -428,7 +428,7 @@ def test_profile_has_maintenance_capability_but_task_still_requires_exact_owner_
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         with sessionmaker(bind=engine)() as session:
             plan = MaintenanceAdapter(None).prepare(session, {"task": "cache.refresh"})
     assert Capability.MAINTENANCE_EXECUTE in owner_managed_capabilities()

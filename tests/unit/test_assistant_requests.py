@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.models import ArrTarget, RequestConfig
 from shortlist.server.assistant.request_adapter import RequestAdapter, RequestIntent
-from shortlist.server.db.models import Base, Collection, RequestCandidate, User
+from shortlist.server.db.models import Collection, RequestCandidate, User
 from shortlist.server.services.request_actions import apply_request_action_in_session
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def candidate(candidate_id: int = 1) -> RequestCandidate:
@@ -38,7 +38,7 @@ def test_request_intent_rejects_duplicates_and_unbounded_batches():
 
 def test_local_action_is_transaction_owned():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         with Session(engine) as session:
             session.add(candidate())
             session.commit()
@@ -51,7 +51,7 @@ def test_local_action_is_transaction_owned():
 
 def test_send_plan_freezes_destination_body_and_resource_scope(monkeypatch):
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         cfg = RequestConfig(
             enabled=True,
             target="arr",

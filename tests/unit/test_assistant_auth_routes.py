@@ -15,8 +15,7 @@ from shortlist.server.assistant_auth.models import AssistantGrant, AssistantOAut
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
 from shortlist.server.assistant_auth.routes import ConstraintsIn, ConstraintsPatchIn, create_oauth_router
 from shortlist.server.assistant_auth.types import ASSISTANT_CAPABILITIES
-from shortlist.server.db.models import Base
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
@@ -25,7 +24,7 @@ def oauth_registration_client() -> Iterator[tuple[TestClient, AssistantAuthRepos
     with disposing_engine(
         create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"r" * 32))
         app = FastAPI()

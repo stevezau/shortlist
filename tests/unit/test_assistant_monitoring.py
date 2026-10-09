@@ -7,13 +7,13 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.assistant.monitoring import MonitoringService
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantContext, GrantPreset
-from shortlist.server.db.models import Base, Collection, Run, RunUser, User
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import Collection, Run, RunUser, User
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def test_report_filters_people_rows_and_free_text():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine)
         with sessions() as session:
             session.add_all(

@@ -17,8 +17,7 @@ from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.oauth import OAuthService
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
 from shortlist.server.assistant_auth.verifier import AssistantTokenVerifier
-from shortlist.server.db.models import Base
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.mark.skipif(not hasattr(time, "tzset"), reason="process timezone switching requires tzset")
@@ -27,7 +26,7 @@ from tests.db_helpers import disposing_engine
 @pytest.mark.parametrize("expired", [False, True], ids=["future", "expired"])
 def test_sqlite_expiry_keeps_utc_meaning_through_sdk_guard(tmp_path, monkeypatch, timezone, credential_kind, expired):
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'auth.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         repository = AssistantAuthRepository(sessionmaker(bind=engine), CredentialHasher(b"t" * 32))
         resource = "https://shortlist.example/mcp"
         issuer = "https://shortlist.example/assistant/oauth"

@@ -19,9 +19,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
-from shortlist.server.db.models import Base, Collection, Delivery, PickRow, User
+from shortlist.server.db.models import Collection, Delivery, PickRow, User
 from shortlist.server.services.run_persistence import live_pick_ids, reconcile_watched
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 from tests.watch_fixtures import personal_delivery
 
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
@@ -75,7 +75,7 @@ class TestIsFinished:
 @pytest.fixture
 def sessions():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

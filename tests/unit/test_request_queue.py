@@ -13,10 +13,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType, MissingTitle, RequestOutcome, RequestReport
-from shortlist.server.db.models import Base, RequestCandidate
+from shortlist.server.db.models import RequestCandidate
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.run_service import RunService
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @contextmanager
@@ -450,7 +450,7 @@ class TestOneRowPerTitleHolds:
     @settings(max_examples=300, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_no_report_shape_can_break_the_persist(self, pre, queued, sent, present):
         with disposing_engine(create_engine("sqlite://")) as engine:
-            Base.metadata.create_all(engine)
+            create_schema(engine)
             sessions = sessionmaker(engine)
             with sessions() as s:
                 for (tmdb_id, media_type), status in {k: v for k, v in pre}.items():

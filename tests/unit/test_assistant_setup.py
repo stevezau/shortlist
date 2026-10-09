@@ -8,8 +8,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from shortlist.server.assistant.setup_adapter import SetupAdapter, ThemeRowIntent
-from shortlist.server.db.models import Base, Collection, Theme
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import Collection, Theme
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def intent():
@@ -29,7 +29,7 @@ def test_setup_requires_new_inactive_unscheduled_row():
 
 def test_setup_prepare_is_pure_and_apply_rolls_back_both_objects():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         adapter = SetupAdapter(SimpleNamespace(secrets=None))
         with Session(engine) as session:
             plan = adapter.prepare(session, intent())
@@ -51,7 +51,7 @@ def test_setup_prepare_is_pure_and_apply_rolls_back_both_objects():
 
 def test_setup_can_pause_future_topups_atomically_with_saved_theme():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         adapter = SetupAdapter(SimpleNamespace(secrets=None))
         definition = intent()
         definition["row"]["values"]["ai_paused"] = True

@@ -19,7 +19,6 @@ from shortlist.server.assistant_auth import AuthorizationDenied, GrantConstraint
 from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Job,
     RowDeliverySnapshot,
@@ -31,13 +30,13 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services.row_mutations import create_row_in_session, delete_row_in_session
 from shortlist.server.services.secrets import SecretBox
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
 def row_identity_world(tmp_path):
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'row-identity.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path))
         body = CollectionIn(
@@ -241,7 +240,7 @@ def test_personal_history_reservation_matches_exact_slug_keys(suffix):
     from shortlist.server.api.collections import _unique_slug
 
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine)
         slug = f"history_{suffix}"
         with sessions() as session:

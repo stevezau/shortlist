@@ -18,7 +18,6 @@ from sqlalchemy.orm import sessionmaker
 from shortlist.engine.clients.plex_pms import PlayEvent
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Delivery,
     PickRow,
@@ -39,7 +38,7 @@ from shortlist.server.services.watch_events import (
     tmdb_by_rating_key,
 )
 from tests.conftest import freeze_clock
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
@@ -57,7 +56,7 @@ def _report_read_at(monkeypatch):
 @pytest.fixture
 def sessions():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

@@ -11,7 +11,6 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.delivery import apply_poster, render_poster_text
 from shortlist.engine.models import LABEL_PREFIX, PosterSpec, UserProfile, UserType
-from shortlist.server.db.models import Base
 from shortlist.server.services.poster_service import (
     PosterStudio,
     clear_assets,
@@ -21,7 +20,7 @@ from shortlist.server.services.poster_service import (
     poster_seed,
     store_upload,
 )
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def _profile(name: str = "Alex") -> UserProfile:
@@ -243,7 +242,7 @@ class TestImageProviderStatus:
 @pytest.fixture
 def sessions():
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         yield sessionmaker(engine)
 
 

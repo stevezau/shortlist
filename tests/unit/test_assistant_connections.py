@@ -10,14 +10,14 @@ from sqlalchemy.orm import sessionmaker
 from shortlist.server.assistant.connections import ConnectionService
 from shortlist.server.assistant_auth import AuthorizationDenied, Capability, GrantConstraints, GrantContext, GrantPreset
 from shortlist.server.assistant_auth.models import AssistantGrant
-from shortlist.server.db.models import Base, CacheRow, Server, Setting
-from tests.db_helpers import disposing_engine
+from shortlist.server.db.models import CacheRow, Server, Setting
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
 def connections(principal):
     with disposing_engine(create_engine("sqlite://")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         state = SimpleNamespace(
             sessions=sessionmaker(engine),
             secrets=None,

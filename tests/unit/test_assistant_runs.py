@@ -8,15 +8,15 @@ from sqlalchemy.orm import sessionmaker
 
 from shortlist.server.assistant.changes import ChangeError
 from shortlist.server.assistant.run_adapter import RunAdapter, RunIntent
-from shortlist.server.db.models import Base, Collection, Theme, User
+from shortlist.server.db.models import Collection, Theme, User
 from shortlist.server.services.run_service import RunService
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 
 @pytest.fixture
 def run_env(tmp_path):
     with disposing_engine(create_engine(f"sqlite:///{tmp_path / 'runs.db'}")) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(engine, expire_on_commit=False)
         with sessions() as session:
             session.add(User(id=1, plex_account_id=11, slug="alice", username="alice", enabled=True))

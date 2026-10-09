@@ -13,9 +13,8 @@ from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantP
 from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.oauth import OAuthService
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
-from shortlist.server.db.models import Base
 from tests.assistant_oauth import authorize, exchange_code, issue_pair, pkce_challenge, refresh
-from tests.db_helpers import disposing_engine
+from tests.db_helpers import create_schema, disposing_engine
 
 # Authlib stamps expiry from the wall clock, so the fixture time must be the real now.
 NOW = datetime.now(UTC)
@@ -32,7 +31,7 @@ def _service(tmp_path: Path) -> Iterator[OAuthService]:
     with disposing_engine(
         create_engine(f"sqlite:///{tmp_path / 'oauth.db'}", connect_args={"check_same_thread": False})
     ) as engine:
-        Base.metadata.create_all(engine)
+        create_schema(engine)
         sessions = sessionmaker(bind=engine, expire_on_commit=False)
         repository = AssistantAuthRepository(sessions, CredentialHasher(b"o" * 32))
         repository.register_oauth_client(
