@@ -67,7 +67,7 @@ Set it up under **Settings → Defaults → Requests**:
 Tags come in three layers, and a requested title carries the union of all that apply:
 
 - **Global** (above) — added to everything Shortlist requests.
-- **Per person** — on a user's detail page, a **Request tag** field tags titles requested because
+- **Per person** — on a user's detail page, **Tag Shortlist adds** tags titles requested because
   that person wanted them (e.g. `sarah`), so you can route their picks to their own folder or rules.
 - **Per row** — in a per-person row's editor, a **Request tag** field tags titles requested for
   anyone in that row's audience (e.g. `picked-for-family`). Shared "popular on this server" rows
@@ -441,7 +441,7 @@ open **Use my own tags** in the editor and give the row a **tag pattern** such a
 `{username}` is their Plex username, `{name}` their name in Shortlist. Matching ignores case, and
 spaces count as dashes, which is how Radarr and Sonarr store a tag. Press **Check** to see every tag
 the pattern (or Overseerr) matched and who it belongs to, before anything is saved. For a tag that
-fits no pattern, a person's own page has **Their request tag in Radarr/Sonarr**, which credits that
+fits no pattern, a person's own page has **Tag their requests already carry**, which credits that
 one tag to them. Overseerr's tags are still read alongside either. Titles Shortlist requested itself —
 carrying its own request tag, or filed by the **Request as** account in Overseerr — never count as
 anyone's request.

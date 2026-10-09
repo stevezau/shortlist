@@ -42,6 +42,9 @@
     /* The coffee link's cup. Pink, near GitHub Sponsors' heart: the one hue here that carries no
        status meaning (red is an error, green is OK, amber a warning or the brand). */
     --support: 330 70% 68%;
+    /* The dashboard's data series (bars, count lines). Sky blue because it is the one hue free of
+       status meaning: green is OK, amber the brand or a warning, red an error, pink support. */
+    --chart: 205 75% 62%;
     --border: 240 5% 17%;
     /* A firmer edge for controls that must read as controls (outline buttons, segment groups). */
     --border-strong: 240 5% 24%;

@@ -116,7 +116,8 @@ export function UserDetailBody({ user }: { user: User }) {
             <section className="space-y-3">
               <UserNickname user={user} />
             </section>
-            <section className="space-y-3">
+            <section aria-labelledby="user-tags-heading" className="space-y-3">
+              <h2 id="user-tags-heading" className="text-lg font-semibold">Sonarr and Radarr tags</h2>
               <UserRequestTag user={user} />
               <UserRequestedByTag user={user} />
             </section>

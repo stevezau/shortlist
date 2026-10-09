@@ -57,7 +57,7 @@ depth just for them. Opening a person shows their recent watch history (distinct
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
 
-A person's Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
+A person's Settings tab groups **Nickname**, **Sonarr and Radarr tags**, **Plex sharing** and **Blocked titles**
 into labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also
 renames existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history
 but stops it shaping recommendations, and you can unblock it from the same section.

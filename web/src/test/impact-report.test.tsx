@@ -61,7 +61,7 @@ function renderReport() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <ImpactReport />
@@ -270,6 +270,23 @@ describe("ImpactReport", () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText("My Faves")).toBeTruthy();
     expect(screen.getByText("TV Shows")).toBeTruthy(); // the library badge on the plain-named row
+  });
+
+  it("remembers By row across a remount", async () => {
+    const first = renderReport();
+    await userEvent.click(await screen.findByRole("button", { name: "By row" }));
+    expect(localStorage.getItem("shortlist.dashboard.whoWatching")).toBe("row");
+    first.unmount();
+
+    renderReport();
+    expect(await screen.findByRole("button", { name: "By row" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "By person" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("falls back to By person when the stored choice is unknown", async () => {
+    localStorage.setItem("shortlist.dashboard.whoWatching", "bogus");
+    renderReport();
+    expect(await screen.findByRole("button", { name: "By person" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("collapses to one 'What happens next' card the morning after the first run", async () => {

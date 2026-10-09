@@ -55,3 +55,29 @@ export function gridCell(account: AccountPrivacy, label: string, status: Privacy
   }
   return "unknown";
 }
+
+/** How many rows fall in each {@link GridCell} kind for one account. */
+export type AccountSummary = Record<GridCell, number>;
+
+/** One account's cells across every row on Plex, counted by kind. */
+export function accountSummary(account: AccountPrivacy, status: PrivacyStatus): AccountSummary {
+  const counts: AccountSummary = {
+    own: 0,
+    hidden: 0,
+    sees: 0,
+    stored_not_applied: 0,
+    refused: 0,
+    owner: 0,
+    left_alone: 0,
+    unknown: 0,
+  };
+  for (const label of status.rows_on_plex) counts[gridCell(account, label, status)] += 1;
+  return counts;
+}
+
+/** Whether an account can see rows that aren't theirs, or has a filter Shortlist cannot work with. */
+export function accountHasProblem(account: AccountPrivacy, status: PrivacyStatus): boolean {
+  if (account.state === "missing" || account.state === "unreadable_filter") return true;
+  const counts = accountSummary(account, status);
+  return counts.sees > 0 || counts.stored_not_applied > 0;
+}

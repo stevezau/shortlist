@@ -340,7 +340,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
                 hovered === t.week ? "bg-muted" : "hover:bg-muted/60",
               )}
             >
-              {/* Two segments of ONE neutral rather than two colours: finished and still-going are an
+              {/* Two segments of ONE hue rather than two colours: finished and still-going are an
                 ordered pair, not two categories, so intensity carries the order. The finished part
                 sits on the baseline where it can be compared across weeks by eye. `finished` is
                 bucketed by the same week key as `watched` (see report_service), so it can never
@@ -348,7 +348,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
               <div
                 className={cn(
                   "rounded-t transition-colors",
-                  hovered === t.week ? "bg-muted-foreground/60" : "bg-muted-foreground/40",
+                  hovered === t.week ? "bg-chart/45" : "bg-chart/30",
                 )}
                 style={{ height: `${columnPct - finishedPct}%` }}
               />
@@ -356,7 +356,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
                 className={cn(
                   "transition-colors",
                   finishedPct >= columnPct && "rounded-t",
-                  hovered === t.week ? "bg-foreground" : "bg-foreground/70",
+                  hovered === t.week ? "bg-chart" : "bg-chart/80",
                 )}
                 style={{ height: `${finishedPct}%` }}
               />
@@ -386,7 +386,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
  * Not a percentage of anything. The bar used to be a share of a 0–100% hit rate, so real values
  * (0–3%) were a one-pixel sliver on every row and the chart said nothing. Scaling to the list's own
  * maximum is what makes "Luke watched four times what Cassie did" visible at a glance. The bar is
- * neutral: amber marks the one action on a screen, not a data series.
+ * the chart hue: amber marks the one action on a screen, not a data series.
  */
 function CountLine({
   name,
@@ -434,7 +434,7 @@ function CountLine({
           )}
         </span>
       </div>
-      {/* The solid part is what got finished, the faded part what is still going: one neutral at two
+      {/* The solid part is what got finished, the faded part what is still going: one hue at two
           intensities because the two are ordered, and the finished part is anchored left so it can
           be compared down the list by eye. */}
       <div
@@ -442,9 +442,9 @@ function CountLine({
         className="mt-2 flex h-1 overflow-hidden rounded-full bg-secondary"
         aria-hidden="true"
       >
-        <div className="h-full bg-muted-foreground" style={{ width: `${max > 0 ? (finished / max) * 100 : 0}%` }} />
+        <div className="h-full bg-chart" style={{ width: `${max > 0 ? (finished / max) * 100 : 0}%` }} />
         <div
-          className="h-full bg-muted-foreground/40"
+          className="h-full bg-chart/30"
           style={{ width: `${max > 0 ? (Math.max(0, watched - finished) / max) * 100 : 0}%` }}
         />
       </div>
@@ -653,6 +653,17 @@ function ByRow({
   );
 }
 
+const WHO_WATCHING_KEY = "shortlist.dashboard.whoWatching";
+type WhoWatchingView = "person" | "row";
+
+function storedWhoWatchingView(): WhoWatchingView {
+  try {
+    return localStorage.getItem(WHO_WATCHING_KEY) === "row" ? "row" : "person";
+  } catch {
+    return "person";
+  }
+}
+
 /**
  * Who is watching: the people, or the rows, in one panel with a switch between them.
  *
@@ -661,7 +672,15 @@ function ByRow({
  * rather than like the bottom of a ranking.
  */
 function WhoIsWatching({ report, reportWindow }: { report: EffectivenessReport; reportWindow: ReportWindow }) {
-  const [view, setView] = useState<"person" | "row">("person");
+  const [view, setViewState] = useState<WhoWatchingView>(storedWhoWatchingView);
+  const setView = (next: WhoWatchingView) => {
+    setViewState(next);
+    try {
+      localStorage.setItem(WHO_WATCHING_KEY, next);
+    } catch {
+      // Nothing to remember it in; the choice holds for this visit.
+    }
+  };
   return (
     <Section
       title="Who’s watching"
@@ -918,8 +937,6 @@ function ReportBody({
           <WhoIsWatching report={report} reportWindow={reportWindow} />
         </div>
 
-        <NeedsALook report={report} reportWindow={reportWindow} />
-
         {/* The lists that grow get the full width, so their length never strands a card beside them. */}
         {report.top_titles.length > 0 && <MostWatched titles={report.top_titles} reportWindow={reportWindow} />}
 
@@ -928,6 +945,8 @@ function ReportBody({
         {(requests.sent > 0 || requests.pending > 0) && (
           <RequestsSummary requests={requests} reportWindow={reportWindow} />
         )}
+
+        <NeedsALook report={report} reportWindow={reportWindow} />
       </div>
     </div>
   );

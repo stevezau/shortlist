@@ -143,13 +143,17 @@ describe("the sharing page's four states", () => {
     expect(await screen.findByText(/no plex accounts to check/i)).toBeVisible();
   });
 
-  it("reports a healthy server as a grid of hidden cells, with the reading's time", async () => {
+  it("reports a healthy server as one line per account, with the reading's time", async () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "Who sees what" })).toBeVisible();
-    expect(screen.getByRole("columnheader", { name: "mike’s rows" })).toBeVisible();
+    expect(screen.getByText("Hides all 1 other row")).toBeVisible();
+    expect(screen.getByText(/one line per plex account, problems first\. read from plex.tv at \d/i)).toBeVisible();
+    // A clean account keeps its per-row cells behind a toggle.
+    expect(screen.queryByText("Hidden")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Show each row (1)" }));
+    expect(screen.getByText("mike’s rows")).toBeVisible();
     expect(screen.getByText("Hidden")).toBeVisible();
-    expect(screen.getByText(/read from plex.tv \d/i)).toBeVisible();
     expect(screen.queryByText(/every account hides/i)).toBeNull();
   });
 
@@ -165,11 +169,14 @@ describe("the sharing page's four states", () => {
     );
     renderPage();
 
-    const sarah = (await screen.findByRole("link", { name: "Sarah" })).closest("tr") as HTMLElement;
+    const sarah = (await screen.findByRole("link", { name: "Sarah" })).closest("li") as HTMLElement;
+    await userEvent.click(within(sarah).getByRole("button", { name: "Show each row (2)" }));
     expect(within(sarah).getByText("Own")).toBeVisible();
     expect(within(sarah).getByText("Hidden")).toBeVisible();
-    const steve = screen.getByText("Steve").closest("tr") as HTMLElement;
-    expect(within(steve).getAllByText("Sees all")).toHaveLength(2);
+    const steve = screen.getByText("Steve").closest("li") as HTMLElement;
+    expect(within(steve).getByText("Sees every row")).toBeVisible();
+    // Every cell would read "Sees all", so the owner gets the one-line verdict and no per-row list.
+    expect(within(steve).queryByRole("button", { name: /Show each row/ })).toBeNull();
   });
 });
 
@@ -229,7 +236,9 @@ describe("what the page refuses to claim", () => {
 
     renderPage();
 
+    // An account that sees rows has its per-row cells open without a click.
     expect(await screen.findAllByText("Sees it")).toHaveLength(2);
+    expect(screen.getByText("Sees 2 rows that aren’t theirs")).toBeVisible();
     expect(screen.getByText(/missing hide rules/i)).toBeVisible();
     expect(screen.getByText(/next run merges them back in/i)).toBeVisible();
   });
@@ -246,7 +255,7 @@ describe("what the page refuses to claim", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Sees all")).toBeVisible();
+    expect(await screen.findByText("Sees every row")).toBeVisible();
     expect(screen.getByText("Plex limit", { selector: "span.rounded-full" })).toBeVisible();
     expect(screen.queryByText(/missing hide rules/i)).toBeNull();
   });
@@ -305,7 +314,8 @@ describe("what the page refuses to claim", () => {
     // The profile reads as its name, and "How →" leads to the page that walks through the fix.
     expect(screen.getByText(/Restriction Profile Older Kid/)).toBeInTheDocument();
     expect(within(note).getByRole("link", { name: /How/ })).toHaveAttribute("href", "/users/7");
-    expect(within(screen.getByRole("table")).queryByText(/collection/i)).toBeNull();
+    expect(within(screen.getByRole("list", { name: "Plex accounts" })).queryByText(/collection/i)).toBeNull();
+    expect(screen.getByText("Sees 3 rows that aren’t theirs")).toBeVisible();
     // The explanation is not repeated in a banner above the grid.
     expect(screen.getAllByText(/restriction profiles/i)).toHaveLength(1);
   });
@@ -321,7 +331,9 @@ describe("what the page refuses to claim", () => {
     renderPage();
 
     expect(await screen.findByText("Rule stored, not applied")).toBeVisible();
+    expect(screen.getByText("1 rule stored, not applied")).toBeVisible();
     expect(screen.queryByText("Hidden")).toBeNull();
+    expect(screen.queryByText(/hides all/i)).toBeNull();
   });
 
   it("shows the account's own filter conditions, so rule 3's preservation is visible", async () => {
@@ -520,9 +532,102 @@ describe("the account lines", () => {
     );
     renderPage();
 
-    const sarah = (await screen.findByRole("link", { name: "sarah" })).closest("tr") as HTMLElement;
+    const sarah = (await screen.findByRole("link", { name: "sarah" })).closest("li") as HTMLElement;
     expect(within(sarah).getByText("Shared")).toBeVisible();
-    const jess = screen.getByRole("link", { name: "jess" }).closest("tr") as HTMLElement;
+    const jess = screen.getByRole("link", { name: "jess" }).closest("li") as HTMLElement;
     expect(within(jess).getByText("Managed")).toBeVisible();
+  });
+});
+
+describe("the account list's order and summaries", () => {
+  it("puts an account with a problem first, then the rest in the order given", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      status({
+        summary: "missing",
+        rows_on_plex: ["shortlist_mike", "shortlist_dan"],
+        accounts: [
+          account({ display_name: "Anna", account_id: 1, hides: ["shortlist_mike", "shortlist_dan"] }),
+          account({ display_name: "Ben", account_id: 2, hides: ["shortlist_mike", "shortlist_dan"] }),
+          account({ display_name: "Cara", account_id: 3, state: "missing", hides: [], missing: ["shortlist_mike"] }),
+        ],
+      }),
+    );
+
+    renderPage();
+
+    const list = await screen.findByRole("list", { name: "Plex accounts" });
+    const names = within(list)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(names).toEqual(["Cara", "Anna", "Ben"]);
+  });
+
+  it("says what each account does with other people's rows, once", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      status({
+        summary: "missing",
+        rows_on_plex: ["shortlist_mike", "shortlist_dan", "shortlist_ann"],
+        accounts: [
+          account({ display_name: "Anna", account_id: 1, hides: ["shortlist_mike", "shortlist_dan", "shortlist_ann"] }),
+          account({
+            display_name: "Cara",
+            account_id: 3,
+            state: "missing",
+            hides: ["shortlist_ann"],
+            missing: ["shortlist_mike", "shortlist_dan"],
+          }),
+        ],
+      }),
+    );
+
+    renderPage();
+
+    const anna = (await screen.findByRole("link", { name: "Anna" })).closest("li") as HTMLElement;
+    expect(within(anna).getByText("Hides all 3 other rows")).toBeVisible();
+    const cara = screen.getByRole("link", { name: "Cara" }).closest("li") as HTMLElement;
+    expect(within(cara).getByText("Sees 2 rows that aren’t theirs")).toBeVisible();
+    expect(within(cara).queryByText(/hides all/i)).toBeNull();
+  });
+
+  it("opens an exposed account's rows by default, non-hidden first, and keeps a clean one's closed", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      status({
+        summary: "missing",
+        rows_on_plex: ["shortlist_mike", "shortlist_dan"],
+        accounts: [
+          account({ display_name: "Anna", account_id: 1, hides: ["shortlist_mike", "shortlist_dan"] }),
+          account({ display_name: "Cara", account_id: 3, state: "missing", hides: ["shortlist_mike"], missing: ["shortlist_dan"] }),
+        ],
+      }),
+    );
+
+    renderPage();
+
+    const cara = (await screen.findByRole("link", { name: "Cara" })).closest("li") as HTMLElement;
+    const toggle = within(cara).getByRole("button", { name: "Hide each row (2)" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const cells = within(cara)
+      .getAllByRole("listitem")
+      .map((item) => item.textContent);
+    expect(cells).toEqual(["dan’s rowsSees it", "mike’s rowsHidden"]);
+
+    const anna = screen.getByRole("link", { name: "Anna" }).closest("li") as HTMLElement;
+    expect(within(anna).getByRole("button", { name: "Show each row (2)" })).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(within(anna).getByRole("button", { name: "Show each row (2)" }));
+    expect(within(anna).getAllByText("Hidden")).toHaveLength(2);
+  });
+
+  it("never says an account hides everything when one of its rows was not checked", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      status({
+        rows_on_plex: ["shortlist_mike", "shortlist_dan"],
+        accounts: [account({ hides: ["shortlist_mike"] })],
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText("Hides 1 other row · 1 not checked")).toBeVisible();
+    expect(screen.queryByText(/hides all/i)).toBeNull();
   });
 });

@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { settingBool } from "@/lib/format";
 import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
-import { type GridCell, gridCell, rowColumnName } from "@/lib/privacy-grid";
+import { type GridCell, accountHasProblem, accountSummary, gridCell, rowColumnName } from "@/lib/privacy-grid";
 import { usePrivacyStatus, useSaveSettings, useSettings, useStartRun } from "@/lib/queries";
 import type { AccountPrivacy, PrivacyStatus } from "@/lib/types";
 import { USER_TYPE_LABEL, profileLabel } from "@/lib/user-profile";
@@ -400,58 +400,77 @@ function Cell({ kind }: { kind: GridCell }) {
   }
 }
 
+/** The one-line answer for an account, from its cell counts. Nothing reads as hiding while any cell says otherwise. */
+function AccountSummaryLine({ account, data }: { account: AccountPrivacy; data: PrivacyStatus }) {
+  const muted = "text-sm text-muted-foreground";
+  if (account.state === "owner") return <span className={muted}>Sees every row</span>;
+  if (account.state === "left_alone") return <span className={muted}>Left alone</span>;
+  if (account.state === "unknown") return <span className={muted}>Not checked</span>;
+
+  const counts = accountSummary(account, data);
+  if (counts.sees > 0) {
+    return (
+      <Badge variant="warning" className="font-semibold">
+        Sees {counts.sees} {counts.sees === 1 ? "row" : "rows"} that aren’t theirs
+      </Badge>
+    );
+  }
+  if (counts.stored_not_applied > 0) {
+    return (
+      <Badge variant="warning" className="font-semibold">
+        {counts.stored_not_applied} {counts.stored_not_applied === 1 ? "rule" : "rules"} stored, not applied
+      </Badge>
+    );
+  }
+  if (counts.refused > 0) return <span className={muted}>Rule refused by Plex</span>;
+  if (counts.hidden === 0) {
+    return <span className={muted}>{counts.unknown > 0 ? "Not checked" : "No other rows to hide"}</span>;
+  }
+  return (
+    <span className={cn(muted, "inline-flex items-center gap-1.5")}>
+      <EyeOff className="size-4 shrink-0" aria-hidden="true" />
+      {counts.unknown > 0
+        ? `Hides ${counts.hidden} other ${counts.hidden === 1 ? "row" : "rows"} · ${counts.unknown} not checked`
+        : `Hides all ${counts.hidden} other ${counts.hidden === 1 ? "row" : "rows"}`}
+    </span>
+  );
+}
+
 /**
- * Who sees what: accounts down the side, every per-person row on the server across the top.
+ * Who sees what: one line per account, problems first.
  *
  * Counts ROWS, the owner's unit (one per person however many libraries it spans). Collections, one
- * per library, are a different and larger number and are not shown here. One table at every width:
- * on a phone each account is a block and each cell carries its own row name.
+ * per library, are a different and larger number and are not shown here. A server has dozens of
+ * accounts and dozens of rows, so a grid of both cannot fit; each account says its verdict once and
+ * keeps the per-row cells behind a toggle.
  */
 function AccountsGrid({ data }: { data: PrivacyStatus }) {
-  const rows = data.rows_on_plex;
+  const problems = data.accounts.filter((account) => accountHasProblem(account, data));
+  const rest = data.accounts.filter((account) => !accountHasProblem(account, data));
+  const readAt = new Date(data.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle role="heading" aria-level={2}>
           Who sees what
         </CardTitle>
-        <CardDescription>One line per Plex account. Every row on the server is a column.</CardDescription>
+        <CardDescription>One line per Plex account, problems first. Read from plex.tv at {readAt}.</CardDescription>
       </CardHeader>
-      <div className="overflow-x-auto">
-        <table className="block w-full md:table">
-          <thead className="hidden md:table-header-group">
-            <tr>
-              <th scope="col" className="w-[300px] px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-faint-foreground">
-                Account
-              </th>
-              {rows.map((label) => (
-                <th
-                  key={label}
-                  scope="col"
-                  className="min-w-28 px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-faint-foreground"
-                >
-                  {rowColumnName(label, data.accounts)}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          {/* One body per account, so an account's explanation can be a row of its own beneath it. */}
-          {data.accounts.map((account) => (
-            <tbody
-              key={account.account_id}
-              className="block border-t first:border-t-0 md:table-row-group md:first-of-type:border-t-0"
-            >
-              <AccountRow account={account} data={data} rows={rows} />
-            </tbody>
-          ))}
-        </table>
-      </div>
+      <ul aria-label="Plex accounts">
+        {[...problems, ...rest].map((account) => (
+          <AccountRow key={account.account_id} account={account} data={data} />
+        ))}
+      </ul>
     </Card>
   );
 }
 
-function AccountRow({ account, data, rows }: { account: AccountPrivacy; data: PrivacyStatus; rows: string[] }) {
-  const [open, setOpen] = useState(false);
+function AccountRow({ account, data }: { account: AccountPrivacy; data: PrivacyStatus }) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  // null = follow the default: open when this account sees something, so an exposure never hides behind a toggle.
+  const [rowsToggled, setRowsToggled] = useState<boolean | null>(null);
+  const counts = accountSummary(account, data);
+  const rowsOpen = rowsToggled ?? (counts.sees > 0 || counts.stored_not_applied > 0);
   const exposed = rowsNotHidden(account, data);
   const note = accountNote(account, exposed);
   // Where Plex refuses hide rules, the person's own page walks through the two-step fix in Plex.
@@ -464,18 +483,19 @@ function AccountRow({ account, data, rows }: { account: AccountPrivacy; data: Pr
         </Link>
       </>
     ) : null;
-  const noteLine = note && (
-    <p className={cn("text-sm", note.tone)}>
-      {note.text}
-      {fixLink}
-    </p>
-  );
+  const rows = data.rows_on_plex
+    .map((label) => ({ label, kind: gridCell(account, label, data) }))
+    .sort((a, b) => Number(a.kind === "hidden") - Number(b.kind === "hidden"));
+  // The owner, a left-alone account and an unread one say the same thing for every row, so a list
+  // of 46 identical cells adds nothing.
+  const perRow = rows.length > 0 && !["owner", "left_alone", "unknown"].includes(account.state);
+  const linkButton =
+    "text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none";
 
   return (
-    <>
-    <tr className={cn("block px-6 pt-4 md:table-row md:p-0", !noteLine && "pb-4")}>
-      <th scope="row" className="block w-[300px] max-w-full px-0 text-left font-normal md:table-cell md:px-6 md:py-4 md:align-top">
-        <div className="flex items-start gap-3">
+    <li className="space-y-2 border-t px-6 py-3 first:border-t-0">
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+        <div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
           <UserAvatar name={account.display_name} />
           <div className="min-w-0">
             <p className="font-semibold">
@@ -511,55 +531,65 @@ function AccountRow({ account, data, rows }: { account: AccountPrivacy; data: Pr
                 page for a reliable answer.
               </p>
             )}
-            <p className="mt-1 text-xs text-faint-foreground">
-              read from plex.tv {new Date(data.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </p>
+          </div>
+        </div>
+        {/* The verdict and the toggles share a column beside the name, so a healthy account is one
+            line tall: with 48 accounts, a line of toggles under each made the page 5,700px. */}
+        <div className="flex shrink-0 flex-col gap-1 sm:items-end">
+          <AccountSummaryLine account={account} data={data} />
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
             {account.other_conditions.length > 0 && (
-              <div className="mt-2">
-                <button
-                  type="button"
-                  onClick={() => setOpen((value) => !value)}
-                  aria-expanded={open}
-                  className="text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
-                >
-                  {open ? "Hide" : "Show"} their own filters ({account.other_conditions.length})
-                </button>
-                {open && (
-                  <ul className="mt-1 space-y-0.5">
-                    {/* Indexed key: a filter can legitimately repeat a condition string, and two
-                        identical keys make React drop one of them — on the list whose whole job is to
-                        show the owner that we preserved their filters exactly. */}
-                    {account.other_conditions.map((condition, index) => (
-                      <li key={`${index}-${condition}`} className="break-all font-mono text-xs text-muted-foreground">
-                        {condition}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((value) => !value)}
+                aria-expanded={filtersOpen}
+                className={linkButton}
+              >
+                {filtersOpen ? "Hide" : "Show"} their own filters ({account.other_conditions.length})
+              </button>
+            )}
+            {perRow && (
+              <button
+                type="button"
+                onClick={() => setRowsToggled(!rowsOpen)}
+                aria-expanded={rowsOpen}
+                className={linkButton}
+              >
+                {rowsOpen ? "Hide" : "Show"} each row ({rows.length})
+              </button>
             )}
           </div>
         </div>
-      </th>
-      {rows.map((label) => (
-        <td
-          key={label}
-          className="flex items-center justify-between gap-3 border-t py-2 first-of-type:mt-3 md:table-cell md:border-t-0 md:px-3 md:py-4 md:align-top"
-        >
-          <span className="text-sm md:hidden">{rowColumnName(label, data.accounts)}</span>
-          <Cell kind={gridCell(account, label, data)} />
-        </td>
-      ))}
-    </tr>
-    {/* Its own full-width row: in the 300px Account column the explanation wrapped to seven lines. */}
-    {noteLine && (
-      <tr className="block px-6 pb-4 md:table-row md:p-0">
-        <td colSpan={rows.length + 1} className="block max-w-3xl md:table-cell md:max-w-none md:pb-4 md:pl-[4.75rem] md:pr-6">
-          {noteLine}
-        </td>
-      </tr>
-    )}
-    </>
+      </div>
+      {note && (
+        <p className={cn("max-w-3xl text-sm", note.tone)}>
+          {note.text}
+          {fixLink}
+        </p>
+      )}
+      {filtersOpen && (
+        <ul className="space-y-0.5">
+          {/* Indexed key: a filter can legitimately repeat a condition string, and two
+              identical keys make React drop one of them — on the list whose whole job is to
+              show the owner that we preserved their filters exactly. */}
+          {account.other_conditions.map((condition, index) => (
+            <li key={`${index}-${condition}`} className="break-all font-mono text-xs text-muted-foreground">
+              {condition}
+            </li>
+          ))}
+        </ul>
+      )}
+      {perRow && rowsOpen && (
+        <ul className="grid gap-x-6 gap-y-2 pt-1 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.map(({ label, kind }) => (
+            <li key={label} className="flex items-center justify-between gap-3 border-t pt-2 text-sm">
+              <span className="min-w-0">{rowColumnName(label, data.accounts)}</span>
+              <Cell kind={kind} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 

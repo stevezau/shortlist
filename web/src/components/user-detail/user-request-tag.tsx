@@ -8,11 +8,11 @@ export function UserRequestTag({ user }: { user: User }) {
       user={user}
       field="request_tag"
       id="user-request-tag"
-      label="Request tag (optional)"
+      label="Tag Shortlist adds"
       placeholder="e.g. sarah"
       maxLength={64}
       errorText="Couldn’t save this tag. Try again."
-      help="Added in Sonarr/Radarr to titles Shortlist requests for this person, alongside your global and row tags. Leave blank for none."
+      help="Added to titles Shortlist requests for them, alongside your global and row tags. Leave blank for none."
     />
   );
 }

@@ -74,7 +74,9 @@ is the server owner. Everything on this page, and what each switch does to Plex 
 ## Privacy
 
 A status strip, then a ledger with one line per Plex account that says what plex.tv just reported for
-it. **Read again** and **Verify now** re-check on demand. The **Policy** panel holds **Disabled users
+it, accounts with a problem first. Each line gives one verdict, such as "Hides all 45 other rows" or
+"Sees 2 rows that aren't theirs"; **Show each row** lists every row for that account, and opens by
+itself when the account can see a row that isn't theirs. **Read again** and **Verify now** re-check on demand. The **Policy** panel holds **Disabled users
 see nothing**, which used to be in Settings, Advanced. It saves as you flip it and applies on the next
 run. The page reports only what it read; it does not claim anything about the Collections tab or
 Related shelves.
@@ -297,7 +299,7 @@ choice.
 It replaced a rate over every title ever _shown_, which stayed under 1% whether Shortlist worked or
 not: a row of 20 to 30 titles is mostly titles nobody will watch.
 
-**By person / By row** — counts, not percentages, sorted by what was actually watched, with the
+**By person / By row** — the page remembers which one you picked, in this browser. Counts, not percentages, sorted by what was actually watched, with the
 finished count beside each. At these sample sizes a percentage is noise: ranking by one put a person
 with `1/31` above a person with `3/103`. Sorting stays on watched deliberately — ranking on finished
 would bury every TV row under every movie row, which says more about the medium than about the row. People and rows with nothing in the window fold away behind a disclosure rather than filling
@@ -310,7 +312,7 @@ removes those picks from every total that counts them, here and on each person's
 undone. Rows that still exist are never affected, whichever slug is named: Shortlist recomputes what is
 eligible on the server rather than trusting the request.
 
-**Requests** sits under **Worth a look**: how many titles were sent to be downloaded in the window,
+**Requests** sits just above **Worth a look**, which closes the page: how many titles were sent to be downloaded in the window,
 how many of those were watched since, and how many are waiting for your approval, with a link to each.
 
 **Most watched** is a shelf of posters: the titles with the most watchers in the window, each with its

@@ -258,24 +258,32 @@ describe("an active person's page", () => {
 });
 
 describe("GroupedPicks", () => {
-  it("groups by the seed each pick came from, not once per pick", () => {
+  it("keeps rank order across seeds and gives each poster its own reason", () => {
     render(
       <GroupedPicks
         collapseAfter={10}
         picks={[
           pick(1),
-          pick(2),
-          pick(3, { seed_title: "Breaking Bad" }),
+          pick(2, { seed_title: "Breaking Bad" }),
+          pick(3),
           pick(4, { seed_title: null }),
         ]}
       />,
     );
 
-    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
-      "Because you watched GoodFellas",
-      "Because you watched Breaking Bad",
-      "Also picked",
+    expect(screen.queryByRole("heading", { level: 3 })).toBeNull();
+    const cards = screen.getAllByRole("listitem");
+    expect(cards.map((c) => c.textContent)).toEqual([
+      expect.stringContaining("Title 1"),
+      expect.stringContaining("Title 2"),
+      expect.stringContaining("Title 3"),
+      expect.stringContaining("Title 4"),
     ]);
+    expect(cards[0]).toHaveTextContent("Because you watched GoodFellas");
+    expect(cards[1]).toHaveTextContent("Because you watched Breaking Bad");
+    expect(cards[2]).toHaveTextContent("Because you watched GoodFellas");
+    expect(cards[3]).not.toHaveTextContent("Because you watched");
+    expect(screen.queryByText("Also picked")).toBeNull();
   });
 
   it("collapses to the first N and expands on request", async () => {

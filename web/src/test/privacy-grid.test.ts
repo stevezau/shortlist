@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { gridCell, rowColumnName } from "@/lib/privacy-grid";
+import { accountHasProblem, accountSummary, gridCell, rowColumnName } from "@/lib/privacy-grid";
 import type { AccountPrivacy, PrivacyStatus } from "@/lib/types";
 
 function account(overrides: Partial<AccountPrivacy> = {}): AccountPrivacy {
@@ -97,5 +97,46 @@ describe("rowColumnName", () => {
   it("uses the display name of the account the label belongs to, else the slug", () => {
     expect(rowColumnName("shortlist_sarah", [account()])).toBe("Sarah’s rows");
     expect(rowColumnName("shortlist_mike", [account()])).toBe("mike’s rows");
+  });
+});
+
+describe("accountSummary", () => {
+  const rows = ["shortlist_mike", "shortlist_dan", "shortlist_sarah"];
+
+  it("counts a clean account's other rows as hidden and its own as own", () => {
+    const s = { ...status(), rows_on_plex: rows };
+    const a = account({ hides: ["shortlist_mike", "shortlist_dan"] });
+    expect(accountSummary(a, s)).toMatchObject({ hidden: 2, own: 1, sees: 0, unknown: 0 });
+    expect(accountHasProblem(a, s)).toBe(false);
+  });
+
+  it("counts the rows an account sees", () => {
+    const s = { ...status(), rows_on_plex: rows };
+    const a = account({ state: "missing", hides: [], missing: ["shortlist_mike", "shortlist_dan"] });
+    expect(accountSummary(a, s)).toMatchObject({ sees: 2, hidden: 0, own: 1 });
+    expect(accountHasProblem(a, s)).toBe(true);
+  });
+
+  it("counts a row in neither list as unknown, never hidden", () => {
+    const s = { ...status(), rows_on_plex: rows };
+    const a = account({ hides: ["shortlist_mike"] });
+    expect(accountSummary(a, s)).toMatchObject({ hidden: 1, unknown: 1 });
+  });
+
+  it("counts stored-but-ignored rules as a problem", () => {
+    const s = { ...status({ measured: true, not_enforced: { sarah: [1] } }), rows_on_plex: rows };
+    const a = account({ hides: ["shortlist_mike", "shortlist_dan"] });
+    expect(accountSummary(a, s).stored_not_applied).toBe(2);
+    expect(accountHasProblem(a, s)).toBe(true);
+  });
+
+  it("flags an unreadable filter even with no rows to count", () => {
+    expect(accountHasProblem(account({ state: "unreadable_filter" }), status())).toBe(true);
+  });
+
+  it("does not call the owner or a left-alone account a problem", () => {
+    const s = { ...status(), rows_on_plex: rows };
+    expect(accountHasProblem(account({ state: "owner" }), s)).toBe(false);
+    expect(accountHasProblem(account({ state: "left_alone" }), s)).toBe(false);
   });
 });
