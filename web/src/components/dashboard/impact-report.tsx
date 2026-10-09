@@ -5,7 +5,6 @@ import { Link } from "react-router";
 import { NeedsALook, WHY_GAVE_UP } from "@/components/dashboard/engagement";
 import { panelRowClass, ReportPanel } from "@/components/dashboard/report-panel";
 import { QueryBoundary } from "@/components/query-boundary";
-import { TitleLinkIcons } from "@/components/title-link-icons";
 import { TitlePoster } from "@/components/title-poster";
 import { UserAvatar } from "@/components/user-avatar";
 import { Why } from "@/components/why";
@@ -13,15 +12,18 @@ import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ReportSkeleton } from "@/components/dashboard/report-skeleton";
-import { formatDate, timeAgo, weekStarting } from "@/lib/format";
+import { nextRowRun } from "@/lib/dashboard-status";
+import { formatDate, timeAgo, timeUntil, weekStarting } from "@/lib/format";
 import {
   useClearDeletedRows,
   useDeletedRows,
   useReport,
+  useSchedule,
   useSyncWatched,
 } from "@/lib/queries";
 import type { EffectivenessReport, ReportWindow } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { dayTime } from "@/lib/when";
 
 const WINDOW_OPTIONS: { value: ReportWindow; label: string }[] = [
   { value: "7", label: "7 days" },
@@ -73,46 +75,13 @@ function WatchSyncButton() {
   );
 }
 
-/**
- * The viewing share as text, computed from the counts rather than the pre-rounded ratio.
- *
- * Never "0.0%" while something came from a row: a share too small to show at one decimal is "<0.1%",
- * because a zero and a very small number say opposite things about whether the setup works.
- */
-function sharePercent(
-  share: EffectivenessReport["overall"]["viewing_share"],
-): string {
-  if (share.watched === 0) return "\u2014";
-  const pct = (share.from_rows / share.watched) * 100;
-  if (pct > 0 && pct < 0.05) return "<0.1%";
-  return `${pct.toFixed(1)}%`;
-}
-
-/** One inline figure: what it is, the value, and at most a line or two under it. */
-function Stat({
-  label,
-  children,
-  sub,
-  size = "lg",
-}: {
-  label: string;
-  children: ReactNode;
-  sub?: ReactNode;
-  /** `md` for a figure that is a state in words (the watch sync), not a count. */
-  size?: "lg" | "md";
-}) {
+/** One cell of the Impact strip: what it is, the figure, and one line under it. */
+function Stat({ label, children, sub }: { label: string; children: ReactNode; sub?: ReactNode }) {
   return (
-    <div className="min-w-0">
-      <p className="text-[13px] text-muted-foreground">{label}</p>
-      <div
-        className={cn(
-          "mt-0.5 font-semibold leading-tight tabular-nums",
-          size === "lg" ? "text-[22px]" : "pt-1 text-[15px] font-medium",
-        )}
-      >
-        {children}
-      </div>
-      {sub && <div className="mt-1 space-y-0.5 text-[13px] leading-snug text-muted-foreground">{sub}</div>}
+    <div className="min-w-0 bg-card px-4 py-3">
+      <p className="text-xs font-semibold uppercase tracking-wider text-faint-foreground">{label}</p>
+      <div className="mt-1 text-2xl font-semibold leading-tight tabular-nums">{children}</div>
+      {sub && <div className="mt-0.5 space-y-0.5 text-[13px] leading-snug text-muted-foreground">{sub}</div>}
     </div>
   );
 }
@@ -123,47 +92,65 @@ function Small({ children }: { children: ReactNode }) {
 }
 
 /**
- * Is it working? — the whole question, as one line of figures under the Impact header.
+ * The watch sync in one line, for the Impact header: the live listener's state and a manual sync.
  *
- * This replaced six stat tiles, then a hero number with two progress bars and a footer of health
- * facts. The tiles made six equal claims about unequal things; the hero card answered the question
- * in three different type sizes. Now each figure is labelled, the same size as its neighbours, and
- * says in a line under it what it counts. The last run's health is the status strip's job above —
- * it read the same report field twice on one screen — so only the watch sync, which nothing else
- * reports, stays here.
+ * The LIVE listener is what it reports, because it is the ONLY source of a partial watch — Plex's
+ * flag cannot see one — so while it is down the page quietly stops learning how far anyone gets.
+ * When the last scheduled sync ran is one hover away.
+ */
+function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
+  return (
+    <span
+      className="inline-flex flex-wrap items-center gap-x-1.5 text-[13px] text-muted-foreground"
+      title={sync.last ? `Last synced ${timeAgo(sync.last)}` : "Not synced yet"}
+    >
+      Watch sync:
+      <span
+        className={cn(
+          "h-2 w-2 shrink-0 rounded-full",
+          // Three states, not two: "not started" painted green read as healthy, the one reading
+          // this line exists to catch.
+          sync.live_down_since ? "bg-destructive" : sync.live_since ? "bg-success" : "bg-muted-foreground/40",
+        )}
+        aria-hidden="true"
+      />
+      <span>
+        {sync.live_down_since
+          ? `live tracking down ${timeAgo(sync.live_down_since)}`
+          : sync.live_since
+            ? "live"
+            : "not started"}
+      </span>
+      <span aria-hidden="true">·</span>
+      <WatchSyncButton />
+    </span>
+  );
+}
+
+/**
+ * Is it working? — four facts in one strip under the Impact header.
+ *
+ * Each says in a line under it what it counts. The last run's health is the status strip's job
+ * above, and the watch sync is in this panel's header, so neither repeats here.
  */
 function Verdict({
   overall,
   coverage,
-  sync,
   reportWindow,
 }: {
   overall: EffectivenessReport["overall"];
   coverage: EffectivenessReport["coverage"];
-  sync: EffectivenessReport["watch_sync"];
   reportWindow: ReportWindow;
 }) {
-  const share = overall.viewing_share;
-  const windowSuffix =
-    reportWindow === "all" ? "since their rows started" : WINDOW_PHRASE[reportWindow];
   const gaveUp = overall.dropped + overall.bounced;
   return (
     // Test ids, not class names: the e2e suite reads these figures by id, so a styling change can
-    // never silently break what it measures.
-    <div className="grid gap-x-8 gap-y-5 px-4 py-4 sm:grid-cols-2 sm:px-5 lg:grid-cols-3 xl:grid-cols-5">
+    // never silently break what it measures. `gap-px` on `bg-border` draws the hairlines.
+    <div className="grid grid-cols-2 gap-px bg-border md:grid-cols-4">
       <Stat
         label="Watched from rows"
         sub={
-          <>
-            {reportWindow !== "all" && (
-              <p>
-                <Delta value={overall.watched_delta} reportWindow={reportWindow} />
-              </p>
-            )}
-            {overall.avg_days_to_watch !== null && (
-              <p>Typically {overall.avg_days_to_watch} days from recommended to watched</p>
-            )}
-          </>
+          reportWindow !== "all" ? <Delta value={overall.watched_delta} reportWindow={reportWindow} /> : undefined
         }
       >
         <span data-testid="verdict-watched">{overall.watched}</span>{" "}
@@ -184,76 +171,34 @@ function Verdict({
               {/* The SAME control the "Worth a look" card uses: hover-only does not exist on a phone. */}
               <Why text={WHY_GAVE_UP} />
             </p>
-          ) : undefined
+          ) : (
+            "watched to the end"
+          )
         }
       >
         <span data-testid="verdict-finished">{overall.finished}</span>
       </Stat>
 
       <Stat
-        label="Share of all viewing"
-        sub={
-          share.watched > 0 ? (
-            <p>{`${share.from_rows.toLocaleString()} of the ${share.watched.toLocaleString()} titles people watched were in their rows · ${windowSuffix}`}</p>
-          ) : (
-            // Says what the share counts, never that nobody watched. It reads the nightly watch sync
-            // while "Watched from rows" reads live credits, so a pick credited today can sit beside an
-            // empty share; on a new install everyone's history predates their rows; and on a server
-            // with only shared rows it stays empty for good, so it must not promise a figure is coming.
-            <p>
-              Nothing to count yet. This counts people with a row of their own, from their first pick,
-              as the nightly watch sync records what they watch.
-            </p>
-          )
-        }
-      >
-        {/* From the exact counts, not the rounded `rate`, for the reason `sharePercent` gives. */}
-        {sharePercent(share)}
-      </Stat>
-
-      <Stat
-        // "a pick", not "something": this counts people who watched a title FROM THEIR ROWS. The line
-        // under it is what tells it apart from the share beside it — that one counts titles.
-        label="People who watched a pick"
-        sub={<p>{`watched at least one title from their rows · ${windowSuffix}`}</p>}
+        // "a pick", not "something": this counts people who watched a title FROM THEIR ROWS.
+        label="People watching"
+        sub="watched a pick"
       >
         <span data-testid="verdict-reach">
           {coverage.users_watched} <Small>of {coverage.users_enabled}</Small>
         </span>
       </Stat>
 
-      <Stat
-        label="Watch sync"
-        size="md"
-        sub={
-          // The LIVE listener, beside the scheduled sync because they are two mechanisms that fail
-          // independently. It is the ONLY source of a partial watch — Plex's flag cannot see one —
-          // so while it is down the page quietly stops learning how far anyone gets.
-          <p className="flex items-center gap-1.5">
-            <span
-              className={cn(
-                "h-1.5 w-1.5 shrink-0 rounded-full",
-                // Three states, not two: "not started" painted green read as healthy, the one
-                // reading this line exists to catch.
-                sync.live_down_since
-                  ? "bg-destructive"
-                  : sync.live_since
-                    ? "bg-success"
-                    : "bg-muted-foreground/40",
-              )}
-              aria-hidden="true"
-            />
-            {sync.live_down_since
-              ? `Live tracking down ${timeAgo(sync.live_down_since)}`
-              : sync.live_since
-                ? "Live tracking on"
-                : "Live tracking not started"}
-          </p>
-        }
-      >
-        <span>{sync.last ? `Synced ${timeAgo(sync.last)}` : "Not synced yet"}</span>
-        {" · "}
-        <WatchSyncButton />
+      <Stat label="Time to watch" sub="typical, from pick to play">
+        <span data-testid="verdict-time">
+          {overall.avg_days_to_watch !== null ? (
+            <>
+              {overall.avg_days_to_watch} <Small>{overall.avg_days_to_watch === 1 ? "day" : "days"}</Small>
+            </>
+          ) : (
+            "\u2014"
+          )}
+        </span>
       </Stat>
     </div>
   );
@@ -394,7 +339,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
                 hovered === t.week ? "bg-muted" : "hover:bg-muted/60",
               )}
             >
-              {/* Two segments of ONE hue rather than two colours: finished and still-going are an
+              {/* Two segments of ONE neutral rather than two colours: finished and still-going are an
                 ordered pair, not two categories, so intensity carries the order. The finished part
                 sits on the baseline where it can be compared across weeks by eye. `finished` is
                 bucketed by the same week key as `watched` (see report_service), so it can never
@@ -402,7 +347,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
               <div
                 className={cn(
                   "rounded-t transition-colors",
-                  hovered === t.week ? "bg-primary/50" : "bg-primary/30",
+                  hovered === t.week ? "bg-muted-foreground/60" : "bg-muted-foreground/40",
                 )}
                 style={{ height: `${columnPct - finishedPct}%` }}
               />
@@ -410,7 +355,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
                 className={cn(
                   "transition-colors",
                   finishedPct >= columnPct && "rounded-t",
-                  hovered === t.week ? "bg-primary" : "bg-primary/70",
+                  hovered === t.week ? "bg-foreground" : "bg-foreground/70",
                 )}
                 style={{ height: `${finishedPct}%` }}
               />
@@ -434,104 +379,68 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
 }
 
 /**
- * One line in a breakdown: a bar scaled to the BIGGEST value in its own list, and the count.
+ * One line in a breakdown: the name and its counts, and under them a bar scaled to the BIGGEST
+ * value in its own list.
  *
  * Not a percentage of anything. The bar used to be a share of a 0–100% hit rate, so real values
  * (0–3%) were a one-pixel sliver on every row and the chart said nothing. Scaling to the list's own
- * maximum is what makes "Luke watched four times what Cassie did" visible at a glance.
+ * maximum is what makes "Luke watched four times what Cassie did" visible at a glance. The bar is
+ * neutral: amber marks the one action on a screen, not a data series.
  */
-function CountBar({
+function CountLine({
+  name,
   watched,
   finished,
   delivered,
   max,
 }: {
+  name: ReactNode;
   watched: number;
   finished: number;
   delivered: number;
   max: number;
 }) {
   return (
-    // Label FIRST, bar last. The label sizes itself and never wraps; the bar is the fixed-width
-    // element, so it is the bars' right edges that line up down the list. Sizing the label instead
-    // meant picking a width — and any width is wrong for some count: w-32 wrapped "3 watched · 103
-    // delivered" onto two lines, and even w-44 overflows once a row passes 999 watched or 9999
-    // delivered. This way no count can break the layout.
-    <div className="flex min-w-0 items-center gap-2 xl:shrink-0">
-      {/* Two labelled numbers, NOT "{watched} of {delivered}". They are counts over two different
-          sets — watched-in-window and delivered-in-window — so presenting them as a fraction makes
-          "4 of 0" reachable whenever delivery paused (a weekly row cron on a 7-day window). That is
-          the same misleading fraction this rewrite exists to remove. */}
-      {/* `nowrap` from `xl`, and never the element that shrinks. Below `xl` the caller stacks this
-          under the row name, so it has the whole card width to itself; from `xl` the name is the
-          flexible half and this is the fixed one. Letting BOTH be flexible was the old bug: flex
-          shares a deficit in proportion to content width, so the long counts label kept ~180px and
-          the row name was squeezed to 32px — "Late Night" rendered as "Lat…" at every width from
-          390 to 1280. Measured, not theorised.
-
-          The nowrap stays breakpoint-gated even though the label now has a line to itself, because
-          a line to itself is not the same as room: at 320px a card's content box is 238px, and
-          "1203 watched · 318 finished · 41600 delivered" is 305px. Unconditional `nowrap` removes
-          the only break opportunity in the label — the separators are real whitespace text nodes
-          in THIS span — and the page scrolls sideways again, 355 against a 320 client. The shrink
-          fix lives in `xl:flex-1` / `xl:shrink-0`, not here, so gating this costs nothing. */}
-      <span className="text-right tabular-nums text-muted-foreground xl:whitespace-nowrap">
-        {/* "watched" stays the leading number so the list keeps its old meaning and its old sort.
-            "finished" is the qualifier beside it: a series counts as watched on its first episode,
-            so a big watched number with a small finished one means sampled, not enjoyed — which is
-            exactly what a single count could never say. */}
-        {/* Each clause is its own nowrap span so a narrow screen breaks BETWEEN clauses rather than
-            between a number and its noun — "0" on one line and "finished" on the next reads as a
-            different, missing figure.
-
-            The separators sit OUTSIDE the spans, as real whitespace text nodes. Putting " · " inside
-            a nowrap span (the obvious way to write this) leaves no whitespace between the spans at
-            all, so the browser has no break opportunity anywhere in the label and the whole thing
-            behaves as one unbreakable string — measured: 404px of it inside a 390px phone. */}
-        <span className="whitespace-nowrap">
-          <span className="font-medium text-foreground">{watched}</span> watched
+    <div className={panelRowClass}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm">
+        {/* `min-w-0` is what makes `truncate` actually truncate in a flex child. */}
+        <span className="min-w-0 truncate font-medium">{name}</span>
+        {/* Two labelled numbers, NOT "{watched} of {delivered}". They are counts over two different
+            sets — watched-in-window and delivered-in-window — so a fraction makes "4 of 0" reachable
+            whenever delivery paused. "finished" qualifies "watched": a series counts as watched on
+            its first episode, so a big watched number with a small finished one means sampled, not
+            enjoyed. Each clause is its own nowrap span so a narrow screen breaks BETWEEN clauses
+            rather than between a number and its noun; the separators are real whitespace text nodes
+            outside the spans, which is what gives the browser somewhere to break. */}
+        <span className="text-[13px] tabular-nums text-muted-foreground">
+          <span className="whitespace-nowrap">
+            <span className="font-medium text-foreground">{watched}</span> watched
+          </span>
+          {watched > 0 && (
+            <>
+              {" "}
+              <span className="whitespace-nowrap">
+                · <span className="font-medium text-foreground">{finished}</span> finished
+              </span>
+            </>
+          )}
+          {/* "delivered", not "sent" — the Requests line uses "sent" for asks of Sonarr/Radarr. */}
+          {delivered > 0 && (
+            <>
+              {" "}
+              <span className="whitespace-nowrap">{`· ${delivered} delivered`}</span>
+            </>
+          )}
         </span>
-        {watched > 0 && (
-          <>
-            {" "}
-            <span className="whitespace-nowrap">
-              · <span className="font-medium text-foreground">{finished}</span>{" "}
-              finished
-            </span>
-          </>
-        )}
-        {/* "delivered", not "sent" — the Requests card on this same page uses "sent" to mean asked of
-            Sonarr/Radarr, and two meanings of the word side by side is exactly the kind of quiet
-            ambiguity this rewrite is meant to remove. */}
-        {delivered > 0 && (
-          <>
-            {" "}
-            <span className="whitespace-nowrap">{`· ${delivered} delivered`}</span>
-          </>
-        )}
-      </span>
-      {/* `2xl`, not `xl`. These cards sit in a 2-column grid from `lg`, so a card is ~360px at
-          1024 and ~500px at 1280 — and `xl` IS 1280, which is to say the bar switched itself on at
-          the exact width where the last 96px did not exist. Measured: it landed at right:1290 in a
-          1280px viewport and scrolled the whole document sideways. The numbers carry the
-          information on their own; the bar only earns its width once a card is wide enough that
-          nothing has to be given up for it. */}
-      {/* One bar, split: the solid part is what got finished, the faded part what is still going.
-          Same hue at two intensities because the two are ordered, not two categories — and the
-          finished part is anchored at the left so it can be compared down the list by eye. */}
-      <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted 2xl:flex">
+      </div>
+      {/* The solid part is what got finished, the faded part what is still going: one neutral at two
+          intensities because the two are ordered, and the finished part is anchored left so it can
+          be compared down the list by eye. */}
+      <div className="mt-2 flex h-1 overflow-hidden rounded-full bg-secondary" aria-hidden="true">
+        <div className="h-full bg-muted-foreground" style={{ width: `${max > 0 ? (finished / max) * 100 : 0}%` }} />
         <div
-          className="h-full bg-primary"
-          style={{ width: `${max > 0 ? (finished / max) * 100 : 0}%` }}
-        />
-        {/* /50, not /35: at /35 this segment sat almost on top of the `bg-muted` track behind it,
-            so "watched but not finished" and "never watched" looked the same at a glance — which is
-            the one distinction this bar exists to draw. */}
-        <div
-          className="h-full bg-primary/50"
-          style={{
-            width: `${max > 0 ? (Math.max(0, watched - finished) / max) * 100 : 0}%`,
-          }}
+          className="h-full bg-muted-foreground/40"
+          style={{ width: `${max > 0 ? (Math.max(0, watched - finished) / max) * 100 : 0}%` }}
         />
       </div>
     </div>
@@ -610,13 +519,7 @@ function ZeroDisclosure({
   );
 }
 
-function ByPerson({
-  people,
-  reportWindow,
-}: {
-  people: EffectivenessReport["per_user"];
-  reportWindow: ReportWindow;
-}) {
+function ByPerson({ people }: { people: EffectivenessReport["per_user"] }) {
   const active = people.filter((p) => p.watched > 0);
   const idle = people.filter((p) => p.watched === 0);
   const max = Math.max(1, ...active.map((p) => p.watched));
@@ -626,50 +529,28 @@ function ByPerson({
   const overflow = active.slice(10);
 
   const line = (p: EffectivenessReport["per_user"][number]) => (
-    <div
+    <CountLine
       key={p.slug}
-      className={cn(
-        "flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3",
-        panelRowClass,
-      )}
-    >
-      {/* `min-w-0` is what makes `truncate` actually truncate here. `truncate` sets
-          `white-space: nowrap`, so this flex child's min-content width is the WHOLE name — without
-          `min-w-0` it refuses to shrink, and a long name pushes the line past a phone's screen
-          instead of ellipsing (the dashboard scrolled 134px sideways at 390px). */}
-      {/* `flex-1`: the name is the half that gets whatever room is left, so it only ellipses when
-          the card genuinely cannot hold it. Below `xl` the line stacks instead. `lg` was measured
-          and rejected: that is exactly where these cards go two-across, so a card is ~360px and the
-          counts alone want ~290 of it — the name came out at 55px, worse than before the fix. The
-          two only fit side by side once a card is ~500px, which is `xl`. */}
-      {/* A link, because "who is this person and what else did they get" is the next question this
-          line provokes, and the answer is a page that already exists. `/users/:id` takes the id,
-          which is why the report carries one — `slug` addresses nothing. `?tab=watched` lands on
-          what they WATCHED: arriving from a watch figure onto their row list is a second click for
-          something the click already asked for. */}
-      <Link
-        to={`/users/${p.id}?tab=watched`}
-        className="min-w-0 truncate rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring xl:flex-1"
-      >
-        {p.display_name || p.username}
-      </Link>
-      <CountBar
-        watched={p.watched}
-        finished={p.finished}
-        delivered={p.delivered}
-        max={max}
-      />
-    </div>
+      name={
+        // A link, because "who is this person and what else did they get" is the next question this
+        // line provokes. `/users/:id` takes the id, which is why the report carries one — `slug`
+        // addresses nothing. `?tab=watched` lands on what they WATCHED.
+        <Link
+          to={`/users/${p.id}?tab=watched`}
+          className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {p.display_name || p.username}
+        </Link>
+      }
+      watched={p.watched}
+      finished={p.finished}
+      delivered={p.delivered}
+      max={max}
+    />
   );
 
   return (
-    <Section
-      title="By person"
-      // "Most watched first" is load-bearing here, not decoration: only the top ten are shown
-      // outright, so without it the fold looks arbitrary rather than like the bottom of a ranking.
-      hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
-      flush
-    >
+    <>
       {active.length === 0 && idle.length === 0 ? (
         <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
           Nobody was delivered a pick in this window.
@@ -700,7 +581,7 @@ function ByPerson({
           </ZeroDisclosure>
         </>
       )}
-    </Section>
+    </>
   );
 }
 
@@ -718,44 +599,29 @@ function ByRow({
   const max = Math.max(1, ...rows.map((r) => r.watched));
 
   const line = (r: EffectivenessReport["per_row"][number]) => (
-    <div
+    <CountLine
       key={`${r.slug}-${r.section_key}-${r.library}`}
-      className={cn(
-        "flex flex-col gap-0.5 text-sm xl:flex-row xl:items-center xl:justify-between xl:gap-3",
-        panelRowClass,
-      )}
-    >
-      <span className="flex min-w-0 items-center gap-1.5 xl:flex-1">
-        {/* `min-w-0` for the same reason as ByPerson above: `truncate` alone cannot shrink a flex
-            child, so the row name held the line open past the screen. */}
-        <span
-          className={`min-w-0 truncate ${r.deleted ? "text-muted-foreground" : ""}`}
-        >
-          {r.name}
+      name={
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className={cn("min-w-0 truncate", r.deleted && "text-muted-foreground")}>{r.name}</span>
+          {/* A row across >1 library is one collection per library. A {library_name} name
+              already reads "✨ Movies …"; otherwise tag which library this line is. */}
+          {r.library && !r.name.includes(r.library) && (
+            <Badge variant="secondary" className="shrink-0 font-normal">
+              {r.library}
+            </Badge>
+          )}
         </span>
-        {/* A row across >1 library is one collection per library. A {library_name} name
-            already reads "✨ Movies …"; otherwise tag which library this line is. */}
-        {r.library && !r.name.includes(r.library) && (
-          <Badge variant="secondary" className="shrink-0 font-normal">
-            {r.library}
-          </Badge>
-        )}
-      </span>
-      <CountBar
-        watched={r.watched}
-        finished={r.finished}
-        delivered={r.delivered}
-        max={max}
-      />
-    </div>
+      }
+      watched={r.watched}
+      finished={r.finished}
+      delivered={r.delivered}
+      max={max}
+    />
   );
 
   return (
-    <Section
-      title="By row"
-      hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
-      flush
-    >
+    <>
       {live.length === 0 && gone.length === 0 ? (
         <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">
           No row delivered a pick in this window.
@@ -774,6 +640,41 @@ function ByRow({
             </DeletedRows>
           )}
         </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Who is watching: the people, or the rows, in one panel with a switch between them.
+ *
+ * They were two panels printing the same counts over two groupings. The hint is load-bearing: only
+ * the top ten people are shown outright, so without "most watched first" the fold looks arbitrary
+ * rather than like the bottom of a ranking.
+ */
+function WhoIsWatching({ report, reportWindow }: { report: EffectivenessReport; reportWindow: ReportWindow }) {
+  const [view, setView] = useState<"person" | "row">("person");
+  return (
+    <Section
+      title="Who’s watching"
+      hint={`Most watched first · ${WINDOW_PHRASE[reportWindow]}`}
+      flush
+      actions={
+        <Segmented
+          value={view}
+          onChange={setView}
+          ariaLabel="Group by"
+          options={[
+            { value: "person", label: "By person" },
+            { value: "row", label: "By row" },
+          ]}
+        />
+      }
+    >
+      {view === "person" ? (
+        <ByPerson people={report.per_user} />
+      ) : (
+        <ByRow rows={report.per_row} reportWindow={reportWindow} />
       )}
     </Section>
   );
@@ -909,51 +810,55 @@ function ReportBody({
     report.since !== null &&
     new Date(report.first_pick) >= new Date(report.since);
 
-  // ONE panel: what the report is and which window it covers on the head row, a hairline, then the
-  // figures. The window control sits beside the title because it changes every figure under it.
-  const impact = (body: ReactNode) => (
+  // ONE panel: the title, the window control (it changes every figure under it), the watch sync,
+  // a hairline, then the figures.
+  const impact = (body: ReactNode, headless = false) => (
     <section
       aria-labelledby="impact-title"
       data-testid="verdict"
       className="min-w-0 overflow-hidden rounded-xl border bg-card text-card-foreground shadow-elevated"
     >
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b px-4 py-3.5 sm:px-5">
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-5",
+          !headless && "border-b",
+        )}
+      >
         {/* h2, not h1 — PageHeader above already owns the page's h1 ("Dashboard"), and two of them
             leaves a screen reader with no page title at all. */}
-        <div className="min-w-0 flex-1 basis-64">
-          <h2 id="impact-title" className="text-base font-semibold tracking-tight">
-            Impact
-          </h2>
-          <p className="mt-0.5 max-w-prose text-sm text-muted-foreground">
-            How much of what Shortlist delivered got watched.
-            {/* On a young install every window already covers all the data, so the numbers are
-                identical whichever button you press — a control that visibly does nothing reads as
-                broken. Say why. */}
-            {coversEverything && (
-              <>
-                {" "}
-                Shortlist has only been recording since {formatDate(report.first_pick as string)}, so every
-                window covers all of it for now.
-              </>
-            )}
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Always mounted so the live region is announced when its text appears, and sized by
-              min-width so toggling it never shifts the window control. */}
-          <span aria-live="polite" className="min-w-[4.5rem] text-right text-xs text-muted-foreground">
-            {updating ? "Updating…" : ""}
-          </span>
-          <Segmented
-          joined
-          value={reportWindow}
-          onChange={onWindowChange}
-          options={WINDOW_OPTIONS}
-          ariaLabel="Report window"
-        />
-        </div>
+        <h2 id="impact-title" className="text-base font-semibold tracking-tight">
+          Impact
+        </h2>
+        {headless ? (
+          <div className="min-w-0 flex-1 basis-80 text-sm text-muted-foreground">{body}</div>
+        ) : (
+          <>
+            <Segmented joined value={reportWindow} onChange={onWindowChange} options={WINDOW_OPTIONS} ariaLabel="Report window" />
+            {/* Always mounted so the live region is announced when its text appears, and sized by
+                min-width so toggling it never shifts the controls. */}
+            <span aria-live="polite" className="min-w-[4.5rem] text-xs text-muted-foreground">
+              {updating ? "Updating…" : ""}
+            </span>
+          </>
+        )}
+        <span className="md:ml-auto">
+          <WatchSyncLine sync={report.watch_sync} />
+        </span>
       </div>
-      <div className={dim}>{body}</div>
+      {!headless && (
+        <>
+          {/* On a young install every window already covers all the data, so the numbers are
+              identical whichever button you press — a control that visibly does nothing reads as
+              broken. Say why. */}
+          {coversEverything && (
+            <p className="border-b px-4 py-2 text-[13px] text-muted-foreground sm:px-5">
+              Shortlist has only been recording since {formatDate(report.first_pick as string)}, so every window
+              covers all of it for now.
+            </p>
+          )}
+          <div className={dim}>{body}</div>
+        </>
+      )}
     </section>
   );
 
@@ -972,108 +877,123 @@ function ReportBody({
     );
   }
 
+  // The morning after the first run: rows are delivered and nobody has watched anything yet, in ANY
+  // window (the trend is fixed at 16 weeks, so it is the all-time check). Six half-empty panels
+  // would say "nothing" six times; one card says what happens next. `first_pick` is the day
+  // counting started.
+  const nothingWatchedYet =
+    overall.watched === 0 && report.recent.length === 0 && report.trend.every((week) => week.watched === 0);
+  if (nothingWatchedYet) {
+    return (
+      <div className="space-y-4">
+        {impact(
+          <p>
+            Nothing watched yet
+            {report.first_pick ? ` — counting started ${formatDate(report.first_pick)}` : ""}.
+          </p>,
+          true,
+        )}
+        <WhatHappensNext people={coverage.users_enabled} pendingRequests={requests.pending} />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      {impact(
-        <Verdict
-          overall={overall}
-          coverage={coverage}
-          sync={report.watch_sync}
-          reportWindow={reportWindow}
-        />,
-      )}
+    <div className="space-y-4">
+      {impact(<Verdict overall={overall} coverage={coverage} reportWindow={reportWindow} />)}
 
-      <div className={cn("space-y-6", dim)}>
-
-      {/* The verdict's rate is the only one on this page — two cards printing the same ratio at two
-          different roundings (1% beside 0.5%) is how a dashboard comes to disagree with itself. */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Section
-          title="Watches per week · 16-week trend"
-          hint="Fixed period: the last 16 weeks. The report window above applies to the other summaries."
-        >
-          <Trend trend={report.trend} />
-        </Section>
-        <ByRow rows={report.per_row} reportWindow={reportWindow} />
-      </div>
-
-      {/* Beside the people, because its first line is about them: how many were given picks and
-          watched none. Every other line points at a row or a person elsewhere on this page.
-
-          Requests stacks UNDER it, in the same column. By person is the tallest list on the page, so
-          this column always had room to spare, and both cards are short summaries. Beside "Recently
-          watched" (twenty lines) the Requests card used to float over a column of empty space. */}
-      <div className="grid items-start gap-4 lg:grid-cols-2">
-        <ByPerson people={report.per_user} reportWindow={reportWindow} />
-        <div className="grid min-w-0 content-start gap-4">
-          <NeedsALook report={report} reportWindow={reportWindow} />
-          {(requests.sent > 0 || requests.pending > 0) && (
-            <RequestsSummary requests={requests} reportWindow={reportWindow} />
-          )}
+      <div className={cn("space-y-4", dim)}>
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <Section title="Watches per week" hint="Last 16 weeks, regardless of the window above">
+            <Trend trend={report.trend} />
+          </Section>
+          <WhoIsWatching report={report} reportWindow={reportWindow} />
         </div>
-      </div>
 
-      {/* The two lists that grow get the full width, so their length never strands a card beside them. */}
-      {report.top_titles.length > 0 && (
-        <MostWatched titles={report.top_titles} reportWindow={reportWindow} />
-      )}
+        <NeedsALook report={report} reportWindow={reportWindow} />
 
-      {report.recent.length > 0 && <RecentlyWatched recent={report.recent} />}
+        {/* The lists that grow get the full width, so their length never strands a card beside them. */}
+        {report.top_titles.length > 0 && <MostWatched titles={report.top_titles} reportWindow={reportWindow} />}
 
-      {/* The detail behind the Dropped tile: who dropped what, and where people stop. Its own
-          component because it is a separate request — the engagement scan is per-pick where the
-          report above is aggregate, and making the dashboard wait on both would delay the numbers
-          that are ready. */}
+        {report.recent.length > 0 && <RecentlyWatched recent={report.recent} />}
+
+        {(requests.sent > 0 || requests.pending > 0) && (
+          <RequestsSummary requests={requests} reportWindow={reportWindow} />
+        )}
       </div>
     </div>
   );
 }
 
-/** Sent, watched since, and waiting on you — each figure in its own tile, so none can sit in another's slot. */
-function RequestsSummary({
-  requests,
-  reportWindow,
-}: {
-  requests: EffectivenessReport["requests"];
-  reportWindow: ReportWindow;
-}) {
-  const tiles: { key: string; value: number; label: string; strong?: boolean }[] = [
-    { key: "sent", value: requests.sent, label: "sent" },
-    { key: "watched", value: requests.watched_after_sent, label: "watched since" },
-    { key: "pending", value: requests.pending, label: "awaiting approval", strong: requests.pending > 0 },
-  ];
+/**
+ * What the dashboard has to say before anyone has watched anything: the next run, what fills this
+ * page in, and requests waiting on the owner.
+ */
+function WhatHappensNext({ people, pendingRequests }: { people: number; pendingRequests: number }) {
+  const schedule = useSchedule();
+  const next = nextRowRun(schedule.data);
+  const line = "flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 sm:px-5";
   return (
-    <Section
-      title="Requests"
-      // App-neutral on purpose — see run-stat-tiles: the route is a setting this card cannot see.
-      hint={`Sent to be downloaded in ${WINDOW_PHRASE[reportWindow]}.`}
-    >
-      <dl className="grid grid-cols-3 gap-2">
-        {tiles.map((tile) => (
-          <div key={tile.key} className="rounded-md bg-elevated px-3 py-2" data-testid={`requests-${tile.key}`}>
-            <dd
-              className={cn(
-                "text-xl font-semibold tabular-nums",
-                tile.strong ? "text-primary" : "text-foreground",
-              )}
-            >
-              {tile.value}
-            </dd>
-            <dt className="text-xs text-muted-foreground">{tile.label}</dt>
+    <Section title="What happens next" flush>
+      <div className="divide-y divide-border">
+        {next && (
+          <div className={line}>
+            <span>
+              The next run builds rows for {people} {people === 1 ? "person" : "people"}
+            </span>
+            <span className="text-sm text-muted-foreground">
+              {dayTime(next.at)} · {timeUntil(next.at)}
+            </span>
           </div>
-        ))}
-      </dl>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-        {requests.pending > 0 && (
-          <Link to="/requests" className="text-primary underline-offset-4 hover:underline">
-            Review {requests.pending} waiting →
-          </Link>
         )}
-        <Link to="/requests?tab=sent" className="text-primary underline-offset-4 hover:underline">
-          View the full send log →
-        </Link>
+        <div className={line}>
+          <span>Watches show up here as people watch their rows</span>
+        </div>
+        {pendingRequests > 0 && (
+          <div className={line}>
+            <span>Requests waiting for approval</span>
+            <span className="text-sm">
+              <span className="font-semibold text-warning">{pendingRequests}</span>
+              <span className="text-muted-foreground"> · </span>
+              <Link to="/requests" className="text-foreground underline-offset-4 hover:underline">
+                Review →
+              </Link>
+            </span>
+          </div>
+        )}
       </div>
     </Section>
+  );
+}
+
+/** Sent, watched since, and waiting on you — each figure in its own tile, so none can sit in another's slot. */
+function RequestsSummary({ requests, reportWindow }: { requests: EffectivenessReport["requests"]; reportWindow: ReportWindow }) {
+  return (
+    <section
+      aria-label="Requests"
+      className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl border bg-card px-4 py-3.5 shadow-elevated sm:px-5"
+    >
+      <h2 className="text-base font-semibold tracking-tight">Requests</h2>
+      <p className="text-sm text-muted-foreground">
+        <span data-testid="requests-sent">{requests.sent}</span> sent · {requests.watched_after_sent} watched since
+        {/* App-neutral on purpose — see run-stat-tiles: the route is a setting this line cannot see. */}
+        <span className="sr-only"> in {WINDOW_PHRASE[reportWindow]}</span>
+        {" · "}
+        {requests.pending > 0 && (
+          <>
+            <span className="font-semibold text-warning">{requests.pending} awaiting approval</span>
+            {" · "}
+            <Link to="/requests" className="text-foreground underline-offset-4 hover:underline">
+              Review →
+            </Link>
+            {" · "}
+          </>
+        )}
+        <Link to="/requests?tab=sent" className="text-foreground underline-offset-4 hover:underline">
+          Send log →
+        </Link>
+      </p>
+    </section>
   );
 }
 
@@ -1105,19 +1025,17 @@ function MostWatched({
                 ratingKey={t.rating_key}
                 className="aspect-[2/3] h-auto w-full rounded-md sm:h-auto sm:w-full"
               />
-              <span
-                className={cn(
-                  "absolute left-1.5 top-1.5 rounded px-1.5 text-xs font-bold tabular-nums",
-                  "bg-black/65 text-foreground",
-                )}
-              >
+              <span className="absolute left-1.5 top-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded bg-background/80 px-1 text-xs font-semibold tabular-nums text-muted-foreground ring-1 ring-border-strong">
                 {i + 1}
               </span>
             </div>
             <p className="truncate text-sm font-medium text-foreground" title={t.title}>
               {t.title}
             </p>
-            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+            {/* The faces say who; the count is in words for a screen reader and on hover. The
+                TMDB/IMDb/Trakt logos are gone from the tile — three coloured marks per poster were
+                the loudest thing on the page. */}
+            <div className="flex items-center" title={`${t.watchers} ${t.watchers === 1 ? "watcher" : "watchers"}`}>
               {t.watcher_sample.length > 0 && (
                 <span className="flex -space-x-1">
                   {t.watcher_sample.map((w) => (
@@ -1125,17 +1043,9 @@ function MostWatched({
                   ))}
                 </span>
               )}
-              <span className="whitespace-nowrap tabular-nums">
+              <span className="sr-only">
                 {t.watchers} {t.watchers === 1 ? "watcher" : "watchers"}
               </span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              {t.year != null ? (
-                <span className="text-xs tabular-nums text-muted-foreground">{t.year}</span>
-              ) : (
-                <span />
-              )}
-              <TitleLinkIcons title={t} />
             </div>
           </li>
         ))}
@@ -1144,10 +1054,10 @@ function MostWatched({
   );
 }
 
-/** How many watches show before the rest are folded away. The server sends at most 20
- *  (`report_service._recent_watches`), so this list is bounded twice over and can never grow the
- *  page without limit — the fold is about what is worth reading at a glance, not about volume. */
-const RECENT_SHOWN = 12;
+/** How many watches show before "See all". The server sends at most 20
+ *  (`report_service._recent_watches`), so the list is bounded twice over; the fold is about what is
+ *  worth reading at a glance, not about volume. */
+const RECENT_SHOWN = 5;
 
 /**
  * "watched", "finished" or "started" — the distinction the rest of this page already draws.
@@ -1164,20 +1074,9 @@ function watchVerb(watch: EffectivenessReport["recent"][number]): string {
   return watch.finished_at ? "finished" : "started";
 }
 
-/** "Today", "Yesterday", else "Fri 12 Sep" — the heading a run of watches is filed under. */
-function dayLabel(iso: string | null, now: Date = new Date()): string {
-  if (!iso) return "Earlier";
-  const day = new Date(iso);
-  const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((midnight(now) - midnight(day)) / 86_400_000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  return day.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-}
-
 const VERB_BADGE: Record<string, string> = {
   finished: "bg-success/15 text-success",
-  started: "bg-primary/15 text-primary",
+  started: "bg-secondary text-secondary-foreground",
   watched: "bg-secondary text-secondary-foreground",
 };
 
@@ -1187,7 +1086,7 @@ const VERB_BADGE: Record<string, string> = {
  * Each line used to be one run of text — person, verb, title, row, time — so the title, which is the
  * news, sat in the middle of a sentence. It now leads with the poster and title, says finished /
  * started / watched as a badge, puts who and which row on the line under it, and keeps the time and
- * the look-up links at the end. A day heading replaces "8h ago" as the thing that orders the list.
+ * the look-up links at the end. The time is "3d ago", newest first.
  *
  * The extras used to be `slice(0, 12)` and nothing else: the server sends up to 20, so eight of
  * them were dropped on the floor with no count, no disclosure and nothing on screen admitting the
@@ -1254,53 +1153,36 @@ function RecentlyWatched({
               {timeAgo(w.watched_at)}
             </time>
           )}
-          <TitleLinkIcons title={w} />
-        </div>
+          </div>
       </li>
     );
   };
 
-  const grouped = (watches: EffectivenessReport["recent"], label: string) => {
-    const days: { day: string; watches: EffectivenessReport["recent"] }[] = [];
-    for (const w of watches) {
-      const day = dayLabel(w.watched_at);
-      const last = days.at(-1);
-      if (last && last.day === day) last.watches.push(w);
-      else days.push({ day, watches: [w] });
-    }
-    return (
-      <ul aria-label={label} className="space-y-1">
-        {days.map(({ day, watches: dayWatches }) => (
-          <li key={day}>
-            <h3 className="pb-1 pt-2 text-xs font-medium uppercase tracking-wide text-muted-foreground/80">
-              {day}
-            </h3>
-            <ul className="divide-y divide-border/40">{dayWatches.map(line)}</ul>
-          </li>
-        ))}
-      </ul>
-    );
-  };
-
-  const shown = recent.slice(0, RECENT_SHOWN);
-  const rest = recent.slice(RECENT_SHOWN);
+  const [all, setAll] = useState(false);
+  const shown = all ? recent : recent.slice(0, RECENT_SHOWN);
 
   return (
     <Section
-      title="Recently watched from Shortlist"
-      // Says the list is bounded. Without it, a feed that stops at twenty reads as a complete
-      // history of what people watched — and the dashboard has no other place that number appears.
+      title="Recently watched"
       hint={`The ${recent.length === 1 ? "newest watch" : `newest ${recent.length} watches`}. Older ones are on each person's page.`}
+      actions={
+        // No page lists every watch, so "See all" opens the rest here rather than linking away.
+        recent.length > RECENT_SHOWN ? (
+          <button
+            type="button"
+            onClick={() => setAll((v) => !v)}
+            aria-expanded={all}
+            className="rounded-sm text-[13px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {all ? "Show fewer" : `See all ${recent.length} →`}
+          </button>
+        ) : undefined
+      }
+      flush
     >
-      {grouped(shown, "Recently watched from Shortlist")}
-      {rest.length > 0 && (
-        <Disclosure
-          label={`Show ${rest.length} more`}
-          openLabel={`Hide ${rest.length} more`}
-        >
-          {grouped(rest, "Older recent watches")}
-        </Disclosure>
-      )}
+      <ul aria-label="Recently watched from Shortlist" className="divide-y divide-border px-4 sm:px-5">
+        {shown.map(line)}
+      </ul>
     </Section>
   );
 }

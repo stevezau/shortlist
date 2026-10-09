@@ -16,7 +16,7 @@ import {
 } from "@/lib/format";
 import { latestFinishedRun, nextRowRun } from "@/lib/dashboard-status";
 import { cannotHide, privacyGlance, rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
-import { hasPrivacyWarning } from "@/lib/run-privacy";
+import { privacyFindings } from "@/lib/run-privacy";
 import type {
   AccountPrivacy,
   EffectivenessReport,
@@ -34,6 +34,22 @@ function Pending() {
   return <Skeleton className="h-6 w-24" />;
 }
 
+/**
+ * What the Last run cell says about a finished run: its status word, and how many warnings sit
+ * behind an OK. A warning is an account the run flagged (`privacyFindings`), plus one for people it
+ * failed to build for. A failed run keeps saying "Failed"; an OK run with any warning never reads
+ * as a plain OK.
+ *
+ * One function so it can be swapped for the shared run-status helper without touching the cell.
+ */
+function lastRunVerdict(run: Run): { label: string; warnings: number; tone: "ok" | "warn" | "error" } {
+  const failed = run.stats.users_error ?? 0;
+  const warnings = run.status === "ok" ? privacyFindings(run.privacy).length + (failed > 0 ? 1 : 0) : 0;
+  if (run.status === "error") return { label: runStatusLabel(run.status), warnings, tone: "error" };
+  if (warnings > 0) return { label: `OK · ${warnings} ${warnings === 1 ? "warning" : "warnings"}`, warnings, tone: "warn" };
+  return { label: runStatusLabel(run.status), warnings, tone: "ok" };
+}
+
 function LastRunCell({
   report,
   runs,
@@ -49,26 +65,23 @@ function LastRunCell({
   }
   const run = latestFinishedRun(runs.data);
   if (run) {
-    const warned = hasPrivacyWarning(run);
+    const verdict = lastRunVerdict(run);
     const elapsed = runElapsedMs(run.began_at, run.finished_at);
     const people = run.stats.users_ok ?? 0;
-    // People the run could not build for: the three tiers the bell draws (`_last_run_problem`) — a
-    // failed run, an OK run that failed someone (amber), a clean one.
+    // People the run could not build for, named in the line under the verdict.
     const failed = run.stats.users_error ?? 0;
     return (
       <StatusCell
         testId={testId}
         label="Last run"
-        tone={run.status === "error" ? "error" : warned || failed > 0 ? "warn" : "ok"}
+        tone={verdict.tone}
         value={
-          // The run page's words for the same state ("OK with warnings"), so the link below never
-          // lands on a different name for what this cell just said.
-          warned ? (
+          verdict.warnings > 0 ? (
             <Badge variant="warning" className="border-warning/40">
-              OK with warnings
+              {verdict.label}
             </Badge>
           ) : (
-            runStatusLabel(run.status)
+            verdict.label
           )
         }
         sub={
@@ -171,6 +184,9 @@ function exposedPhrase(account: AccountPrivacy, status: PrivacyStatus, notEnforc
 
 function PrivacyCell({ privacy }: { privacy: UseQueryResult<PrivacyStatus> }) {
   const testId = "status-privacy";
+  // The callout under the strip says the fix once and links to it, so the cell states the fact in
+  // plain text rather than repeating the link.
+  const calloutShown = privacy.data !== undefined && !privacy.data.error && cannotHide(privacy.data).length > 0;
   const cell = (tone: "ok" | "warn" | "error" | "neutral", value: ReactNode, sub?: ReactNode) => (
     <StatusCell testId={testId} label="Privacy" tone={tone} value={value} sub={sub} />
   );
@@ -192,11 +208,8 @@ function PrivacyCell({ privacy }: { privacy: UseQueryResult<PrivacyStatus> }) {
       // the moment its first row lands — so that promise is made only when no such account exists.
       const stuck = cannotHide(privacy.data).length;
       if (stuck > 0) {
-        return cell(
-          "warn",
-          "Nothing to hide yet",
-          toPrivacy(`${stuck} ${stuck === 1 ? "account" : "accounts"} can’t be hidden`),
-        );
+        const phrase = `${stuck} ${stuck === 1 ? "account" : "accounts"} can’t be hidden`;
+        return cell("warn", "Nothing to hide yet", calloutShown ? phrase : toPrivacy(phrase));
       }
       return cell("neutral", "Nothing to hide yet", "Every row is hidden before it appears");
     }
@@ -205,18 +218,23 @@ function PrivacyCell({ privacy }: { privacy: UseQueryResult<PrivacyStatus> }) {
     case "counted": {
       const first = glance.exposed[0];
       const enforcement = privacy.data.enforcement;
+      const phrase = first
+        ? exposedPhrase(
+            first,
+            privacy.data,
+            Boolean(enforcement?.measured && (enforcement.not_enforced?.[first.user]?.length ?? 0) > 0),
+          )
+        : null;
       return cell(
         glance.hiding === glance.total ? "ok" : "warn",
-        `${glance.hiding} of ${glance.total} hide every row`,
-        first
-          ? toPrivacy(
-              exposedPhrase(
-                first,
-                privacy.data,
-                Boolean(enforcement?.measured && (enforcement.not_enforced?.[first.user]?.length ?? 0) > 0),
-              ),
-            )
-          : `Read from plex.tv ${timeAgo(privacy.data.read_at)}`,
+        `${glance.hiding} of ${glance.total} private`,
+        phrase === null ? (
+          `Read from plex.tv ${timeAgo(privacy.data.read_at)}`
+        ) : calloutShown ? (
+          <span className="text-warning">{phrase}</span>
+        ) : (
+          toPrivacy(phrase)
+        ),
       );
     }
   }

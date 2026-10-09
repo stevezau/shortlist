@@ -131,6 +131,23 @@ describe("ActivityIndicator toasts", () => {
     toastError.mockClear();
   });
 
+  it("shows no button while nothing is running or queued, and keeps observing the queue", async () => {
+    // The Activity nav item goes to the same place, so an idle icon was a duplicate. The component
+    // stays mounted, so the toasts still fire for work that starts and ends between polls.
+    const { poll } = await renderIndicator([job({ id: 1, status: "done" })]);
+
+    expect(screen.queryByRole("button", { name: /Background work/ })).toBeNull();
+
+    await poll([job({ id: 2, status: "done", detail: "Removed 2 rows" })]);
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  it("shows the button, with a count, while a job is in flight", async () => {
+    await renderIndicator([job({ id: 3, status: "running" })]);
+
+    expect(await screen.findByRole("button", { name: "Background work: 1 in progress" })).toBeInTheDocument();
+  });
+
   it("asks the server to leave the routine job kinds out of the feed", async () => {
     // `watch.reconcile` is queued once per playback stop — 165 of the 197 jobs a day on a 46-user
     // server, which is more than this poll's page holds. Dropping them server-side is what keeps

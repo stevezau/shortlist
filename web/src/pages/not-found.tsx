@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 
-import { EmptyState } from "@/components/query-boundary";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -12,11 +12,11 @@ import { Button } from "@/components/ui/button";
  */
 export function NotFoundPage() {
   return (
-    <EmptyState
+    <PageHeader
       title="Page not found"
-      hint="That page doesn't exist. It may have moved, or the link was wrong."
-      action={
-        <Button asChild variant="outline" size="sm">
+      subtitle="That page doesn't exist. It may have moved, or the link was wrong."
+      actions={
+        <Button asChild>
           <Link to="/">Go to Dashboard</Link>
         </Button>
       }
