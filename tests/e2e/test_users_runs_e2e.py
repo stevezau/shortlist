@@ -333,22 +333,20 @@ class TestRuns:
         page.goto(f"/users/{sarah_id}")
         expect(page.get_by_role("heading", name="sarah")).to_be_visible(timeout=LOAD)
 
-        # Picks are posters grouped under their reason ("Because you watched <seed>"), so the first
-        # group's heading is what shows the page has loaded.
-        reason_re = re.compile(r"^Because you watched .+")
-        headings = page.get_by_role("heading", level=3).filter(has_text=reason_re)
-        expect(headings.first).to_be_visible(timeout=LOAD)
+        # Every poster carries its own reason under the title, so the first such caption is what
+        # shows the page has loaded.
+        reason_re = re.compile(r"Because you watched .+|Worth another watch|They asked for these")
+        expect(page.get_by_text(re.compile(r"^Because you watched .+")).first).to_be_visible(timeout=LOAD)
         # Rows collapse to the first 5 picks (collapseAfter=5), so expand every row before counting:
-        # this test asserts EVERY pick sits under a reason, not just the first few.
+        # this test asserts EVERY pick carries a reason, not just the first few.
         # Re-query each iteration: clicking one toggle re-renders the DOM and stales the locator list.
         while (toggle := page.get_by_role("button", name=re.compile(r"Show all \d+")).first).is_visible():
             toggle.click()
-        # Every pick is a list item under such a heading; none falls into the reasonless "Also picked"
-        # group. sarah watches movies AND TV, so both libraries' rows show a reason.
+        # Every pick is a list item, and every one of them names why it is there. sarah watches movies
+        # AND TV, so both libraries' rows show a reason.
         picks = page.get_by_role("listitem").filter(has_text=re.compile(r"suggested by"))
         expect(picks).to_have_count(len(sarah_picks))
-        expect(page.get_by_role("heading", name="Also picked")).to_have_count(0)
-        expect(headings).not_to_have_count(0)
+        expect(picks.filter(has_text=reason_re)).to_have_count(len(sarah_picks))
         titles = {p["title"] for p in sarah_picks}
         assert titles & {t for t, _ in DEMO_MOVIES} and titles & {t for t, _ in DEMO_SHOWS}, (
             "sarah's row should mix both libraries — otherwise this test proves nothing about them"
