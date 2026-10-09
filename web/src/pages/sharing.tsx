@@ -17,7 +17,7 @@ import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import { type GridCell, gridCell, rowColumnName } from "@/lib/privacy-grid";
 import { usePrivacyStatus, useSaveSettings, useSettings, useStartRun } from "@/lib/queries";
 import type { AccountPrivacy, PrivacyStatus } from "@/lib/types";
-import { USER_TYPE_LABEL } from "@/lib/user-profile";
+import { USER_TYPE_LABEL, profileLabel } from "@/lib/user-profile";
 import { cn } from "@/lib/utils";
 
 /**
@@ -354,7 +354,7 @@ function accountNote(account: AccountPrivacy, exposed: number): { text: string; 
       return {
         text: `${
           exposed > 0 ? `${account.display_name} ${rowsNotTheirs(exposed)}. ` : ""
-        }Plex rejects hide rules for Restriction Profiles (${account.restriction_profile}). Clear it in Plex to fix; Shortlist never changes that profile for you.`,
+        }Plex rejects hide rules for Restriction Profiles (${profileLabel(account.restriction_profile)}). Clear it in Plex to fix; Shortlist never changes that profile for you.`,
         tone: "text-warning",
       };
     case "left_alone":
@@ -435,11 +435,15 @@ function AccountsGrid({ data }: { data: PrivacyStatus }) {
               ))}
             </tr>
           </thead>
-          <tbody className="block divide-y md:table-row-group">
-            {data.accounts.map((account) => (
-              <AccountRow key={account.account_id} account={account} data={data} rows={rows} />
-            ))}
-          </tbody>
+          {/* One body per account, so an account's explanation can be a row of its own beneath it. */}
+          {data.accounts.map((account) => (
+            <tbody
+              key={account.account_id}
+              className="block border-t first:border-t-0 md:table-row-group md:first-of-type:border-t-0"
+            >
+              <AccountRow account={account} data={data} rows={rows} />
+            </tbody>
+          ))}
         </table>
       </div>
     </Card>
@@ -450,9 +454,26 @@ function AccountRow({ account, data, rows }: { account: AccountPrivacy; data: Pr
   const [open, setOpen] = useState(false);
   const exposed = rowsNotHidden(account, data);
   const note = accountNote(account, exposed);
+  // Where Plex refuses hide rules, the person's own page walks through the two-step fix in Plex.
+  const fixLink =
+    account.state === "refused_by_plex" && account.user_id !== null ? (
+      <>
+        {" "}
+        <Link to={`/users/${account.user_id}`} className="font-medium underline underline-offset-2">
+          How &rarr;
+        </Link>
+      </>
+    ) : null;
+  const noteLine = note && (
+    <p className={cn("text-sm", note.tone)}>
+      {note.text}
+      {fixLink}
+    </p>
+  );
 
   return (
-    <tr className="block px-6 py-4 md:table-row md:border-t md:p-0 md:first:border-t-0">
+    <>
+    <tr className={cn("block px-6 pt-4 md:table-row md:p-0", !noteLine && "pb-4")}>
       <th scope="row" className="block w-[300px] max-w-full px-0 text-left font-normal md:table-cell md:px-6 md:py-4 md:align-top">
         <div className="flex items-start gap-3">
           <UserAvatar name={account.display_name} />
@@ -478,9 +499,8 @@ function AccountRow({ account, data, rows }: { account: AccountPrivacy; data: Pr
                 for an account Shortlist has not synced, whose kind is only a fallback (see the note). */}
             <p className="text-xs text-muted-foreground">
               {account.user_id !== null && USER_TYPE_LABEL[account.user_type]}
-              {account.restriction_profile && ` · Restriction Profile ${account.restriction_profile}`}
+              {account.restriction_profile && ` · Restriction Profile ${profileLabel(account.restriction_profile)}`}
             </p>
-            {note && <p className={cn("mt-1.5 text-sm", note.tone)}>{note.text}</p>}
             {account.user_id === null && (
               // A share added since the last user sync. Every attribute beside the filter is a
               // fallback (`user_type` reads "shared", `restriction_profile` reads ""), so the state
@@ -531,6 +551,15 @@ function AccountRow({ account, data, rows }: { account: AccountPrivacy; data: Pr
         </td>
       ))}
     </tr>
+    {/* Its own full-width row: in the 300px Account column the explanation wrapped to seven lines. */}
+    {noteLine && (
+      <tr className="block px-6 pb-4 md:table-row md:p-0">
+        <td colSpan={rows.length + 1} className="block max-w-3xl md:table-cell md:max-w-none md:pb-4 md:pl-[4.75rem] md:pr-6">
+          {noteLine}
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 

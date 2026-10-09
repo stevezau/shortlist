@@ -159,16 +159,17 @@ function PrivacyCell({ user, privacy }: { user: User; privacy: PrivacyQuery }) {
   const name = user.display_name || user.username;
   const exposure =
     exposed > 0 ? (
-      <>
-        <span className="block font-medium">{capitalise(rowsNotTheirs(exposed))}</span>
+      <p className="mt-0.5" title={capitalise(rowsNotTheirs(exposed))}>
+        <span className="font-medium">Can see {exposed} {exposed === 1 ? "row" : "rows"}</span>
+        {" · "}
         <Link
           to={account?.state === "refused_by_plex" ? `/users/${user.id}` : "/privacy"}
           aria-label={`${name} ${rowsNotTheirs(exposed)} — how to fix it`}
-          className="mt-0.5 block text-sm underline underline-offset-2"
+          className="whitespace-nowrap underline underline-offset-2"
         >
           {account?.state === "refused_by_plex" ? "Fix in Plex →" : "See Privacy →"}
         </Link>
-      </>
+      </p>
     ) : null;
 
   if (privacy.isPending) return <Skeleton className="h-5 w-32" />;
@@ -762,11 +763,11 @@ export function UsersPage() {
               <div className="overflow-hidden rounded-xl border bg-card">
                 <Table>
                   <TableHeader className="hidden lg:table-header-group">
-                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead className="pr-8 text-right">Picks watched (30 days)</TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
+                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead className="text-right lg:pr-6">Picks watched<span className="block text-xs font-normal text-faint-foreground">30 days</span></TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
                   </TableHeader>
                   <TableBody className="grid lg:table-row-group">
                     {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
-                      <TableCell className="min-w-0 lg:w-[34%] lg:pl-4">
+                      <TableCell className="min-w-0 lg:w-[30%] lg:pl-4">
                         <div className="flex items-start gap-3">
                           {selecting && <label className={`mt-1.5 flex shrink-0 cursor-pointer ${coarseHitArea}`}><input type="checkbox" aria-label={`Select ${user.display_name || user.username}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="size-4 shrink-0 accent-primary" /></label>}
                           <UserAvatar name={user.username} size="sm" />
@@ -787,8 +788,8 @@ export function UsersPage() {
                       </TableCell>
                       <TableCell className="justify-self-end lg:justify-self-auto"><StatePill user={user} /></TableCell>
                       <TableCell className="text-sm lg:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
-                      <TableCell className="text-sm lg:pr-8 lg:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
-                      <TableCell className={`text-sm ${exposedRows(user, privacy) > 0 ? "bg-warning/10 text-warning lg:px-3" : ""}`}><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
+                      <TableCell className="text-sm lg:pr-6 lg:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
+                      <TableCell className={`text-sm ${exposedRows(user, privacy) > 0 ? "bg-warning/10 text-warning lg:px-3" : ""} lg:min-w-44`}><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
                       <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? new Date(user.last_run_at).toLocaleString() : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
                       <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap lg:table-cell lg:pr-4 lg:text-right">
                         <GatedSwitch
