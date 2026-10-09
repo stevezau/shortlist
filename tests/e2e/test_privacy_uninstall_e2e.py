@@ -79,7 +79,10 @@ class TestUninstall:
         build_real_rows(app)
         # 5 rows for 3 users: sarah and the cold-start jess each get one per library; mike watches only TV.
         assert len(state.collections) == 5
-        assert state.users[201].filters["filterMovies"] == "label!=Shortlist_jess,Shortlist_mike"
+        # People run concurrently, so excludes land in the order their first rows are written; the order
+        # within one `label!=` clause means nothing to Plex.
+        clause, _, labels = state.users[201].filters["filterMovies"].partition("!=")
+        assert (clause, sorted(labels.split(","))) == ("label", ["Shortlist_jess", "Shortlist_mike"])
 
         # Uninstall is its own page now (with a live per-step log), reached from the Danger Zone link.
         page.goto("/settings#danger")

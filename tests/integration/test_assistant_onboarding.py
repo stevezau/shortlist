@@ -19,7 +19,8 @@ from shortlist.server.db.models import Job, User
 from shortlist.server.main import create_app
 from tests.e2e.conftest import _make_fake_tmdb
 from tests.fakes.fake_plex import make_fake_plex, make_fake_plextv, seed_state
-from tests.integration.test_assistant_mcp_tool_matrix import McpWire, _port, _ThreadedServer, _wait_for_operation
+from tests.integration.test_assistant_mcp_tool_matrix import McpWire, _port, _wait_for_operation
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.integration
 
@@ -53,9 +54,9 @@ class FreshInstallation:
 def fresh_installation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """The product creates its defaults; even owner identity and grants are established over HTTP."""
     plex = seed_state()
-    pms = _ThreadedServer(make_fake_plex(plex), _port())
-    tv = _ThreadedServer(make_fake_plextv(plex), _port())
-    tmdb = _ThreadedServer(_make_fake_tmdb(plex), _port())
+    pms = UvicornThread(make_fake_plex(plex), _port())
+    tv = UvicornThread(make_fake_plextv(plex), _port())
+    tmdb = UvicornThread(_make_fake_tmdb(plex), _port())
     servers = [pms, tv, tmdb]
     for server, health in ((pms, "/identity"), (tv, "/api/users"), (tmdb, "/configuration")):
         server.start()
@@ -75,7 +76,7 @@ def fresh_installation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SHORTLIST_MCP_URL", base_url + "/mcp")
     monkeypatch.delenv("APP_BASE_PATH", raising=False)
     app = create_app(config_dir=tmp_path)
-    runtime = _ThreadedServer(app, number)
+    runtime = UvicornThread(app, number)
     servers.append(runtime)
     runtime.start()
     runtime.wait_until_up("/api/system/health")
