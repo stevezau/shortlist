@@ -848,7 +848,7 @@ describe("UsersPage — Plex Home accounts", () => {
     );
     renderPage();
 
-    expect(await screen.findByText(/can see 3 rows/i)).toBeInTheDocument();
+    expect(await screen.findByText(/sees 3 rows not theirs/i)).toBeInTheDocument();
   });
 
   it("does not flag a profiled account that sees nothing", async () => {
@@ -1069,7 +1069,7 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
     expect(link).toHaveTextContent("Fix in Plex");
     expect(link).toHaveAttribute("href", `/users/${KID.id}`);
     const cell = link.closest("td") as HTMLElement;
-    expect(cell).toHaveTextContent("Can see 3 rows · Fix in Plex");
+    expect(cell).toHaveTextContent("Sees 3 rows not theirs · Fix in Plex");
     expect(cell.className).toMatch(/bg-warning/);
   });
 
@@ -1083,7 +1083,7 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
     renderPage();
 
     const kidRow = (await screen.findByRole("link", { name: "kid" })).closest("tr") as HTMLElement;
-    expect(await within(kidRow).findByText("Can see 3 rows")).toBeInTheDocument();
+    expect(await within(kidRow).findByText("Sees 3 rows not theirs")).toBeInTheDocument();
     expect(within(kidRow).queryByText(/5 rows/)).toBeNull();
   });
 

@@ -160,7 +160,7 @@ function PrivacyCell({ user, privacy }: { user: User; privacy: PrivacyQuery }) {
   const exposure =
     exposed > 0 ? (
       <p className="mt-0.5" title={capitalise(rowsNotTheirs(exposed))}>
-        <span className="font-medium">Can see {exposed} {exposed === 1 ? "row" : "rows"}</span>
+        <span className="font-medium">Sees {exposed} {exposed === 1 ? "row" : "rows"} not theirs</span>
         {" · "}
         <Link
           to={account?.state === "refused_by_plex" ? `/users/${user.id}` : "/privacy"}
