@@ -9,6 +9,7 @@
  * Filter rules inside a sentence are wrapped in backticks (`label!=shortlist_kid`) so the table can set
  * them in the code face; everything else is plain text.
  */
+import { joinList, plural } from "@/lib/format";
 import type { AuditEvent } from "@/lib/types";
 
 export interface ChangeDescription {
@@ -98,19 +99,9 @@ function record(value: unknown): Message {
 
 // --- wording ---------------------------------------------------------------------------------------
 
-function plural(count: number, one: string, many = `${one}s`): string {
-  return `${count} ${count === 1 ? one : many}`;
-}
-
-/** "a", "a and b", "a, b and c". */
-function joinAnd(items: string[]): string {
-  if (items.length <= 1) return items[0] ?? "";
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
-}
-
 /** Up to three names, then "and N more" — a sweep can delete forty rows. */
 function nameList(items: string[], max = 3): string {
-  if (items.length <= max) return joinAnd(items);
+  if (items.length <= max) return joinList(items);
   return `${items.slice(0, max).join(", ")} and ${items.length - max} more`;
 }
 
@@ -139,7 +130,7 @@ function diffSentence(diff: Message, dry: boolean): string {
       deleted.length ? `delete ${nameList(deleted)}` : "",
       duplicates ? `remove ${plural(duplicates, "leftover copy", "leftover copies")}` : "",
     ].filter(Boolean);
-    return parts.length ? `Would ${joinAnd(parts)}` : "";
+    return parts.length ? `Would ${joinList(parts)}` : "";
   }
   const parts = [
     added ? `+${plural(added, "title")}` : "",
@@ -194,7 +185,7 @@ function filterDelta(fields: Message): { added: string[]; removed: string[] } {
   return { added: unique(added), removed: unique(removed) };
 }
 
-const code = (rules: string[]) => joinAnd(rules.map((rule) => `\`${rule}\``));
+const code = (rules: string[]) => joinList(rules.map((rule) => `\`${rule}\``));
 
 function shareFilterSentence(message: Message, dry: boolean): string {
   const { added, removed } = filterDelta(record(message.fields));
@@ -269,7 +260,7 @@ function renameSentence(message: Message): string {
   const parts: string[] = [];
   if (done.length === 1 && first) {
     const libraries = strings(first.libraries);
-    parts.push(`${arrow}${libraries.length ? ` in ${joinAnd(libraries)}` : ""}`);
+    parts.push(`${arrow}${libraries.length ? ` in ${joinList(libraries)}` : ""}`);
   } else if (done.length > 1) {
     parts.push(`Renamed ${done.length} collections, e.g. ${arrow}`);
   }
@@ -285,12 +276,12 @@ function uninstallSummary(message: Message, dry: boolean): string {
   const failed = records(message.filters_failed).length;
   const unreachable = records(message.filters_unreachable).length;
   const done = dry
-    ? `Would ${joinAnd([
+    ? `Would ${joinList([
         `restore ${plural(restored, "share filter")}`,
         `delete ${plural(deleted, "collection")}`,
         `switch off ${plural(disabled, "row")}`,
       ])}`
-    : `${joinAnd([
+    : `${joinList([
         `${plural(restored, "share filter")} restored`,
         `${plural(deleted, "collection")} deleted`,
         `${plural(disabled, "row")} switched off`,
@@ -377,7 +368,7 @@ export function describeChange(event: AuditEvent, names: NameLookup = {}): Chang
       const deleted = records(m.deleted);
       return {
         who: "Rows nobody owns",
-        what: joinAnd(unique(deleted.map((d) => str(d.library)))),
+        what: joinList(unique(deleted.map((d) => str(d.library)))),
         change: `${dry ? "Would delete" : "Deleted"} ${plural(deleted.length, "collection")} whose person is no longer on the server: ${nameList(deleted.map((d) => str(d.title)))}`,
       };
     }
@@ -391,7 +382,7 @@ export function describeChange(event: AuditEvent, names: NameLookup = {}): Chang
       const why = reasons.length === 1 && reasons[0] ? DEMOTE_REASONS[reasons[0]] : undefined;
       return {
         who: nameList(people.map(personName)),
-        what: joinAnd(unique(demoted.map((d) => str(d.library)))),
+        what: joinList(unique(demoted.map((d) => str(d.library)))),
         change: `${dry ? "Would take off Home" : "Taken off Home"}: ${nameList(demoted.map((d) => str(d.title)))}${why ? ` (${why})` : ""}`,
       };
     }
@@ -420,7 +411,7 @@ export function describeChange(event: AuditEvent, names: NameLookup = {}): Chang
       const change = error
         ? `Couldn't reset the poster: ${error}`
         : reset.length
-          ? `${dry ? "Would reset the poster" : "Poster reset"} to Plex's own artwork in ${joinAnd(reset)}`
+          ? `${dry ? "Would reset the poster" : "Poster reset"} to Plex's own artwork in ${joinList(reset)}`
           : "No collection on Plex needed its poster reset";
       return { who, what: "Poster", change };
     }

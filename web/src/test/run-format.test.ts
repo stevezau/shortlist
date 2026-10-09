@@ -67,7 +67,6 @@ describe("errorBucket — only the three recognised classes count as 'the same p
 describe("rankClass", () => {
   it("is neutral: the first ten at full strength, the rest muted", () => {
     expect(rankClass(1)).not.toContain("amber");
-    expect(rankClass(3)).not.toContain("amber");
     expect(rankClass(4)).not.toContain("amber");
     expect(rankClass(10)).not.toContain("muted");
     expect(rankClass(11)).toContain("muted");
@@ -203,7 +202,7 @@ describe("currentPhase", () => {
   });
 
   it("does not let the LIBRARY INDEX start the per-user stretch or pad its total", () => {
-    // `_build_indexes` narrates under the SECTION TITLE, not a slug (pipeline.py:214-220), and it
+    // `_build_indexes` narrates under the SECTION TITLE, not a slug (in the pipeline), and it
     // runs inside `preparing`. Counting log subjects made "Movies"/"TV Shows" two extra people AND
     // declared the run was building rows while it was still reading libraries.
     const phase = currentPhase(runWith(["sarah", "mike", "ana"]), [
@@ -221,7 +220,7 @@ describe("currentPhase", () => {
   });
 
   it("does not let a SHARED row start the per-user stretch either", () => {
-    // A shared row narrates under `shared_<row>` (rows.py:2480,2667). It is the ONLY non-server
+    // A shared row narrates under `shared_<row>` (the `_shared_row` builder in the engine's rows module). It is the ONLY non-server
     // subject here on purpose: with a real person's line in the fixture too, the start gate would
     // be satisfied regardless and this would pin nothing.
     const phase = currentPhase(runWith(["sarah", "mike", "ana"]), [
@@ -348,10 +347,10 @@ describe("currentPhase", () => {
  *  frozen for all but a few seconds of it.
  *
  *  The roster comes from `stats.expected_users`, written at queue time AND at start
- *  (run_service.py:180,266) and dropped only when `run_persistence.py:782` reassigns `stats` whole
+ *  (run_service) and dropped only when run_persistence's finalize reassigns `run.stats` whole
  *  at finalize — the same moment `finished_at` is set and this header stops rendering. `run.users`
  *  grows as people finish because `ctx.on_user_done` persists each person BEFORE their terminal
- *  emit (pipeline.py:373 then :380), so a person present in the log is present in the payload.
+ *  emit (`ctx.on_user_done` fires before the per-user terminal `_emit` in the pipeline), so a person present in the log is present in the payload.
  */
 describe("currentPhase — replaying run #10", () => {
   const ROSTER = Array.from({ length: 46 }, (_, i) => `person${i + 1}`);
@@ -468,7 +467,7 @@ describe("currentPhase — replaying run #10", () => {
  *
  * The ONLY other thing that refreshes a running run is the live SSE stream, and `EventSource`
  * replays nothing it missed while disconnected — so when the stream itself is down, a finished run
- * reads "Running" with a ticking timer until someone reloads. That is the SFLIX 2026-08-13 symptom
+ * reads "Running" with a ticking timer until someone reloads. That is the production symptom seen on 2026-08-13
  * (a cancel that HAD worked looked like one that was ignored), reachable through a dropped
  * connection rather than through an idle one.
  *

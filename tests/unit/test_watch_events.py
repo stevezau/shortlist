@@ -787,7 +787,7 @@ class TestCarriedForwardPicksCarryNoRatingKey:
 
 class TestAnAccountWeDoNotKnowCreditsNobody:
     """The whole feature keys on `accountID == users.plex_account_id`, and a real server's play log
-    carries ids that match no user row — on SFLIX, `1` (conventionally the owner in Plex's history
+    carries ids that match no user row — on a large production server, `1` (conventionally the owner in Plex's history
     endpoint) and one id belonging to a share since removed.
 
     Skipping them is the safe direction and the current behaviour; this pins it, because the unsafe

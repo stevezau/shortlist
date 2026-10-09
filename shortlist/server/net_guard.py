@@ -59,6 +59,9 @@ def _is_blocked_ip(host: str) -> bool:
             address = ipaddress.ip_address(candidate)
         except ValueError:
             continue
+        # `::ffff:169.254.169.254` is the metadata address to the OS but is not "in" an IPv4 network.
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
         if any(address in net for net in _BLOCKED_NETS):
             return True
     return False

@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AcquisitionClaim, RequestCandidate, User } from "@/lib/types";
 import { RequestsPage } from "@/pages/requests";
+import { makeUser } from "@/test/user-fixtures";
 
 const {
   listRequests,
@@ -71,32 +72,7 @@ vi.mock("@/lib/api", () => ({
 
 /** A users-list row, for the username → display-name resolution the inbox does client-side. */
 function person(username: string, displayName: string): User {
-  return {
-    manage_sharing: true,
-    id: username.length,
-    plex_account_id: 0,
-    username,
-    slug: username,
-    nickname: "",
-    friendly_name: "",
-    display_name: displayName,
-    avatar_url: "",
-    user_type: "shared",
-    restricted: false,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    enabled: true,
-    cold_start: false,
-    request_tag: "",
-    requested_by_tag: "",
-    prefs: {},
-    history_depth: 0,
-    last_run_at: null,
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    preview_titles: [],
-  };
+  return makeUser({ id: username.length, username, slug: username, display_name: displayName });
 }
 
 function candidate(
@@ -309,7 +285,7 @@ describe("RequestsPage", () => {
     // Sonarr has no id-based URL, so the direct link needs the titleSlug captured at send time.
     getSettings.mockResolvedValueOnce({
       "requests.enabled": true,
-      "requests.sonarr.url": "https://tv.stevez0.com",
+      "requests.sonarr.url": "https://sonarr.example.com",
     });
     listRequests.mockResolvedValue([
       candidate({
@@ -327,14 +303,14 @@ describe("RequestsPage", () => {
     );
     const open = screen.getByRole("link", { name: /Open in Sonarr/i });
     expect((open as HTMLAnchorElement).href).toBe(
-      "https://tv.stevez0.com/series/shogun",
+      "https://sonarr.example.com/series/shogun",
     );
   });
 
   it("falls back to the Sonarr home for a legacy sent show with no captured slug", async () => {
     getSettings.mockResolvedValueOnce({
       "requests.enabled": true,
-      "requests.sonarr.url": "https://tv.stevez0.com",
+      "requests.sonarr.url": "https://sonarr.example.com",
     });
     listRequests.mockResolvedValue([
       candidate({
@@ -351,13 +327,13 @@ describe("RequestsPage", () => {
       await screen.findByRole("tab", { name: "Sent (1)" }),
     );
     const open = screen.getByRole("link", { name: /Open in Sonarr/i });
-    expect((open as HTMLAnchorElement).href).toBe("https://tv.stevez0.com/");
+    expect((open as HTMLAnchorElement).href).toBe("https://sonarr.example.com/");
   });
 
   it("deep-links a sent movie to its Radarr page (slug when captured, else TMDB id)", async () => {
     getSettings.mockResolvedValueOnce({
       "requests.enabled": true,
-      "requests.radarr.url": "https://movies.stevez0.com",
+      "requests.radarr.url": "https://radarr.example.com",
     });
     listRequests.mockResolvedValue([
       candidate({
@@ -375,7 +351,7 @@ describe("RequestsPage", () => {
     );
     const open = screen.getByRole("link", { name: /Open in Radarr/i });
     expect((open as HTMLAnchorElement).href).toBe(
-      "https://movies.stevez0.com/movie/the-matrix-603",
+      "https://radarr.example.com/movie/the-matrix-603",
     );
   });
 

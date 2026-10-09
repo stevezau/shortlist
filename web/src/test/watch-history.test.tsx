@@ -333,7 +333,9 @@ describe("the library filter", () => {
     );
     renderPanel();
 
-    expect(await screen.findByText("Movies")).toBeInTheDocument();
+    // Scoped to the row: the "Movies" media filter button carries the same text.
+    const row = (await screen.findByText("Teacup")).closest("li");
+    expect(Array.from(row!.querySelectorAll("span[title]")).map((t) => t.textContent)).toEqual(["Movies"]);
     expect(screen.queryByText(/Movies ·/)).not.toBeInTheDocument();
   });
 
@@ -348,7 +350,8 @@ describe("the library filter", () => {
     );
     renderPanel();
 
-    expect(await screen.findByText("Movies")).toBeInTheDocument();
+    const row = (await screen.findByText("Teacup")).closest("li");
+    expect(Array.from(row!.querySelectorAll("span[title]")).map((t) => t.textContent)).toEqual(["Movies"]);
   });
 
   it("still names both libraries on a row that is genuinely in two", async () => {

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { UserSharing } from "@/components/user-detail/user-sharing";
 import type { User } from "@/lib/types";
+import { makeUser } from "@/test/user-fixtures";
 
 const patchUser = vi.hoisted(() => vi.fn());
 
@@ -18,33 +19,7 @@ vi.mock("@/lib/queries", () => ({
 }));
 
 function user(patch: Partial<User> = {}): User {
-  return {
-    manage_sharing: true,
-    id: 9,
-    username: "kid",
-    slug: "kid",
-    user_type: "managed",
-    restricted: true,
-    enabled: false,
-    cold_start: false,
-    history_depth: 0,
-    last_run_at: null,
-    request_tag: "",
-    requested_by_tag: "",
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    nickname: "",
-    friendly_name: "",
-    display_name: "Ellie",
-    avatar_url: "",
-    plex_account_id: 500,
-    restriction_profile: "",
-    preview_titles: [],
-    unhidden_rows: 0,
-    departed: false,
-    prefs: {},
-    ...patch,
-  };
+  return makeUser({ id: 9, username: "kid", slug: "kid", user_type: "managed", restricted: true, enabled: false, display_name: "Ellie", plex_account_id: 500, ...patch });
 }
 
 function renderCard(value: User) {

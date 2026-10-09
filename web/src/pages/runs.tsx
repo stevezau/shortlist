@@ -318,7 +318,7 @@ export function RunsPage() {
   // Live updates. Without this the list is a snapshot: a run that finishes leaves its row reading
   // "Running" with a ticking timer for as long as the page stays open, because nothing refetches. On
   // a real server that made a cancel that HAD worked look like one that was ignored — the operator
-  // watches this page, and this page never changed its mind (SFLIX, 2026-08-13).
+  // watches this page, and this page never changed its mind (a large production server, 2026-08-13).
   useSSE({
     onRunFinished: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.runs });

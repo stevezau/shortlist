@@ -78,7 +78,6 @@ def test_cancelled_run_keeps_its_worker_and_writer_lock_until_shutdown_finishes(
             with pytest.raises(RuntimeError, match="shutting down"):
                 await service.dispatch_queued_assistant_run(run_id)
             await service.sync_watched()
-            service.sync_watched_background()
             assert service._tasks == {caller}
 
             release.set()

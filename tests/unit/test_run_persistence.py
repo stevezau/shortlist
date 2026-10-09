@@ -116,7 +116,7 @@ class TestTheShelfEventsANightlyRunEmits:
         assert [(a[0], a[1]) for a in seen] == [("run.hub_order", "info")]
 
     def test_an_unverified_move_is_a_warning(self):
-        """A shelf we asked for and did not get — the SFLIX case the whole audit was rebuilt around."""
+        """A shelf we asked for and did not get — the a big server case the whole audit was rebuilt around."""
         seen = self._emit([{"library": "Movies", "moved": ["Picked for You"], "verified": False}])
 
         assert [(a[0], a[1]) for a in seen] == [("run.hub_order", "warning")]

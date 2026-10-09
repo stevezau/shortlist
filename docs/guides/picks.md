@@ -2,7 +2,6 @@
 title: "Choosing what goes in a Plex recommendation row"
 description: Where candidate titles come from, how often a row changes, how to override any of it per row or per person, and how to stop one watch skewing someone's picks.
 heading: What goes in a row
-nav_order: 3
 ---
 
 ## Recommendation sources

@@ -90,7 +90,6 @@ import type {
   Session,
   Settings,
   SetupState,
-  SyncsInfo,
   TestableService,
   TitleMatch,
   UninstallResult,
@@ -454,12 +453,12 @@ export const api = {
   getUserHistory: (id: number): Promise<WatchItem[]> =>
     request(`/api/users/${id}/history`),
 
-  /** Search one person's cached watched set. Unlike `getUserHistory` this never touches Plex, so it
-   *  can search the whole set rather than the page on screen. */
   /** What this person did with the picks they were given: finished, part-watched, or abandoned. */
   getUserOutcomes: (id: number): Promise<UserPickOutcome[]> =>
     request(`/api/users/${id}/outcomes`),
 
+  /** Search one person's cached watched set. Unlike `getUserHistory` this never touches Plex, so it
+   *  can search the whole set rather than the page on screen. */
   getUserWatched: (
     id: number,
     { q, mediaType, library, limit }: WatchedFilters,
@@ -770,22 +769,6 @@ export const api = {
       body: JSON.stringify({ version }),
     }),
 
-  /** The plain-text diagnostics bundle for bug reports (secrets-free). */
-  getDebugBundle: async (): Promise<string> => {
-    const response = await fetch(apiUrl("/api/system/debug"), {
-      headers: { Accept: "text/plain" },
-    });
-    if (!response.ok)
-      throw new ApiError(
-        response.status,
-        "Couldn't build the diagnostics bundle.",
-      );
-    return response.text();
-  },
-
-  /** When each sync last ran and when it next fires (Tools page). */
-  getSyncs: (): Promise<SyncsInfo> => request("/api/system/syncs"),
-
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
   getReport: (window: ReportWindow = "30"): Promise<EffectivenessReport> =>
     request(`/api/report?window=${window}`),
@@ -813,7 +796,6 @@ export const api = {
   syncWatched: (): Promise<{ started: boolean }> =>
     request("/api/report/sync", { method: "POST" }),
 
-  /** A library's managed collections — the candidate anchors for placing rows in the shelf. */
   /** A library's FOREIGN collections — ours are excluded server-side, because a Shortlist row is
    *  anchored by row slug rather than by title (a per-person row is one collection per person).
    *  `on_shelf` is whether it has a position on a Plex shelf at all: a collection that has none
@@ -1103,8 +1085,6 @@ export const api = {
    *  `supportReportZipUrl` is the one to offer: the text report PLUS every redacted log file. The
    *  `.txt` remains for anyone who wants only the pasteable part. */
   supportReportZipUrl: (): string => apiUrl("/api/support/report.zip"),
-
-  supportBundleUrl: (): string => apiUrl("/api/support/bundle.txt"),
 
   /** The pasteable report. Not `request()`: the response is text/plain. */
   getSupportBundle: async (): Promise<string> => {

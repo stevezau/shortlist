@@ -11,7 +11,7 @@ updated: 2026-10-05
     <img src="{{ '/images/rows-crop.webp' | relative_url }}" width="1560" height="918" loading="lazy"
          alt="The Rows page: four rows, each with an on/off switch, a Run now button and a more-actions menu, and an Add a row button at the top right.">
   </picture>
-  <figcaption><strong>Rows → Add a row</strong> opens the template gallery. <em>Seasonal</em> is one of the ten starting templates.</figcaption>
+  <figcaption><strong>Rows → Add a row</strong> opens the template gallery. <em>Seasonal</em> is one of the eleven starting templates.</figcaption>
 </figure>
 
 ## Start a seasonal row

@@ -1,12 +1,10 @@
 # Full-repo review backlog
 
-Findings from the nine-reviewer pre-`beta.8` sweep (July 2026). **Everything is closed** — sections
-1–8 from the sweep itself, plus the one item the sweep missed and a later pass found. See the `dev`
-history for 2026-07-31.
-
-Kept as the record of what was fixed, so a future reviewer who rediscovers one of these checks the
-history before "fixing" it again. Everything from that sweep is closed; the OPEN section immediately
-below is later work.
+Findings from the nine-reviewer pre-`beta.8` sweep (July 2026) and every review since. This file is
+the worklist: sections headed **OPEN** below are unfixed (lines 79-252 as of 2026-10-09, plus the
+2026-10-02 release audit's "left open" list at line 13), and each one is judged on its own. Everything
+else is closed and is kept as the record of what was fixed, so a future reviewer who rediscovers one
+checks the history before "fixing" it again.
 
 ---
 
@@ -83,7 +81,7 @@ Found read-only while tracing per-person ↔ shared switching for the row-editor
 it — the design explicitly declines to fix them and sends them here instead. Neither has been
 reproduced on a live server; both are reasoned from the cited code, not measured.
 
-- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — HIGH — a brand-new subset shared row is visible to people outside its
+- **FIXED (2026-09-27; verified live on a large production server, runs 57–58) — HIGH — a brand-new subset shared row is visible to people outside its
   audience until the run ends.** Precondition: a row switches to `build=shared` with an `audience`
   narrower than everyone (a "subset" shared row), and no earlier per-person row of this row's owner has
   already put a `shortlist_<userslug>` exclude on the outsiders' share filters. The early first-row
@@ -100,7 +98,7 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   `test_a_new_shared_row_is_excluded_from_outsiders_before_the_next_row_is_written`,
   `test_a_new_shared_row_is_hidden_before_its_second_library_is_written` and
   `test_no_early_merge_for_a_shared_row_already_on_the_server`.
-- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — MED — a build switch's collection
+- **FIXED (2026-09-27; verified live on a large production server, runs 57–58) — MED — a build switch's collection
   removal can leave a stale per-person copy behind permanently.** At save, `shortlist/server/api/row_changes.py:129-136` triggers RECONCILE
   to delete every per-person copy of a row switching build (`collection_reconcile.py:551-594`), and the
   save waits for it — but the removal can still miss a copy: the reconcile job itself can give up
@@ -132,12 +130,12 @@ reproduced on a live server; both are reasoned from the cited code, not measured
   `test_the_default_row_switched_to_shared_retires_copies_titled_from_the_global_template` and
   `test_collection_reconcile.py::test_a_walk_that_fails_partway_has_already_forgotten_the_people_it_finished`.
 
-## OPEN — seen during the row-editor live proof on SFLIX (2026-09-27)
+## OPEN — seen during the row-editor live proof on a large production server (2026-09-27)
 
-Seen while proving the new row editor's save paths live on throwaway MooHouse-only rows (all cleaned
+Seen while proving the new row editor's save paths live on throwaway Guest-only rows (all cleaned
 up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour, not changed by it.
 
-- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — LOW — a seasons change re-applies
+- **FIXED (2026-09-27; verified live on a large production server, runs 57–58) — LOW — a seasons change re-applies
   visibility to EVERY row for every account.**
   Saving one row out of Seasonal queued `rows.visibility` (`shortlist/server/api/row_changes.py`
   ~195-196), and the pass merged all 48 accounts' filters (none changed) and re-promoted every
@@ -194,7 +192,7 @@ up; evidence in that session's scratchpad `live-proof/`). PRE-EXISTING behaviour
 Found by the row-editor cleanup's second review. PRE-EXISTING: it predates that work, which only
 routes its own kind-switch renames around it (design §15.1).
 
-- **FIXED (2026-09-27; verified live on SFLIX, runs 57–58) — MED — Rename… reports "renamed 0 /
+- **FIXED (2026-09-27; verified live on a large production server, runs 57–58) — MED — Rename… reports "renamed 0 /
   nothing to rename" for any rename where the old or new name contains `{top_seed}`.** `collection_reconcile.py:972-990` (`_renamed_titles`)
   renders both templates with no picks, and a `{top_seed}` template renders as "" without one, so there
   are no (old, new) title pairs to rename. Plex keeps the old title until the row's next delivery
@@ -245,7 +243,7 @@ found on the way and are not fixed.
   be one whose seed has since left the seed set. The next night's check sees that name and rebuilds.
   One seed per library (the recommended Movies+TV budget of 2) cannot reach it.
 
-Not a bug, so it isn't re-found: on SFLIX, 28 of 91 `{top_seed}` titles named an older watch than the
+Not a bug, so it isn't re-found: on a large production server, 28 of 91 `{top_seed}` titles named an older watch than the
 person's newest (2026-09-24). The row's budget is 3, and above one seed per library the title names the
 best pick's seed, not the newest watch — the trade-off `docs/guides/rows.md` already describes.
 
@@ -339,7 +337,7 @@ titles qualify, and the row is unfiltered when no token can be minted (a PIN-pro
 visibility read fails. (A scout claimed "picking never reads an account's filter" by grepping for
 `filterMovies`; the check is by token, not by parsing the filter — Architecture Review caught it.) The
 owner warning (`notifications.py`, "restrictions-restored") and `docs/reference/concepts.md` now say the
-row is filled only with titles the list admits. SFLIX: 0 of 48 accounts carry a restriction of their own.
+row is filled only with titles the list admits. A large production server: 0 of 48 accounts carry a restriction of their own.
 
 Residue note: `CanaryAllow_DELETE_ME` now appears in the movie library's label list with 0 items, from the
 first void attempt. Inert, and that list already carries several empty names (`Kometa`, `Based`, `Decade`,
@@ -436,7 +434,7 @@ same day:
 
 Found auditing #119. A person with no row yet has no `label!=shortlist_<slug>` in anyone's share
 filter until a merge writes one, and the merge ran after EVERY person's delivery — about an hour on
-SFLIX, longer on a refresh night now that rows update in place.
+A large production server, longer on a refresh night now that rows update in place.
 
 **Measured, read-only, as a shared account** (`tests/fixtures/pms_collections_tab_filter_visibility.json`):
 collection mode "hide" does not cover the Collections tab or collection search — the public shared rows,
@@ -492,7 +490,7 @@ Still NOT done, and deliberately: making the delivery actually succeed. That nee
 BEFORE the repair's delete, per the reverted attempt below, and the race has never been observed —
 see the evidence in the original note.
 
-Found auditing #119, LOW, pre-existing. **Never observed on SFLIX:** 0 in 7 days of logs, and 0 vanished
+Found auditing #119, LOW, pre-existing. **Never observed on a large production server:** 0 in 7 days of logs, and 0 vanished
 picks in run history back to 2026-07-24 (checked 2026-09-13). Leave it unless it is ever seen. If every pick for a library is deleted from Plex in the seconds
 between curation and `_create_labelled_collection`'s `fetch_items`, `create_collection(section, title,
 [])` reaches plexapi's `Collection._create`, which raises `BadRequest('Must include items…')` before
@@ -551,7 +549,7 @@ about how much — the same shape as the show-level bug one level down. Every on
 (2017–2024), so they are historical residue there rather than fresh marks.
 
 *INVESTIGATED 2026-09-18 — DO NOT BUILD THIS. The detection query is wrong and would mark 52 shows on
-SFLIX as watched that nobody has watched.*
+A large production server as watched that nobody has watched.*
 
 The plan was `?type=3&unwatched=0`, roll up by `parentRatingKey`, count the episodes. Measured, in this
 order, and each step moved the conclusion:
@@ -614,7 +612,7 @@ fetch` fail-softs past an unreadable section and returns a non-empty answer that
 
 **Also outstanding, unrelated to the reporter:**
 
-* **DONE (2026-09-28; measured live on SFLIX: 47.8s, was 87–132s over the six syncs before; all 47 people's cached sets byte-identical before and after):** users are read `run.concurrency` at a time
+* **DONE (2026-09-28; measured live on a large production server: 47.8s, was 87–132s over the six syncs before; all 47 people's cached sets byte-identical before and after):** users are read `run.concurrency` at a time
   (sync + run prefill). PMS reads run lock-free, then each user's SQLite write step runs under
   `WatchSync._cache_writes`. The "static half" lever had nothing to share: every per-section call depends
   on the user's own token. Review (2026-09-28): the
@@ -1130,7 +1128,7 @@ most — the job is REMOVED from APScheduler while off, so "restore" has to re-r
 test reads the trigger string rather than `next_run is not None`.
 
 **FIXED 2026-09-28** (`queries.useBuiltInScheduleLabel`): the chip reads "Built-in (HH:MM)" from
-`default_cron`. The first fix (02239886) reached only the generic `SchedulePanel`, so on SFLIX only "Clear
+`default_cron`. The first fix (02239886) reached only the generic `SchedulePanel`, so on a large production server only "Clear
 out old records" changed: Sync watch history, Sync people from Plex and Back up the database draw their
 own `CronPicker` and still said "Daily". All four now share the one hook; pinned by
 `jobs-page.test.tsx` ("…sync jobs that draw their own panel") and `backup-panel.test.tsx`. Original note: for the five jobs where blank means default, the chip is labelled
@@ -1358,20 +1356,20 @@ report change.
 
 ## Known limitation: shared rows delivered before the `media_type` fix can never be credited
 
-**Status: accepted, not fixed. Verified on SFLIX 2026-08-24.**
+**Status: accepted, not fixed. Verified on a large production server 2026-08-24.**
 
 `RunSharedRow.picks` is a JSON blob, and `_shared_key` refuses to guess a title's type when the blob
 carries no `media_type` — correctly, because TMDB ids are namespaced per type and matching on the id
 alone would credit the wrong title. `_pick_dicts` now writes `media_type` on every pick, but the rows
 already in the database were written before it did.
 
-On SFLIX every `run_shared_rows` row up to and including run 25 (2026-08-23) carries
+On a large production server every `run_shared_rows` row up to and including run 25 (2026-08-23) carries
 `media_type: None` for every pick. The effect is measurable: `thats_no_moon` played The Bear at
 2026-08-23 19:41, the play is in the scan and resolves to `(136315, "show")`, run 25's shared row
 contains The Bear — and `shared_credits` returns **0**, because the row's key pool was built from
 picks with no type.
 
-Not backfilled, and mostly not backfillABLE. Measured on SFLIX across all twelve stored shared rows:
+Not backfilled, and mostly not backfillABLE. Measured on a large production server across all twelve stored shared rows:
 runs 1-23 carry neither `tmdb_id` nor `rating_key` on any pick — their blobs hold only
 `title/year/rank/rating/reason/seed_title/sources/affinity`, so there is no id to join on by any
 route, and no migration can invent one. Only run 25 carries a `rating_key` (all 80 picks), and its

@@ -21,7 +21,7 @@ the row is not clear… it feels messy, let's get it all cleaned up. Think throu
 
 ## Facts already established
 
-- Row 2 on SFLIX: media=both, max_seeds=3, seed_window=1, seasons=[] (read from the live DB).
+- Row 2 on a large production server: media=both, max_seeds=3, seed_window=1, seasons=[] (read from the live DB).
 - Seasons group is shown on every row except the default one (`row-editor.tsx:754`).
 - The editor already warns: "This row's name mentions one title, but it's built from 3 watches… Set it
   to 2 — one film and one show."
@@ -32,7 +32,7 @@ the row is not clear… it feels messy, let's get it all cleaned up. Think throu
 ## Read first
 
 - `.claude/docs/row-types-architecture-review.md` (row types may already exist as a concept)
-- `.claude/docs/discussion-124-seasonal-rows.md`, `.claude/docs/issue-84-row-naming.md`
+- `.claude/docs/discussion-124-seasonal-rows.md`
 - `.claude/rules/frontend.md`, `docs/guides/rows.md`
 - Memories: design-questions-in-prose, my-taste-is-not-the-default, fix-the-complaint-not-its-
   generalisation, measure-layout-dont-reason-about-it, test-frontend-at-1024, browser-verify-with-fake-plex

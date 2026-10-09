@@ -5,10 +5,10 @@ FastAPI backend + React SPA + SQLite, with a pure-Python engine (per-user watche
 PMS via each share's server token → TMDB similar-titles (+ optional AI web search) → ranking and reasons in code → per-user Plex
 collection + label-restriction privacy).
 
-**Status: 1.0.** In production on the maintainer's server: the FastAPI server runs the engine on
+**Status: 1.x (1.10.0 is the latest tag; run `git tag` before trusting a version).** In production on the maintainer's server: the FastAPI server runs the engine on
 its own nightly schedule (APScheduler), with the React SPA and Docker
-packaging. Read these
-before any feature work:
+packaging, plus optional MCP assistant access (`shortlist/server/assistant*`, off unless
+`SHORTLIST_MCP_URL` is set). Read these before any feature work:
 
 - [.claude/docs/shortlist-design.md](docs/shortlist-design.md) — product/UX design (wizard, screens, engine, privacy system)
 - [.claude/docs/shortlist-architecture.md](docs/shortlist-architecture.md) — repo layout, DB schema, API surface, testing, CI, phases

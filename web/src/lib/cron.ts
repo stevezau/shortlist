@@ -9,6 +9,71 @@
  * and `parseNaturalSchedule` means most people never have to write cron at all.
  */
 
+/** "03:30" (+ optional weekly day) → the `schedule.cron` string. */
+export function cronFromTime(time: string, weekly = false): string {
+  const [hoursRaw, minutesRaw] = time.split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+  const safeHours =
+    Number.isInteger(hours) && hours >= 0 && hours <= 23 ? hours : 3;
+  const safeMinutes =
+    Number.isInteger(minutes) && minutes >= 0 && minutes <= 59 ? minutes : 30;
+  return `${safeMinutes} ${safeHours} * * ${weekly ? "0" : "*"}`;
+}
+
+/**
+ * Whether a cron string is one the simple Run at + Nightly/Weekly presets can round-trip losslessly.
+ * The presets ONLY ever emit nightly (`* * *` dow `*`) or Sunday-weekly (dow `0`) — cronFromTime
+ * writes `0` for weekly and timeFromCron collapses any non-`*` dow to "weekly", so `0` is the sole
+ * weekday they can represent. Every other cron (a non-Sunday weekday, steps, ranges, lists, specific
+ * months) would be silently flattened, so it must open as-is in Custom mode instead.
+ */
+export function isPresetCron(cron: string): boolean {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const [minuteField, hourField, domField, monthField, dowField] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  const minutes = Number(minuteField);
+  const hours = Number(hourField);
+  const clockOk =
+    Number.isInteger(minutes) &&
+    minutes >= 0 &&
+    minutes <= 59 &&
+    Number.isInteger(hours) &&
+    hours >= 0 &&
+    hours <= 23;
+  const dailyFields = domField === "*" && monthField === "*";
+  const dowOk = dowField === "*" || dowField === "0"; // only nightly or Sunday-weekly round-trip
+  return clockOk && dailyFields && dowOk;
+}
+
+/** Best-effort inverse of cronFromTime; falls back to 03:30 nightly. */
+export function timeFromCron(cron: string): { time: string; weekly: boolean } {
+  const parts = cron.trim().split(/\s+/);
+  const minutes = Number(parts[0]);
+  const hours = Number(parts[1]);
+  if (
+    parts.length === 5 &&
+    Number.isInteger(minutes) &&
+    minutes >= 0 &&
+    minutes <= 59 &&
+    Number.isInteger(hours) &&
+    hours >= 0 &&
+    hours <= 23
+  ) {
+    return {
+      time: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
+      weekly: parts[4] !== "*",
+    };
+  }
+  return { time: "03:30", weekly: false };
+}
+
 const DAY_NAMES = [
   "Sunday",
   "Monday",

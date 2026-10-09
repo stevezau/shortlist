@@ -8,8 +8,9 @@ import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { jobStatusLabel, timeAgo } from "@/lib/format";
-import { isActiveJob, jobDuration, jobStatusTone } from "@/lib/job-status";
+import { timeAgo } from "@/lib/format";
+import { isInFlight } from "@/lib/job-activity";
+import { jobDuration, jobStatusLabel, jobStatusTone } from "@/lib/job-status";
 import type { Job, JobCatalogEntry } from "@/lib/types";
 
 type Filter = "all" | "failed" | "active";
@@ -114,7 +115,7 @@ export function ActivityFeed({
     // Slow when idle rather than stopping: a feed of "every background job this server has run" that
     // never refetches shows a job appearing only if you happen to reload.
     refetchInterval: (query) =>
-      (query.state.data ?? []).some(isActiveJob) ? 3_000 : 15_000,
+      (query.state.data ?? []).some(isInFlight) ? 3_000 : 15_000,
   });
   // A full page back means there is probably more; a short one means we reached the end.
   const maybeMore = (jobs.data ?? []).length >= limit;
@@ -147,7 +148,7 @@ export function ActivityFeed({
         {(rows) => {
           // "failed" arrives already narrowed by the server; only "active" is still a predicate,
           // because queued-or-running is two statuses and the endpoint takes one.
-          const shown = filter === "active" ? rows.filter(isActiveJob) : rows;
+          const shown = filter === "active" ? rows.filter(isInFlight) : rows;
           if (rows.length === 0 && filter === "all") {
             // An empty state has to say WHY, or a working feature reads as a broken one.
             return (

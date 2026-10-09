@@ -10,6 +10,7 @@ anthropic==0.120.0
     # via shortlist (pyproject.toml)
 anyio==4.14.2
     # via
+    #   shortlist (pyproject.toml)
     #   anthropic
     #   google-genai
     #   httpx
@@ -141,6 +142,7 @@ referencing==0.37.0
     #   jsonschema-specifications
 requests==2.34.2
     # via
+    #   shortlist (pyproject.toml)
     #   google-auth
     #   google-genai
     #   plexapi
@@ -161,6 +163,7 @@ sse-starlette==3.5.0
     # via mcp
 starlette==1.3.1
     # via
+    #   shortlist (pyproject.toml)
     #   fastapi
     #   mcp
     #   sse-starlette

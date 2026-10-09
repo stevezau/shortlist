@@ -175,7 +175,7 @@ def _sync_owner(
         )
         return None
     # `username`, never `title`: store the owner's plex.tv username ("S_FLIX"), not their display
-    # title ("SFLIX_Admin"), to match how every other account is keyed on the roster.
+    # title ("Home_Admin"), to match how every other account is keyed on the roster.
     username = account.get("username") or account.get("title") or "owner"
     # The owner is in Tautulli like anyone else, so their `{user}` row should honour the name set
     # there rather than falling straight through to their Plex username.

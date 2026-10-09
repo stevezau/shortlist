@@ -19,6 +19,7 @@ import type {
   Settings,
   User,
 } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 /** A fresh row definition with sensible defaults, for the "Add a row" editor. */
 export function blankInput(): CollectionInput {
@@ -185,7 +186,7 @@ export function audienceSummary(collection: Collection, users: User[]): string {
   const names = collection.audience_user_ids
     .map((id) => {
       const user = users.find((u) => u.id === id);
-      return user && (user.display_name || user.username);
+      return user && (personName(user));
     })
     .filter(Boolean);
   if (names.length === 0) return "No one yet";

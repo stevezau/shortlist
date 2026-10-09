@@ -2,11 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GroupedPicks } from "@/components/user-detail/grouped-picks";
 import { UserDetailBody } from "@/pages/user-detail";
 import type { Pick, PrivacyStatus, User, UserRow } from "@/lib/types";
+import { makeUser } from "@/test/user-fixtures";
 
 const { userRows, privacyStatus } = vi.hoisted(() => ({
   userRows: { current: [] as unknown[] },
@@ -27,20 +28,16 @@ vi.mock("@/lib/api", () => ({
   ),
 }));
 
-const KID = {
+const KID = makeUser({
   id: 2,
   username: "kid",
-  display_name: "",
   slug: "kid",
   user_type: "managed",
   enabled: false,
   restricted: true,
   restriction_profile: "older_kid",
   unhidden_rows: 5,
-  history_depth: 0,
-  last_run_at: null,
-  prefs: {},
-} as unknown as User;
+});
 
 function pick(rank: number, patch: Partial<Pick> = {}): Pick {
   return {
@@ -66,7 +63,8 @@ function renderBody(user: User) {
   );
 }
 
-describe("an Off person's page", () => {
+// Reset for every test in the file: the nested tests below swap these and restore them by hand.
+beforeEach(() => {
   userRows.current = [
     { collection_id: 1, slug: "picked", name: "Picked for You", library: "", media: "both", size: 15, recent_count: 8, is_default: true, muted: false, override: {}, picks: [pick(1)] } as unknown as UserRow,
   ];
@@ -74,7 +72,9 @@ describe("an Off person's page", () => {
     accounts: [{ user_id: 2, state: "refused_by_plex", missing: ["a", "b", "c"], user: "kid" }],
     enforcement: {},
   } as unknown as PrivacyStatus;
+});
 
+describe("an Off person's page", () => {
   it("is plainly Off: Run now disabled with a reason, no Active switch, rows not applying", async () => {
     renderBody(KID);
 

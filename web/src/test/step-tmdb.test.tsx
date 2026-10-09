@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { StepHistory } from "@/pages/setup/step-history";
+import { StepTmdb } from "@/pages/setup/step-tmdb";
 
 const { getSettings, putSettings, testConnection } = vi.hoisted(() => ({
   getSettings: vi.fn(),
@@ -37,7 +37,7 @@ function renderStep(
   });
   render(
     <QueryClientProvider client={client}>
-      <StepHistory
+      <StepTmdb
         data={data}
         update={update}
         next={vi.fn()}
@@ -47,7 +47,7 @@ function renderStep(
   );
 }
 
-describe("StepHistory settings persistence", () => {
+describe("StepTmdb settings persistence", () => {
   beforeEach(() => {
     getSettings.mockReset();
     putSettings.mockClear();
@@ -124,7 +124,7 @@ describe("StepHistory settings persistence", () => {
   });
 });
 
-describe("StepHistory TMDB walkthrough", () => {
+describe("StepTmdb TMDB walkthrough", () => {
   it("links to TMDB signup and offers no Tautulli skip button", async () => {
     getSettings.mockResolvedValue({});
     renderStep();

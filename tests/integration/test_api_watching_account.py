@@ -469,7 +469,7 @@ class TestTheSourceCanBeAnAccountOtherThanTheOwner:
     silently wearing another's name.
     """
 
-    def _shared(self, client, username="moohouse"):
+    def _shared(self, client, username="guest"):
         with client.app.state.sessions() as session:
             user = User(plex_account_id=555000900, username=username, slug=username, user_type="shared")
             session.add(user)
@@ -514,7 +514,7 @@ class TestTheSourceCanBeAnAccountOtherThanTheOwner:
         _, target_id = _seed_owner_and_target(client)
         source_id = self._shared(client)
         ctx = _plex_ctx()
-        ctx.plextv.shared_server_tokens.return_value = {555000900: "MOOHOUSE-TOKEN"}
+        ctx.plextv.shared_server_tokens.return_value = {555000900: "GUEST-TOKEN"}
 
         with (
             patch.object(client.app.state.run_service, "build_context", return_value=ctx),
@@ -525,7 +525,7 @@ class TestTheSourceCanBeAnAccountOtherThanTheOwner:
                 json={"to_user_id": target_id, "from_user_id": source_id},
             )
 
-        assert service.call_args.kwargs["source_token"] == "MOOHOUSE-TOKEN"
+        assert service.call_args.kwargs["source_token"] == "GUEST-TOKEN"
         # And emphatically NOT the admin token, which is what a wrong `user_type` would select.
         assert service.call_args.kwargs["source_token"] != "ADMIN-TOKEN"
 

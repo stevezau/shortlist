@@ -933,7 +933,7 @@ class TestRequestTag:
         with sessions() as session:
             session.add_all(
                 [
-                    User(username="MooHouse", slug="moohouse", plex_account_id=1, user_type="shared", enabled=True),
+                    User(username="Guest", slug="guest", plex_account_id=1, user_type="shared", enabled=True),
                     User(
                         username="Sarah",
                         slug="sarah",
@@ -948,7 +948,7 @@ class TestRequestTag:
         builder = ContextBuilder(sessions, SecretBox(tmp_path), EventBus())
         with sessions() as session:
             tags = {p.username: p.request_tag for p in builder.enabled_profiles(session)}
-        assert tags["MooHouse"] == ""  # no explicit tag -> nothing here; the slug is the engine's job
+        assert tags["Guest"] == ""  # no explicit tag -> nothing here; the slug is the engine's job
         assert tags["Sarah"] == "vip"  # an explicit tag is used
 
 
@@ -1685,7 +1685,7 @@ class TestSyncWatched:
         `ctx.plex.sections()` is the OWNER's library list walked for every person, so every library
         someone isn't given 403s on every single sync. Counting that as a failure discarded their
         whole cache and forced an uncached complete re-read of every library, hourly, for ever
-        (SFLIX: two users). The readable library's cached titles must come back WITHOUT the
+        (a large production server: two users). The readable library's cached titles must come back WITHOUT the
         complete-read fallback firing.
         """
         from datetime import UTC, datetime
@@ -1963,7 +1963,7 @@ class TestSyncWatched:
 
         REQUIRES `shortlist.engine.rows.builds_anything_for(profile, config)`. The server asks the
         engine that question now instead of importing the engine's private `_in_audience`/`_is_muted`
-        and re-assembling the rule. `_has_a_row_in_scope` fails OPEN when the export is missing — so
+        and re-assembling the rule. `has_a_row_in_scope` fails OPEN when the export is missing — so
         this test failing with `True` means the engine has not exported it, and every scoped run is
         pre-filling history for people it then skips.
         """
@@ -1978,13 +1978,13 @@ class TestSyncWatched:
         )
         ctx = SimpleNamespace(config=config)
 
-        assert service._has_a_row_in_scope(ctx, included) is True
-        assert service._has_a_row_in_scope(ctx, excluded) is False
+        assert service._watch.has_a_row_in_scope(ctx, included) is True
+        assert service._watch.has_a_row_in_scope(ctx, excluded) is False
 
     def test_the_prefill_scope_check_fails_open(self, service):
         """A context that cannot answer must be treated as in-scope — the worst case is then exactly
         the behaviour before the narrowing, never a person silently missing their history."""
-        assert service._has_a_row_in_scope(SimpleNamespace(), object()) is True
+        assert service._watch.has_a_row_in_scope(SimpleNamespace(), object()) is True
 
     def test_streams_per_user_progress_and_a_finished_event(self, service, monkeypatch):
         """The Tools page bar is driven by these events — a sync that emits nothing shows no bar."""

@@ -456,7 +456,7 @@ def create_owner_grant_router(repository: AssistantAuthRepository | None = None)
         grant = current_repository.get_grant_context(grant_id)
         if grant is None or grant.owner_account_id != owner.account_id:
             raise HTTPException(status_code=404, detail="assistant grant not found")
-        return {"revoked": current_repository.revoke_grant(grant_id)}
+        return {"revoked": current_repository.revoke_grant(grant_id, owner_account_id=owner.account_id)}
 
     @router.delete("/{grant_id}", status_code=204)
     def remove_revoked_grant(request: Request, grant_id: str, owner: BrowserOwnerDep) -> None:
@@ -553,6 +553,9 @@ def create_oauth_router(
         current_repository = repository or current_runtime.repository
         current_oauth = oauth or current_runtime.oauth
         authorization_server = ASGIAuthorizationServer(current_oauth)
+        # Before consuming: a malformed approval must not burn the owner's pending flow.
+        if body.approved and not body.grant_id:
+            raise HTTPException(status_code=400, detail="approved consent requires a grant")
         now = datetime.now(UTC)
         flow = current_repository.consume_consent_flow(
             body.flow_id,
@@ -564,8 +567,6 @@ def create_oauth_router(
         )
         if flow is None:
             raise HTTPException(status_code=400, detail="consent flow is invalid, expired, or already used")
-        if body.approved and not body.grant_id:
-            raise HTTPException(status_code=400, detail="approved consent requires a grant")
         grant_context = current_repository.get_grant_context(body.grant_id, now=now) if body.grant_id else None
         if grant_context is not None and (
             grant_context.owner_account_id != owner.account_id or grant_context.client_id != flow.client_id
@@ -632,7 +633,10 @@ def create_oauth_router(
         if any(not _safe_redirect_uri(uri) for uri in body.redirect_uris):
             raise HTTPException(status_code=400, detail="redirect URIs must be exact HTTPS or loopback HTTP URLs")
         current_repository = repository or _runtime(request).repository
-        if current_repository.oauth_client_count() >= 1_000:
+        if current_repository.oauth_client_count() >= _MAX_OAUTH_CLIENTS:
+            # Free the slots held by clients that never authorized before refusing a new one.
+            current_repository.expire_unused_oauth_clients()
+        if current_repository.oauth_client_count() >= _MAX_OAUTH_CLIENTS:
             raise HTTPException(status_code=429, detail="OAuth client registration capacity reached")
         client_id = f"client_{secrets.token_urlsafe(18)}"
         current_repository.register_oauth_client(
@@ -752,6 +756,7 @@ def _serialize_grant_summary(summary: GrantSummary) -> dict[str, Any]:
     return serialized
 
 
+_MAX_OAUTH_CLIENTS = 1_000
 _REGISTRATION_HITS: deque[float] = deque()
 
 

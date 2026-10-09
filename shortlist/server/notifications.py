@@ -33,7 +33,7 @@ from shortlist.server.version_check import check_for_update
 DISMISSED_KEY = "notifications.dismissed"  # list of dismissed notification ids (each id encodes its state)
 
 
-def _update_available(store: SettingsStore, current_version: str) -> dict | None:
+def _update_available(current_version: str) -> dict | None:
     update = check_for_update(current_version)
     if not update:
         return None
@@ -306,6 +306,17 @@ def job_alert(event: str, job_id: int, label: str) -> dict:
     }
 
 
+def _newest_run_with(session: Session, key: str) -> Run | None:
+    """The newest finished run whose stats carry ``key`` — the latest run that actually MEASURED it.
+
+    Not merely the latest that finished: a run that failed early or never reached the privacy phase
+    carries no key at all, and reading its absence as "nothing found" would let one bad run clear a
+    real finding while the exposure is untouched.
+    """
+    runs = session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
+    return next((r for r in runs if key in (r.stats or {})), None)
+
+
 def exposed_accounts(session: Session) -> set[str]:
     """Every account the newest measurement says can see rows that aren't theirs.
 
@@ -319,10 +330,9 @@ def exposed_accounts(session: Session) -> set[str]:
     Returns:
         Account names, possibly empty.
     """
-    runs = session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50).all()
     names: set[str] = set()
     for key in ("unhideable_rows", "filters_not_enforced", "unreadable_filters"):
-        newest = next((r for r in runs if key in (r.stats or {})), None)
+        newest = _newest_run_with(session, key)
         if newest is not None:
             names.update((newest.stats or {}).get(key) or {})
     return names
@@ -768,20 +778,11 @@ def _rows_we_cannot_hide(session: Session) -> dict | None:
     which needs the very filter Plex is refusing. NOT dismissable while it is true — it is a live
     privacy exposure, not a preference.
     """
-    from shortlist.server.db.models import Run
-
     # The latest run that actually RECORDED a measurement — not merely the latest that finished. A run
     # that failed early, was aborted, or never reached the privacy phase carries no `unhideable_rows`
     # key at all; treating that as "{}" would let one bad run clear a real finding from the alert while
     # the exposure is untouched. That silence is the thing this whole check exists to end.
-    run = next(
-        (
-            r
-            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
-            if "unhideable_rows" in (r.stats or {})
-        ),
-        None,
-    )
+    run = _newest_run_with(session, "unhideable_rows")
     exposed = ((run.stats or {}).get("unhideable_rows") or {}) if run else {}
     if not exposed:
         return None
@@ -935,16 +936,7 @@ def _filters_not_enforced(session: Session) -> dict | None:
     each seeing all six per-person rows. Nothing could see it — the read-back proves plex.tv STORED the
     filter, and the only look-through-their-eyes check was gated on the account having a profile.
     """
-    from shortlist.server.db.models import Run
-
-    run = next(
-        (
-            r
-            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
-            if "filters_not_enforced" in (r.stats or {})
-        ),
-        None,
-    )
+    run = _newest_run_with(session, "filters_not_enforced")
     exposed = ((run.stats or {}).get("filters_not_enforced") or {}) if run else {}
     if not exposed:
         return None
@@ -978,14 +970,7 @@ def _filters_plex_cannot_read(session: Session) -> dict | None:
     nothing can verify, and by owner decision does not block everyone else's rows over it, so this card
     is the whole warning. Error, undismissable, and cleared by the next run that looked and found none.
     """
-    run = next(
-        (
-            r
-            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
-            if "unreadable_filters" in (r.stats or {})
-        ),
-        None,
-    )
+    run = _newest_run_with(session, "unreadable_filters")
     unreadable = ((run.stats or {}).get("unreadable_filters") or {}) if run else {}
     if not unreadable:
         return None
@@ -1109,7 +1094,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
     by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
     newer release surfaces again rather than staying hidden forever."""
     candidates = [
-        _update_available(store, current_version),
+        _update_available(current_version),
         _runs_paused(store),
         _secrets_we_cannot_read(store),
         _last_run_problem(session),

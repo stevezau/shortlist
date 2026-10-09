@@ -11,19 +11,10 @@ export type RunPrivacy = NonNullable<Run["privacy"]>;
  */
 export function privacyFindings(privacy: RunPrivacy | null | undefined): string[] {
   if (!privacy) return [];
-  const seen = new Set<string>();
-  const names: string[] = [];
-  for (const name of [
-    ...privacy.can_see_others,
-    ...(privacy.unreadable_filters ?? []),
-    ...(privacy.filters_not_enforced ?? []),
-  ]) {
-    const key = name.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    names.push(name);
-  }
-  return names;
+  return unseen(
+    [...privacy.can_see_others, ...(privacy.unreadable_filters ?? []), ...(privacy.filters_not_enforced ?? [])],
+    new Set(),
+  );
 }
 
 /**
@@ -32,13 +23,7 @@ export function privacyFindings(privacy: RunPrivacy | null | undefined): string[
  */
 export function privacyWarnings(privacy: RunPrivacy | null | undefined): string[] {
   if (!privacy) return [];
-  const seen = new Set<string>();
-  return [...privacyFindings(privacy), ...(privacy.write_failed ?? []), ...(privacy.unchecked ?? [])].filter((name) => {
-    const key = name.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return unseen([...privacyFindings(privacy), ...(privacy.write_failed ?? []), ...(privacy.unchecked ?? [])], new Set());
 }
 
 /**

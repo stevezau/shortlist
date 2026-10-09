@@ -61,7 +61,7 @@ def test_switching_the_target_saves_and_survives_a_reload(page: Page, app: Short
     )
     _panel(page).get_by_role("button", name="Overseerr / Jellyseerr", exact=True).click()
 
-    # Autosave has no button; wait for the value to reach the API rather than a fixed sleep.
+    # Autosave has no button; the "Saved" readout below is the real wait, the pause only lets the write settle.
     expect(_saved_status(page)).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(2000)
 

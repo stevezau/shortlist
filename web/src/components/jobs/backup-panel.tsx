@@ -106,13 +106,7 @@ export function BackupPanel() {
           value={backupCron}
           blankLabel={blankLabel}
           onChange={(cron) =>
-            saveSettings.mutate(
-              { "backup.cron": cron },
-              {
-                onSuccess: () =>
-                  queryClient.invalidateQueries({ queryKey: queryKeys.syncs }),
-              },
-            )
+            saveSettings.mutate({ "backup.cron": cron })
           }
         />
         <div className="flex items-center gap-2">
@@ -124,9 +118,6 @@ export function BackupPanel() {
                 { "backup.max_keep": Number(v) },
                 {
                   onSuccess: () => {
-                    queryClient.invalidateQueries({
-                      queryKey: queryKeys.syncs,
-                    });
                     queryClient.invalidateQueries({
                       queryKey: queryKeys.settings,
                     });

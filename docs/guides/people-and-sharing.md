@@ -6,7 +6,7 @@ updated: 2026-10-03
 ---
 
 <figure class="shot">
-  <img src="{{ '/images/user-detail.webp' | relative_url }}" width="1440" height="1000" loading="lazy"
+  <img src="{{ '/images/user-detail.webp' | relative_url }}" width="1440" height="1400" loading="lazy"
        alt="A person's page in Shortlist: sarah, 12 titles watched, with tabs for Rows, Runs, Settings and Watched, and her Picked for You row listing the reason for each pick">
   <figcaption>Open a person on the <strong>Users</strong> page for their history, their picks and their settings.</figcaption>
 </figure>

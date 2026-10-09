@@ -1,7 +1,7 @@
 """Every migration must be re-runnable after a crash.
 
 SQLite auto-commits DDL. A migration interrupted after its statements ran but before Alembic bumped
-`alembic_version` (the container is killed, two deployers race — as happened live on SFLIX) leaves
+`alembic_version` (the container is killed, two deployers race — as happened live on a large production server) leaves
 the schema change committed and the version stamp behind it. Alembic re-runs that revision on the
 next boot, so every revision has to survive being applied to a database that already has its
 changes: a re-run must FINISH the job, not fail on "table already exists" / "duplicate column".

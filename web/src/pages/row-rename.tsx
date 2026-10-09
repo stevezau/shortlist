@@ -133,7 +133,13 @@ export function RowRenamePage() {
             .split("\n")
             .find((l) => l.startsWith("data: "));
           if (!dataLine) continue;
-          const event: RenameEvent = JSON.parse(dataLine.slice(6));
+          // One malformed chunk must not abort the display: the server is still renaming on Plex.
+          let event: RenameEvent;
+          try {
+            event = JSON.parse(dataLine.slice(6));
+          } catch {
+            continue;
+          }
           // Only an error about the whole rename stops it. One person's refusal is theirs: the server
           // carries on with everyone else, and stopping here hid every rename that followed it.
           if (event.error && !event.user) {

@@ -1,7 +1,7 @@
 """Focused boundary tests for bounded provider calls.
 
 These tests deliberately assert the request fields owned by Shortlist and that a denied call never
-reaches an SDK or HTTP transport.  The provider-control implementation is supplied separately.
+reaches an SDK or HTTP transport.
 """
 
 from __future__ import annotations

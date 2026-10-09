@@ -27,7 +27,7 @@ function tintFor(name: string): string {
 
 function initials(name: string): string {
   // Bracketed notes and punctuation are not the name: Plex display names read like
-  // "Joe - Richard's Mate (P)", which used to give "J(" — a bracket where a letter belongs.
+  // "Alex - Sam's Mate (P)", which used to give "A(" — a bracket where a letter belongs.
   const parts = name
     .replace(/\([^)]*\)|\[[^\]]*\]/g, " ")
     .split(/\s+/)

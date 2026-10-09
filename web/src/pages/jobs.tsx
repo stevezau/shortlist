@@ -646,15 +646,7 @@ export function JobsPanel() {
                     value={usersCron}
                     blankLabel={usersBlankLabel}
                     onChange={(cron) =>
-                      saveSettings.mutate(
-                        { "sync.users_cron": cron },
-                        {
-                          onSuccess: () =>
-                            queryClient.invalidateQueries({
-                              queryKey: queryKeys.syncs,
-                            }),
-                        },
-                      )
+                      saveSettings.mutate({ "sync.users_cron": cron })
                     }
                   />
                 }
@@ -732,15 +724,7 @@ export function JobsPanel() {
                     value={watchCron}
                     blankLabel={watchBlankLabel}
                     onChange={(cron) =>
-                      saveSettings.mutate(
-                        { "sync.watch_cron": cron },
-                        {
-                          onSuccess: () =>
-                            queryClient.invalidateQueries({
-                              queryKey: queryKeys.syncs,
-                            }),
-                        },
-                      )
+                      saveSettings.mutate({ "sync.watch_cron": cron })
                     }
                   />
                 }

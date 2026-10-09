@@ -83,3 +83,19 @@ updates:
       actions-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+
+  # The node:22-alpine and python:3.12-slim base images in the Dockerfile. Python stays on 3.12
+  # (CI tests only that), so minor/major interpreter bumps are ignored and arrive by hand.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

@@ -97,7 +97,7 @@ def test_selected_endpoint_change_is_rejected_without_writing_a_grant() -> None:
             pass
         else:
             raise AssertionError("a changed service endpoint was approved")
-        assert repository.list_grants(42) == []
+        assert repository.list_grant_summaries(42) == []
 
         grant = repository.create_grant(
             owner_account_id=42,

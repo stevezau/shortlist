@@ -431,7 +431,7 @@ describe("TraceView", () => {
   it("renders a cold-start user's flow — 'Popular titles', no ranking step, and a delivered ending", () => {
     // A cold user files a history stage (no seeds) + a synthetic cold_start gather. The flow must be
     // cold-aware: the search step becomes "Popular titles", the ranking step is omitted (no taste
-    // ranking runs), and the tab still reaches a delivered ending — this is the Cassie bug's fix.
+    // ranking runs), and the tab still reaches a delivered ending — this is the fix for a tab stuck before delivery.
     const data = okTrace({
       status: "cold_start",
       trace: {
@@ -997,8 +997,8 @@ describe("TraceView for a shared row", () => {
   // A shared row belongs to nobody, so every "they / their" in this view is wrong for it — and it
   // records no per-person history stage at all, by design.
   const sharedData = {
-    username: "👥 Popular Movies on SFLIX",
-    display_name: "👥 Popular Movies on SFLIX",
+    username: "👥 Popular Movies on Home Server",
+    display_name: "👥 Popular Movies on Home Server",
     status: "ok",
     error: null,
     reason: null,
@@ -1009,11 +1009,11 @@ describe("TraceView for a shared row", () => {
 
   it("drops the person framing and names the row as the run page does", () => {
     render(
-      <TraceView data={sharedData} rowName="👥 Popular {library_name} on SFLIX" sharedRow />,
+      <TraceView data={sharedData} rowName="👥 Popular {library_name} on Home Server" sharedRow />,
     );
 
     expect(
-      screen.getByRole("heading", { name: /How we picked for 👥 Popular on SFLIX/ }),
+      screen.getByRole("heading", { name: /How we picked for 👥 Popular on Home Server/ }),
     ).toBeInTheDocument();
     expect(screen.getByText(/for this shared row/i)).toBeInTheDocument();
     expect(screen.queryByText(/for this person/i)).not.toBeInTheDocument();

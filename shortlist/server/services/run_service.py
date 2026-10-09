@@ -37,13 +37,8 @@ from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.plex_reachability import error_text
 from shortlist.server.services.report_cache import invalidate_report_cache
 from shortlist.server.services.run_log import RunLogBuffer, capture_warnings, problem_line
-from shortlist.server.services.run_persistence import HIT_WINDOW_DAYS  # noqa: F401  (re-export)
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.watch_sync import WatchSync
-
-# HIT_WINDOW_DAYS moved to `run_persistence` with the hit-rate reconcile that owns it, and is
-# re-exported above because `services/report_service.py` imports it from here.
-
 
 #: How long after it started a scheduled run cut short by a restart is still worth finishing. Past this a
 #: daily row's next scheduled run is closer than the rebuild would be.
@@ -227,18 +222,6 @@ class RunService:
 
     def refresh_watched(self, ctx, profile, *, force_full: bool = False, sweep_dead: bool = False) -> list:
         return self._watch.refresh_watched(ctx, profile, force_full=force_full, sweep_dead=sweep_dead)
-
-    def _has_a_row_in_scope(self, ctx, profile) -> bool:
-        return self._watch.has_a_row_in_scope(ctx, profile)
-
-    def sync_watched_background(self) -> None:
-        """Fire sync_watched as a tracked background task (the reference is kept so it isn't GC'd) —
-        for the dashboard's manual 'Sync now'."""
-        if self._closing:
-            return
-        task = asyncio.create_task(self.sync_watched())
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
 
     async def sync_watched(self) -> None:
         """Run a watch sweep owned by this service, even if its scheduler caller is cancelled."""

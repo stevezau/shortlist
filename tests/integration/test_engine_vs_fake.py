@@ -914,7 +914,7 @@ def test_a_per_person_row_only_builds_for_its_audience(fakes, tmp_path):
 
 
 def test_a_run_heals_the_leaking_rows_a_previous_version_left_behind(fakes, tmp_path):
-    """The upgrade path, reproduced from the live failure (SFLIX, 2026-07-12).
+    """The upgrade path, reproduced from the live failure (a large production server, 2026-07-12).
 
     The shipped version delivered every pick into the movie library regardless of type, so a TV
     watcher's row was a movie-library collection full of shows. Plex fixes a collection's subtype
@@ -1599,7 +1599,7 @@ def test_each_users_row_contains_only_their_own_picks(fakes, tmp_path):
     A Plex collection is a TAG on items, keyed by TITLE within a library — not an independent bag.
     So two rows with the same title in one library are ONE membership, and every user's row shows
     the union of everyone's picks. On a live server this made every row identical: a film picked
-    for one user alone turned up in another user's row, carrying a single collection tag (SFLIX,
+    for one user alone turned up in another user's row, carrying a single collection tag (a large production server,
     2026-07-13). The privacy still held — each collection object is hidden by its own label — but
     the recommendations were not personal at all.
 
@@ -1838,7 +1838,7 @@ def _assert_breakdown_names_what_plex_holds(report: RunReport, state, account_id
 
 def test_a_row_renamed_onto_a_deleted_collections_name_keeps_its_collection_and_gets_the_name(fakes, tmp_path):
     """A real PMS keeps a deleted collection's name as a tag and refuses every rename onto it
-    (pms_collection_title_tags.json). On SFLIX that froze four `{top_seed}` rows on their old seed's
+    (pms_collection_title_tags.json). On a large production server that froze four `{top_seed}` rows on their old seed's
     name night after night, while the run reported the new one. The row must come out renamed, as the
     same collection, with nothing left behind."""
     state, pms_url, _tmdb_app = fakes
@@ -3417,7 +3417,7 @@ def test_a_row_renamed_in_place_does_not_make_the_next_pass_rebuild_the_shelf(fa
     Plex's manage listing keeps the title a collection had when it was promoted, and the fake now does
     too (`pms_managed_hub_renamed_collection.json`). While hubs were matched to rows by title, every
     row renamed in place read as a foreign hub, so the pass rebuilt the whole shelf and reported each
-    row as put back. On SFLIX that happened on most nights, because `{top_seed}` rows are renamed
+    row as put back. On a large production server that happened on most nights, because `{top_seed}` rows are renamed
     whenever their seed changes, and it is what kept the "something else is reordering" bell ringing.
     """
     state, pms_url, _tmdb_app = fakes
@@ -3432,7 +3432,7 @@ def test_a_row_renamed_in_place_does_not_make_the_next_pass_rebuild_the_shelf(fa
                     size=8,
                     hub_anchors={str(s.key): HubAnchor(anchor_row="picked") for s in p.sections()},
                 ),
-                # A row BELOW the renamed one, as SFLIX's shared row sits below "Because you watched".
+                # A row BELOW the renamed one, as that server's shared row sits below "Because you watched".
                 # Without it a misread renamed row is simply the next foreign hub after `picked`, the
                 # arrangement comes out the same, and this test passes with the bug in place.
                 RowSpec(

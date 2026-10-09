@@ -1912,7 +1912,7 @@ class TestStructuredExtractionPath:
 
 
 class TestAnUnparseableReplyIsDiagnosable:
-    """Two replies on SFLIX 2026-09-06 could not be parsed, and the log recorded only that fact.
+    """Two replies on a large production server 2026-09-06 could not be parsed, and the log recorded only that fact.
 
     The seed's candidates are gone either way; what matters is being able to tell WHICH failure it
     was, because they have different fixes: a refusal ("I can't help with that"), a truncated

@@ -18,7 +18,7 @@ import { resolveRowName } from "@/lib/run-rows";
  *
  * The SCHEDULE leads, because the schedule is what a group is. This block used to lead with the row
  * names, comma-joined into one truncating line — three rows on the same nightly cron rendered as
- * "✨ Picked for You, 🎯 Because you watched {top_seed}, 👥 Popular {library_name} on SFLIX" with
+ * "✨ Picked for You, 🎯 Because you watched {top_seed}, 👥 Popular {library_name} on Home Server" with
  * the cron as its subtitle. That put the group's identity in the small print and made the rows
  * themselves unreadable and unclickable. Each row is now its own link into its own editor.
  *

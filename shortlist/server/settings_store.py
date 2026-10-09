@@ -146,11 +146,11 @@ DEFAULTS: dict[str, Any] = {
     # a reverse proxy in front of it (SearXNG itself has no auth); the password is a SECRET_KEY.
     "searxng.url": "",
     "searxng.username": "",
-    # How hard Exa works on each search, and what it costs. Measured on two seeds (see
-    # `.claude/docs/llm-web-search-upgrade.md`): `deep-lite` found 47 and 36 TMDB-resolvable titles
-    # for $0.012 a search, where `auto` found 13 and 8 for $0.007 — and once returned nothing at all
-    # from 26k characters of page text. `deep-lite` is the default despite costing more because the
-    # cheap modes are erratic, and every search is cached 14 days and shared across the whole roster.
+    # How hard Exa works on each search, and what it costs. Measured on two seeds: `deep-lite` found 47
+    # and 36 TMDB-resolvable titles for $0.012 a search, where `auto` found 13 and 8 for $0.007 — and
+    # once returned nothing at all from 26k characters of page text. `deep-lite` is the default despite
+    # costing more because the cheap modes are erratic, and every search is cached 7 days and shared
+    # across the whole roster.
     "exa.search_type": "deep-lite",
     # Cap on already-finished titles in a row, as a fraction: 0.0 = all fresh (default), 1.0 = no
     # filtering, in between = at most that share of the row may be things already watched. Per-row.
@@ -232,8 +232,9 @@ DEFAULTS: dict[str, Any] = {
     # How long (seconds) to wait on a single PMS call before giving up and retrying. Reads are near-
     # instant on a LAN, but rebuilding a big library's collection (a TV row on a large server) legitimately
     # takes 15-20s+, so too low a value times those out and forces a wasteful retry. 20 proved too tight
-    # for large TV libraries (SFLIX 2026-07-20: legit writes at 19.9s, many ERR at 20.0s then retried); 45
-    # gives headroom while still failing a truly-stalled call. Raise it if big writes still time out. Advanced.
+    # for large TV libraries (a large production server, 2026-07-20: legit writes at 19.9s, many ERR at
+    # 20.0s then retried); 45 gives headroom while still failing a truly-stalled call. Raise it if big
+    # writes still time out. Advanced.
     "plex.timeout_s": 45,
     "plextv.throttle_s": 0.0,  # FLOOR between plex.tv writes; 0 = as fast as plex.tv accepts (adaptive 429 backoff)
     # How many users a run processes concurrently. Only their reads + AI curation overlap; every Plex

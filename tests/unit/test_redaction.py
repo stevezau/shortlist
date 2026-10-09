@@ -15,20 +15,20 @@ from sqlalchemy.orm import sessionmaker
 from shortlist.server.services.redaction import known_identifiers, redact_all, redact_literals, shape_hosts
 from tests.db_helpers import disposing_engine
 
-MACHINE_ID = "7ee8abc1bcdcc79389ad1e15c30e2692714bc940"
+MACHINE_ID = "0123456789abcdef0123456789abcdef01234567"
 
 
 class TestShapeHosts:
     def test_url_keeps_scheme_and_port_and_drops_the_host(self):
-        assert shape_hosts("GET https://172.16.10.240:32400/library") == "GET https://<host>:32400/library"
+        assert shape_hosts("GET https://192.168.1.10:32400/library") == "GET https://<host>:32400/library"
 
     def test_connection_pool_error_kwarg_is_shaped(self):
-        assert shape_hosts("host='172.16.10.240', port=32400") == "host='<host>', port=32400"
+        assert shape_hosts("host='192.168.1.10', port=32400") == "host='<host>', port=32400"
 
     def test_bare_address_with_no_scheme_is_shaped(self):
         """How `http_retry` logs every PMS call — 17,234 of them in one real report, all missed by the
         URL and kwarg patterns."""
-        assert shape_hosts("GET 172.16.10.240 -> 200 in 0.03s") == "GET <host> -> 200 in 0.03s"
+        assert shape_hosts("GET 192.168.1.10 -> 200 in 0.03s") == "GET <host> -> 200 in 0.03s"
 
     def test_version_string_is_not_mistaken_for_an_address(self):
         assert shape_hosts("PMS 1.43.3.10861 ok") == "PMS 1.43.3.10861 ok"
@@ -69,7 +69,7 @@ class TestRedactLiterals:
         assert out.count("<machine-id>") == 3
 
     def test_a_host_is_replaced_at_a_boundary(self):
-        assert redact_literals("at 172.16.10.240 now", {"172.16.10.240": "<host>"}) == "at <host> now"
+        assert redact_literals("at 192.168.1.10 now", {"192.168.1.10": "<host>"}) == "at <host> now"
 
     def test_a_short_hostname_does_not_eat_the_words_around_it(self):
         """`plex` is the stock Docker Compose hostname for a PMS. A bare `str.replace` on it rewrites
@@ -118,15 +118,15 @@ class TestKnownIdentifiers:
 
         with self._sessions(tmp_path) as sessions, sessions() as session:
             session.query(Server).delete()
-            session.add(Server(machine_id=MACHINE_ID, url=url, name="SFLIX", token_enc=""))
+            session.add(Server(machine_id=MACHINE_ID, url=url, name="Home Server", token_enc=""))
             session.commit()
             return known_identifiers(session)
 
     def test_returns_machine_id_and_host_longest_first(self, tmp_path):
-        found = self._with_server(tmp_path, "http://172.16.10.240:32400")
+        found = self._with_server(tmp_path, "http://192.168.1.10:32400")
 
-        assert found == {MACHINE_ID: "<machine-id>", "172.16.10.240": "<host>"}
-        assert list(found) == [MACHINE_ID, "172.16.10.240"], "longest first"
+        assert found == {MACHINE_ID: "<machine-id>", "192.168.1.10": "<host>"}
+        assert list(found) == [MACHINE_ID, "192.168.1.10"], "longest first"
 
     def test_no_server_row_yields_nothing_rather_than_raising(self, tmp_path):
         from shortlist.server.db.models import Server

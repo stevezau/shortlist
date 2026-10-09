@@ -6,7 +6,7 @@ selected by the owner** out of 37; `cooccurrence` (within-server collaborative f
 
 Report: https://claude.ai/code/artifact/344b142b-fa24-42a9-b08f-dd302c71892b
 Full research notes (outside the repo — contains unpublished third-party security findings):
-`~/.claude/projects/-Users-stevenadams-workspace-shortlist/research/diskovarr-teardown-dossier.md`
+`~/.claude/projects/<project>/research/diskovarr-teardown-dossier.md`
 
 **This file is the single source of truth for the programme.** Status lives here, not in the artifact.
 
@@ -508,7 +508,7 @@ contexts previously blocked a release with every check green.
   2026-09-08:** `deploy.sh` is wrong. The live container carries no
   `com.centurylinklabs.watchtower.enable=false` label, and watchtower (`WATCHTOWER_SCHEDULE=0 30 4 *
   * *`, nightly 04:30, not label-scoped, `shortlist` absent from `WATCHTOWER_DISABLE_CONTAINERS`)
-  owns it. `deploy.sh` is referenced by nothing and is currently unused.
+  owns it. `deploy.sh` was referenced by nothing and has since been deleted.
 - The pinned cross-version fingerprint literal must be generated on Python 3.12 (the image's
   interpreter). The dev machine is now the plex host, which has only 3.14.4 — but `uv python install
   3.12` can provide one, so this is no longer blocked.
@@ -869,7 +869,7 @@ build a new abstraction.
 
 - **Dead `connected` flag — REAL.** Zero of 6 call sites read it (confirmed by grep).
 - **No polling fallback — REAL, and it has already caused a production incident.** A code comment in
-  `runs.tsx` documents the SFLIX failure of 2026-08-13.
+  `runs.tsx` documents the large production server failure of 2026-08-13.
 - **"Cancel doesn't invalidate the run query" — FALSE AS STATED.** Proved by running a script against
   the actually-installed `@tanstack/query-core`: `invalidateQueries(["runs"])` already cascades to
   `["runs", id]` by prefix matching. The real residual bug is different — that invalidation reflects

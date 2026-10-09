@@ -2,7 +2,6 @@
 title: A tour of the Shortlist web interface
 description: What every page in the Shortlist web interface does, and what each number on the dashboard actually means.
 heading: The web interface
-nav_order: 1
 updated: 2026-10-04
 ---
 
@@ -230,17 +229,17 @@ current row membership and watch tracking intact.
 
 ## Settings
 
-Three tabs, each with its own address: **Connections** (`/settings/connections`), **Defaults**
-(`/settings/defaults`) and **System** (`/settings/system`). Use the search box to find a setting by
+Four tabs, each with its own address: **Connections** (`/settings/connections`), **Defaults**
+(`/settings/defaults`), **Requests** (`/settings/requests`) and **System** (`/settings/system`). Use the search box to find a setting by
 name. Connections holds Plex, TMDB, AI and web search, Tautulli, Trakt, MDBList, Overseerr or
 Jellyseerr, Radarr, Sonarr and the webhook with its alert events. Defaults holds Title sources,
-Refresh and variety, Row defaults, Row placement and Requests. System holds retention, logging and run
+Refresh and variety, Row defaults, and Row placement. Requests holds the request sources, limits and the "don't request these automatically" hold filter. System holds retention, logging and run
 limits, the Plex cleanup audit, API access and the Danger zone. All forms stay mounted, so switching
 sections preserves unfinished edits. Every connection is re-testable in place. See
 [Finding and saving settings](../reference/settings.md#finding-and-saving-settings).
 
 <div class="preview-gallery">
-  <figure><a href="{{ '/images/preview-settings.webp' | relative_url }}"><img src="{{ '/images/preview-settings.webp' | relative_url }}" alt="Settings with Connections, Defaults and System tabs and a search box" loading="lazy"></a><figcaption>Settings: three tabs and a search box.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-settings.webp' | relative_url }}"><img src="{{ '/images/preview-settings.webp' | relative_url }}" alt="Settings with Connections, Defaults, Requests and System tabs and a search box" loading="lazy"></a><figcaption>Settings: four tabs and a search box.</figcaption></figure>
 </div>
 
 Each row's run schedule lives in that row's editor, not here. See [Schedules](schedules.md).

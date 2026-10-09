@@ -34,6 +34,7 @@ from shortlist.server.db.models import (
     WatchEvent,
     WatchSession,
 )
+from shortlist.server.services.delivery_snapshots import utc as _as_utc
 from shortlist.server.services.watch_identity import verified_owner_account_id
 
 #: Where the incremental read resumes from.
@@ -41,10 +42,6 @@ CURSOR_KEY = "sync.history_cursor"
 #: A first read with no cursor. Six years of history exists; picks do not go back anywhere near that
 #: far, so anything older can never be attributed to anything.
 BACKFILL_DAYS = 90
-
-
-def _as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def ingest_play_history(session: Session, plex, store, *, limit: int = 20000) -> int:

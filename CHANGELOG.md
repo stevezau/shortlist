@@ -6,6 +6,50 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+Back up `/config` before upgrading: this release adds database migrations 0102 to 0109. No settings need
+changing, and assistant access stays off until you opt in.
+
+### Added
+
+- **Assistant access (MCP, #141).** Optional, and off until `SHORTLIST_MCP_URL` is set. Connect a local or
+  hosted AI assistant that can view Shortlist or manage its supported settings, rows and saved
+  configuration. You approve each named connection yourself, and the assistant never sees the owner API
+  token. Migrations 0103 to 0108 add the tables for its connections, approvals, budgets and request
+  history. See [Connect an assistant](https://shortlistapp.dev/guides/assistant-access/).
+- **Hold requests by genre or TMDB tag.** **Settings, Requests** has a new "Don't request these
+  automatically" filter: movies with a chosen genre or TMDB tag wait in the inbox for you to approve instead of being
+  sent on their own.
+- **More seasonal presets**, and a simpler way to add a season to a row.
+- **Requests has its own Settings tab.** Settings now has four tabs. Changed settings are marked with their
+  default and a reset.
+- **Warnings view in Activity.** The log can be filtered to warnings, with context, and warning lines are
+  tinted.
+- **A per-user Kometa guide** on the docs site.
+
+### Changed
+
+- **Redesigned screens.** The dashboard, rows list, row editor, **Add a row** (now its own page), Users and
+  person page, Privacy, Runs and run detail, Activity, Settings and the first-run wizard were reworked.
+  Runs show one verdict ("OK · N warnings") everywhere, and the Privacy page leads with its enforcement
+  check and a who-sees-what grid. Breadcrumb headers, plain-word row names and a 12px text floor apply
+  throughout.
+- **The uninstall preview** is grouped by library, person and row, and names a shared row "Shared row".
+- **Confirmed row membership is kept separately from run logs** (migration 0102), so clearing run history
+  no longer loses what a row delivered or where a watch is credited.
+- **Deleted row ids are never reused** (migration 0109). It seeds the counter above every id that grants and
+  history still refer to, so a new row can never inherit an old one's access.
+
+### Fixed
+
+- A watch is credited to the verified Plex owner, for both live watches and completed history.
+- Shared rows render their configured poster, and retried rows keep their delivery evidence.
+- Row names fill `{user}` instead of stripping it.
+- The requests-row check redacts credentials in a source failure before logging or returning it.
+- Privacy never shows a green all-clear above an exposure: the Off banner, the exposed-rows badge, the
+  first-run finish and the person page all follow the engine's reading, including during a plex.tv outage.
+- A run that could not save or check someone's hide rules reads as a warning.
+- The Most watched shelf stays inside its scroll area on a phone.
+
 ## [1.10.0] - 2026-10-05
 
 ### Added

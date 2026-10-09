@@ -289,7 +289,7 @@ def _media_filter(items: list, media: str) -> list:
 
 # How many episodes watched = the person is clearly watching this show, not discovering it. The
 # ``show_pct`` fraction alone is unreachable for a long RETURNING series: it keeps adding episodes, so
-# watched/total never hits 80% even for someone 160 episodes deep (SFLIX/MooHouse Gold Rush 160/226 =
+# watched/total never hits 80% even for someone 160 episodes deep (a guest account: Gold Rush 160/226 =
 # 71%; 2026-07-20). A per-show floor catches those — someone that far in has plainly seen it, not
 # sampled it, however many unaired-then-aired seasons pushed the total up.
 #
@@ -1348,7 +1348,7 @@ def _gather_pool(
     season_source: str = "season",
     guidance: Guidance | None = None,
 ) -> _Gathered:
-    """The first half of ``_candidate_pool``: gather, then keep what the libraries hold and this person may see."""
+    """The first half of the candidate pool: gather, then keep what the libraries hold and this person may see."""
     # The titles this person has already watched (per the row's policy), not just the ~30 seeds — a
     # recommendation you've finished is the exact thing the row shouldn't surface. Falls back to the
     # seed set when the row has no exclusion rule (see `RowPolicy.pool_exclusions` for the None sentinel).
@@ -1436,7 +1436,7 @@ def _rank_pool(
     who: str,
     named: frozenset[tuple[MediaType, int]] = frozenset(),
 ) -> tuple[Pool, candidates_mod.GatherStats]:
-    """The second half of ``_candidate_pool``: the row's limits, then the pre-rank cut. ``who`` names the
+    """The second half of the candidate pool: the row's limits, then the pre-rank cut. ``who`` names the
     person and row in the log."""
     pool, in_library, dropped = gathered.pool, gathered.in_library, list(gathered.dropped)
     if limits is not None and limits.active:
@@ -1495,66 +1495,6 @@ def _rank_pool(
         year_now=_run_year(ctx.run_day),
     )
     return (pool, in_library, ranked), gather_stats
-
-
-def _candidate_pool(
-    ctx: EngineContext,
-    seeds: list,
-    library_index: dict[MediaType, dict[int, int]],
-    *,
-    excluded_genres: set[str],
-    profile=None,
-    sources: list[str] | None = None,
-    media: str = "both",
-    watched_exclusions: set[tuple[int, MediaType]] | None = None,
-    recent_count: int | None = None,
-    recency: float = 0.0,
-    visible: Callable[[list[int]], set[int] | None] | None = None,
-    season: seasons_mod.SeasonTitles | None = None,
-    guidance: Guidance | None = None,
-    limits: RowLimits | None = None,
-) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
-    """Gather TMDB candidates for ``seeds`` and intersect them with the library.
-
-    Returns ``((pool, in_library, ranked), gather_stats)`` — the 3-tuple of candidate lists, plus the
-    AI token/Exa spend the gather incurred (for per-run cost accounting):
-
-    * ``pool`` — every pooled candidate (used for request-demand bookkeeping before narrowing).
-    * ``in_library`` — the ones the delivery libraries actually hold and this user may still see.
-    * ``ranked`` — the pre-ranked candidates the curator chooses from.
-
-    ``media`` narrows the pool BEFORE the pre-rank truncation. Filtering after it meant a
-    movie-heavy watcher's shows-only row could lose every show to the 40-candidate cut and deliver
-    nothing — a dead row on a green run. Identity is (tmdb_id, media_type), never the bare id — movie
-    1399 and TV 1399 are different titles.
-
-    (No staleness partition anymore: rows now carry their prior picks forward on non-refresh nights,
-    so there's nothing to "hold back" — see ``_reusable_prior`` / ``_is_refresh_night``.)
-    """
-    gathered = _gather_pool(
-        ctx,
-        seeds,
-        library_index,
-        excluded_genres=excluded_genres,
-        profile=profile,
-        sources=sources,
-        media=media,
-        watched_exclusions=watched_exclusions,
-        recent_count=recent_count,
-        visible=visible,
-        season=season,
-        guidance=guidance,
-    )
-    return _rank_pool(
-        ctx,
-        gathered,
-        seeds,
-        media=media,
-        recency=recency,
-        limits=limits,
-        gather_stats=gathered.stats_for_ranking(),
-        who="candidate pool",
-    )
 
 
 def _add_step_tokens(report: UserRunReport, step: str, n: int) -> None:
@@ -2194,7 +2134,7 @@ def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: Engine
         _forget(report, spec, removed_in)
 
 
-# A row's candidate pool, as `_candidate_pool` returns it: (pool, in_library, ranked).
+# A row's candidate pool, as `_gather_pool` and `_rank_pool` return it: (pool, in_library, ranked).
 Pool = tuple[list[Candidate], list[Candidate], list[Candidate]]
 
 
@@ -2397,7 +2337,7 @@ class RowPolicy:
     def pool_exclusions(self, spec: RowSpec) -> set[tuple[int, MediaType]] | None:
         """Titles this row's pool must not contain, or None when this row has no exclusion rule.
 
-        The None sentinel is NOT "nothing to exclude" — `_candidate_pool` reads it as "this caller
+        The None sentinel is NOT "nothing to exclude" — `_gather_pool` reads it as "this caller
         didn't compute a watched breakdown, so fall back to excluding the seeds". An EMPTY SET is the
         meaningful other thing: "I did compute it, and there is nothing finished." So a row with a rule
         returns its set even when empty, and only a row with no rule at all returns None. Collapsing
@@ -2412,7 +2352,7 @@ class RowPolicy:
             rule = True
         # `and spec.media != "movie"` mirrors `pool_key` EXACTLY. `_started_shows` only ever yields
         # SHOW keys, so on a movies row this contributes nothing — but setting `rule` anyway returned
-        # an empty SET where an identical sibling row returns None, and `_candidate_pool` reads None
+        # an empty SET where an identical sibling row returns None, and `_gather_pool` reads None
         # as "exclude the seeds" and a set as "exclude exactly this". Same key, two different pools:
         # whichever row computed first would win, and the other could be handed back its own seeds.
         # Today the API refuses that combination, but a guard in another module is not what should be
@@ -2497,7 +2437,7 @@ class RowPolicy:
                     self.cfg.candidates_pre_rank,
                     recency,
                     year_now,
-                    # The same dials `_candidate_pool` passes. Threading them into only one of the two
+                    # The same dials `_gather_pool` and `_rank_pool` pass. Threading them into only one of the two
                     # cut sites gave a row overriding `recency` a different ranking function from its
                     # siblings — same server, same person, same night.
                     self.cfg.genre_avoidance,
@@ -2517,7 +2457,7 @@ class RowPolicy:
             # dial's reach at whatever survived" failure this method exists to escape.
             #
             # So: cut without it, measure the bounded result, then re-cut with it. Same two-step as
-            # `_candidate_pool`, and memoised, so the extra TMDB reads are bounded by
+            # `_gather_pool`, and memoised, so the extra TMDB reads are bounded by
             # `candidates_pre_rank` and paid once per distinct (pool, recency).
             cut_without_cast = cut(in_library, 0.0)
             if self.cfg.cast > 0:
@@ -3109,7 +3049,7 @@ def _build_section_picks(
     A row runs PER LIBRARY, not per media type: each library gets its own full collection of k,
     curated from that library's own contents. So a server with two movie libraries (Movies + 4K)
     gets a full row in EACH, and a mostly-TV watcher still gets a full movie row and a full show row
-    (the "one movie in Picked for You" bug, SFLIX 2026-07-15).
+    (the "one movie in Picked for You" bug, a large production server 2026-07-15).
 
     ``pool_for_row`` is this row's pre-ranked candidates; on the cold path it is empty and unread,
     and ``base_cold`` is sliced instead. ``taste`` is every title tonight's gather turned up, before
@@ -3633,7 +3573,7 @@ def _deliver_row(
     timeout retries JUST this write, NOT the expensive gather+curate that produced ``picks``. Each
     attempt re-acquires the write-lock and the backoff sleep happens OUTSIDE it, so a stalled user
     never holds the lock while waiting. This replaced a whole-user retry that re-ran the LLM and a
-    full re-gather on a single Plex hiccup (SFLIX run 3: ~2795s for danvex before it failed,
+    full re-gather on a single Plex hiccup (a large production server run 3: ~2795s for one user before it failed,
     2026-07-19).
     """
     ctx, user, cfg, user_report = policy.ctx, policy.user, policy.cfg, policy.report
@@ -4284,7 +4224,7 @@ def _shared_row(
     # LLM is asked.
     #
     # It used to derive SEEDS from the pooled history and run the same TMDB-similar + web-search
-    # pipeline a per-person row uses. `_candidate_pool` excludes the seeds from its own results (a
+    # pipeline a per-person row uses. `_gather_pool` excludes the seeds from its own results (a
     # recommendation you have already watched is the thing a row shouldn't surface), and here the
     # seeds ARE the popular titles — so the most-watched titles on the server were structurally
     # barred from the row named after them, and every pick was a similar-title suggestion hard-stamped

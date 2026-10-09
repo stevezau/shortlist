@@ -35,7 +35,6 @@ SOURCES = tuple(
             ROOT / "unraid-templates" / "shortlist.xml",
             ROOT / "unraid-templates" / "ca_profile.xml",
         ]
-        if "superpowers" not in p.parts
     )
 )
 

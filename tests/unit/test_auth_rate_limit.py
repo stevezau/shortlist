@@ -37,6 +37,9 @@ class TestPinRateLimit:
     def test_limit_is_per_ip(self):
         for _ in range(auth._PIN_MAX_PER_WINDOW):
             auth._rate_limit_pin(_request("1.1.1.1"))
+        with pytest.raises(HTTPException) as exc:
+            auth._rate_limit_pin(_request("1.1.1.1"))
+        assert exc.value.status_code == 429
         auth._rate_limit_pin(_request("2.2.2.2"))  # a different IP is unaffected
 
     def test_an_ip_recovers_after_its_window_elapses(self, monkeypatch):

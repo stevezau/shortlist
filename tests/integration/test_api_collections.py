@@ -1177,11 +1177,11 @@ class TestCollectionsSeed:
         image = client.get(f"/api/collections/{cid}/poster/image")
         assert image.status_code == 200 and image.headers["content-type"].startswith("image/") and image.content
 
-        # A non-image upload is rejected (only when Pillow can tell).
+        # A non-image upload is rejected; Pillow is in the dev extras, so CI always can tell.
         bad = client.post(
             f"/api/collections/{cid}/poster/upload", files={"file": ("x.png", b"not an image", "image/png")}
         )
-        assert bad.status_code in (200, 422)  # 422 with Pillow, 200 (stored as-is) without
+        assert bad.status_code == 422
 
         # Deleting the image removes it (mode stays "upload", so nothing is served afterwards).
         assert client.delete(f"/api/collections/{cid}/poster/image").status_code == 204

@@ -63,10 +63,6 @@ class ItemState:
     show_rating_key: int | None = None
     title: str = ""
 
-    @property
-    def is_empty(self) -> bool:
-        return not self.view_count and not self.view_offset_ms
-
 
 @dataclass(frozen=True)
 class WatchState:

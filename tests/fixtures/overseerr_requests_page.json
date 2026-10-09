@@ -88,8 +88,8 @@
     "ratingKey4k": null,
     "jellyfinMediaId": null,
     "jellyfinMediaId4k": null,
-    "mediaUrl": "https://host.example.test/desktop#!/server/7ee8abc1bcdcc79389ad1e15c30e2692714bc940/details?key=%2Flibrary%2Fmetadata%2F694749",
-    "iOSPlexUrl": "plex://preplay/?metadataKey=%2Flibrary%2Fmetadata%2F694749&server=7ee8abc1bcdcc79389ad1e15c30e2692714bc940",
+    "mediaUrl": "https://host.example.test/desktop#!/server/0123456789abcdef0123456789abcdef01234567/details?key=%2Flibrary%2Fmetadata%2F694749",
+    "iOSPlexUrl": "plex://preplay/?metadataKey=%2Flibrary%2Fmetadata%2F694749&server=0123456789abcdef0123456789abcdef01234567",
     "serviceUrl": "https://host.example.test/series/help-we-bought-a-village"
    },
    "seasons": [
@@ -197,8 +197,8 @@
     "ratingKey4k": null,
     "jellyfinMediaId": null,
     "jellyfinMediaId4k": null,
-    "mediaUrl": "https://host.example.test/desktop#!/server/7ee8abc1bcdcc79389ad1e15c30e2692714bc940/details?key=%2Flibrary%2Fmetadata%2F694072",
-    "iOSPlexUrl": "plex://preplay/?metadataKey=%2Flibrary%2Fmetadata%2F694072&server=7ee8abc1bcdcc79389ad1e15c30e2692714bc940",
+    "mediaUrl": "https://host.example.test/desktop#!/server/0123456789abcdef0123456789abcdef01234567/details?key=%2Flibrary%2Fmetadata%2F694072",
+    "iOSPlexUrl": "plex://preplay/?metadataKey=%2Flibrary%2Fmetadata%2F694072&server=0123456789abcdef0123456789abcdef01234567",
     "serviceUrl": "https://host.example.test/movie/38523"
    },
    "seasons": [],
@@ -291,8 +291,8 @@
     "ratingKey4k": null,
     "jellyfinMediaId": null,
     "jellyfinMediaId4k": null,
-    "mediaUrl": "https://host.example.test/desktop#!/server/7ee8abc1bcdcc79389ad1e15c30e2692714bc940/details?key=%2Flibrary%2Fmetadata%2F693845",
-    "iOSPlexUrl": "plex://preplay/?metadataKey=%2Flibrary%2Fmetadata%2F693845&server=7ee8abc1bcdcc79389ad1e15c30e2692714bc940",
+    "mediaUrl": "https://host.example.test/desktop#!/server/0123456789abcdef0123456789abcdef01234567/details?key=%2Flibrary%2Fmetadata%2F693845",
+    "iOSPlexUrl": "plex://preplay/?metadataKey=%2Flibrary%2Fmetadata%2F693845&server=0123456789abcdef0123456789abcdef01234567",
     "serviceUrl": "https://host.example.test/series/la-brea"
    },
    "seasons": [

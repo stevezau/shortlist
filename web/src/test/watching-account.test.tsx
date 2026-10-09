@@ -10,6 +10,7 @@ import {
   WatchingAccountPage,
   rowsOnTheSharedShelf,
 } from "@/pages/watching-account";
+import { makeUser } from "@/test/user-fixtures";
 
 const { getUsers, listCollections, updateCollection, dismissNotification } =
   vi.hoisted(() => ({
@@ -35,34 +36,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-function user(over: Partial<User>): User {
-  return {
-    manage_sharing: true,
-    id: 1,
-    username: "u",
-    slug: "u",
-    user_type: "shared",
-    restricted: false,
-    enabled: true,
-    cold_start: false,
-    history_depth: 0,
-    last_run_at: null,
-    request_tag: "",
-    requested_by_tag: "",
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    nickname: "",
-    friendly_name: "",
-    display_name: "",
-    avatar_url: "",
-    plex_account_id: 0,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    preview_titles: [],
-    prefs: {},
-    ...over,
-  };
+function user(over: Partial<User> = {}): User {
+  return makeUser({ username: "u", slug: "u", ...over });
 }
 
 function row(over: Partial<Collection>): Collection {
@@ -244,8 +219,6 @@ describe("WatchingAccountPage", () => {
   });
 });
 
-/** The deep link the Users page uses. The guide is what you read once; the tool is what you come
- *  back for, so pressing "Watching account" has to land on the tool rather than the explainer. */
 describe("WatchingAccountPage when the collections query has not answered", () => {
   it("does not claim the shelf is already clear while it is still loading", async () => {
     // `data ?? []` made an unanswered query indistinguishable from a genuinely clean server, so the
@@ -288,6 +261,8 @@ describe("WatchingAccountPage when the collections query has not answered", () =
   });
 });
 
+/** The deep link the Users page uses. The guide is what you read once; the tool is what you come
+ *  back for, so pressing "Watching account" has to land on the tool rather than the explainer. */
 describe("WatchingAccountPage opened with ?setup=1", () => {
   function renderAt(path: string) {
     const client = new QueryClient({

@@ -83,6 +83,7 @@ import type {
   TraceSelection,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { personName } from "@/lib/user-names";
 
 /** What the request subsystem did with each wanted-but-missing title, keyed "<tmdb_id>:<media>".
  *  Page-scoped (one run, one user) so a deep return row can overlay "→ requested from Radarr" onto a
@@ -99,7 +100,7 @@ function useRequestOutcome(
 export function RunUserTracePage() {
   // Serves BOTH traces. A shared row runs the same pipeline minus the per-person history stage and
   // returns the same shape, with the row's title standing in for the person — so forking this view
-  // would mean maintaining 1,600 lines twice to render identical stages.
+  // would mean maintaining the whole trace twice to render identical stages.
   const { id, userId, rowSlug } = useParams();
   const runId = Number(id);
   const uid = Number(userId);
@@ -224,7 +225,7 @@ export function TraceView({
   data: RunUserTraceResponse;
   userId?: number;
   /** For a SHARED row: its name as the run page shows it, so the two never disagree about what the
-   *  row is called. `display_name` carries a per-LIBRARY rendered title ("Popular Movies on SFLIX"),
+   *  row is called. `display_name` carries a per-LIBRARY rendered title ("Popular Movies on Home Server"),
    *  which would name the whole row after one of its libraries. */
   rowName?: string;
   /** Every row's name by SLUG, for the shortlist and delivery lines — the trace records slugs.
@@ -238,7 +239,7 @@ export function TraceView({
   /** The run this trace belongs to; when known, the title line leads with a "Run #N /" breadcrumb. */
   runId?: number;
 }) {
-  const name = rowName || data.display_name || data.username;
+  const name = rowName || personName(data);
   const libraries = useMemo(() => buildLibraries(data), [data]);
   const [active, setActive] = useState(libraries[0]?.key ?? "");
   const current = libraries.find((l) => l.key === active) ?? libraries[0];

@@ -42,6 +42,7 @@ class TestWhatIsRefused:
             "http://169.254.169.254/latest/meta-data/",  # AWS/GCP/Azure/DO instance credentials
             "http://169.254.169.254",
             "http://100.100.100.200/",  # Alibaba
+            "http://[::ffff:169.254.169.254]/",  # the same address written as IPv4-mapped IPv6
         ],
     )
     def test_cloud_metadata_addresses(self, url):

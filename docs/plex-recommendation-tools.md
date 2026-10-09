@@ -55,7 +55,7 @@ the last group can be private, and that is where they differ most.
 <td><span class="yes">Yes</span><span class="q">hidden by sharing filters before the row is shown</span></td>
 <td><span class="yes">Yes</span><span class="q">only after the hiding is in place</span></td>
 <td><span class="yes">Yes</span><span class="q">built-in picker needs no key</span></td>
-<td><span class="yes">Yes</span><span class="q">v1.9.3, 27 Sep 2026</span></td>
+<td><span class="yes">Yes</span><span class="q">v1.10.0, 5 Oct 2026</span></td>
 <td class="compare__pick">each person should get rows nobody else can see</td>
 </tr>
 <tr>
@@ -159,7 +159,7 @@ the last group can be private, and that is where they differ most.
 ### Shortlist
 
 Per-user rows (Picked for You, Because you watched, Watch it again, seasonal picks, a "Your requests"
-row and a shared Popular on this server row, from ten templates) built from each person's own watch
+row and a shared Popular on this server row, from eleven templates) built from each person's own watch
 history, made private with Plex's label restrictions. Every other account's share filter gets `label!=shortlist_<user>` merged into it,
 so each personal row is hidden from other supported accounts. The
 [server owner and some restriction profiles](plex-per-user-collections.md#two-things-to-watch-out-for)

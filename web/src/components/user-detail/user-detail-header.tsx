@@ -12,6 +12,7 @@ import { timeAgo } from "@/lib/format";
 import { usePatchUser, useStartRun } from "@/lib/queries";
 import type { User } from "@/lib/types";
 import { profileBlocksRows, userState } from "@/lib/user-state";
+import { personName } from "@/lib/user-names";
 
 /** The user page's identity header: avatar, status badges, stats, pause toggle, and Run now. */
 export function UserDetailHeader({ user }: { user: User }) {
@@ -23,7 +24,7 @@ export function UserDetailHeader({ user }: { user: User }) {
   const state = userState(user);
   const off = state === "off";
   const paused = state === "paused";
-  const name = user.display_name || user.username;
+  const name = personName(user);
   const profileBlocked = profileBlocksRows(user);
   const offReason = profileBlocked
     ? `Clear ${name}’s Restriction Profile in Plex first`
@@ -43,7 +44,7 @@ export function UserDetailHeader({ user }: { user: User }) {
                   Users
                 </Link>
                 <span className="font-normal text-faint-foreground">{" / "}</span>
-                {user.display_name || user.username}
+                {name}
               </h1>
               <UserBadges user={user} />
               {off && <Badge variant="secondary">off</Badge>}
@@ -133,7 +134,7 @@ export function UserDetailHeader({ user }: { user: User }) {
           nothing live, so pointing there sent people somewhere the run never appears. */}
       {startRun.isSuccess && (
         <p className="text-sm text-muted-foreground">
-          Run started for {user.display_name || user.username} only &mdash;
+          Run started for {name} only &mdash;
           follow it on{" "}
           <Link to="/runs" className="font-medium underline">
             Runs

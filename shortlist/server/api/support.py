@@ -214,7 +214,7 @@ def _scrub(s: str) -> str:
 
 
 #: Setting keys whose VALUE is a network location. Reported as a shape, never verbatim: a report is
-#: destined for a public issue tracker, and a bare `http://172.16.10.240:32400` hands over someone's
+#: destined for a public issue tracker, and a bare `http://192.168.1.10:32400` hands over someone's
 #: LAN topology — while a `plex.direct` hostname embeds their server's machine id. The scheme and port
 #: are the only parts with diagnostic value ("is it https", "is it the standard port").
 _LOCATION_KEYS = {
@@ -232,7 +232,7 @@ _LOCATION_KEYS = {
 
 
 def _location_shape(value: str) -> str:
-    """`http://172.16.10.240:32400` -> `http://<host>:32400`. Empty stays empty."""
+    """`http://192.168.1.10:32400` -> `http://<host>:32400`. Empty stays empty."""
     from urllib.parse import urlsplit
 
     if not value:

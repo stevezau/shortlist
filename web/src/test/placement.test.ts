@@ -11,6 +11,7 @@ import {
   placementSummary,
 } from "@/lib/placement";
 import type { User } from "@/lib/types";
+import { makeUser } from "@/test/user-fixtures";
 
 describe("placementLabel — every value of the enum", () => {
   it("names all four, including the one that was missing", () => {
@@ -75,43 +76,17 @@ describe("placementSummary", () => {
 });
 
 function user(patch: Partial<User> = {}): User {
-  return {
-    manage_sharing: true,
-    id: 1,
-    username: "sarah",
-    slug: "sarah",
-    user_type: "shared",
-    restricted: false,
-    enabled: true,
-    cold_start: false,
-    history_depth: 10,
-    last_run_at: null,
-    request_tag: "",
-    requested_by_tag: "",
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    nickname: "",
-    friendly_name: "",
-    display_name: "",
-    avatar_url: "",
-    plex_account_id: 0,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    preview_titles: [],
-    prefs: {},
-    ...patch,
-  };
+  return makeUser({ history_depth: 10, ...patch });
 }
 
 describe("ownerName / othersCount", () => {
   it("names the owner and counts everyone else", () => {
     const users = [
-      user({ id: 1, user_type: "owner", display_name: "stevezau" }),
+      user({ id: 1, user_type: "owner", display_name: "admin" }),
       user({ id: 2, slug: "sarah" }),
       user({ id: 3, slug: "mike" }),
     ];
-    expect(ownerName(users)).toBe("stevezau");
+    expect(ownerName(users)).toBe("admin");
     expect(othersCount(users)).toBe(2);
   });
 

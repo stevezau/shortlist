@@ -963,8 +963,8 @@ alembic_version` plus the dates — worth doing before deciding whether any of t
   `com.centurylinklabs.watchtower.enable=false` label, so it was not created by `deploy.sh`, and
   watchtower — `WATCHTOWER_SCHEDULE=0 30 4 * * *`, nightly at 04:30, not label-scoped, with
   `shortlist` absent from `WATCHTOWER_DISABLE_CONTAINERS` — owns it. So the deploy path is: push to
-  `dev` → CI publishes `:dev` → watchtower recreates the container at the next 04:30. `deploy.sh` is
-  currently unused and its header is stale. The pre-commit half of this design still stands: the
+  `dev` → CI publishes `:dev` → watchtower recreates the container at the next 04:30. `deploy.sh` was
+  unused and has since been deleted. The pre-commit half of this design still stands: the
   developer loop now runs migrations via a local `uvicorn` boot (see §4), which is even earlier than
   the build it used to assume.
 - **The literal in `test_the_fingerprint_does_not_depend_on_the_python_minor`** is written as `"0f1a…"`
@@ -976,7 +976,7 @@ alembic_version` plus the dates — worth doing before deciding whether any of t
 
 ## Files read for this design (read-only, no edits)
 
-`.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `pyproject.toml`, `scripts/deploy.sh`,
+`.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `pyproject.toml`,
 `tests/conftest.py` (110-175), `tests/unit/test_migrations.py`, `tests/unit/test_migration_initial.py`,
 `tests/integration/test_migration_recovery.py`, and migrations `0001`, `0032`, `0033`, `0034`, `0038`,
 `0060`, `0063`, `0070`, `0078`, `0081`, `0082`, `0083`, `0088`, `0089`. Git history: `git log`

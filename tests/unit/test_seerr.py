@@ -258,7 +258,7 @@ class TestUsers:
             },
             {
                 "id": 7,
-                "name": "MooHouse",
+                "name": "Guest",
                 "auto_approve_movies": False,
                 "auto_approve_tv": False,
                 "is_plex_user": True,

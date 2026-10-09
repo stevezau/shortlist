@@ -7,15 +7,10 @@ import { CronInput } from "@/components/cron-input";
 /** The shared "Custom" schedule box. Its whole job is that nothing is committed on trust, so the
  *  branches that matter are: what it shows back, and when it does (and doesn't) call onChange. */
 describe("CronInput", () => {
-  it("explains what it accepts before anything is typed", () => {
-    render(<CronInput value="" onChange={vi.fn()} />);
-    expect(screen.getByText(/plain English/i)).toBeInTheDocument();
-  });
-
-  it("keeps explaining itself when a schedule is already set", () => {
-    // The box normally opens with a cron in it, so a hint shown only on an empty field is a hint
-    // nobody ever sees — which is exactly how it shipped the first time.
-    render(<CronInput value="17 */4 * * *" onChange={vi.fn()} />);
+  // The box normally opens with a cron in it, so a hint shown only on an empty field is a hint
+  // nobody ever sees — which is exactly how it shipped the first time.
+  it.each(["", "17 */4 * * *"])("explains what it accepts when the value is %j", (value) => {
+    render(<CronInput value={value} onChange={vi.fn()} />);
     expect(screen.getByText(/plain English/i)).toBeInTheDocument();
   });
 

@@ -6,6 +6,8 @@
  * deliberately no way to spell "never", because switching the row off already means that.
  */
 
+import { joinList } from "@/lib/format";
+
 export type ShowDays = number[];
 
 export const DAY_CHIPS: { iso: number; short: string; long: string }[] = [
@@ -40,12 +42,6 @@ export function showDaysSummary(days: ShowDays): string {
   return chosen.map((chip) => chip.short).join(", ");
 }
 
-/** "Monday, Wednesday and Friday" — an English list, not a comma-joined array. */
-function englishList(names: string[]): string {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-}
-
 /**
  * The line under the control, naming the days the row is HIDDEN.
  *
@@ -58,8 +54,8 @@ export function showDaysSentence(days: ShowDays): string {
   if (shown.length === 0 || shown.length === 7) return "";
   const hidden = DAY_CHIPS.filter((chip) => !days.includes(chip.iso));
   return (
-    `Shows on ${englishList(shown.map((c) => c.long))}. ` +
-    `Hidden on ${englishList(hidden.map((c) => c.long))} — ` +
+    `Shows on ${joinList(shown.map((c) => c.long))}. ` +
+    `Hidden on ${joinList(hidden.map((c) => c.long))} — ` +
     `it keeps its titles, so it comes straight back.`
   );
 }

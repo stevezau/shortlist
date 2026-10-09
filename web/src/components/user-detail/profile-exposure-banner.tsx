@@ -1,8 +1,9 @@
 import { Card } from "@/components/ui/card";
-import { ProfileFixSteps } from "@/components/user-detail/off-banner";
-import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
-import { usePrivacyStatus } from "@/lib/queries";
+import { LastRunExposure, ProfileFixSteps } from "@/components/user-detail/off-banner";
+import { useAccountExposure } from "@/components/user-detail/use-account-exposure";
+import { rowsNotTheirs } from "@/lib/privacy-attention";
 import type { User } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 import { profileName } from "@/lib/user-profile";
 
 /**
@@ -12,17 +13,13 @@ import { profileName } from "@/lib/user-profile";
  * the last run, found rows showing.
  */
 export function ProfileExposureBanner({ user }: { user: User }) {
-  const privacy = usePrivacyStatus();
+  const { live, exposed, lastRun, isPending } = useAccountExposure(user);
   const profile = user.restriction_profile ? profileName(user) : "";
   if (!profile) return null;
 
-  const name = user.display_name || user.username;
-  const account = privacy.data?.accounts?.find((a) => a.user_id === user.id);
-  const live = account && privacy.data && !privacy.data.error && !privacy.data.rows_error;
-  const exposed = live ? rowsNotHidden(account, privacy.data) : 0;
-  const lastRun = user.unhidden_rows;
+  const name = personName(user);
 
-  if (live ? exposed === 0 : privacy.isPending || lastRun === 0) return null;
+  if (live ? exposed === 0 : isPending || lastRun === 0) return null;
 
   return (
     <Card data-testid="profile-exposure-banner" className="overflow-hidden p-0">
@@ -36,10 +33,7 @@ export function ProfileExposureBanner({ user }: { user: User }) {
           </>
         ) : (
           <>
-            <span className="font-medium">
-              Couldn&rsquo;t check live. The last run found {name} could see {lastRun}{" "}
-              {lastRun === 1 ? "collection" : "collections"} that aren&rsquo;t theirs.
-            </span>{" "}
+            <LastRunExposure name={name} lastRun={lastRun} />{" "}
             Plex rejects hide rules for accounts with a Restriction Profile.
           </>
         )}

@@ -20,14 +20,16 @@ PORT="${PORT:-5959}"
 # SIGKILL the container with the scheduler and playback listener never stopped. The app now ends its
 # own event streams on the stop signal; this bounds anything else. 3s, plus up to 5s for the
 # listener's own shutdown, stays inside Docker's default 10s.
+RUN_AS=""
 if [ "$(id -u)" = "0" ]; then
     getent group shortlist >/dev/null 2>&1 || addgroup --gid "$PGID" shortlist 2>/dev/null || true
     id shortlist >/dev/null 2>&1 || adduser --uid "$PUID" --gid "$PGID" --disabled-password --gecos "" shortlist 2>/dev/null || true
     mkdir -p /config
     chown -R "$PUID:$PGID" /config
-    exec gosu "$PUID:$PGID" uvicorn shortlist.server.main:app --host 0.0.0.0 --port "$PORT" \
-        --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS" --timeout-graceful-shutdown 3
+    RUN_AS="gosu $PUID:$PGID"
 fi
 
-exec uvicorn shortlist.server.main:app --host 0.0.0.0 --port "$PORT" \
+# RUN_AS is deliberately unquoted: it word-splits into `gosu <uid:gid>`, or into nothing when not root.
+# shellcheck disable=SC2086
+exec $RUN_AS uvicorn shortlist.server.main:app --host 0.0.0.0 --port "$PORT" \
     --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS" --timeout-graceful-shutdown 3

@@ -2,7 +2,7 @@
 
 Every outbound call (TMDB, Tautulli, Trakt, Arr, OMDb, plex.tv reads) goes through here so a
 transient blip — a read timeout, a dropped connection, an HTTP 429/5xx — is retried with exponential
-backoff instead of failing the whole run. (Run 3 on SFLIX died on a single 30s PMS read timeout.)
+backoff instead of failing the whole run. (Run 3 on a large production server died on a single 30s PMS read timeout.)
 
 Three entry points, split by HTTP safety:
 

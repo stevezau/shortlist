@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { CollectionInput, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { personName } from "@/lib/user-names";
 
 type AudiencePatch = Pick<CollectionInput, "audience" | "audience_user_ids">;
 
@@ -42,7 +43,7 @@ export function AudiencePicker({
             <span className="flex min-w-0 items-center gap-2 text-sm">
               <UserAvatar name={user.username} size="sm" />
               <span className="min-w-0 break-words">
-                {user.display_name || user.username}
+                {personName(user)}
                 {!user.enabled && <span className="block text-xs text-muted-foreground">Shortlist disabled</span>}
               </span>
             </span>

@@ -26,6 +26,7 @@ from shortlist.engine.seasons import (
 )
 
 __all__ = [
+    "GENRE_IDS_BY_NAME",
     "ThemeCollection",
     "ThemePick",
     "ThemeSpec",
@@ -37,7 +38,7 @@ __all__ = [
 
 # TMDB's movie genre list, which it has not changed in years. Themes name genres in words (the AI writes
 # them); `Season.movie_genres` wants ids. Shows are never genre-queried (seasons.py), so no TV list.
-_MOVIE_GENRE_IDS: dict[str, int] = {
+GENRE_IDS_BY_NAME: dict[str, int] = {
     "action": 28,
     "adventure": 12,
     "animation": 16,
@@ -60,7 +61,7 @@ _MOVIE_GENRE_IDS: dict[str, int] = {
     "war": 10752,
     "western": 37,
 }
-MOVIE_GENRE_IDS = frozenset(_MOVIE_GENRE_IDS.values())
+MOVIE_GENRE_IDS = frozenset(GENRE_IDS_BY_NAME.values())
 
 
 @dataclass(frozen=True)
@@ -140,14 +141,14 @@ def _genre_key(name: str) -> str:
     """A genre's hash key: its TMDB id when the name is known, so aliases and case hash alike, else its
     lowered name. Always a string, and prefixed so a name can never collide with an id."""
     lowered = name.strip().lower()
-    genre_id = _MOVIE_GENRE_IDS.get(lowered)
+    genre_id = GENRE_IDS_BY_NAME.get(lowered)
     return f"id:{genre_id}" if genre_id is not None else f"name:{lowered}"
 
 
 def _genre_ids(names: tuple[str, ...]) -> tuple[int, ...]:
     ids = []
     for name in names:
-        genre_id = _MOVIE_GENRE_IDS.get(name.strip().lower())
+        genre_id = GENRE_IDS_BY_NAME.get(name.strip().lower())
         if genre_id is None:
             logger.warning("theme: unknown genre “{}” ignored", name)
             continue

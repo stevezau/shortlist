@@ -88,7 +88,7 @@ def rename_or_keep(
     one of three things holds the name:
 
     - An ORPHAN, left by a deleted collection. The pre-#119 rebuild deleted rows nightly, so a
-      `{top_seed}` row whose seed comes back meets one: on SFLIX four rows kept their old seed's name
+      `{top_seed}` row whose seed comes back meets one: on a large server four rows kept their old seed's name
       every night while the run reported the new one. `_reclaim_orphaned_name` frees it for this row.
     - The same person's row in ANOTHER library (a twin, e.g. two rows sharing a name under #121, or a
       `{top_seed}` row borrowing its seed). Only a create can share that name: REBUILD.
@@ -311,7 +311,7 @@ def row_marker(plex_account_id: int) -> str:
     A Plex collection is a TAG on items, keyed by TITLE within a library — not an independent bag
     with its own membership. Two rows sharing a title in one library are therefore ONE membership,
     and every user's row shows the union of everyone's picks: on a live server a film picked for a
-    single user turned up in another user's row, carrying one collection tag (SFLIX, 2026-07-13).
+    single user turned up in another user's row, carrying one collection tag (a large production server, 2026-07-13).
     "Picked for You" has to mean picked for YOU, so the titles must differ.
 
     They must also LOOK identical — nobody wants their own name stapled to their row — so the
@@ -1296,57 +1296,6 @@ def remove_row_collections(
     return removed
 
 
-def rename_row_collections(
-    plex: PlexClient,
-    config: EngineConfig,
-    *,
-    label: str,
-    marker: str,
-    old_display: str,
-    new_display: str,
-    dry_run: bool,
-) -> list[str]:
-    """Rename this account's row collection IN PLACE — ``old_display`` → ``new_display``, keeping the
-    invisible account marker — across every library that holds it. An on-demand reconcile OUTSIDE a
-    run (the owner renamed a row): a multi-row user's renamed row is updated rather than orphaned with
-    a new copy (single-row users are already renamed seamlessly by the next run's delivery).
-
-    Privacy-neutral: the filter that hides a row is keyed on its LABEL, which is untouched here, so
-    changing only the human title can never make the server less private (it neither creates,
-    promotes, nor alters a share filter).
-    Matches only collections under ``label`` whose marker-stripped title equals ``old_display``; a
-    foreign (Kometa) collection never carries our label and ``find_owned_collections`` only returns
-    ours. Returns the library titles renamed (or, in a dry run, that would be).
-    """
-    if not label.lower().startswith(f"{LABEL_PREFIX}_"):
-        # Lowercased for the same reason as the removal guard: `User.label` stores Plex's TITLE-CASED
-        # form ("Shortlist_sarah"), and a case-sensitive test returns [] for it — indistinguishable
-        # from "nothing matched", so a rename would leave the row under its old name with nothing but
-        # a log line. Defensive: no caller passes the title-cased form today, and this is what keeps
-        # one from silently no-opping if it ever does.
-        # The UNDERSCORE matters (rule 4): every row now also carries the bare `shortlist` label, and
-        # `find_owned_collections` matches a tag exactly — so a caller passing the constant label
-        # would select every Shortlist collection on the server rather than one row's.
-        # Belt-and-suspenders: only ever retitle under one of OUR labels, matching the delete
-        # path's ownership re-check. find_owned_collections already scopes to this label, so this only
-        # guards against a caller ever passing a foreign one.
-        logger.warning("refusing to rename under a non-Shortlist label {!r}", label)
-        return []
-    renamed: list[str] = []
-    new_title = new_display + marker
-    for section in plex.sections():
-        for collection in plex.find_owned_collections(section, label):
-            if strip_marker(collection.title) != old_display or collection.title == new_title:
-                continue  # not this row, or already carries the new title
-            renamed.append(section.title)
-            if dry_run:
-                logger.info("[dry-run] would rename '{}' → '{}' in '{}'", old_display, new_display, section.title)
-            else:
-                collection.editTitle(new_title)
-                logger.info("renamed '{}' → '{}' in '{}'", old_display, new_display, section.title)
-    return renamed
-
-
 def reset_row_posters(
     plex: PlexClient,
     config: EngineConfig,
@@ -1975,7 +1924,7 @@ def _deliver_one(
         # Membership already IS the wanted set — skip the add/remove/sortUpdate writes entirely. An
         # unchanged row used to fire a sortUpdate every run (a real write on a slow library, for
         # nothing). The deferred order pass still runs via order_work, so a refresh-night re-rank is still
-        # applied and the collection keeps its custom sort from prior runs. (perf: SFLIX 2026-07-19)
+        # applied and the collection keeps its custom sort from prior runs. (perf: a large production server 2026-07-19)
         if order_work is not None:
             order_work.append((collection, wanted_keys))
         apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
@@ -2023,7 +1972,7 @@ def _deliver_one(
         plex.set_items(collection, existing_items, add_items, wanted_keys)
     except CollectionRejectedItems:
         # A Plex collection can end up in a state where it refuses EVERY add. Observed on a real
-        # server (darren3437, SFLIX, runs 21 and 22): an empty collection of ours 400'd on a batch of
+        # server (one user, a large production server, runs 21 and 22): an empty collection of ours 400'd on a batch of
         # 30 valid shows AND on a single one, while a sibling collection accepted the very same item
         # a second later. Same library, same subtype, same machineIdentifier, every ratingKey
         # resolving — the object itself was broken, and it stayed broken run after run, so that
@@ -2204,7 +2153,7 @@ def sweep_broken_rows(
             # No shortlist label. If the title still carries our invisible marker, it's an ORPHAN —
             # a per-user row whose label write never landed (an interrupted run). With no label, NO
             # `label!=` share filter can hide it, so EVERY user sees it: the exact leak that stranded
-            # unlabelled "Picked for You" rows on SFLIX. The marker proves it's ours, so delete it;
+            # unlabelled "Picked for You" rows on a large production server. The marker proves it's ours, so delete it;
             # the next successful run rebuilds the owner's row, labelled. A collection with no marker
             # is genuinely foreign (Kometa and friends) — leave it alone (rule 4).
             if not has_marker(collection.title) or systemic_failure:

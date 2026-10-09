@@ -256,11 +256,6 @@ export function ruleChips(rules: Theme["rules"]): RuleChip[] {
   return chips;
 }
 
-/** A theme's hard limits in words, one short phrase each; none for a limit that is not set. */
-export function rulesSummary(rules: Theme["rules"]): string[] {
-  return ruleChips(rules).map((chip) => chip.label);
-}
-
 /** The rules with one chip's fields left out, so a saved theme has no such limit. */
 export function withoutRule(rules: Theme["rules"], chip: RuleChip): Theme["rules"] {
   return Object.fromEntries(Object.entries(rules).filter(([key]) => !chip.keys.includes(key as RuleKey)));

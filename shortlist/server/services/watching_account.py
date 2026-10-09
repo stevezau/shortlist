@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserType
 from shortlist.engine.watch_replica import (
+    ItemState,
     OpKind,
     WatchState,
     build_plan,
@@ -581,8 +582,7 @@ def stamp_true_dates(session: Session, user_id: int) -> int:
         return 0
 
     stamped = 0
-    rows = rows_to_stamp
-    for row in rows:
+    for row in rows_to_stamp:
         when = newest.get(row.rating_key)
         if when is None:
             continue
@@ -645,8 +645,6 @@ def undo_transfer(
             "from it could remove watches it never recorded"
         )
         return report
-
-    from shortlist.engine.watch_replica import ItemState
 
     # Rows written before the show key was added carry four elements; unpacked leniently so an older
     # snapshot still restores. It must NOT try to clear show rows in that case — see `knows_shows`.

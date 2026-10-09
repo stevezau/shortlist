@@ -38,7 +38,7 @@ export function StepCustomize({ update, next, back }: StepProps) {
   // fields above silently reset to their literals and the next save wrote those defaults OVER the
   // owner's stored values. The worst case was "Skip for now — you can change this later", which is
   // also a save: a control whose label promises nothing changes was replacing a custom row name
-  // with the classic default. Same pattern as `step-history`, for the same reason.
+  // with the classic default. Same pattern as `step-tmdb`, for the same reason.
   const settings = useSettings();
   const seeded = useRef(false);
   useEffect(() => {
@@ -50,7 +50,7 @@ export function StepCustomize({ update, next, back }: StepProps) {
     // Functional updaters: if the fetch was slow and the owner already picked something, their
     // choice wins. An absent saved value never overwrites what they chose.
     //
-    // All three called unconditionally at the effect's top level, exactly as `step-history` does.
+    // All three called unconditionally at the effect's top level, exactly as `step-tmdb` does.
     // Wrapping them in `if (savedTpl)` reads more naturally but trips
     // `react-hooks/set-state-in-effect`, which is an ERROR in this config and would fail CI's lint
     // job — so the "is there anything to apply?" test lives inside each updater instead.

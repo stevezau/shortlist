@@ -23,6 +23,8 @@ Everything else is set in the app and stored in its database; see the
 | `SHORTLIST_MCP_URL`                                                        | unset     | live: enables assistant access at the exact canonical URL, including `APP_BASE_PATH` and the final `/mcp`; for example `https://media.example.com/shortlist/mcp`. Requires HTTPS outside loopback. Read at startup. See [Connect an assistant](../guides/assistant-access.md).                                      |
 | `APP_BASE_PATH`                                                            | `/`       | live: serve the app from a subpath behind a reverse proxy, e.g. `/shortlist`. Read at startup, so the published image works unmodified — no rebuild. Accepts `/shortlist` or `/shortlist/`. The proxy just forwards; it does not need to strip the prefix. See [Serving from a subpath](#serving-from-a-subpath). |
 
+`GIT_SHA` and `GIT_BRANCH` are build arguments baked into the image so the version check can tell which commit it is running. They are build metadata, not settings, and there is nothing to configure.
+
 ### Serving from a subpath
 
 Set `APP_BASE_PATH` and point the proxy at the container. No rebuild, and no prefix-stripping

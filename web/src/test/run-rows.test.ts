@@ -65,7 +65,7 @@ function run(overrides: Partial<RunDetail> = {}): RunDetail {
 const CONFIG_NAMES = {
   picked: "✨ {library_name} Picked for You",
   because: "🎯 Because you watched {top_seed}",
-  popular: "👥 Popular {library_name} on SFLIX",
+  popular: "👥 Popular {library_name} on Home Server",
 };
 
 describe("rowDisplayName", () => {
@@ -74,7 +74,7 @@ describe("rowDisplayName", () => {
     // the page as "✨ {library_name} Picked for You".
     expect(rowDisplayName(CONFIG_NAMES.picked)).toBe("✨ Picked for You");
     expect(rowDisplayName(CONFIG_NAMES.because)).toBe("🎯 Because you watched");
-    expect(rowDisplayName(CONFIG_NAMES.popular)).toBe("👥 Popular on SFLIX");
+    expect(rowDisplayName(CONFIG_NAMES.popular)).toBe("👥 Popular on Home Server");
   });
 });
 
@@ -87,7 +87,7 @@ describe("resolveRowName", () => {
   it("falls back to plain words, never braces, where no value exists yet", () => {
     expect(resolveRowName(CONFIG_NAMES.because)).toBe("🎯 Because you watched …");
     expect(resolveRowName("☕ {library_name} you've already seen")).toBe("☕ You've already seen");
-    expect(resolveRowName(CONFIG_NAMES.popular)).toBe("👥 Popular on SFLIX");
+    expect(resolveRowName(CONFIG_NAMES.popular)).toBe("👥 Popular on Home Server");
     expect(resolveRowName("{user}'s picks")).not.toContain("{");
   });
 
@@ -188,7 +188,7 @@ describe("groupRunByRow", () => {
         users: [user({ rows_considered: { picked: "due" } })],
         shared_rows: sharedRows({
           collection_slug: "popular",
-          row_title: "👥 Popular Movies on SFLIX",
+          row_title: "👥 Popular Movies on Home Server",
           status: "ok",
           error: null,
           reason: null,
@@ -206,7 +206,7 @@ describe("groupRunByRow", () => {
     );
 
     const shared = groups.find((g) => g.kind === "shared")!;
-    expect(shared.title).toBe("👥 Popular on SFLIX");
+    expect(shared.title).toBe("👥 Popular on Home Server");
     expect(shared.libraries).toEqual(["Movies"]);
     expect(shared.people).toEqual([]);
     expect(rowSummary(shared)).toBe("1 pick · +1 −1");
@@ -405,7 +405,7 @@ describe("a run that is still going", () => {
 
     expect(groups.map((g) => g.title)).toEqual([
       "✨ Picked for You",
-      "👥 Popular on SFLIX",
+      "👥 Popular on Home Server",
     ]);
     // Nobody done yet, so all three are still to come.
     expect(groups[0]!.pending).toBe(3);

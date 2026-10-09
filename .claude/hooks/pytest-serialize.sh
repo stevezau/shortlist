@@ -10,11 +10,13 @@
 # moment later is the cheaper failure mode.
 set -uo pipefail
 
-readonly REPO="/home/data/workspace/shortlist"
+REPO="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+readonly REPO
 
 payload=$(cat)
 cmd=$(printf '%s' "${payload}" | jq -r '.tool_input.command // ""' 2>/dev/null) || exit 0
-[[ "${cmd}" == *pytest* ]] || exit 0
+# `pytest` as a command word, so a path like pytest-serialize.sh or a grep for the word is not a run.
+[[ "${cmd}" =~ (^|[[:space:];\&|(])pytest([[:space:]]|$) ]] || exit 0
 
 # Our own process tree must not count as "another run".
 mine=$({ pstree -p $$ 2>/dev/null || true; } | grep -oE '\([0-9]+\)' | tr -d '()')

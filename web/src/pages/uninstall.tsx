@@ -300,7 +300,7 @@ export function UninstallPage() {
               <p role="alert" className="text-sm text-destructive-text">
                 {apiErrorMessage(
                   uninstall.error,
-                  "Uninstall failed — nothing was left half-done. See the server log, then try again.",
+                  "Uninstall failed. Some accounts may not have been restored. See the server log, then run the uninstall again to retry.",
                 )}
               </p>
             )}

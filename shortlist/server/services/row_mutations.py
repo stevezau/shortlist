@@ -325,24 +325,7 @@ def update_row_in_session(
             defer_rename=body.defer_rename,
         )
 
-        def projected_stranded() -> set[str]:
-            return api._stranded_sections(
-                None,
-                old_media=change.media_before,
-                old_keys=list(change.libraries_before),
-                new_media=change.media_after,
-                new_keys=list(change.libraries_after),
-                sections=library_sections,
-            )
-
-        steps = steps_for_row_plan(
-            plan_row_changes(change, projected_stranded),
-            slug=change.slug,
-            build=change.build_before,
-        )
-        if sent & {"schedule", "enabled"}:
-            steps.append(schedule_rebuild_step())
-        diff = {key: {"before": current.get(key), "after": after_values[key]} for key in sorted(sent)}
+        steps, diff = _row_effects(change, sent, library_sections, current, after_values)
         return collection, steps, diff
     if theme is not None and "theme_id" in sent and theme.id != collection.theme_id:
         collection.ai_tokens = (collection.ai_tokens or 0) + api._unattributed_theme_tokens(
@@ -371,20 +354,7 @@ def update_row_in_session(
         defer_rename=body.defer_rename,
     )
 
-    def stranded() -> set[str]:
-        return api._stranded_sections(
-            None,
-            old_media=change.media_before,
-            old_keys=list(change.libraries_before),
-            new_media=change.media_after,
-            new_keys=list(change.libraries_after),
-            sections=library_sections,
-        )
-
-    steps = steps_for_row_plan(plan_row_changes(change, stranded), slug=change.slug, build=change.build_before)
-    if sent & {"schedule", "enabled"}:
-        steps.append(schedule_rebuild_step())
-    diff = {key: {"before": current.get(key), "after": after_values[key]} for key in sorted(sent)}
+    steps, diff = _row_effects(change, sent, library_sections, current, after_values)
     return collection, steps, diff
 
 
@@ -445,6 +415,19 @@ def apply_prevalidated_row_update_in_session(
         defer_rename=body.defer_rename,
     )
 
+    steps, diff = _row_effects(change, sent, library_sections, current, after_values)
+    return collection, steps, diff
+
+
+def _row_effects(change, sent: set[str], library_sections: list | None, current: dict, after_values: dict):
+    """The durable steps and the field diff for one row edit.
+
+    Shared by the preview, the REST-validated apply and the full apply so the three can never plan
+    different effects for one change: a step one path forgets is a visibility change that never reaches
+    Plex (jobs-and-runs-design section 12).
+    """
+    from shortlist.server.api import collections as api
+
     def stranded() -> set[str]:
         return api._stranded_sections(
             None,
@@ -459,7 +442,7 @@ def apply_prevalidated_row_update_in_session(
     if sent & {"schedule", "enabled"}:
         steps.append(schedule_rebuild_step())
     diff = {key: {"before": current.get(key), "after": after_values[key]} for key in sorted(sent)}
-    return collection, steps, diff
+    return steps, diff
 
 
 def steps_for_row_plan(plan: list[PlannedWork] | tuple[PlannedWork, ...], *, slug: str, build: str) -> list[dict]:

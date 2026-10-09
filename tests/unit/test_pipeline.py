@@ -2256,7 +2256,7 @@ class TestPerRowOverrides:
         assert seeds == {"Fargo"}
 
     def _three_seed_named_row_ctx(self, ctx, *, twelve_affinity: float = 0.2, chernobyl_finds_twelve: bool = False):
-        """A `{top_seed}` row built from up to three watches in one Movies library — SFLIX's per-row budget.
+        """A `{top_seed}` row built from up to three watches in one Movies library — that server's per-row budget.
 
         Fargo (900) is the newest watch; its look-alikes 20-22 are middling matches. Heat (902) has one
         look-alike, 12, a weak match that discover ALSO finds. Chernobyl (901) has weak look-alikes 25-27,
@@ -3288,8 +3288,8 @@ class TestAutoUserTag:
         # A slug with an underscore, because that is what a two-word Plex name produces. It reaches
         # the client verbatim; turning it into `moo-house` for the Arr's charset is the CLIENT's job
         # and is pinned separately (`test_arr.py::test_tags_are_sanitized_to_the_arr_charset`).
-        steve = make_profile("MooHouse", account_id=100, slug="moo_house")
-        mock_plextv.users = [plextv_user(100, "MooHouse")]
+        steve = make_profile("Guest", account_id=100, slug="guest_user")
+        mock_plextv.users = [plextv_user(100, "Guest")]
         ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
         ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [
             {"id": 30, "title": "Missing Gem", "genre_ids": [], "vote_average": 9.0, "vote_count": 900}
@@ -3303,7 +3303,7 @@ class TestAutoUserTag:
 
         pipeline_mod.run(ctx, [steve])
 
-        assert radarr.tag_calls == [{"moo_house"}], "the wanting person's slug never reached Radarr"
+        assert radarr.tag_calls == [{"guest_user"}], "the wanting person's slug never reached Radarr"
 
     def test_an_explicit_user_tag_survives_a_row_opting_out(self, ctx: EngineContext, mock_plextv, monkeypatch):
         # `auto_user_tag` governs the AUTOMATIC slug only. A tag the owner typed on a person is not
@@ -3917,7 +3917,7 @@ class TestLibraryScoping:
         These are two questions and this used to answer both with one list: with no users
         `delivery_sections` came back EMPTY, so the shelf-ordering phase iterated nothing and every
         `privacy.sync` — the nightly job and the "Fix privacy" button — silently reordered nothing
-        at all, whatever else it was asked to do (SFLIX, 2026-08-12). Indexing stays gated on users
+        at all, whatever else it was asked to do (a large production server, 2026-08-12). Indexing stays gated on users
         because that is the part that costs thousands of PMS reads.
         """
         from shortlist.engine.models import RowSpec
@@ -4726,7 +4726,7 @@ class TestEffectiveRowSources:
 
 class TestPerDeliveryTimeoutRetry:
     """A PMS timeout retries JUST the idempotent delivery write, NOT the whole user — so a Plex hiccup
-    never re-runs the expensive gather + pick selection (the amplifier that made SFLIX run 3
+    never re-runs the expensive gather + pick selection (the amplifier that made a large production server run 3
     catastrophic). A delivery that keeps timing out still fails only that user (rule 6 resume-safety)."""
 
     def _full_movie_pool(self, ctx: EngineContext) -> None:
@@ -4928,7 +4928,7 @@ class TestConverge:
         return report
 
     def test_a_stranded_row_is_taken_off_the_owners_home(self, ctx: EngineContext):
-        """The SFLIX case: a shared user's row left on the owner's Home by an older build, whose
+        """The a large production server case: a shared user's row left on the owner's Home by an older build, whose
         owner is not in tonight's run so promote never revisits it."""
         stranded = self._collection(1, "Shortlist_gemnath")
         report = self._run(ctx, [stranded], promoted=set())

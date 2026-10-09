@@ -12,31 +12,10 @@ import { describe, expect, it } from "vitest";
 
 import { RunStatTiles } from "@/components/runs/run-stat-tiles";
 import type { RunDetail } from "@/lib/types";
+import { makeTilesRun } from "@/test/run-fixtures";
 
 function renderTiles(stats: Record<string, unknown>) {
-  const run = {
-    id: 1,
-    trigger: "manual",
-    status: "ok",
-    dry_run: false,
-    started_at: "2026-08-18T04:18:00Z",
-    began_at: "2026-08-18T04:18:00Z",
-    finished_at: "2026-08-18T04:24:00Z",
-    users: [],
-    shared_rows: [],
-    error: null,
-    promotion_blockers: [],
-    stats: {
-      users_ok: 1,
-      users_error: 0,
-      titles_requested: 0,
-      // Emitted by every current run; 0 means "known: nothing is waiting", which is what separates
-      // these cases from a historic run that cannot say either way.
-      requests_queued: 0,
-      ...stats,
-    },
-  } as unknown as RunDetail;
-  render(<RunStatTiles run={run} />);
+  render(<RunStatTiles run={makeTilesRun({}, stats)} />);
 }
 
 describe("the REQUESTED tile", () => {

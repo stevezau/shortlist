@@ -6,12 +6,13 @@ import {
   Loader2,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { UserAvatar } from "@/components/user-avatar";
 import { formatDuration } from "@/lib/format";
+import { personName } from "@/lib/user-names";
 import { cn } from "@/lib/utils";
 import type { RunRowCost, RunUserResult } from "@/lib/types";
 
@@ -66,7 +67,7 @@ function UserRow({
       <UserAvatar name={result.username} size="sm" />
       <span className="min-w-0 flex-1">
         <span className="block break-words font-medium">
-          {result.display_name || result.username}
+          {personName(result)}
         </span>
         {added !== undefined && added > 0 && (
           <span className="block text-xs text-muted-foreground tabular-nums">
@@ -181,6 +182,13 @@ export function UserTabs({
   const bothGroups =
     [failed.length, ok.length, skipped.length, pending.length].filter(Boolean)
       .length > 1;
+  // Pending always carries its label; the others only when more than one group is showing.
+  const groups = [
+    { label: "Failed", results: failed, labelled: bothGroups },
+    { label: "Succeeded", results: ok, labelled: bothGroups },
+    { label: "Skipped", results: skipped, labelled: bothGroups },
+    { label: "Pending", results: pending, labelled: true },
+  ];
 
   return (
     <div className="space-y-3" role="tablist" aria-label="Users in this run" aria-orientation="vertical"
@@ -247,65 +255,26 @@ export function UserTabs({
           came for. A vertical list reads far better than a wrapped grid of 48 near-identical pills. */}
       <div>
         <div className="max-h-96 divide-y divide-border/50 overflow-y-auto">
-          {bothGroups && failed.length > 0 && (
-            <GroupLabel>Failed · {failed.length}</GroupLabel>
-          )}
-          {failed.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-              cost={costBySlug?.get(result.slug)}
-              built={builtBySlug?.get(result.slug)}
-              added={newBySlug?.get(result.slug)}
-              notPrivate={notPrivate?.has(result.username.toLowerCase())}
-            />
-          ))}
-          {bothGroups && ok.length > 0 && (
-            <GroupLabel>Succeeded · {ok.length}</GroupLabel>
-          )}
-          {ok.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-              cost={costBySlug?.get(result.slug)}
-              built={builtBySlug?.get(result.slug)}
-              added={newBySlug?.get(result.slug)}
-              notPrivate={notPrivate?.has(result.username.toLowerCase())}
-            />
-          ))}
-          {bothGroups && skipped.length > 0 && (
-            <GroupLabel>Skipped · {skipped.length}</GroupLabel>
-          )}
-          {skipped.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-              cost={costBySlug?.get(result.slug)}
-              built={builtBySlug?.get(result.slug)}
-              added={newBySlug?.get(result.slug)}
-              notPrivate={notPrivate?.has(result.username.toLowerCase())}
-            />
-          ))}
-          {pending.length > 0 && (
-            <GroupLabel>Pending · {pending.length}</GroupLabel>
-          )}
-          {pending.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-              cost={costBySlug?.get(result.slug)}
-              built={builtBySlug?.get(result.slug)}
-              added={newBySlug?.get(result.slug)}
-              notPrivate={notPrivate?.has(result.username.toLowerCase())}
-            />
+          {groups.map(({ label, results: group, labelled }) => (
+            <Fragment key={label}>
+              {labelled && group.length > 0 && (
+                <GroupLabel>
+                  {label} · {group.length}
+                </GroupLabel>
+              )}
+              {group.map((result) => (
+                <UserRow
+                  key={result.slug}
+                  result={result}
+                  selected={selected}
+                  onSelect={onSelect}
+                  cost={costBySlug?.get(result.slug)}
+                  built={builtBySlug?.get(result.slug)}
+                  added={newBySlug?.get(result.slug)}
+                  notPrivate={notPrivate?.has(result.username.toLowerCase())}
+                />
+              ))}
+            </Fragment>
           ))}
           {shown.length === 0 && (
             <p className="px-3 py-8 text-center text-sm text-muted-foreground">

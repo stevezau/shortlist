@@ -31,6 +31,7 @@ import type {
   RunRowCost,
   RunUserResult,
 } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 function CopyForGitHubButton({
   run,
@@ -380,10 +381,10 @@ export function UserPanel({
                 to={`/users/${userId}`}
                 className="rounded-sm hover:text-primary hover:underline"
               >
-                {result.display_name || result.username}
+                {personName(result)}
               </Link>
             ) : (
-              result.display_name || result.username
+              personName(result)
             )}
           </span>
           <Badge

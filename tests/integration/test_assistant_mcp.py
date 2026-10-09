@@ -14,6 +14,7 @@ from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantP
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Server
 from shortlist.server.main import create_app
+from tests.assistant_oauth import issue_pair
 
 pytestmark = pytest.mark.integration
 
@@ -245,25 +246,14 @@ def test_browser_owner_can_patch_only_explicit_grant_constraints_without_reconne
             client_name="Constraint patch test",
             redirect_uris=["http://127.0.0.1:49152/callback"],
         )
-        verifier = "v" * 64
-        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-        authorization_code = oauth.issue_authorization_code(
+        oauth_credential = issue_pair(
+            oauth,
             owner_account_id=42,
             grant_id=grant.grant_id,
             client_id=grant.client_id,
             redirect_uri="http://127.0.0.1:49152/callback",
-            resource=oauth.resource,
             scopes={capability.value for capability in grant.capabilities},
-            code_challenge=challenge,
-            code_challenge_method="S256",
-        ).take()
-        oauth_credential = oauth.exchange_code(
-            code=authorization_code,
-            client_id=grant.client_id,
-            redirect_uri="http://127.0.0.1:49152/callback",
-            resource=oauth.resource,
-            code_verifier=verifier,
-        ).access_token.take()
+        ).access_token
 
         client.cookies.set(
             SESSION_COOKIE,
@@ -828,9 +818,6 @@ def test_rich_discovery_tools_serialize_and_enforce_row_library_selection(tmp_pa
 
 @pytest.mark.parametrize("credential_kind", ["local", "oauth"])
 def test_created_row_is_available_with_same_bearer_and_without_scope_widening(tmp_path, monkeypatch, credential_kind):
-    import base64
-    import hashlib
-
     from shortlist.server.assistant.operation_models import AssistantOperation
     from shortlist.server.assistant_auth.types import ASSISTANT_CAPABILITIES
     from shortlist.server.db.models import User
@@ -853,28 +840,17 @@ def test_created_row_is_available_with_same_bearer_and_without_scope_widening(tm
                 redirect_uris=[redirect],
                 token_endpoint_auth_method="none",
             )
-            verifier = "v" * 64
             effective.remove(Capability.AI_GENERATE.value)
-            code = oauth.issue_authorization_code(
+            issued = issue_pair(
+                oauth,
                 owner_account_id=42,
                 grant_id=grant.grant_id,
                 client_id=grant.client_id,
                 redirect_uri=redirect,
-                resource=oauth.resource,
                 scopes=effective,
-                code_challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
-                .rstrip(b"=")
-                .decode(),
-                code_challenge_method="S256",
-            ).take()
-            issued = oauth.exchange_code(
-                code=code,
-                client_id=grant.client_id,
-                redirect_uri=redirect,
-                resource=oauth.resource,
-                code_verifier=verifier,
             )
-            client.headers["Authorization"] = f"Bearer {issued.access_token.take()}"
+            assert issued.ok, issued.body
+            client.headers["Authorization"] = f"Bearer {issued.access_token}"
         # Save a second proposal first: creation must invalidate old plans but preserve the connection.
         intent = {
             "action": "create",

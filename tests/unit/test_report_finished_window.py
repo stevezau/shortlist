@@ -721,7 +721,7 @@ class TestTheTitlesThatLosePeople:
 class TestAWatchIsNotJudgedTheMomentItStarts:
     """An outcome used to be decided on percentage alone, with no notion of time.
 
-    Reported live 2026-08-24: MooHouse pressed play on Moxie, and the dashboard said "gave up on
+    Reported live 2026-08-24: Guest pressed play on Moxie, and the dashboard said "gave up on
     Moxie after 1%" while the session was still open — they were watching it as it said so. Anyone
     who starts something and is a minute in was written off immediately, and "gave up" is the
     loudest thing this report says about a pick.
@@ -889,11 +889,13 @@ class TestRowNamerLabel:
             return namer.label("row", library)
 
     def test_the_library_placeholder_becomes_the_library(self, tmp_path):
-        assert self.label(tmp_path, "👥 Popular {library_name} on SFLIX") == "👥 Popular Movies on SFLIX"
+        assert self.label(tmp_path, "👥 Popular {library_name} on Home Server") == "👥 Popular Movies on Home Server"
 
     def test_a_blank_library_leaves_no_double_space(self, tmp_path):
         """The shared-row call site passes an empty library."""
-        assert self.label(tmp_path, "👥 Popular {library_name} on SFLIX", library="") == "👥 Popular on SFLIX"
+        assert (
+            self.label(tmp_path, "👥 Popular {library_name} on Home Server", library="") == "👥 Popular on Home Server"
+        )
 
     def test_a_trailing_per_person_placeholder_becomes_an_ellipsis(self, tmp_path):
         """The case this exists for — and no space before it."""

@@ -57,7 +57,7 @@ _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the web-search LLM
 _WEB_PICK_CAP = 300
 # A normal reply is ~2,500 characters, so real failures are kept whole; a runaway one must not bloat the run trace.
 _UNPARSED_REPLY_CAP = 20_000
-# A search that came back nearly empty is cached BRIEFLY rather than for the usual fortnight. Exa's
+# A search that came back nearly empty is cached BRIEFLY rather than for the usual week. Exa's
 # `deep-lite` is measurably variable — three identical calls returned 36, 45 and 38 usable titles,
 # sharing only 45% — so a thin draw should not be served to every user for a whole week. But refusing to
 # cache it at all is worse: a seed that genuinely has little written about it would then be a fresh
@@ -101,7 +101,7 @@ class GatherStats:
     sources add nothing here. ``exa_searches`` is tracked separately on purpose: Exa bills per search
     request, not per token, so it must never be folded into a token total.
 
-    ``exa_cache_hits`` counts searches served from the shared 14-day cache instead of billed. It's
+    ``exa_cache_hits`` counts searches served from the shared 7-day cache instead of billed. It's
     tracked next to ``exa_searches`` so a run can show "1 searched · 793 from cache" — without it a
     fully-cached run reads ``exa_searches: 1`` and is indistinguishable from a run that searched
     nothing, which is precisely how a warm cache gets misread as a broken source.
@@ -295,7 +295,7 @@ def _web_via_search(
     failed_seeds: list[str] = []
     seen_urls: set[str] = set()
     # The provider is part of the key: Exa returns page text and SearXNG returns engine snippets, so
-    # serving one from the other's entry would make a backend switch invisible for the whole 14-day
+    # serving one from the other's entry would make a backend switch invisible for the whole 7-day
     # TTL. (Pre-1.1 `exasearch:` keys simply age out — nothing reads them again.)
     provider = getattr(search, "name", "exa")
     per_query = getattr(search, "results_per_query", _WEB_SEARCH_PER_TITLE)
@@ -304,8 +304,8 @@ def _web_via_search(
     # shapes, decided per provider rather than per setting.
     structured = extracts_titles(search)
     if web_trace is not None:
-        # Which backend actually ran. Under `auto` the mode alone can't say, so the trace would
-        # otherwise credit the wrong one on a server that configured the other.
+        # Which backend actually ran, recorded from the provider itself rather than inferred from the
+        # configured mode.
         web_trace["provider"] = provider
         web_trace["structured"] = structured
     searched = seeds[: max(1, recent_count)]
@@ -465,9 +465,9 @@ def _cache_ttl(payload: dict, structured: bool) -> int:
     """How long this seed's search should be reused for.
 
     Everything is cached — the alternative is re-billing a search for every user every night — but a
-    thin draw only lasts a day rather than a fortnight. Exa's `deep-lite` genuinely varies run to
+    thin draw only lasts a day rather than a week. Exa's `deep-lite` genuinely varies run to
     run, so a search that found almost nothing is more likely to be a bad draw than a fact about the
-    title, and tomorrow gets to try again. A rich draw is what the fortnight is for.
+    title, and tomorrow gets to try again. A rich draw is what the week is for.
     """
     thin = len(payload.get("titles") or []) < _MIN_CACHEABLE_TITLES if structured else not payload.get("results")
     return _THIN_CACHE_TTL_S if thin else WEB_SEARCH_CACHE_TTL_S

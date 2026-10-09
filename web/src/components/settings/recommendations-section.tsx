@@ -374,7 +374,6 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               <div className="flex items-center gap-2">
                 <SettingsNumberField
                   id="max-seeds"
-
                   min={5}
                   max={100}
                   value={maxSeeds}
@@ -399,12 +398,11 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 <div className="flex items-center gap-2">
                   <SettingsNumberField
                     id="recent-count"
-
                     min={1}
                     max={25}
                     value={recentCount}
                     onCommit={setRecentCount}
-                  className="w-24"
+                    className="w-24"
                   />
                   <span className="text-sm text-muted-foreground">watches</span>
                 </div>

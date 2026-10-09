@@ -29,7 +29,7 @@ import {
   noRequestSource,
 } from "@/lib/row-kinds";
 import {
-  AI_TEMPLATES,
+  ALL_TEMPLATES,
   findRowTemplate,
   GALLERY_GROUPS,
   ROW_TEMPLATES,
@@ -38,8 +38,8 @@ import {
 import { selectedClass } from "@/lib/selected";
 import type { CollectionInput, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { personName } from "@/lib/user-names";
 
-const ALL_TEMPLATES = [...ROW_TEMPLATES, ...AI_TEMPLATES];
 
 /** The templates of one kind, in the gallery's order. */
 function templatesOfKind(kind: string): RowTemplate[] {
@@ -48,10 +48,6 @@ function templatesOfKind(kind: string): RowTemplate[] {
 
 function templateName(template: RowTemplate): string {
   return template.values.name ?? template.title;
-}
-
-function personName(user: User): string {
-  return user.display_name || user.username;
 }
 
 /** Step 1: the kinds of row, one tile each. */

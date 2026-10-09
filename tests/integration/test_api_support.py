@@ -1025,7 +1025,7 @@ class TestLivePlexTools:
         import httpx
 
         xml = (
-            '<MediaContainer size="1" machineIdentifier="7ee8abc1bcdcc79389ad1e15c30e2692714bc940">'
+            '<MediaContainer size="1" machineIdentifier="0123456789abcdef0123456789abcdef01234567">'
             '<Directory key="1" title="Movies"><Location id="1" path="/Users/johnsmith/Media/Movies"/>'
             '</Directory><Video><Part file="/Users/johnsmith/Media/Movies/Heat.mkv"/></Video>'
             "</MediaContainer>"
@@ -2080,18 +2080,18 @@ class TestWhatTheReportDiscloses:
     """
 
     def test_the_server_address_is_reduced_to_a_shape(self, client):
-        """A bare `http://172.16.10.240:32400` hands over someone's LAN topology, and a `plex.direct`
+        """A bare `http://192.168.1.10:32400` hands over someone's LAN topology, and a `plex.direct`
         hostname embeds their server's machine id. Scheme and port are the only diagnostic parts."""
         with client.app.state.sessions() as session:
             store = SettingsStore(session, client.app.state.secrets)
-            store.set("plex.url", "http://172.16.10.240:32400")
+            store.set("plex.url", "http://192.168.1.10:32400")
             store.set("tautulli.url", "https://tautulli.mydomain.example:8181")
             session.commit()
         _enable(client)
 
         body = client.get("/api/support/config").json()
 
-        assert "172.16.10.240" not in body["text"]
+        assert "192.168.1.10" not in body["text"]
         assert "tautulli.mydomain.example" not in body["text"]
         assert "http://<host>:32400" in body["text"], body["text"]
         assert "https://<host>:8181" in body["text"]
@@ -2125,9 +2125,9 @@ class TestWhatTheReportDiscloses:
         import io
         import zipfile
 
-        machine_id = "7ee8abc1bcdcc79389ad1e15c30e2692714bc940"
+        machine_id = "0123456789abcdef0123456789abcdef01234567"
         with client.app.state.sessions() as session:
-            session.query(Server).update({"machine_id": machine_id, "url": "http://172.16.10.240:32400"})
+            session.query(Server).update({"machine_id": machine_id, "url": "http://192.168.1.10:32400"})
             session.commit()
         logs = client.app.state.config_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
@@ -2137,7 +2137,7 @@ class TestWhatTheReportDiscloses:
             f"2026-08-05 03:31:02.000 | DEBUG | a:b:1 - PUT /library/collections/9"
             f"?type=1&uri=server%3A%2F%2F{machine_id}%2Fcom.plexapp\n"
             f"2026-08-05 03:31:03.000 | DEBUG | a:b:1 - retry uri=server%253A%252F%252F{machine_id}%252Fcom\n"
-            "2026-08-05 03:31:04.000 | DEBUG | a:b:1 - GET 172.16.10.240 -> 200 in 0.03s\n"
+            "2026-08-05 03:31:04.000 | DEBUG | a:b:1 - GET 192.168.1.10 -> 200 in 0.03s\n"
         )
         _enable(client)
 
@@ -2145,7 +2145,7 @@ class TestWhatTheReportDiscloses:
             blob = b"".join(archive.read(n) for n in archive.namelist())
 
         assert machine_id.encode() not in blob, "machine id survived"
-        assert b"172.16.10.240" not in blob, "address survived"
+        assert b"192.168.1.10" not in blob, "address survived"
         assert b"<machine-id>" in blob
 
     def test_the_errors_check_shapes_addresses_in_its_json_not_only_its_text(self, client):
@@ -2155,14 +2155,14 @@ class TestWhatTheReportDiscloses:
         logs = client.app.state.config_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         (logs / "shortlist.log").write_text(
-            "2026-08-05 03:31:02.000 | ERROR | a:b:1 - host='172.16.10.240', port=32400 unreachable\n"
+            "2026-08-05 03:31:02.000 | ERROR | a:b:1 - host='192.168.1.10', port=32400 unreachable\n"
         )
         _enable(client)
 
         body = client.get("/api/support/errors").json()
 
-        assert "172.16.10.240" not in body["text"]
-        assert "172.16.10.240" not in json.dumps(body["lines"]), body["lines"]
+        assert "192.168.1.10" not in body["text"]
+        assert "192.168.1.10" not in json.dumps(body["lines"]), body["lines"]
         assert "<host>" in json.dumps(body["lines"])
 
     def test_the_plain_log_download_carries_the_same_guarantee(self, client):
@@ -2172,22 +2172,22 @@ class TestWhatTheReportDiscloses:
         import io
         import zipfile
 
-        machine_id = "7ee8abc1bcdcc79389ad1e15c30e2692714bc940"
+        machine_id = "0123456789abcdef0123456789abcdef01234567"
         with client.app.state.sessions() as session:
-            session.query(Server).update({"machine_id": machine_id, "url": "http://172.16.10.240:32400"})
+            session.query(Server).update({"machine_id": machine_id, "url": "http://192.168.1.10:32400"})
             session.commit()
         logs = client.app.state.config_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         (logs / "shortlist.log").write_text(
             f"2026-08-05 03:31:02.000 | DEBUG | a:b:1 - uri=server%253A%252F%252F{machine_id}%252Fcom\n"
-            "2026-08-05 03:31:03.000 | DEBUG | a:b:1 - GET 172.16.10.240 -> 200\n"
+            "2026-08-05 03:31:03.000 | DEBUG | a:b:1 - GET 192.168.1.10 -> 200\n"
         )
 
         with zipfile.ZipFile(io.BytesIO(client.get("/api/system/logs/download").content)) as archive:
             blob = b"".join(archive.read(n) for n in archive.namelist())
 
         assert machine_id.encode() not in blob
-        assert b"172.16.10.240" not in blob
+        assert b"192.168.1.10" not in blob
 
 
 class TestNoDisplayNameReachesTheReport:
@@ -2223,13 +2223,13 @@ class TestTheFindingsFromTheFifthReviewPass:
     def test_the_server_address_never_reaches_the_report_via_an_exception(self, client, monkeypatch):
         """HIGH. `config` shaped the settings it printed, and the test only checked `config` — but the
         same address arrives in every quoted exception. "My Plex is unreachable" is the single most
-        likely line in a support report, and it printed `host='172.16.10.240', port=32400` verbatim.
+        likely line in a support report, and it printed `host='192.168.1.10', port=32400` verbatim.
         """
         import shortlist.server.api.support as support
 
         def explode(_store):
             raise RuntimeError(
-                "HTTPConnectionPool(host='172.16.10.240', port=32400): "
+                "HTTPConnectionPool(host='192.168.1.10', port=32400): "
                 "Max retries exceeded with url: https://192-168-1-5.abc123def456abc123def456abc12345.plex.direct:32400/x"
             )
 
@@ -2238,7 +2238,7 @@ class TestTheFindingsFromTheFifthReviewPass:
 
         text = client.get("/api/support/bundle.txt").text
 
-        assert "172.16.10.240" not in text
+        assert "192.168.1.10" not in text
         assert "192-168-1-5" not in text
         assert "abc123def456abc123def456abc12345" not in text, "a plex.direct name embeds the machine id"
         assert "<host>" in text
@@ -2335,7 +2335,7 @@ class TestKnownIdentifiersAreRedactedAsLiterals:
         with client.app.state.sessions() as session:
             server = session.query(Server).first()
             server.machine_id = self.MACHINE
-            server.url = "http://172.16.10.240:32400"
+            server.url = "http://192.168.1.10:32400"
             session.commit()
 
     def test_a_url_encoded_machine_id_is_redacted(self, client, monkeypatch):
@@ -2360,13 +2360,13 @@ class TestKnownIdentifiersAreRedactedAsLiterals:
         logs = client.app.state.config_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         (logs / "shortlist.log").write_text(
-            "2026-08-05 03:31:02.000 | WARNING | http_retry:_send:134 - GET 172.16.10.240 -> 500 in 0.05s\n"
+            "2026-08-05 03:31:02.000 | WARNING | http_retry:_send:134 - GET 192.168.1.10 -> 500 in 0.05s\n"
         )
         _enable(client)
 
         text = client.get("/api/support/bundle.txt").text
 
-        assert "172.16.10.240" not in text
+        assert "192.168.1.10" not in text
         assert "<host>" in text
 
     def test_a_version_string_is_not_mistaken_for_an_address(self, client):

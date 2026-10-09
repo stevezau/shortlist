@@ -109,6 +109,7 @@ import {
   RATING_SOURCES,
 } from "@/lib/rating-sources";
 import type { Collection, CollectionInput, User } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 /** The global `row.name_template` every install ships with, until Settings says otherwise. */
 const DEFAULT_ROW_NAME = "✨ {library_name} Picked for You";
@@ -1228,7 +1229,7 @@ export function RowEditor({
               placementFriends={input.placement_friends}
               personName={(() => {
                 const person = reachedUsers(input, users)[0];
-                return person ? person.display_name || person.username : null;
+                return person ? personName(person) : null;
               })()}
             />
             {/* Closed, the line above says where the row shows; the controls open with "Edit placement". */}

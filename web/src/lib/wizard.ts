@@ -5,6 +5,10 @@ import type { SetupState } from "./types";
 
 export const TOTAL_STEPS = 7;
 
+/** Zero-based positions in {@link WIZARD_STEPS} that the shell treats specially. */
+export const TMDB_STEP = 2;
+export const CUSTOMIZE_STEP = 5;
+
 export type CuratorProvider =
   | "anthropic"
   | "openai"

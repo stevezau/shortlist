@@ -164,7 +164,7 @@ class TestRunsApi:
                     run_id=run.id,
                     collection_slug="popular",
                     **{
-                        "row_title": "👥 Popular Movies on SFLIX",
+                        "row_title": "👥 Popular Movies on Home Server",
                         "status": "ok",
                         "diff": {"added": ["Dune"], "removed": []},
                         "picks": [{"rank": 1, "title": "Dune", "reason": "3 people watched it"}],
@@ -190,7 +190,7 @@ class TestRunsApi:
         row = body["shared_rows"][0]
         assert set(row) == RUN_SHARED_ROW_KEYS
         assert row["collection_slug"] == "popular"
-        assert row["row_title"] == "👥 Popular Movies on SFLIX"
+        assert row["row_title"] == "👥 Popular Movies on Home Server"
         assert [p["title"] for p in row["picks"]] == ["Dune"]
         assert set(row["picks"][0]) == PICK_KEYS, (
             "picks come from a JSON column nothing validates — a partial one must be filled in on "
@@ -206,7 +206,7 @@ class TestRunsApi:
         body = client.get(f"/api/runs/{run_id}/rows/popular/trace").json()
 
         assert set(body) == TRACE_KEYS, "the trace view reads one shape — a fork here would need a second view"
-        assert body["display_name"] == "👥 Popular Movies on SFLIX"
+        assert body["display_name"] == "👥 Popular Movies on Home Server"
         assert body["trace"] == {"gathers": [{"source": "popular"}]}
         assert client.get(f"/api/runs/{run_id}/rows/nope/trace").status_code == 404
 
@@ -366,13 +366,13 @@ class TestRunsApi:
     def test_run_detail_shows_the_display_name_not_the_bare_username(self, client: TestClient):
         """The runs view must read a person the same way the Users page does — nickname → Tautulli
         friendly name → username (User.display_name). The bug: it only emitted `username`, so a
-        Tautulli friendly name populated after the run still showed the raw Plex login (SFLIX)."""
+        Tautulli friendly name populated after the run still showed the raw Plex login (a large production server)."""
         from shortlist.server.db.models import Run, RunUser
 
         with client.app.state.sessions() as session:
             user = session.query(User).first()
             user.nickname = ""  # no owner override — the Tautulli name should win
-            user.friendly_name = "Joe - Richard's Mate"
+            user.friendly_name = "Joe - Sam's Mate"
             run = Run(trigger="manual", status="ok")
             session.add(run)
             session.flush()
@@ -383,7 +383,7 @@ class TestRunsApi:
         result = client.get(f"/api/runs/{run_id}").json()["users"][0]
 
         assert result["username"] == raw_username  # still carried, for search + avatar
-        assert result["display_name"] == "Joe - Richard's Mate"
+        assert result["display_name"] == "Joe - Sam's Mate"
 
     def test_the_run_page_gets_provenance_on_the_breakdown_it_actually_renders(self, client: TestClient):
         """The run page renders the stored `breakdown` blob, NOT the picks list — so provenance
@@ -569,7 +569,7 @@ class TestRunsApi:
         had to go read container logs (issue #1)."""
         from shortlist.server.db.models import Run
 
-        blocker = "LisaPlex1234 (plex account 12345): plex.tv rejected the share-filter update: HTTP 400"
+        blocker = "GuestPlex1234 (plex account 12345): plex.tv rejected the share-filter update: HTTP 400"
         with client.app.state.sessions() as session:
             run = Run(
                 trigger="manual",

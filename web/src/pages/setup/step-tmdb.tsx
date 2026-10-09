@@ -18,7 +18,7 @@ import type { StepProps } from "./step-props";
  * (no configuration), so Tautulli here is only for the friendlier display names it knows people by.
  * Testing writes the settings then tests them; leaving Tautulli alone just uses each account's Plex username.
  */
-export function StepHistory({ data, update }: StepProps) {
+export function StepTmdb({ data, update }: StepProps) {
   const [tmdbKey, setTmdbKey] = useState("");
   const [url, setUrl] = useState("");
   const [apiKey, setApiKey] = useState("");

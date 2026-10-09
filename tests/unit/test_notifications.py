@@ -32,7 +32,7 @@ class TestUpdateAvailable:
     def test_fires_when_a_newer_release_exists(self, session, monkeypatch):
         monkeypatch.setattr(notif, "check_for_update", lambda v: {"latest": "9.9.9", "url": "https://x/9.9.9"})
 
-        result = notif._update_available(SettingsStore(session), "1.0.0")
+        result = notif._update_available("1.0.0")
 
         assert result == {
             "id": "update-9.9.9",
@@ -45,7 +45,7 @@ class TestUpdateAvailable:
         }
 
     def test_does_not_fire_when_already_up_to_date(self, session):
-        assert notif._update_available(SettingsStore(session), "1.0.0") is None
+        assert notif._update_available("1.0.0") is None
 
 
 class TestRunsPaused:
@@ -833,7 +833,7 @@ class TestEveryNotificationIsRenderable:
 class TestShelfContention:
     """Another tool reordering the Recommended shelf — the case a single pass cannot see.
 
-    Each ordering pass on SFLIX moved its rows, re-read the shelf, confirmed the new order and
+    Each ordering pass on a large production server moved its rows, re-read the shelf, confirmed the new order and
     reported success. It was right every time; agregarr moved them back ten minutes later. So the
     signal is not "did our write land" (it did) but "did it STAY", and only repetition answers that.
     """
@@ -940,8 +940,8 @@ class TestShelfContention:
 
         This query reads a BOUNDED window of the most recent shelf events. One stale anchor writes a
         record on every pass, and `privacy.sync` fires on every who-sees-what change (31 in one day on
-        SFLIX), so sharing `shelf.order` would let a setting nobody has fixed push the repeated MOVES
-        out of the window — and contention would stop being detected on a genuinely contested shelf.
+        a large production server), so sharing `shelf.order` would let a setting nobody has fixed push the
+        repeated MOVES out of the window — and contention would stop being detected on a genuinely contested shelf.
         """
         old = datetime.now(UTC) - timedelta(hours=1)
         for _ in range(3):

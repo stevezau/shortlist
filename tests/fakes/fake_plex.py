@@ -347,7 +347,7 @@ class FakePlexState:
 
         A Plex collection is a TAG on items, keyed by TITLE within a library — not an independent
         bag with its own membership. So two collections with the same title in the same library
-        are ONE membership: each returns the union of both. Verified on a live server (SFLIX,
+        are ONE membership: each returns the union of both. Verified on a live server (a large production server,
         2026-07-13): a film picked for one user alone appeared in another user's row, carrying a
         single collection tag.
 
@@ -371,7 +371,7 @@ class FakePlexState:
         it sits in (e.g. a show-subtype collection inside a movie library) is matched by NEITHER
         filter, so its label exclude does nothing and it stays visible to every user. That is not
         a hypothetical: it is exactly how two users' rows ended up on everyone's Home screen on a
-        live server (SFLIX, 2026-07-12).
+        live server (a large production server, 2026-07-12).
 
         Subtype is sticky — see FakeCollection.subtype — so swapping in items of the right type
         does NOT make a mistyped collection filterable again.

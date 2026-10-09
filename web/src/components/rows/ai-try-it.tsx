@@ -8,10 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SELECT_CLASS } from "@/components/rows/seasons/select-class";
 import { useRun, useStartRun } from "@/lib/queries";
 import type { Collection, RunDetail, User } from "@/lib/types";
-
-function personName(user: User): string {
-  return user.display_name || user.username;
-}
+import { personName } from "@/lib/user-names";
 
 /**
  * Try an AI row for one person (#138): a scoped dry run of just this row, shown as the picks and the

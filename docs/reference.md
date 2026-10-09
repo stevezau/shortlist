@@ -29,7 +29,7 @@ environment variables and the files under `/config` → **[Environment and files
 
 ## The API
 
-Every REST endpoint, its request and response shape, and the read-only support checks behind
+The main REST endpoints, their request and response shape, and the read-only support checks behind
 **Have an issue?** → **[API reference](reference/api.md)**
 
 Assistant tools, grants and the plan/apply lifecycle → **[MCP assistant reference](reference/assistant.md)**.

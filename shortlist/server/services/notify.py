@@ -123,7 +123,7 @@ def scrub(text: str, *values: str) -> str:
     return redact(text)
 
 
-def test_item() -> dict:
+def sample_item() -> dict:
     """The message the Settings test button sends.
 
     A notification dict of the same shape the registry builds, so it travels the identical
@@ -186,7 +186,7 @@ def deliver(store: SettingsStore, item: dict) -> str:
 
     Args:
         store: A store that can decrypt secrets — the webhook address is one.
-        item: A notification dict from the registry (or `test_item`).
+        item: A notification dict from the registry (or `sample_item`).
 
     Returns:
         A plain-English line for the operator who pressed Test.

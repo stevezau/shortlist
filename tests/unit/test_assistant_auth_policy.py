@@ -141,6 +141,19 @@ class TestGrantConstraints:
             ResourceSelection(person_ids=frozenset({2}), dynamic_audience=True),
         )
 
+    def test_without_the_all_people_marker_the_same_target_is_denied(self) -> None:
+        grant = _grant(
+            GrantPreset.MANAGE_SELECTED_ROWS,
+            constraints=GrantConstraints(person_ids=frozenset({1}), include_future_people=False),
+        )
+
+        with pytest.raises(AuthorizationDenied):
+            require_authorized(
+                grant,
+                {Capability.AUDIENCES_WRITE},
+                ResourceSelection(person_ids=frozenset({2}), dynamic_audience=True),
+            )
+
     def test_batch_and_work_limits_can_only_narrow_instance_limits(self) -> None:
         grant = _grant(
             GrantPreset.OWNER_AUTOMATION,

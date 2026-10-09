@@ -255,7 +255,7 @@ class PlexTvClient:
         plex.tv mints a per-user ``accessToken`` for each shared invite (``GET
         /api/servers/{machine_id}/shared_servers``). Passed to the PMS as that user's ``X-Plex-Token``
         it reads the library AS them — including their ``viewCount``/``viewedLeafCount`` and their
-        MARKS, which the playback-history API never returns (live-verified 2026-07-24: a MooHouse
+        MARKS, which the playback-history API never returns (live-verified 2026-07-24: a Guest
         mark-as-watched absent from 11,476 history rows was present via this token). This is how
         Shortlist sees "already watched" for shared users without mounting the PMS database.
 

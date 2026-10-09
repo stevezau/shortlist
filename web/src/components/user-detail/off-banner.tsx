@@ -1,9 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
-import { usePrivacyStatus } from "@/lib/queries";
+import { useAccountExposure } from "@/components/user-detail/use-account-exposure";
+import { rowsNotTheirs } from "@/lib/privacy-attention";
 import type { User } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 import { profileName } from "@/lib/user-profile";
 import { profileBlocksRows } from "@/lib/user-state";
 
@@ -17,13 +18,8 @@ export const PLEX_USERS_URL = "https://app.plex.tv/desktop/#!/settings/users";
  * is a larger number for the same account. A restriction profile gets the two-step Plex fix.
  */
 export function OffBanner({ user }: { user: User }) {
-  const privacy = usePrivacyStatus();
-  const name = user.display_name || user.username;
-  const account = privacy.data?.accounts.find((a) => a.user_id === user.id);
-  const live = account && privacy.data && !privacy.data.error && !privacy.data.rows_error;
-  const exposed = live ? rowsNotHidden(account, privacy.data) : 0;
-  // No live answer for this person: the run's own count is the only evidence left, so use it, labelled.
-  const lastRun = user.unhidden_rows;
+  const { live, exposed, lastRun, isPending } = useAccountExposure(user);
+  const name = personName(user);
   const profile = profileBlocksRows(user) ? profileName(user) : "";
 
   return (
@@ -43,14 +39,11 @@ export function OffBanner({ user }: { user: User }) {
           Turning {name} off in Shortlist does not fix this.
         </div>
       )}
-      {!live && !privacy.isPending && (
+      {!live && !isPending && (
         <div className="border-t bg-warning/10 px-6 py-3 text-sm text-warning">
           {lastRun > 0 ? (
             <>
-              <span className="font-medium">
-                Couldn&rsquo;t check live. The last run found {name} could see {lastRun}{" "}
-                {lastRun === 1 ? "collection" : "collections"} that aren&rsquo;t theirs.
-              </span>{" "}
+              <LastRunExposure name={name} lastRun={lastRun} />{" "}
               Turning {name} off in Shortlist does not fix this.
             </>
           ) : (
@@ -92,5 +85,15 @@ export function ProfileFixSteps({ name, profile }: { name: string; profile: stri
         </a>
       </Button>
     </div>
+  );
+}
+
+/** "Couldn't check live. The last run found …", shared by the Off and profile-exposure banners. */
+export function LastRunExposure({ name, lastRun }: { name: string; lastRun: number }) {
+  return (
+    <span className="font-medium">
+      Couldn&rsquo;t check live. The last run found {name} could see {lastRun}{" "}
+      {lastRun === 1 ? "collection" : "collections"} that aren&rsquo;t theirs.
+    </span>
   );
 }

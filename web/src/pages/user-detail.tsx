@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useUsers } from "@/lib/queries";
 import type { User } from "@/lib/types";
 import { userState } from "@/lib/user-state";
+import { personName } from "@/lib/user-names";
 
 function SectionHeading({ children }: { children: ReactNode }) {
   return <h2 className="text-lg font-semibold">{children}</h2>;
@@ -101,7 +102,7 @@ export function UserDetailBody({ user }: { user: User }) {
           </div>
           <p className="text-sm text-muted-foreground">
             A run builds rows for everyone at once, so this is the subset that
-            covered {user.display_name || user.username} — each showing what
+            covered {personName(user)} — each showing what
             happened to <em>their</em> row, not whether the run as a whole
             succeeded.
           </p>

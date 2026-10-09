@@ -21,11 +21,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
-/** Connections: every service Shortlist talks to, and where its alerts go. */
-function ConnectionsTab({ settings }: { settings: Settings }) {
-  return <ConnectionsSection settings={settings} />;
-}
-
 /** Defaults: what every new row starts from. Each section still saves itself as before; the bar at
  *  the foot reports all of them at once. */
 function DefaultsTab({ settings }: { settings: Settings }) {
@@ -39,12 +34,6 @@ function DefaultsTab({ settings }: { settings: Settings }) {
       <SaveBar />
     </SaveBarProvider>
   );
-}
-
-/** Requests: filling gaps in a library through Radarr, Sonarr or Overseerr. It had been the last
- *  section of Defaults, about 1,700px of that tab on its own. */
-function RequestsTab({ settings }: { settings: Settings }) {
-  return <RequestsSection settings={settings} />;
 }
 
 /** System: how Shortlist runs, the API token, and the danger zone. */
@@ -86,9 +75,9 @@ export function SettingsPage() {
         {(settings) => (
           <SettingsTabs
             content={{
-              connections: <ConnectionsTab settings={settings} />,
+              connections: <ConnectionsSection settings={settings} />,
               defaults: <DefaultsTab settings={settings} />,
-              requests: <RequestsTab settings={settings} />,
+              requests: <RequestsSection settings={settings} />,
               system: <SystemTab settings={settings} />,
             }}
           />

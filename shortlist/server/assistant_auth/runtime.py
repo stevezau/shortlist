@@ -21,7 +21,6 @@ class AssistantAuthSettings:
     enabled: bool
     issuer: str
     resource: str
-    allow_insecure_http: bool = False
 
     def validate(self) -> None:
         """Reject ambiguous or unsafe canonical OAuth URLs."""
@@ -33,7 +32,7 @@ class AssistantAuthSettings:
                 raise ValueError(f"assistant OAuth {label} must be an absolute HTTP URL without query or fragment")
             if parsed.username or parsed.password:
                 raise ValueError(f"assistant OAuth {label} must not contain user information")
-            if parsed.scheme == "http" and not (self.allow_insecure_http or _is_loopback(parsed.hostname)):
+            if parsed.scheme == "http" and not _is_loopback(parsed.hostname):
                 raise ValueError(f"assistant OAuth {label} requires HTTPS outside loopback")
         if self.issuer.endswith("/"):
             raise ValueError("assistant OAuth issuer must not end with a slash")

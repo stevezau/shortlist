@@ -4,7 +4,7 @@ No real Plex server, no network. The app runs with a temp /config, its Plex sett
 the fake, and Playwright drives a browser against it. Run with `pytest -m e2e`
 (needs `playwright install chromium` once, and a built SPA: `pnpm -C web build`).
 
-Three boundaries are faked so the suite never touches the network:
+Two boundaries are faked so the suite never touches the network:
 - PMS + plex.tv          -> tests/fakes/fake_plex.py (real HTTP on loopback)
 - TMDB                   -> `_make_fake_tmdb` below (real HTTP on loopback)
 The Plex PIN endpoints are stubbed in the BROWSER instead (`stub_plex_pin`), because that is

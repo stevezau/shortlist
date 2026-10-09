@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from shortlist.server.db.models import DEFAULT_SLUG, Collection
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services.plex_reachability import describe_address
-from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
+from shortlist.server.settings_store import DEFAULTS, SECRET_KEYS, SettingsStore
 
 
 @dataclass(frozen=True)
@@ -60,8 +60,6 @@ def prepare_settings_in_session(
         else:
             normalized[key] = value.strip() if key in _FETCHED_URL_KEYS and isinstance(value, str) else value
     changed = _settings_diff(store, normalized)
-    from shortlist.server.settings_store import DEFAULTS
-
     for key in reset_keys:
         if store.has_row(key):
             changed[key] = {
@@ -77,7 +75,7 @@ def prepare_settings_in_session(
     new_name = str(after("row.name_template") or "")
     if new_name and new_name != old_name:
         default_row = session.query(Collection).filter_by(slug=DEFAULT_SLUG).first()
-        clash = reconcile.row_titled_from(
+        clashes = reconcile.rows_titled_from(
             session,
             new_name,
             secrets=secrets,
@@ -86,7 +84,7 @@ def prepare_settings_in_session(
             media=default_row.media if default_row else "both",
             library_keys=default_row.library_keys if default_row else [],
         )
-        if clash is not None:
+        if clashes:
             raise HTTPException(
                 status_code=422, detail="The proposed row name conflicts with another row in the same library."
             )

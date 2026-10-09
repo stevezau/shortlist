@@ -13,7 +13,6 @@ from shortlist.server.assistant.budgets import AssistantBudget
 from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantPreset, StoredGrantIdentity
 from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.models import (
-    AssistantBootstrapFlow,
     AssistantConsentFlow,
     AssistantGrant,
     AssistantLocalCredential,
@@ -87,7 +86,7 @@ def test_repository_persists_only_a_digest_of_the_local_credential() -> None:
         with sessions() as session:
             stored = session.query(AssistantGrant).filter_by(id=grant.grant_id).one()
             serialized = repr(stored.__dict__)
-            credential_rows = repository.list_local_credentials(grant.grant_id, session=session)
+            credential_rows = session.query(AssistantLocalCredential).filter_by(grant_id=grant.grant_id).all()
 
         assert raw not in serialized
         assert raw not in repr(credential_rows[0].__dict__)
@@ -480,15 +479,6 @@ def test_removing_a_revoked_grant_cascades_credentials_and_retains_audit_history
                         created_at=NOW,
                         expires_at=NOW + timedelta(minutes=10),
                     ),
-                    AssistantBootstrapFlow(
-                        id="bootstrap-removed",
-                        client_id=grant.client_id,
-                        client_name="Removed client",
-                        deployment_proof_digest="b" * 64,
-                        grant_id=grant.grant_id,
-                        created_at=NOW,
-                        expires_at=NOW + timedelta(days=1),
-                    ),
                     Event(scope="assistant.history", message={"grant_id": grant.grant_id}),
                 ]
             )
@@ -502,7 +492,6 @@ def test_removing_a_revoked_grant_cascades_credentials_and_retains_audit_history
             assert session.query(AssistantOAuthCode).filter_by(grant_id=grant.grant_id).count() == 0
             assert session.query(AssistantOAuthToken).filter_by(grant_id=grant.grant_id).count() == 0
             assert session.query(AssistantConsentFlow).filter_by(grant_id=grant.grant_id).count() == 0
-            assert session.get(AssistantBootstrapFlow, "bootstrap-removed").grant_id is None
             assert session.query(Event).filter_by(scope="assistant.history").count() == 1
             removed = session.query(Event).filter_by(scope="assistant.grant.removed").one()
             assert removed.message == {
@@ -544,7 +533,7 @@ def test_removing_a_grant_is_owner_scoped_idempotent_and_requires_prior_revocati
 def test_reserved_owner_permissions_cannot_be_persisted_in_an_assistant_grant() -> None:
     with _repository() as (repository, _):
         for reserved in (Capability.SECRETS_READ, Capability.GRANTS_MANAGE):
-            try:
+            with pytest.raises(AuthorizationDenied):
                 repository.create_grant(
                     owner_account_id=42,
                     client_id="client",
@@ -554,10 +543,6 @@ def test_reserved_owner_permissions_cannot_be_persisted_in_an_assistant_grant() 
                     constraints=GrantConstraints(),
                     now=NOW,
                 )
-            except AuthorizationDenied:
-                pass
-            else:
-                raise AssertionError(f"reserved capability {reserved} was accepted")
 
 
 def test_transactional_recheck_preserves_the_token_capability_subset() -> None:
@@ -596,3 +581,23 @@ def test_transactional_recheck_preserves_the_token_capability_subset() -> None:
         with sessions() as session:
             approved = require_current_grant_in_session(session, stored_identity, now=NOW)
         assert approved.capabilities == grant.capabilities
+
+
+def test_revoking_a_grant_writes_an_audit_event_naming_the_owner_once() -> None:
+    with _repository() as (repository, sessions):
+        grant = repository.create_grant(
+            owner_account_id=42,
+            client_id="client",
+            name="Assistant",
+            preset=GrantPreset.INSPECT,
+            capabilities={Capability.INSTANCE_READ},
+            constraints=GrantConstraints(),
+            now=NOW,
+        )
+
+        assert repository.revoke_grant(grant.grant_id, owner_account_id=42, now=NOW) is True
+        assert repository.revoke_grant(grant.grant_id, owner_account_id=42, now=NOW) is False
+
+        with sessions() as session:
+            event = session.query(Event).filter_by(scope="assistant.grant.revoked").one()
+            assert event.message == {"grant_id": grant.grant_id, "actor": {"via": "browser", "account_id": 42}}

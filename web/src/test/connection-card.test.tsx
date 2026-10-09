@@ -110,6 +110,8 @@ describe("ConnectionCard", () => {
     renderCard({}, [
       { key: "tmdb.apikey", label: "API key", kind: "password" },
     ]);
+    // "Set up" is on screen, so the card has rendered; the mount-time test would have fired by now.
+    await screen.findByRole("button", { name: /Set up/i });
     await new Promise((r) => setTimeout(r, 0));
     expect(testConnection).not.toHaveBeenCalled();
   });
@@ -356,6 +358,8 @@ describe("ConnectionCard", () => {
       { key: "tmdb.apikey", label: "API key", kind: "password" },
     ]);
     await userEvent.click(screen.getByRole("button", { name: /Edit/i }));
+    // The edit panel is open, so the models query has had its chance to be enabled.
+    await screen.findByRole("button", { name: /^Save$/i });
     await new Promise((r) => setTimeout(r, 0));
     expect(getCuratorModels).not.toHaveBeenCalled();
   });
@@ -368,6 +372,8 @@ describe("ConnectionCard", () => {
       "curator.api_key": "•••••",
     });
     await userEvent.click(screen.getByRole("button", { name: /Edit/i }));
+    // The edit panel is open, so the models query has had its chance to be enabled.
+    await screen.findByRole("button", { name: /^Save$/i });
     await new Promise((r) => setTimeout(r, 0));
     expect(getCuratorModels).not.toHaveBeenCalled();
   });
@@ -377,6 +383,8 @@ describe("ConnectionCard", () => {
     // is on file just wastes a request the server can't answer. Free-text entry still works.
     renderCuratorCard({ "curator.provider": "anthropic" });
     await userEvent.click(screen.getByRole("button", { name: /Edit/i }));
+    // The edit panel is open, so the models query has had its chance to be enabled.
+    await screen.findByRole("button", { name: /^Save$/i });
     await new Promise((r) => setTimeout(r, 0));
     expect(getCuratorModels).not.toHaveBeenCalled();
   });

@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RequestHoldsField } from "@/components/request-holds-field";
 import { readHoldTags, writeHoldTags } from "@/lib/request-holds";
@@ -48,10 +48,17 @@ describe("RequestHoldsField", () => {
     previewHolds.mockResolvedValue(PREVIEW);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("asks nothing of the server until something is picked", async () => {
+    vi.useFakeTimers();
     renderField();
     expect(screen.getByText(/Nothing picked, so any movie can be requested automatically/i)).toBeInTheDocument();
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
     expect(previewHolds).not.toHaveBeenCalled();
   });
 

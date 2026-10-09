@@ -19,6 +19,13 @@ const READ_ONLY_SCOPES = new Set([
   "history.use", "history.export", "requests.read",
 ]);
 
+/** Grants this client could reuse: live, and not waiting on the owner's separate access approval. */
+function compatibleGrants(grants: AssistantGrant[] | undefined, clientId: string): AssistantGrant[] {
+  return (grants ?? []).filter(
+    (grant) => !grant.revoked_at && !grant.requires_access_approval && grant.client_id === clientId,
+  );
+}
+
 function ConsentLoading() {
   return <main className="mx-auto flex min-h-screen max-w-2xl items-center px-4 py-10"><Skeleton className="h-96 w-full" /></main>;
 }
@@ -49,9 +56,7 @@ export function AssistantConsentPage() {
   const decide = useMutation({
     mutationFn: async (approved: boolean) => {
       if (!flow) throw new Error("The authorization request is not ready.");
-      const compatible = (grants.data ?? []).filter((grant) =>
-        !grant.revoked_at && !grant.requires_access_approval && grant.client_id === flow.client.id,
-      );
+      const compatible = compatibleGrants(grants.data, flow.client.id);
       let grantId = selectedGrant ?? compatible[0]?.id ?? "new";
       if (approved && grantId === "new") {
         const created = await api.createAssistantGrant({
@@ -89,9 +94,7 @@ export function AssistantConsentPage() {
   if (begin.isError) return <ConsentFrame><ErrorState error={begin.error} onRetry={() => { initialized.current = true; begin.mutate(); }} /></ConsentFrame>;
   if (!flow) return <ConsentLoading />;
 
-  const compatible = (grants.data ?? []).filter((grant: AssistantGrant) =>
-    !grant.revoked_at && !grant.requires_access_approval && grant.client_id === flow.client.id,
-  );
+  const compatible = compatibleGrants(grants.data, flow.client.id);
   const effectiveGrant = selectedGrant ?? compatible[0]?.id ?? "new";
   const selectedExisting = compatible.find((grant) => grant.id === effectiveGrant);
   const baseProfileScopes = new Set([

@@ -2,7 +2,7 @@
 
 Status: **historical design investigation; §5 records the current delivery-membership invariant.**
 Everything in "What the server actually offers" was probed against
-SFLIX (PMS 1.43.3.10793) on 2026-08-23 with the admin token. Numbers are that server's, not
+A large production server (PMS 1.43.3.10793) on 2026-08-23 with the admin token. Numbers are that server's, not
 illustrative.
 
 Written because the membership rule shipped in `82e1bfd` ("only credit a watch if the title was in
@@ -206,11 +206,11 @@ than the pick history can be attributed anyway.
   (a `stopped` state racing the session teardown), which would cost us the identity lookup.
 - Does the history log get an entry when a title is marked watched **without** playback?
 - Do managed/Home users appear in the history log under their own `accountID`? **Partly answered
-  (SFLIX, 2026-08-24, 18,756 events across 51 distinct ids).** Managed users do — one appears under
+  (a large production server, 2026-08-24, 18,756 events across 51 distinct ids).** Managed users do — one appears under
   its own id and credits normally. But two ids in the log match no user row: `1`, with 3 events from
   December 2025 and March 2026, and `725647550` with 37, almost certainly a share that has since
   been removed. `1` is conventionally the server owner in Plex's history endpoint, and the owner here
-  really does have a different id (`5245144`), so an owner watching on the ADMIN account would very
+  really does have a different id (`1000000`), so an owner watching on the ADMIN account would very
   likely not be credited.
 
   Deliberately NOT mapped `1` → owner. Three stale events are not enough evidence to attribute

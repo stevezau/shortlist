@@ -1,5 +1,5 @@
 {
-  "_source": "Live capture from a real PMS (SFLIX), 2026-07-28, via PlexTvClient.list_users().",
+  "_source": "Live capture from a real PMS (a large production server), 2026-07-28, via PlexTvClient.list_users().",
   "_why": [
     "plex-safety rule 11: any assumption about a plex.tv response shape gets a recorded fixture.",
     "The assumption this pins is the one behind privacy.py's decision to SKIP share-filter writes for",

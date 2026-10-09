@@ -165,7 +165,7 @@ class TestMergeWritesWhatPlexEnforces:
         assert merged == "label=Age%200&label!=Shortlist_a,shortlist_b"
 
     def test_a_filter_of_only_our_excludes_is_left_alone(self):
-        """Every account on SFLIX: one clause, enforced. Steady state must write nothing."""
+        """Every account on a large production server: one clause, enforced. Steady state must write nothing."""
         raw = "label!=shortlist_a,shortlist_b"
         assert merge_label_excludes(raw, {"shortlist_a", "shortlist_b"}, label_prefix=PREFIX) is raw
 

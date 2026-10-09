@@ -512,9 +512,7 @@ describe("ConnectionsSection", () => {
     const card = screen.getByTestId("connection-llm");
     // Settle the runs query first. Asserting straight away passed whatever the component did,
     // because the note cannot be on screen before the data it renders has arrived.
-    await waitFor(() =>
-      expect(screen.getByTestId("connection-llm").textContent).toBeDefined(),
-    );
+    await waitFor(() => expect(getRuns).toHaveBeenCalled());
     await act(async () => {
       await Promise.resolve();
     });
@@ -527,7 +525,10 @@ describe("ConnectionsSection", () => {
     renderSection({ "exa.apikey": "•••••" });
     const card = screen.getByTestId("connection-llm");
     // Let the runs query settle so a late-arriving footnote would have rendered.
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => expect(getRuns).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
     expect(within(card).queryByText(/Last run:/)).not.toBeInTheDocument();
   });
 });

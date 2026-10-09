@@ -20,7 +20,7 @@ type Settleable = { finished_at: string | null };
  * (`run-detail.tsx` and `runs.tsx` both wire `run.finished` to `invalidateQueries`) — and
  * `EventSource` replays nothing it missed while it was disconnected. Its `onerror` retries with
  * backoff up to 30s forever, and until it reconnects `run.finished` is never delivered, so a run
- * that has ended still reads "Running" with a ticking timer. That is the SFLIX 2026-08-13 symptom
+ * that has ended still reads "Running" with a ticking timer. That is the 2026-08-13 symptom seen on a large production server
  * (`runs.tsx`) reached through a dropped connection rather than an idle one, and it is also what
  * leaves a cancelled run stuck on "Stopping…": cancelling records `cancel_requested`, and only the
  * stream ever reports that the run then actually stopped.

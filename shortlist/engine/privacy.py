@@ -695,7 +695,7 @@ def desired_excludes(
     A row is visible to everyone whose share filter doesn't exclude it, and Plex does not care
     whether we consider its owner "enabled", "paused", or in tonight's run. Keying this off the
     user list is how 45 of a live server's 48 accounts ended up able to see three other people's
-    private rows: only the three managed users ever had excludes written (SFLIX, 2026-07-12).
+    private rows: only the three managed users ever had excludes written (a large production server, 2026-07-12).
 
     `own_label` is resolved by the caller from the account's ID — never from its NAME. Two Plex
     accounts can have display names that slugify identically, and anyone can rename themselves at

@@ -36,7 +36,7 @@ describe("Live run progress", () => {
     const run = fixture();run.stats = { users_ok: 0, users_error: 0 };show(run);
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
   });
-  it.each(["ok", "error", "cancelled"])("does not show live progress for a finished %s run", (status) => {
+  it.each(["ok", "error", "aborted"])("does not show live progress for a finished %s run", (status) => {
     const run = fixture();run.status = status as RunDetail["status"];run.finished_at = "2026-09-29T00:01:00Z";show(run);
     expect(screen.queryByRole("region", { name: "Live run progress" })).not.toBeInTheDocument();
   });

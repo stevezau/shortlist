@@ -1315,7 +1315,7 @@ class TestACreditIsAskedForWhileStillWatching:
     """`_queue_reconcile` was reachable only from `_close`, so a credit was computed when a session
     ENDED and at no other time.
 
-    Reported live 2026-08-24: MooHouse started Moxie and the dashboard showed nothing. It appeared
+    Reported live 2026-08-24: Guest started Moxie and the dashboard showed nothing. It appeared
     about seventy seconds later — but only because an unrelated viewer stopped something else, and
     that pass swept this still-playing session up on the way past. On a server with one person
     watching, nothing would have appeared until they stopped, which for a two-hour film is two hours

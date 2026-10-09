@@ -96,7 +96,7 @@ describe("RunsPage", () => {
   it("clears a finished run from the list without a manual refresh", async () => {
     // The list had no live updates at all: no SSE, no polling. A run that finished left its row
     // reading "Running" with a ticking timer for as long as the page stayed open — so a cancel that
-    // HAD worked looked like one that was ignored, which is exactly how it was reported (SFLIX,
+    // HAD worked looked like one that was ignored, which is exactly how it was reported (a large production server,
     // 2026-08-13: the log said the run completed at 2m51s while this page still said Running at
     // 3m20s).
     const running = {

@@ -443,7 +443,7 @@
     };
 
     /* Deliberately simple: every term must appear somewhere in the page. With
-       six pages, ranking cleverness buys nothing a substring match doesn't. */
+       a few dozen pages, ranking cleverness buys nothing a substring match doesn't. */
     var search = function (query) {
       var terms = query.toLowerCase().split(/\s+/).filter(Boolean);
       if (!terms.length || !index) return [];

@@ -1166,6 +1166,8 @@ def _validate_registry() -> None:
 
 _validate_registry()
 
+_SETTINGS_BY_KEY = {definition.key: definition for definition in _SETTINGS}
+
 
 def get_settings_catalog() -> tuple[SettingDefinition, ...]:
     """Return independent typed copies of every public settings definition.
@@ -1189,7 +1191,7 @@ def get_setting_definition(key: str) -> SettingDefinition:
     Raises:
         KeyError: If the setting lacks catalog and effect classification.
     """
-    for definition in _SETTINGS:
-        if definition.key == key:
-            return definition.model_copy(deep=True)
+    definition = _SETTINGS_BY_KEY.get(key)
+    if definition is not None:
+        return definition.model_copy(deep=True)
     raise KeyError(f"unknown setting {key!r}; deny the operation until it is classified")

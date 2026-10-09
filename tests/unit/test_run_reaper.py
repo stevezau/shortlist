@@ -155,7 +155,7 @@ def test_a_run_a_restart_cut_short_is_announced_as_stopped_if_it_had_started(
 
 class TestAScheduledRunCutShortIsFinishedOnce:
     """A scheduled run a restart cut short rebuilds only the people it never reached, once (owner decision
-    2026-09-14). On SFLIX Watchtower replaced the container at 04:30 while the 03:30 run was half way,
+    2026-09-14). On a big server Watchtower replaced the container at 04:30 while the 03:30 run was half way,
     and 23 of 46 people went a day without a rebuild, the same people every night an image was published.
     Only once: the resumed run is not resumed again, so a crash loop cannot re-curate the server over and over."""
 

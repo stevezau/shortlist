@@ -16,6 +16,7 @@ import { overrideName } from "@/test/override-name";
 import { toInput } from "@/lib/collections";
 import type { Collection, User } from "@/lib/types";
 import { BUILTINS } from "@/test/season-fixtures";
+import { makeUser } from "@/test/user-fixtures";
 
 const { updateCollection, settingsData, startRun, scheduleData, privacyData, effectivenessData, librariesData } = vi.hoisted(() => ({
   librariesData: { current: [] as unknown[] },
@@ -144,33 +145,7 @@ function row(patch: Partial<Collection> = {}): Collection {
 }
 
 function user(patch: Partial<User> = {}): User {
-  return {
-    manage_sharing: true,
-    id: 1,
-    username: "sarah",
-    slug: "sarah",
-    user_type: "shared",
-    restricted: false,
-    enabled: true,
-    cold_start: false,
-    history_depth: 10,
-    last_run_at: null,
-    request_tag: "",
-    requested_by_tag: "",
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    nickname: "",
-    friendly_name: "",
-    display_name: "",
-    avatar_url: "",
-    plex_account_id: 0,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    preview_titles: [],
-    prefs: {},
-    ...patch,
-  };
+  return makeUser({ history_depth: 10, ...patch });
 }
 
 function renderEditor(collection: Collection, users: User[] = [], expand = true) {
@@ -480,7 +455,10 @@ describe("RowEditor — a name that needs a watch", () => {
   it("stays out of the way for a row whose name never needs one", async () => {
     renderEditor(row({ name: "✨ {library_name} Picked for You" }));
 
-    await screen.findByLabelText(/^row name$/i).catch(() => null);
+    // The cold-start setting is rendered by the same field group as the new-person name, so once it
+    // is on screen the absence below is a real answer, not a render that has not happened yet.
+    await waitFor(() => expect(document.querySelector('[data-setting="cold_start"]')).not.toBeNull());
+    expect(document.querySelector('[data-setting="fallback_name"]')).toBeNull();
     expect(
       screen.queryByLabelText(/Name for someone who.s new/i),
     ).not.toBeInTheDocument();
@@ -870,14 +848,14 @@ describe("RowEditor — placement", () => {
 
   it("names the owner account behind 'Just me', and counts everyone else", () => {
     renderEditor(row({ placement: "both", placement_friends: "both" }), [
-      user({ id: 1, user_type: "owner", display_name: "stevezau" }),
+      user({ id: 1, user_type: "owner", display_name: "admin" }),
       user({ id: 2, slug: "sarah" }),
       user({ id: 3, slug: "mike" }),
     ]);
 
     expect(screen.getAllByText("Just me").length).toBeGreaterThan(0);
     // The whole point of the rename: "me" is a specific Plex account, so name it.
-    expect(screen.getByText("stevezau")).toBeInTheDocument();
+    expect(screen.getByText("admin")).toBeInTheDocument();
     expect(screen.getByText("2 other people")).toBeInTheDocument();
   });
 

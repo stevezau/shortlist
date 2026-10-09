@@ -59,3 +59,13 @@ globalThis.requestAnimationFrame = (cb: FrameRequestCallback): number => {
   return 0;
 };
 globalThis.cancelAnimationFrame = (): void => {};
+
+// Several tests stub these by assigning over the prototype/window (jsdom has neither, so a spy has
+// nothing to wrap). Put back what jsdom shipped after every test, so a stub cannot leak into the
+// next test in the same worker; vitest's per-file isolation otherwise hides the leak.
+const originalScrollIntoView = Element.prototype.scrollIntoView;
+const originalMatchMedia = window.matchMedia;
+afterEach(() => {
+  Element.prototype.scrollIntoView = originalScrollIntoView;
+  window.matchMedia = originalMatchMedia;
+});

@@ -59,7 +59,7 @@ def test_the_global_amount_of_a_show_saves_and_survives_a_reload(page: Page, app
     monitor.select_option("firstSeason")
     expect(page.get_by_text(re.compile("Season 1 only"))).to_be_visible()
 
-    # Autosave has no button; wait for the value to reach the API rather than a fixed sleep.
+    # Autosave has no button; the "Saved" readout below is the real wait, the pause only lets the write settle.
     # The Requests tab keeps its own "Saved" readout beside the form (it has no save bar).
     expect(page.get_by_role("status").get_by_text("Saved", exact=True)).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(2000)

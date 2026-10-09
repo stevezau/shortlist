@@ -58,7 +58,7 @@ class TestWatchedShowFilter:
         assert (200, MediaType.SHOW) in finished, "7 episodes >= floor 3 → finished"
 
     def test_a_long_returning_series_never_hits_80_percent(self):
-        """Gold Rush on SFLIX: 160 episodes of 226 = 71%, never hits 80%. The scaled floor
+        """Gold Rush on a large production server: 160 episodes of 226 = 71%, never hits 80%. The scaled floor
         (15% of 226 ≈ 34) catches it — and 160 is well past that."""
         # 160 >= min(226*0.8=180.8, floor=max(3, 226*0.15=33.9)=33.9) = 33.9 → finished
         finished = _watched_titles(set(), {300: (160, 226)}, 0.8)

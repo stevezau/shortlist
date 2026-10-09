@@ -695,7 +695,7 @@ async def test_connection(service: str, request: Request) -> dict:
                 # 3am one. Same `deliver`, same body builder, same settings — only the trigger differs.
                 from shortlist.server.services import notify
 
-                return notify.deliver(SettingsStore(session, state.secrets), notify.test_item())
+                return notify.deliver(SettingsStore(session, state.secrets), notify.sample_item())
             if service == "searxng":
                 from shortlist.engine.clients.search import SearxngClient
 

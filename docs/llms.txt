@@ -74,7 +74,7 @@ them as restored.
   llama.cpp, LM Studio, vLLM, LocalAI).
 - Every pick is verified to exist in the user's library before delivery — titles are never invented.
 - Every pick carries a reason: "Because you watched X".
-- Six row kinds and ten templates to start from: Picked for You, Because you watched, Watch it again,
+- Six row kinds and eleven templates to start from: Picked for You, Because you watched, Watch it again,
   Popular on this server (shared), Seasonal and Your requests. Each person can have as many rows as
   you add; shared rows are seen by everyone.
 - A seasonal row follows the calendar: three built-in seasons (Valentine's Day, Halloween,
@@ -87,7 +87,7 @@ them as restored.
   approval inbox. Dry run shows what would change without writing to Plex; uninstall restores share
   filters.
 - Web interface: dashboard, Users, Privacy, Runs (with a per-person "How we picked"), Activity
-  (including "Changes on Plex") and three-tab Settings.
+  (including "Changes on Plex") and four-tab Settings.
 - Optional integrations: Tautulli, Radarr, Sonarr, Overseerr/Jellyseerr, Trakt, MDBList, Exa.
 - Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
 - Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
@@ -103,7 +103,7 @@ Every page below, concatenated into one file, is at [llms-full.txt]({{ '/llms-fu
 - [Guides]({{ '/guides' | absolute_url }}): index of the guide pages
 - [A tour of the web interface]({{ '/guides/interface' | absolute_url }}): every page and every dashboard number
 - [People and sharing]({{ '/guides/people-and-sharing' | absolute_url }}): the Users page, turning people on, off and paused, per-person settings, leaving one account's sharing alone, people who leave, accounts Plex restricts
-- [Rows and templates]({{ '/guides/rows' | absolute_url }}): ten templates, six row kinds, editing a row, naming
+- [Rows and templates]({{ '/guides/rows' | absolute_url }}): eleven templates, six row kinds, editing a row, naming
 - [How a row is filled]({{ '/guides/rows/what-goes-in' | absolute_url }}): Because you watched and Watch it again rows, people with too little history, the order titles appear in
 - [Seasonal rows]({{ '/guides/rows/seasonal' | absolute_url }}): three built-in seasons, ten ready-made holidays and custom dates, hidden between seasons
 - [Where a row shows]({{ '/guides/rows/placement' | absolute_url }}): Home and the Recommended shelf, placement next to other collections, posters, descriptions and sort titles
@@ -118,7 +118,7 @@ Every page below, concatenated into one file, is at [llms-full.txt]({{ '/llms-fu
 - [Reference]({{ '/reference' | absolute_url }}): index of the reference pages
 - [Settings reference]({{ '/reference/settings' | absolute_url }}): every settings key and its default, grouped by area, and per-row request overrides
 - [Environment and files]({{ '/reference/environment' | absolute_url }}): container environment variables, serving from a subpath, the files under /config
-- [API reference]({{ '/reference/api' | absolute_url }}): every REST endpoint and its request and response shape
+- [API reference]({{ '/reference/api' | absolute_url }}): the main REST endpoints and their request and response shapes
 - [MCP assistant reference]({{ '/reference/assistant' | absolute_url }}): assistant tools, scoped permissions, reviewed changes, operation receipts and external-call limits
 - [How Shortlist decides things]({{ '/reference/concepts' | absolute_url }}): what "already watched" means, watched vs finished, why the owner sees every row, how a pick is chosen, how rows stay private
 - [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling

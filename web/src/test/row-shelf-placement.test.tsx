@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,7 +103,7 @@ describe("RowShelfPlacement", () => {
       },
       {
         slug: "popular",
-        name: "Popular on SFLIX",
+        name: "Popular on Home Server",
         media: "both",
         library_keys: [],
       },
@@ -166,7 +166,7 @@ describe("RowShelfPlacement", () => {
       (o) => o.textContent,
     );
     expect(labels).toContain("Picked for You");
-    expect(labels).toContain("Popular on SFLIX");
+    expect(labels).toContain("Popular on Home Server");
     expect(labels).not.toContain("Because you watched");
   });
 
@@ -299,7 +299,9 @@ describe("RowShelfPlacement", () => {
     const latest = renderControl({}, { pinnedTop: true, onConsumePin });
 
     await waitFor(() => expect(getLibraries).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 0)); // let the effect (not) fire
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0)); // let the effect (not) fire
+    });
     expect(onConsumePin).not.toHaveBeenCalled(); // pin_top left intact by the editor
     expect(latest.value).toEqual({});
   });
@@ -310,7 +312,9 @@ describe("RowShelfPlacement", () => {
     await waitFor(() => expect(latest.value).toEqual({ "2": { top: true } }));
 
     await userEvent.selectOptions(screen.getByLabelText("Position"), "off");
-    await new Promise((r) => setTimeout(r, 0)); // give the effect a chance to (wrongly) re-materialize
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0)); // give the effect a chance to (wrongly) re-materialize
+    });
     expect(latest.value).toEqual({ "2": { enabled: false } }); // the ref guard keeps Top from coming back
   });
 });

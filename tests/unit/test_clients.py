@@ -169,11 +169,11 @@ class TestPlexTvClient:
         from shortlist.engine.clients.plex_pms import log_title
         from shortlist.engine.delivery import row_marker
 
-        marked = "✨ Movies Picked for You" + row_marker(218833834)
+        marked = "✨ Movies Picked for You" + row_marker(1000001)
         assert len(marked) == len("✨ Movies Picked for You") + 64
 
         rendered = log_title(marked)
-        assert rendered == "✨ Movies Picked for You [acct 218833834]"
+        assert rendered == "✨ Movies Picked for You [acct 1000001]"
         # No invisible characters survive into the log line.
         assert not any(c in ("\u200b", "\u200c") for c in rendered)
 
@@ -1341,8 +1341,8 @@ class TestPlexClient:
         assert mock_plex.section_signature(SimpleNamespace()) is None
 
     def test_server_name_returns_friendly_name(self, mock_plex: PlexClient):
-        mock_plex._server.friendlyName = "SFLIX"
-        assert mock_plex.server_name == "SFLIX"
+        mock_plex._server.friendlyName = "Home Server"
+        assert mock_plex.server_name == "Home Server"
 
     def test_top_rated_returns_tmdb_pairs_skipping_items_without_guids(self, mock_plex: PlexClient):
         """The cold-start guid parse lives here now; items with no tmdb guid are skipped, and the
@@ -1384,7 +1384,7 @@ class TestPlexClient:
     def test_set_items_retries_a_transient_500_instead_of_failing_the_user(self, mock_plex: PlexClient, monkeypatch):
         """A 5xx from addItems is Plex under load, not a rejected request.
 
-        SFLIX 2026-09-06: `PUT /library/collections/687180/items` answered 500 after exactly 10.0s
+        a large production server 2026-09-06: `PUT /library/collections/687180/items` answered 500 after exactly 10.0s
         while that same collection served eight GETs and a children read as 200 either side of it.
         It arrives as a plexapi BadRequest rather than a timeout, so the retry ladder never saw it
         and user j.fm failed for the whole run after 9.5 minutes of work - having already had their
@@ -1429,7 +1429,7 @@ class TestPlexClient:
     def test_set_items_retries_a_transient_500_on_REMOVAL_too(self, mock_plex: PlexClient, monkeypatch):
         """The second failure of run 1 was a DELETE, not the add.
 
-        SFLIX 2026-09-06: user uid=20 died on
+        a large production server 2026-09-06: user uid=20 died on
         `DELETE /library/collections/687190/items/604259 -> 500`, on a collection that served 11
         GETs and another DELETE as 200. Retrying only the add would have left this user failing.
         """
@@ -1523,7 +1523,7 @@ class TestPlexClient:
 
     def test_stored_label_retries_a_transient_500_rather_than_losing_the_row(self, mock_plex: PlexClient, monkeypatch):
         """A 5xx here makes the CALLER DELETE the row, so an un-retried wobble bins a good row.
-        SFLIX 2026-09-06: creating one collection needed four attempts under load."""
+        a large production server 2026-09-06: creating one collection needed four attempts under load."""
         monkeypatch.setattr("shortlist.engine.clients.plex_pms.time.sleep", lambda _s: None)
         collection = MagicMock()
         collection.labels = []
@@ -2176,7 +2176,7 @@ class TestTraktClient:
 
 class TestPmsPromoteRetry:
     """A promote is idempotent, so a PMS read-timeout must be retried, not fail the user (the shape
-    of the SFLIX 48-user rollout, where 42 users died on one un-retried promote timeout)."""
+    of the a large production server 48-user rollout, where 42 users died on one un-retried promote timeout)."""
 
     def test_retries_a_timeout_then_succeeds(self, monkeypatch):
         import requests
@@ -2834,7 +2834,7 @@ class TestWatchedWindowCoverage:
     @respx.mock
     def test_a_series_marked_watched_comes_back_even_with_no_show_level_stamp(self, mock_plex):
         """The reporter's exact case, as the server actually reports it: episode counts complete,
-        no `lastViewedAt` on the show at all. Verified live — MooHouse/Rabbit Hole read
+        no `lastViewedAt` on the show at all. Verified live — Guest/Rabbit Hole read
         `viewedLeafCount=8 leafCount=8 lastViewedAt=None` and was absent from `unwatched=0`."""
         marked = (
             '<Directory ratingKey="5001" type="show" title="Rabbit Hole" year="2023" '

@@ -50,6 +50,7 @@ from shortlist.server.services.delivery_snapshots import (
     record_delivery_boundaries,
     record_snapshots,
 )
+from shortlist.server.services.delivery_snapshots import utc as _as_utc
 from shortlist.server.services.watch_events import (
     RowMembership,
     _attribution_floor,
@@ -60,13 +61,13 @@ from shortlist.server.services.watch_events import (
     tmdb_by_rating_key,
 )
 
-# Bounds the effectiveness report's MATURED cohort (a pick delivered more recently than this has not
-# had a fair chance to be watched yet). It no longer gates whether a pick is credited: that is
-# `reconcile_watched`'s "was it in their row at the time" test, which needs no clock.
 #: Watch history never outlives this, whatever `runs.retention` says. It is the one table here that
 #: grows with the whole server's viewing rather than with Shortlist's own activity.
 WATCH_RETENTION_MONTHS = 6
 
+# Bounds the effectiveness report's MATURED cohort (a pick delivered more recently than this has not
+# had a fair chance to be watched yet). It no longer gates whether a pick is credited: that is
+# `reconcile_watched`'s "was it in their row at the time" test, which needs no clock.
 HIT_WINDOW_DAYS = 30
 
 #: How far through a FILM counts as having finished it, when all we have is live playback.
@@ -81,10 +82,6 @@ HIT_WINDOW_DAYS = 30
 #: Films only, and that needs no guard: `session_progress` returns None for a series, because one
 #: episode's progress is not the show's (migration 0077).
 FINISHED_PERCENT = 90
-
-
-def _as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _record_deliveries(session: Session, user_slug: str, breakdown: list[dict]) -> None:
@@ -1162,7 +1159,7 @@ def _pick_dicts(user_report) -> list[dict]:
             # TMDB ids are namespaced PER TYPE — movie 1399 is not show 1399 — so the id alone does
             # not identify a title. Omitting this made every shared-row credit a silent no-op on the
             # real server: the pool keyed `(tmdb_id, "")` and never intersected the `(tmdb_id,
-            # "movie")` the play log resolves to. Found on SFLIX 2026-08-24, not by any test.
+            # "movie")` the play log resolves to. Found on a large production server 2026-08-24, not by any test.
             "media_type": p.media_type.value,
             "rating_key": p.rating_key,
             "rank": p.rank,
@@ -1549,8 +1546,8 @@ def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
         # `verified` is the whole point of the record. "We asked" and "it happened" are different
         # facts — a co-managing tool (agregarr, Kometa) reorders the same shelf on its own clock — and an
         # audit that only ever said the first is how a shelf owned by another tool was reported as a
-        # successful reorder for weeks (SFLIX 2026-08-12). A dry run asked for nothing, so it is neither
-        # verified nor a warning.
+        # successful reorder for weeks (a large production server, 2026-08-12). A dry run asked for nothing, so it
+        # is neither verified nor a warning.
         #
         # An unplaceable entry asked Plex for nothing either, so it carries NO `verified` and gets its
         # own scope — `_shelf_contention` counts repeated moves within a bounded event budget, and a
@@ -1818,8 +1815,6 @@ def _finalize_run(
         stats["privacy_unchecked"] = list(report.privacy_unchecked)
         stats["privacy_write_failed"] = list(report.privacy_write_failed)
         stats["privacy_left_alone"] = list(report.privacy_left_alone)
-    # Accounts the owner left alone whose excludes could not be taken back off. Written only when
-    # non-empty: an empty key would read as a measurement on every run that never got this far.
     # Accounts whose filter Shortlist wrote and Plex is not applying. Written on every run that
     # actually MEASURED, empty included — that empty dict is what lets a fixed server clear the
     # alert. Keyed on the measured flag rather than on emptiness, because the notification reads the
@@ -1827,6 +1822,8 @@ def _finalize_run(
     # through every clean run that followed one bad night.
     if report.filters_enforcement_measured:
         stats["filters_not_enforced"] = {name: list(keys) for name, keys in report.filters_not_enforced.items()}
+    # Accounts the owner left alone whose excludes could not be taken back off. Written only when
+    # non-empty: an empty key would read as a measurement on every run that never got this far.
     if report.left_alone_failures:
         stats["left_alone_failures"] = {str(account): why for account, why in report.left_alone_failures.items()}
     # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit

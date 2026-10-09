@@ -74,7 +74,7 @@ them as restored.
   llama.cpp, LM Studio, vLLM, LocalAI).
 - Every pick is verified to exist in the user's library before delivery — titles are never invented.
 - Every pick carries a reason: "Because you watched X".
-- Six row kinds and ten templates to start from: Picked for You, Because you watched, Watch it again,
+- Six row kinds and eleven templates to start from: Picked for You, Because you watched, Watch it again,
   Popular on this server (shared), Seasonal and Your requests. Each person can have as many rows as
   you add; shared rows are seen by everyone.
 - A seasonal row follows the calendar: three built-in seasons (Valentine's Day, Halloween,
@@ -87,7 +87,7 @@ them as restored.
   approval inbox. Dry run shows what would change without writing to Plex; uninstall restores share
   filters.
 - Web interface: dashboard, Users, Privacy, Runs (with a per-person "How we picked"), Activity
-  (including "Changes on Plex") and three-tab Settings.
+  (including "Changes on Plex") and four-tab Settings.
 - Optional integrations: Tautulli, Radarr, Sonarr, Overseerr/Jellyseerr, Trakt, MDBList, Exa.
 - Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
 - Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
@@ -195,7 +195,7 @@ nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in
 what claims the instance for you); from then on Shortlist only opens for that account.
 
 <figure class="shot">
-  <img src="https://shortlistapp.dev/images/wizard.webp" width="1440" height="1000"
+  <img src="https://shortlistapp.dev/images/wizard.webp" width="1440" height="755"
        alt="The Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
   <figcaption>The wizard's Welcome step.</figcaption>
 </figure>
@@ -213,7 +213,7 @@ The wizard has **7 steps**:
 2. **Connect Plex** — sign in with a PIN, then pick your server. Shortlist checks your Plex
    version, Plex Pass, and libraries, and tells you in plain English whether each one is OK.
 
-   <img src="https://shortlistapp.dev/images/wizard-connect.webp" width="1440" height="783"
+   <img src="https://shortlistapp.dev/images/wizard-connect.webp" width="1440" height="732"
         alt="The Connect Plex step after running checks: the discovered server with its reachable and unreachable addresses, and a checklist confirming the Plex version, Plex Pass and two libraries">
 
    Every address Plex advertises for your server is tried from where Shortlist actually runs, and
@@ -275,7 +275,7 @@ Everyone has a row and it will refresh on its own. Worth doing next:
 
 - **Check it landed.** Sign in as somebody who isn't you and confirm they see their row, and only
   theirs. The owner account sees everybody's, so it can't tell you this.
-- **Add another kind of row.** There are ten templates, including "Your requests".
+- **Add another kind of row.** There are eleven templates, including "Your requests" and the AI's "Describe a row".
   See [Rows and templates](https://shortlistapp.dev/guides/rows/).
 - **Decide how often rows change.** Each row keeps its own schedule.
   See [Schedules](https://shortlistapp.dev/guides/schedules/).
@@ -662,17 +662,17 @@ current row membership and watch tracking intact.
 
 ## Settings
 
-Three tabs, each with its own address: **Connections** (`/settings/connections`), **Defaults**
-(`/settings/defaults`) and **System** (`/settings/system`). Use the search box to find a setting by
+Four tabs, each with its own address: **Connections** (`/settings/connections`), **Defaults**
+(`/settings/defaults`), **Requests** (`/settings/requests`) and **System** (`/settings/system`). Use the search box to find a setting by
 name. Connections holds Plex, TMDB, AI and web search, Tautulli, Trakt, MDBList, Overseerr or
 Jellyseerr, Radarr, Sonarr and the webhook with its alert events. Defaults holds Title sources,
-Refresh and variety, Row defaults, Row placement and Requests. System holds retention, logging and run
+Refresh and variety, Row defaults, and Row placement. Requests holds the request sources, limits and the "don't request these automatically" hold filter. System holds retention, logging and run
 limits, the Plex cleanup audit, API access and the Danger zone. All forms stay mounted, so switching
 sections preserves unfinished edits. Every connection is re-testable in place. See
 [Finding and saving settings](https://shortlistapp.dev/reference/settings/#finding-and-saving-settings).
 
 <div class="preview-gallery">
-  <figure><a href="https://shortlistapp.dev/images/preview-settings.webp"><img src="https://shortlistapp.dev/images/preview-settings.webp" alt="Settings with Connections, Defaults and System tabs and a search box" loading="lazy"></a><figcaption>Settings: three tabs and a search box.</figcaption></figure>
+  <figure><a href="https://shortlistapp.dev/images/preview-settings.webp"><img src="https://shortlistapp.dev/images/preview-settings.webp" alt="Settings with Connections, Defaults, Requests and System tabs and a search box" loading="lazy"></a><figcaption>Settings: four tabs and a search box.</figcaption></figure>
 </div>
 
 Each row's run schedule lives in that row's editor, not here. See [Schedules](https://shortlistapp.dev/guides/schedules/).
@@ -767,7 +767,7 @@ Source: https://shortlistapp.dev/guides/people-and-sharing/
 The Users page in Shortlist, turning people on, off and paused, per-person settings, leaving one account's Plex sharing alone, people who leave the server, and accounts Plex restricts.
 
 <figure class="shot">
-  <img src="https://shortlistapp.dev/images/user-detail.webp" width="1440" height="1000" loading="lazy"
+  <img src="https://shortlistapp.dev/images/user-detail.webp" width="1440" height="1400" loading="lazy"
        alt="A person's page in Shortlist: sarah, 12 titles watched, with tabs for Rows, Runs, Settings and Watched, and her Picked for You row listing the reason for each pick">
   <figcaption>Open a person on the <strong>Users</strong> page for their history, their picks and their settings.</figcaption>
 </figure>
@@ -922,17 +922,17 @@ of the rows guide is split by question:
 
 ## Starting from a template
 
-There are ten starting templates: _Picked for You_, _Because you watched…_, _Watch it again_,
+There are eleven starting templates: _Picked for You_, _Because you watched…_, _Watch it again_,
 _Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_, _Movie night_
-and _More TV to watch_. **Rows → Add a row** opens the compact gallery, with search, filters and a
+_More TV to watch_ and _Describe a row_ (an [AI row](https://shortlistapp.dev/guides/ai#an-ai-row), which needs an AI provider). **Rows → Add a row** opens the compact gallery, with search, filters and a
 preview of the selected template. Each tile describes what it changes; every field remains editable
 afterwards. **Use template** opens the editor; **Start from scratch** opens an empty row directly.
 _Your requests_ is for titles someone requested that are now ready on Plex.
 
 <figure class="shot">
-  <img src="https://shortlistapp.dev/images/templates.webp" width="1440" height="860" loading="lazy"
-       alt="The Add a row dialog: ten template tiles, a search box and category tabs, with the selected template's preview and settings on the right.">
-  <figcaption><strong>Rows → Add a row</strong>: ten templates, each with a preview before you commit.</figcaption>
+  <img src="https://shortlistapp.dev/images/templates.webp" width="1440" height="1400" loading="lazy"
+       alt="The Add a row page: the row kinds to pick from, starting templates, the name each person sees, and a preview of the row on Plex.">
+  <figcaption><strong>Rows → Add a row</strong>: pick a kind, name it, choose who gets it, and see the row before you add it.</figcaption>
 </figure>
 
 In the editor, **Per person / Shared** stays visible above **Row type**, whichever template you
@@ -1374,7 +1374,7 @@ A seasonal row follows the calendar: Halloween films and horror in October, Chri
     <img src="https://shortlistapp.dev/images/rows-crop.webp" width="1560" height="918" loading="lazy"
          alt="The Rows page: four rows, each with an on/off switch, a Run now button and a more-actions menu, and an Add a row button at the top right.">
   </picture>
-  <figcaption><strong>Rows → Add a row</strong> opens the template gallery. <em>Seasonal</em> is one of the ten starting templates.</figcaption>
+  <figcaption><strong>Rows → Add a row</strong> opens the template gallery. <em>Seasonal</em> is one of the eleven starting templates.</figcaption>
 </figure>
 
 ## Start a seasonal row
@@ -3397,9 +3397,9 @@ Plex Pass servers, so without it Shortlist cannot keep one person's row off ever
 | **Trakt**    | Titles TMDB misses, from its own lists                    | An API key, which now needs Trakt's paid VIP plan |
 | **MDBList**  | Ratings from IMDb, Rotten Tomatoes, Metacritic and Trakt  | A free API key                                    |
 
-## Who writes the reason next to a pick
+## AI providers
 
-Any one of these, or none — with none, Shortlist still writes a plain-English reason itself.
+Any one of these, or none. A model is used for web search and AI rows only. The reason next to each pick is always written by Shortlist itself, so no provider changes it.
 
 | Service                                              | What you need                        |
 | ---------------------------------------------------- | ------------------------------------ |
@@ -3482,7 +3482,7 @@ environment variables and the files under `/config` → **[Environment and files
 
 ## The API
 
-Every REST endpoint, its request and response shape, and the read-only support checks behind
+The main REST endpoints, their request and response shape, and the read-only support checks behind
 **Have an issue?** → **[API reference](https://shortlistapp.dev/reference/api/)**
 
 Assistant tools, grants and the plan/apply lifecycle → **[MCP assistant reference](https://shortlistapp.dev/reference/assistant/)**.
@@ -3542,12 +3542,14 @@ Every Shortlist settings key with its default, grouped by area, per-row request 
 
 ## Finding and saving settings
 
-Settings has three tabs, each with its own address:
+Settings has four tabs, each with its own address:
 
 - **Connections** (`/settings/connections`): Plex, TMDB, AI and web search, Tautulli, Trakt, MDBList,
   Overseerr or Jellyseerr, Radarr, Sonarr, and the webhook with its alert events.
-- **Defaults** (`/settings/defaults`): Title sources, Refresh and variety, Row defaults, Row placement
-  and Requests.
+- **Defaults** (`/settings/defaults`): Title sources, Refresh and variety, Row defaults
+  and Row placement.
+- **Requests** (`/settings/requests`): request sources, limits, and the "don't request these
+  automatically" hold filter.
 - **System** (`/settings/system`): retention, console log detail, run concurrency, the Plex request
   timeout, the Plex cleanup audit, API access and the Danger zone.
 
@@ -3623,6 +3625,9 @@ The default row, shelf order, and how titles are found and ranked.
 | `recommendations.refresh_days` | `8`                                | REFRESH CADENCE IN DAYS, not a nightly shuffle: 0 = frozen once built, 1 = rebuild every night, N = every N days. On a rebuild night the strongest ~⅔ stay and the weakest third is swapped for new picks; other nights the row is reused unchanged (no rebuild, no Plex write). Per-row overridable. Except on a row whose name uses `{top_seed}` or that cycles its seed, which always rebuilds nightly (a row naming a recent watch cannot be allowed to lag behind it) and where the editor hides the control accordingly. Was `recommendations.freshness`, a 0–1 fraction a curve stretched onto 1–14 days; migration 0065 converts every stored value to the day count it already meant, so no row changes pace. Anything up to 365 is now sayable — the fraction could not express a cadence slower than a fortnight.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `recommendations.idle_hold_days` | `0`                                | HOW LONG A ROW WAITS WHEN ITS OWNER HAS WATCHED NOTHING since it was last built, in days. `0` (the default) = off, so a row rebuilds on its `recommendations.refresh_days` cadence whatever they have been doing. Set to N and a row due to rebuild is left alone — no re-pick, no Plex write — until they watch something or the row turns N days old, whichever comes first. The ceiling is what makes this a hold rather than a freeze: the row nobody watches is the one that most needs to look different next time they open Plex. Must be set HIGHER than the row's EFFECTIVE `recommendations.refresh_days` to do anything: a row is rebuilt on its due night, so by its next due night it is exactly one cadence old and the ceiling releases at that age — a 30-day hold on a 30-day row never holds, and a hold on a frozen row (cadence 0) never fires at all. Effective, not stored: a row named after a watch (`{top_seed}`) is forced to rebuild nightly, so any hold above 1 day works there. The Settings control, the row editor and `/api/support/row-schedule` all warn when a hold cannot fire — at or below the cadence, or on a frozen row. Overridden in progress by a settings change (including a blocked seed) and by a moved seed on a `{top_seed}` row, so neither waits for the ceiling. Per-row overridable. Never applied to a row that cycles its seed (`seed_window > 1`), whose rotation is driven by the cadence rather than by new watches, nor to a shared row, which has no single owner. Saves Plex writes, not AI tokens — the candidate gather runs above the rebuild decision on every path, at every cadence. Reported per row+library in the run trace as `held_idle`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `recommendations.recency` | `0.5`                              | How much a title's RELEASE DATE counts when ranking it: 0 = ignore age entirely, which is how ranking worked before this setting existed; 1 = every ~8 years of age halves a title's weight (0.5 = every ~16). A WEIGHT, never a filter — an old title is only ever asked to be a better match, never excluded, so nothing is dropped for being old. Distinct from `recommendations.refresh_days` above, which is how OFTEN a row rebuilds rather than which titles win. Per-row overridable. Applies to EVERY install, existing servers included: upgrading to the release that introduced it shifts each row towards newer titles on its next rebuild night. Set it to `0` for age-blind ranking (how it worked before).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `recommendations.genre_avoidance` | `0.0`                              | how strongly ranking avoids repeating genres already chosen for the same row, from 0 (off, the default) to 1. |
+| `recommendations.franchise` | `0.0`                              | how strongly a shared franchise lifts a title in the ranking, from 0 (off, the default) to 1. |
+| `recommendations.cast` | `0.0`                              | how strongly shared cast members lift a title in the ranking, from 0 (off, the default) to 1. |
 | `recommendations.recent_count` | `10`                               | how many of a person's most recent watches the `llm_web` source searches per row (one cached search each, "what to watch if you liked X"); results cached 7 days and shared across users so a popular title is searched once server-wide; overridable per row, and per person on a row (User → Rows), each falling back to the next: user → row → this global (1–25)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `recommendations.max_seeds` | `30`                               | how many of a person's watched titles SEED a row. The titles every discovery source searches from, not just `llm_web`. Fewer = a tighter row about a couple of things; more = broader coverage of their taste. Overridable per row (1–100), which is where a deliberately narrow value belongs: a row named `{top_seed}` wants 1 so its title is true. This server-wide default is floored at **5** because seeds are shared across the media types a row covers, so a global 1 or 2 would leave every movies-and-TV row with one half unseeded (5–100)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `recommendations.min_history` | `10`                               | how many titles someone must have watched before Shortlist recommends from THEIR taste. Below it they are a **cold start** and get whatever `recommendations.cold_start` says. Floored at 1: at 0 nobody is ever cold, which would silently disable the whole path (1–100)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
@@ -3706,6 +3711,8 @@ Cron expressions for the background jobs. Empty means the default shown.
 | `runs.retention` | `3`                                | how many months of run history to keep; after each run, anything older is auto-pruned (runs + per-user traces + activity logs deleted; **picks and current delivery records are kept**, so watched-pick counts, future watch tracking and Plex row cleanup continue). `0` = keep everything forever                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `events.retention` | `0` (forever)                      | how many months of the audit trail (`events`) to keep (0–24). Kept forever by default: "what changed on whose share at 03:31" is the record you want long after the run detail around it is gone. `0` = never prune. Set from Settings → System → "Change log kept"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `jobs.max_parallel_readonly` | `3`                                | how many READ-ONLY background jobs may run at once (1–8). Jobs that write to Plex/plex.tv are always exclusive and never overlap a run. Share-filter writes are read-modify-write merges, so two at once would lose one of them. Read-only: `sync.history`, `backup.take`, `maintenance.prune` and `watch.reconcile`. `sync.users` counts as a writer because it renames collections. Dial to 1 if your PMS objects to the concurrency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `backup.max_keep` | `10`                               | how many automatic database backups to keep on disk; older ones are deleted. |
+| `plex.orphan_confirm_delay_s` | `30`                               | seconds between the two independent reads that must both find an owned collection unlabelled before Shortlist may delete it as an orphan (0–300). A single empty read never deletes anything. |
 | `sync.watch_full_days` | `7`                                | how often the RECONCILE pass runs, in days (1–90). **Every watch-history read — the nightly job and a run's own top-up alike — reads each library in full**, so this is not what decides whether a complete read happens — it gates the one thing that acts on a title being ABSENT and cannot correct itself later: sweeping a library removed from the server, which believes a single `/library/sections` answer for every user. Dropping cached titles the read no longer returned, and withdrawing pick credit, are NOT gated here — a correction you have already made in Plex should not take up to a week to show up. Reading in full rather than "what changed since last time" is what catches a series marked watched by hand: a show's own date can lag the episodes it counts, so a change-ordered read (`lastViewedAt`) sorts it behind the cursor and never sees it (issue #108). Reading everything costs nothing measurable: 27.4s against 27.3s on a live 47-user, 3-library server, because Plex sends a 500-row page per library either way. A reconcile that would drop more than half a library asks the server a second time first, and keeps the titles if the two answers disagree                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `paused_all` | `false`                            | Danger-Zone "stop all runs" switch; pauses without disabling anyone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
@@ -3975,6 +3982,8 @@ Everything else is set in the app and stored in its database; see the
 | `SHORTLIST_MCP_URL`                                                        | unset     | live: enables assistant access at the exact canonical URL, including `APP_BASE_PATH` and the final `/mcp`; for example `https://media.example.com/shortlist/mcp`. Requires HTTPS outside loopback. Read at startup. See [Connect an assistant](https://shortlistapp.dev/guides/assistant-access/).                                      |
 | `APP_BASE_PATH`                                                            | `/`       | live: serve the app from a subpath behind a reverse proxy, e.g. `/shortlist`. Read at startup, so the published image works unmodified — no rebuild. Accepts `/shortlist` or `/shortlist/`. The proxy just forwards; it does not need to strip the prefix. See [Serving from a subpath](#serving-from-a-subpath). |
 
+`GIT_SHA` and `GIT_BRANCH` are build arguments baked into the image so the version check can tell which commit it is running. They are build metadata, not settings, and there is nothing to configure.
+
 ### Serving from a subpath
 
 Set `APP_BASE_PATH` and point the proxy at the container. No rebuild, and no prefix-stripping
@@ -4065,12 +4074,12 @@ durable plex-account-id → slug map a row's label is built from) · `secret.key
 # Reference: the REST API
 Source: https://shortlistapp.dev/reference/api/
 
-Every Shortlist REST endpoint — sign-in, users, rows, runs, requests, events, reports, the support checks and their responses.
+The main Shortlist REST endpoints — sign-in, users, rows, runs, requests, events, reports, the support checks and their responses.
 
 The interactive API docs are off by default (they'd disclose the whole surface unauthenticated);
 set `SHORTLIST_ENABLE_DOCS=1` to expose `/api/docs` and `/api/openapi.json` for local development
 (also required if you regenerate the frontend API types with `pnpm -C web gen:api` against a live
-server). Highlights:
+server). The OpenAPI document served there lists every route; this page covers the main ones:
 
 Assistant connections use the separately authenticated MCP endpoint. See the
 [MCP assistant reference](https://shortlistapp.dev/reference/assistant/) for its tool contracts and permissions, and
@@ -5942,16 +5951,19 @@ provably exists. And you get the thing a model is actually good at: a sentence e
 film follows from that one, which is what makes a row feel considered rather than random.
 
 Note that steps 1–3 need no AI at all. That's worth knowing before you buy an API key — the
-structural work is code, and the model is a finishing pass.
+structural work is code. Shortlist goes one step further: it does step 4 in code too, ranking the
+shortlist and writing the reason for each pick itself, so a model is never needed to explain a pick.
 
 ## Do you need an API key?
 
 No, and it's worth understanding what you're buying if you use one.
 
 **Without a model:** candidate generation, filtering and scoring all run in code. You get a correct,
-personalised row. What you don't get is natural-language reasoning about the shortlist.
+personalised row, with a plain-English reason on every pick. What you don't get is web search for
+recent titles TMDB misses, or an AI row you describe in your own words.
 
-**With a model:** better ordering on close calls, and per-pick explanations in real prose.
+**With a model:** it can search the web for recent titles, and it can build an AI row from a
+description. Ranking and the reason for each pick are still done in code.
 
 That's the honest delta. It's a nice improvement, not the difference between working and not
 working. Be suspicious of any tool that treats an API key as mandatory — it usually means the model
@@ -6004,8 +6016,8 @@ Questions worth asking, whichever you pick:
   actually watched?
 
 Shortlist runs the inverted shape: candidates come from TMDB and Trakt, are filtered to titles in
-your library, and only then does an optional model (Claude, GPT, Gemini, or an OpenAI-compatible
-server you run yourself) rank and explain them.
+your library, then ranked and explained in code. An optional model (Claude, GPT, Gemini, or an
+OpenAI-compatible server you run yourself) only helps find titles, through web search, or builds an AI row.
 
   Do it automatically
   Shortlist does this for every person on your server, every night: it reads each person's own watch history, picks only titles already in your library, says why, and hides each row from everyone else with Plex sharing filters (the server owner and some restriction profiles are the exceptions). It is one self-hosted Docker container, and AI is optional.
@@ -6078,7 +6090,7 @@ the last group can be private, and that is where they differ most.
 <td><span class="yes">Yes</span><span class="q">hidden by sharing filters before the row is shown</span></td>
 <td><span class="yes">Yes</span><span class="q">only after the hiding is in place</span></td>
 <td><span class="yes">Yes</span><span class="q">built-in picker needs no key</span></td>
-<td><span class="yes">Yes</span><span class="q">v1.9.3, 27 Sep 2026</span></td>
+<td><span class="yes">Yes</span><span class="q">v1.10.0, 5 Oct 2026</span></td>
 <td class="compare__pick">each person should get rows nobody else can see</td>
 </tr>
 <tr>
@@ -6182,7 +6194,7 @@ the last group can be private, and that is where they differ most.
 ### Shortlist
 
 Per-user rows (Picked for You, Because you watched, Watch it again, seasonal picks, a "Your requests"
-row and a shared Popular on this server row, from ten templates) built from each person's own watch
+row and a shared Popular on this server row, from eleven templates) built from each person's own watch
 history, made private with Plex's label restrictions. Every other account's share filter gets `label!=shortlist_<user>` merged into it,
 so each personal row is hidden from other supported accounts. The
 [server owner and some restriction profiles](https://shortlistapp.dev/plex-per-user-collections/#two-things-to-watch-out-for)

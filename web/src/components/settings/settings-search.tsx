@@ -14,7 +14,7 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 /**
- * "Search settings…": finds a setting on any of the three tabs by its name or what it does, and
+ * "Search settings…": finds a setting on any tab by its name or what it does, and
  * jumps to it. A setting that moved out of Settings (the disabled-users switch, now on Privacy)
  * still turns up, labelled as moved, and goes to where it lives now.
  */
@@ -51,7 +51,7 @@ export function SettingsSearch() {
           ref={input}
           type="search"
           role="combobox"
-          aria-label="Search settings on all three tabs"
+          aria-label="Search settings"
           aria-expanded={open}
           aria-controls={listId}
           aria-autocomplete="list"

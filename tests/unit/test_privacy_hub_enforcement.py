@@ -8,7 +8,7 @@ read a shape this repo does not control, and a mock would only prove it reads th
 The clean case is the weak half — a detector that always returned `[]` would pass it. The one that
 matters is `test_it_fires_when_another_persons_row_is_on_this_home`, which replays the SAME real
 response and re-attributes it, and is the offline twin of the live check run against the maintainer's
-server on 2026-08-18 (MooHouse: clean under their own slug, four ratingKeys under another's).
+server on 2026-08-18 (Guest: clean under their own slug, four ratingKeys under another's).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from shortlist.engine.privacy import unhidden_rows_on_home
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "pms_hubs_shared_account.json"
 
 #: ratingKeys of the rows in the recording, by whose they are.
-MOOHOUSE_ROWS = [624682, 624683, 624690, 624691]
+GUEST_ROWS = [624682, 624683, 624690, 624691]
 SHARED_ROW = [577628, 577629]
 KOMETA_ROWS = [506410, 527794, 343591]
 
@@ -45,7 +45,7 @@ def hubs() -> list[dict]:
 def owned() -> dict[str, _Row]:
     """What `owned_collections()` returns for that server, trimmed to the rows in the recording."""
     return {
-        "moohouse": _Row(MOOHOUSE_ROWS),
+        "guest": _Row(GUEST_ROWS),
         "someone-else": _Row([700001, 700002]),
         "_shared_popular": _Row(SHARED_ROW),
     }
@@ -53,13 +53,13 @@ def owned() -> dict[str, _Row]:
 
 class TestAgainstTheRealResponse:
     def test_an_account_seeing_only_its_own_rows_reads_clean(self, hubs, owned):
-        assert unhidden_rows_on_home(hubs, owned, "moohouse") == []
+        assert unhidden_rows_on_home(hubs, owned, "guest") == []
 
     def test_it_fires_when_another_persons_row_is_on_this_home(self, hubs, owned):
         """The teeth. Same real hubs, read as somebody else's account: the four rows that were
         legitimately theirs are now four rows of another person's on this Home, and every one is
         reported. A detector that could never fire passes the clean case above and fails here."""
-        assert unhidden_rows_on_home(hubs, owned, "someone-else") == MOOHOUSE_ROWS
+        assert unhidden_rows_on_home(hubs, owned, "someone-else") == GUEST_ROWS
 
     def test_the_shared_row_is_never_reported(self, hubs, owned):
         """It is on this Home, it is ours, and it is not theirs — every condition for a hit except
@@ -75,14 +75,14 @@ class TestAgainstTheRealResponse:
     def test_rows_that_exist_but_are_not_on_this_home_are_not_reported(self, hubs, owned):
         """`someone-else`'s own rows (700001/700002) are in `owned` and absent from this recording —
         which is the filter WORKING. Reporting on existence rather than visibility would invert it."""
-        assert not set(unhidden_rows_on_home(hubs, owned, "moohouse")) & {700001, 700002}
+        assert not set(unhidden_rows_on_home(hubs, owned, "guest")) & {700001, 700002}
 
 
 class TestTheRefusals:
     def test_no_rows_of_ours_means_no_finding(self, hubs):
         """First run, or a failed collections read. Every hub in the recording belongs to another
         tool as far as we know, and 'sees none of ours' must not become 'sees all of theirs'."""
-        assert unhidden_rows_on_home(hubs, {}, "moohouse") == []
+        assert unhidden_rows_on_home(hubs, {}, "guest") == []
 
     def test_an_empty_home_is_clean_not_an_error(self, owned):
         assert unhidden_rows_on_home([], owned, "someone-else") == []
@@ -115,11 +115,11 @@ class TestTheShapeItReadsIsTheRecordedOne:
         therefore indistinguishable by title, and the only thing that tells them apart is the
         ratingKey in `key`. Getting this wrong reports a person's OWN row as somebody else's."""
         ours = [
-            h for h in hubs if (m := re.search(r"/library/collections/(\d+)", h["key"])) and int(m[1]) in MOOHOUSE_ROWS
+            h for h in hubs if (m := re.search(r"/library/collections/(\d+)", h["key"])) and int(m[1]) in GUEST_ROWS
         ]
-        assert len(ours) == len(MOOHOUSE_ROWS)
+        assert len(ours) == len(GUEST_ROWS)
         visible = ["".join(c for c in h["title"] if c not in "​‌") for h in ours]
-        assert not [t for t in visible if "moohouse" in t.lower()]
+        assert not [t for t in visible if "guest" in t.lower()]
         # The marker that DOES distinguish them is zero-width, so it is invisible to a title read.
         assert all(set(h["title"]) & {"​", "‌"} for h in ours)
 
@@ -186,7 +186,7 @@ class TestTheSpotCheckGivesUp:
         )
         report = RunReport(started_at=None, dry_run=False)
         # `owned` belongs to nobody in this audience, so any hub we return reads as a leak.
-        _verify_filters_enforced(ctx, people, roster, {"absent-person": _Row(MOOHOUSE_ROWS)}, True, report)
+        _verify_filters_enforced(ctx, people, roster, {"absent-person": _Row(GUEST_ROWS)}, True, report)
         return reads, report
 
     def test_it_stops_after_three_failures_instead_of_walking_every_account(self):
@@ -235,7 +235,7 @@ class TestTheSpotCheckGivesUp:
             [_Acct("s-leaking", outcome="leak"), *(_Acct(f"m{i}", kind="managed", outcome="raise") for i in range(5))]
         )
 
-        assert report.filters_not_enforced == {"s-leaking": MOOHOUSE_ROWS}
+        assert report.filters_not_enforced == {"s-leaking": GUEST_ROWS}
         assert report.filters_enforcement_measured is True, "a finding must always reach the run's stats"
 
     def test_an_account_without_our_excludes_does_not_consume_the_budget(self):

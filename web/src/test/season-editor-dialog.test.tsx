@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SeasonEditorDialog, type SeasonEditorTarget } from "@/components/rows/seasons/season-editor-dialog";
+import { MISSING_COLLECTION } from "@/components/rows/seasons/season-collection-picker";
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type { SeasonRow } from "@/lib/season-verdict";
@@ -33,8 +34,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const NO_TAG =
   "TMDB has no tag matching “father's day”. Try a broader word, or add a collection or your own picks below.";
-const MISSING_COLLECTION =
-  "Not in your library right now. Kometa only creates its seasonal collections in season; on nights it's missing, this season uses its other sources.";
 
 function renderEditor(
   target: SeasonEditorTarget,

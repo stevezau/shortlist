@@ -358,6 +358,9 @@ def clear_assets(session: Session, collection_id: int) -> None:
         session.delete(asset)
 
 
+_MAX_UPLOAD_PIXELS = 64_000_000
+
+
 def normalize_upload(raw: bytes) -> tuple[bytes, str]:
     """Validate + downscale an uploaded image to a sane portrait poster (JPEG).
 
@@ -373,20 +376,19 @@ def normalize_upload(raw: bytes) -> tuple[bytes, str]:
     except ImportError:  # pragma: no cover - posters extra missing from the runtime
         return raw, "image/png"
     # A decompression bomb — a 100,000 x 100,000 PNG is a few hundred KB on the wire and gigabytes
-    # once decoded, comfortably inside MAX_UPLOAD_BYTES. Pillow's own limit warns by default rather
-    # than raising, so set an explicit ceiling generous for real artwork (a 4K poster is ~35 MP) and
-    # turn the warning into the error the caller already handles.
-    previous_limit = Image.MAX_IMAGE_PIXELS
-    Image.MAX_IMAGE_PIXELS = 64_000_000
+    # once decoded, comfortably inside MAX_UPLOAD_BYTES. `Image.open` is lazy and reads only the header,
+    # so the size is checked before `convert` decodes anything. Pillow's own global limit is left alone:
+    # assigning it would race with another upload running in a parallel thread. The ceiling is generous
+    # for real artwork (a 4K poster is ~35 MP).
     try:
         image = Image.open(io.BytesIO(raw))
+        if image.width * image.height > _MAX_UPLOAD_PIXELS:
+            raise ValueError("that image is too large to process")
         image = image.convert("RGB")
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("that file isn't an image we can read") from exc
     except Image.DecompressionBombError as exc:
         raise ValueError("that image is too large to process") from exc
-    finally:
-        Image.MAX_IMAGE_PIXELS = previous_limit
     image.thumbnail((1000, 1500))  # keep aspect; poster-sized ceiling
     out = io.BytesIO()
     image.save(out, format="JPEG", quality=88)

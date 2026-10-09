@@ -282,7 +282,7 @@ class TestDistinctRecent:
 class TestDeriveSeeds:
     def test_weight_is_pure_recency_so_a_recent_watch_outranks_an_old_favorite(self):
         # Weight is recency-only: a title watched once yesterday must outrank an old favourite
-        # rewatched many times years ago (the SFLIX/MooHouse bug — The Girl on the Train, 18x but
+        # rewatched many times years ago (the a large production server bug — The Girl on the Train, 18x but
         # ~8.7 years ago, dominated the seeds over titles watched this week).
         history = [
             make_watched("Old Favorite", days_ago=3000, watch_count=18),
@@ -465,7 +465,7 @@ class TestDeriveSeeds:
 
     def test_reserves_seed_budget_for_the_minority_media_type(self):
         # A TV-heavy watcher: 20 recent shows + 3 older movies. The movies must still seed, or a
-        # media=both row's Movies half starves (SFLIX/MooHouse: 58 of her last 60 watches were TV).
+        # media=both row's Movies half starves (a large production server: 58 of her last 60 watches were TV).
         history = [make_watched(f"Show {i}", days_ago=i, media_type=MediaType.SHOW) for i in range(20)]
         history += [make_watched(f"Movie {i}", days_ago=40 + i, media_type=MediaType.MOVIE) for i in range(3)]
         ids = {f"Show {i}": i + 1 for i in range(20)}

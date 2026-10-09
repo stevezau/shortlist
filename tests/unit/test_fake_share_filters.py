@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.fakes.fake_plex import FakeCollection, FakeMovie, make_fake_plex, seed_state, share_filter_admits
+from tests.fakes.fake_plex import make_fake_plex, seed_state, share_filter_admits
 
 FIXTURE = json.loads((Path(__file__).parents[1] / "fixtures" / "pms_share_filter_allow_lists.json").read_text())
 
@@ -98,8 +98,3 @@ class TestReadingAsTheAccount:
 
 def _keys(response) -> set[int]:
     return {int(k) for k in re.findall(r'ratingKey="(\d+)"', response.text)}
-
-
-def test_the_fake_item_and_collection_types_carry_what_filters_read():
-    assert FakeMovie(1, "t", 2000, 0, 1, 5.0, content_rating="G", labels=["Kids"]).content_rating == "G"
-    assert FakeCollection.__dataclass_fields__["labels"]

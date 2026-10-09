@@ -1,13 +1,13 @@
 ---
 title: "Reference: the REST API"
-description: Every Shortlist REST endpoint — sign-in, users, rows, runs, requests, events, reports, the support checks and their responses.
+description: The main Shortlist REST endpoints — sign-in, users, rows, runs, requests, events, reports, the support checks and their responses.
 heading: API reference
 ---
 
 The interactive API docs are off by default (they'd disclose the whole surface unauthenticated);
 set `SHORTLIST_ENABLE_DOCS=1` to expose `/api/docs` and `/api/openapi.json` for local development
 (also required if you regenerate the frontend API types with `pnpm -C web gen:api` against a live
-server). Highlights:
+server). The OpenAPI document served there lists every route; this page covers the main ones:
 
 Assistant connections use the separately authenticated MCP endpoint. See the
 [MCP assistant reference](assistant.md) for its tool contracts and permissions, and

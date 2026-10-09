@@ -8,6 +8,7 @@ import type { Job, JobCatalogEntry } from "@/lib/types";
  *  `user.cleanup` per person on a "disable all") without pulling the whole history every 3 seconds. */
 const ACTIVITY_LIMIT = 30;
 
+/** `queued` WITH attempts is a retry in flight, not work that has yet to start. */
 export function isInFlight(job: Job): boolean {
   return job.status === "queued" || job.status === "running";
 }
@@ -26,7 +27,7 @@ export function isInFlight(job: Job): boolean {
  */
 export function useJobActivity() {
   return useQuery({
-    queryKey: ["jobs", "activity"],
+    queryKey: queryKeys.jobsActivity,
     // `excludeRoutine`: the header is a feed of things worth telling you about, so the high-volume
     // automatic kinds are dropped by the SERVER (see `JobKind.routine`) rather than filtered here —
     // one per playback stop measured 165 of the 197 jobs queued in a day on a 46-user server, which
@@ -96,7 +97,7 @@ export function statusMap(jobs: Job[]): Map<number, Job["status"]> {
  */
 export function useRunActive(enabled: boolean): boolean {
   const query = useQuery({
-    queryKey: ["runs", "active"],
+    queryKey: queryKeys.runsActive,
     queryFn: () => api.getRuns(undefined, undefined, 1),
     enabled,
     refetchInterval: enabled ? 3_000 : false,

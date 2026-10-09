@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -142,7 +142,10 @@ describe("StepCurator", () => {
     getSettings.mockResolvedValueOnce({ "curator.provider": "anthropic" } as Settings);
     const { update } = renderStep(undefined);
     await screen.findByText(/Skip this and Shortlist works the same/);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor(() => expect(getSettings).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     expect(update).not.toHaveBeenCalled();
   });
 });

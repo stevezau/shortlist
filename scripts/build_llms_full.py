@@ -128,7 +128,7 @@ def _expand_include(name: str, params: dict[str, str]) -> str:
 def _include_as_text(name: str, params: dict[str, str] | None = None, config: dict | None = None) -> str:
     """Flatten an HTML include to prose.
 
-    Done generically rather than per-include: `privacy-order.html`, the four-step write order on the
+    Done generically rather than per-include: `privacy-order.html`, the three-step write order on the
     FAQ, is a drawn figure whose every word is real text, so stripping the markup leaves exactly the
     sentences a reader sees. Hand-writing a plain-text copy here would be a second source of truth
     for the privacy ordering — the one claim in these docs that must never drift.
@@ -228,9 +228,7 @@ def build() -> str:
     config = _load_config()
     ordered = [DOCS / "index.md"] + [_url_to_source(u) for u in _nav_urls(config)]
 
-    every = sorted(
-        p for p in DOCS.rglob("*.md") if p.name != "README.md" and "superpowers" not in p.relative_to(DOCS).parts
-    )
+    every = sorted(p for p in DOCS.rglob("*.md") if p.name != "README.md")
     missing = [p for p in every if p not in ordered]
     if missing:
         names = ", ".join(str(p.relative_to(DOCS)) for p in missing)
@@ -255,4 +253,4 @@ if __name__ == "__main__":
     text = build()
     OUT.write_text(text)
     pages = text.count("\nSource: ")
-    print(f"wrote {OUT.relative_to(Path.cwd())}: {len(text):,} bytes, {pages} pages", file=sys.stderr)
+    print(f"wrote {OUT}: {len(text):,} bytes, {pages} pages", file=sys.stderr)

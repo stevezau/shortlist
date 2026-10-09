@@ -266,9 +266,6 @@ class Collection(Base):
     # {} -> the default for every library this row builds in, which is the top of the shelf. A
     # library absent here gets that default too; `{"enabled": false}` is how a row opts out.
     hub_anchor: Mapped[dict] = mapped_column(JSON, default=dict)
-    # Dead as of the curate removal (migration 0036 clears it): the LLM no longer ranks a candidate
-    # pool, so there is no per-row curation recipe. Column kept — dropping it would rebuild the whole
-    # table (inbound FKs); a future migration can remove it.
     # This row's own Sonarr/Radarr request settings. NULL -> inherit the global `requests.*` setting,
     # the same convention `watched_pct` / `recency` / `refresh_days` / `cold_start` already use, so an
     # upgrade changes nothing until the owner sets one.
@@ -383,7 +380,8 @@ class Theme(Base):
     name: Mapped[str] = mapped_column(String(255))
     emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
     brief: Mapped[str] = mapped_column(Text, default="", server_default="")
-    origin: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")  # ai | manual
+    # ai | manual | assistant
+    origin: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     media: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     # [{"id": int, "name": str}] — TMDB keywords.
     tags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")

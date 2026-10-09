@@ -213,7 +213,7 @@ class TestReplayCase:
             case, config, config_label="x", tmdb=tmdb, library_index=index, resolve_tmdb_id=lambda *_: None
         )
 
-        assert isinstance(outcome.ratings_trusted, bool)
+        assert outcome.ratings_trusted is True, "an account with no ratings has nothing to distrust"
 
 
 class TestSummarise:

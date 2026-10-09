@@ -97,7 +97,6 @@ export const queryKeys = {
   ownedCollections: ["owned-collections"] as const,
   notifications: ["notifications"] as const,
   whatsNew: ["whats-new"] as const,
-  syncs: ["syncs"] as const,
   version: ["version"] as const,
   imageProvider: ["image-provider"] as const,
   backups: ["backups"] as const,
@@ -108,6 +107,11 @@ export const queryKeys = {
   jobsCatalog: ["jobs", "catalog"] as const,
   privacyStatus: ["privacy", "status"] as const,
   plexChanges: ["events", "plex-writes"] as const,
+  watchSnapshots: ["watch-snapshots"] as const,
+  acquisitionClaims: ["requests", "acquisition-claims"] as const,
+  collectionEffectiveness: (id: number | null) => ["collection-effectiveness", id] as const,
+  jobsActivity: ["jobs", "activity"] as const,
+  runsActive: ["runs", "active"] as const,
 };
 
 /**
@@ -334,10 +338,6 @@ export function useSettingDefaults() {
   });
 }
 
-export function useSyncs() {
-  return useQuery({ queryKey: queryKeys.syncs, queryFn: api.getSyncs });
-}
-
 /** Whether the AI provider can generate poster images — for the row editor's Generate gate. */
 export function useImageProvider() {
   return useQuery({
@@ -502,7 +502,7 @@ export function useDeleteCollection() {
   });
 }
 
-/** Quality profiles + root folders for a Sonarr/Radarr — only fetched once it's connected. */
+/** Overseerr/Jellyseerr accounts for the "request as" dropdown — only fetched once it's connected. */
 export function useSeerrOptions(enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.seerrOptions,
@@ -532,6 +532,7 @@ export function useRequestRowSources(pattern: string, enabled: boolean, rowId: n
   });
 }
 
+/** Quality profiles + root folders for a Sonarr/Radarr — only fetched once it's connected. */
 export function useArrOptions(service: "radarr" | "sonarr", enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.arrOptions(service),
@@ -783,9 +784,6 @@ export function useUserHistory(id: number) {
   });
 }
 
-/** A page of someone's cached watched set. `placeholderData` keeps the previous page on screen while
- *  a new search resolves — without it every keystroke blanks the list to a skeleton, which reads as
- *  "no results" for a moment and makes typing feel broken. */
 /** What they did with their picks — finished, part-watched, abandoned. */
 export function useUserOutcomes(id: number) {
   return useQuery({
@@ -794,6 +792,9 @@ export function useUserOutcomes(id: number) {
   });
 }
 
+/** A page of someone's cached watched set. `placeholderData` keeps the previous page on screen while
+ *  a new search resolves — without it every keystroke blanks the list to a skeleton, which reads as
+ *  "no results" for a moment and makes typing feel broken. */
 export function useUserWatched(id: number, filters: WatchedFilters) {
   return useQuery({
     queryKey: queryKeys.userWatched(id, filters),
@@ -802,8 +803,8 @@ export function useUserWatched(id: number, filters: WatchedFilters) {
   });
 }
 
-/** Plex Home users the owner could move their watching to. `enabled: false` — it is a live plex.tv
- *  read behind a "look again" button, so it runs when asked rather than on mount. */
+/** Plex Home users the owner could move their watching to. A live plex.tv read that runs on mount;
+ *  the "look again" button refetches it. */
 export function useHomeUserCandidates() {
   return useQuery({
     queryKey: queryKeys.homeUsers,
@@ -825,15 +826,14 @@ export function useTransferWatchHistory() {
       // watched set, which the users list and every watch-history panel read from.
       if (result.dry_run) return;
       queryClient.invalidateQueries({ queryKey: queryKeys.users });
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      queryClient.invalidateQueries({ queryKey: ["watch-snapshots"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchSnapshots });
     },
   });
 }
 
 export function useWatchSnapshots() {
   return useQuery({
-    queryKey: ["watch-snapshots"],
+    queryKey: queryKeys.watchSnapshots,
     queryFn: () => api.listWatchSnapshots(),
     retry: false,
   });
@@ -849,8 +849,7 @@ export function useUndoWatchTransfer() {
       // views reading it are just as stale afterwards.
       if (result.dry_run) return;
       queryClient.invalidateQueries({ queryKey: queryKeys.users });
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      queryClient.invalidateQueries({ queryKey: ["watch-snapshots"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchSnapshots });
     },
   });
 }
@@ -1101,7 +1100,7 @@ export function useSendRequests() {
 
 export function useAcquisitionClaims() {
   return useQuery({
-    queryKey: ["requests", "acquisition-claims"],
+    queryKey: queryKeys.acquisitionClaims,
     queryFn: () => api.listAcquisitionClaims(),
     staleTime: 15_000,
     retry: false,
@@ -1114,7 +1113,7 @@ export function useReleaseAcquisitionClaim() {
     mutationFn: ({ id, reviewToken, expectedStatus }: { id: number; reviewToken: string; expectedStatus: "outcome_unknown" | "succeeded" }) =>
       api.releaseAcquisitionClaim(id, reviewToken, expectedStatus),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["requests", "acquisition-claims"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.acquisitionClaims });
       void queryClient.invalidateQueries({ queryKey: queryKeys.requests });
     },
   });
@@ -1204,7 +1203,7 @@ export function usePlexChanges() {
  *  history, and asking for one would 404. */
 export function useCollectionEffectiveness(id: number | null) {
   return useQuery({
-    queryKey: ["collection-effectiveness", id],
+    queryKey: queryKeys.collectionEffectiveness(id),
     queryFn: () => api.getCollectionEffectiveness(id as number),
     enabled: id !== null,
   });

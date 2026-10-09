@@ -33,14 +33,16 @@
   short_a: >-
     No. Shortlist picks the titles itself, and the suggestions come from TMDB, which is free. An AI
     model is optional: Claude, GPT, Gemini, or one you run yourself such as Ollama, llama.cpp, LM
-    Studio, vLLM or LocalAI. If you add one, it writes the short reason next to each pick and can
-    search the web for recent titles TMDB doesn't return. That web search is off until you turn it on.
+    Studio, vLLM or LocalAI. If you add one, it can
+    search the web for recent titles TMDB doesn't return and build AI rows from a description. Shortlist
+    writes the reason next to each pick itself. That web search is off until you turn it on.
   a: >-
     No. Shortlist works with no AI and no key. It picks the titles itself, and the suggestions come
     from TMDB, which is free. Adding an AI model is optional. If you do add one (Claude, GPT, Gemini,
-    or something you run yourself like Ollama, llama.cpp, LM Studio, vLLM or LocalAI) it writes the
-    short reason next to each pick and can search the web for recent titles TMDB doesn't return. That
-    web search is off until you turn it on.
+    or something you run yourself like Ollama, llama.cpp, LM Studio, vLLM or LocalAI) it can
+    search the web for recent titles TMDB doesn't return and build AI rows from a description.
+    Shortlist writes the reason next to each pick itself, with or without a model. That web search is
+    off until you turn it on.
 
 - q: Will the AI recommend films I don't actually have?
   a: >-

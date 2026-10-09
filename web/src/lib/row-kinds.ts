@@ -1,3 +1,4 @@
+import { joinList } from "@/lib/format";
 import { SEASON_TOKENS, TOP_SEED, usesSeason } from "@/lib/placeholders";
 import {
   FILL_META,
@@ -417,16 +418,6 @@ export const SETTING_LABELS: Readonly<Record<RowSettingKey, string>> = {
 };
 
 /**
- * The settings with no line in "What this row will do" (design §8), each with why. Every other
- * setting the editor shows has exactly one line there.
- */
-export const NO_FACT_LINE: Readonly<Partial<Record<RowSettingKey, string>>> = {
-  name: "The Plex card beside the name field shows it, filled in for a sample person.",
-  description: "The Plex card shows it under the name, filled in the same way.",
-  poster: "The Plex card shows it: the uploaded image, the text poster's words, or Plex's own artwork.",
-};
-
-/**
  * Which setting controls each field of the editor's input; null for the few no editor control
  * writes. Typed over every key, so a new field doesn't compile until it is placed here.
  */
@@ -812,11 +803,6 @@ function kindTitle(choice: RowKindChoice): string {
     : KIND_META[choice.kind].title;
 }
 
-function listOf(items: string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
-}
-
 function watches(count: number): string {
   return `${count} watch${count === 1 ? "" : "es"}`;
 }
@@ -1042,7 +1028,7 @@ function settingLines(
   );
 
   const lines: string[] = [];
-  const labels = (keys: RowSettingKey[]) => listOf(keys.map((key) => SETTING_LABELS[key]));
+  const labels = (keys: RowSettingKey[]) => joinList(keys.map((key) => SETTING_LABELS[key]));
   if (added.length > 0) {
     lines.push(`Adds ${added.length === 1 ? "a setting" : "settings"} this kind uses: ${labels(added)}.`);
   }

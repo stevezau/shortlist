@@ -38,7 +38,7 @@ describe("CleanupAuditCard", () => {
         {
           library: "Movies",
           title: "Old Row",
-          label: "Shortlist_ghost",
+          label: "shortlist_ghost",
           rating_key: 2,
           kind: "user",
           slug: "ghost",
@@ -47,7 +47,7 @@ describe("CleanupAuditCard", () => {
         {
           library: "Movies",
           title: "Picked for You",
-          label: "Shortlist_sarah",
+          label: "shortlist_sarah",
           rating_key: 1,
           kind: "user",
           slug: "sarah",
@@ -62,9 +62,9 @@ describe("CleanupAuditCard", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Check Plex/i }));
 
-    expect(await screen.findByText(/user or shared row is gone/i)).toBeTruthy();
-    expect(screen.getByText("Old Row")).toBeTruthy();
-    expect(screen.getByText(/no longer in the app/i)).toBeTruthy(); // the orphan badge
+    expect(await screen.findByText(/user or shared row is gone/i)).toBeInTheDocument();
+    expect(screen.getByText("Old Row")).toBeInTheDocument();
+    expect(screen.getByText(/no longer in the app/i)).toBeInTheDocument(); // the orphan badge
     expect(getOwnedCollections).toHaveBeenCalledTimes(1);
   });
 
@@ -76,7 +76,7 @@ describe("CleanupAuditCard", () => {
         {
           library: "TV",
           title: "Picked for You",
-          label: "Shortlist_sarah",
+          label: "shortlist_sarah",
           rating_key: 5,
           kind: "user",
           slug: "sarah",
@@ -88,6 +88,6 @@ describe("CleanupAuditCard", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Check Plex/i }));
 
-    expect(await screen.findByText(/all in sync with the app/i)).toBeTruthy();
+    expect(await screen.findByText(/all in sync with the app/i)).toBeInTheDocument();
   });
 });

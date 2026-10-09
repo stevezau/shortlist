@@ -939,7 +939,7 @@ async def run_pending(state) -> int:
     Three callers reach this: the scheduler tick, `POST /api/system/jobs`, and the disable path.
     The drain LOOP is serialized (claiming is fast, and two loops racing would just interleave for
     no gain); what runs inside it is not. Read-only kinds go out concurrently up to
-    `jobs.max_parallel_readonly`; anything that writes to Plex takes `_PLEX_WRITER_LOCK`.
+    `jobs.max_parallel_readonly`; anything that writes to Plex takes `plex_writer_lock`.
 
     A caller that finds the loop already running returns immediately rather than queueing behind it
     in a request path.
@@ -1302,7 +1302,7 @@ def _privacy_sync(state, payload: dict) -> dict:
     Recommended shelf — added 2026-08-12 so a shelf left in pieces could be repaired by a job rather
     than only by a run — and that was removed on 2026-09-10. On a server whose owner had set
     `privacy.sync_cron` to `*/30 * * * *` it ran the whole placement phase 49 times a day (measured on
-    SFLIX: 200 hub-order writes in 24h against the nightly run's 5) for a position that only changes
+    a large production server: 200 hub-order writes in 24h against the nightly run's 5) for a position that only changes
     when a row is built. `sync.check` still repairs a broken shelf on demand, which is the job that
     advertises it.
     """
@@ -1314,8 +1314,8 @@ def _privacy_sync(state, payload: dict) -> dict:
     # The shelf ORDER is not this job's business — the nightly run owns it, exactly as
     # `rows.visibility` already says of itself. This job has BOTH a cron and a mutation trigger, so an
     # owner who sets `privacy.sync_cron` to `*/30 * * * *` gets the whole placement phase 49 times a
-    # day on top of the run — measured on SFLIX 2026-09-10: 200 hub-order records in 24 hours against
-    # the nightly run's 5, each pass re-issuing every move three times. Who can SEE a row is this
+    # day on top of the run — measured on a large production server 2026-09-10: 200 hub-order records in 24 hours
+    # against the nightly run's 5, each pass re-issuing every move three times. Who can SEE a row is this
     # job's business and still runs; where it sits on the shelf is not.
     ctx.config.manage_shelf_order = False
     report = engine_run(ctx, [])
@@ -1583,6 +1583,7 @@ def _maintenance_prune(state, payload: dict) -> dict:
     Idempotent by construction: it deletes whatever is currently older than the limit, so replaying
     it after a crash simply finds nothing left to delete.
     """
+    from shortlist.server.assistant.retention import prune_assistant_state
     from shortlist.server.services.run_persistence import prune_events, prune_expired_cache, prune_runs
 
     with state.sessions() as session:
@@ -1596,12 +1597,18 @@ def _maintenance_prune(state, payload: dict) -> dict:
         runs = prune_runs(session, months if 0 < months <= 24 else 0)
         events = prune_events(session, event_months if 0 < event_months <= 24 else 0)
         cached = prune_expired_cache(session)
+        # Fixed windows, not owner settings: these rows are working state (codes, tokens, unapplied plans).
+        assistant = prune_assistant_state(session, now=datetime.now(UTC))
         session.commit()
     return {
         "runs": runs,
         "events": events,
         "cache_rows": cached,
-        "detail": f"Pruned {runs} run(s), {events} audit event(s) and {cached} expired cache row(s)",
+        "assistant": assistant,
+        "detail": (
+            f"Pruned {runs} run(s), {events} audit event(s), {cached} expired cache row(s) "
+            f"and {sum(assistant.values())} assistant row(s)"
+        ),
     }
 
 

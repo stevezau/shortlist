@@ -4,8 +4,9 @@ import { useState } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { jobStatusLabel, timeAgo } from "@/lib/format";
-import { isActiveJob, jobDuration, jobStatusTone } from "@/lib/job-status";
+import { timeAgo } from "@/lib/format";
+import { isInFlight } from "@/lib/job-activity";
+import { jobDuration, jobStatusLabel, jobStatusTone } from "@/lib/job-status";
 import type { Job } from "@/lib/types";
 
 /** What it was asked to do, what came back, and why it failed — so a failure is diagnosable here
@@ -115,7 +116,7 @@ export function JobHistory({ kind }: { kind: string }) {
     queryKey: ["jobs", kind],
     queryFn: () => api.getJobs(kind, 50),
     refetchInterval: (query) =>
-      (query.state.data ?? []).some(isActiveJob) ? 3_000 : false,
+      (query.state.data ?? []).some(isInFlight) ? 3_000 : false,
   });
 
   if (jobs.isPending) return <Skeleton className="h-16 w-full" />;

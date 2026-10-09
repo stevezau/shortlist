@@ -594,7 +594,7 @@ class TestRunExecution:
             llm_tokens=120,
             llm_output_tokens=20,
             trace={"gathers": [{"source": "popular"}]},
-            breakdown=[{"row_slug": "popular", "row_title": "👥 Popular on SFLIX", "library_key": "1"}],
+            breakdown=[{"row_slug": "popular", "row_title": "👥 Popular on Home Server", "library_key": "1"}],
         )
         report = RunReport(started_at=datetime.now(UTC), finished_at=datetime.now(UTC), users=[shared])
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
@@ -609,7 +609,7 @@ class TestRunExecution:
             row = session.get(RunSharedRow, (run.id, "popular"))
             assert row is not None, "a shared row must have a run record, not only an audit event"
             assert row.collection_slug == "popular", "keyed on the COLLECTION slug, not the shared_ report slug"
-            assert row.row_title == "👥 Popular on SFLIX", "the title AS RENDERED this run"
+            assert row.row_title == "👥 Popular on Home Server", "the title AS RENDERED this run"
             assert row.status == "ok"
             assert row.trace == {"gathers": [{"source": "popular"}]}, "the trace is the whole point"
             assert row.llm_tokens == 120
@@ -639,7 +639,7 @@ class TestRunExecution:
             breakdown=[
                 {
                     "row_slug": "popular",
-                    "row_title": "👥 Popular on SFLIX",
+                    "row_title": "👥 Popular on Home Server",
                     "library_key": "1",
                     "rating_key": 9001,
                 }
@@ -1479,7 +1479,7 @@ class TestCancellingAQueuedRunIsImmediate:
     def test_a_queued_run_that_is_cancelled_never_gets_a_start_time(self, sessions, tmp_path):
         """NULL `began_at` is what makes the Runs page say "never ran" instead of billing the queue
         wait as work. Three runs queued together and cancelled nine minutes later each reported
-        "9m 26s" (SFLIX, 2026-08-13) — measured from `started_at`, which is stamped at INSERT."""
+        "9m 26s" (a large production server, 2026-08-13) — measured from `started_at`, which is stamped at INSERT."""
         service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="queued", stats={})

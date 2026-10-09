@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-
 import { Badge } from "@/components/ui/badge";
 import { profileName } from "@/lib/user-profile";
 import type { User } from "@/lib/types";
@@ -103,14 +101,7 @@ export function ColdStartBadge({ user }: { user: User }) {
  * card and their own page). The Users table splits them across its own columns instead, so each
  * sits under the heading that describes it.
  */
-export function UserBadges({
-  user,
-  emptyFallback = null,
-}: {
-  user: User;
-  emptyFallback?: ReactNode;
-}) {
-  void emptyFallback; // every user now has a type, so there is never nothing to show
+export function UserBadges({ user }: { user: User }) {
   return (
     <>
       <UserTypeBadge user={user} />

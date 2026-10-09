@@ -1,6 +1,6 @@
 # Shortlist — Architecture & Execution Plan
 
-**Status:** ready to execute (gated on Phase 0 privacy test) · **Date:** 2026-07-12 ·
+**Status:** shipped (1.x, in production); the layout in section 2 is a map, not a contract, so read the tree when it matters · **Date:** 2026-07-12 ·
 **Companions:** [`shortlist-design.md`](shortlist-design.md) (product/UX design) · media_preview_generator
 (MPG, `stevezau/media_preview_generator`) — the donor repo for release infrastructure.
 
@@ -30,7 +30,7 @@ framework-agnostic; the app layer (Flask+SocketIO+Jinja in MPG) is NOT what Shor
 | `README.md` structure                                                                                                                                                                | Port the shape: shields (+ AI-Assisted badge), logo, About/Problem/Solution, screenshots table, Quick Start, docs-hub table                              |
 | `docs/` hub (`README/getting-started/guides/reference/faq`)                                                                                                                          | Port structure                                                                                                                                           |
 | `docker-compose.example.yml`, `unraid-templates/`                                                                                                                                    | Port patterns (Unraid = big homelab reach)                                                                                                               |
-| `llms.txt`                                                                                                                                                                           | Port (AI-readable repo summary)                                                                                                                          |
+| `docs/llms.txt`                                                                                                                                                                         | Port (AI-readable repo summary)                                                                                                                          |
 | `CONTRIBUTING.md`                                                                                                                                                                    | Port + adapt                                                                                                                                             |
 | Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                                           |
 
@@ -57,29 +57,28 @@ shortlist/
 ├── .github/                      # ported: ci.yml, docker-pr(+cleanup).yml, architecture-review.yml, templates
 ├── shortlist/                       # Python package (backend + engine)
 │   ├── engine/                   # PURE library — zero FastAPI/DB imports; talks to clients only
-│   │   ├── pipeline.py           # per-user stage orchestration (history→candidates→filter→rank→curate→deliver→privacy)
-│   │   ├── models.py             # dataclasses: Seed, Candidate, Pick, UserProfile, RunReport
-│   │   ├── history.py            # HistorySource protocol; ShareTokenWatchSource (reads PMS per-user watched set), seed derivation
-│   │   ├── candidates.py         # TMDB similar/recommended pooling + seed tagging
-│   │   ├── ranking.py            # heuristic pre-rank (seed_freq × rating × recency)
-│   │   ├── curator/              # LLM providers behind Curator protocol
-│   │   │   ├── base.py           # curate(profile, candidates, k) -> [Pick]; strict JSON schema; validates output ⊆ input
-│   │   │   ├── anthropic.py · openai.py · google.py · ollama.py · null.py (heuristic+template reasons)
+│   │   ├── pipeline.py           # per-user stage orchestration (history→candidates→filter→rank→deliver→privacy)
+│   │   ├── models.py · context.py # dataclasses (Seed, Candidate, Pick, RunReport…) and the run context
+│   │   ├── history.py            # per-user watched set read from the PMS with each share's token; seed derivation
+│   │   ├── candidates.py         # TMDB similar/discover, Trakt and AI web-search pooling + seed tagging
+│   │   ├── ranking.py · picker.py # scoring, and the picks with the plain-English reason written in code
+│   │   ├── rows.py · limits.py   # row kinds, per-row settings, library limits
+│   │   ├── seasons.py · themes.py · over_time.py  # seasonal rows, AI-row themes, refresh share and repeat cooldown
+│   │   ├── requests.py · requests_row.py · request_*.py  # Radarr/Sonarr/Seerr requests and the "Your requests" row
+│   │   ├── curator/              # LLM providers behind a protocol: anthropic, openai, openai_compatible, google, null
 │   │   ├── delivery.py           # collection upsert, custom sort, label, poster, visibility promote
-│   │   ├── placeholders.py       # row-name placeholders ({user}, {top_seed}, {season}…) and what each call site asks of them
-│   │   ├── seasons.py            # seasonal rows: the season catalogue, show/build windows, TMDB season lists
+│   │   ├── placeholders.py       # row-name placeholders ({user}, {top_seed}, {season}…)
 │   │   ├── privacy.py            # filter parse/merge/serialize, snapshot, diff, throttled apply
-│   │   ├── acquire.py            # Radarr/Sonarr/Seerr, capped
-│   │   ├── posters.py            # PIL branded collection posters (3 templates)
-│   │   └── clients/              # plex.py (plexapi + raw plex.tv: pins, users, filters, home-switch), tautulli.py, tmdb.py, arr.py
+│   │   └── clients/              # plex_pms.py, plextv.py, tmdb.py, tautulli.py, arr.py, seerr.py, trakt.py, mdblist.py, search.py, poster.py
 │   ├── server/                   # FastAPI app
 │   │   ├── main.py               # app factory; serves web/dist; /api mount; healthz
 │   │   ├── auth.py               # PIN flow, owner-only session, signed httpOnly cookie
 │   │   ├── db/                   # SQLAlchemy models, session, alembic/
-│   │   ├── api/                  # routers: auth, setup, users, runs, settings, system, events (SSE)
+│   │   ├── api/                  # routers: setup, users, runs, collections (rows), settings, system, privacy, events (SSE)…
+│   │   ├── assistant/ · assistant_auth/  # optional MCP assistant access (#141): tools, owner-approved connections, OAuth, budgets
 │   │   ├── scheduler.py          # APScheduler; run rows are the durable queue (resume on restart)
-│   │   ├── services/             # run_service (engine adapter + SSE emit), snapshot_service, hit_rate, secrets (Fernet @ /config/secret.key)
-│   │   └── settings_store.py     # typed settings table access; env-var seeding on first boot (MPG pattern)
+│   │   ├── services/             # run_service (engine adapter + SSE emit), jobs, watch_* (live watch tracking), secrets (Fernet @ /config/secret.key)
+│   │   └── settings_store.py     # typed settings table access; env-var seeding on first boot
 │   └── logging_config.py         # loguru + Rich (ported)
 ├── web/                          # React 19 + Vite + TypeScript + Tailwind + shadcn/ui
 │   └── src/
@@ -98,7 +97,7 @@ shortlist/
 ├── Dockerfile                    # multi-stage: node:22 build web → python:3.12-slim runtime; PUID/PGID init; HEALTHCHECK
 ├── docker-compose.example.yml
 ├── pyproject.toml                # ruff config, pytest config (cov target 80%), hatchling
-└── README.md · CONTRIBUTING.md · LICENSE(MIT) · llms.txt
+└── README.md · CONTRIBUTING.md · LICENSE(MIT)
 ```
 
 **The contract that keeps this honest:** `shortlist/engine/` imports nothing from `shortlist/server/`.
@@ -305,7 +304,7 @@ Releases are cut by hand: promote `dev` → `master` via PR, then tag `vX.Y.Z` o
    (c) support `--dry-run`, (d) log a structured diff to `events`.
 2. Share-filter writes are READ-MODIFY-WRITE merges. Never construct a filter string from scratch.
    Never touch conditions Shortlist didn't add.
-3. plex.tv writes: ≤1 req/s, exponential backoff on 429, resume-safe.
+3. plex.tv writes: adaptive throttle with 429 backoff, resume-safe (see `.claude/rules/plex-safety.md` rule 6).
 4. The owner account is never restricted; managed-user restriction profiles are never modified.
 5. Tokens: encrypted at rest, never logged, never in exceptions.
 6. Every schema or filter-format assumption gets a recorded-fixture test from a real server response.

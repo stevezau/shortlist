@@ -112,7 +112,7 @@ class TestTheFingerprintIgnoresWhatDoesNotRun:
         assert freeze.fingerprint(edited) != freeze.fingerprint(BASE), why
 
     def test_re_rendering_every_real_migration_from_its_own_ast_changes_nothing(self):
-        """The false-positive proof, run against all 62 real migrations rather than a toy.
+        """The false-positive proof, run against every real migration rather than a toy.
 
         `ast.unparse` throws away every comment, every blank line, every quote style and all
         line-wrapping, and re-emits the file from its syntax tree — a more violent reformat than
@@ -129,7 +129,7 @@ class TestTheFingerprintIgnoresWhatDoesNotRun:
 
 
 class TestTheFingerprintSurvivesAPythonUpgrade:
-    """The worst failure this design has is all 62 lines breaking at once on a new interpreter.
+    """The worst failure this design has is every line breaking at once on a new interpreter.
 
     The manifest in this repo was generated on 3.14.6 and verified byte-identical on 3.9.6 — a span
     that brackets CI's pinned 3.12 — but no 3.12 interpreter was available to generate it on, so
@@ -250,7 +250,7 @@ class TestTheCheckerCatchesTheRealThing:
     def test_a_repo_wide_reformat_of_every_migration_does_not_fire(self, sandbox: Path):
         """The scenario that would get this check switched off: someone runs `ruff format` (or bumps
         ruff and it re-wraps differently) across the tree. Simulated harder than ruff would — every
-        file re-emitted from its own syntax tree, comments and layout gone — over all 62 at once."""
+        file re-emitted from its own syntax tree, comments and layout gone — over every migration at once."""
         for path in sorted(self._versions(sandbox).glob("[0-9]*.py")):
             path.write_text(ast.unparse(ast.parse(path.read_text())))
 
@@ -361,7 +361,7 @@ class TestTheCheckerCatchesTheRealThing:
 
     def test_every_fingerprint_moving_at_once_is_reported_as_one_interpreter_problem(self, sandbox: Path):
         """A systemic mismatch agrees with itself on every line, so the per-migration check reads it
-        as 62 independent edits and tells the developer to regenerate — which would re-freeze
+        as dozens of independent edits and tells the developer to regenerate — which would re-freeze
         whatever the tree says and bless any real edit hiding among them. Same aggregate guard as
         `.claude/rules/plex-safety.md` §4's "not one row reads as labelled"."""
         manifest = sandbox / "shortlist/server/db/alembic/frozen_migrations.txt"
@@ -380,7 +380,7 @@ class TestTheCheckerCatchesTheRealThing:
         assert result.returncode == 1
         assert f"That is not {frozen} edits" in result.stderr
         assert "Do NOT regenerate the manifest" in result.stderr
-        assert "executable content of migration" not in result.stderr, "62 separate reports is the failure mode"
+        assert "executable content of migration" not in result.stderr, "one report per migration is the failure mode"
 
     @pytest.mark.parametrize(
         "bad_line,expected",

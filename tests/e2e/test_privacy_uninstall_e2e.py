@@ -25,7 +25,7 @@ class TestRowsStayPrivateAcrossLibraries:
     """The promise of the product, end to end: after a real run, no user can see another
     user's row — in ANY library.
 
-    This is the shape of the only leak that ever reached a live server (SFLIX, 2026-07-12).
+    This is the shape of the only leak that ever reached a live server (a large production server, 2026-07-12).
     Every user's picks were delivered into the movie library regardless of type, so the TV
     watchers' rows sat in a movie library holding shows. Plex applies `label!=` share filters
     per library, and a collection whose contents don't match its library is matched by neither
@@ -188,7 +188,7 @@ class TestEveryAccountOnTheServerIsCovered:
 
     On a live server this was not true: 45 of its 48 accounts had completely empty share filters
     and could see all three managed users' private rows, because Shortlist only ever wrote filters
-    for the users it built rows for (SFLIX, 2026-07-12).
+    for the users it built rows for (a large production server, 2026-07-12).
     """
 
     def test_an_account_shortlist_has_never_seen_still_gets_the_excludes(self, app: ShortlistApp, reset_fake_plex):

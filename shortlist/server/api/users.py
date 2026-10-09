@@ -789,42 +789,6 @@ async def sync_users(request: Request) -> dict:
     return result
 
 
-async def _hide_paused_users_rows(state, user_slug: str) -> None:
-    """Queue the take-down for a just-paused user, and drain it so it happens now.
-
-    Durable rather than fire-and-forget for the same reason disable cleanup is: a paused user is
-    absent from every subsequent run, so if this write is lost to a Plex outage nothing would ever
-    retry it and their row would stay up indefinitely.
-    """
-    from shortlist.server.services.jobs import enqueue, run_pending
-
-    enqueue(state.sessions, "user.hide", {"slug": user_slug})
-    try:
-        await run_pending(state)
-    except Exception as e:
-        logger.warning(
-            "paused {} but their rows could not be hidden right now ({}: {}) — queued for retry",
-            user_slug,
-            type(e).__name__,
-            redact(str(e)),
-        )
-
-
-async def _restore_paused_users_rows(state, user_slug: str) -> None:
-    """Put an un-paused user's rows back.
-
-    ONE job, deliberately. `user.restore` merges every account's share filters itself before promoting
-    anything — plex-safety rule 1's ordering, in straight-line code. Splitting it into a queued
-    `privacy.sync` followed by a queued `user.restore` would NOT have been ordered: a job whose retry
-    backoff has not elapsed is stepped over, so a filter pass that failed against a 503 plex.tv would
-    be skipped and the promotion would land anyway.
-    """
-    from shortlist.server.services.jobs import drain_now, enqueue
-
-    enqueue(state.sessions, "user.restore", {"slug": user_slug})
-    await drain_now(state, f"'{user_slug}' was un-paused")
-
-
 class RemovedOut(PassthroughModel):
     """What `DELETE /users/{id}` dropped. `user_id` is still valid — the row is archived, not deleted."""
 

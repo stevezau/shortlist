@@ -42,6 +42,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { noRequestSource } from "@/lib/row-kinds";
 import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import { profileName, USER_TYPE_LABEL } from "@/lib/user-profile";
 import { profileBlocksRows, userState, type UserState } from "@/lib/user-state";
@@ -58,6 +59,7 @@ import {
   usePatchUser,
   useUsers,
 } from "@/lib/queries";
+import { personName } from "@/lib/user-names";
 
 function needsAttention(user: User): boolean {
   return Boolean(user.restriction_profile || user.unhidden_rows || user.departed);
@@ -156,7 +158,7 @@ function PrivacyCell({ user, privacy }: { user: User; privacy: PrivacyQuery }) {
   // is tinted by the row (see `exposedRows`) and leads to the remedy: a profiled account's own page
   // says how to clear the profile; anything else is the Privacy page's to explain.
   const exposed = exposedRows(user, privacy);
-  const name = user.display_name || user.username;
+  const name = personName(user);
   const exposure =
     exposed > 0 ? (
       <p className="mt-0.5" title={capitalise(rowsNotTheirs(exposed))}>
@@ -343,10 +345,6 @@ function RequestsCell({
   );
 }
 
-function noRequestSource(data: RowSources): boolean {
-  return [data.overseerr, data.radarr, data.sonarr].every((s) => s === "off");
-}
-
 /** Why the Requests column is blank after a failed read. A failed REFETCH still has the last answer,
  *  which says which sources are configured — so an install with only Radarr/Sonarr is not told that
  *  an Overseerr it never connected is down. With no answer at all, nothing can be blamed by name. */
@@ -398,7 +396,7 @@ export function UsersPage() {
     return matchesName && matchesStatus(user, status);
   }).sort((a, b) => sort === "history" ? b.history_depth - a.history_depth :
     sort === "last-run" ? (b.last_run_at ?? "").localeCompare(a.last_run_at ?? "") :
-    (a.display_name || a.username).localeCompare(b.display_name || b.username));
+    (personName(a)).localeCompare(personName(b)));
   const navigate = useNavigate();
   const patchUser = usePatchUser();
   const toggleSelected = (id: number) => setSelected((before) => { const next = new Set(before); if (next.has(id)) next.delete(id); else next.add(id); return next; });
@@ -431,7 +429,7 @@ export function UsersPage() {
    * decision. This names the person and the consequence, up front, and resolves in place.
    */
   const toggleUser = (user: User, enabled: boolean) => {
-    const who = user.display_name || user.username;
+    const who = personName(user);
     const id = `user-toggle-${user.id}`;
     toast.loading(enabled ? `Turning on ${who}…` : `Turning off ${who}…`, {
       id,
@@ -559,7 +557,7 @@ export function UsersPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Remove {removing?.display_name || removing?.username}?
+              Remove {removing && personName(removing)}?
             </DialogTitle>
             <DialogDescription>
               Plex no longer has this account, so their rows are already gone
@@ -584,7 +582,7 @@ export function UsersPage() {
                 removeUser.mutate(target.id, {
                   onSuccess: (result) => {
                     toast.success(
-                      `${target.display_name || target.username} removed — ${result.picks_deleted} picks and ${result.runs_deleted} runs dropped`,
+                      `${personName(target)} removed — ${result.picks_deleted} picks and ${result.runs_deleted} runs dropped`,
                     );
                     setRemoving(null);
                   },
@@ -769,11 +767,11 @@ export function UsersPage() {
                     {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
                       <TableCell className="min-w-0 lg:w-[30%] lg:pl-4">
                         <div className="flex items-start gap-3">
-                          {selecting && <label className={`mt-1.5 flex shrink-0 cursor-pointer ${coarseHitArea}`}><input type="checkbox" aria-label={`Select ${user.display_name || user.username}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="size-4 shrink-0 accent-primary" /></label>}
+                          {selecting && <label className={`mt-1.5 flex shrink-0 cursor-pointer ${coarseHitArea}`}><input type="checkbox" aria-label={`Select ${personName(user)}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="size-4 shrink-0 accent-primary" /></label>}
                           <UserAvatar name={user.username} size="sm" />
                           <div className="min-w-0 space-y-1">
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <Link to={`/users/${user.id}`} className="min-w-0 break-words font-semibold hover:text-primary hover:underline" title={`Plex username: ${user.username}`}>{user.display_name || user.username}</Link>
+                              <Link to={`/users/${user.id}`} className="min-w-0 break-words font-semibold hover:text-primary hover:underline" title={`Plex username: ${user.username}`}>{personName(user)}</Link>
                               <RestrictedPill user={user} />
                             </div>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">

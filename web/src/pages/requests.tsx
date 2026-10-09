@@ -36,6 +36,7 @@ import { Link, useSearchParams } from "react-router";
 
 import { apiErrorMessage } from "@/lib/api";
 import { formatDate, settingBool, settingString } from "@/lib/format";
+import { type TitleLink, titleLinks } from "@/lib/title-links";
 import { languageName } from "@/lib/request-language";
 import {
   useArrStatus,
@@ -104,6 +105,12 @@ function wantedByLabel(
   return `Wanted by ${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
 }
 
+const LINK_GLYPHS: Record<TitleLink["label"], ReactNode> = {
+  TMDB: <TmdbGlyph className="h-3.5 w-3.5 rounded-[2px]" />,
+  IMDb: <ImdbGlyph className="h-3.5 w-3.5 rounded-[2px]" />,
+  Trakt: <TraktGlyph className="h-3.5 w-3.5" />,
+};
+
 type QuickLink = {
   label: string;
   icon: ReactNode;
@@ -121,28 +128,9 @@ function ExternalLinks({
   item: RequestCandidate;
   lead?: QuickLink[];
 }) {
-  const tmdbPath = item.media_type === "movie" ? "movie" : "tv";
-  const traktType = item.media_type === "movie" ? "movie" : "show";
   const links: QuickLink[] = [
     ...lead,
-    {
-      label: "TMDB",
-      icon: <TmdbGlyph className="h-3.5 w-3.5 rounded-[2px]" />,
-      href: `https://www.themoviedb.org/${tmdbPath}/${item.tmdb_id}`,
-    },
-    {
-      label: "IMDb",
-      icon: <ImdbGlyph className="h-3.5 w-3.5 rounded-[2px]" />,
-      // Deep-link straight to the title when we resolved its id; otherwise fall back to a search.
-      href: item.imdb_id
-        ? `https://www.imdb.com/title/${item.imdb_id}/`
-        : `https://www.imdb.com/find/?q=${encodeURIComponent(item.title)}&s=tt`,
-    },
-    {
-      label: "Trakt",
-      icon: <TraktGlyph className="h-3.5 w-3.5" />,
-      href: `https://trakt.tv/search/tmdb/${item.tmdb_id}?id_type=${traktType}`,
-    },
+    ...titleLinks(item).map((link) => ({ label: link.label, icon: LINK_GLYPHS[link.label], href: link.href })),
   ];
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -1465,8 +1453,9 @@ export function RequestsPage() {
     ? language
     : ANY_LANGUAGE;
   const pendingShown = narrow(pendingRows);
-  const sentShown = narrow(sentRows);
-  const rejectedShown = narrow(rejectedRows);
+  // Only the tab on screen reads these two, so the others are not filtered and sorted every render.
+  const sentShown = active === "sent" ? narrow(sentRows) : [];
+  const rejectedShown = active === "rejected" ? narrow(rejectedRows) : [];
 
   // The count beside a PICKED name is re-read from the server's answer, which isn't capped to this
   // page — otherwise the chip could say "(12)" beside a list of forty of that person's titles.

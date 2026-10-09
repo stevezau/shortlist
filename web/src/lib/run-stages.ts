@@ -8,6 +8,11 @@ export const RUN_STAGES = [
   "delivering",
 ] as const;
 
+/** A person's stage once nothing more will happen to them in this run. */
+export function isTerminalStage(stage: string | undefined): boolean {
+  return stage === "done" || stage === "cold_start" || stage === "error" || stage === "skipped";
+}
+
 export const STAGE_LABELS: Record<string, string> = {
   queued: "queued",
   preparing: "getting ready — reading your libraries",

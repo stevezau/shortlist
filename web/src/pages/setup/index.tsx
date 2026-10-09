@@ -10,13 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { resolveArea } from "@/lib/auth";
 import { queryKeys, useSession, useSetupState } from "@/lib/queries";
-import { TOTAL_STEPS, useWizard, WIZARD_STEPS } from "@/lib/wizard";
+import { CUSTOMIZE_STEP, TMDB_STEP, TOTAL_STEPS, useWizard, WIZARD_STEPS } from "@/lib/wizard";
 
 import { StepConnect } from "./step-connect";
 import { StepCurator } from "./step-curator";
 import { StepCustomize } from "./step-customize";
 import { StepFirstRun } from "./step-first-run";
-import { StepHistory } from "./step-history";
+import { StepTmdb } from "./step-tmdb";
 import { StepUsers } from "./step-users";
 import { StepWelcome } from "./step-welcome";
 import type { StepHeader, StepProps } from "./step-props";
@@ -24,7 +24,7 @@ import type { StepHeader, StepProps } from "./step-props";
 const STEP_COMPONENTS: readonly ((props: StepProps) => ReactNode)[] = [
   StepWelcome,
   StepConnect,
-  StepHistory,
+  StepTmdb,
   StepCurator,
   StepUsers,
   StepCustomize,
@@ -50,7 +50,7 @@ function Wizard() {
   if (!meta || !Step) return null;
 
   return (
-    <main className={`mx-auto w-full px-5 py-6 sm:px-10 sm:py-8 ${wizard.step === 5 ? "max-w-[1110px]" : "max-w-2xl"}`}>
+    <main className={`mx-auto w-full px-5 py-6 sm:px-10 sm:py-8 ${wizard.step === CUSTOMIZE_STEP ? "max-w-[1110px]" : "max-w-2xl"}`}>
       <header className="mb-7">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3"><Wordmark size="sm" /><span className="text-sm text-muted-foreground">setup</span></div>
@@ -95,14 +95,14 @@ function Wizard() {
         setHeader={setHeader}
       />
 
-      {wizard.step > 0 && wizard.step < TOTAL_STEPS - 1 && wizard.step !== 5 && (
+      {wizard.step > 0 && wizard.step < TOTAL_STEPS - 1 && wizard.step !== CUSTOMIZE_STEP && (
         <footer className="mt-8 flex items-center justify-between border-t pt-4">
           <Button variant="ghost" onClick={wizard.back}>
             <ArrowLeft aria-hidden="true" />
             Back
           </Button>
           <div className="flex flex-wrap items-center justify-end gap-4">
-            {wizard.step === 2 && !wizard.canProceed && (
+            {wizard.step === TMDB_STEP && !wizard.canProceed && (
               <span className="text-sm text-muted-foreground">Next unlocks when the key tests OK</span>
             )}
             <Button onClick={wizard.next} disabled={!wizard.canProceed}>

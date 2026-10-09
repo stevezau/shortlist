@@ -9,7 +9,7 @@ import type { RunDetail, RunUserResult } from "@/lib/types";
 const CONFIG_NAMES = {
   picked: "✨ {library_name} Picked for You",
   because: "🎯 Because you watched {top_seed}",
-  popular: "👥 Popular {library_name} on SFLIX",
+  popular: "👥 Popular {library_name} on Home Server",
 };
 
 const pick = (rank: number, title: string, reason = "") => ({
@@ -218,7 +218,7 @@ describe("RunRowsTab", () => {
         shared_rows: [
           {
             collection_slug: "popular",
-            row_title: "👥 Popular Movies on SFLIX",
+            row_title: "👥 Popular Movies on Home Server",
             status: "ok",
             error: null,
             reason: null,
@@ -231,7 +231,7 @@ describe("RunRowsTab", () => {
             breakdown: [
               {
                 row_slug: "popular",
-                row_title: "👥 Popular Movies on SFLIX",
+                row_title: "👥 Popular Movies on Home Server",
                 library_key: "1",
                 library_title: "Movies",
                 added: ["Dune"],
@@ -248,7 +248,7 @@ describe("RunRowsTab", () => {
       } as unknown as Partial<RunDetail>),
     );
 
-    expect(screen.getByText("👥 Popular Movies on SFLIX")).toBeInTheDocument();
+    expect(screen.getByText("👥 Popular Movies on Home Server")).toBeInTheDocument();
     // One library here, so no tab strip — with two it switches instead of stacking, which is what
     // kept a 40-pick row from scrolling for pages.
     expect(screen.getByText("Dune")).toBeInTheDocument();
@@ -268,7 +268,7 @@ describe("RunRowsTab", () => {
         shared_rows: [
           {
             collection_slug: "popular",
-            row_title: "👥 Popular Movies on SFLIX",
+            row_title: "👥 Popular Movies on Home Server",
             status: "ok",
             error: null,
             reason: null,
@@ -276,19 +276,19 @@ describe("RunRowsTab", () => {
             llm_tokens: 0,
             llm_tokens_by_step: {},
             exa_searches: 0,
-            diff: { duplicates_removed: ["👥 Popular Movies on SFLIX"] },
+            diff: { duplicates_removed: ["👥 Popular Movies on Home Server"] },
             picks: [pick(1, "Dune")],
             breakdown: [
               {
                 row_slug: "popular",
-                row_title: "👥 Popular Movies on SFLIX",
+                row_title: "👥 Popular Movies on Home Server",
                 library_key: "1",
                 library_title: "Movies",
                 added: [],
                 removed: [],
                 kept: ["Dune"],
                 deleted: [],
-                duplicates_removed: ["👥 Popular Movies on SFLIX"],
+                duplicates_removed: ["👥 Popular Movies on Home Server"],
                 created: false,
                 picks: [pick(1, "Dune", "11 people watched it")],
               },
@@ -300,7 +300,7 @@ describe("RunRowsTab", () => {
     );
 
     const note = screen.getByText(/removed a duplicate copy of this row/i);
-    expect(note).toHaveTextContent("👥 Popular Movies on SFLIX");
+    expect(note).toHaveTextContent("👥 Popular Movies on Home Server");
     // The row is still live, with its picks right beside this — so no alarm colour and no "deleted".
     expect(note).not.toHaveClass("text-destructive-text");
     expect(screen.queryByText(/deleted/i)).not.toBeInTheDocument();
@@ -313,7 +313,7 @@ describe("RunRowsTab", () => {
         shared_rows: [
           {
             collection_slug: "popular",
-            row_title: "👥 Popular Movies on SFLIX",
+            row_title: "👥 Popular Movies on Home Server",
             status: "skipped",
             error: null,
             reason:
@@ -813,7 +813,7 @@ describe("RunRowsTab — per-row cost", () => {
    *  but `_row_timer` wraps the loop body and starts BEFORE the cancel check, so a cost exists for
    *  it anyway. That cost is what the person list used to render, as a green tick beside "0s". */
   const cancelledMidPerson = run({
-    status: "cancelled",
+    status: "aborted",
     users: [
       user({
         duration_ms: PERSON_WHOLE_RUN_MS,
@@ -856,7 +856,7 @@ describe("RunRowsTab — per-row cost", () => {
     // breakdown too — so exactly the person this exists to catch still got a tick. What actually
     // separates the two is whether per-row COST was recorded at all.
     const onlyRowSkipped = run({
-      status: "cancelled",
+      status: "aborted",
       users: [
         user({
           duration_ms: PERSON_WHOLE_RUN_MS,
@@ -935,7 +935,7 @@ describe("RunRowsTab — a shared row that hasn't built yet", () => {
       } as unknown as Partial<RunDetail>),
     );
 
-    expect(screen.getByText("👥 Popular on SFLIX")).toBeInTheDocument();
+    expect(screen.getByText("👥 Popular on Home Server")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
 
     // Sole row, so it is already open — the panel must explain itself rather than be an empty box.

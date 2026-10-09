@@ -869,7 +869,7 @@ class TestSettingsApi:
             ok = client.post("/api/settings/test/notify").json()
         assert ok["ok"] is True and "204" in ok["message"]
         sent = json.loads(route.calls.last.request.content)
-        assert sent | {"sent_at": ""} == notify.webhook_body(notify.test_item(), now=None) | {"sent_at": ""}
+        assert sent | {"sent_at": ""} == notify.webhook_body(notify.sample_item(), now=None) | {"sent_at": ""}
         assert sent["source"] == "shortlist" and sent["id"] == "notify-test"
         assert set(off) == {"ok", "message"} and set(ok) == {"ok", "message"}
 

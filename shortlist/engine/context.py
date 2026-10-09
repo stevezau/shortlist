@@ -58,7 +58,7 @@ class EngineContext:
     # (owner_slug, row_slug, section_key) -> last run's delivered picks for that row+library, newest
     # first. Carried forward so a row is REUSED unchanged on non-refresh nights (`refresh_days` is the
     # refresh CADENCE) instead of re-curated from scratch every night — the fix for the nightly
-    # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
+    # full-row churn that staleness_runs=3 used to force (a large production server 2026-07-20). Empty -> every row
     # bootstraps by curating fresh, exactly like a first run.
     previous_picks: dict[tuple[str, str, str], list[Pick]] = field(default_factory=dict)
     # What earlier real runs showed, for an AI row's no-repeat and keep-out controls (#138); None on direct

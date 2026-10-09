@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isActiveJob, jobDuration, jobStatusTone } from "@/lib/job-status";
+import { jobDuration, jobStatusTone } from "@/lib/job-status";
 import type { Job } from "@/lib/types";
 
 function job(patch: Partial<Job> & { id: number }): Job {
@@ -80,12 +80,6 @@ describe("jobDuration", () => {
 });
 
 describe("job status helpers", () => {
-  it("counts queued and running as active", () => {
-    expect(isActiveJob(job({ id: 1, status: "queued" }))).toBe(true);
-    expect(isActiveJob(job({ id: 2, status: "running" }))).toBe(true);
-    expect(isActiveJob(job({ id: 3, status: "done" }))).toBe(false);
-  });
-
   it("only colours a failure", () => {
     expect(jobStatusTone("failed")).toContain("destructive");
     expect(jobStatusTone("done")).not.toContain("destructive");

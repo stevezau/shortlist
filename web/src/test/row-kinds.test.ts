@@ -35,20 +35,11 @@ import {
 } from "@/lib/row-kinds";
 import { ROW_TEMPLATE_GROUPS } from "@/lib/row-templates";
 import type { CollectionInput } from "@/lib/types";
-import { FIXTURES as SAVED_ROWS } from "@/test/row-kind-fixtures";
+import { BYW_NAME, CTX, FIXTURES as SAVED_ROWS } from "@/test/row-kind-fixtures";
 
-const CTX: RowKindContext = {
-  isDefault: false,
-  globalMaxSeeds: 30,
-  defaultRowName: "✨ {library_name} Picked for You",
-  globalSources: ["tmdb_similar", "tmdb_discover"],
-  seasonCatalogue: ["valentines", "halloween", "christmas"],
-  builtinSeasons: ["valentines", "halloween", "christmas"],
-};
 const DEFAULT_CTX: RowKindContext = { ...CTX, isDefault: true };
 
 const PICKS_NAME = "✨ {library_name} Picks";
-const BYW_NAME = "🎯 Because you watched {top_seed}";
 const AGAIN_NAME = "☕ {library_name} you've already seen";
 const POPULAR_NAME = "👥 Popular {library_name} on this server";
 const REQUESTS_NAME = "📬 {library_name} you asked for";

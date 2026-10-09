@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
 import type { AccountPrivacy, Collection, PrivacyStatus, RowSources, User, UserPatch } from "@/lib/types";
 import { UsersPage } from "@/pages/users";
+import { makeUser } from "@/test/user-fixtures";
 
 const { toastSuccess } = vi.hoisted(() => ({ toastSuccess: vi.fn() }));
 
@@ -86,32 +87,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-const SARAH: User = {
-  manage_sharing: true,
-  id: 4,
-  username: "sarah",
-  slug: "sarah",
-  user_type: "shared",
-  restricted: false,
-  enabled: true,
-  cold_start: false,
-  history_depth: 120,
-  last_run_at: null,
-  request_tag: "",
-  requested_by_tag: "",
-  picks_watched_30d: null,
-  last_pick_watched_at: null,
-  nickname: "",
-  friendly_name: "",
-  display_name: "",
-  avatar_url: "",
-  plex_account_id: 0,
-  restriction_profile: "",
-  unhidden_rows: 0,
-  departed: false,
-  preview_titles: [],
-  prefs: {},
-};
+const SARAH: User = makeUser({ id: 4, history_depth: 120 });
 
 const MIKE: User = { ...SARAH, id: 5, username: "mike", slug: "mike" };
 
@@ -1123,15 +1099,6 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Done selecting" }));
     expect(screen.queryByRole("checkbox", { name: "Select sarah" })).toBeNull();
-  });
-
-  it("pulls new people from Plex with the page's one primary action", async () => {
-    getUsers.mockResolvedValue([SARAH]);
-    renderPage();
-
-    await userEvent.click(await screen.findByRole("button", { name: "Add people" }));
-
-    await waitFor(() => expect(syncUsers).toHaveBeenCalledTimes(1));
   });
 
   it("says what pausing really does: rows come off Home, nothing is deleted", async () => {

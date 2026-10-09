@@ -4,7 +4,7 @@ The PMS half of the watching-account transfer. The plan itself is pure and lives
 `test_watch_replica.py`; this file is about the four reads that build a `WatchState` and the three
 endpoints that change one.
 
-Every response shape here was taken from a live probe against SFLIX (PMS 1.43.3.10896) on
+Every response shape here was taken from a live probe against a large production server (PMS 1.43.3.10896) on
 2026-08-25 — see `.claude/docs/watching-account-transfer-design.md`.
 """
 
@@ -303,7 +303,7 @@ class TestTheRecordedResponses:
 
     A fixture nothing reads is documentation, not a fixture (rule 11). These exist because the whole
     replication turns on what these four reads return, and every one of them was an assumption until
-    a live probe on 2026-08-25 (SFLIX, PMS 1.43.3.10896).
+    a live probe on 2026-08-25 (a large production server, PMS 1.43.3.10896).
     """
 
     @staticmethod

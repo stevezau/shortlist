@@ -188,22 +188,3 @@ class AssistantOAuthRevokedFamily(Base):
 
     family_id: Mapped[str] = mapped_column(String(40), primary_key=True)
     revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class AssistantBootstrapFlow(Base):
-    """Deployment-controlled first-run proof awaiting Plex owner verification."""
-
-    __tablename__ = "assistant_bootstrap_flows"
-
-    id: Mapped[str] = mapped_column(String(40), primary_key=True)
-    client_id: Mapped[str] = mapped_column(String(255))
-    client_name: Mapped[str] = mapped_column(String(255))
-    deployment_proof_digest: Mapped[str] = mapped_column(String(64), unique=True)
-    expected_machine_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    owner_account_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    verified_machine_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    grant_id: Mapped[str | None] = mapped_column(ForeignKey("assistant_grants.id", ondelete="SET NULL"), nullable=True)
-    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

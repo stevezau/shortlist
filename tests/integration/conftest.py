@@ -1,7 +1,4 @@
-"""Shared fixtures for the `tests/integration/test_api_*.py` files split from the old
-`test_api.py` (see `.claude/docs/review-backlog.md` §6.5) — full app via TestClient, real
-lifespan, tmp SQLite, forged owner session.
-"""
+"""Shared `client` fixture for the API tests: real app via TestClient, tmp SQLite, forged owner session."""
 
 from __future__ import annotations
 
@@ -31,7 +28,7 @@ OWNER_JSON = {
 
 @pytest.fixture
 def client(tmp_path: Path):
-    """The one `client` fixture shared by every `test_api_*.py` file: a real app + TestClient,
+    """The default `client` fixture (test_requests_api.py defines its own): a real app + TestClient,
     a linked server (so owner checks are active), and two pre-seeded users (sarah, mike)."""
     app = create_app(config_dir=tmp_path)
     with TestClient(app) as test_client:

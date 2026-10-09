@@ -21,12 +21,14 @@ import { runOutcome } from "@/lib/run-outcome";
 import type { RunFinishedEvent } from "@/lib/types";
 import { api, apiErrorMessage } from "@/lib/api";
 import { useRun, useUsers } from "@/lib/queries";
-import { describeCounts, RUN_STAGES, STAGE_LABELS } from "@/lib/run-stages";
+import { describeCounts, isTerminalStage, RUN_STAGES, STAGE_LABELS } from "@/lib/run-stages";
+import { TOTAL_STEPS } from "@/lib/wizard";
 import { useSSE } from "@/lib/sse";
 import type { Pick, RunUserStageEvent, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 import type { StepProps } from "./step-props";
+import { personName } from "@/lib/user-names";
 
 function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds} seconds`;
@@ -83,7 +85,7 @@ function ProgressCard({
   privacyFlagged: boolean;
 }) {
   const stage = progress?.stage;
-  const terminal = stage === "done" || stage === "cold_start" || stage === "error" || stage === "skipped";
+  const terminal = isTerminalStage(stage);
   const active = !!progress && stage !== "queued" && !terminal && !runFinished;
 
   let detail: string;
@@ -118,7 +120,7 @@ function ProgressCard({
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <p className="font-medium">{user.display_name || user.username}</p>
+            <p className="font-medium">{personName(user)}</p>
             {active && <StageTrail stage={stage ?? ""} />}
           </div>
           <p
@@ -214,7 +216,7 @@ export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
   // Stored terminal results are authoritative after a reconnect; live stages fill the in-flight gaps.
   const userProgress = (user: User) => {
     const recorded = recordedProgress[user.slug];
-    return recorded && ["done", "cold_start", "error", "skipped"].includes(recorded.stage)
+    return recorded && isTerminalStage(recorded.stage)
       ? recorded : progress[user.slug] ?? progress[user.username] ?? recorded;
   };
 
@@ -280,7 +282,7 @@ export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
     setHeader?.({
       title: headerTitle,
       why: headerWhy,
-      stepLabel: "Step 7 of 7 · Done",
+      stepLabel: `Step ${TOTAL_STEPS} of ${TOTAL_STEPS} · Done`,
       badge: { text: `run ${finishedStatus}`, variant: badgeVariant },
     });
     return () => setHeader?.(null);
@@ -311,7 +313,7 @@ export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
               </p>
               {willGetRow.length > 0 && (
                 <p className="text-sm text-muted-foreground">
-                  {willGetRow.map((user) => user.display_name || user.username).join(", ")}
+                  {willGetRow.map((user) => personName(user)).join(", ")}
                 </p>
               )}
               {usersQuery.data !== undefined && willGetRow.length === 0 && (
@@ -369,10 +371,7 @@ export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
                 const p = userProgress(user);
                 return (
                   p &&
-                  (p.stage === "done" ||
-                    p.stage === "cold_start" ||
-                    p.stage === "error" ||
-                    p.stage === "skipped")
+                  isTerminalStage(p.stage)
                 );
               });
             return (

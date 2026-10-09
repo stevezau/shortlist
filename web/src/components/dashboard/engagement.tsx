@@ -12,6 +12,7 @@ import type {
   EngagementReport,
   ReportWindow,
 } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 /**
  * What is NOT working, and nothing else.
@@ -142,7 +143,7 @@ function gaveUp(people: EngagementReport["people"]): Problem[] {
       //
       // They are still counted, in the "gave up part-way" tile. What they are not is a finding.
       if (pick.outcome === "dropped") {
-        out.push({ person: person.display_name || person.username, pick });
+        out.push({ person: personName(person), pick });
       }
     }
   }

@@ -448,7 +448,7 @@ class ContextBuilder:
                 """The server as ONE user sees it, for the privacy check on accounts Plex refuses a
                 hide-list for.
 
-                Reuses `ShareTokenWatchSource._token_for` rather than reading the shared-server list
+                Reuses `ShareTokenWatchSource.server_token_for` rather than reading the shared-server list
                 directly, for two reasons. It has the CANARY fallback: a managed Home profile that was
                 never separately shared is absent from `shared_server_tokens()` — and that is exactly
                 the archetype this check exists for, so a bare lookup returned None and the account was
@@ -456,7 +456,7 @@ class ContextBuilder:
                 to stop. It also memoises the roster behind a lock, so this does not re-fetch plex.tv
                 once per profiled account per run (rule 6).
                 """
-                token = _history._token_for(profile)
+                token = _history.server_token_for(profile)
                 return PlexClient(_url, token, timeout=plex_timeout) if token else None
 
             provider = store.get("curator.provider")
@@ -551,7 +551,7 @@ class ContextBuilder:
                 pms_for_user=_pms_for_user,
                 # Same token `_pms_for_user` builds its client from — including the canary fallback
                 # for a Home profile that was never separately shared.
-                token_for_user=lambda profile, _history=history: _history._token_for(profile),
+                token_for_user=lambda profile, _history=history: _history.server_token_for(profile),
                 disabled_account_ids=disabled_account_ids,
                 unmanaged_account_ids=unmanaged_account_ids,
                 known_slugs=known_slugs,
@@ -1399,8 +1399,7 @@ class ContextBuilder:
             return PosterSpec(mode="upload", image=stored[0]) if stored else None
         # "text" (built-in Pillow) and "ai" (image provider) both render from title/subtitle/style;
         # "generate" is the pre-rename name for "ai". apply_poster maps the mode to a render engine.
-        # (Bug 2026-07-21: only "generate" was handled here, so the renamed "text"/"ai" modes silently
-        # yielded None and no poster was ever applied.)
+        # All three must be handled: dropping one silently yields None and no poster is ever applied.
         if mode in ("text", "ai", "generate"):
             return PosterSpec(
                 mode=mode,

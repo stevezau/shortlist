@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.curator import make_curator
 from shortlist.engine.models import MediaType, RowLimits
-from shortlist.engine.themes import _MOVIE_GENRE_IDS, ThemeSpec, theme_content_hash
+from shortlist.engine.themes import GENRE_IDS_BY_NAME, ThemeSpec, theme_content_hash
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.seasons import CollectionIO, TagIO, _off_loop, _plex
 from shortlist.server.auth import require_owner
@@ -361,7 +361,7 @@ def _refuse_unusable(draft: ThemeIn) -> None:
     """422 for a theme that would select nothing, or names a genre TMDB does not have."""
     if not (draft.tags or draft.genres or draft.collections or draft.picks):
         raise HTTPException(status_code=422, detail="Add at least one tag, genre, collection or title.")
-    unknown = [g for g in (*draft.genres, *draft.excluded_genres) if g.strip().lower() not in _MOVIE_GENRE_IDS]
+    unknown = [g for g in (*draft.genres, *draft.excluded_genres) if g.strip().lower() not in GENRE_IDS_BY_NAME]
     if unknown:
         raise HTTPException(status_code=422, detail=f"TMDB has no genre called “{unknown[0]}”.")
     low, high = draft.rules.min_year, draft.rules.max_year

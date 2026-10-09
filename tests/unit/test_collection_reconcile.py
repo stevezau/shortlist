@@ -759,7 +759,7 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_not_called()
-        assert events == [{"done": True, "total": 0}]
+        assert events == [{"done": True, "total": 0, "dry_run": False}]
 
     def test_an_empty_old_template_also_refuses_since_falsy_is_falsy(self, sessions):
         _add_user(sessions, slug="sarah", account_id=100)
@@ -775,7 +775,7 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_not_called()
-        assert events == [{"done": True, "total": 0}]
+        assert events == [{"done": True, "total": 0, "dry_run": False}]
 
     def test_renames_the_collection_matching_the_old_rendered_title(self, sessions):
         _add_user(sessions, slug="sarah", account_id=100)
@@ -798,7 +798,7 @@ class TestReconcileRowRenameIter:
             "new": "New Name",
             "libraries": ["Movies"],
         } in (events)
-        assert events[-1] == {"done": True, "total": 1}
+        assert events[-1] == {"done": True, "total": 1, "dry_run": False}
 
     def test_a_top_seed_row_given_a_plain_name_is_renamed_now_from_its_recorded_title(self, sessions):
         """A `{top_seed}` title renders to nothing without picks, so the screen matched nothing and said
@@ -850,7 +850,7 @@ class TestReconcileRowRenameIter:
             "new": "Comedy Picks",
             "libraries": ["Movies"],
         } in events
-        assert events[-1] == {"done": True, "total": 1}
+        assert events[-1] == {"done": True, "total": 1, "dry_run": False}
 
     @pytest.mark.parametrize(
         ("old_template", "worn"),
@@ -895,7 +895,7 @@ class TestReconcileRowRenameIter:
                 "libraries": ["Movies"],
                 "next_run": True,
             },
-            {"done": True, "total": 0},
+            {"done": True, "total": 0, "dry_run": False},
         ]
 
     CONFLICT = "(409) conflict; http://pms:32400/library/sections/1/all?id=771&title.value=X&type=18"
@@ -929,7 +929,7 @@ class TestReconcileRowRenameIter:
         assert collection.editTitle.call_args_list[-1].args == ("New Name" + row_marker(100),)
         assert plex.create_collection.call_args.args[2] == collection.items.return_value[:1]
         assert not any(e.get("error") for e in events), events
-        assert events[-1] == {"done": True, "total": 1}
+        assert events[-1] == {"done": True, "total": 1, "dry_run": False}
 
     def test_a_name_their_row_in_another_library_has_is_left_for_the_next_run_and_says_so(self, sessions):
         """Only a new collection can share that name, and a rename has no titles to build one from."""
@@ -950,7 +950,7 @@ class TestReconcileRowRenameIter:
         (pending,) = [e for e in events if e.get("user")]
         assert pending["next_run"] is True and pending["new"] == "New Name" and "error" not in pending
         plex.create_collection.assert_not_called()
-        assert events[-1] == {"done": True, "total": 0}
+        assert events[-1] == {"done": True, "total": 0, "dry_run": False}
 
     def test_a_name_something_in_that_library_really_has_is_reported_and_the_others_still_rename(self, sessions):
         _add_user(sessions, slug="sarah", account_id=100)
@@ -977,7 +977,7 @@ class TestReconcileRowRenameIter:
         assert refused["user"] == "sarah" and "already has" in refused["error"] and "(409)" not in refused["error"]
         assert refused["display_name"] == "sarah" and not refused["error"].startswith("sarah")
         mikes.editTitle.assert_called_once_with("New Name" + row_marker(200))
-        assert events[-1] == {"done": True, "total": 1}
+        assert events[-1] == {"done": True, "total": 1, "dry_run": False}
 
     def test_a_name_that_could_not_be_freed_is_not_blamed_on_something_holding_it(self, sessions):
         """Review 2026-09-14: every KEPT said "something else there already has that name", including a
@@ -1048,7 +1048,7 @@ class TestReconcileRowRenameIter:
         )
 
         plex.create_collection.assert_called_once()
-        assert events[-1] == {"done": True, "total": 1}
+        assert events[-1] == {"done": True, "total": 1, "dry_run": False}
 
     def test_a_shared_rows_refused_rename_is_said_plainly(self, sessions):
         collection = self._refusing("Old Shared Name" + row_marker(0))
@@ -1071,7 +1071,7 @@ class TestReconcileRowRenameIter:
 
         (refused,) = [e for e in events if e.get("error")]
         assert "already has that name" in refused["error"] and "(409)" not in refused["error"]
-        assert events[-1] == {"done": True, "total": 0}
+        assert events[-1] == {"done": True, "total": 0, "dry_run": False}
 
     def test_does_not_touch_a_different_row_sharing_the_same_label(self, sessions):
         _add_user(sessions, slug="sarah", account_id=100)
@@ -1114,7 +1114,7 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_called_once_with("New Shared Name" + row_marker(0))
-        assert events[-1] == {"done": True, "total": 1}
+        assert events[-1] == {"done": True, "total": 1, "dry_run": False}
 
     # ---- seasonal names (discussion #124) ----------------------------------------------------------
 
@@ -1141,7 +1141,7 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_called_once_with("Christmas for sarah" + row_marker(100))
-        assert events[-1] == {"done": True, "total": 1}
+        assert events[-1] == {"done": True, "total": 1, "dry_run": False}
 
     def test_out_of_season_it_keeps_the_season_it_last_wore(self, sessions):
         collection, plex = self._one_collection(sessions, "🎃 Halloween picks" + row_marker(100))
@@ -1169,7 +1169,7 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_not_called()
-        assert events == [{"done": True, "total": 0}]
+        assert events == [{"done": True, "total": 0, "dry_run": False}]
 
     def test_a_nickname_change_renames_a_seasonal_row_named_after_them(self, sessions):
         collection, plex = self._one_collection(sessions, "Christmas for Sal" + row_marker(100))
@@ -1221,7 +1221,7 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_not_called()
-        assert events == [{"done": True, "total": 0}]
+        assert events == [{"done": True, "total": 0, "dry_run": False}]
 
     def test_a_shared_rename_leaves_a_helper_and_an_unmarked_copy_alone(self, sessions):
         """Everything under a shared row's label used to be renamed, in listing order: a helper a killed run left
@@ -1279,7 +1279,7 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_not_called()
-        assert events[-1] == {"done": True, "total": 1}  # still counted as a would-be rename
+        assert events[-1] == {"done": True, "total": 1, "dry_run": True}  # still counted as a would-be rename
 
     def test_a_pms_failure_for_one_user_is_yielded_and_redacted_without_losing_anothers_success(self, sessions):
         _add_user(sessions, slug="ann", account_id=100)
@@ -1328,7 +1328,7 @@ class TestReconcileRowRenameIter:
             )
         )
 
-        assert events == [{"done": True, "total": 0}]
+        assert events == [{"done": True, "total": 0, "dry_run": False}]
 
     def test_an_unfillable_top_seed_template_skips_rather_than_retitling_to_the_blank_default(self, sessions):
         _add_user(sessions, slug="sarah", account_id=100)
@@ -1349,7 +1349,7 @@ class TestReconcileRowRenameIter:
         collection.editTitle.assert_not_called()
         # Nothing renamed now; reported as taking the name at the next run instead of a bare "renamed 0"
         # (backlog 2026-09-27) — see test_a_row_given_a_top_seed_name_is_reported_as_taking_it_at_the_next_run.
-        assert events[-1] == {"done": True, "total": 0}
+        assert events[-1] == {"done": True, "total": 0, "dry_run": False}
         assert all(e.get("next_run") for e in events[:-1])
 
     def test_old_display_names_covers_a_nickname_change_with_an_unchanged_template(self, sessions):
@@ -1372,7 +1372,7 @@ class TestReconcileRowRenameIter:
         )
 
         collection.editTitle.assert_called_once_with("For Sarah J" + row_marker(100))
-        assert events[-1] == {"done": True, "total": 1}
+        assert events[-1] == {"done": True, "total": 1, "dry_run": False}
 
 
 class TestRunReconcileAudit:
@@ -1483,6 +1483,26 @@ class TestRunRowRenameFromPlexAudit:
             event = session.query(Event).filter_by(scope="row.rename").one()
         assert event.message["new_template"] == "New Name"
         assert len(event.message["renames"]) == 1
+
+    @pytest.mark.parametrize("effective_dry_run", [True, False])
+    def test_the_audit_records_the_effective_dry_run(self, sessions, effective_dry_run):
+        """Rules 8 and 10: under a forced preview the audit must not read as renames that happened."""
+        _add_user(sessions, slug="sarah", account_id=100)
+        collection = _collection("Old Name" + row_marker(100))
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [_section("Movies")]
+        plex.find_owned_collections.side_effect = lambda sec, label: [collection] if label == "shortlist_sarah" else []
+        state = _state(sessions, plex, dry_run=effective_dry_run)
+
+        asyncio.run(
+            rec.run_row_rename_from_plex(
+                state, slug="comedy", new_template="New Name", old_template="Old Name", scope="row.rename"
+            )
+        )
+
+        with sessions() as session:
+            event = session.query(Event).filter_by(scope="row.rename").one()
+        assert event.message["dry_run"] is effective_dry_run
 
     def test_a_per_user_failure_is_joined_into_the_audited_error_and_redacted(self, sessions):
         _add_user(sessions, slug="bob", account_id=200)

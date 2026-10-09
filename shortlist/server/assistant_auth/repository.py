@@ -24,6 +24,7 @@ from .models import (
     AssistantOAuthToken,
 )
 from .policy import AuthorizationDenied, basic_role_capabilities, capabilities_for_preset, owner_managed_capabilities
+from .retention import prune_unused_oauth_clients
 from .types import (
     ASSISTANT_CAPABILITIES,
     Capability,
@@ -321,14 +322,6 @@ class AssistantAuthRepository:
                 if context := self._active_context(session, row, _now(now)):
                     return context
         return None
-
-    def list_grants(self, owner_account_id: int, *, include_revoked: bool = False) -> list[GrantContext]:
-        """List an owner's named integrations without credential material."""
-        with self.sessions() as session:
-            statement = select(AssistantGrant).where(AssistantGrant.owner_account_id == owner_account_id)
-            if not include_revoked:
-                statement = statement.where(AssistantGrant.revoked_at.is_(None))
-            return [_grant_context(row) for row in session.scalars(statement.order_by(AssistantGrant.created_at))]
 
     def list_grant_summaries(self, owner_account_id: int) -> list[GrantSummary]:
         """List owner-visible status without returning credential bodies or digests."""
@@ -750,8 +743,8 @@ class AssistantAuthRepository:
             session.refresh(row)
             return _effective_grant_context(session, row)
 
-    def revoke_grant(self, grant_id: str, *, now: datetime | None = None) -> bool:
-        """Immediately revoke a grant and all authentication through it."""
+    def revoke_grant(self, grant_id: str, *, owner_account_id: int | None = None, now: datetime | None = None) -> bool:
+        """Immediately revoke a grant and all authentication through it, and audit who did it."""
         timestamp = _now(now)
         with self.sessions() as session:
             changed = session.execute(
@@ -772,6 +765,11 @@ class AssistantAuthRepository:
                 .where(AssistantOAuthToken.grant_id == grant_id)
                 .values(access_revoked_at=timestamp, refresh_revoked_at=timestamp)
             )
+            if changed == 1:
+                actor = {"via": "browser", "account_id": owner_account_id} if owner_account_id else {"via": "system"}
+                session.add(
+                    Event(scope="assistant.grant.revoked", level="info", message={"grant_id": grant_id, "actor": actor})
+                )
             session.commit()
             return changed == 1
 
@@ -858,19 +856,6 @@ class AssistantAuthRepository:
             session.commit()
             return context
 
-    def list_local_credentials(
-        self,
-        grant_id: str,
-        *,
-        session: Session | None = None,
-    ) -> list[AssistantLocalCredential]:
-        """List metadata for a grant's local credentials."""
-        statement = select(AssistantLocalCredential).where(AssistantLocalCredential.grant_id == grant_id)
-        if session is not None:
-            return list(session.scalars(statement))
-        with self.sessions() as owned:
-            return list(owned.scalars(statement))
-
     def register_oauth_client(
         self,
         *,
@@ -900,6 +885,13 @@ class AssistantAuthRepository:
             session.add(row)
             session.commit()
         return row
+
+    def expire_unused_oauth_clients(self, *, now: datetime | None = None) -> int:
+        """Delete never-used dynamic clients so spam cannot hold the registration cap."""
+        with self.sessions() as session:
+            removed = prune_unused_oauth_clients(session, now=_now(now))
+            session.commit()
+            return removed
 
     def oauth_client_count(self) -> int:
         """Return the persisted public-client count for registration capacity control."""

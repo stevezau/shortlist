@@ -13,7 +13,7 @@ written down because it is a large change spanning the engine, the server and th
 Every bug found on 2026-07-28 has one root cause: **Shortlist applies changes imperatively to the
 users in tonight's run, and nothing ever reconciles anything else.**
 
-Confirmed on the maintainer's production server (SFLIX, 96 Shortlist collections):
+Confirmed on the maintainer's production server ( a large production server, 96 Shortlist collections):
 
 | Observation                                                                 | Cause                                                                                                                                                                                                         |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -622,7 +622,7 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
 
 - ~~`{top_seed}` restore placement~~ **CLOSED.** `promote_user_rows` takes `placement_keys`
   ({ratingKey -> row slug}) from the ledger and prefers it over any title, so an un-paused
-  `{top_seed}` row gets its configured placement even with run history wiped. Verified live on SFLIX
+  `{top_seed}` row gets its configured placement even with run history wiped. Verified live on a large production server
   with `DELETE /api/runs` first: the row came back Recommended-only, as configured, not on Home.
 - **MED, unchanged and by design**: placement / pin_top / mute / content settings are next-run-only —
   they change what a row IS, not who may see it, so there is nothing to write between runs.
@@ -828,10 +828,10 @@ now, at the door and at the point of use.
 
 ---
 
-## 15. Live verification on SFLIX, 2026-07-29
+## 15. Live verification on a large production server, 2026-07-29
 
 Run against the real server (50 accounts, 105 MB database) after deploying `199c6fa`. A throwaway row
-and Steve's own MooHouse account were used; no other user's row was touched.
+and Steve's own Guest account were used; no other user's row was touched.
 
 | What                                                  | Result                                                                                 |
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -869,7 +869,7 @@ path. **Only a live disable surfaced it**: every unit test exercised the per-row
 ## 16. The bug live testing found that no test would have (2026-07-29)
 
 **A scoped run rebuilt a DIFFERENT row's collection as itself.** Found by building a second row on
-SFLIX and watching the first row's Movies collection disappear.
+A large production server and watching the first row's Movies collection disappear.
 
 `deliver_rows` takes `sole_row`, which licenses it to treat a title mismatch as an in-place RENAME —
 safe only when there is genuinely one row that could have moved. It was derived from the rows the run
@@ -997,7 +997,7 @@ collections, with the row renamed so it reaches the key branch). All four fail o
 
 ## 19. The Recommended shelf: a co-managing tool owned it, and we only fought back once a night (2026-08-12)
 
-SFLIX's owner opened Manage Recommendations and found the "✨ Movies Picked for You" rows in three
+the production server owner opened Manage Recommendations and found the "✨ Movies Picked for You" rows in three
 disjoint blocks — 27 at the top, 5 in the middle, 14 stranded at the bottom, out of 46. Pressing
 "Privacy sync" and "Check and fix rows on Plex" changed nothing. Nothing was orphaned: all 46 rows
 were correctly labelled, marker-verified, in the delivery ledger, owned by enabled users, and
@@ -1083,7 +1083,7 @@ failure. It returns `verified`, and the audit records it at `warning` level when
 run and would otherwise have no record at all.
 
 **What was NOT established:** that Plex drops hub moves it answers 200 to. That was the first reading
-of the evidence and it is unproven — agregarr explains the observed shelf completely. Live on SFLIX
+of the evidence and it is unproven — agregarr explains the observed shelf completely. Live on a large production server
 the 19 planned moves converged and verified on the FIRST attempt, and the next pass returned "already
 in place". The retry/verify machinery is justified by honesty, not by a known Plex fault. Do not cite
 a Plex bug here without new evidence.
@@ -1106,7 +1106,7 @@ AFTER re-promote  own_home=True   homeVisibility='all'
 ```
 
 Reported upstream as [agregarr/agregarr#622](https://github.com/agregarr/agregarr/issues/622), where
-it is still open. The recovery ran 204 times in 24 hours on SFLIX; the same window put all 31 Kometa
+it is still open. The recovery ran 204 times in 24 hours on a large production server; the same window put all 31 Kometa
 collections in one library on `homeVisibility="all"`.
 
 **It matters because the owner is the one account with no share filter** (rule 5), so

@@ -31,7 +31,7 @@ const { putSettings, getSeerrOptions } = vi.hoisted(() => ({
         },
         {
           id: 7,
-          name: "MooHouse",
+          name: "Guest",
           auto_approve_movies: true,
           auto_approve_tv: false,
           is_plex_user: true,
@@ -108,7 +108,7 @@ describe("RequestsSettings", () => {
         },
         {
           id: 7,
-          name: "MooHouse",
+          name: "Guest",
           auto_approve_movies: true,
           auto_approve_tv: false,
           is_plex_user: true,
@@ -748,7 +748,7 @@ describe("RequestsSettings", () => {
       // and every title downloading immediately (reported on discussion #110).
       renderPanel(VIA_SEERR);
       expect(
-        await screen.findByRole("option", { name: /MooHouse/ }),
+        await screen.findByRole("option", { name: /Guest/ }),
       ).toBeTruthy();
       const groups = [...document.querySelectorAll("optgroup")].map(
         (g) => g.label,
@@ -762,7 +762,7 @@ describe("RequestsSettings", () => {
     it("says what picking a person costs THEM, at the moment it is picked", async () => {
       renderPanel({ ...VIA_SEERR, "requests.overseerr.request_as_user_id": 7 });
       const note = await screen.findByText(/count against their quota/);
-      expect(note.textContent).toMatch(/MooHouse/);
+      expect(note.textContent).toMatch(/Guest/);
     });
 
     it("says nothing of the sort for an account made for this", async () => {

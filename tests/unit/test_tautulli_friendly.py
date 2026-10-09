@@ -5,7 +5,7 @@ bug they guard was in the unwrap layer itself: Tautulli's ``get_users`` returns 
 response ``data`` (``{"response": {"result": "success", "data": [ ...users... ]}}``), whereas
 ``get_history`` nests another ``{"data": [...]}`` under it. ``_cmd`` unwraps ``data`` once, so for
 ``get_users`` its return IS the list — an old ``_cmd(...).get("data")`` raised AttributeError, which
-``sync_users`` swallowed, and every user fell back to their bare Plex username (shipped to SFLIX).
+``sync_users`` swallowed, and every user fell back to their bare Plex username (shipped to a large production server).
 A ``_cmd``-stub test could never catch that; it mocked the wrong shape.
 """
 

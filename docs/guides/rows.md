@@ -19,17 +19,17 @@ of the rows guide is split by question:
 
 ## Starting from a template
 
-There are ten starting templates: _Picked for You_, _Because you watched…_, _Watch it again_,
+There are eleven starting templates: _Picked for You_, _Because you watched…_, _Watch it again_,
 _Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_, _Movie night_
-and _More TV to watch_. **Rows → Add a row** opens the compact gallery, with search, filters and a
+_More TV to watch_ and _Describe a row_ (an [AI row]({{ '/guides/ai' | relative_url }}#an-ai-row), which needs an AI provider). **Rows → Add a row** opens the compact gallery, with search, filters and a
 preview of the selected template. Each tile describes what it changes; every field remains editable
 afterwards. **Use template** opens the editor; **Start from scratch** opens an empty row directly.
 _Your requests_ is for titles someone requested that are now ready on Plex.
 
 <figure class="shot">
-  <img src="{{ '/images/templates.webp' | relative_url }}" width="1440" height="860" loading="lazy"
-       alt="The Add a row dialog: ten template tiles, a search box and category tabs, with the selected template's preview and settings on the right.">
-  <figcaption><strong>Rows → Add a row</strong>: ten templates, each with a preview before you commit.</figcaption>
+  <img src="{{ '/images/templates.webp' | relative_url }}" width="1440" height="1400" loading="lazy"
+       alt="The Add a row page: the row kinds to pick from, starting templates, the name each person sees, and a preview of the row on Plex.">
+  <figcaption><strong>Rows → Add a row</strong>: pick a kind, name it, choose who gets it, and see the row before you add it.</figcaption>
 </figure>
 
 In the editor, **Per person / Shared** stays visible above **Row type**, whichever template you

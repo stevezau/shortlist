@@ -46,16 +46,19 @@ provably exists. And you get the thing a model is actually good at: a sentence e
 film follows from that one, which is what makes a row feel considered rather than random.
 
 Note that steps 1–3 need no AI at all. That's worth knowing before you buy an API key — the
-structural work is code, and the model is a finishing pass.
+structural work is code. Shortlist goes one step further: it does step 4 in code too, ranking the
+shortlist and writing the reason for each pick itself, so a model is never needed to explain a pick.
 
 ## Do you need an API key?
 
 No, and it's worth understanding what you're buying if you use one.
 
 **Without a model:** candidate generation, filtering and scoring all run in code. You get a correct,
-personalised row. What you don't get is natural-language reasoning about the shortlist.
+personalised row, with a plain-English reason on every pick. What you don't get is web search for
+recent titles TMDB misses, or an AI row you describe in your own words.
 
-**With a model:** better ordering on close calls, and per-pick explanations in real prose.
+**With a model:** it can search the web for recent titles, and it can build an AI row from a
+description. Ranking and the reason for each pick are still done in code.
 
 That's the honest delta. It's a nice improvement, not the difference between working and not
 working. Be suspicious of any tool that treats an API key as mandatory — it usually means the model
@@ -108,8 +111,8 @@ Questions worth asking, whichever you pick:
   actually watched?
 
 Shortlist runs the inverted shape: candidates come from TMDB and Trakt, are filtered to titles in
-your library, and only then does an optional model (Claude, GPT, Gemini, or an OpenAI-compatible
-server you run yourself) rank and explain them.
+your library, then ranked and explained in code. An optional model (Claude, GPT, Gemini, or an
+OpenAI-compatible server you run yourself) only helps find titles, through web search, or builds an AI row.
 
 {% include seo-closing.html shot="run-detail.webp" shot_w="1440" shot_h="1000"
    shot_alt="A finished run in Shortlist: the result, duration, people and privacy summary, then the picks built for sarah, each with the reason it was chosen, such as Because you watched drama like GoodFellas."

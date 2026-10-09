@@ -458,14 +458,6 @@ describe("RowRequestSettings", () => {
       expect(sonarrShown()).toBe(true);
       expect(tagShown()).toBe(true);
     });
-
-    it("never clears a hidden field's stored value", async () => {
-      const set = renderSection(
-        { req_radarr_root_folder: "/data/Kids" },
-        { target: "overseerr" },
-      );
-      expect(set).not.toHaveBeenCalled();
-    });
   });
 
   describe("the one-person demand warning", () => {

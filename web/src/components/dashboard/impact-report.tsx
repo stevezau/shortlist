@@ -24,6 +24,7 @@ import {
 import type { EffectivenessReport, ReportWindow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { dayTime } from "@/lib/when";
+import { personName } from "@/lib/user-names";
 
 const WINDOW_OPTIONS: { value: ReportWindow; label: string }[] = [
   { value: "7", label: "7 days" },
@@ -546,7 +547,7 @@ function ByPerson({ people }: { people: EffectivenessReport["per_user"] }) {
           to={`/users/${p.id}?tab=watched`}
           className="rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {p.display_name || p.username}
+          {personName(p)}
         </Link>
       }
       watched={p.watched}
@@ -1126,7 +1127,7 @@ function RecentlyWatched({
     i: number,
   ): React.ReactNode => {
     const verb = watchVerb(w);
-    const name = w.display_name || w.username;
+    const name = personName(w);
     return (
       <li
         // watched_at (when present) is a stable, unique-enough identity for this list;

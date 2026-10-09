@@ -455,33 +455,6 @@ def person_title_clash(session, secrets, collection: Collection, user: User, the
     return None
 
 
-def row_titled_from(
-    session,
-    template: str,
-    *,
-    secrets=None,
-    exclude_slug: str = "",
-    build: str = "",
-    fallback_name: str = "",
-    media: str = "both",
-    library_keys=(),
-    theme: ThemeSpec | None = None,
-) -> Collection | None:
-    """The first of `rows_titled_from`, or None."""
-    clashes = rows_titled_from(
-        session,
-        template,
-        secrets=secrets,
-        exclude_slug=exclude_slug,
-        build=build,
-        fallback_name=fallback_name,
-        media=media,
-        library_keys=library_keys,
-        theme=theme,
-    )
-    return clashes[0] if clashes else None
-
-
 def rows_titled_from(
     session,
     template: str,
@@ -1058,7 +1031,8 @@ def reconcile_row_rename_iter(
     — with ``"next_run": True`` when nothing was renamed now and the next run gives it the name, in which
     case ``new`` may be the raw template (a ``{top_seed}`` name has no title until a run picks the seed) —
     and {"user", "library", "error"} for a per-collection PMS failure.
-    At the end yields {"done": True, "total": n}.
+    At the end yields {"done": True, "total": n, "dry_run": effective}, where the flag is the one the
+    renames actually ran under (the chokepoint may have forced a preview).
     """
     may_free_name = None if holds_writer_lock else (lambda: not jobs.plex_writer_busy(state))
     with state.sessions() as session:
@@ -1158,7 +1132,7 @@ def reconcile_row_rename_iter(
                     yield event
                 except Exception as e:  # pragma: no cover - PMS failure shape
                     yield {"user": slug, "library": lib_name, "error": redact(str(e))}
-        yield {"done": True, "total": total}
+        yield {"done": True, "total": total, "dry_run": dry_run}
         return
 
     for udata in users_data:
@@ -1285,7 +1259,7 @@ def reconcile_row_rename_iter(
                     message = redact(f"{type(e).__name__}: {e}")
                     logger.warning("{}: rename failed in {} ({})", udata["slug"], lib_name, message)
                     yield {"user": udata["slug"], "library": lib_name, "error": message}
-    yield {"done": True, "total": total}
+    yield {"done": True, "total": total, "dry_run": dry_run}
 
 
 def _renamed_titles(
@@ -1365,8 +1339,11 @@ async def run_row_rename_from_plex(
     entries: list[dict] = []
     failures: list[str] = []
     error: str | None = None
+    # Floor of safe mode: if the iterator never reached its done event, assume the preview was forced.
+    effective_dry_run = force_dry_run()
 
     def _collect() -> None:
+        nonlocal effective_dry_run
         for event in reconcile_row_rename_iter(
             state,
             slug=slug,
@@ -1377,7 +1354,9 @@ async def run_row_rename_from_plex(
         ):
             if event.get("error"):
                 failures.append(f"{event.get('user', '?')}: {event['error']}")
-            elif not event.get("done"):
+            elif event.get("done"):
+                effective_dry_run = bool(event.get("dry_run", effective_dry_run))
+            else:
                 entries.append(event)
 
     try:
@@ -1388,7 +1367,16 @@ async def run_row_rename_from_plex(
     # audit distinguishes "nothing needed doing" from "some of it could not be done".
     if failures and error is None:
         error = "; ".join(failures)
-    write_audit(state, scope, "info", slug=slug, renames=entries, new_template=new_template, error=error)
+    write_audit(
+        state,
+        scope,
+        "info",
+        slug=slug,
+        renames=entries,
+        new_template=new_template,
+        dry_run=effective_dry_run,
+        error=error,
+    )
     logger.info(
         "{} '{}': renamed {} collection(s){}",
         scope,

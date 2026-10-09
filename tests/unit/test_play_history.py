@@ -45,7 +45,7 @@ class TestParsing:
             events = client.play_history()
 
         movie = next(e for e in events if e.rating_key == 456294)
-        assert movie.plex_account_id == 218833834
+        assert movie.plex_account_id == 1000001
         assert movie.media_type == "movie"
         assert movie.show_rating_key is None
         assert movie.viewed_at == datetime.fromtimestamp(1787395686, tz=UTC)
@@ -131,7 +131,7 @@ class TestPaging:
         assert events[0].viewed_at > events[1].viewed_at
 
     def test_a_row_missing_its_account_is_dropped_rather_than_attributed_to_nobody(self, client):
-        broken = FIXTURE.replace('accountID="218833834"', 'accountID=""')
+        broken = FIXTURE.replace('accountID="1000001"', 'accountID=""')
         with patch("shortlist.engine.clients.plex_pms.http_retry.get", return_value=_response(broken)):
             events = client.play_history()
 

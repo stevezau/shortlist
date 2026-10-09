@@ -180,7 +180,7 @@ def test_0109_preserves_existing_rows_indexes_and_foreign_keys_and_prevents_reus
             ).fetchall()
             foreign_keys = {table: db.execute(f"PRAGMA foreign_key_list({table})").fetchall() for table in tables}
 
-        command.upgrade(_alembic(tmp_path), "head")
+        command.upgrade(_alembic(tmp_path), "0109")
 
         with closing(sqlite3.connect(tmp_path / "shortlist.db")) as db:
             assert db.execute("SELECT version_num FROM alembic_version").fetchone() == ("0109",)

@@ -37,8 +37,9 @@ from shortlist.server.db.models import (
     WatchSession,
     iso_utc,
 )
+from shortlist.server.services.delivery_snapshots import utc as _as_utc
 from shortlist.server.services.report_cache import current_generation, get_cached_report, store_report
-from shortlist.server.services.run_service import HIT_WINDOW_DAYS
+from shortlist.server.services.run_persistence import HIT_WINDOW_DAYS
 from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
 
@@ -110,12 +111,6 @@ def _period_is_comparable(started_running: datetime | None, prev_since: datetime
     if prev_since is None or started_running is None:
         return False
     return started_running <= prev_since
-
-
-def _as_utc(value: datetime) -> datetime:
-    """SQLite hands back naive datetimes for some columns and aware ones for others; comparing the
-    two raises. Treat naive as UTC, which is what every writer in this app stores."""
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _in_period(column, start, end=None) -> list:
@@ -452,7 +447,7 @@ class _RowNamer:
         # override tier of engine `resolve_row_template` is dropped for this aggregate label, and a
         # custom row uses its stored name). Rendered per library below.
         # The default row's template is the GLOBAL one, full stop — never its own column. The engine
-        # forces that column empty when it builds specs (`context_builder.py:604,698`), so reading it
+        # forces that column empty when it builds specs, so reading it
         # here made reports the one surface that could disagree with what Plex actually got: a
         # database carrying a stale value (written before the API guarded it) shows the old name for
         # ever, while delivery uses the global. Ignoring it makes this match delivery on both old and

@@ -44,6 +44,7 @@ import {
 } from "@/lib/queries";
 import { rowDisplayName } from "@/lib/run-rows";
 import type { AuditEvent, Run } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 type ModeFilter = "all" | "real" | "dry";
 
@@ -220,7 +221,7 @@ export function ChangesOnPlex() {
 
   const names = useMemo<NameLookup>(() => {
     const rows = new Map((collections.data ?? []).map((c) => [c.slug, rowDisplayName(c.name || c.fallback_name)]));
-    const people = new Map((users.data ?? []).map((u) => [u.slug, u.display_name || u.username]));
+    const people = new Map((users.data ?? []).map((u) => [u.slug, personName(u)]));
     return { row: (slug) => rows.get(slug) || undefined, person: (slug) => people.get(slug) || undefined };
   }, [collections.data, users.data]);
   const runs = useMemo(() => new Map((runsQuery.data ?? []).map((run) => [run.id, run])), [runsQuery.data]);

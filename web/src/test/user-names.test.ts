@@ -2,35 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { User } from "@/lib/types";
 import { displayNameLookup } from "@/lib/user-names";
+import { makeUser } from "@/test/user-fixtures";
 
-function user(overrides: Partial<User>): User {
-  return {
-    manage_sharing: true,
-    id: 1,
-    plex_account_id: 100,
-    username: "sarah_p",
-    slug: "sarah_p",
-    nickname: "",
-    friendly_name: "",
-    display_name: "",
-    avatar_url: "",
-    user_type: "shared",
-    restricted: false,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    enabled: true,
-    cold_start: false,
-    request_tag: "",
-    requested_by_tag: "",
-    prefs: {},
-    history_depth: 0,
-    last_run_at: null,
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    preview_titles: [],
-    ...overrides,
-  };
+function user(overrides: Partial<User> = {}): User {
+  return makeUser({ plex_account_id: 100, username: "sarah_p", slug: "sarah_p", ...overrides });
 }
 
 describe("displayNameLookup", () => {

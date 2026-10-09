@@ -43,6 +43,7 @@ import { RunProgress } from "@/components/runs/run-progress";
 import { useHashScroll } from "@/lib/use-hash-scroll";
 import { useSSE } from "@/lib/sse";
 import type { RunDetail, RunLogEntry, RunUserStageEvent } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 /** The people a run failed for, grouped by the reason — because 45 people can share one cause.
  *
@@ -66,7 +67,7 @@ function failuresByReason(
     // Unrecognised errors group by their own text, so they are never merged with each other.
     const key = bucket ?? `raw:${user.error}`;
     const group = groups.get(key) ?? { reason: user.error, people: [] };
-    group.people.push(user.display_name || user.username);
+    group.people.push(personName(user));
     groups.set(key, group);
   }
   return [...groups.values()].sort((a, b) => b.people.length - a.people.length);
@@ -176,7 +177,7 @@ export function RunDetailPage() {
   // Tab and the deep-linked person both live in the URL, so a refresh, a bookmark, and the link
   // from a person's Runs tab all land exactly where they said they would.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = (searchParams.get("tab") as RunTab | null) ?? "rows";
+  const tab: RunTab = searchParams.get("tab") === "log" ? "log" : "rows";
   // Deep link from a person's Recent runs. It survived the People tab's removal as a dead parameter:
   // the link was still built, nothing read it, and clicking "Run #NN" from someone's page landed on
   // the top of a run with forty others in it.

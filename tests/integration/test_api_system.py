@@ -619,7 +619,7 @@ class TestSystemResponseShapes:
     def test_the_library_list_is_read_from_plex_once_not_once_per_page_load(self, client: TestClient, monkeypatch):
         """`/libraries` backs every row card, the library picker and the placement settings, and each
         read is a PlexServer handshake plus a sections read. Plex serialises against its own database,
-        so on a busy server (one DELETE took 15.8s during a collection sweep, SFLIX 2026-08-04) every
+        so on a busy server (one DELETE took 15.8s during a collection sweep, a big server 2026-08-04) every
         page wanting a library list queued behind it. The list changes when someone adds a library."""
         from types import SimpleNamespace
 

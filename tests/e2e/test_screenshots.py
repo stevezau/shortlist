@@ -265,6 +265,8 @@ def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
         created = app.api("POST", "/api/collections", json=payload)
         assert created.status_code == 201, created.text
     _capture(shot_page, "/rows", "rows.webp", "preview-rows.webp", wait="Picked for You")
+    # The template gallery became the Add a row page, so templates.webp shows that page.
+    _capture(shot_page, "/rows/new", "templates.webp", wait="What this row will look like")
 
 
 @skip_unless_capturing
@@ -295,7 +297,8 @@ def test_capture_wizard_screenshot(fresh_shot_page: Page, fresh_app: ShortlistAp
     expect(page.get_by_role("button", name="Sign in with Plex")).to_have_count(0, timeout=LOAD)
     expect(page.get_by_text(FakePlexState.friendly_name, exact=True).first).to_be_visible(timeout=PROBE)
     expect(page.locator("button", has_text=pms_url).first).to_be_enabled(timeout=LOAD)
-    page.get_by_role("button", name="Run checks").click()
+    # The picker preselects the address that answered and runs the checks itself; "Run checks" now
+    # lives under a closed "Advanced" section, so clicking it would wait for a button nobody sees.
     expect(page.get_by_text("Plex Pass active")).to_be_visible(timeout=LOAD)
     page.wait_for_timeout(500)
     _fit_viewport(page)

@@ -1,6 +1,6 @@
 # Shortlist Rows & Prompt Tuning — Design
 
-**Status: proposal, for review. No code until approved.**
+**Status: shipped.** Rows, templates and per-row settings have been in production for months; this is the original proposal, kept for its reasoning. The current editor design is `.claude/docs/plans/row-editor-cleanup-design.md`.
 
 Shortlist today builds exactly one kind of row — a private "Picked for You" per user. This design turns
 that into one flexible concept — a **Row** — so an owner can define any number of curated rows, choose
@@ -283,7 +283,7 @@ collection_audience(collection_id FK, user_id FK)   -- only rows for audience = 
   "never exclude an all‑audience shared label" reduction, aggregate reason framing, Probe extension.
 - **Phase D — Audience/access control for shared Rows.** The audience‑aware `desired_excludes`, hiding
   a shared Row from non‑audience users, the full property‑test suite. _Only phase that adds privacy
-  write surface; ships last, most tests, verified `--dry-run` against SFLIX before any real write._
+  write surface; ships last, most tests, verified `--dry-run` against a large production server before any real write._
 
 ## 12. Remaining open questions
 

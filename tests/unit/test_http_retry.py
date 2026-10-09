@@ -133,7 +133,7 @@ class TestRedact:
         ],
     )
     def test_redacts_shapes_that_are_not_query_params(self, secret: str, text: str):
-        """These three probed unchanged before `_EXTRA_SECRETS` was merged in from `log_reader.scrub`
+        """These probed unchanged before `_EXTRA_SECRETS` was merged in from `log_reader.scrub`
         — and `redact()` is what guards API 502 details and `events` rows (plex-safety rule 9), so it
         must be at least as strong as the log view's own redaction."""
         from shortlist.engine.clients.http_retry import redact

@@ -147,7 +147,12 @@ class _ArrClient:
         # as an error the caller records, but keep the app's own message (it never contains secrets).
         if r.status_code >= 300:
             raise ArrError(f"{self.app_name} refused the add (HTTP {r.status_code}): {_first_error(r)}")
-        return r.json()
+        try:
+            return r.json()
+        except ValueError as e:
+            # The write succeeded; a non-JSON 2xx body (a proxy's page) must not escape as a bare ValueError
+            # and lose the pass's recorded outcomes.
+            raise ArrError(f"{self.app_name} answered with a body that is not JSON") from e
 
     def _throttle(self) -> None:
         """At most one write per ``min_write_interval`` seconds — be a polite client (rule 6 spirit)."""

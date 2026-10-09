@@ -74,10 +74,11 @@ from shortlist.server.db.models import (
     User,
     iso_utc,
 )
+from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import crontab_trigger
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs, poster_service, report_service
-from shortlist.server.services.audit import add_audit
+from shortlist.server.services.audit import add_audit, write_audit
 from shortlist.server.services.poster_service import load_upload
 from shortlist.server.services.row_mutations import (
     apply_prevalidated_row_update_in_session,
@@ -1280,7 +1281,7 @@ def _reject_duplicate_name(
     already_clashing: frozenset[str] = frozenset(),
     theme: ThemeSpec | None = None,
 ) -> None:
-    """Refuse a row title another row is already titled from — see `reconcile.row_titled_from` for
+    """Refuse a row title another row is already titled from — see `reconcile.rows_titled_from` for
     what "already titled from" means and why the `name` column is the wrong thing to compare.
 
     ``template`` is the EFFECTIVE template being proposed (`name_template or name`), not the raw name:
@@ -1691,36 +1692,6 @@ def _stranded_sections(
         return {str(s.key) for s in target_sections(sections, spec)}
 
     return targeted(old_media, old_keys) - targeted(new_media, new_keys)
-
-
-def _queue_reconcile(
-    state,
-    *,
-    slug: str,
-    build: str,
-    scope: str,
-    only_user_ids: list[int] | None = None,
-    template: str | None = None,
-    in_sections: list[str] | None = None,
-) -> None:
-    """Queue the removal of a row's Plex collections as a durable job.
-
-    Every one of these used to be a bare ``run_in_executor``: no retry, no record, and no check that a
-    run was not writing to the same server at that moment. A Plex outage at the instant of the edit lost
-    the work permanently — and nothing revisits a deleted or switched-off row, so those collections
-    stayed on the server for ever. As a job it retries with backoff, survives a container restart, waits
-    for a run to finish, and shows up on the Jobs page whether it succeeds or gives up.
-
-    The caller drains afterwards, so in the normal case it still happens immediately.
-    """
-    payload: dict = {"slug": slug, "build": build, "scope": scope}
-    if only_user_ids is not None:
-        payload["only_user_ids"] = only_user_ids
-    if template is not None:
-        payload["template"] = template  # the DELETE path: no row left to read it from on a retry
-    if in_sections is not None:
-        payload["in_sections"] = in_sections  # a NARROWED row: only the libraries it walked away from
-    jobs.enqueue(state.sessions, "row.reconcile", payload)
 
 
 def _apply_patch(
@@ -2306,56 +2277,6 @@ async def _plan_view(state, plan: list[PlannedWork], change: RowChange, *, warni
     return view
 
 
-async def _apply_plan(state, plan: list[PlannedWork], *, slug: str, build: str) -> None:
-    """Carry out a planned edit, in order, then drain whatever is still queued.
-
-    The order matters and is the planner's, not this function's: a `privacy.sync` drains the queue as
-    it goes, so every removal planned before it has actually happened by the time each account's
-    excludes are recomputed (plex-safety rule 1).
-
-    `build` is the row's build BEFORE the edit — the collections being removed are the old build's.
-    """
-    for work in plan:
-        if work.kind == RECONCILE:
-            _queue_reconcile(
-                state,
-                slug=slug,
-                build=build,
-                scope=work.scope,
-                only_user_ids=work.only_user_ids,
-                in_sections=work.in_sections,
-            )
-        elif work.kind == PRIVACY_SYNC:
-            await jobs.queue_privacy_sync(state, work.scope)
-        elif work.kind == RENAME:
-            # Re-renders per user and skips anyone whose title didn't actually change — so a user with
-            # their own `row_name_tpl` override is left alone. Best-effort + audited.
-            await reconcile.run_row_rename_from_plex(
-                state,
-                slug=slug,
-                new_template=work.new_template,
-                old_template=work.old_template,
-                scope=work.scope,
-            )
-        elif work.kind == POSTER_RESET:
-            await reconcile.run_poster_reset(state, slug=slug, build=build, scope=work.scope)
-        elif work.kind == VISIBILITY:
-            # The handler recomputes today's answer and keeps no state; queued with the row, it promotes that
-            # row alone (after the server-wide filter merge). A row whose day turned over while Plex was
-            # unreachable is the midnight job's, which is durable and retried. So is this one: an outage
-            # right now is retried rather than lost.
-            # Names the row: when its days are CLEARED and no other row on the server carries a
-            # schedule, the job's gate would otherwise see nothing to do and skip the very pass that
-            # puts this row back.
-            jobs.enqueue(state.sessions, "rows.visibility", {"row": slug})
-    # Anything queued above happens NOW when Plex is reachable; when it isn't, the worker retries it.
-    # AWAITED, unlike the delete below. An edit's Plex work IS the request: narrowing a row's
-    # libraries means "take it off those libraries", so returning 200 before that happened would
-    # report a change that has not been made. A delete is different — the row is gone from the DB,
-    # which is what the page is waiting to hear, and the cleanup is bookkeeping after the fact.
-    await jobs.drain_now(state, f"row '{slug}' was edited")
-
-
 # `response_model=None` because the return annotation is a union: FastAPI would otherwise try to
 # build a body model from it, which a 204 route may not have. The preview's shape is documented via
 # `responses` instead, so the SPA's generated types still know about it.
@@ -2521,6 +2442,11 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
     q: Queue = Queue()
 
     def _run():
+        renames: list[dict] = []
+        failures: list[str] = []
+        error: str | None = None
+        # Floor of safe mode: if the iterator never reaches its done event, assume the preview was forced.
+        effective_dry_run = force_dry_run()
         try:
             for event in reconcile.reconcile_row_rename_iter(
                 state,
@@ -2532,13 +2458,35 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
                 build=build,
                 dry_run=body.dry_run,
             ):
+                if event.get("error"):
+                    failures.append(f"{event.get('user', '?')}: {event['error']}")
+                elif event.get("done"):
+                    effective_dry_run = bool(event.get("dry_run", effective_dry_run))
+                else:
+                    renames.append(event)
                 q.put(event)
         except Exception as e:
             # Redacted: this catches anything the generator raises BEFORE its own per-collection
             # handler — a `plex.sections()` failure carrying a tokened URL — and it goes straight to
             # the browser (rule 9).
-            q.put({"error": redact(f"{type(e).__name__}: {e}")})
+            error = redact(f"{type(e).__name__}: {e}")
+            q.put({"error": error})
         finally:
+            # Rule 10: the stream does real editTitle writes, so it leaves the same audit row as
+            # `run_row_rename_from_plex`. Before the sentinel, so the audit exists once the stream ends.
+            try:
+                write_audit(
+                    state,
+                    "collection.rename",
+                    "info",
+                    slug=slug,
+                    renames=renames,
+                    new_template=new_template,
+                    dry_run=effective_dry_run,
+                    error=error or ("; ".join(failures) or None),
+                )
+            except Exception as audit_error:
+                logger.warning("rename audit not written: {}", redact(str(audit_error)))
             q.put(None)  # sentinel
 
     loop = asyncio.get_running_loop()

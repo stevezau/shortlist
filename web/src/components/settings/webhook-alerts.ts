@@ -106,5 +106,4 @@ export function useWebhookAlerts(settings: Settings) {
   return { save, enabled, toggle, events, toggleEvent, hasAddress, retry };
 }
 
-
 export type WebhookAlerts = ReturnType<typeof useWebhookAlerts>;

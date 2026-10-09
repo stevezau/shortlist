@@ -117,7 +117,7 @@ class SectionNotShared(RuntimeError):
 # Shortlist's invisible per-account title marker is exactly 64 zero-width chars (see
 # delivery.row_marker). Checked locally here rather than imported to avoid a delivery↔client import
 # cycle; the two definitions must stay in lockstep.
-_MARKER_CHARS = ("​", "‌")
+_MARKER_CHARS = ("\u200b", "\u200c")
 
 
 def has_shortlist_marker(title: str) -> bool:
@@ -385,7 +385,7 @@ class _TimingHTTPAdapter(HTTPAdapter):
 
     plexapi talks to the PMS through ``requests`` DIRECTLY, bypassing the logged ``http_retry`` wrapper
     that instruments Tautulli/TMDB — so a slow ``collection.items()``/``addItems``/``fetch`` was
-    completely invisible in the logs (SFLIX run 3: 465s per TV row with zero log lines, 2026-07-19).
+    completely invisible in the logs (a large production server run 3: 465s per TV row with zero log lines, 2026-07-19).
     Logs method + path + status + duration; the query string is dropped so the ``X-Plex-Token`` never
     reaches the log (rule 9).
     """
@@ -413,7 +413,7 @@ def _retrying_session() -> requests.Session:
     """A requests session that retries transient PMS failures (read/connect timeouts, 429, 5xx).
 
     plexapi talks to the PMS over ``requests``; without this a single slow response fails the whole
-    run (SFLIX run 3 died on one 30s read timeout). Only idempotent methods are retried, so a
+    run (a large production server run 3 died on one 30s read timeout). Only idempotent methods are retried, so a
     collection create/label (POST/PUT) is never repeated — just the reads that dominate a run.
     """
     retry = Retry(
@@ -444,7 +444,7 @@ _PMS_TIMEOUTS = (
 )
 
 #: Plex answering with a server error rather than dropping the connection. Same transient overload
-#: as a read timeout — SFLIX 2026-09-06: `PUT /library/collections/687180/items` returned 500 after
+#: as a read timeout — a large production server 2026-09-06: `PUT /library/collections/687180/items` returned 500 after
 #: exactly 10.0s while that very collection served eight GETs and a children read as 200 either
 #: side of it — but it arrives as a `BadRequest`, not a timeout, so the retry ladder never saw it
 #: and one wobble failed a whole user for the run.
@@ -505,7 +505,7 @@ def _retry_idempotent(
     * poster upload/reset — last write wins.
 
     At scale a busy PMS pushes these into read timeouts, and one un-retried timeout used to fail the
-    whole user (SFLIX 48-user rollout, 2026-07-18). The backoff also gives the server air.
+    whole user (a large production server 48-user rollout, 2026-07-18). The backoff also gives the server air.
 
     ``already_done`` is the exception type meaning "the thing you asked for is already true" on a
     RETRY — never on the first attempt, where it is a genuine surprise worth raising.
@@ -620,11 +620,11 @@ class PlexClient:
         # This 20s default is for the fast-fail connection probes (setup/test-connection/section list).
         # The RUN's client is built by context_builder with the configurable `plex.timeout_s` (default
         # 45), because a large TV library's collection rebuild legitimately takes 15-20s and 20s timed
-        # those out + retried (SFLIX 47-user run, 2026-07-20).
+        # those out + retried (a large production server 47-user run, 2026-07-20).
         # On why the default is 20, not 60: on a LAN PMS a single call taking >20s means the server is
         # stalled, not working, and waiting the full 60s just multiplied the damage (a stuck GET retried
-        # 4x = ~240s, serialized behind the write-lock; SFLIX run 3, 2026-07-19). The retrying session's
-        # backoff still covers real transients, and the reorder no longer holds the write-lock (deferred,
+        # 4x = ~240s, serialized behind the write-lock; a large production server, 2026-07-19). The retrying
+        # session's backoff still covers real transients, and the reorder no longer holds the write-lock (deferred,
         # best-effort) so the old "keep the ceiling high for the busy reorder" reason is gone.
         session = _retrying_session()
         if not follow_redirects:
@@ -1013,7 +1013,7 @@ class PlexClient:
         so a collection built from shows keeps `subtype="show"` even after its contents are
         swapped for movies. A mismatched collection is matched by neither `filterMovies` nor
         `filterTelevision`, which makes it impossible to hide from anyone — so it must be
-        deleted and recreated, never edited in place (SFLIX, 2026-07-12).
+        deleted and recreated, never edited in place (a large production server, 2026-07-12).
 
         The subtype is conclusive, so it answers on its own: falling through to the items would
         cost a PMS round-trip per user per library, every night, for rows that are already fine.
@@ -1055,7 +1055,7 @@ class PlexClient:
         # Keep the per-section cache WARM: append the new collection rather than wiping the whole
         # cache. Wiping meant every subsequent user re-read the ENTIRE (and growing) section.collections()
         # list to find their own row — O(N^2) PMS reads across a rollout, the dominant delivery cost on a
-        # busy server (SFLIX 48-user run, 2026-07-18). Its label is applied next (stored_label reloads
+        # busy server (a 48-user run, 2026-07-18). Its label is applied next (stored_label reloads
         # this same object in place), so the cached entry becomes correctly labelled.
         cached = self._collections_cache.get(section.key)
         if cached is not None:
@@ -1065,7 +1065,7 @@ class PlexClient:
     def stored_label(self, collection: Collection, label: str, *, extra: str | None = None) -> str:
         """Ensure `label` is on the collection and return it AS STORED (Plex title-cases it).
 
-        ``extra`` puts a SECOND label on in the same write. Measured on SFLIX 2026-09-06: a label PUT
+        ``extra`` puts a SECOND label on in the same write. Measured on a large server 2026-09-06: a label PUT
         costs ~9.3s whatever it carries, and every new row takes two of them (its ``shortlist_<user>``
         and the constant ``shortlist``) — 64 PUTs, 593s, 21% of that run. plexapi's ``editTags``
         concatenates ``existing + items`` and issues ONE ``PUT /library/sections/<key>/all``, so
@@ -1323,7 +1323,7 @@ class PlexClient:
             By identifier. The manage listing keeps a collection's title from when it was promoted, so
             matching by title made every row renamed in place — a `{top_seed}` row, most nights — read
             as another tool's hub: the pass found the shelf out of order, rebuilt all of it, and
-            reported every row as put back (SFLIX, 2026-09-16). Title is only the fallback for an
+            reported every row as put back (a large production server, 2026-09-16). Title is only the fallback for an
             identifier that names no ratingKey at all.
             """
             rating_key = hub_rating_key(hub)
@@ -1549,7 +1549,7 @@ class PlexClient:
         items to add (``add_items``), so this makes ZERO extra PMS reads. It used to re-fetch
         ``collection.items()`` here — a second read of what the caller had just read — and the caller
         fetched ALL wanted items even when only a few changed. On a slow, single-writer PMS those reads
-        were the dominant per-user delivery cost, serialized across users (SFLIX, 2026-07-18).
+        were the dominant per-user delivery cost, serialized across users (a large production server, 2026-07-18).
 
         Ordering (Plex's ``moveItem``, one PMS round-trip per item, no bulk API) is deliberately NOT done
         here: it runs once at the very end via ``order_collection`` — best-effort, so a slow PMS degrades
@@ -1892,17 +1892,7 @@ class PlexClient:
         if dry_run:
             logger.info("DRY RUN: would mark ratingKey={} played for the target account", rating_key)
             return True
-        r = http_retry.get(
-            self._server.url("/:/scrobble", includeToken=False),
-            params={"key": str(rating_key), "identifier": "com.plexapp.plugins.library"},
-            headers={"X-Plex-Token": token, "Accept": "application/json"},
-            timeout=self._timeout,
-        )
-        if r.status_code in (401, 403, 404):
-            logger.debug("scrobble skipped for ratingKey={} (HTTP {})", rating_key, r.status_code)
-            return False
-        r.raise_for_status()
-        return True
+        return self._user_write("/:/scrobble", {"key": str(rating_key)}, rating_key, token)
 
     def unscrobble_as(self, rating_key: int, token: str, *, dry_run: bool = False) -> bool:
         """Mark one item UNWATCHED as another account — the only call here that removes state.
@@ -2284,7 +2274,7 @@ class PlexClient:
 
                 Done by ORDERING, not filtering: the read is sorted ``lastViewedAt:desc`` and stops at
                 the first title older than the cutoff. A `lastViewedAt>=` query filter was tried first
-                and is **silently ignored** by PMS 1.43.3 (live-probed 2026-07-30 against SFLIX:
+                and is **silently ignored** by PMS 1.43.3 (live-probed 2026-07-30 against a large production server:
                 unfiltered, `>=` and `>>=` all returned the same totalSize of 1077 — as did a `year>>=`
                 control, so param filtering on this endpoint does not work at all). Ignoring a filter
                 is the worst failure mode available: it returns everything while looking like it
@@ -2782,7 +2772,7 @@ class PlexClient:
         # 403 here is the PMS saying this token cannot see this library — an unshared library, not a
         # broken read. It has to be a distinct signal: treated as a generic failure it invalidated the
         # WHOLE person's watch cache on every sync, forcing an uncached complete re-read of every
-        # library for ever (SFLIX: two users, hourly, silently). See `SectionNotShared`.
+        # library for ever (a large production server: two users, hourly, silently). See `SectionNotShared`.
         if r.status_code == 403:
             raise SectionNotShared(f"section {section_key} is not shared with this user")
         r.raise_for_status()

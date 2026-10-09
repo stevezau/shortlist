@@ -1,7 +1,6 @@
 # Shortlist — Product & Technical Design
 
-**Status:** design complete; execution gated on one live privacy test · **Date:** 2026-07-12 ·
-**Predecessors:** [`ai-recommendations-design.md`](ai-recommendations-design.md) (the personal-script design this productizes) + [`ai-recommendations-research.md`](ai-recommendations-research.md) (May research) + July 2026 deep-research re-validation (99-agent sweep, 25/25 claims verified).
+**Status:** shipped (1.x, in production) · **Date:** 2026-07-12 · Original design, kept as the product and UX record; where it and the code disagree, the code wins. It rests on a personal-script prototype, May 2026 research and a July 2026 re-validation (99-agent sweep, 25/25 claims verified).
 
 ---
 
@@ -318,7 +317,7 @@ for each enabled user U:
   merged = current AND label!= (existing enforced label!= values ∪ desired_excludes)   # MERGE, never clobber
             # joined with `&`, never `|` — Plex reads `|` as OR (#116, see plex-safety rule 3)
   if merged == current: skip (steady-state nights are zero PUTs)
-  PUT plex.tv/api/users/{U.id}?filterMovies=…&filterTelevision=…   # throttle 1 req/s, 429 backoff
+  PUT plex.tv/api/users/{U.id}?filterMovies=…&filterTelevision=…   # adaptive throttle, 429 backoff (plex-safety rule 6)
   read back; assert; log diff
 ```
 
@@ -388,7 +387,7 @@ mutations. Docs firmly recommend not exposing Shortlist publicly; subpath + reve
 | Owner/admin account                     | always                        | Excluded from restrictions (Plex limit); banner + "use a viewing account" tip                                                                                                                                 |
 | Thin history (<10)                      | Step 4 + nightly              | Cold-start row (§5), auto-upgrade                                                                                                                                                                             |
 | User removed from server                | nightly diff                  | Their collection deleted, their label dropped from everyone's excludes, snapshot kept                                                                                                                         |
-| plex.tv 429s                            | response codes                | 1 req/s throttle + exponential backoff + resume; runs never half-apply (per-user transaction)                                                                                                                 |
+| plex.tv 429s                            | response codes                | adaptive throttle with 429 backoff (plex-safety rule 6) + resume; runs never half-apply (per-user transaction)                                                                                                                 |
 | TMDB down / LLM down                    | health probes per run         | degrade gracefully: reuse last candidates / heuristic mode; warn, never fail the whole run                                                                                                                    |
 | Very large libraries                    | index once/run + SQLite cache | O(library) once, O(user-history) per user; 10k-item library ≈ seconds                                                                                                                                         |
 | ~40 collections on owner's Home         | —                             | only the owner sees all (verified); collection mode "hide" keeps them out of library browse, and only the `label!=` excludes keep other accounts off them in the Collections tab (measured; the owner has no share, so sees every row there — docs/faq.md); incremental rollout guidance in docs; no evidence of Home-render degradation (researched July 2026)  |

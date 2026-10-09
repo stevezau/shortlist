@@ -124,7 +124,7 @@ class TestChoosingEvents:
     def test_every_event_is_in_the_body_that_leaves_the_server(self):
         item = {"id": "x", "severity": "info", "title": "t", "body": "b", "action_url": "/", "event": "run.started"}
         assert notify.webhook_body(item)["event"] == "run.started"
-        assert notify.webhook_body(notify.test_item())["event"] == "test"
+        assert notify.webhook_body(notify.sample_item())["event"] == "test"
 
 
 class TestRunEvents:
@@ -393,7 +393,7 @@ class TestAuthHeader:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(200))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert route.calls.last.request.headers["X-Gotify-Key"] == "s3cr3t-v4lue"
 
     def test_the_default_header_name_is_authorization(self, sessions, secrets):
@@ -401,7 +401,7 @@ class TestAuthHeader:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(200))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert route.calls.last.request.headers["Authorization"] == "Bearer abc123def456"
 
     def test_a_blank_name_sends_no_header(self, sessions, secrets):
@@ -414,7 +414,7 @@ class TestAuthHeader:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(200))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert "authorization" not in route.calls.last.request.headers
         assert "bearer abc123def456" not in {v.lower() for v in route.calls.last.request.headers.values()}
 
@@ -423,7 +423,7 @@ class TestAuthHeader:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(200))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert "authorization" not in route.calls.last.request.headers
 
     def test_the_value_never_reaches_an_error_message(self, sessions, secrets):
@@ -432,7 +432,7 @@ class TestAuthHeader:
         with respx.mock:
             respx.post(WEBHOOK).mock(side_effect=httpx.ConnectError(f"refused while sending {value}"))
             with sessions() as session, pytest.raises(notify.NotifyFailed) as caught:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert value not in str(caught.value)
 
     def test_the_escaped_form_of_the_value_is_scrubbed_too(self):

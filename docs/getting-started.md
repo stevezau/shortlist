@@ -70,7 +70,7 @@ nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in
 what claims the instance for you); from then on Shortlist only opens for that account.
 
 <figure class="shot">
-  <img src="{{ '/images/wizard.webp' | relative_url }}" width="1440" height="1000"
+  <img src="{{ '/images/wizard.webp' | relative_url }}" width="1440" height="755"
        alt="The Shortlist setup wizard on its Welcome step, with a seven-segment progress bar and a Get started button">
   <figcaption>The wizard's Welcome step.</figcaption>
 </figure>
@@ -88,7 +88,7 @@ The wizard has **7 steps**:
 2. **Connect Plex** — sign in with a PIN, then pick your server. Shortlist checks your Plex
    version, Plex Pass, and libraries, and tells you in plain English whether each one is OK.
 
-   <img src="{{ '/images/wizard-connect.webp' | relative_url }}" width="1440" height="783"
+   <img src="{{ '/images/wizard-connect.webp' | relative_url }}" width="1440" height="732"
         alt="The Connect Plex step after running checks: the discovered server with its reachable and unreachable addresses, and a checklist confirming the Plex version, Plex Pass and two libraries">
 
    Every address Plex advertises for your server is tried from where Shortlist actually runs, and
@@ -150,7 +150,7 @@ Everyone has a row and it will refresh on its own. Worth doing next:
 
 - **Check it landed.** Sign in as somebody who isn't you and confirm they see their row, and only
   theirs. The owner account sees everybody's, so it can't tell you this.
-- **Add another kind of row.** There are ten templates, including "Your requests".
+- **Add another kind of row.** There are eleven templates, including "Your requests" and the AI's "Describe a row".
   See [Rows and templates](guides/rows.md).
 - **Decide how often rows change.** Each row keeps its own schedule.
   See [Schedules](guides/schedules.md).

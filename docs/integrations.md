@@ -25,9 +25,9 @@ Plex Pass servers, so without it Shortlist cannot keep one person's row off ever
 | **Trakt**    | Titles TMDB misses, from its own lists                    | An API key, which now needs Trakt's paid VIP plan |
 | **MDBList**  | Ratings from IMDb, Rotten Tomatoes, Metacritic and Trakt  | A free API key                                    |
 
-## Who writes the reason next to a pick
+## AI providers
 
-Any one of these, or none — with none, Shortlist still writes a plain-English reason itself.
+Any one of these, or none. A model is used for web search and AI rows only. The reason next to each pick is always written by Shortlist itself, so no provider changes it.
 
 | Service                                              | What you need                        |
 | ---------------------------------------------------- | ------------------------------------ |

@@ -1637,7 +1637,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         """ "Check and fix rows on Plex" has to fix a row stranded at the bottom of the Recommended shelf.
 
         That is the literal complaint this button is pressed for, and it did nothing about it: the
-        handler only converged. On SFLIX it was pressed against a shelf holding 14 rows at the bottom
+        handler only converged. On a big server it was pressed against a shelf holding 14 rows at the bottom
         and reported success without issuing a single move (2026-08-12).
         """
         self._converge_spy(monkeypatch)

@@ -70,3 +70,23 @@ tests/e2e/assets/posters/
 
 # Personal deployment notes moved out of CLAUDE.local.md — never commit
 .claude/docs/local/
+
+# Generated or per-machine files that tools drop in the tree
+.coverage.*
+*.tsbuildinfo
+test-results/
+playwright-report/
+.mypy_cache/
+.vscode/
+Thumbs.db
+desktop.ini
+.superpowers/
+
+# Impeccable live-iteration scratch (any depth); web/.impeccable/ is the frontend's local copy
+**/.impeccable/live/
+web/.impeccable/
+
+# Secrets that must never be committed (the live ones sit in /config, but a stray copy is one cp away)
+secret.key
+session.secret
+*.pem

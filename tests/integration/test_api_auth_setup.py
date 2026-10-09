@@ -160,6 +160,15 @@ class TestAuthResponses:
         assert r.status_code == 502
         assert "plex.tv" in r.json()["detail"]
 
+    def test_a_plextv_outage_is_a_502_not_a_500(self, client: TestClient):
+        """An error status or a refused connection from plex.tv must not surface as an unhandled 500."""
+        with respx.mock:
+            respx.post("https://plex.tv/api/v2/pins").mock(return_value=httpx.Response(503))
+            assert client.post("/api/auth/pin").status_code == 502
+        with respx.mock:
+            respx.get("https://plex.tv/api/v2/pins/42").mock(side_effect=httpx.ConnectError("refused"))
+            assert client.get("/api/auth/pin/42").status_code == 502
+
     def test_a_pin_body_missing_its_fields_is_a_clean_error(self, client: TestClient):
         with respx.mock:
             respx.post("https://plex.tv/api/v2/pins").mock(return_value=httpx.Response(201, json={"unexpected": 1}))
@@ -368,7 +377,7 @@ class TestSetupApi:
             lambda *a, **k: SimpleNamespace(
                 version="1.43.3.10793",
                 machine_id="m1",
-                server_name="SFLIX",
+                server_name="Home Server",
                 # `key` is an int here for the same reason it is on a real PMS — see the test above.
                 sections=lambda: [SimpleNamespace(key=1, title="Movies", type="movie", totalSize=1200)],
             ),
@@ -407,7 +416,7 @@ class TestSetupApi:
             setup_probe,
             "PlexClient",
             lambda *a, **k: SimpleNamespace(
-                version="1.43.3.10793", machine_id="m1", server_name="SFLIX", sections=lambda: []
+                version="1.43.3.10793", machine_id="m1", server_name="Home Server", sections=lambda: []
             ),
         )
 
@@ -459,7 +468,7 @@ class TestSetupApi:
         self._sign_in_with_a_plex_token(client)
         resources = [
             {
-                "name": "SFLIX",
+                "name": "Home Server",
                 "clientIdentifier": "m1",
                 "provides": "server",
                 "owned": True,
@@ -488,7 +497,7 @@ class TestSetupApi:
         self._sign_in_with_a_plex_token(client)
         resources = [
             {
-                "name": "SFLIX",
+                "name": "Home Server",
                 "clientIdentifier": "m1",
                 "provides": "server",
                 "owned": True,
@@ -522,7 +531,7 @@ class TestSetupApi:
                     json={
                         "plex_url": f"https://8-8-8-8.{'a' * 32}.plex.direct:32400",
                         "machine_id": "m1",
-                        "server_name": "SFLIX",
+                        "server_name": "Home Server",
                         "version": "1.43.3.10793",
                         "owner_account_id": OWNER_ID,
                     },
@@ -545,13 +554,13 @@ class TestSetupApi:
                 json={
                     "plex_url": "http://pms:32400",
                     "machine_id": "m1",
-                    "server_name": "SFLIX",
+                    "server_name": "Home Server",
                     "version": "1.43.3.10793",
                     "owner_account_id": OWNER_ID,
                 },
             ).json()
 
-        assert body == {"linked": True, "server_name": "SFLIX"}
+        assert body == {"linked": True, "server_name": "Home Server"}
 
 
 class TestUninstall:

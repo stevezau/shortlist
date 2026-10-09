@@ -99,7 +99,7 @@ is private.
 
 | Start each row from a template                                        | Add as many rows as you like           |
 | --------------------------------------------------------------------- | -------------------------------------- |
-| ![The Add a row template gallery](docs/images/templates.webp) | ![The rows page](docs/images/rows.webp) |
+| ![The Add a row page](docs/images/templates.webp) | ![The rows page](docs/images/rows.webp) |
 
 | Every pick, and _why_ it was picked                    | Watch every run, step by step                    |
 | ------------------------------------------------------ | ------------------------------------------------ |
@@ -136,9 +136,9 @@ but nobody pictured here watched anything.</sub>
 
 **Make it yours**
 
-- 🎞️ **Six row kinds, ten templates.** Picked for You, Because you watched, Watch it again, Popular on
+- 🎞️ **Six row kinds, eleven templates.** Picked for You, Because you watched, Watch it again, Popular on
   this server (shared), Seasonal and Your requests. Start each row from a template (Fresh finds, From
-  the vault, Movie night and More TV to watch are the others) rather than a blank form. Every row has
+  the vault, Movie night, More TV to watch and the AI's Describe a row are the others) rather than a blank form. Every row has
   its own sources, size, libraries, cadence and audience, and you can add as many as you like.
 - 🗓️ **A rebuild cadence you control**: nightly, weekly, monthly or never, so nobody opens Plex to a
   completely reshuffled row every day.
@@ -169,7 +169,7 @@ but nobody pictured here watched anything.</sub>
 - 📊 **Know if it's working.** A dashboard tracks what was delivered against what people actually
   watched, per user and per row, and separates a title they **started** from one they **finished**.
 - 🖥️ **A clear dashboard.** Dashboard, Users, Privacy, Runs (with a per-person "How we picked") and Activity pages, including
-  "Changes on Plex", a row editor with a jump list, and three-tab Settings. See [the interface guide](https://shortlistapp.dev/guides/interface/).
+  "Changes on Plex", a row editor with a jump list, and four-tab Settings. See [the interface guide](https://shortlistapp.dev/guides/interface/).
 - 🧪 **Safe mode.** Set `SHORTLIST_DRY_RUN=1` to try it against your real server without writing a
   single change.
 - 📦 **Homelab-native**: one container, a `/config` volume, a multi-arch image on GHCR, a healthcheck

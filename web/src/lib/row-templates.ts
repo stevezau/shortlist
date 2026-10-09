@@ -52,10 +52,11 @@ export const ROW_TEMPLATES: RowTemplate[] = GENERATED_ROW_TEMPLATES;
 /** AI row starting points generated from the same backend catalog. */
 export const AI_TEMPLATES: RowTemplate[] = GENERATED_AI_TEMPLATES;
 
+/** Every template, ordinary rows first, then AI. */
+export const ALL_TEMPLATES: RowTemplate[] = [...ROW_TEMPLATES, ...AI_TEMPLATES];
+
 export function findRowTemplate(id: string): RowTemplate | undefined {
-  return [...ROW_TEMPLATES, ...AI_TEMPLATES].find(
-    (template) => template.id === id,
-  );
+  return ALL_TEMPLATES.find((template) => template.id === id);
 }
 
 /** Names a highlight may start with that keep their capital mid-sentence: the apps, and every season

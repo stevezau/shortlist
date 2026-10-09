@@ -13,12 +13,6 @@ export const ROW_SIZE_MIN = 5;
 export const ROW_SIZE_MAX = 40;
 export const ROW_SIZE_DEFAULT = 15;
 
-/** Clamp any typed row size into the allowed range and to a whole number. */
-export function clampRowSize(value: number): number {
-  if (!Number.isFinite(value)) return ROW_SIZE_DEFAULT;
-  return Math.max(ROW_SIZE_MIN, Math.min(ROW_SIZE_MAX, Math.round(value)));
-}
-
 /**
  * The seeded "Picked for You" row. Its name and size come from the global Settings, so the UI must
  * neither offer nor advertise per-row versions of those two on it. Its sources, libraries and

@@ -231,7 +231,6 @@ _WEB_RAG = _WebPrompt(
     ),
     count="Pick up to {k} of the titles mentioned in these articles. ",
 )
-_WEB_RAG_SYSTEM = _WEB_RAG.head + _WEB_RAG.guide + _WEB_RAG.tail
 
 _WEB_PICK = _WebPrompt(
     head=(
@@ -247,7 +246,6 @@ _WEB_PICK = _WebPrompt(
     ),
     count="Pick up to {k} of them. ",
 )
-_WEB_PICK_SYSTEM = _WEB_PICK.head + _WEB_PICK.guide + _WEB_PICK.tail
 
 _PROMPT_FOR_BACKEND = {"native": _WEB, "exa": _WEB_PICK, "searxng": _WEB_RAG}
 
@@ -419,7 +417,7 @@ def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
         # SHOW THE REPLY. Without it this line says only that something went wrong, and the seed's
         # candidates are gone with no way to tell a refusal ("I can't help with that") from a
         # truncated response from a provider wrapping the array in a key we do not unwrap — three
-        # different fixes. Observed twice on SFLIX 2026-09-06 with nothing recorded but this
+        # different fixes. Observed twice on a large production server 2026-09-06 with nothing recorded but this
         # sentence. Truncated because a reply can be thousands of tokens, and repr'd so that a
         # response which is empty or pure whitespace is visibly so rather than looking like a
         # missing log line.

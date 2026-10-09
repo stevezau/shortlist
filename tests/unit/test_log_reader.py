@@ -170,14 +170,14 @@ class TestTailAndZip:
         ever a third of the job — a log file's bulk is addresses."""
         write_log(
             tmp_path,
-            LINE.format(level="DEBUG", message="GET 172.16.10.240 -> 200 in 0.03s"),
-            LINE.format(level="ERROR", message="host='172.16.10.240', port=32400 unreachable"),
+            LINE.format(level="DEBUG", message="GET 192.168.1.10 -> 200 in 0.03s"),
+            LINE.format(level="ERROR", message="host='192.168.1.10', port=32400 unreachable"),
             LINE.format(level="INFO", message="PMS 1.43.3.10861 ok"),
         )
 
         body = zipfile.ZipFile(io.BytesIO(log_reader.build_zip(tmp_path))).read("logs/shortlist.log").decode()
 
-        assert "172.16.10.240" not in body
+        assert "192.168.1.10" not in body
         assert body.count("<host>") == 2
         assert "1.43.3.10861" in body, "a version string is not an address"
 
@@ -189,7 +189,7 @@ class TestTailAndZip:
         with the literal pass deleted — which is what the first version of this test did. `%252F` is a
         shape only the literal pass can catch, so this can only go green for the right reason.
         """
-        machine_id = "7ee8abc1bcdcc79389ad1e15c30e2692714bc940"
+        machine_id = "0123456789abcdef0123456789abcdef01234567"
         write_log(
             tmp_path,
             LINE.format(
@@ -210,7 +210,7 @@ class TestTailAndZip:
         """The ordering defect. A `plex.direct` hostname EMBEDS the machine id, so running the patterns
         first rewrites its middle to `<machine-id>` — after which the exact hostname no longer matches
         and the dashed LAN IP on the front survives into the export."""
-        machine_id = "7ee8abc1bcdcc79389ad1e15c30e2692"
+        machine_id = "0123456789abcdef0123456789abcdef"
         host = f"192-168-1-5.{machine_id}.plex.direct"
         write_log(tmp_path, LINE.format(level="DEBUG", message=f"GET {host} -> 200 in 0.03s"))
 

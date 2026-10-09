@@ -14,6 +14,23 @@ from shortlist.server.db.models import Collection, Event, RequestCandidate, User
 
 MAX_ASSISTANT_REQUESTS = 25
 
+__all__ = [
+    "MAX_ASSISTANT_REQUESTS",
+    "AutomaticRequestGuard",
+    "acquisition_review_token",
+    "apply_request_action_in_session",
+    "build_request_send_payload",
+    "durable_handled_requests",
+    "finish_candidate_in_session",
+    "finish_request_dispatch",
+    "missing_title",
+    "normalize_candidate_ids",
+    "recover_abandoned_request_dispatches",
+    "request_candidates_in_session",
+    "reserve_request_dispatches",
+    "start_manual_request_dispatch",
+]
+
 
 def normalize_candidate_ids(ids: list[int]) -> tuple[int, ...]:
     if not ids or len(ids) > MAX_ASSISTANT_REQUESTS or any(type(value) is not int or value <= 0 for value in ids):
@@ -422,17 +439,6 @@ def finish_candidate_in_session(session: Session, candidate_id: int, outcome) ->
     if outcome.status == "requested":
         row.status = "sent"
         row.sent_at = datetime.now(UTC)
-
-
-__all__ = [
-    "MAX_ASSISTANT_REQUESTS",
-    "apply_request_action_in_session",
-    "build_request_send_payload",
-    "finish_candidate_in_session",
-    "missing_title",
-    "normalize_candidate_ids",
-    "request_candidates_in_session",
-]
 
 
 def recover_abandoned_request_dispatches(sessions) -> int:

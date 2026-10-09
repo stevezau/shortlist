@@ -25,6 +25,7 @@ import {
   useSetAllUsersEnabled,
   useUsers,
 } from "@/lib/queries";
+import { personName } from "@/lib/user-names";
 
 /** Why this person has no row, said under their name so a switched-off switch is never a mystery. */
 function offReason(user: User): string {
@@ -138,7 +139,7 @@ export function StepUsers() {
               </div>
             ) : (
               <div>
-                <TransferSteps numbered={false} />
+                <TransferSteps />
                 <Button variant="ghost" size="sm" className="mt-2" onClick={() => setShowTransfer(false)}>
                   Not now
                 </Button>
@@ -239,7 +240,7 @@ export function StepUsers() {
                 {users.map((user) => (
                   <TableRow key={user.id}>
                     <TableCell>
-                      <p className="font-medium">{user.display_name || user.username}</p>
+                      <p className="font-medium">{personName(user)}</p>
                       {!user.enabled && (
                         <p className="mt-0.5 text-sm font-normal text-muted-foreground">{offReason(user)}</p>
                       )}

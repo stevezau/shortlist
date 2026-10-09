@@ -18,13 +18,14 @@ from dataclasses import replace
 from datetime import UTC, datetime
 
 from loguru import logger
+from plexapi.collection import Collection
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
 from shortlist.engine import seasons as seasons_mod
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plex_pms import TOP, log_title
-from shortlist.engine.clients.plextv import FilterWriteRefused
+from shortlist.engine.clients.plextv import FilterWriteRefused, PlexTvUser
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
     is_name_freeing_helper,
@@ -372,7 +373,7 @@ def _build_indexes(
     # WHICH libraries rows live in, and WHETHER to walk their contents, are two different questions.
     # This used to answer both with one list, so a run with no users — `engine_run(ctx, [])`, i.e. every
     # `privacy.sync` — got `delivery_sections = []` and the shelf-ordering phase then iterated nothing
-    # at all. That is the second, independent reason the SFLIX shelf could never be repaired by a job:
+    # at all. That is the second, independent reason a large server's shelf could never be repaired by a job:
     # even with the right rows to move, there were no libraries to move them in (2026-08-12).
     # Naming the sections is pure in-memory filtering of a list we already hold; it is the INDEXING
     # below that costs thousands of PMS reads, and that is what stays gated on there being users.
@@ -661,7 +662,7 @@ def _deliver_phase(
         try:
             # PMS timeouts are retried at the DELIVERY write (idempotent) inside _run_user, so a Plex
             # hiccup no longer re-runs the whole user's gather + ranking (which is what made a slow
-            # night catastrophic — SFLIX run 3, 2026-07-19). A timeout that exhausts the delivery
+            # night catastrophic — a large production server run 3, 2026-07-19). A timeout that exhausts the delivery
             # retries, or one from a non-delivery PMS read, falls through here and fails just this user.
             delivered = rows._run_user(
                 ctx,
@@ -851,7 +852,14 @@ def _record_filter_write(report: RunReport, user: UserProfile, written: dict[str
     entry["at"] = time.monotonic()
 
 
-def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> None:
+def _record_unhideable(
+    ctx: EngineContext,
+    user: UserProfile,
+    remote: PlexTvUser | None,
+    owned: dict[str, OwnedRow],
+    collections_known: bool,
+    report: RunReport,
+) -> None:
     """Check what an account we could not write a hide-list for can actually SEE, and record it.
 
     Only for accounts Plex genuinely refuses (a managed account with a parental profile) — every other
@@ -923,7 +931,7 @@ def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> N
     )
 
 
-def _leave_sharing_alone(ctx: EngineContext, user, remote, report: RunReport) -> None:
+def _leave_sharing_alone(ctx: EngineContext, user: UserProfile, remote: PlexTvUser | None, report: RunReport) -> None:
     """Strip Shortlist's excludes from an account the owner asked us not to manage, and audit it.
 
     Never raises and never blocks promotion. Everything this does REMOVES an exclusion of ours from
@@ -977,7 +985,14 @@ def _record_restored_restriction(
         report.restrictions_restored[user.plex_account_id] = user.username
 
 
-def _verify_filters_enforced(ctx, audience, roster, owned, collections_known, report) -> None:
+def _verify_filters_enforced(
+    ctx: EngineContext,
+    audience: list[UserProfile],
+    roster: Mapping[int, PlexTvUser],
+    owned: dict[str, OwnedRow],
+    collections_known: bool,
+    report: RunReport,
+) -> None:
     """Look through a real account's eyes and check our exclusions are actually being APPLIED.
 
     The gap this closes. The read-back above proves plex.tv STORED the filter string; nothing proved
@@ -1828,7 +1843,7 @@ def _converge_phase(
     Promotion is write-only and reaches a collection ONLY when its owner is in tonight's run. So a
     row belonging to anyone paused, disabled, deselected in a scoped run, errored, cancelled — or
     simply promoted by an older build with different rules — keeps whatever flags it last got, for
-    ever. That is how 5 other people's rows ended up parked on the maintainer's Home screen (SFLIX,
+    ever. That is how 5 other people's rows ended up parked on the maintainer's Home screen (a large production server,
     2026-07-28): the user-type-aware promote landed on 2026-07-27, but nothing went back for the
     collections it no longer visits.
 
@@ -1987,7 +2002,9 @@ def _converge_phase(
         )
 
 
-def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type: UserType | None = None) -> None:
+def _promote_one(
+    ctx: EngineContext, collection: Collection, spec: RowSpec | None, user_type: UserType | None = None
+) -> None:
     """Promote one collection with its row's placement, respecting the user type.
 
     Every person gets their OWN collection, so all three Plex flags are chosen per collection from
@@ -2091,7 +2108,7 @@ def _row_keys_by_slug(ctx: EngineContext, report: RunReport, section_key: str) -
     `report.users[].placement_titles`, which only ever holds rows delivered by THE RUN IN PROGRESS —
     so a `privacy.sync` (`engine_run(ctx, [])`, which is what the scheduled privacy-sync job and the
     "Fix privacy" button both run) had an empty map, every group came out empty, and the whole
-    ordering pass silently did nothing. On SFLIX that was 31 runs in one day reaching this code and
+    ordering pass silently did nothing. On a large production server that was 31 runs in one day reaching this code and
     issuing not one move (2026-08-12). The ledger is written by past runs, so it answers the same
     question for a run with no users at all.
 

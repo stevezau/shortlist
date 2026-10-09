@@ -363,7 +363,7 @@ class TestWatchedTitles:
         assert (10, MediaType.SHOW) in finished  # can't tell -> count as finished, don't re-recommend
 
     def test_a_returning_show_watched_a_lot_but_under_the_fraction_still_counts(self):
-        # SFLIX/MooHouse Gold Rush: 160 of 226 episodes = 71%, under show_pct — but 160 plays clearly
+        # a large production server Gold Rush: 160 of 226 episodes = 71%, under show_pct — but 160 plays clearly
         # means they're watching it, so the season-worth floor counts it as watched (was recommended).
         finished = self._finished(movies=set(), plays={40: 160}, episodes={40: 226})
         assert (40, MediaType.SHOW) in finished

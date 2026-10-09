@@ -33,7 +33,14 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "itsdangerous>=2.1",
     "cryptography>=42.0",
+    # Never imported by name: FastAPI requires it at request time to parse Form and UploadFile bodies
+    # (poster upload), so dependency checkers report it as unused. Removing it breaks those endpoints.
     "python-multipart>=0.0.9",
+    # Imported directly (requests/urllib3 in plex_pms and plex_reachability, starlette across the server,
+    # anyio in the assistant stdio bridge) but otherwise only present because plexapi, fastapi and mcp pull them in.
+    "requests>=2.31",
+    "starlette>=0.37",
+    "anyio>=4.0",
     "mcp==2.3.0",
     "Authlib==1.8.0",
     # The PMS notification socket (`watch_stream`). Already in the lock transitively via uvicorn's
@@ -67,6 +74,8 @@ dev = [
     # Local commit guard: runs the same ruff check + ruff format CI enforces, so a format slip is
     # caught at `git commit`, not in GitHub. Activate once per clone with `pre-commit install`.
     "pre-commit>=3.7",
+    # scripts/build_llms_full.py and build_feed.py read the docs' YAML data files.
+    "pyyaml>=6.0",
 ]
 
 [project.urls]

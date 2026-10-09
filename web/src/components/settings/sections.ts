@@ -139,7 +139,7 @@ export const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   { label: "Row name template", keywords: "row name library name user top seed", to: at("defaults", "row-defaults"), where: "Defaults" },
   { label: "How many titles", keywords: "row size length", to: at("defaults", "row-defaults"), where: "Defaults" },
   { label: "Let Shortlist order the Recommended shelf", keywords: "shelf order placement kometa agregarr", to: at("defaults", "placement"), where: "Defaults" },
-  { label: "Fill in the gaps automatically", keywords: "requests radarr sonarr overseerr missing", to: at("requests", "requests"), where: "Defaults" },
+  { label: "Fill in the gaps automatically", keywords: "requests radarr sonarr overseerr missing", to: at("requests", "requests"), where: "Requests" },
   { label: "Runs kept", keywords: "history retention months", to: at("system", "runs-retention"), where: "System" },
   { label: "Change log kept", keywords: "events audit retention", to: at("system", "events-retention"), where: "System" },
   { label: "Console log detail", keywords: "log level debug trace docker logs", to: at("system", "log-level"), where: "System" },

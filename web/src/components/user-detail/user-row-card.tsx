@@ -17,6 +17,7 @@ import { LIBRARY_NAME } from "@/lib/placeholders";
 import { resolveRowName } from "@/lib/run-rows";
 import { useSetUserRowOverride, useUserRows } from "@/lib/queries";
 import type { User, UserRow } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 import { userState } from "@/lib/user-state";
 
 /** The title an owner reads for one of a person's rows: this library and this person's lead seed
@@ -267,6 +268,7 @@ function OffRowsList({ rows, name }: { rows: UserRow[]; name: string }) {
 export function UserRowsSection({ user }: { user: User }) {
   const query = useUserRows(user.id);
   const off = userState(user) === "off";
+  const name = personName(user);
   return (
     <QueryBoundary
       query={query}
@@ -286,13 +288,13 @@ export function UserRowsSection({ user }: { user: User }) {
     >
       {(rows) =>
         off ? (
-          <OffRowsList rows={rows} name={user.display_name || user.username} />
+          <OffRowsList rows={rows} name={name} />
         ) : (
-        <div className="space-y-3">
-          {rows.map((row) => (
-            <UserRowCard key={row.collection_id} userId={user.id} name={user.display_name || user.username} row={row} />
-          ))}
-        </div>
+          <div className="space-y-3">
+            {rows.map((row) => (
+              <UserRowCard key={row.collection_id} userId={user.id} name={name} row={row} />
+            ))}
+          </div>
         )
       }
     </QueryBoundary>

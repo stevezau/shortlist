@@ -5,16 +5,14 @@ const sectionHeading = "text-sm font-semibold text-foreground";
 // `node` is react-markdown's syntax-tree node, passed to every override. Spread onto a DOM element it
 // would be rendered as an attribute, so each override drops it. Every heading level renders as one
 // small heading: release bodies use `###` for their sections, and the dialog's title sits above them.
+const heading: Components["h3"] = ({ node: _node, ...props }) => (
+  <h3 className={sectionHeading} {...props} />
+);
+
 const NOTES: Components = {
-  h1: ({ node: _node, ...props }) => (
-    <h3 className={sectionHeading} {...props} />
-  ),
-  h2: ({ node: _node, ...props }) => (
-    <h3 className={sectionHeading} {...props} />
-  ),
-  h3: ({ node: _node, ...props }) => (
-    <h3 className={sectionHeading} {...props} />
-  ),
+  h1: heading,
+  h2: heading,
+  h3: heading,
   h4: ({ node: _node, ...props }) => (
     <h4 className={sectionHeading} {...props} />
   ),

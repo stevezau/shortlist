@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { BlockedSeedsList } from "@/components/user-detail/blocked-seeds";
 import type * as ApiModule from "@/lib/api";
-import type { User, WatchItem } from "@/lib/types";
+import type { WatchItem } from "@/lib/types";
+import { makeUser } from "@/test/user-fixtures";
 
 const { getUserHistory, blockSeed, unblockSeed, searchTitles } = vi.hoisted(
   () => ({
@@ -41,7 +42,7 @@ function renderList(prefs: Record<string, unknown> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const user = { id: 7, username: "sarah", prefs } as unknown as User;
+  const user = makeUser({ id: 7, username: "sarah", prefs });
   render(
     <QueryClientProvider client={client}>
       <BlockedSeedsList user={user} />

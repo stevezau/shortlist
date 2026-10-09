@@ -553,14 +553,6 @@ def _used_by(session: Session, catalogue: seasons_mod.Catalogue) -> dict[str, li
     return used
 
 
-def _enabled_followers(session: Session, slug: str) -> list[Collection]:
-    """The enabled rows that follow the season, in the Rows page's order."""
-    rows = session.scalars(
-        select(Collection).where(Collection.enabled.is_(True)).order_by(Collection.sort_order, Collection.id)
-    )
-    return [row for row in rows if slug in (row.seasons or [])]
-
-
 def _today(
     row: Collection, seasons: list[str], now: datetime, catalogue: seasons_mod.Catalogue
 ) -> tuple[bool, RowSeason | None]:
@@ -729,20 +721,3 @@ async def _off_loop[T](read: Callable[[], T], what: str) -> T:
     except Exception as e:
         logger.warning("{} failed ({})", what, type(e).__name__)
         raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
-
-
-def _apply_visibility(state: State, rows: list[str], reason: str) -> None:
-    """Re-apply today's shown-or-hidden to these rows now, as the row editor does when a row's seasons change.
-
-    One `rows.visibility` pass per row, named, because the pass's own gate looks only at rows whose answer
-    changed in the past week — and it recomputes with today's catalogue, in which these rows' past days have
-    changed too. The handler promotes one named row at a time (`promote_user_rows(only_row=…)`), so the rows
-    cannot share a pass. Each pass merges every account's excludes before it promotes anything (plex-safety
-    rule 1).
-
-    Not awaited: each pass is a whole privacy sync, and the season is saved, which is what the editor is
-    waiting to hear. The jobs are durable and retried, and show in the header's activity popover.
-    """
-    for slug in rows:
-        jobs.enqueue(state.sessions, "rows.visibility", {"row": slug})
-    jobs.drain_in_background(state, reason)

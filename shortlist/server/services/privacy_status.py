@@ -220,7 +220,7 @@ def read_sharing_status(
     status.rows_on_plex = sorted(all_labels)
     # plex.tv gives us a USERNAME; `person()` and every other tool key on a SLUG, and `slugify`
     # lowercases and replaces punctuation — so they differ for essentially every real account
-    # ("MooHouse" -> "moohouse", "Chris Smith" -> "chris_smith"). Passing a username on as if it were
+    # ("Guest" -> "guest", "Chris Smith" -> "chris_smith"). Passing a username on as if it were
     # a slug made the per-person section 404 for exactly the people with a privacy fault.
     slug_of = {u.plex_account_id: u.slug for u in all_users}
     name_of = {u.plex_account_id: u.display_name for u in all_users}
