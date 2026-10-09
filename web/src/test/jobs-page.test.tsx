@@ -332,7 +332,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check now: Check and fix rows on Plex$/,
+        name: /^Run: Check and fix rows on Plex$/,
       }),
     );
 
@@ -359,7 +359,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check now: Check and fix rows on Plex$/,
+        name: /^Run: Check and fix rows on Plex$/,
       }),
     );
 
@@ -385,7 +385,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check now: Check and fix rows on Plex$/,
+        name: /^Run: Check and fix rows on Plex$/,
       }),
     );
 
@@ -418,7 +418,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check now: Check and fix rows on Plex$/,
+        name: /^Run: Check and fix rows on Plex$/,
       }),
     );
     runJob.mockClear();
@@ -446,7 +446,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check now: Check and fix rows on Plex$/,
+        name: /^Run: Check and fix rows on Plex$/,
       }),
     );
     await userEvent.click(
@@ -476,7 +476,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check now: Check and fix rows on Plex$/,
+        name: /^Run: Check and fix rows on Plex$/,
       }),
     );
     runJob.mockClear();
@@ -501,7 +501,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check now: Check and fix rows on Plex$/,
+        name: /^Run: Check and fix rows on Plex$/,
       }),
     );
 
@@ -533,7 +533,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check now: Check and fix rows on Plex$/,
+        name: /^Run: Check and fix rows on Plex$/,
       }),
     );
     await userEvent.click(
@@ -762,7 +762,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Clear now: Clear out old records$/,
+        name: /^Run: Clear out old records$/,
       }),
     );
 
@@ -821,6 +821,17 @@ describe("JobsPage — sync check", () => {
       const row = await screen.findByTestId(`job-${kind}`);
       expect(within(row).queryByText(/Changes Plex|Can delete/)).toBeNull();
     }
+  });
+
+  it("says Deletes data in plain text, never as a red tag, and gives every job the same verb", async () => {
+    renderPage();
+
+    const prune = await screen.findByTestId("job-maintenance.prune");
+    const tag = within(prune).getByText("Deletes data");
+    expect(tag.className).not.toMatch(/destructive/);
+    const check = await screen.findByTestId("job-sync.check");
+    expect(within(check).getByText("Can delete").className).not.toMatch(/destructive/);
+    expect(within(prune).getByRole("button", { name: /^Run: Clear out old records$/ })).toHaveTextContent(/^Run$/);
   });
 
   it("keeps the reassurance beside 'Can delete' visible, not in a hover title", async () => {

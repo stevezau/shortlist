@@ -18,6 +18,7 @@ import { ActivityFeed } from "@/components/jobs/activity-feed";
 import { BackupPanel } from "@/components/jobs/backup-panel";
 import { JobRow } from "@/components/jobs/job-row";
 import { MutationAlert } from "@/components/mutation-alert";
+import { NightlyRunCard } from "@/components/jobs/nightly-run-card";
 import { RowSchedules } from "@/components/jobs/row-schedules";
 import { Button } from "@/components/ui/button";
 import {
@@ -68,7 +69,7 @@ const PENDING_LABELS: Record<string, string> = {
  */
 const EFFECT_TAGS: Record<
   string,
-  { text: string; title: string; destructive?: boolean; note?: string }
+  { text: string; title: string; note?: string }
 > = {
   "sync.users": {
     text: "Changes Plex",
@@ -79,11 +80,15 @@ const EFFECT_TAGS: Record<
     text: "Can delete",
     title:
       "Writes corrections to Plex, and after you have read the preview and pressed Fix it can delete a collection for good. Nothing is deleted before you press Fix.",
-    destructive: true,
     // The reassurance was in the `title` above and nowhere else, so the only visible thing on the
     // row was a red "Can delete" — hover-only on a desktop, unreachable on a phone, next to a
     // button people then did not dare press. The scary half must never outlive the calming half.
     note: "Nothing is deleted until you read the preview and press Fix.",
+  },
+  // Plain text, not a warning: it only ever removes Shortlist's own old records, never anything on Plex.
+  "maintenance.prune": {
+    text: "Deletes data",
+    title: "Removes run history and change-log entries older than the retention limits in Settings.",
   },
   "privacy.sync": {
     text: "Changes Plex",
@@ -523,15 +528,11 @@ export function JobsPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* Not "the nightly run": these are five separate jobs on five separate timers, and rows
-          build on their own schedules again — there is no one nightly thing to wait for. */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          Background upkeep, each on its own timer. Press Run to do one now instead.
-        </p>
-        {/* Health at a glance, and only when there is something to say — a permanent "0 failed"
-            teaches you to stop reading it. */}
-        <div className="flex flex-wrap items-center gap-2">
+      <NightlyRunCard />
+
+      {/* Health at a glance, and only when there is something to say — a permanent "0 failed"
+          teaches you to stop reading it. */}
+      <div className="flex flex-wrap items-center justify-end gap-2 empty:hidden">
           {active > 0 && (
             <button
               type="button"
@@ -564,7 +565,6 @@ export function JobsPanel() {
             </span>
           )}
         </div>
-      </div>
 
       {catalog.isError && (
         <MutationAlert
@@ -584,8 +584,8 @@ export function JobsPanel() {
                 between the page title and the first job. One is enough here; the tags carry
                 their own meaning (a job with no tag changes nothing on Plex). */}
             <GroupHeading
-              title="Run now"
-              hint="open one to see or change when it runs"
+              title="Upkeep"
+              hint="each on its own timer — open one to change when it runs"
             />
             <div className="overflow-hidden rounded-md border">
               <JobRow
@@ -755,7 +755,7 @@ export function JobsPanel() {
                 action={{
                   // Not "Check for drift": "drift" is our word for it, not anyone else's, and the
                   // button has to read as the safe half of a two-step — this one only looks.
-                  label: "Check now",
+                  label: "Run",
                   run: () => driftPreview.mutate(),
                   pending: driftPreview.isPending,
                 }}
@@ -817,6 +817,7 @@ export function JobsPanel() {
                         <div>
                           <Button
                             size="sm"
+                            variant="outline"
                             loading={driftFix.isPending}
                             // Confirm at the CLICK when this will delete, which every other
                             // irreversible Plex write in the app already does (row delete, row
@@ -874,7 +875,7 @@ export function JobsPanel() {
                 queuedTitle={queuedTitleFor("backup.take")}
                 icon={Database}
                 action={{
-                  label: "Back up now",
+                  label: "Run",
                   run: () => backupNow.mutate(),
                   pending: backupNow.isPending,
                 }}
@@ -929,9 +930,10 @@ export function JobsPanel() {
               <JobRow
                 entry={entryFor("maintenance.prune")}
                 queuedTitle={queuedTitleFor("maintenance.prune")}
+                tag={EFFECT_TAGS["maintenance.prune"]}
                 icon={Eraser}
                 action={{
-                  label: "Clear now",
+                  label: "Run",
                   run: () => pruneNow.mutate(),
                   pending: pruneNow.isPending,
                 }}
