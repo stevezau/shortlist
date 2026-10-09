@@ -836,7 +836,7 @@ describe("RequestsPage", () => {
     await userEvent.click(
       screen.getByRole("checkbox", { name: /Sarah Pick/i }),
     );
-    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Dismiss/i }));
     await waitFor(() => expect(screen.getByText("Mike Pick")).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Stop filtering by Sarah" })).toBeNull();
   });
@@ -1174,7 +1174,7 @@ describe("RequestsPage", () => {
     renderPage();
     await screen.findByText("Andor");
     await userEvent.click(screen.getByRole("checkbox", { name: /Andor/i }));
-    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Dismiss/i }));
     await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([11]));
     // Delete is not a rejection — it leaves no tombstone.
     expect(rejectRequests).not.toHaveBeenCalled();
@@ -1264,15 +1264,15 @@ describe("RequestsPage", () => {
       expect(within(details).getByRole("link", { name: /Trakt/ })).toHaveAttribute("href", expect.stringContaining("trakt.tv/search/tmdb/"));
     });
 
-    it("keeps all three labelled title actions visible without opening a menu", async () => {
+    it("gives each title one visible action, with Reject and Dismiss explained in a menu", async () => {
       listRequests.mockResolvedValue([candidate({ id: 1, title: "Sinners" })]);
       renderPage();
       await screen.findByText("Sinners");
       const group = screen.getByRole("group", { name: "Actions for Sinners" });
-      expect(group.querySelector("details")).toBeNull();
-      for (const name of ["Send", "Delete", "Reject"]) {
-        expect(within(group).getByRole("button", { name })).toBeVisible();
-      }
+      expect(within(group).getByRole("button", { name: /^Send to / })).toBeVisible();
+      expect(within(group).getByLabelText("More actions for Sinners")).toBeTruthy();
+      expect(within(group).getByRole("button", { name: /^Reject — never suggest it again/ })).toBeTruthy();
+      expect(within(group).getByRole("button", { name: /^Dismiss — remove it for now, may come back/ })).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Select Sinners" })).not.toBeChecked();
     });
 
@@ -1337,7 +1337,7 @@ describe("RequestsPage", () => {
       expect(deleteRequests).not.toHaveBeenCalled();
 
       await userEvent.click(
-        rowActions("Fallout").getByRole("button", { name: /^Delete/i }),
+        rowActions("Fallout").getByRole("button", { name: /^Dismiss/i }),
       );
       await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([7]));
     });
@@ -1354,7 +1354,7 @@ describe("RequestsPage", () => {
       await userEvent.click(screen.getByRole("checkbox", { name: /Andor/i }));
 
       await userEvent.click(
-        rowActions("Fallout").getByRole("button", { name: /^Delete/i }),
+        rowActions("Fallout").getByRole("button", { name: /^Dismiss/i }),
       );
       await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([7]));
       expect(screen.getByRole("checkbox", { name: /Andor/i })).toBeChecked();
@@ -1467,7 +1467,7 @@ describe("RequestsPage", () => {
       await screen.findByText("Fallout");
       const row = rowActions("Fallout");
       expect(row.getByRole("button", { name: /Send/i })).toBeDisabled();
-      expect(row.getByRole("button", { name: /^Delete/i })).toBeDisabled();
+      expect(row.getByRole("button", { name: /^Dismiss/i })).toBeDisabled();
       expect(row.getByRole("button", { name: /Reject/i })).toBeDisabled();
     });
   });
@@ -1559,22 +1559,19 @@ describe("RequestsPage — the header", () => {
 
     listRequests.mockResolvedValue([candidate({ id: 2, tmdb_id: 200, title: "Arrival" })]);
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Dune" }));
-    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Dismiss/i }));
 
     await waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
     await userEvent.click(screen.getByRole("button", { name: "Clear the search" }));
     expect(await screen.findByText("Arrival")).toBeTruthy();
   });
 
-  it("keeps the Delete and Reject difference on screen while titles are selected", async () => {
-    // That is exactly when the bulk buttons act — the difference must not be hover-only then.
+  it("says what Reject and Dismiss do in the menu where each title is decided", async () => {
     twoWaitingOneSent();
     renderPage();
     await screen.findByText("Middling");
-    await userEvent.click(screen.getByRole("checkbox", { name: "Select Acclaimed" }));
-
-    expect(screen.getByRole("button", { name: "Clear selection" })).toBeTruthy();
-    expect(screen.getByText(/blocks it for good/)).toBeTruthy();
+    expect(rowActions("Acclaimed").getByText(/never suggest it again/)).toBeTruthy();
+    expect(rowActions("Acclaimed").getByText(/may come back/)).toBeTruthy();
   });
 
   it("moves between tabs with the arrow keys, and labels the panel by its tab", async () => {
@@ -1784,7 +1781,7 @@ describe("RequestsPage — the language filter", () => {
       candidate({ id: 4, tmdb_id: 400, title: "Legacy Title", language: "", rating: 7.0 }),
     ]);
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Parasite" }));
-    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Dismiss/i }));
 
     await waitFor(() => expect(screen.getByText("Dune")).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Remove the Korean language filter" })).toBeNull();

@@ -5,6 +5,7 @@ import {
   ExternalLink,
   Inbox,
   Loader2,
+  MoreHorizontal,
   RotateCcw,
   Search,
   Send,
@@ -15,7 +16,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { type ReactNode, useId, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import {
   ImdbGlyph,
@@ -415,6 +416,79 @@ function ArrStatusBadge({ view }: { view: ArrView }) {
   );
 }
 
+/**
+ * The "⋯" beside a title's Send button: the two ways to take a title off the list, each saying what
+ * it does in the menu itself. A native `<details>` so it works with no script, closed again by a
+ * pick, an outside click or Escape.
+ */
+function RowMoreMenu({
+  title,
+  disabled,
+  onReject,
+  onDismiss,
+}: {
+  title: string;
+  disabled: boolean;
+  onReject: () => void;
+  onDismiss: () => void;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (e: Event) => {
+      const menu = ref.current;
+      if (!menu?.open) return;
+      if (e instanceof KeyboardEvent && e.key !== "Escape") return;
+      if (e instanceof MouseEvent && menu.contains(e.target as Node)) return;
+      menu.open = false;
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, []);
+  const pick = (action: () => void) => () => {
+    if (ref.current) ref.current.open = false;
+    action();
+  };
+  return (
+    <details ref={ref} className="relative">
+      <Button
+        asChild
+        variant="outline"
+        size="icon"
+        className="cursor-pointer"
+      >
+        <summary
+          aria-label={`More actions for ${title}`}
+          className="list-none [&::-webkit-details-marker]:hidden"
+        >
+          <MoreHorizontal aria-hidden="true" />
+        </summary>
+      </Button>
+      <div className="absolute right-0 top-10 z-20 w-72 rounded-lg border border-border-strong bg-elevated py-1 text-left shadow-elevated">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={pick(onReject)}
+          className="block w-full px-3 py-2 text-left text-sm font-medium text-destructive-text hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Reject &mdash; never suggest it again
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={pick(onDismiss)}
+          className="block w-full px-3 py-2 text-left text-sm font-medium hover:bg-raised disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Dismiss &mdash; remove it for now, may come back
+        </button>
+      </div>
+    </details>
+  );
+}
+
 function PendingRow({
   item,
   viaSeerr,
@@ -548,42 +622,26 @@ function PendingRow({
         <div
           role="group"
           aria-label={`Actions for ${item.title}`}
-          className="order-2 flex flex-wrap items-center gap-1 self-center sm:col-start-2 sm:row-start-1 sm:justify-end"
+          className="order-2 flex flex-wrap items-center gap-2 self-center sm:col-start-2 sm:row-start-1 sm:justify-end"
         >
+          {/* Outline, not filled: the page's one amber control is the bulk bar's Send. */}
           <Button
             size="sm"
             variant="outline"
-            className="border-primary/30 bg-primary/5 text-primary"
             loading={sending}
             disabled={disabled || busy}
             onClick={() => onSend(item.id)}
             title={`Add ${item.title} to ${app} and start searching for it now.`}
           >
             {!sending && <Send aria-hidden="true" />}
-            Send
+            Send to {app}
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="px-2 text-muted-foreground"
+          <RowMoreMenu
+            title={item.title}
             disabled={disabled || busy}
-            onClick={() => onDelete(item.id)}
-            title="Take this off the list for now. If a later run turns it up again, it comes back."
-          >
-            <Trash2 aria-hidden="true" />
-            Delete
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="px-2 text-muted-foreground"
-            disabled={disabled || busy}
-            onClick={() => onReject(item.id)}
-            title={`Never ask ${app} for this again. It won't come back to this list.`}
-          >
-            <X aria-hidden="true" />
-            Reject
-          </Button>
+            onReject={() => onReject(item.id)}
+            onDismiss={() => onDelete(item.id)}
+          />
         </div>
       </div>
     </div>
@@ -1468,9 +1526,20 @@ export function RequestsPage() {
     <div>
       <PageHeader
         title="Requests"
-        actions={settingsQuery.data ? <div className="text-left text-xs sm:text-right"><p className="font-medium text-foreground">Destination · {settingString(settingsQuery.data, "requests.target", "arr") === "overseerr" ? "Overseerr" : "Radarr & Sonarr"}</p><p className="mt-1 text-muted-foreground">{settingBool(settingsQuery.data, "requests.enabled") ? `Global auto-send is ${settingBool(settingsQuery.data, "requests.auto_send") ? "on" : "off"}` : "Requests disabled"} · <Link className="text-primary hover:underline" to={SETTINGS_LINK}>Settings</Link></p></div> : undefined}
-        subtitle="Titles your people wanted that aren’t in your library yet. Send the ones you want, reject the rest."
+        subtitle="Titles your people want that aren’t in your library."
       />
+
+      {settingsQuery.data && (
+        <p className="mb-5 rounded-lg border bg-card px-4 py-2.5 text-[13px] text-muted-foreground">
+          {settingBool(settingsQuery.data, "requests.enabled")
+            ? `Sends to ${settingString(settingsQuery.data, "requests.target", "arr") === "overseerr" ? "Overseerr" : "Radarr (movies) and Sonarr (shows)"} · Auto-send is ${settingBool(settingsQuery.data, "requests.auto_send") ? "on" : "off: you approve each one"}`
+            : "Sending is disabled"}
+          {" · "}
+          <Link className="text-foreground underline underline-offset-2" to={SETTINGS_LINK}>
+            Settings &rarr;
+          </Link>
+        </p>
+      )}
 
       {claimsQuery.data && claimsQuery.data.items.length > 0 && (
         <section className="mx-auto mb-5 max-w-6xl rounded-lg border border-warning/50 bg-warning/5 px-4 py-4 sm:px-5" aria-labelledby="acquisition-recovery-title">
@@ -1690,26 +1759,25 @@ export function RequestsPage() {
                                   ))}
                                 </select>
                               </span>
-                            </>
-                          )}
-                        </div>
-                      )}
-                      {activeFull.length > 1 && (                              <Button
+                              <Button
                                 variant="outline"
                                 size="sm"
-                                className="mt-1 h-10 w-full justify-between border-border bg-card text-xs text-muted-foreground"
+                                className="h-9 text-xs text-muted-foreground"
                                 aria-expanded={filtersOpen}
                                 aria-controls={filtersId}
                                 onClick={() => setFiltersOpen((open) => !open)}
                               >
                                 <SlidersHorizontal aria-hidden="true" />
-                                Filters <span className="ml-auto font-normal">Rating · votes · language</span>
+                                Filters
                                 {menuFiltersSet > 0 && (
                                   <span className="rounded-full bg-raised px-1.5 text-xs font-bold tabular-nums text-foreground">
                                     {menuFiltersSet}
                                   </span>
                                 )}
                               </Button>
+                            </>
+                          )}
+                        </div>
                       )}
                       {filtersOpen && activeFull.length > 1 && (
                         <div
@@ -1801,11 +1869,10 @@ export function RequestsPage() {
 
                     {active === "waiting" &&
                       (pending.length > 0 ? (
-                        <section className="space-y-3">
+                        <section className={cn("space-y-3", selectedPending.length > 0 && "pb-24")}>
                           {/* The action bar. Quiet until something is ticked, then it lights up and says
-                              what it will act on. The Delete-vs-Reject difference rides along as one
-                              short line — the two both clear the list but do opposite things next run,
-                              so it must never be a guess or hover-only. */}
+                              what it will act on. Reject-vs-Dismiss is spelled out in each row's ⋯ menu,
+                              where the choice is made one title at a time. */}
                           <div
                             className={cn(
                               "flex flex-wrap items-center gap-x-3 gap-y-2 px-1 py-2",
@@ -1832,15 +1899,18 @@ export function RequestsPage() {
                                 : `${pendingShown.length} waiting`}
                             </label>
                             {/* Send first, and separated: it is the reason the page exists, and the
-                                eye used to land on "Delete". The rule (a plain border, not a
-                                Separator) keeps the two destructive actions visibly apart from it. */}
-                            {/* Named, because the page now has two Delete buttons and two Rejects —
-                                this one acts on the ticked rows, the one on each card acts on that
-                                card. Reading "Reject" alone, they are indistinguishable. */}
+                                page's one filled amber control. Named, because the cards carry their
+                                own Send and Reject — this group acts on the ticked rows. */}
                             <div
                               role="group"
                               aria-label="Actions for the selected titles"
-                              className={selectedPending.length > 0 ? "flex flex-wrap items-center gap-2" : "hidden"}
+                              // Once something is ticked the actions float at the bottom of the screen, so they stay in
+                              // reach however far down a long queue the ticked rows are.
+                              className={
+                                selectedPending.length > 0
+                                  ? "fixed bottom-4 left-4 right-4 z-20 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-border-strong bg-elevated px-4 py-3 shadow-elevated md:left-[calc(15rem+1rem)] md:right-8"
+                                  : "hidden"
+                              }
                             >
                               <Button
                                 size="sm"
@@ -1869,23 +1939,7 @@ export function RequestsPage() {
                                 className="mx-1 h-5 w-px bg-border"
                               />
                               <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={
-                                  !requestsEnabled ||
-                                  selectedPending.length === 0 ||
-                                  busy
-                                }
-                                onClick={() =>
-                                  act(() => del.mutate(selectedPending))
-                                }
-                                title="Take these off the list for now. If a later run turns one up again, it comes back."
-                              >
-                                <Trash2 aria-hidden="true" />
-                                Delete
-                              </Button>
-                              <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="sm"
                                 disabled={
                                   !requestsEnabled ||
@@ -1900,13 +1954,24 @@ export function RequestsPage() {
                                 <X aria-hidden="true" />
                                 Reject
                               </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-muted-foreground"
+                                disabled={
+                                  !requestsEnabled ||
+                                  selectedPending.length === 0 ||
+                                  busy
+                                }
+                                onClick={() =>
+                                  act(() => del.mutate(selectedPending))
+                                }
+                                title="Take these off the list for now. If a later run turns one up again, it comes back."
+                              >
+                                <Trash2 aria-hidden="true" />
+                                Dismiss
+                              </Button>
                             </div>
-                            <details className="group ml-auto text-xs text-muted-foreground"><summary className="flex cursor-pointer items-center gap-1.5 list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />Delete or Reject?</summary><p className="max-w-md pt-2">
-                              <strong className="font-medium text-foreground">Delete</strong>{" "}
-                              can come back on a later run &middot;{" "}
-                              <strong className="font-medium text-foreground">Reject</strong>{" "}
-                              blocks it for good
-                            </p></details>
                             {selectedPending.length > 0 && (
                               <Button
                                 variant="ghost"
