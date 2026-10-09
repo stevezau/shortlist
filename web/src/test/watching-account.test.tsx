@@ -132,7 +132,7 @@ describe("WatchingAccountPage", () => {
     // timing reads as "your shelf is clear now", which it is not.
     renderPage();
     await userEvent.click(
-      await screen.findByRole("button", { name: /do this for me/i }),
+      await screen.findByRole("button", { name: /off the library shelf/i }),
     );
 
     expect(
@@ -152,7 +152,7 @@ describe("WatchingAccountPage", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /do this for me/i }),
+      await screen.findByRole("button", { name: /off the library shelf/i }),
     );
 
     expect(await screen.findByText(/Changed 1 of 2/i)).toBeInTheDocument();
@@ -166,7 +166,7 @@ describe("WatchingAccountPage", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /do this for me/i }),
+      await screen.findByRole("button", { name: /off the library shelf/i }),
     );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(2));
@@ -183,6 +183,14 @@ describe("WatchingAccountPage", () => {
     });
   });
 
+  it("names what the button changes and has no lone step number", async () => {
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: /off the library shelf/i });
+    expect(button).not.toHaveTextContent(/do this for me/i);
+    expect(screen.queryByText(/^1$/)).not.toBeInTheDocument();
+  });
+
   it("offers nothing to do when no row is on the friends' shelf", async () => {
     listCollections.mockResolvedValue([row({ placement_friends: "home" })]);
     renderPage();
@@ -194,7 +202,7 @@ describe("WatchingAccountPage", () => {
     // passed BECAUSE of the defect, which is why it never caught it.
     expect(await screen.findByText(/already done/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /do this for me/i }),
+      screen.getByRole("button", { name: /off the library shelf/i }),
     ).toBeDisabled();
   });
 
@@ -267,7 +275,7 @@ describe("WatchingAccountPage when the collections query has not answered", () =
     await screen.findByText(/couldn.t check/i);
 
     expect(
-      screen.getByRole("button", { name: /do this for me/i }),
+      screen.getByRole("button", { name: /off the library shelf/i }),
     ).toBeDisabled();
   });
 
