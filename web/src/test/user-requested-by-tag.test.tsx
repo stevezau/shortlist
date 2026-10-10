@@ -63,7 +63,8 @@ describe("UserRequestedByTag", () => {
         requested_by_tag: "children",
       }),
     );
-    expect(await screen.findByText(/saved/i)).toBeInTheDocument();
+    // The "Saved" confirmation, not the field's standing "Saved as you go" hint.
+    expect(await screen.findByText(/^saved$/i)).toBeInTheDocument();
   });
 
   it("does not PATCH when the value is unchanged", async () => {

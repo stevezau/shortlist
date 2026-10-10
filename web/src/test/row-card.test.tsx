@@ -343,12 +343,12 @@ describe("RowCard", () => {
 
     getCollectionEffectiveness.mockResolvedValueOnce(history);
     const { unmount } = renderCard(collection());
-    expect(await screen.findByText(`Last built ${time} today`)).toBeInTheDocument();
+    expect(await screen.findByText(`Last built today ${time}`)).toBeInTheDocument();
     unmount();
 
     getCollectionEffectiveness.mockResolvedValueOnce(history);
     renderCard(collection({ enabled: false }));
-    expect(await screen.findByText(`Off, not on anyone's Plex · last built ${time} today`)).toBeInTheDocument();
+    expect(await screen.findByText(`Off, not on anyone's Plex · last built today ${time}`)).toBeInTheDocument();
   });
 
   it("claims no build at all while the row's history can't be read", async () => {

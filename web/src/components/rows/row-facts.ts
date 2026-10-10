@@ -41,9 +41,11 @@ export function rowLibraries(
   return libraries.filter((library) => row.media === "both" || library.type === row.media);
 }
 
-/** When a row was last built, in the app's one timestamp format ("Today 02:30", then "Fri 9 Oct 02:30"). */
+/** When a row was last built, in the app's one timestamp format, lower-cased to sit mid-sentence:
+ *  "Last built today 02:30", then "Last built Fri 9 Oct 02:30". */
 export function builtAt(iso: string, now: Date = new Date()): string {
-  return Number.isNaN(new Date(iso).getTime()) ? "at an unknown time" : dayTime(iso, now);
+  if (Number.isNaN(new Date(iso).getTime())) return "at an unknown time";
+  return dayTime(iso, now).replace(/^(Today|Yesterday|Tomorrow)\b/, (word) => word.toLowerCase());
 }
 
 /** The row's kind in the words the kind picker uses: "Picked for You", "Seasonal", "AI row"… */
