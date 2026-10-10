@@ -11,6 +11,7 @@ import pytest
 from alembic import command
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
@@ -18,7 +19,6 @@ from shortlist.server.assistant_auth.models import AssistantGrant
 from shortlist.server.db.models import (
     Collection,
     CollectionAudience,
-    CollectionUserOverride,
     Event,
     Job,
     PosterAsset,
@@ -155,7 +155,6 @@ def test_0109_preserves_existing_rows_indexes_and_foreign_keys_and_prevents_reus
                 session.add_all(
                     [
                         CollectionAudience(collection_id=42, user_id=12),
-                        CollectionUserOverride(collection_id=42, user_id=12, muted=True, row_size=9),
                         ThemeHistory(
                             collection_id=42,
                             user_id=12,
@@ -166,6 +165,13 @@ def test_0109_preserves_existing_rows_indexes_and_foreign_keys_and_prevents_reus
                         ),
                         PosterAsset(key="upload:42", image=b"poster", content_type="image/png"),
                     ]
+                )
+                # Raw SQL: at 0108 the table still has the NOT NULL `prompt` column the model no longer maps.
+                session.execute(
+                    text(
+                        "INSERT INTO collection_user_overrides (collection_id, user_id, muted, row_size, prompt, "
+                        "updated_at) VALUES (42, 12, 1, 9, '{}', '2026-01-01 00:00:00')"
+                    )
                 )
                 session.commit()
         else:

@@ -314,8 +314,7 @@ class Collection(Base):
     # nobody in particular — there is no one person to name. The editor hides it there, exactly as it
     # already hides `request_tag`.
     req_auto_user_tag: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
-    # AI web search instructions for this row (#138): {} or {"mode": "add"|"own", "text": str}. Held the curate
-    # settings until migration 0036 cleared it.
+    # AI web search instructions for this row (#138): {} or {"mode": "add"|"own", "text": str}.
     prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     # Custom collection poster for this row. {} -> Plex's own artwork. Shape:
     # {"mode": "upload"|"generate", "title", "subtitle", "style"}. No image bytes live here — an
@@ -481,8 +480,6 @@ class CollectionUserOverride(Base):
     # How many recent watches the AI web-search source searches for THIS person on THIS row (1..25).
     # None -> fall through to the row's own recent_count, then the global recommendations.recent_count.
     recent_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # Dead as of the curate removal (migration 0036 clears it) — see Collection.prompt. Column kept.
-    prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 

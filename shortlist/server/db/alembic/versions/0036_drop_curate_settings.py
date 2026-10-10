@@ -88,6 +88,9 @@ def upgrade() -> None:
 
     # 4) Empty the dead per-row / per-person curation recipes (raw JSON columns, {} == "no recipe").
     for table in ("collections", "collection_user_overrides"):
+        # 0111 drops the override column; a replay of this migration on a newer schema has none to empty.
+        if "prompt" not in {c["name"] for c in sa.inspect(bind).get_columns(table)}:
+            continue
         bind.execute(sa.text(f"update {table} set prompt = '{{}}' where prompt is not null and prompt != '{{}}'"))
 
     # 5) Strip the dead prompt_* keys out of each user's prefs blob, leaving the rest byte-for-byte.

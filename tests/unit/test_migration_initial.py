@@ -204,7 +204,7 @@ class TestCurateSettingsCleared:
 
         from sqlalchemy.orm import Session
 
-        from shortlist.server.db.models import Collection, CollectionUserOverride, User
+        from shortlist.server.db.models import Collection, User
         from shortlist.server.settings_store import SettingsStore
 
         run_migrations(tmp_path)  # full schema at head
@@ -232,7 +232,6 @@ class TestCurateSettingsCleared:
             )
             session.add(row)
             session.flush()
-            session.add(CollectionUserOverride(collection_id=row.id, user_id=user.id, prompt={"tone": "z"}))
             session.commit()
             ids = (row.id, user.id)
 
@@ -251,7 +250,7 @@ class TestCurateSettingsCleared:
     def test_dead_recipe_settings_and_cut_source_are_gone(self, tmp_path: Path):
         from sqlalchemy.orm import Session
 
-        from shortlist.server.db.models import Collection, CollectionUserOverride, User
+        from shortlist.server.db.models import Collection, User
         from shortlist.server.settings_store import SettingsStore
 
         collection_id, user_id = self._seed_and_replay(tmp_path)
@@ -268,4 +267,3 @@ class TestCurateSettingsCleared:
             row = session.get(Collection, collection_id)
             assert row.candidate_sources == ["tmdb_discover"]  # llm_library stripped, order kept
             assert row.prompt == {}  # dead recipe cleared
-            assert session.get(CollectionUserOverride, (collection_id, user_id)).prompt == {}
