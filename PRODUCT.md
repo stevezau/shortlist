@@ -90,7 +90,7 @@ pre-Shortlist filter state, restored on uninstall) · **dry run** (a run that lo
 
 ## Evidence on Hand
 
-- In production on the maintainer's own server (40+ users, PMS 1.43.x); v1.10.0 released 2026-10-05.
+- In production on the maintainer's own server (40+ users, PMS 1.43.x); v1.11.0 released 2026-10-10.
 - Public docs site (docs/ in repo, 15+ pages) and MIT GitHub repo with CI (ruff, pytest, Playwright e2e).
 - A real Plex Home screenshot in README.md.
 - `tests/fakes/fake_plex.py` lets the whole app run with no real Plex server, so any screen can be

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-10-10
+
 Back up `/config` before upgrading: this release adds database migrations 0102 to 0111. No settings need
 changing, and assistant access stays off until you opt in.
 
@@ -1890,7 +1892,7 @@ First public beta. Everything below ships in this release.
 
   _Later removed: per-row curation styles and prompts, the AI curator and "AI suggests from your
   library" were withdrawn before 0.1.0-beta.9, when ranking and reasons moved into code. Per-row AI
-  instructions for AI web search returned in [Unreleased]._
+  instructions for AI web search returned in 1.10.0._
 - **Freshness as a cadence** — rows stay stable and refresh every N days (nightly → fortnightly),
   so a person's row isn't reshuffled every night; unchanged rows skip the Plex write entirely.
 - **Row placement** — choose the Plex shelf (Home / library Recommended / both) and position, per

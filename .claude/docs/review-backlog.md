@@ -9,11 +9,6 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 
 ## OPEN
 
-**Before the next release (owner's call):**
-
-- Migrations 0102–0111 ship in it (the `v1.10.0` tag stops at 0101): back up `/config/shortlist.db`, upgrade a
-  copy first, and run Architecture Review on the release PR.
-
 **Dependency advisories (build-time only, never in the image):**
 
 - `braces`: no patched release yet (latest is 3.0.3). Re-run `pnpm -C web audit` and bump when one ships.
