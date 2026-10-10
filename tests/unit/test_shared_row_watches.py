@@ -1401,6 +1401,8 @@ class TestTheIdleCountIsNotASubtraction:
         from shortlist.server.services.report_service import effectiveness
 
         with world() as s:
+            # `users_watched` counts people enabled now, so the watcher has to be one.
+            s.add(User(id=3, plex_account_id=55, username="sam3", slug="sam3", enabled=True))
             s.add(Collection(id=2, slug="mine", name="Mine", enabled=True))
             s.add(Delivery(collection_slug="mine", user_slug="alex", library_key="1", rating_key=600))
             s.add(Delivery(collection_slug="mine", user_slug="sam", library_key="1", rating_key=601))
@@ -1454,6 +1456,10 @@ class TestTheIdleCountIsNotASubtraction:
         a_pick_so_the_rating_key_resolves(world)
         watch_session(world, 99, started=NOW - timedelta(hours=2), offset=1_800_000)
         reconcile_watched(world, [profile()])
+        with world() as s:
+            # `users_watched` counts people enabled now, so the watcher has to be one.
+            s.query(User).filter_by(plex_account_id=99).one().enabled = True
+            s.commit()
 
         with world() as s:
             cov = effectiveness(s, "30")["coverage"]

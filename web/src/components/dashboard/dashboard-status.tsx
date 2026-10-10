@@ -9,14 +9,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { describeCron } from "@/lib/cron";
 import {
   formatDuration,
-  runElapsedMs,
   runStatusLabel,
   timeAgo,
   timeUntil,
 } from "@/lib/format";
-import { latestFinishedRun, nextRowRun } from "@/lib/dashboard-status";
+import { latestRunChain, nextRowRun } from "@/lib/dashboard-status";
 import { cannotHide, privacyGlance, rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
-import { runHealth } from "@/lib/run-status";
 import type {
   AccountPrivacy,
   EffectivenessReport,
@@ -47,13 +45,14 @@ function LastRunCell({
   if (runs.isPending && report.isPending) {
     return <StatusCell testId={testId} label="Last run" tone="neutral" value={<Pending />} />;
   }
-  const run = latestFinishedRun(runs.data);
-  if (run) {
-    const verdict = runHealth(run);
-    const elapsed = runElapsedMs(run.began_at, run.finished_at);
-    const people = run.stats.users_ok ?? 0;
+  const chain = latestRunChain(runs.data);
+  if (chain) {
+    const run = chain.linkRun;
+    const verdict = chain.health;
+    const elapsed = chain.elapsedMs;
+    const people = chain.people;
     // People the run could not build for, named in the line under the verdict.
-    const failed = run.stats.users_error ?? 0;
+    const failed = chain.failed;
     return (
       <StatusCell
         testId={testId}
@@ -72,10 +71,10 @@ function LastRunCell({
         sub={
           <>
             <Link to={`/runs/${run.id}`} className={linkClass}>
-              {run.finished_at ? `${dayTime(run.finished_at)} · ${timeAgo(run.finished_at)}` : `Run #${run.id}`}
+              {chain.finishedAt ? `${dayTime(chain.finishedAt)} · ${timeAgo(chain.finishedAt)}` : `Run #${run.id}`}
             </Link>
             {/* A dry run wrote nothing, so its "OK" is not a claim about anyone's rows. */}
-            {run.dry_run && " · dry run"}
+            {chain.dryRun && " · dry run"}
             {` · ${people} ${people === 1 ? "person" : "people"}`}
             {failed > 0 && ` · ${failed} failed`}
             {elapsed !== null && (

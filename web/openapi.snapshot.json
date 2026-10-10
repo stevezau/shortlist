@@ -5159,6 +5159,10 @@
             "title": "Display Name",
             "type": "string"
           },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
           "finished": {
             "title": "Finished",
             "type": "integer"
@@ -5185,6 +5189,7 @@
           "username",
           "display_name",
           "slug",
+          "enabled",
           "delivered",
           "watched",
           "finished"

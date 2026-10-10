@@ -342,6 +342,34 @@ describe("the dashboard's Last run", () => {
   });
 });
 
+describe("the dashboard's Last run, when two scheduled runs queued behind each other", () => {
+  it("sums the night and links the run that did the work, not the near-empty one behind it", async () => {
+    getRuns.mockResolvedValue([
+      finishedRun({
+        id: 13,
+        started_at: "2026-10-09T03:30:00Z",
+        began_at: "2026-10-09T05:10:00Z",
+        finished_at: "2026-10-09T05:12:00Z",
+        privacy: null,
+        stats: { users_ok: 0, users_skipped: 46, users_error: 0 },
+      }),
+      finishedRun({
+        id: 12,
+        started_at: "2026-10-09T02:30:00Z",
+        began_at: "2026-10-09T02:30:00Z",
+        finished_at: "2026-10-09T05:10:00Z",
+        privacy: null,
+        stats: { users_ok: 46, users_error: 0 },
+      }),
+    ]);
+    renderDashboard();
+
+    const cell = await within(await strip()).findByTestId("status-last-run");
+    expect(await within(cell).findByText(/46 people/)).toBeInTheDocument();
+    expect(within(cell).getByRole("link")).toHaveAttribute("href", "/runs/12");
+  });
+});
+
 describe("the dashboard's Privacy", () => {
   it("counts the private accounts and names the exposed one in rows, with the link left to the callout", async () => {
     getPrivacyStatus.mockResolvedValue(KID_EXPOSED);

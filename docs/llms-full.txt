@@ -4537,6 +4537,7 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      old. That matters — a pick stops being creditable once its row drops it, so counting a pick delivered
      yesterday in the denominator drags the rate toward zero for no reason. `per_user`/`per_row` return COUNTS, not rates, sorted by
      what was actually watched: at these sample sizes a percentage is noise, and sorting by one put `1/31` above `3/103`.
+     Each `per_user` entry carries `enabled` (false for someone disabled since); `coverage.users_watched` and its delta count enabled people only, so "N of `users_enabled`" always agrees with the list.
      Every count comes in a WATCHED/FINISHED pair (`overall.finished`, `landing.finished`/`finished_rate`, and a `finished` on each
      `per_user`, `per_row` and `trend` entry). `overall.finished` carries NO `_prev`/`_delta`, unlike its neighbours: this window's
      finishes are counted as of now while the previous window's have had an extra period to complete, so a server behaving perfectly

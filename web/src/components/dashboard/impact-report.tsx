@@ -144,6 +144,9 @@ function Verdict({
   reportWindow: ReportWindow;
 }) {
   const gaveUp = overall.dropped + overall.bounced;
+  // Same person-titles and window as `watched`: gave-up titles are by construction watched and never
+  // finished (`resolve_outcomes`), so the three never overlap. Clamped in case a sync lands between reads.
+  const stillGoing = Math.max(0, overall.watched - overall.finished - gaveUp);
   return (
     // Test ids, not class names: the e2e suite reads these figures by id, so a styling change can
     // never silently break what it measures. `gap-px` on `bg-border` draws the hairlines.
@@ -171,7 +174,10 @@ function Verdict({
               <span className="font-medium text-destructive-text tabular-nums">{gaveUp}</span> gave up part-way
               {/* The SAME control the "Worth a look" card uses: hover-only does not exist on a phone. */}
               <Why text={WHY_GAVE_UP} />
+              {stillGoing > 0 && ` · ${stillGoing} still going`}
             </p>
+          ) : stillGoing > 0 ? (
+            `${stillGoing} still going`
           ) : (
             "watched to the end"
           )
@@ -314,6 +320,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
         </span>
         {hovered === null && <span className="opacity-70">· latest</span>}
       </p>
+      <SplitLegend />
 
       <div
         className="flex h-36 items-stretch gap-1"
@@ -390,12 +397,15 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
  */
 function CountLine({
   name,
+  note,
   watched,
   finished,
   delivered,
   max,
 }: {
   name: ReactNode;
+  /** Muted text after the name, e.g. " · disabled". */
+  note?: string;
   watched: number;
   finished: number;
   delivered: number;
@@ -405,7 +415,10 @@ function CountLine({
     <div className={panelRowClass}>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm">
         {/* `min-w-0` is what makes `truncate` actually truncate in a flex child. */}
-        <span className="min-w-0 truncate font-medium">{name}</span>
+        <span className="min-w-0 truncate font-medium">
+          {name}
+          {note && <span className="font-normal text-muted-foreground">{note}</span>}
+        </span>
         {/* Two labelled numbers, NOT "{watched} of {delivered}". They are counts over two different
             sets — watched-in-window and delivered-in-window — so a fraction makes "4 of 0" reachable
             whenever delivery paused. "finished" qualifies "watched": a series counts as watched on
@@ -524,11 +537,32 @@ function ZeroDisclosure({
   );
 }
 
+/** The key to every two-tone bar: one hue, solid for finished, faded for still going. Same classes
+ *  as the bars, so the swatches cannot drift from what they explain. */
+function SplitLegend({ className }: { className?: string }) {
+  return (
+    <p
+      aria-hidden="true"
+      data-testid="split-legend"
+      className={cn("flex flex-wrap justify-end gap-x-3 text-xs text-muted-foreground", className)}
+    >
+      <span className="inline-flex items-center gap-1">
+        <span className="h-2 w-2 rounded-sm bg-chart" /> Finished
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <span className="h-2 w-2 rounded-sm bg-chart/30" /> Still going
+      </span>
+    </p>
+  );
+}
+
 const PEOPLE_SHOWN = 5;
 
 function ByPerson({ people }: { people: EffectivenessReport["per_user"] }) {
+  // Someone disabled since keeps their history while they watched, but an idle one is left out: the
+  // "none in this window" list is about the people Shortlist serves now.
   const active = people.filter((p) => p.watched > 0);
-  const idle = people.filter((p) => p.watched === 0);
+  const idle = people.filter((p) => p.watched === 0 && p.enabled !== false);
   const max = Math.max(1, ...active.map((p) => p.watched));
   // The first few are shown outright, so the list ends near the foot of the weekly chart beside it
   // (ten left a chart-sized gap under it on a real server). The rest sit behind a disclosure: they
@@ -550,6 +584,7 @@ function ByPerson({ people }: { people: EffectivenessReport["per_user"] }) {
           {personName(p)}
         </Link>
       }
+      note={p.enabled === false ? " · disabled" : undefined}
       watched={p.watched}
       finished={p.finished}
       delivered={p.delivered}
@@ -565,6 +600,7 @@ function ByPerson({ people }: { people: EffectivenessReport["per_user"] }) {
         </p>
       ) : (
         <>
+          {shown.length > 0 && <SplitLegend className="px-4 pt-2 sm:px-5" />}
           {shown.length > 0 && <div className="divide-y">{shown.map(line)}</div>}
           {active.length === 0 && (
             <p className="px-4 py-4 text-sm text-muted-foreground sm:px-5">

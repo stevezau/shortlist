@@ -273,10 +273,20 @@ def _finished_count(session: Session, start, end=None) -> int:
     )
 
 
-def _watchers_count(session: Session, start, end=None) -> int:
-    return _distinct_across_both(
-        session, PickRow.user_id, _watched_in(start, end), SharedRowWatch.user_id, _shared_watched_in(start, end)
-    )
+def _watchers_count(session: Session, start, end=None, *, enabled_only: bool = False) -> int:
+    """People who watched in the period.
+
+    `enabled_only` restricts it to people enabled NOW. The dashboard prints the figure as "N of
+    `users_enabled`", and `users_enabled` is current: counting someone the owner has since disabled
+    could put N above that denominator, or out of step with the list beside it.
+    """
+    picks_filters = _watched_in(start, end)
+    shared_filters = _shared_watched_in(start, end)
+    if enabled_only:
+        enabled = session.query(User.id).filter(User.enabled.is_(True))
+        picks_filters = [*picks_filters, PickRow.user_id.in_(enabled)]
+        shared_filters = [*shared_filters, SharedRowWatch.user_id.in_(enabled)]
+    return _distinct_across_both(session, PickRow.user_id, picks_filters, SharedRowWatch.user_id, shared_filters)
 
 
 def _avg_days_to_watch(session: Session, start, end=None) -> float | None:
@@ -1056,10 +1066,10 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
 
     watched_now = _watched_count(session, since)
     finished_now = _finished_count(session, since)
-    watchers_now = _watchers_count(session, since)
+    watchers_now = _watchers_count(session, since, enabled_only=True)
     avg_now = _avg_days_to_watch(session, since)
     watched_prev = _watched_count(session, prev_since, since) if comparable else None
-    watchers_prev = _watchers_count(session, prev_since, since) if comparable else None
+    watchers_prev = _watchers_count(session, prev_since, since, enabled_only=True) if comparable else None
     avg_prev = _avg_days_to_watch(session, prev_since, since) if comparable else None
 
     delivered_now = (
@@ -1221,6 +1231,8 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
                 "username": users[uid].username,
                 "display_name": users[uid].display_name,  # nickname → Tautulli → username
                 "slug": users[uid].slug,
+                # Disabled people keep their history, but are not who the dashboard counts "of N".
+                "enabled": users[uid].enabled,
             }
             if uid in users
             else None

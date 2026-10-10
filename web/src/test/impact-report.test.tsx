@@ -163,6 +163,7 @@ const REPORT: EffectivenessReport = {
       username: "sarah",
       display_name: "Sarah H",
       slug: "sarah",
+      enabled: true,
       // All three DISTINCT, and distinct from every per_row figure, so a wrong-field swap on the
       // person line changes the rendered text. The per_row assertions used to cover the row half
       // while the person half was asserted by nothing.
@@ -1304,5 +1305,104 @@ describe("ImpactReport — loading and updating", () => {
 
     await screen.findByText("Updating…");
     expect(document.querySelectorAll(".opacity-60.motion-reduce\\:transition-none").length).toBeGreaterThan(0);
+  });
+});
+
+describe("ImpactReport — the Finished card's still-going remainder", () => {
+  // REPORT: 41 watched, 32 finished, 1 bounced + 2 dropped, so 41 - 32 - 3 = 6 are still going.
+  it("names the people still watching beside those who gave up", async () => {
+    getReport.mockResolvedValue(REPORT);
+    renderReport();
+
+    const card = await screen.findByTestId("verdict");
+    expect(card.textContent).toMatch(/3\s*gave up part-way\s*·\s*6 still going/);
+  });
+
+  it("says only 'still going' when nobody gave up", async () => {
+    getReport.mockResolvedValue({ ...REPORT, overall: { ...REPORT.overall, bounced: 0, dropped: 0 } });
+    renderReport();
+
+    const card = await screen.findByTestId("verdict");
+    expect(card.textContent).toMatch(/9 still going/);
+    expect(card.textContent).not.toMatch(/watched to the end/);
+  });
+
+  it("keeps 'watched to the end' when everything watched was finished", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, watched: 32, finished: 32, bounced: 0, dropped: 0 },
+    });
+    renderReport();
+
+    const card = await screen.findByTestId("verdict");
+    expect(card.textContent).toMatch(/watched to the end/);
+    expect(card.textContent).not.toMatch(/still going/);
+  });
+
+  it("never prints a negative remainder", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      overall: { ...REPORT.overall, watched: 10, finished: 9, bounced: 3, dropped: 0 },
+    });
+    renderReport();
+
+    const card = await screen.findByTestId("verdict");
+    expect(card.textContent).not.toMatch(/-\d+ still going/);
+    expect(card.textContent).not.toMatch(/still going/);
+  });
+});
+
+describe("ImpactReport — disabled people in Who's watching", () => {
+  const person = (over: Record<string, unknown>) => ({
+    id: 1,
+    username: "x",
+    display_name: "X",
+    slug: "x",
+    enabled: true,
+    delivered: 5,
+    watched: 0,
+    finished: 0,
+    ...over,
+  });
+
+  it("leaves an idle disabled person out of the none-in-this-window list, and tags a disabled watcher", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      per_user: [
+        person({ id: 1, username: "sarah", display_name: "Sarah", slug: "sarah", watched: 3, finished: 1 }),
+        person({ id: 2, username: "gone", display_name: "Gone", slug: "gone", watched: 2, enabled: false }),
+        person({ id: 3, username: "mike", display_name: "Mike", slug: "mike" }),
+        person({ id: 4, username: "off", display_name: "Off", slug: "off", enabled: false }),
+      ],
+    });
+    renderReport();
+
+    await screen.findAllByText("Sarah");
+    expect(screen.getByText("· disabled")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /1 person with none in this window/i }));
+    expect(screen.getByText("Mike")).toBeInTheDocument();
+    expect(screen.queryByText("Off")).toBeNull();
+  });
+});
+
+describe("ImpactReport — the two-tone bars have a key", () => {
+  it("gives the weekly chart and the people list one legend each", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      trend: [
+        { week: "2026-26", watched: 4, finished: 3 },
+        { week: "2026-27", watched: 5, finished: 3 },
+        { week: "2026-28", watched: 6, finished: 4 },
+      ],
+    });
+    renderReport();
+
+    await screen.findAllByText("Sarah H");
+    const legends = screen.getAllByTestId("split-legend");
+    expect(legends).toHaveLength(2);
+    for (const legend of legends) {
+      expect(legend).toHaveTextContent("Finished");
+      expect(legend).toHaveTextContent("Still going");
+    }
   });
 });

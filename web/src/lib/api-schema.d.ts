@@ -5609,6 +5609,8 @@ export interface components {
             delivered: number;
             /** Display Name */
             display_name: string;
+            /** Enabled */
+            enabled: boolean;
             /** Finished */
             finished: number;
             /** Id */

@@ -907,3 +907,79 @@ class TestEngagementPerPersonTruncation:
         assert people, "no people in the engagement payload"
         titles = [p["title"] for p in people[0]["picks"]]
         assert "Real Drop" in titles, "the one real abandonment was truncated away by 40 bounces"
+
+
+class TestADisabledPersonIsNotCountedAmongThoseWatching:
+    """The card reads "N of users_enabled"; `users_watched` used to count people disabled since.
+
+    Found on a live server: "34 of 46" beside a list totalling 48, because `per_user` and
+    `users_watched` both kept people the owner had since disabled.
+    """
+
+    def _two_watchers(self, sessions, *, second_enabled: bool) -> None:
+        seed(sessions, tmdb_id=1, delivered_ago=3, watched_ago=2, finished_ago=2)
+        with sessions() as session:
+            session.add(User(id=2, plex_account_id=8, username="sam", slug="sam", enabled=second_enabled))
+            session.add(
+                PickRow(
+                    user_id=2,
+                    tmdb_id=2,
+                    media_type="show",
+                    rating_key=2,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="TV Shows",
+                    title="S2",
+                    created_at=NOW - timedelta(days=3),
+                    watched_at=NOW - timedelta(days=2),
+                )
+            )
+            session.commit()
+
+    def test_users_watched_counts_enabled_people_only(self, sessions):
+        self._two_watchers(sessions, second_enabled=False)
+        with sessions() as session:
+            report = effectiveness(session, "7")
+        assert report["coverage"]["users_watched"] == 1
+        assert report["coverage"]["users_enabled"] == 1
+
+    def test_per_user_still_lists_them_and_says_who_is_disabled(self, sessions):
+        self._two_watchers(sessions, second_enabled=False)
+        with sessions() as session:
+            report = effectiveness(session, "7")
+        assert {p["username"]: p["enabled"] for p in report["per_user"]} == {"alex": True, "sam": False}
+
+    def test_an_enabled_watcher_is_counted(self, sessions):
+        self._two_watchers(sessions, second_enabled=True)
+        with sessions() as session:
+            report = effectiveness(session, "7")
+        assert report["coverage"]["users_watched"] == 2
+
+    def test_the_previous_window_counts_enabled_people_only(self, sessions):
+        # Both watched 10 days ago (previous period of a 7-day window), first pick 40 days ago so it is comparable.
+        seed(sessions, tmdb_id=1, delivered_ago=40, watched_ago=10, finished_ago=10)
+        with sessions() as session:
+            session.add(User(id=2, plex_account_id=8, username="sam", slug="sam", enabled=False))
+            session.add(
+                PickRow(
+                    user_id=2,
+                    tmdb_id=2,
+                    media_type="show",
+                    rating_key=2,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="TV Shows",
+                    title="S2",
+                    created_at=NOW - timedelta(days=40),
+                    watched_at=NOW - timedelta(days=10),
+                )
+            )
+            session.commit()
+        seed(sessions, tmdb_id=3, delivered_ago=40, watched_ago=2, finished_ago=2)
+        with sessions() as session:
+            report = effectiveness(session, "7")
+        # 1 watcher now (alex), 1 enabled watcher before (alex; sam is disabled): no change.
+        assert report["coverage"]["users_watched"] == 1
+        assert report["coverage"]["users_watched_delta"] == 0

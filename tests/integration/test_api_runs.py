@@ -1032,6 +1032,8 @@ class TestRunsApi:
             "username",
             "display_name",
             "slug",
+            # False for someone disabled since; the dashboard tags them and leaves idle ones out.
+            "enabled",
             "delivered",
             "watched",
             "finished",

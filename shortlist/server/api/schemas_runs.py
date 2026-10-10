@@ -357,6 +357,8 @@ class PerUserOut(PassthroughModel):
     username: str
     display_name: str
     slug: str
+    #: False for someone the owner has since disabled; their window history is still listed.
+    enabled: bool
     delivered: int
     watched: int
     finished: int
