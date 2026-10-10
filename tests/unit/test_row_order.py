@@ -1,6 +1,6 @@
 """Every value of `RowSpec.pick_order`, against one fixture, asserted to its exact output.
 
-`test_pipeline_row_overrides.py` proves each order is WIRED UP — that a row configured with it reaches Plex in
+`test_pipeline_row_overrides_refresh.py` proves each order is WIRED UP — that a row configured with it reaches Plex in
 that order through the real pipeline. This file proves each order is CORRECT, by calling
 `_apply_order` directly on a list whose five picks disagree about every axis at once: the ranking,
 the rating, the year, which titles are new, and where a rotation lands.
@@ -85,8 +85,8 @@ class TestEveryPickOrder:
         assert _order("rotate", run_day=2) == [3, 4, 5, 1, 2]
 
     def test_shuffle_is_a_permutation_that_is_not_the_ranking(self):
-        """Shuffle's day-to-day and per-user behaviour is covered in `test_pipeline_row_overrides.py`; here it only
-        has to be a real reordering of the same five titles rather than a truncation."""
+        """Shuffle's day-to-day and per-user behaviour is covered in `test_pipeline_row_overrides_refresh.py`; here
+        it only has to be a real reordering of the same five titles rather than a truncation."""
         shuffled = _order("shuffle")
 
         assert sorted(shuffled) == [1, 2, 3, 4, 5], f"same titles, reordered — got {shuffled}"

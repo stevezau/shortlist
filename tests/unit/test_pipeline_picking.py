@@ -32,7 +32,7 @@ class TestRatingSource:
     """
 
     def _rating_ctx(self, ctx, source: str, mdblist):
-        from tests.unit.test_pipeline_row_overrides import TestPerRowOverrides as T
+        from tests.unit.test_pipeline_row_overrides_refresh import TestRowPickOrder as T
 
         T()._ordered_row_ctx(ctx, "rating")
         ctx.config.rating_source = source
