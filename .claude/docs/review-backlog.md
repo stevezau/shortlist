@@ -1417,15 +1417,16 @@ largest test-file splits and the shared fixtures. What is still open:
 
 **Before the next release (owner's call):**
 
-- Migrations 0102–0110 ship in it: back up `/config/shortlist.db`, upgrade a copy first, and run
+- Migrations 0102–0111 ship in it: back up `/config/shortlist.db`, upgrade a copy first, and run
   Architecture Review on the release PR.
-- The maintainer's LAN IP, hostname and account names are scrubbed from the tree but remain in git
-  history. Removing them needs a history rewrite and force-push.
+- WON'T FIX (owner, 2026-10-10): the maintainer's LAN IP, hostname and account names stay in git history;
+  no history rewrite.
 
-**Dependency advisories with no usable fix (build-time only, never in the image):**
+**Dependency advisories (build-time only, never in the image):**
 
-- `braces`: no patched release yet. Re-run `pnpm -C web audit` and bump when one ships.
-- `postcss-selector-parser`: fixed only in a version that needs Tailwind 4. Clears with that upgrade.
+- `braces`: no patched release yet (latest is 3.0.3). Re-run `pnpm -C web audit` and bump when one ships.
+- FIXED 2026-10-10: `postcss-selector-parser` overridden to 7.1.6 under Tailwind 3
+  (`web/pnpm-workspace.yaml`); the built CSS and JS were byte-identical. Drop the override with Tailwind 4.
 
 **Done in the 2026-10-10 follow-up (owner picked each one):**
 
@@ -1440,9 +1441,14 @@ largest test-file splits and the shared fixtures. What is still open:
   predicate, written columns, events and commit unchanged. Note: `approve_updated_access` writes
   constraints only, never capabilities — kept as it was.
 
-**Still open (needs a full test run and Architecture Review):**
-
-- Split the ~270-line `lifespan` in `main.py` and the ~250-line `reconcile_row_rename_iter`.
+- FIXED 2026-10-10: `lifespan` (276 → 38 lines) and `reconcile_row_rename_iter` (264 → ~40) split into
+  named phases; Architecture Review on the split.
+- FIXED 2026-10-10 (owner delegated the call): run page placeholders read as words; pick reasons read
+  "Because you watched Dune — more sci-fi and action"; Settings is full width like every page; per-person
+  run rows show their status in the header.
+- NOT A BUG 2026-10-10: the Requests settings tab's 7–14s load was the audit's Vite dev server (every
+  request it makes answers in under 1s, and no field blocks the tab); run 12's 32 queued titles were real
+  (held back by thresholds) and were cleared from the inbox by a `requests.delete` at 2026-10-09 20:50 UTC.
 
 **Smaller leftovers:**
 
