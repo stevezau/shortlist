@@ -2,7 +2,7 @@
 title: "Requests: Radarr and Sonarr for Plex recommendations"
 description: Let Shortlist ask Radarr or Sonarr for titles your people want that the library doesn't have yet, with an approval inbox and guardrails.
 heading: Requests (Radarr and Sonarr)
-updated: 2026-10-09
+updated: 2026-10-10
 ---
 
 ## Reviewing the inbox
@@ -22,7 +22,7 @@ Off by default. When on, Shortlist notices the titles your people's taste surfac
 doesn't have yet. That means everything the recommendation sources turned up, not just what made it
 into a row. It then asks for a few of the best ones on each run.
 
-You choose **where requests go**, under Settings → Defaults → Requests:
+You choose **where requests go**, under Settings → Requests:
 
 - **Radarr & Sonarr** (the default) — Shortlist adds the title itself, using a quality profile and
   folder you pick here.
@@ -30,12 +30,13 @@ You choose **where requests go**, under Settings → Defaults → Requests:
   own quality settings, folder rules and approvals. See
   [Requesting through Overseerr](#requesting-through-overseerr) below.
 
-Set it up under **Settings → Defaults → Requests**:
+Set it up under **Settings → Requests**:
 
 1. Turn on **Fill in the gaps automatically**.
-2. For each app, paste its **address** (e.g. `http://localhost:7878` for Radarr,
-   `http://localhost:8989` for Sonarr) and **API key** (found in the app under _Settings →
-   General_), then click **Test connection**. Save.
+2. For each app, open **Settings → Connections** and fill in its card with its **address** (e.g.
+   `http://localhost:7878` for Radarr, `http://localhost:8989` for Sonarr) and **API key** (found in
+   the app under _Settings → General_), then press **Test**. Save. The Requests tab shows a **Go to
+   Connections** button until an app is connected.
 3. Once connected, pick a **Quality** profile and a **Save to** folder from the dropdowns. Shortlist
    reads these straight from the app, so there are no ids to look up. For Sonarr, also pick **how
    much of a show to grab** — these are Sonarr's own Add Series _Monitor_ choices, so they mean
@@ -199,7 +200,7 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 ### Why is a title still waiting?
 
 The bar for sending on its own is higher than the bar for being requestable at all. Under
-**Settings → Defaults → Requests → Send the strongest titles without asking**, a title has to clear **both**
+**Settings → Requests → Send the strongest titles without asking**, a title has to clear **both**
 bars: **Send without asking when wanted by** (3 people by default, counted **within one row**) and
 **Send without asking when rated** (8.0 by default). A 7.9 wanted by twenty people still waits.
 Beyond that:
@@ -256,7 +257,7 @@ that would pass sit further down. A bigger budget reaches them.
 ## Keeping concerts and other kinds out of auto-send
 
 Concert films, music documentaries and stand-up specials often carry fan-inflated ratings, so they
-can clear the auto-send bar easily. To stop that, open **Settings → Defaults → Requests**, find
+can clear the auto-send bar easily. To stop that, open **Settings → Requests**, find
 **Don't request these automatically**, and pick what to keep out:
 
 - **Genres.** TMDB's movie genres, such as Documentary. Genres are broad: Music also covers musicals
@@ -284,7 +285,7 @@ the popular English titles, what's left missing skews non-English before any set
 the rating floor then favours it further, because TMDB's audience rates anime and K-drama generously.
 The result is a nightly run that mostly asks for subtitled titles.
 
-**Settings → Defaults → Requests → Guardrails → Language** fixes it without throwing the good ones away:
+**Settings → Requests → Guardrails → Language** fixes it without throwing the good ones away:
 
 - **Any language** — one bar for everything. This is the default and how Shortlist has always
   behaved; nothing changes until you pick something else.
@@ -322,7 +323,7 @@ editor, under **Requests** — a kids row can file into its own folder at a lowe
 only the first season of a show, stay English-only, ask for a lower rating, and hold itself to one
 title a night, while your main row carries on as it was.
 
-A field left on "use the setting from Settings → Defaults → Requests" follows the global, and follows it as you
+A field left on "use the setting from Settings → Requests" follows the global, and follows it as you
 change it. Only the ones you deliberately override differ. Every on/off setting in this group,
 including that "use the setting from Settings" choice, is a switch — there are no checkboxes here,
 only where you're picking items from a list (languages, tags, and the like).

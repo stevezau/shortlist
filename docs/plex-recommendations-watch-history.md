@@ -2,7 +2,7 @@
 title: Plex recommendations based on each user's watch history
 description: Plex's library rows are identical for everyone and ignore what you've watched. What Plex really does with watch history, why smart collections aren't personal, how to build Netflix-style rows that are, and what good looks like.
 heading: How to get Plex recommendations based on each user's watch history
-updated: 2026-10-03
+updated: 2026-10-10
 byline: true
 redirect_from:
   - /plex-netflix-style-recommendations/
@@ -113,11 +113,11 @@ that looks arbitrary. It's also how you debug a bad pick.
 <figure class="reasons">
   <ul>
     <li><img src="{{ '/images/poster-fight-club.webp' | relative_url }}" width="160" height="240" alt="">
-      <span><strong>Fight Club</strong><span class="why">Because you watched GoodFellas</span><span class="whose">Sarah's movies row</span></span></li>
+      <span><strong>Fight Club</strong><span class="why">Because you watched GoodFellas — more crime and drama</span><span class="whose">Sarah's movies row</span></span></li>
     <li><img src="{{ '/images/poster-severance.webp' | relative_url }}" width="160" height="240" alt="">
-      <span><strong>Severance</strong><span class="why">Because you watched The Wire</span><span class="whose">Sarah's TV row</span></span></li>
+      <span><strong>Severance</strong><span class="why">Because you watched The Wire — more drama and crime</span><span class="whose">Sarah's TV row</span></span></li>
     <li><img src="{{ '/images/poster-the-expanse.webp' | relative_url }}" width="160" height="240" alt="">
-      <span><strong>The Expanse</strong><span class="why">Because you watched Breaking Bad</span><span class="whose">Mike's TV row</span></span></li>
+      <span><strong>The Expanse</strong><span class="why">Because you watched Breaking Bad — more drama and crime</span><span class="whose">Mike's TV row</span></span></li>
   </ul>
   <figcaption>What each person's reason looks like: the pick, the watch that earned it, and whose row it is in.</figcaption>
 </figure>

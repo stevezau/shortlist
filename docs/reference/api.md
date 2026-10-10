@@ -293,6 +293,7 @@ PUT /api/collections/{id}/up-next {user_id, theme_id} -> theme ref
 POST /api/collections/{id}/up-next/regenerate {user_id} -> theme ref
      Writes a new Up next theme for one person now, with one AI call. 409 while the row's AI is paused, 422 without
      an AI provider or when the row is not on Explore.
+POST /api/collections/{id}/rename {name_template?, old_template?, dry_run?} -> text/event-stream (renames this row's collections on Plex: one `rename` event per person, then a `done` event; `old_template` is the title the row rendered as before, which is what tells this row's collection apart from the person's other rows; `dry_run` previews and writes nothing)
 POST /api/collections/{id}/cleanup {dry_run?} (remove this row's Plex collections for everyone; dry-run previews)
 POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/collections/{id}/poster/image (serve/remove uploaded artwork) · POST /api/collections/{id}/poster/preview {title,subtitle,style} -> generated sample image
 ```
@@ -300,6 +301,7 @@ POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/co
 ## System, jobs and libraries
 
 ```
+GET  /api/system/version -> {current_version, latest_version, update_available, install_type, git_sha, git_branch} (owner-gated; `git_sha`/`git_branch` identify which build a `:dev` image is, and are empty on a source checkout)
 GET  /api/system/image-provider -> {capable, provider, reason} (can the AI provider generate poster images — drives the row editor's Generate gate)
 GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files as a zip; credentials, addresses and this server's machine id removed — the live view above strips credentials only, since it renders on the owner's own screen where the address is what makes a line readable)
 GET  /api/system/libraries -> [{key, title, type}] (the server's Plex libraries, for the row editor)
@@ -315,13 +317,42 @@ GET  /api/system/owned-collections -> {collections:[{library,title,label,rating_
 ## Runs
 
 ```
-GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages backwards; every run carries `privacy` — `{can_see_others, unreadable_filters, filters_not_enforced}`, the accounts that run found able to see other people's rows, whose filter Plex cannot read, or whose filter Plex is not applying. `privacy` is null when the run did not measure who can see what, and always null for a dry run, which builds nothing to check; each of the last two lists is null when that check did not run and `[]` when it ran and found nothing. Reporting only: a finding never changes `status`) · GET /api/runs/summary · GET /api/runs/{id} (each user carries `status`, `error`, `reason` — why a `skipped` user built nothing — `has_trace`, and `cost` — that person's timing and token spend for this run, `null` on a run recorded before this was measured, which must render as "not recorded" and never as `0s`; when present, `{setup_ms, rows: {row_slug: {duration_ms, blocked_ms}}, pools: [{label, tokens, exa_searches, duration_ms, rows}]}` — `setup_ms`/`pools` are the person's shared spend (history fetch + candidate gather), repeated across every row because it belongs to none of them; each row's own `duration_ms` is wall-clock INCLUDING `blocked_ms` (time spent waiting on the shared Plex write lock at concurrency above 1), so that row's own work time is `duration_ms - blocked_ms`; tokens are reported per POOL, never per row — all AI spend happens in the pool-scoped candidate gather, and pools are shared between rows, so a per-row token figure would be an allocation invented by the API rather than a measurement; `pools[].rows` names every row slug that drew on a given pool) · GET /api/runs/{id}/users/{user_id}/trace -> {username, display_name, status, error, reason, trace, breakdown} (the full per-user pipeline trace. History (with true distinct-title watched totals per library, split by media type) / seeds with each seed's weight ingredients, each source's queries+returns tagged with their fate (kept / already_watched / not_in_your_libraries / excluded_genre / lost_ranking_cutoff), the web-search/RAG prompts, resolved vs. hallucinated titles (the AI's resolved proposals carry the same fate so the UI marks each kept vs. dropped), plus `error`/`reason` for a failed or skipped person and `breakdown` (the delivered picks per library); a cold-start user carries a trace too (their thin history + a synthetic `cold_start` source), so `has_trace` is set and the "How we picked" page renders for them; fetched on demand, `trace: {}` on runs predating the feature) · GET /api/runs/{id}/log?after_seq=&format=json|text (the run's activity feed, kept in `run_log_lines` so an older run still has one; `after_seq` returns only what is new, `format=text` is the download) · POST /api/runs {user_ids?, collection_ids?, dry_run?} · POST /api/runs/{id}/cancel · DELETE /api/runs (permanently clears the run list and step-by-step logs; keeps Plex rows, saved picks, watched-pick counts and the separate delivery records needed for future watch tracking and row cleanup; 409 while any run is queued or running — wait for it to finish)
+GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages backwards; every run carries `privacy` — `{can_see_others, unreadable_filters, filters_not_enforced}`, the accounts that run found able to see other people's rows, whose filter Plex cannot read, or whose filter Plex is not applying. `privacy` is null when the run did not measure who can see what, and always null for a dry run, which builds nothing to check; each of the last two lists is null when that check did not run and `[]` when it ran and found nothing. Reporting only: a finding never changes `status`) · GET /api/runs/summary · GET /api/runs/{id} (each user carries `status`, `error`, `reason` — why a `skipped` user built nothing — `has_trace`, and `cost` — that person's timing and token spend for this run, `null` on a run recorded before this was measured, which must render as "not recorded" and never as `0s`; when present, `{setup_ms, rows: {row_slug: {duration_ms, blocked_ms}}, pools: [{label, tokens, exa_searches, duration_ms, rows}]}` — `setup_ms`/`pools` are the person's shared spend (history fetch + candidate gather), repeated across every row because it belongs to none of them; each row's own `duration_ms` is wall-clock INCLUDING `blocked_ms` (time spent waiting on the shared Plex write lock at concurrency above 1), so that row's own work time is `duration_ms - blocked_ms`; tokens are reported per POOL, never per row — all AI spend happens in the pool-scoped candidate gather, and pools are shared between rows, so a per-row token figure would be an allocation invented by the API rather than a measurement; `pools[].rows` names every row slug that drew on a given pool) · GET /api/runs/{id}/users/{user_id}/trace -> {username, display_name, status, error, reason, trace, breakdown} (the full per-user pipeline trace. History (with true distinct-title watched totals per library, split by media type) / seeds with each seed's weight ingredients, each source's queries+returns tagged with their fate (kept / already_watched / not_in_your_libraries / excluded_genre / lost_ranking_cutoff), the web-search/RAG prompts, resolved vs. hallucinated titles (the AI's resolved proposals carry the same fate so the UI marks each kept vs. dropped), plus `error`/`reason` for a failed or skipped person and `breakdown` (the delivered picks per library); a cold-start user carries a trace too (their thin history + a synthetic `cold_start` source), so `has_trace` is set and the "How we picked" page renders for them; fetched on demand, `trace: {}` on runs predating the feature) · GET /api/runs/{id}/rows/{slug}/trace (the same pipeline trace for one SHARED row, whose title is served as `username`/`display_name`; `{}` on a run recorded before shared rows were persisted) · GET /api/runs/{id}/log?after_seq=&format=json|text (the run's activity feed, kept in `run_log_lines` so an older run still has one; `after_seq` returns only what is new, `format=text` is the download) · POST /api/runs {user_ids?, collection_ids?, dry_run?} · POST /api/runs/{id}/cancel · DELETE /api/runs (permanently clears the run list and step-by-step logs; keeps Plex rows, saved picks, watched-pick counts and the separate delivery records needed for future watch tracking and row cleanup; 409 while any run is queued or running — wait for it to finish)
 ```
+
+Every run carries a `stats` object, written when it finishes. The keys most worth reading:
+
+- `users_ok`, `users_error`, `users_skipped`: people built, failed, and skipped without error.
+- `titles_added`, `titles_removed`: titles that entered or left everyone's rows this run.
+- `rows_swept`, `shares_updated`: rows removed because Plex could not hide them, and share filters written.
+- `titles_requested`: titles sent to Radarr, Sonarr or Overseerr. `requests_queued` is how many a run
+  chose to hold for approval, and `requests_waiting` is the part of that which really sits in the Requests
+  inbox now (the rest was already requested or already in the library). `requests_wanted`,
+  `requests_pool`, `requests_examined` and `requests_lookups` say how many candidates were wanted,
+  pooled, looked at and looked up, `requests_by_row` splits that per row, and `requests_warnings` lists
+  anything a source reported.
+- `llm_tokens`, `llm_output_tokens`, `llm_tokens_by_step`, `exa_searches`, `exa_cache_hits`: AI and web-search
+  spend.
+- `promotion_blockers`, `error`, `dry_run`: why nothing was promoted, the run-level error, and whether it
+  was a dry run.
+- `unhideable_rows`, `unreadable_filters`, `filters_not_enforced`, `privacy_unchecked`,
+  `privacy_write_failed`, `privacy_left_alone`: the privacy findings behind a run's `privacy` field. A key
+  is absent when the run did not measure it, and `{}` or `[]` when it measured and found nothing.
+
+## Catalogs
+
+```
+GET  /api/catalogs/settings -> [setting definitions] (every setting Shortlist knows, with its options, numeric range, prerequisites and what changing it affects)
+GET  /api/catalogs/templates -> [row template definitions] (the templates Add a row offers, with their creation defaults)
+```
+
+Both require the owner browser session. They are read-only descriptions of what exists, not of your values.
 
 ## Requests
 
 ```
 GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent then rejected, capped at 500 rows; `wanted_by` repeats one `wanters` username per value and keeps a title any of them wanted — applied BEFORE the cap, so picking a name searches the whole history rather than the 500 the page loaded; omitted = everyone) · GET /api/requests/status -> {statuses: {request_id: "downloaded"|"downloading"|"queued"|"unmonitored"|null}, radarr: "ok"|"unreachable"|"off", sonarr: same} (live Sonarr/Radarr status for WAITING and SENT items — rejected are skipped; null = the app is fine and doesn't track it, which is why `radarr`/`sonarr` report reachability separately: an app that never answered would otherwise be indistinguishable from one with nothing to say. Fetched separately so the list itself makes no Arr calls, and read from whole-library maps so the cost doesn't scale with inbox size — which is what makes the inbox's poll cheap — it runs every 10s only while a title is actually downloading, and every 30s while an app is unreachable so the badge clears itself when it comes back; a settled inbox does not poll at all) · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids} (permanent) · POST /api/requests/restore {ids} (un-reject → back to Waiting) · POST /api/requests/delete {ids} (removable; can re-surface) · POST /api/requests/clear {ids} (hide SENT items from the log without un-sending — the tombstone stays so the title isn't re-requested)
+POST /api/requests/hold-preview {genres[], tags[]} -> {checked, held[{tmdb_id, title, year, reason, story}], unread} (which waiting movies these TMDB genre ids and tag ids would hold back from automatic sending; the Requests tab's live check before you save. Reads TMDB through the shared cache, saves nothing, and returns 503 without a TMDB key; `unread` counts titles TMDB could not answer for)
 GET  /api/requests/row-sources?pattern= -> {overseerr, radarr, sonarr: "connected"|"unreachable"|"off", complete, problems[], seerr_requests, seerr_requesters, seerr_linked, servers[{kind, name, is4k, tag_requests}], tagged_movies, tagged_shows, people[{user_id, display_name, linked, ready}], tags[{label, source: "overseerr"|"pattern"|"override", user_id, display_name, titles, ambiguous}]}
      The "Your requests" row's setup check, behind the Row editor's sources panel and the Users page's Requests column. Read-only: it reads every
      configured source once and writes nothing. `pattern` (max 200) previews an own-tag pattern such as `req-{username}` — the row's Check
@@ -384,8 +415,7 @@ GET  /api/notifications/whats-new -> {version, releases[{version, url, published
 
 ```
 Settings -> Connections -> Webhook (`notify.webhook.url` / `notify.webhook.auth_header_name` /
-`notify.webhook.auth_header_value`) and Settings → Connections → Webhook (`notify.webhook.enabled` /
-`notify.webhook.events`).
+`notify.webhook.auth_header_value` / `notify.webhook.enabled` / `notify.webhook.events`).
      Each event in `notify.webhook.events` POSTs generic JSON
      {source, version, id, severity, title, message, event, path, sent_at}, plus `content` and `text`
      carrying "title\nmessage" — the fields Discord and Slack each require — to one webhook.
@@ -544,6 +574,8 @@ GET  /api/support/jobs -> {jobs[], counts{}, failed, text}
 GET  /api/support/clocks -> {tz, local_now, utc_now, offset_hours, scheduled[], text}
 GET  /api/support/database -> {head, tables_present, tables_expected, missing_tables[], indexes, size_mb, text}
 GET  /api/support/config -> {settings[{env, key, env_set, secret, value, has_value}], text}
+GET  /api/support/errors -> {lines[], total_matched, log_file, text} (the newest WARNING and ERROR log lines, redacted)
+GET  /api/support/runs -> {runs[{id, status, trigger, dry_run, started_at, finished_at, stats, people, failed[{user, error}]}], text} (the last five runs and who failed in each)
 GET  /api/support/bundle.txt -> text/plain; every server-wide block in one downloadable file
 GET  /api/support/report.zip -> the bundle plus every log file, redacted, as one attachment
 GET  /api/support/suggestions -> {users[], titles[], libraries[]} (type-ahead for the inputs above; owner-only, never part of a report)

@@ -2,7 +2,7 @@
 title: Install Shortlist for Plex with Docker
 description: Requirements, Docker install, first login and the setup wizard that connects your Plex server and builds each user's first personalized rows.
 heading: Getting started
-updated: 2026-10-03
+updated: 2026-10-10
 ---
 
 ## Requirements
@@ -114,7 +114,7 @@ The wizard has **7 steps**:
 
 ## Trying it safely
 
-Shortlist is new and it changes real Plex sharing settings, so you may well want to watch it work
+Shortlist changes real Plex sharing settings, so you may well want to watch it work
 before you trust it. Two ways to do that:
 
 - **Safe mode** — start the container with `-e SHORTLIST_DRY_RUN=1`. Every run then logs exactly what

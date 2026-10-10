@@ -2,7 +2,7 @@
 title: "Rows and templates: Plex recommendation row types"
 description: Start a row from a template, choose what kind of row it is, and name it. What fills each kind, seasonal rows and where a row sits on Plex each have their own page.
 heading: Rows and templates
-updated: 2026-10-04
+updated: 2026-10-10
 ---
 
 A row is one Plex collection per person (or one shared by everyone, for Popular on this server),
@@ -11,7 +11,7 @@ of the rows guide is split by question:
 
 - [How a row is filled](rows/what-goes-in.md): Because you watched and Watch it again rows, people
   with too little history, and the order titles appear in.
-- [Seasonal rows](rows/seasonal.md): rows that follow Halloween, Christmas and Valentine's Day.
+- [Seasonal rows](rows/seasonal.md): rows that follow holidays, film days and your own dates.
 - [Where a row shows](rows/placement.md): Home and the Recommended shelf, placement next to other
   collections, posters, descriptions and sort titles.
 - [Your requests rows](requests.md#your-requests-rows) and per-row request settings are in the
@@ -20,10 +20,11 @@ of the rows guide is split by question:
 ## Starting from a template
 
 There are eleven starting templates: _Picked for You_, _Because you watched…_, _Watch it again_,
-_Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_, _Movie night_
-_More TV to watch_ and _Describe a row_ (an [AI row]({{ '/guides/ai' | relative_url }}#an-ai-row), which needs an AI provider). **Rows → Add a row** opens the compact gallery, with search, filters and a
-preview of the selected template. Each tile describes what it changes; every field remains editable
-afterwards. **Use template** opens the editor; **Start from scratch** opens an empty row directly.
+_Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_, _Movie night_,
+_More TV to watch_ and _Describe a row_ (an [AI row]({{ '/guides/ai' | relative_url }}#an-ai-row), which needs an AI provider). **Rows → Add a row** opens a page where you pick a kind of row, choose a
+starting template if the kind has more than one, name the row and choose who gets it,
+with a preview of what it will look like on Plex. Press **Add row** to create it (a Describe a row template says **Continue** and takes you to its editor to write the list first). Every field remains
+editable afterwards, and **Set every option yourself** opens the full editor instead.
 _Your requests_ is for titles someone requested that are now ready on Plex.
 
 <figure class="shot">
@@ -150,8 +151,8 @@ That dialog also says what happens on Plex once you save, because it isn't the s
   back on Plex straight away, still holding the titles from its last season.
 - **Every other switch** doesn't touch Plex until you save and the row next runs.
 - **A switched-off row** isn't on Plex, so no switch changes anything there; its settings apply when
-  you turn it back on. If **Pause all runs** is on in Settings, anything that waits on a run waits
-  until runs are resumed, and the dialog says so.
+  you turn it back on. If **Pause all users** is on in Settings, under System → Run speed, anything that waits on a run waits
+  until you resume, and the dialog says so.
 
 A switch to a per-person kind can still be refused when you save, if another per-person row already
 uses the same name in a shared library — the editor shows that the same way it does today.

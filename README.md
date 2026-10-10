@@ -49,8 +49,7 @@
 ![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
 
 <sub>What lands on Plex: a real "Picked for You" row from the maintainer's server, visible only to
-its owner. Four "watched" ticks were painted out, because that run predates the freshness fix. Rows
-built today carry none.</sub>
+its owner. Four "watched" ticks have been painted out.</sub>
 
 ## What it does
 
@@ -142,8 +141,8 @@ but nobody pictured here watched anything.</sub>
   its own sources, size, libraries, cadence and audience, and you can add as many as you like.
 - 🗓️ **A rebuild cadence you control**: nightly, weekly, monthly or never, so nobody opens Plex to a
   completely reshuffled row every day.
-- 🎃 **Seasonal rows**: one row that follows the calendar: Halloween, Christmas, Valentine's Day plus ten
-  ready-made holidays such as Thanksgiving and Easter, or your own dates. Picked for each person and
+- 🎃 **Seasonal rows**: one row that follows the calendar: Halloween, Christmas, Valentine's Day plus twenty
+  ready-made holidays, film days and spotlights such as Thanksgiving and Easter, or your own dates. Picked for each person and
   hidden between seasons.
 - 🚫 **Block a bad seed.** A film someone put on for a friend shouldn't shape their picks. Block it
   from a run's "How we picked" page. The watch stays in their Plex history and just stops seeding.

@@ -41,7 +41,7 @@ Short pages instead of one long one. If you know what you want to do, start here
 | [People and sharing](guides/people-and-sharing.md)       | The Users page, on/off/paused, per-person settings, accounts Plex restricts |
 | [Rows and templates](guides/rows.md)                     | Starting from a template, row kinds, editing and naming a row               |
 | [How a row is filled](guides/rows/what-goes-in.md)       | Because you watched and Watch it again rows, cold start, title order        |
-| [Seasonal rows](guides/rows/seasonal.md)                 | Rows that follow Halloween, Christmas and Valentine's Day                   |
+| [Seasonal rows](guides/rows/seasonal.md)                 | Rows that follow holidays, film days and your own dates                    |
 | [Where a row shows](guides/rows/placement.md)            | Home and Recommended, shelf placement, posters, descriptions                |
 | [What goes in a row](guides/picks.md)                    | Recommendation sources, rebuild cadence, per-row and per-person overrides   |
 | [Schedules and runs](guides/schedules.md)                | Each row's own schedule, custom schedules, the jobs worth knowing about     |

@@ -6,7 +6,7 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
-Back up `/config` before upgrading: this release adds database migrations 0102 to 0109. No settings need
+Back up `/config` before upgrading: this release adds database migrations 0102 to 0111. No settings need
 changing, and assistant access stays off until you opt in.
 
 ### Added
@@ -25,11 +25,24 @@ changing, and assistant access stays off until you opt in.
 - **Warnings view in Activity.** The log can be filtered to warnings, with context, and warning lines are
   tinted.
 - **A per-user Kometa guide** on the docs site.
+- **A webhook event for a skipped scheduled job** (`job.skipped`). Webhook events can now be chosen before an
+  address is saved; only the on switch waits for one.
+- **Pick reasons name what the picks share.** "Because you watched Dune — more sci-fi and action", and the
+  person page groups a person's picks by reason.
+- **Dashboard.** "Last run" sums the night's scheduled runs, Finished says how many are still going, and both
+  bar charts say which shade is finished and which is still going. Durations of an hour or more read as hours
+  and minutes.
+- **First-run wizard** has a TMDB key walkthrough, and its last step shows the rows it built.
 
 ### Changed
 
-- **`GET /api/report/engagement` no longer returns `losing`, `stop_points` or `observed`.** Nothing in the
-  app read them; `people` is unchanged.
+- **Pause all users moved** from the Danger zone to **Settings, System, Run speed**. Only the full uninstall
+  stays in the Danger zone.
+- **Assistant consent** names the read-only scopes it asks for, and access is a simple choice of view or
+  manage.
+- **Numbers agree across pages.** People watching counts enabled people only, a person's header counts
+  shared-row watches like the dashboard does, and shared rows say they are one copy for everyone. The Requests
+  figures count only the titles that really reached the inbox.
 - **Redesigned screens.** The dashboard, rows list, row editor, **Add a row** (now its own page), Users and
   person page, Privacy, Runs and run detail, Activity, Settings and the first-run wizard were reworked.
   Runs show one verdict ("OK · N warnings") everywhere, and the Privacy page leads with its enforcement
@@ -51,6 +64,20 @@ changing, and assistant access stays off until you opt in.
   first-run finish and the person page all follow the engine's reading, including during a plex.tv outage.
 - A run that could not save or check someone's hide rules reads as a warning.
 - The Most watched shelf stays inside its scroll area on a phone.
+- A schedule rebuild no longer drops that night's past-due row run.
+- A scheduled job that is skipped is reported (webhook and bell) instead of vanishing.
+- Watch sessions left open by a restart close as `orphaned` instead of `timeout`.
+- Web search no longer caches a SearXNG answer that was not JSON. An unusable Exa answer is cached for an
+  hour, and the run's trace lists the seeds that failed.
+- Retention pruning also drops the cached dashboard report, so the dashboard cannot show pruned data.
+- The log view widens its window once when a stretch of debug lines pushed every info line out.
+- Tab strips keep the active tab in view, small controls have larger touch targets, and the rows, Users and
+  Privacy pages read cleanly from 320px wide up.
+
+### Removed
+
+- **`GET /api/report/engagement` no longer returns `losing`, `stop_points` or `observed`.** Nothing in the
+  app read them; `people` is unchanged.
 
 ## [1.10.0] - 2026-10-05
 

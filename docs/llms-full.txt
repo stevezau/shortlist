@@ -78,7 +78,7 @@ them as restored.
   Popular on this server (shared), Seasonal and Your requests. Each person can have as many rows as
   you add; shared rows are seen by everyone.
 - A seasonal row follows the calendar: three built-in seasons (Valentine's Day, Halloween,
-  Christmas), ten ready-made holidays such as Thanksgiving and Easter, or custom dates. It is ranked
+  Christmas), twenty ready-made holidays, film days and spotlights such as Thanksgiving and Easter, or custom dates. It is ranked
   for each person and hidden between seasons.
 - A "Your requests" row: the titles a person asked for in Overseerr/Jellyseerr, or that carry their
   requester tag in Radarr/Sonarr, once they are on Plex and until they have watched them. No AI, no
@@ -92,7 +92,7 @@ them as restored.
 - Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
 - Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
   label-based share filters.
-- Status: 1.0, running in production.
+- Status: 1.x, running in production.
 
 # Full documentation
 
@@ -239,7 +239,7 @@ The wizard has **7 steps**:
 
 ## Trying it safely
 
-Shortlist is new and it changes real Plex sharing settings, so you may well want to watch it work
+Shortlist changes real Plex sharing settings, so you may well want to watch it work
 before you trust it. Two ways to do that:
 
 - **Safe mode** — start the container with `-e SHORTLIST_DRY_RUN=1`. Every run then logs exactly what
@@ -327,7 +327,7 @@ Short pages instead of one long one. If you know what you want to do, start here
 | [People and sharing](https://shortlistapp.dev/guides/people-and-sharing/)       | The Users page, on/off/paused, per-person settings, accounts Plex restricts |
 | [Rows and templates](https://shortlistapp.dev/guides/rows/)                     | Starting from a template, row kinds, editing and naming a row               |
 | [How a row is filled](https://shortlistapp.dev/guides/rows/what-goes-in/)       | Because you watched and Watch it again rows, cold start, title order        |
-| [Seasonal rows](https://shortlistapp.dev/guides/rows/seasonal/)                 | Rows that follow Halloween, Christmas and Valentine's Day                   |
+| [Seasonal rows](https://shortlistapp.dev/guides/rows/seasonal/)                 | Rows that follow holidays, film days and your own dates                    |
 | [Where a row shows](https://shortlistapp.dev/guides/rows/placement/)            | Home and Recommended, shelf placement, posters, descriptions                |
 | [What goes in a row](https://shortlistapp.dev/guides/picks/)                    | Recommendation sources, rebuild cadence, per-row and per-person overrides   |
 | [Schedules and runs](https://shortlistapp.dev/guides/schedules/)                | Each row's own schedule, custom schedules, the jobs worth knowing about     |
@@ -453,16 +453,20 @@ next release.
 
 ## Dashboard
 
-A status strip across the top shows **Last run**, **Next run**, **Privacy** and **Plex**. Below it, a
-privacy callout says whether every row is still hidden from the wrong people, then the impact report:
-what Shortlist delivered versus what people actually watched, for a window you choose (7 / 30 / 90
-days, or all time, 30 by default). Each headline figure carries its change against the previous equal
-period, so you can see direction rather than a running total. There's also a **Sync watched now**
-button to refresh the numbers on demand. Before the first run the page shows a first-run panel
-instead, with **Run now** and **Dry run first**. A dry run writes nothing to Plex.
+A status strip across the top shows **Last run**, **Next run**, **Privacy** and **Plex**. **Last run**
+sums up the night's scheduled runs when more than one ran. When an account has a Plex Restriction
+Profile (or a filter Plex fails on) that Shortlist cannot hide rows from, a one-line callout names it
+under the strip. Below that is the impact report: what Shortlist delivered versus what people actually
+watched, for a window you choose (7 / 30 / 90 days, or all time, 30 by default). **Watched from rows**
+carries its change against the previous equal period, so you can see direction rather than a running
+total. Beside the window selector, **Watch sync** says whether live watch tracking is running, and
+**Sync now** refreshes the numbers on demand. Before the first run the page shows a first-run panel
+instead, with **Run now** and **Dry run first**. A dry run writes nothing to Plex. Once rows exist but
+nobody has watched anything, a **What happens next** card shows when the next run builds rows and how
+many requests wait for approval.
 
 <div class="preview-gallery">
-  <figure><a href="https://shortlistapp.dev/images/preview-dashboard.webp"><img src="https://shortlistapp.dev/images/preview-dashboard.webp" alt="The dashboard with the Last run, Next run, Privacy and Plex status strip, a privacy callout and the Impact report" loading="lazy"></a><figcaption>Dashboard: the status strip, the privacy callout and the Impact report.</figcaption></figure>
+  <figure><a href="https://shortlistapp.dev/images/preview-dashboard.webp"><img src="https://shortlistapp.dev/images/preview-dashboard.webp" alt="The dashboard with the Last run, Next run, Privacy and Plex status strip and the Impact report" loading="lazy"></a><figcaption>Dashboard: the status strip and the Impact report.</figcaption></figure>
 </div>
 
 [What each figure means](#reading-the-dashboard) is at the bottom of this page.
@@ -506,16 +510,18 @@ is the server owner. Everything on this page, and what each switch does to Plex 
 
 ## Privacy
 
-A status strip, then a ledger with one line per Plex account that says what plex.tv just reported for
-it, accounts with a problem first. Each line gives one verdict, such as "Hides all 45 other rows" or
-"Sees 2 rows that aren't theirs"; **Show each row** lists every row for that account, and opens by
-itself when the account can see a row that isn't theirs. **Read again** and **Verify now** re-check on demand. The **Policy** panel holds **Disabled users
-see nothing**, which used to be in Settings, Advanced. It saves as you flip it and applies on the next
-run. The page reports only what it read; it does not claim anything about the Collections tab or
-Related shelves.
+The page leads with an enforcement panel: **Plex was applying the rules when last checked**, **Plex is
+ignoring the privacy filter**, or a note that Plex has not been checked recently. It comes from the last
+run's own measurement, so it stays visible when plex.tv is down, and **Verify now** starts a run of every
+row to measure it again. Under it, a who-sees-what grid lists each Plex account against the rows, read
+live from plex.tv, accounts with a problem first. Each account gets one verdict, such as "Sees it",
+"Rule stored, not applied", "Rule refused by Plex", "Left alone" or "Not checked". **Read again** in the
+page header re-reads plex.tv. The **Policy** panel holds **Disabled users see nothing**, which used to be
+in Settings, Advanced. It saves as you flip it and applies on the next run. The page reports only what it
+read; it does not claim anything about the Collections tab or Related shelves.
 
 <div class="preview-gallery">
-  <figure><a href="https://shortlistapp.dev/images/preview-privacy.webp"><img src="https://shortlistapp.dev/images/preview-privacy.webp" alt="The Privacy page with its status strip, one ledger line per Plex account and the Policy panel" loading="lazy"></a><figcaption>Privacy: what plex.tv reported for each account, read live.</figcaption></figure>
+  <figure><a href="https://shortlistapp.dev/images/preview-privacy.webp"><img src="https://shortlistapp.dev/images/preview-privacy.webp" alt="The Privacy page with its enforcement panel, a who-sees-what grid of Plex accounts and the Policy panel" loading="lazy"></a><figcaption>Privacy: the enforcement check and what plex.tv reported for each account, read live.</figcaption></figure>
 </div>
 
 ## Runs
@@ -526,7 +532,7 @@ couldn't check (such as a PIN-protected account with a Restriction Profile), one
 couldn't be saved, and one you left alone are never counted as hiding; they are named under the count
 instead. A run from an older version reads **Not fully measured**, because it didn't record those
 accounts. A run that finished fine but left an account able to see other people's rows reads
-**OK with warnings**, and the callout names the accounts. A dry run reads **Not measured**, because
+**OK · N warnings**, and the callout names the accounts. A dry run reads **Not measured**, because
 it writes no hide rules to measure. A failed run still says Failed.
 
 <div class="preview-gallery">
@@ -590,7 +596,7 @@ Every piece of background maintenance Shortlist does, one per line: the name, ho
 when the next one fires, and the button. The next-run time, or **Not scheduled**, stays visible on
 mobile too.
 
-**Run now** holds the six you start yourself:
+**Run now** holds the eight you start yourself:
 
 | Job                            | What it does                                    |
 | ------------------------------ | ----------------------------------------------- |
@@ -600,6 +606,8 @@ mobile too.
 | **Privacy sync**               | Re-merge every share filter                     |
 | **Back up the database**       | Write a backup to `/config/backups`             |
 | **Clear out old records**      | Drop run history past the limit you set         |
+| **Pick new row themes**        | Give AI rows set to Explore their next theme    |
+| **Show and hide rows for today** | Apply each row's day schedule and seasons     |
 
 A tag on the line says what a job changes on your server: **Can delete** on the one that can remove
 a collection, **Changes Plex** on the ones that write. Anything untagged only reads, or only touches
@@ -668,8 +676,9 @@ Four tabs, each with its own address: **Connections** (`/settings/connections`),
 (`/settings/defaults`), **Requests** (`/settings/requests`) and **System** (`/settings/system`). Use the search box to find a setting by
 name. Connections holds Plex, TMDB, AI and web search, Tautulli, Trakt, MDBList, Overseerr or
 Jellyseerr, Radarr, Sonarr and the webhook with its alert events. Defaults holds Title sources,
-Refresh and variety, Row defaults, and Row placement. Requests holds the request sources, limits and the "don't request these automatically" hold filter. System holds retention, logging and run
-limits, the Plex cleanup audit, API access and the Danger zone. All forms stay mounted, so switching
+Refresh and variety, Row defaults, and Row placement. Requests holds the request sources, limits and the "don't request these automatically" hold filter. System holds retention, logging, run speed
+(run concurrency and **Pause all users**), the Plex cleanup audit, API access and the Danger zone, which
+holds the full uninstall. All forms stay mounted, so switching
 sections preserves unfinished edits. Every connection is re-testable in place. See
 [Finding and saving settings](https://shortlistapp.dev/reference/settings/#finding-and-saving-settings).
 
@@ -688,8 +697,10 @@ installed rather than how good the picks are — each night would add another ~6
 that can no longer be credited, and the number could only sink. The window is what keeps these
 figures about the picks.
 
-**Watched** — picks people STARTED in the window. A pick delivered last month and watched this week
-counts here, as long as the row was still showing it: this figure is about watching, not delivery.
+**Watched from rows** — picks people STARTED in the window, with the number delivered beside it
+("· 100 delivered"). A pick delivered last month and watched this week counts here, as long as the row
+was still showing it: this figure is about watching, not delivery. The two are separate counts, not "41
+of 100", because watches are counted by when they happened and deliveries by when the pick was made.
 For a series it counts from the **first finished episode**, because that is Plex's own definition and
 Plex offers no other — see Finished.
 
@@ -706,33 +717,29 @@ credited as watched only 21 had actually been finished and 31 were a single epis
 "watched" count makes a TV row look better than a movie row for a structural reason rather than a
 real one. A big Watched with a small Finished means people are sampling, not staying.
 
-**Dropped** — picks someone started and gave up on. This is the one number Plex's own watched flag
-cannot produce: to Plex, a pick nobody opened and a pick someone played for three minutes are both
-"not watched", and they say opposite things. One never got their attention; the other got it and lost
-it. The hint splits off the ones that barely started at all — under 5% in, which reads as "wrong pick
-entirely" rather than "fair go, didn't hold me".
+Under the figure, a line says what became of the rest. It reads "N gave up part-way" when someone
+started a pick and abandoned it, and "N still going" for the ones still in progress. Both appear only
+when they are not zero. Giving up is the one thing Plex's own watched flag cannot show: to Plex, a pick
+nobody opened and a pick someone played for three minutes are both "not watched", and they say opposite
+things. A film counts as given up only after 24 hours with no further play, so the clock restarts if
+they come back, and a series is never counted as given up. **Worth a look** at the bottom of the page lists them. That card hides itself when there is nothing to
+look at.
 
-It counts only what Shortlist watched happen live, so it starts empty and fills in from the moment
-watch tracking is running. A title nobody has played since then is in neither count — unknown is not
-the same as zero.
+Giving up counts only what Shortlist watched happen live, so it starts empty and fills in from the
+moment watch tracking is running. A title nobody has played since then is in neither count — unknown
+is not the same as zero.
 
-**People who watched a pick** — how many people watched at least one title from their rows in the
-window, out of everyone currently enabled. It counts people; **Watched from Shortlist rows** counts
-titles.
+**People watching** — how many people watched at least one title from their rows in the window, out of
+everyone currently enabled. It counts people; **Watched from rows** counts titles.
 
-**Avg to watch** — average days from a title first being recommended to it first being watched, over
-titles first watched in the window. Lower is better, and the change arrow is coloured accordingly.
+**Time to watch** — average days from a title first being recommended to it first being watched, over
+titles first watched in the window. A dash means nothing has been watched yet.
 
-**Watched from Shortlist rows** — the one percentage. Of the titles people watched
-in the window, the share a Shortlist row of theirs was showing when they watched it. Each person
-counts from their first pick, so viewing from before they had a row is left out, and people with no
-picks yet aren't counted. It says the rows are in front of what people choose, not that a row made the
-choice.
+Each person counts from their first pick, so viewing from before they had a row is left out, and people
+with no picks yet aren't counted. The dashboard says the rows are in front of what people choose, not
+that a row made the choice.
 
-It replaced a rate over every title ever _shown_, which stayed under 1% whether Shortlist worked or
-not: a row of 20 to 30 titles is mostly titles nobody will watch.
-
-**By person / By row** — the page remembers which one you picked, in this browser. Counts, not percentages, sorted by what was actually watched, with the
+**Who's watching** has a **By person / By row** switch. The page remembers which one you picked, in this browser. Counts, not percentages, sorted by what was actually watched, with the
 finished count beside each. At these sample sizes a percentage is noise: ranking by one put a person
 with `1/31` above a person with `3/103`. Sorting stays on watched deliberately — ranking on finished
 would bury every TV row under every movie row, which says more about the medium than about the row. People and rows with nothing in the window fold away behind a disclosure rather than filling
@@ -745,15 +752,16 @@ removes those picks from every total that counts them, here and on each person's
 undone. Rows that still exist are never affected, whichever slug is named: Shortlist recomputes what is
 eligible on the server rather than trusting the request.
 
-**Requests** sits just above **Worth a look**, which closes the page: how many titles were sent to be downloaded in the window,
-how many of those were watched since, and how many are waiting for your approval, with a link to each.
+**Requests** sits just above **Worth a look**, which closes the page. It shows, as a single line, how many
+titles were sent to be downloaded in the window, how many of those were watched since, and how many are
+awaiting approval, with links to **Review** and the **Send log**. A figure that is zero is left out.
 
 **Most watched** is a shelf of posters: the titles with the most watchers in the window, each with its
-rank, year, the newest few people who watched it, and links to look it up on TMDB, IMDb and Trakt.
+rank and the faces of a few people who watched it; hover for the watcher count.
 
-**Recently watched from Shortlist** lists the newest watches under the day they happened. Each line
-leads with the poster and title, says whether it was **Watched** (a film), **Started** or **Finished**
-(a series), and names the person and the row it came from, with the same look-up links at the end.
+**Recently watched** lists the newest watches. Each line leads with the poster and title, says whether
+it was **Watched** (a film), **Started** or **Finished** (a series), names the person and the row it came
+from, and shows how long ago it was. Older watches are on each person's page.
 
 **Watches per week** is always the long view: the last 16 weeks, whatever window is
 selected. Each column is split: the solid part is what got finished, the faded part what is still
@@ -916,7 +924,7 @@ of the rows guide is split by question:
 
 - [How a row is filled](https://shortlistapp.dev/guides/rows/what-goes-in/): Because you watched and Watch it again rows, people
   with too little history, and the order titles appear in.
-- [Seasonal rows](https://shortlistapp.dev/guides/rows/seasonal/): rows that follow Halloween, Christmas and Valentine's Day.
+- [Seasonal rows](https://shortlistapp.dev/guides/rows/seasonal/): rows that follow holidays, film days and your own dates.
 - [Where a row shows](https://shortlistapp.dev/guides/rows/placement/): Home and the Recommended shelf, placement next to other
   collections, posters, descriptions and sort titles.
 - [Your requests rows](https://shortlistapp.dev/guides/requests/#your-requests-rows) and per-row request settings are in the
@@ -925,10 +933,11 @@ of the rows guide is split by question:
 ## Starting from a template
 
 There are eleven starting templates: _Picked for You_, _Because you watched…_, _Watch it again_,
-_Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_, _Movie night_
-_More TV to watch_ and _Describe a row_ (an [AI row](https://shortlistapp.dev/guides/ai#an-ai-row), which needs an AI provider). **Rows → Add a row** opens the compact gallery, with search, filters and a
-preview of the selected template. Each tile describes what it changes; every field remains editable
-afterwards. **Use template** opens the editor; **Start from scratch** opens an empty row directly.
+_Your requests_, _Fresh finds_, _Seasonal_, _From the vault_, _Popular on this server_, _Movie night_,
+_More TV to watch_ and _Describe a row_ (an [AI row](https://shortlistapp.dev/guides/ai#an-ai-row), which needs an AI provider). **Rows → Add a row** opens a page where you pick a kind of row, choose a
+starting template if the kind has more than one, name the row and choose who gets it,
+with a preview of what it will look like on Plex. Press **Add row** to create it (a Describe a row template says **Continue** and takes you to its editor to write the list first). Every field remains
+editable afterwards, and **Set every option yourself** opens the full editor instead.
 _Your requests_ is for titles someone requested that are now ready on Plex.
 
 <figure class="shot">
@@ -1055,8 +1064,8 @@ That dialog also says what happens on Plex once you save, because it isn't the s
   back on Plex straight away, still holding the titles from its last season.
 - **Every other switch** doesn't touch Plex until you save and the row next runs.
 - **A switched-off row** isn't on Plex, so no switch changes anything there; its settings apply when
-  you turn it back on. If **Pause all runs** is on in Settings, anything that waits on a run waits
-  until runs are resumed, and the dialog says so.
+  you turn it back on. If **Pause all users** is on in Settings, under System → Run speed, anything that waits on a run waits
+  until you resume, and the dialog says so.
 
 A switch to a per-person kind can still be refused when you save, if another per-person row already
 uses the same name in a shared library — the editor shows that the same way it does today.
@@ -1376,7 +1385,7 @@ A seasonal row follows the calendar: Halloween films and horror in October, Chri
     <img src="https://shortlistapp.dev/images/rows-crop.webp" width="1560" height="918" loading="lazy"
          alt="The Rows page: four rows, each with an on/off switch, a Run now button and a more-actions menu, and an Add a row button at the top right.">
   </picture>
-  <figcaption><strong>Rows → Add a row</strong> opens the template gallery. <em>Seasonal</em> is one of the eleven starting templates.</figcaption>
+  <figcaption><strong>Rows → Add a row</strong> opens a page to pick a kind of row. <em>Seasonal</em> is one of the six kinds.</figcaption>
 </figure>
 
 ## Start a seasonal row
@@ -2003,7 +2012,7 @@ It lives with Jobs rather than in its own nav entry because "what background wor
 does it run" are two views of one thing. As separate pages, every job was listed twice and neither
 page could answer a whole question. `/schedule` still redirects here.
 
-Two jobs are worth knowing about there:
+These jobs are worth knowing about there:
 
 - **Sync watch history** re-reads every watched title in every library, every time it runs — and so
   does a run's own history top-up, so pressing Run now sees the same thing. Reading everything
@@ -2029,6 +2038,13 @@ Two jobs are worth knowing about there:
   to Plex, so its frequency picker offers **Off** where every other job offers **Daily**, and Off
   means off rather than "fall back to the default" the way every other blank cron does. **Check now**
   still works by hand with the schedule off.
+- **Show and hide rows for today** runs at midnight by default (`rows.visibility_cron`), and again
+  whenever you change which days or seasons a row appears in. It puts each row on or off Plex's shelves
+  to match its day schedule and seasons. A hidden row keeps its titles, so it comes straight back
+  without being built again, and everybody's privacy filters are re-merged before anything is shown.
+- **Pick new row themes** runs daily at 01:30 by default (`themes.rotate_cron`). It gives each person
+  on an AI row set to Explore their next theme, and changes nothing on Plex. Like **Check and fix rows
+  on Plex**, its frequency picker offers **Off**. See [AI and cost](https://shortlistapp.dev/guides/ai/).
 
 **Every row runs on its own schedule**. There is no single server-wide one. Open a row (Rows → edit)
 and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for
@@ -2349,7 +2365,7 @@ Off by default. When on, Shortlist notices the titles your people's taste surfac
 doesn't have yet. That means everything the recommendation sources turned up, not just what made it
 into a row. It then asks for a few of the best ones on each run.
 
-You choose **where requests go**, under Settings → Defaults → Requests:
+You choose **where requests go**, under Settings → Requests:
 
 - **Radarr & Sonarr** (the default) — Shortlist adds the title itself, using a quality profile and
   folder you pick here.
@@ -2357,12 +2373,13 @@ You choose **where requests go**, under Settings → Defaults → Requests:
   own quality settings, folder rules and approvals. See
   [Requesting through Overseerr](#requesting-through-overseerr) below.
 
-Set it up under **Settings → Defaults → Requests**:
+Set it up under **Settings → Requests**:
 
 1. Turn on **Fill in the gaps automatically**.
-2. For each app, paste its **address** (e.g. `http://localhost:7878` for Radarr,
-   `http://localhost:8989` for Sonarr) and **API key** (found in the app under _Settings →
-   General_), then click **Test connection**. Save.
+2. For each app, open **Settings → Connections** and fill in its card with its **address** (e.g.
+   `http://localhost:7878` for Radarr, `http://localhost:8989` for Sonarr) and **API key** (found in
+   the app under _Settings → General_), then press **Test**. Save. The Requests tab shows a **Go to
+   Connections** button until an app is connected.
 3. Once connected, pick a **Quality** profile and a **Save to** folder from the dropdowns. Shortlist
    reads these straight from the app, so there are no ids to look up. For Sonarr, also pick **how
    much of a show to grab** — these are Sonarr's own Add Series _Monitor_ choices, so they mean
@@ -2526,7 +2543,7 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 ### Why is a title still waiting?
 
 The bar for sending on its own is higher than the bar for being requestable at all. Under
-**Settings → Defaults → Requests → Send the strongest titles without asking**, a title has to clear **both**
+**Settings → Requests → Send the strongest titles without asking**, a title has to clear **both**
 bars: **Send without asking when wanted by** (3 people by default, counted **within one row**) and
 **Send without asking when rated** (8.0 by default). A 7.9 wanted by twenty people still waits.
 Beyond that:
@@ -2583,7 +2600,7 @@ that would pass sit further down. A bigger budget reaches them.
 ## Keeping concerts and other kinds out of auto-send
 
 Concert films, music documentaries and stand-up specials often carry fan-inflated ratings, so they
-can clear the auto-send bar easily. To stop that, open **Settings → Defaults → Requests**, find
+can clear the auto-send bar easily. To stop that, open **Settings → Requests**, find
 **Don't request these automatically**, and pick what to keep out:
 
 - **Genres.** TMDB's movie genres, such as Documentary. Genres are broad: Music also covers musicals
@@ -2611,7 +2628,7 @@ the popular English titles, what's left missing skews non-English before any set
 the rating floor then favours it further, because TMDB's audience rates anime and K-drama generously.
 The result is a nightly run that mostly asks for subtitled titles.
 
-**Settings → Defaults → Requests → Guardrails → Language** fixes it without throwing the good ones away:
+**Settings → Requests → Guardrails → Language** fixes it without throwing the good ones away:
 
 - **Any language** — one bar for everything. This is the default and how Shortlist has always
   behaved; nothing changes until you pick something else.
@@ -2649,7 +2666,7 @@ editor, under **Requests** — a kids row can file into its own folder at a lowe
 only the first season of a show, stay English-only, ask for a lower rating, and hold itself to one
 title a night, while your main row carries on as it was.
 
-A field left on "use the setting from Settings → Defaults → Requests" follows the global, and follows it as you
+A field left on "use the setting from Settings → Requests" follows the global, and follows it as you
 change it. Only the ones you deliberately override differ. Every on/off setting in this group,
 including that "use the setting from Settings" choice, is a switch — there are no checkboxes here,
 only where you're picking items from a list (languages, tags, and the like).
@@ -2939,7 +2956,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
 - **Everything broke, get me out** — Settings → System → Danger zone → **Uninstall** restores every
   user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled
   collection. Kometa and other tools' collections are never touched.
-- **Did anything drift out of sync?** — Settings → System → Danger zone → **What Shortlist has on your
+- **Did anything drift out of sync?** — Settings → System → **What Shortlist has on your
   Plex** ("Check Plex") lists every shortlist-labeled collection read straight from the server (not
   the database), flagging any whose user/row no longer exists in the app. Every collection is
   labeled at creation, in one step, so a collection that can't be labeled is deleted rather than left
@@ -3444,8 +3461,8 @@ until they've watched them. [How the row works →](/guides/requests/#your-reque
 
 The webhook is a JSON POST that works with Discord, Slack, Home Assistant, n8n or anything that
 accepts one. Add its address on the **Webhook** card in Settings → Connections, then turn it on and
-tick what to send in Settings → Connections → Webhook: runs starting, finishing or failing, jobs starting,
-finishing or failing, someone able to see a row that isn't theirs, titles waiting for your approval,
+tick what to send in Settings → Connections → Webhook: runs starting, finishing, finishing with some people failed, failing or stopping early, jobs starting,
+finishing, failing or being skipped, someone able to see a row that isn't theirs, titles waiting for your approval,
 and new versions. A failed run and a privacy problem are ticked to begin with. No message names
 anybody.
 
@@ -3553,7 +3570,8 @@ Settings has four tabs, each with its own address:
 - **Requests** (`/settings/requests`): request sources, limits, and the "don't request these
   automatically" hold filter.
 - **System** (`/settings/system`): retention, console log detail, run concurrency, the Plex request
-  timeout, the Plex cleanup audit, API access and the Danger zone.
+  timeout, **Pause all users**, the Plex cleanup audit, API access and the Danger zone (the full
+  uninstall).
 
 The search box finds a setting by name and jumps to it. **Disabled users see nothing** is on the
 Privacy page, and the search box points you there. Old `#hash` links such as `/settings#defaults` or
@@ -3701,7 +3719,7 @@ Cron expressions for the background jobs. Empty means the default shown.
 | `privacy.sync_cron` | `""` (every 30 minutes)            | cron for the privacy sync. A re-merge of every account's share filter, which also picks up accounts newly shared with the server. It builds, delivers and promotes nothing, so it can only ever make the server _more_ private; it is the cheapest safety net against drift now that nothing verifies hiding after the fact                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `rows.visibility_cron` | `""` (daily 00:00)                 | cron for applying each row's day schedule (`collections.show_days`) and seasons (`collections.seasons`). Midnight, not 03:30 with the runs: a Monday row would otherwise stay on people's Home until 03:30 on Tuesday, and a row that rebuilds weekly for days. Costs nothing at all — one query, no clients built — on a server where no row narrows its days and no seasonal row has opened or closed a season in the last seven nights; where one has, the pass is a share-filter merge plus the ~5ms visibility flips, idempotent rather than tracked in state                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `sync.check_cron` | `""` (daily 05:45)                 | cron for the drift check — after the rows build (03:30) and the 05:30 privacy pass, so it checks the state those left behind. The ONE schedule that can be switched off entirely: it writes corrections to Plex, so choosing **Off** in its frequency picker (Jobs → Check and fix rows on Plex) stores an empty value the scheduler reads as an explicit "off" rather than "inherit the default" (every other blank cron means "use the built-in default"). Because of that, its picker is driven by the EFFECTIVE cron from `GET /api/schedule`, not by the raw setting. The two are indistinguishable in `GET /api/settings`, which folds the blank default in. The way back is the **Built-in (05:45)** chip in the same picker, which saves `null` — that deletes the stored value, so the job inherits the built-in cron again rather than pinning a copy of it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `maintenance.prune_cron` | `""` (daily 06:15)                 | cron for the retention prune. It applies `runs.retention` and `events.retention` and drops expired cache rows. Last of the night, after every other schedule has finished writing, so it trims a settled database. The prune is also queued after every run; this schedule is the FLOOR under that, for a server whose rows have no cron (or one paused from the Danger Zone) and so has no runs to queue it. Local database housekeeping. Nothing on Plex changes. Blank = built-in default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `maintenance.prune_cron` | `""` (daily 06:15)                 | cron for the retention prune. It applies `runs.retention` and `events.retention` and drops expired cache rows. Last of the night, after every other schedule has finished writing, so it trims a settled database. The prune is also queued after every run; this schedule is the FLOOR under that, for a server whose rows have no cron (or one paused with **Pause all users**) and so has no runs to queue it. Local database housekeeping. Nothing on Plex changes. Blank = built-in default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `themes.rotate_cron` | `""` (daily 01:30) | cron for **Pick new row themes**: for every AI row set to Explore, moves each person to their next theme when the current one has run its course, and writes the following theme a day early. Asks your AI provider only when a theme is needed. Changes nothing on Plex; a row picks up its new theme the next time it builds. Like `sync.check_cron`, it can be switched off entirely (Jobs → Pick new row themes → **Off**), which stores an empty value; **Built-in** deletes the stored value so the default applies again |
 
 ### System
@@ -3713,10 +3731,11 @@ Cron expressions for the background jobs. Empty means the default shown.
 | `runs.retention` | `3`                                | how many months of run history to keep; after each run, anything older is auto-pruned (runs + per-user traces + activity logs deleted; **picks and current delivery records are kept**, so watched-pick counts, future watch tracking and Plex row cleanup continue). `0` = keep everything forever                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `events.retention` | `0` (forever)                      | how many months of the audit trail (`events`) to keep (0–24). Kept forever by default: "what changed on whose share at 03:31" is the record you want long after the run detail around it is gone. `0` = never prune. Set from Settings → System → "Change log kept"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `jobs.max_parallel_readonly` | `3`                                | how many READ-ONLY background jobs may run at once (1–8). Jobs that write to Plex/plex.tv are always exclusive and never overlap a run. Share-filter writes are read-modify-write merges, so two at once would lose one of them. Read-only: `sync.history`, `backup.take`, `maintenance.prune` and `watch.reconcile`. `sync.users` counts as a writer because it renames collections. Dial to 1 if your PMS objects to the concurrency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `backup.cron` | `""` (daily 03:00)                 | cron for the automatic database backup written to `/config/backups`. Blank = built-in default. |
 | `backup.max_keep` | `10`                               | how many automatic database backups to keep on disk; older ones are deleted. |
 | `plex.orphan_confirm_delay_s` | `30`                               | seconds between the two independent reads that must both find an owned collection unlabelled before Shortlist may delete it as an orphan (0–300). A single empty read never deletes anything. |
 | `sync.watch_full_days` | `7`                                | how often the RECONCILE pass runs, in days (1–90). **Every watch-history read — the nightly job and a run's own top-up alike — reads each library in full**, so this is not what decides whether a complete read happens — it gates the one thing that acts on a title being ABSENT and cannot correct itself later: sweeping a library removed from the server, which believes a single `/library/sections` answer for every user. Dropping cached titles the read no longer returned, and withdrawing pick credit, are NOT gated here — a correction you have already made in Plex should not take up to a week to show up. Reading in full rather than "what changed since last time" is what catches a series marked watched by hand: a show's own date can lag the episodes it counts, so a change-ordered read (`lastViewedAt`) sorts it behind the cursor and never sees it (issue #108). Reading everything costs nothing measurable: 27.4s against 27.3s on a live 47-user, 3-library server, because Plex sends a 500-row page per library either way. A reconcile that would drop more than half a library asks the server a second time first, and keeps the titles if the two answers disagree                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `paused_all` | `false`                            | Danger-Zone "stop all runs" switch; pauses without disabling anyone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `paused_all` | `false`                            | **Pause all users** switch under System → Run speed; nobody is processed on any run until you resume, so no row is rebuilt and nobody's picks change. Nobody is disabled and rows already on Plex stay                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Per-row request overrides
 
@@ -4069,7 +4088,7 @@ The bridge never accepts a credential in the URL or as a command argument.
 
 `shortlist.db` (SQLite: settings, users, runs, restriction snapshots, and the
 durable plex-account-id → slug map a row's label is built from) · `secret.key` (Fernet, 600) ·
-`session.secret` · `logs/`.
+`session.secret` · `client.id` (this install's Plex client identifier) · `backups/` (database backups) · `logs/`.
 
 ---
 
@@ -4367,6 +4386,7 @@ PUT /api/collections/{id}/up-next {user_id, theme_id} -> theme ref
 POST /api/collections/{id}/up-next/regenerate {user_id} -> theme ref
      Writes a new Up next theme for one person now, with one AI call. 409 while the row's AI is paused, 422 without
      an AI provider or when the row is not on Explore.
+POST /api/collections/{id}/rename {name_template?, old_template?, dry_run?} -> text/event-stream (renames this row's collections on Plex: one `rename` event per person, then a `done` event; `old_template` is the title the row rendered as before, which is what tells this row's collection apart from the person's other rows; `dry_run` previews and writes nothing)
 POST /api/collections/{id}/cleanup {dry_run?} (remove this row's Plex collections for everyone; dry-run previews)
 POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/collections/{id}/poster/image (serve/remove uploaded artwork) · POST /api/collections/{id}/poster/preview {title,subtitle,style} -> generated sample image
 ```
@@ -4374,6 +4394,7 @@ POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/co
 ## System, jobs and libraries
 
 ```
+GET  /api/system/version -> {current_version, latest_version, update_available, install_type, git_sha, git_branch} (owner-gated; `git_sha`/`git_branch` identify which build a `:dev` image is, and are empty on a source checkout)
 GET  /api/system/image-provider -> {capable, provider, reason} (can the AI provider generate poster images — drives the row editor's Generate gate)
 GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files as a zip; credentials, addresses and this server's machine id removed — the live view above strips credentials only, since it renders on the owner's own screen where the address is what makes a line readable)
 GET  /api/system/libraries -> [{key, title, type}] (the server's Plex libraries, for the row editor)
@@ -4389,13 +4410,42 @@ GET  /api/system/owned-collections -> {collections:[{library,title,label,rating_
 ## Runs
 
 ```
-GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages backwards; every run carries `privacy` — `{can_see_others, unreadable_filters, filters_not_enforced}`, the accounts that run found able to see other people's rows, whose filter Plex cannot read, or whose filter Plex is not applying. `privacy` is null when the run did not measure who can see what, and always null for a dry run, which builds nothing to check; each of the last two lists is null when that check did not run and `[]` when it ran and found nothing. Reporting only: a finding never changes `status`) · GET /api/runs/summary · GET /api/runs/{id} (each user carries `status`, `error`, `reason` — why a `skipped` user built nothing — `has_trace`, and `cost` — that person's timing and token spend for this run, `null` on a run recorded before this was measured, which must render as "not recorded" and never as `0s`; when present, `{setup_ms, rows: {row_slug: {duration_ms, blocked_ms}}, pools: [{label, tokens, exa_searches, duration_ms, rows}]}` — `setup_ms`/`pools` are the person's shared spend (history fetch + candidate gather), repeated across every row because it belongs to none of them; each row's own `duration_ms` is wall-clock INCLUDING `blocked_ms` (time spent waiting on the shared Plex write lock at concurrency above 1), so that row's own work time is `duration_ms - blocked_ms`; tokens are reported per POOL, never per row — all AI spend happens in the pool-scoped candidate gather, and pools are shared between rows, so a per-row token figure would be an allocation invented by the API rather than a measurement; `pools[].rows` names every row slug that drew on a given pool) · GET /api/runs/{id}/users/{user_id}/trace -> {username, display_name, status, error, reason, trace, breakdown} (the full per-user pipeline trace. History (with true distinct-title watched totals per library, split by media type) / seeds with each seed's weight ingredients, each source's queries+returns tagged with their fate (kept / already_watched / not_in_your_libraries / excluded_genre / lost_ranking_cutoff), the web-search/RAG prompts, resolved vs. hallucinated titles (the AI's resolved proposals carry the same fate so the UI marks each kept vs. dropped), plus `error`/`reason` for a failed or skipped person and `breakdown` (the delivered picks per library); a cold-start user carries a trace too (their thin history + a synthetic `cold_start` source), so `has_trace` is set and the "How we picked" page renders for them; fetched on demand, `trace: {}` on runs predating the feature) · GET /api/runs/{id}/log?after_seq=&format=json|text (the run's activity feed, kept in `run_log_lines` so an older run still has one; `after_seq` returns only what is new, `format=text` is the download) · POST /api/runs {user_ids?, collection_ids?, dry_run?} · POST /api/runs/{id}/cancel · DELETE /api/runs (permanently clears the run list and step-by-step logs; keeps Plex rows, saved picks, watched-pick counts and the separate delivery records needed for future watch tracking and row cleanup; 409 while any run is queued or running — wait for it to finish)
+GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages backwards; every run carries `privacy` — `{can_see_others, unreadable_filters, filters_not_enforced}`, the accounts that run found able to see other people's rows, whose filter Plex cannot read, or whose filter Plex is not applying. `privacy` is null when the run did not measure who can see what, and always null for a dry run, which builds nothing to check; each of the last two lists is null when that check did not run and `[]` when it ran and found nothing. Reporting only: a finding never changes `status`) · GET /api/runs/summary · GET /api/runs/{id} (each user carries `status`, `error`, `reason` — why a `skipped` user built nothing — `has_trace`, and `cost` — that person's timing and token spend for this run, `null` on a run recorded before this was measured, which must render as "not recorded" and never as `0s`; when present, `{setup_ms, rows: {row_slug: {duration_ms, blocked_ms}}, pools: [{label, tokens, exa_searches, duration_ms, rows}]}` — `setup_ms`/`pools` are the person's shared spend (history fetch + candidate gather), repeated across every row because it belongs to none of them; each row's own `duration_ms` is wall-clock INCLUDING `blocked_ms` (time spent waiting on the shared Plex write lock at concurrency above 1), so that row's own work time is `duration_ms - blocked_ms`; tokens are reported per POOL, never per row — all AI spend happens in the pool-scoped candidate gather, and pools are shared between rows, so a per-row token figure would be an allocation invented by the API rather than a measurement; `pools[].rows` names every row slug that drew on a given pool) · GET /api/runs/{id}/users/{user_id}/trace -> {username, display_name, status, error, reason, trace, breakdown} (the full per-user pipeline trace. History (with true distinct-title watched totals per library, split by media type) / seeds with each seed's weight ingredients, each source's queries+returns tagged with their fate (kept / already_watched / not_in_your_libraries / excluded_genre / lost_ranking_cutoff), the web-search/RAG prompts, resolved vs. hallucinated titles (the AI's resolved proposals carry the same fate so the UI marks each kept vs. dropped), plus `error`/`reason` for a failed or skipped person and `breakdown` (the delivered picks per library); a cold-start user carries a trace too (their thin history + a synthetic `cold_start` source), so `has_trace` is set and the "How we picked" page renders for them; fetched on demand, `trace: {}` on runs predating the feature) · GET /api/runs/{id}/rows/{slug}/trace (the same pipeline trace for one SHARED row, whose title is served as `username`/`display_name`; `{}` on a run recorded before shared rows were persisted) · GET /api/runs/{id}/log?after_seq=&format=json|text (the run's activity feed, kept in `run_log_lines` so an older run still has one; `after_seq` returns only what is new, `format=text` is the download) · POST /api/runs {user_ids?, collection_ids?, dry_run?} · POST /api/runs/{id}/cancel · DELETE /api/runs (permanently clears the run list and step-by-step logs; keeps Plex rows, saved picks, watched-pick counts and the separate delivery records needed for future watch tracking and row cleanup; 409 while any run is queued or running — wait for it to finish)
 ```
+
+Every run carries a `stats` object, written when it finishes. The keys most worth reading:
+
+- `users_ok`, `users_error`, `users_skipped`: people built, failed, and skipped without error.
+- `titles_added`, `titles_removed`: titles that entered or left everyone's rows this run.
+- `rows_swept`, `shares_updated`: rows removed because Plex could not hide them, and share filters written.
+- `titles_requested`: titles sent to Radarr, Sonarr or Overseerr. `requests_queued` is how many a run
+  chose to hold for approval, and `requests_waiting` is the part of that which really sits in the Requests
+  inbox now (the rest was already requested or already in the library). `requests_wanted`,
+  `requests_pool`, `requests_examined` and `requests_lookups` say how many candidates were wanted,
+  pooled, looked at and looked up, `requests_by_row` splits that per row, and `requests_warnings` lists
+  anything a source reported.
+- `llm_tokens`, `llm_output_tokens`, `llm_tokens_by_step`, `exa_searches`, `exa_cache_hits`: AI and web-search
+  spend.
+- `promotion_blockers`, `error`, `dry_run`: why nothing was promoted, the run-level error, and whether it
+  was a dry run.
+- `unhideable_rows`, `unreadable_filters`, `filters_not_enforced`, `privacy_unchecked`,
+  `privacy_write_failed`, `privacy_left_alone`: the privacy findings behind a run's `privacy` field. A key
+  is absent when the run did not measure it, and `{}` or `[]` when it measured and found nothing.
+
+## Catalogs
+
+```
+GET  /api/catalogs/settings -> [setting definitions] (every setting Shortlist knows, with its options, numeric range, prerequisites and what changing it affects)
+GET  /api/catalogs/templates -> [row template definitions] (the templates Add a row offers, with their creation defaults)
+```
+
+Both require the owner browser session. They are read-only descriptions of what exists, not of your values.
 
 ## Requests
 
 ```
 GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent then rejected, capped at 500 rows; `wanted_by` repeats one `wanters` username per value and keeps a title any of them wanted — applied BEFORE the cap, so picking a name searches the whole history rather than the 500 the page loaded; omitted = everyone) · GET /api/requests/status -> {statuses: {request_id: "downloaded"|"downloading"|"queued"|"unmonitored"|null}, radarr: "ok"|"unreachable"|"off", sonarr: same} (live Sonarr/Radarr status for WAITING and SENT items — rejected are skipped; null = the app is fine and doesn't track it, which is why `radarr`/`sonarr` report reachability separately: an app that never answered would otherwise be indistinguishable from one with nothing to say. Fetched separately so the list itself makes no Arr calls, and read from whole-library maps so the cost doesn't scale with inbox size — which is what makes the inbox's poll cheap — it runs every 10s only while a title is actually downloading, and every 30s while an app is unreachable so the badge clears itself when it comes back; a settled inbox does not poll at all) · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids} (permanent) · POST /api/requests/restore {ids} (un-reject → back to Waiting) · POST /api/requests/delete {ids} (removable; can re-surface) · POST /api/requests/clear {ids} (hide SENT items from the log without un-sending — the tombstone stays so the title isn't re-requested)
+POST /api/requests/hold-preview {genres[], tags[]} -> {checked, held[{tmdb_id, title, year, reason, story}], unread} (which waiting movies these TMDB genre ids and tag ids would hold back from automatic sending; the Requests tab's live check before you save. Reads TMDB through the shared cache, saves nothing, and returns 503 without a TMDB key; `unread` counts titles TMDB could not answer for)
 GET  /api/requests/row-sources?pattern= -> {overseerr, radarr, sonarr: "connected"|"unreachable"|"off", complete, problems[], seerr_requests, seerr_requesters, seerr_linked, servers[{kind, name, is4k, tag_requests}], tagged_movies, tagged_shows, people[{user_id, display_name, linked, ready}], tags[{label, source: "overseerr"|"pattern"|"override", user_id, display_name, titles, ambiguous}]}
      The "Your requests" row's setup check, behind the Row editor's sources panel and the Users page's Requests column. Read-only: it reads every
      configured source once and writes nothing. `pattern` (max 200) previews an own-tag pattern such as `req-{username}` — the row's Check
@@ -4458,8 +4508,7 @@ GET  /api/notifications/whats-new -> {version, releases[{version, url, published
 
 ```
 Settings -> Connections -> Webhook (`notify.webhook.url` / `notify.webhook.auth_header_name` /
-`notify.webhook.auth_header_value`) and Settings → Connections → Webhook (`notify.webhook.enabled` /
-`notify.webhook.events`).
+`notify.webhook.auth_header_value` / `notify.webhook.enabled` / `notify.webhook.events`).
      Each event in `notify.webhook.events` POSTs generic JSON
      {source, version, id, severity, title, message, event, path, sent_at}, plus `content` and `text`
      carrying "title\nmessage" — the fields Discord and Slack each require — to one webhook.
@@ -4618,6 +4667,8 @@ GET  /api/support/jobs -> {jobs[], counts{}, failed, text}
 GET  /api/support/clocks -> {tz, local_now, utc_now, offset_hours, scheduled[], text}
 GET  /api/support/database -> {head, tables_present, tables_expected, missing_tables[], indexes, size_mb, text}
 GET  /api/support/config -> {settings[{env, key, env_set, secret, value, has_value}], text}
+GET  /api/support/errors -> {lines[], total_matched, log_file, text} (the newest WARNING and ERROR log lines, redacted)
+GET  /api/support/runs -> {runs[{id, status, trigger, dry_run, started_at, finished_at, stats, people, failed[{user, error}]}], text} (the last five runs and who failed in each)
 GET  /api/support/bundle.txt -> text/plain; every server-wide block in one downloadable file
 GET  /api/support/report.zip -> the bundle plus every log file, redacted, as one attachment
 GET  /api/support/suggestions -> {users[], titles[], libraries[]} (type-ahead for the inputs above; owner-only, never part of a report)
@@ -5663,11 +5714,11 @@ that looks arbitrary. It's also how you debug a bad pick.
 <figure class="reasons">
   <ul>
     <li><img src="https://shortlistapp.dev/images/poster-fight-club.webp" width="160" height="240" alt="">
-      <span><strong>Fight Club</strong><span class="why">Because you watched GoodFellas</span><span class="whose">Sarah's movies row</span></span></li>
+      <span><strong>Fight Club</strong><span class="why">Because you watched GoodFellas — more crime and drama</span><span class="whose">Sarah's movies row</span></span></li>
     <li><img src="https://shortlistapp.dev/images/poster-severance.webp" width="160" height="240" alt="">
-      <span><strong>Severance</strong><span class="why">Because you watched The Wire</span><span class="whose">Sarah's TV row</span></span></li>
+      <span><strong>Severance</strong><span class="why">Because you watched The Wire — more drama and crime</span><span class="whose">Sarah's TV row</span></span></li>
     <li><img src="https://shortlistapp.dev/images/poster-the-expanse.webp" width="160" height="240" alt="">
-      <span><strong>The Expanse</strong><span class="why">Because you watched Breaking Bad</span><span class="whose">Mike's TV row</span></span></li>
+      <span><strong>The Expanse</strong><span class="why">Because you watched Breaking Bad — more drama and crime</span><span class="whose">Mike's TV row</span></span></li>
   </ul>
   <figcaption>What each person's reason looks like: the pick, the watch that earned it, and whose row it is in.</figcaption>
 </figure>

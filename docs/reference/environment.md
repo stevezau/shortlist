@@ -2,7 +2,7 @@
 title: "Reference: environment variables and files"
 description: The container's environment variables and which are live or one-time seeds, serving Shortlist from a subpath behind a reverse proxy, and the files it keeps under /config.
 heading: Environment and files
-updated: 2026-10-05
+updated: 2026-10-10
 ---
 
 Everything else is set in the app and stored in its database; see the
@@ -108,4 +108,4 @@ The bridge never accepts a credential in the URL or as a command argument.
 
 `shortlist.db` (SQLite: settings, users, runs, restriction snapshots, and the
 durable plex-account-id → slug map a row's label is built from) · `secret.key` (Fernet, 600) ·
-`session.secret` · `logs/`.
+`session.secret` · `client.id` (this install's Plex client identifier) · `backups/` (database backups) · `logs/`.

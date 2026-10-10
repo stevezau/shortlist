@@ -2,7 +2,7 @@
 title: A tour of the Shortlist web interface
 description: What every page in the Shortlist web interface does, and what each number on the dashboard actually means.
 heading: The web interface
-updated: 2026-10-04
+updated: 2026-10-10
 ---
 
 Eight pages in the sidebar: Dashboard, Rows, Users, Privacy, Runs, Requests, Activity and Settings.
@@ -20,16 +20,20 @@ next release.
 
 ## Dashboard
 
-A status strip across the top shows **Last run**, **Next run**, **Privacy** and **Plex**. Below it, a
-privacy callout says whether every row is still hidden from the wrong people, then the impact report:
-what Shortlist delivered versus what people actually watched, for a window you choose (7 / 30 / 90
-days, or all time, 30 by default). Each headline figure carries its change against the previous equal
-period, so you can see direction rather than a running total. There's also a **Sync watched now**
-button to refresh the numbers on demand. Before the first run the page shows a first-run panel
-instead, with **Run now** and **Dry run first**. A dry run writes nothing to Plex.
+A status strip across the top shows **Last run**, **Next run**, **Privacy** and **Plex**. **Last run**
+sums up the night's scheduled runs when more than one ran. When an account has a Plex Restriction
+Profile (or a filter Plex fails on) that Shortlist cannot hide rows from, a one-line callout names it
+under the strip. Below that is the impact report: what Shortlist delivered versus what people actually
+watched, for a window you choose (7 / 30 / 90 days, or all time, 30 by default). **Watched from rows**
+carries its change against the previous equal period, so you can see direction rather than a running
+total. Beside the window selector, **Watch sync** says whether live watch tracking is running, and
+**Sync now** refreshes the numbers on demand. Before the first run the page shows a first-run panel
+instead, with **Run now** and **Dry run first**. A dry run writes nothing to Plex. Once rows exist but
+nobody has watched anything, a **What happens next** card shows when the next run builds rows and how
+many requests wait for approval.
 
 <div class="preview-gallery">
-  <figure><a href="{{ '/images/preview-dashboard.webp' | relative_url }}"><img src="{{ '/images/preview-dashboard.webp' | relative_url }}" alt="The dashboard with the Last run, Next run, Privacy and Plex status strip, a privacy callout and the Impact report" loading="lazy"></a><figcaption>Dashboard: the status strip, the privacy callout and the Impact report.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-dashboard.webp' | relative_url }}"><img src="{{ '/images/preview-dashboard.webp' | relative_url }}" alt="The dashboard with the Last run, Next run, Privacy and Plex status strip and the Impact report" loading="lazy"></a><figcaption>Dashboard: the status strip and the Impact report.</figcaption></figure>
 </div>
 
 [What each figure means](#reading-the-dashboard) is at the bottom of this page.
@@ -73,16 +77,18 @@ is the server owner. Everything on this page, and what each switch does to Plex 
 
 ## Privacy
 
-A status strip, then a ledger with one line per Plex account that says what plex.tv just reported for
-it, accounts with a problem first. Each line gives one verdict, such as "Hides all 45 other rows" or
-"Sees 2 rows that aren't theirs"; **Show each row** lists every row for that account, and opens by
-itself when the account can see a row that isn't theirs. **Read again** and **Verify now** re-check on demand. The **Policy** panel holds **Disabled users
-see nothing**, which used to be in Settings, Advanced. It saves as you flip it and applies on the next
-run. The page reports only what it read; it does not claim anything about the Collections tab or
-Related shelves.
+The page leads with an enforcement panel: **Plex was applying the rules when last checked**, **Plex is
+ignoring the privacy filter**, or a note that Plex has not been checked recently. It comes from the last
+run's own measurement, so it stays visible when plex.tv is down, and **Verify now** starts a run of every
+row to measure it again. Under it, a who-sees-what grid lists each Plex account against the rows, read
+live from plex.tv, accounts with a problem first. Each account gets one verdict, such as "Sees it",
+"Rule stored, not applied", "Rule refused by Plex", "Left alone" or "Not checked". **Read again** in the
+page header re-reads plex.tv. The **Policy** panel holds **Disabled users see nothing**, which used to be
+in Settings, Advanced. It saves as you flip it and applies on the next run. The page reports only what it
+read; it does not claim anything about the Collections tab or Related shelves.
 
 <div class="preview-gallery">
-  <figure><a href="{{ '/images/preview-privacy.webp' | relative_url }}"><img src="{{ '/images/preview-privacy.webp' | relative_url }}" alt="The Privacy page with its status strip, one ledger line per Plex account and the Policy panel" loading="lazy"></a><figcaption>Privacy: what plex.tv reported for each account, read live.</figcaption></figure>
+  <figure><a href="{{ '/images/preview-privacy.webp' | relative_url }}"><img src="{{ '/images/preview-privacy.webp' | relative_url }}" alt="The Privacy page with its enforcement panel, a who-sees-what grid of Plex accounts and the Policy panel" loading="lazy"></a><figcaption>Privacy: the enforcement check and what plex.tv reported for each account, read live.</figcaption></figure>
 </div>
 
 ## Runs
@@ -93,7 +99,7 @@ couldn't check (such as a PIN-protected account with a Restriction Profile), one
 couldn't be saved, and one you left alone are never counted as hiding; they are named under the count
 instead. A run from an older version reads **Not fully measured**, because it didn't record those
 accounts. A run that finished fine but left an account able to see other people's rows reads
-**OK with warnings**, and the callout names the accounts. A dry run reads **Not measured**, because
+**OK · N warnings**, and the callout names the accounts. A dry run reads **Not measured**, because
 it writes no hide rules to measure. A failed run still says Failed.
 
 <div class="preview-gallery">
@@ -157,7 +163,7 @@ Every piece of background maintenance Shortlist does, one per line: the name, ho
 when the next one fires, and the button. The next-run time, or **Not scheduled**, stays visible on
 mobile too.
 
-**Run now** holds the six you start yourself:
+**Run now** holds the eight you start yourself:
 
 | Job                            | What it does                                    |
 | ------------------------------ | ----------------------------------------------- |
@@ -167,6 +173,8 @@ mobile too.
 | **Privacy sync**               | Re-merge every share filter                     |
 | **Back up the database**       | Write a backup to `/config/backups`             |
 | **Clear out old records**      | Drop run history past the limit you set         |
+| **Pick new row themes**        | Give AI rows set to Explore their next theme    |
+| **Show and hide rows for today** | Apply each row's day schedule and seasons     |
 
 A tag on the line says what a job changes on your server: **Can delete** on the one that can remove
 a collection, **Changes Plex** on the ones that write. Anything untagged only reads, or only touches
@@ -235,8 +243,9 @@ Four tabs, each with its own address: **Connections** (`/settings/connections`),
 (`/settings/defaults`), **Requests** (`/settings/requests`) and **System** (`/settings/system`). Use the search box to find a setting by
 name. Connections holds Plex, TMDB, AI and web search, Tautulli, Trakt, MDBList, Overseerr or
 Jellyseerr, Radarr, Sonarr and the webhook with its alert events. Defaults holds Title sources,
-Refresh and variety, Row defaults, and Row placement. Requests holds the request sources, limits and the "don't request these automatically" hold filter. System holds retention, logging and run
-limits, the Plex cleanup audit, API access and the Danger zone. All forms stay mounted, so switching
+Refresh and variety, Row defaults, and Row placement. Requests holds the request sources, limits and the "don't request these automatically" hold filter. System holds retention, logging, run speed
+(run concurrency and **Pause all users**), the Plex cleanup audit, API access and the Danger zone, which
+holds the full uninstall. All forms stay mounted, so switching
 sections preserves unfinished edits. Every connection is re-testable in place. See
 [Finding and saving settings](../reference/settings.md#finding-and-saving-settings).
 
@@ -255,8 +264,10 @@ installed rather than how good the picks are — each night would add another ~6
 that can no longer be credited, and the number could only sink. The window is what keeps these
 figures about the picks.
 
-**Watched** — picks people STARTED in the window. A pick delivered last month and watched this week
-counts here, as long as the row was still showing it: this figure is about watching, not delivery.
+**Watched from rows** — picks people STARTED in the window, with the number delivered beside it
+("· 100 delivered"). A pick delivered last month and watched this week counts here, as long as the row
+was still showing it: this figure is about watching, not delivery. The two are separate counts, not "41
+of 100", because watches are counted by when they happened and deliveries by when the pick was made.
 For a series it counts from the **first finished episode**, because that is Plex's own definition and
 Plex offers no other — see Finished.
 
@@ -273,33 +284,29 @@ credited as watched only 21 had actually been finished and 31 were a single epis
 "watched" count makes a TV row look better than a movie row for a structural reason rather than a
 real one. A big Watched with a small Finished means people are sampling, not staying.
 
-**Dropped** — picks someone started and gave up on. This is the one number Plex's own watched flag
-cannot produce: to Plex, a pick nobody opened and a pick someone played for three minutes are both
-"not watched", and they say opposite things. One never got their attention; the other got it and lost
-it. The hint splits off the ones that barely started at all — under 5% in, which reads as "wrong pick
-entirely" rather than "fair go, didn't hold me".
+Under the figure, a line says what became of the rest. It reads "N gave up part-way" when someone
+started a pick and abandoned it, and "N still going" for the ones still in progress. Both appear only
+when they are not zero. Giving up is the one thing Plex's own watched flag cannot show: to Plex, a pick
+nobody opened and a pick someone played for three minutes are both "not watched", and they say opposite
+things. A film counts as given up only after 24 hours with no further play, so the clock restarts if
+they come back, and a series is never counted as given up. **Worth a look** at the bottom of the page lists them. That card hides itself when there is nothing to
+look at.
 
-It counts only what Shortlist watched happen live, so it starts empty and fills in from the moment
-watch tracking is running. A title nobody has played since then is in neither count — unknown is not
-the same as zero.
+Giving up counts only what Shortlist watched happen live, so it starts empty and fills in from the
+moment watch tracking is running. A title nobody has played since then is in neither count — unknown
+is not the same as zero.
 
-**People who watched a pick** — how many people watched at least one title from their rows in the
-window, out of everyone currently enabled. It counts people; **Watched from Shortlist rows** counts
-titles.
+**People watching** — how many people watched at least one title from their rows in the window, out of
+everyone currently enabled. It counts people; **Watched from rows** counts titles.
 
-**Avg to watch** — average days from a title first being recommended to it first being watched, over
-titles first watched in the window. Lower is better, and the change arrow is coloured accordingly.
+**Time to watch** — average days from a title first being recommended to it first being watched, over
+titles first watched in the window. A dash means nothing has been watched yet.
 
-**Watched from Shortlist rows** — the one percentage. Of the titles people watched
-in the window, the share a Shortlist row of theirs was showing when they watched it. Each person
-counts from their first pick, so viewing from before they had a row is left out, and people with no
-picks yet aren't counted. It says the rows are in front of what people choose, not that a row made the
-choice.
+Each person counts from their first pick, so viewing from before they had a row is left out, and people
+with no picks yet aren't counted. The dashboard says the rows are in front of what people choose, not
+that a row made the choice.
 
-It replaced a rate over every title ever _shown_, which stayed under 1% whether Shortlist worked or
-not: a row of 20 to 30 titles is mostly titles nobody will watch.
-
-**By person / By row** — the page remembers which one you picked, in this browser. Counts, not percentages, sorted by what was actually watched, with the
+**Who's watching** has a **By person / By row** switch. The page remembers which one you picked, in this browser. Counts, not percentages, sorted by what was actually watched, with the
 finished count beside each. At these sample sizes a percentage is noise: ranking by one put a person
 with `1/31` above a person with `3/103`. Sorting stays on watched deliberately — ranking on finished
 would bury every TV row under every movie row, which says more about the medium than about the row. People and rows with nothing in the window fold away behind a disclosure rather than filling
@@ -312,15 +319,16 @@ removes those picks from every total that counts them, here and on each person's
 undone. Rows that still exist are never affected, whichever slug is named: Shortlist recomputes what is
 eligible on the server rather than trusting the request.
 
-**Requests** sits just above **Worth a look**, which closes the page: how many titles were sent to be downloaded in the window,
-how many of those were watched since, and how many are waiting for your approval, with a link to each.
+**Requests** sits just above **Worth a look**, which closes the page. It shows, as a single line, how many
+titles were sent to be downloaded in the window, how many of those were watched since, and how many are
+awaiting approval, with links to **Review** and the **Send log**. A figure that is zero is left out.
 
 **Most watched** is a shelf of posters: the titles with the most watchers in the window, each with its
-rank, year, the newest few people who watched it, and links to look it up on TMDB, IMDb and Trakt.
+rank and the faces of a few people who watched it; hover for the watcher count.
 
-**Recently watched from Shortlist** lists the newest watches under the day they happened. Each line
-leads with the poster and title, says whether it was **Watched** (a film), **Started** or **Finished**
-(a series), and names the person and the row it came from, with the same look-up links at the end.
+**Recently watched** lists the newest watches. Each line leads with the poster and title, says whether
+it was **Watched** (a film), **Started** or **Finished** (a series), names the person and the row it came
+from, and shows how long ago it was. Older watches are on each person's page.
 
 **Watches per week** is always the long view: the last 16 weeks, whatever window is
 selected. Each column is split: the solid part is what got finished, the faded part what is still
