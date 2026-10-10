@@ -297,9 +297,15 @@ def is_promoted(hub) -> bool:
     invisible to everyone, so its position on the shelf is meaningless and moving it is pure churn.
     Any single flag is enough: a row on the owner's Home alone still has a visible position.
     """
-    return any(
-        bool(getattr(hub, flag, False))
-        for flag in ("promotedToSharedHome", "promotedToOwnHome", "promotedToRecommended")
+    return any(_surface_flags(hub))
+
+
+def _surface_flags(hub) -> tuple[bool, bool, bool]:
+    """A managed hub's ``(recommended, own_home, shared_home)`` promotion flags; a missing one reads False."""
+    return (
+        bool(getattr(hub, "promotedToRecommended", False)),
+        bool(getattr(hub, "promotedToOwnHome", False)),
+        bool(getattr(hub, "promotedToSharedHome", False)),
     )
 
 
@@ -993,12 +999,8 @@ class PlexClient:
                 }
                 if flags:
                     try:
-                        hub = collection.visibility()
-                        row |= {
-                            "recommended": bool(getattr(hub, "promotedToRecommended", False)),
-                            "own_home": bool(getattr(hub, "promotedToOwnHome", False)),
-                            "shared_home": bool(getattr(hub, "promotedToSharedHome", False)),
-                        }
+                        recommended, own_home, shared_home = _surface_flags(collection.visibility())
+                        row |= {"recommended": recommended, "own_home": own_home, "shared_home": shared_home}
                     except Exception as e:
                         # One unreadable hub must not cost the whole walk — this is the tool someone
                         # reaches for when the server is already misbehaving.
@@ -1210,14 +1212,7 @@ class PlexClient:
         the ones that would actually change — so the Tools button offered to "fix" rows that were
         already down (caught on the live server: preview said 2, the live pass corrected 0).
         """
-        hub = collection.visibility()
-        return any(
-            (
-                bool(getattr(hub, "promotedToRecommended", False)),
-                bool(getattr(hub, "promotedToOwnHome", False)),
-                bool(getattr(hub, "promotedToSharedHome", False)),
-            )
-        )
+        return any(_surface_flags(collection.visibility()))
 
     def demote_all(self, collection: Collection, *, reason: str = "") -> bool:
         """Take a collection off EVERY surface, leaving it (and its label) in place.
@@ -1230,11 +1225,7 @@ class PlexClient:
         Idempotent: reads first and writes nothing when the collection already claims nothing.
         """
         hub = collection.visibility()
-        claims = (
-            bool(getattr(hub, "promotedToRecommended", False)),
-            bool(getattr(hub, "promotedToOwnHome", False)),
-            bool(getattr(hub, "promotedToSharedHome", False)),
-        )
+        claims = _surface_flags(hub)
         if not any(claims):
             return False
         hub.updateVisibility(recommended=False, home=False, shared=False)
@@ -1254,13 +1245,10 @@ class PlexClient:
         when a write actually happened.
         """
         hub = collection.visibility()
-        if not getattr(hub, "promotedToOwnHome", False):
+        recommended, own_home, shared_home = _surface_flags(hub)
+        if not own_home:
             return False
-        hub.updateVisibility(
-            recommended=bool(getattr(hub, "promotedToRecommended", False)),
-            home=False,
-            shared=bool(getattr(hub, "promotedToSharedHome", False)),
-        )
+        hub.updateVisibility(recommended=recommended, home=False, shared=shared_home)
         logger.info("{}: demoted off the owner's Home (converge)", log_title(collection.title))
         return True
 
@@ -2603,9 +2591,34 @@ class PlexClient:
         episode nobody finished.
         """
         newest = 0
+
+        def fold(page: list[ET.Element]) -> None:
+            nonlocal newest
+            for el in page:
+                try:
+                    views = int(el.get("viewCount") or 0)
+                    stamp = int(el.get("lastViewedAt") or 0)
+                except ValueError:
+                    continue
+                if views > 0:
+                    newest = max(newest, stamp)  # unwatched and part-watched rows are both excluded
+
+        url = self._server.url(f"/library/metadata/{show_rating_key}/allLeaves", includeToken=False)
+        if not self._page_through(url, token, f"show {show_rating_key} is not visible to this user", fold):
+            logger.warning("watched read: show {} did not finish paging its episodes", show_rating_key)
+        return newest
+
+    def _page_through(self, url: str, token: str, not_shared_message: str, fold_page) -> bool:
+        """GET ``url`` page by page as ``token``, handing each page's elements to ``fold_page``.
+
+        Returns True once the end is proven (an empty page, or ``start`` reaching a reported
+        ``totalSize``), False when `_EPISODE_PAGE_LIMIT` pages passed without it.
+
+        Raises:
+            SectionNotShared: The server answered 403.
+        """
         start = 0
         for _ in range(self._EPISODE_PAGE_LIMIT):
-            url = self._server.url(f"/library/metadata/{show_rating_key}/allLeaves", includeToken=False)
             r = http_retry.get(
                 url,
                 headers={
@@ -2616,26 +2629,18 @@ class PlexClient:
                 timeout=self._timeout,
             )
             if r.status_code == 403:
-                raise SectionNotShared(f"show {show_rating_key} is not visible to this user")
+                raise SectionNotShared(not_shared_message)
             r.raise_for_status()
             root = ET.fromstring(r.text)
             page = list(root)
-            for el in page:
-                try:
-                    views = int(el.get("viewCount") or 0)
-                    stamp = int(el.get("lastViewedAt") or 0)
-                except ValueError:
-                    continue
-                if views > 0:
-                    newest = max(newest, stamp)  # unwatched and part-watched rows are both excluded
+            fold_page(page)
             if not page:
-                return newest
+                return True
             start += len(page)
             reported = root.get("totalSize")
             if reported is not None and start >= int(reported):
-                return newest
-        logger.warning("watched read: show {} did not finish paging its episodes", show_rating_key)
-        return newest
+                return True
+        return False
 
     def _newest_episode_stamps(self, section_key: str | int, token: str) -> dict[int, int] | None:
         """`{show ratingKey: newest watched episode lastViewedAt}` for one show library, read as `token`.
@@ -2651,31 +2656,8 @@ class PlexClient:
             an arbitrary subset and every date taken from it is arbitrarily too old.
         """
         newest: dict[int, int] = {}
-        start = 0
-        # A server that reports no `totalSize` AND caps the container below what we asked for
-        # answers every page short, so "short page" cannot mean "the end" — that read stops after one
-        # page and dates every show from the first 2% of an unordered list. Page until the server
-        # returns an EMPTY page instead, which costs one extra request and cannot be misread. The
-        # bound is a safety stop against a server that never empties, not an expected exit.
-        for _ in range(self._EPISODE_PAGE_LIMIT):
-            url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
-            # `?` or `&`: plexapi appends `?X-Plex-Token=...` to `url()` even with `includeToken=False`
-            # whenever `log.show_secrets` is on, and a hardcoded `?` then made `type=4` part of the
-            # token value rather than a parameter — answered with the whole library, not its episodes.
-            r = http_retry.get(
-                f"{url}{'&' if '?' in url else '?'}type=4&unwatched=0",
-                headers={
-                    "X-Plex-Token": token,
-                    "X-Plex-Container-Start": str(start),
-                    "X-Plex-Container-Size": str(self._WATCHED_PAGE),
-                },
-                timeout=self._timeout,
-            )
-            if r.status_code == 403:
-                raise SectionNotShared(f"section {section_key} is not shared with this user")
-            r.raise_for_status()
-            root = ET.fromstring(r.text)
-            page = list(root)
+
+        def fold(page: list[ET.Element]) -> None:
             for el in page:
                 raw = el.get("grandparentRatingKey")
                 if raw is None:
@@ -2697,12 +2679,20 @@ class PlexClient:
                     continue
                 if stamp > newest.get(key, 0):
                     newest[key] = stamp
-            if not page:
-                return newest
-            start += len(page)
-            reported = root.get("totalSize")
-            if reported is not None and start >= int(reported):
-                return newest
+
+        # A server that reports no `totalSize` AND caps the container below what we asked for
+        # answers every page short, so "short page" cannot mean "the end" — that read stops after one
+        # page and dates every show from the first 2% of an unordered list. `_page_through` pages until
+        # the server returns an EMPTY page instead, which costs one extra request and cannot be
+        # misread. Its page bound is a safety stop against a server that never empties, not an
+        # expected exit.
+        url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
+        # `?` or `&`: plexapi appends `?X-Plex-Token=...` to `url()` even with `includeToken=False`
+        # whenever `log.show_secrets` is on, and a hardcoded `?` then made `type=4` part of the
+        # token value rather than a parameter — answered with the whole library, not its episodes.
+        url = f"{url}{'&' if '?' in url else '?'}type=4&unwatched=0"
+        if self._page_through(url, token, f"section {section_key} is not shared with this user", fold):
+            return newest
         logger.warning(
             "watched read: section {} — episode read did not terminate in {} pages, dates left unknown",
             section_key,
