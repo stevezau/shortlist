@@ -79,6 +79,53 @@ def _grant_context(row: AssistantGrant) -> GrantContext:
     )
 
 
+def _apply_revisioned_update(
+    session: Session,
+    *,
+    grant_id: str,
+    owner_account_id: int,
+    expected_revision: int,
+    timestamp: datetime,
+    event_scope: str,
+    values: dict[str, object],
+    event_details: dict[str, object] | None = None,
+) -> None:
+    """Update one active owner-scoped grant by revision CAS, audit it, and commit as one transaction.
+
+    The audit event is committed with the grant update, so a failed audit cannot leave changed
+    authority without its durable record. A CAS miss rolls back and raises ``GrantUpdateConflict``.
+    ``event_details`` sit between the actor and the new revision in the event message.
+    """
+    changed = session.execute(
+        update(AssistantGrant)
+        .execution_options(synchronize_session=False)
+        .where(
+            AssistantGrant.id == grant_id,
+            AssistantGrant.owner_account_id == owner_account_id,
+            AssistantGrant.revision == expected_revision,
+            AssistantGrant.revoked_at.is_(None),
+            or_(AssistantGrant.expires_at.is_(None), AssistantGrant.expires_at > timestamp),
+        )
+        .values(**values, revision=AssistantGrant.revision + 1, updated_at=timestamp)
+    ).rowcount
+    if changed != 1:
+        session.rollback()
+        raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
+    session.add(
+        Event(
+            scope=event_scope,
+            level="info",
+            message={
+                "grant_id": grant_id,
+                "actor": {"via": "browser", "account_id": owner_account_id},
+                **(event_details or {}),
+                "revision": expected_revision + 1,
+            },
+        )
+    )
+    session.commit()
+
+
 def _effective_grant_context(session: Session, row: AssistantGrant) -> GrantContext:
     """Resolve the reviewed profile against this transaction's configured services."""
     context = _grant_context(row)
@@ -464,43 +511,25 @@ class AssistantAuthRepository:
             )
             if capability_values is not None and capability_values != set(_grant_context(row).capabilities):
                 changed_fields.append("capabilities")
-            changed = session.execute(
-                update(AssistantGrant)
-                .execution_options(synchronize_session=False)
-                .where(
-                    AssistantGrant.id == grant_id,
-                    AssistantGrant.owner_account_id == owner_account_id,
-                    AssistantGrant.revision == expected_revision,
-                    AssistantGrant.revoked_at.is_(None),
-                    or_(AssistantGrant.expires_at.is_(None), AssistantGrant.expires_at > timestamp),
-                )
-                .values(
+            _apply_revisioned_update(
+                session,
+                grant_id=grant_id,
+                owner_account_id=owner_account_id,
+                expected_revision=expected_revision,
+                timestamp=timestamp,
+                event_scope="assistant.grant.update",
+                event_details={
+                    "changed_fields": changed_fields,
+                },
+                values=dict(
                     capabilities=(
                         sorted(capability.value for capability in capability_values)
                         if capability_values is not None
                         else row.capabilities
                     ),
                     constraints=updated_constraints.as_dict(),
-                    revision=AssistantGrant.revision + 1,
-                    updated_at=timestamp,
-                )
-            ).rowcount
-            if changed != 1:
-                session.rollback()
-                raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
-            session.add(
-                Event(
-                    scope="assistant.grant.update",
-                    level="info",
-                    message={
-                        "grant_id": grant_id,
-                        "actor": {"via": "browser", "account_id": owner_account_id},
-                        "changed_fields": changed_fields,
-                        "revision": expected_revision + 1,
-                    },
-                )
+                ),
             )
-            session.commit()
             session.refresh(row)
             return _effective_grant_context(session, row)
 
@@ -535,37 +564,17 @@ class AssistantAuthRepository:
                 max_provider_calls=current.max_provider_calls,
                 include_future_people=True,
             )
-            changed = session.execute(
-                update(AssistantGrant)
-                .execution_options(synchronize_session=False)
-                .where(
-                    AssistantGrant.id == grant_id,
-                    AssistantGrant.owner_account_id == owner_account_id,
-                    AssistantGrant.revision == expected_revision,
-                    AssistantGrant.revoked_at.is_(None),
-                    or_(AssistantGrant.expires_at.is_(None), AssistantGrant.expires_at > timestamp),
-                )
-                .values(
+            _apply_revisioned_update(
+                session,
+                grant_id=grant_id,
+                owner_account_id=owner_account_id,
+                expected_revision=expected_revision,
+                timestamp=timestamp,
+                event_scope="assistant.grant.approved_updated_access",
+                values=dict(
                     constraints=updated.as_dict(),
-                    revision=AssistantGrant.revision + 1,
-                    updated_at=timestamp,
-                )
-            ).rowcount
-            if changed != 1:
-                session.rollback()
-                raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
-            session.add(
-                Event(
-                    scope="assistant.grant.approved_updated_access",
-                    level="info",
-                    message={
-                        "grant_id": grant_id,
-                        "actor": {"via": "browser", "account_id": owner_account_id},
-                        "revision": expected_revision + 1,
-                    },
-                )
+                ),
             )
-            session.commit()
             session.refresh(row)
             return _effective_grant_context(session, row)
 
@@ -635,39 +644,21 @@ class AssistantAuthRepository:
                 else:
                     values.discard(Capability.AI_GENERATE)
                     current = replace(current, max_provider_calls=0)
-            changed = session.execute(
-                update(AssistantGrant)
-                .execution_options(synchronize_session=False)
-                .where(
-                    AssistantGrant.id == grant_id,
-                    AssistantGrant.owner_account_id == owner_account_id,
-                    AssistantGrant.revision == expected_revision,
-                    AssistantGrant.revoked_at.is_(None),
-                    or_(AssistantGrant.expires_at.is_(None), AssistantGrant.expires_at > timestamp),
-                )
-                .values(
+            _apply_revisioned_update(
+                session,
+                grant_id=grant_id,
+                owner_account_id=owner_account_id,
+                expected_revision=expected_revision,
+                timestamp=timestamp,
+                event_scope="assistant.grant.owner_managed",
+                event_details={
+                    "changed_fields": ["owner_managed"] if upgrade else ["paid_services"],
+                },
+                values=dict(
                     capabilities=sorted(capability.value for capability in values),
                     constraints=current.as_dict(),
-                    revision=AssistantGrant.revision + 1,
-                    updated_at=timestamp,
-                )
-            ).rowcount
-            if changed != 1:
-                session.rollback()
-                raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
-            session.add(
-                Event(
-                    scope="assistant.grant.owner_managed",
-                    level="info",
-                    message={
-                        "grant_id": grant_id,
-                        "actor": {"via": "browser", "account_id": owner_account_id},
-                        "changed_fields": ["owner_managed"] if upgrade else ["paid_services"],
-                        "revision": expected_revision + 1,
-                    },
-                )
+                ),
             )
-            session.commit()
             session.refresh(row)
             return _effective_grant_context(session, row)
 
@@ -707,39 +698,21 @@ class AssistantAuthRepository:
                 owner_managed=True,
                 basic_access_v1=access_role,
             )
-            changed = session.execute(
-                update(AssistantGrant)
-                .execution_options(synchronize_session=False)
-                .where(
-                    AssistantGrant.id == grant_id,
-                    AssistantGrant.owner_account_id == owner_account_id,
-                    AssistantGrant.revision == expected_revision,
-                    AssistantGrant.revoked_at.is_(None),
-                    or_(AssistantGrant.expires_at.is_(None), AssistantGrant.expires_at > timestamp),
-                )
-                .values(
+            _apply_revisioned_update(
+                session,
+                grant_id=grant_id,
+                owner_account_id=owner_account_id,
+                expected_revision=expected_revision,
+                timestamp=timestamp,
+                event_scope="assistant.grant.basic_access",
+                event_details={
+                    "access_role": access_role,
+                },
+                values=dict(
                     capabilities=sorted(capability.value for capability in values),
                     constraints=updated.as_dict(),
-                    revision=AssistantGrant.revision + 1,
-                    updated_at=timestamp,
-                )
-            ).rowcount
-            if changed != 1:
-                session.rollback()
-                raise GrantUpdateConflict("assistant grant changed, expired, or was revoked")
-            session.add(
-                Event(
-                    scope="assistant.grant.basic_access",
-                    level="info",
-                    message={
-                        "grant_id": grant_id,
-                        "actor": {"via": "browser", "account_id": owner_account_id},
-                        "access_role": access_role,
-                        "revision": expected_revision + 1,
-                    },
-                )
+                ),
             )
-            session.commit()
             session.refresh(row)
             return _effective_grant_context(session, row)
 
