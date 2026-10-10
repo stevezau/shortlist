@@ -61,7 +61,7 @@ export function SettingsPage() {
   const settingsQuery = useSettings();
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div>
       <PageHeader
         title="Settings"
         subtitle="Your services, the defaults every new row starts from, and how Shortlist runs."

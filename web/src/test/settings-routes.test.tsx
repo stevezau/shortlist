@@ -61,6 +61,13 @@ beforeEach(() => {
 });
 
 describe("Settings addresses", () => {
+  it("fills the page width rather than capping the column", () => {
+    // A ~1000px column left the right third of a 1440px screen empty; pages stay full width.
+    const { container } = renderAt("/settings/connections");
+    expect(container.querySelector('[class*="max-w-6xl"]')).toBeNull();
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+  });
+
   it("opens Connections from a bare /settings", async () => {
     renderAt("/settings");
     expect(await screen.findByRole("tab", { name: "Connections", selected: true })).toBeVisible();

@@ -1,5 +1,16 @@
 import { LIBRARY_NAME, PLACEHOLDER_EXACT, PLACEHOLDER_SPLIT, SEASON, SEASON_EMOJI } from "@/lib/placeholders";
 
+/** What each placeholder reads as in words, for a view that lists one row for every person. */
+const PLAIN_WORDS: Record<string, string> = {
+  user: "each person’s name",
+  library_name: "each library",
+  top_seed: "each person’s top title",
+  season: "the current season",
+  season_emoji: "the season’s emoji",
+  theme: "the theme",
+  theme_emoji: "the theme’s emoji",
+};
+
 /**
  * A row's configured name, rendered honestly wherever the app names a row.
  *
@@ -13,6 +24,7 @@ export function RowName({
   name,
   libraryName,
   season,
+  plain = false,
   className = "font-medium",
 }: {
   name: string;
@@ -20,6 +32,9 @@ export function RowName({
   libraryName?: string;
   /** The season the row is in (or next in), for a caller that knows it: its two tokens then read as the real words. */
   season?: { name: string; emoji: string };
+  /** Draw a placeholder still left as plain italic words instead of a chip — for a display that lists a
+   *  per-person row once for everyone. The template editors keep the chips. */
+  plain?: boolean;
   className?: string;
 }) {
   // The engine collapses the gap a filled token leaves, so match it — never "📬  you asked for".
@@ -34,7 +49,9 @@ export function RowName({
   return (
     <span className={className}>
       {parts.map((part, i) =>
-        PLACEHOLDER_EXACT.test(part) ? (
+        PLACEHOLDER_EXACT.test(part) && plain ? (
+          <em key={i}>{PLAIN_WORDS[part.slice(1, -1)] ?? part.slice(1, -1).replace(/_/g, " ")}</em>
+        ) : PLACEHOLDER_EXACT.test(part) ? (
           <span
             key={i}
             className="mx-0.5 rounded bg-muted px-1 py-0.5 text-xs font-normal text-muted-foreground"

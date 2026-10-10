@@ -943,4 +943,33 @@ describe("RunRowsTab — a shared row that hasn't built yet", () => {
       screen.getByText(/builds once everyone’s own rows are done/i),
     ).toBeInTheDocument();
   });
+
+  it("shows a per-person row's name with readable words, not a placeholder chip", () => {
+    const { container } = renderTab(
+      run({
+        users: [
+          user({
+            rows_considered: { picked: "not_due", because: "due" },
+            breakdown: [{ row_slug: "because", row_title: "x", library_key: "1", library_title: "Movies", added: [], removed: [], kept: [], deleted: [], created: false, picks: [] }],
+          }),
+        ],
+      }),
+    );
+    expect(container).toHaveTextContent("Because you watched each person’s top title");
+    expect(container).not.toHaveTextContent("top seed");
+  });
+
+  it("shows a per-person row's status before it is expanded", () => {
+    renderTab(
+      run({
+        users: [
+          user({ slug: "sarah", breakdown: [{ row_slug: "picked", row_title: "x", library_key: "1", library_title: "Movies", added: [], removed: [], kept: [], deleted: [], created: false, picks: [] }] }),
+        ],
+      }),
+    );
+    // Collapsed by default with several rows; each per-person row header carries its status, and no Trace
+    // link, because a per-person trace belongs to the person.
+    expect(screen.getAllByText("OK").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: /Trace/ })).toBeNull();
+  });
 });

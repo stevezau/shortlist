@@ -70,6 +70,7 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
           </Label>
           <ModifiedDefault modified={mName} name="Row name template" />
           <Input
+            className="max-w-xl"
             id={rowNameId}
             value={rowNameTpl}
             onChange={(event) => setRowNameTpl(event.target.value)}

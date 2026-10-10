@@ -17,4 +17,11 @@ describe("RowName", () => {
     expect(container).toHaveTextContent("🎃 Halloween Favourites");
     expect(screen.queryByText("season")).toBeNull();
   });
+
+  it("reads a placeholder as italic words in a view that lists a row once for everyone", () => {
+    const { container } = render(<RowName name="Because you watched {top_seed}" plain />);
+    expect(container).toHaveTextContent("Because you watched each person’s top title");
+    expect(screen.getByText("each person’s top title").tagName).toBe("EM");
+    expect(screen.queryByText("top seed")).toBeNull();
+  });
 });

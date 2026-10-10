@@ -21,6 +21,7 @@ import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
 import {
   groupRunByRow,
   libraryLabel,
+  rowCounts,
   rowSummary,
   rowTimeMs,
   type RunRowGroup,
@@ -47,13 +48,14 @@ const DECISION_LABEL: Record<string, string> = {
  * The row's name in its card header. The header spans every library the row built, so the
  * `{library_name}` token is resolved once per library ("✨ Movies Picked for You · ✨ TV Shows Picked
  * for You") rather than drawn as a chip. A row that delivered nothing has no library to name, so its
- * token is dropped (`group.title`) instead; any other placeholder still gets `RowName`'s chip.
+ * token is dropped (`group.title`) instead; any other placeholder reads as italic words ("each person's
+ * top title"), because this page lists a per-person row once for everyone and a chip read as unfilled.
  */
 function RowHeaderName({ group, libraries }: { group: RunRowGroup; libraries: string }) {
   if (!group.template.includes(LIBRARY_NAME)) {
     return (
       <>
-        <RowName name={group.template} />
+        <RowName name={group.template} plain />
         {libraries && (
           <span className="text-xs tracking-wide text-muted-foreground uppercase">{libraries}</span>
         )}
@@ -66,7 +68,7 @@ function RowHeaderName({ group, libraries }: { group: RunRowGroup; libraries: st
       {group.libraries.map((library, i) => (
         <span key={library}>
           {i > 0 && <span className="mr-2 text-muted-foreground">·</span>}
-          <RowName name={group.template} libraryName={library} />
+          <RowName name={group.template} libraryName={library} plain />
         </span>
       ))}
     </>
@@ -257,6 +259,15 @@ function RowCard({
     if (person.result.slug === chosen?.slug) chosenPerson = person;
   }
   const decision = chosenPerson?.decision;
+  // A per-person row has no single trace (each person has their own, behind "How we picked"), so its
+  // header carries the status alone: failed if anyone failed, OK once everyone has reported.
+  const { failed } = rowCounts(group);
+  const personStatus =
+    group.kind === "shared" || group.people.length === 0 || group.pending > 0
+      ? null
+      : failed > 0
+        ? { variant: "destructive" as const, label: `${failed} failed` }
+        : { variant: "success" as const, label: "OK" };
 
   return (
     <div className="rounded-lg border">
@@ -302,11 +313,18 @@ function RowCard({
             {runStatusLabel(shared.status)}
           </Badge>
         ) : (
-          notStarted && (
-            <Badge variant="outline" className="shrink-0">
-              Pending
-            </Badge>
-          )
+          <>
+            {notStarted && (
+              <Badge variant="outline" className="shrink-0">
+                Pending
+              </Badge>
+            )}
+            {personStatus && (
+              <Badge variant={personStatus.variant} className="shrink-0">
+                {personStatus.label}
+              </Badge>
+            )}
+          </>
         )}
         {/* Trace sits on the thing it traces: the row when the row is SHARED (one build for the whole
             server), and the PERSON otherwise — `UserPanel` renders their own "How we picked" button.

@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 /**
  * The seed credit, appended only when the reason has not already named it.
  *
- * The engine's own reason usually names the seed — "Because you watched drama like Movie 08" — so
+ * The engine's own reason usually names the seed — "Because you watched Movie 08 — more drama" — so
  * appending "· inspired by Movie 08" restated the first clause on the same line.
  *
  * Matched on WORD BOUNDARIES, not with `includes`: a bare substring test suppresses the credit for
