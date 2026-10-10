@@ -404,6 +404,21 @@ Shortlist's own side is one switch, **Settings → Defaults → Row placement �
 shelf**; turning it off leaves the order entirely to the other tool. Where each row goes is set on
 the row itself.
 
+## Agregarr trailer placeholders
+
+Agregarr can add a short trailer to Plex as a stand-in for a film or show the server doesn't have yet,
+and labels each one `trailer-placeholder`. Shortlist reads that label and treats the trailer as what it
+is:
+
+- Playing a trailer doesn't count as watching the film or show, so it never shapes anyone's
+  recommendations.
+- When a title has both the real copy and a trailer, rows point at the real copy.
+- A title that only has a trailer can still go in a row, so people see it and can ask for it. A
+  "Your requests" row never shows a trailer as the title someone asked for.
+
+There is nothing to set up. A TV trailer stops counting as one once the show's real episodes are in Plex,
+even before Agregarr removes its label.
+
 ## Your AI web search finds nothing new
 
 The `llm_web` source asks the web what to watch next. Which backend it asks is

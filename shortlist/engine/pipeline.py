@@ -253,7 +253,7 @@ def _outcome_tally(reports: list[UserRunReport]) -> str:
     return f"{ok} ok, {failed} failed, {len(reports) - ok - failed} skipped"
 
 
-# The real invalidation is the section SIGNATURE (item count + last-updated): the moment the library
+# The real invalidation is the section SIGNATURE (item count + last-updated + Agregarr trailers): the moment the library
 # changes, the key changes and this is bypassed. This TTL is only a backstop for the rare change the
 # signature can't see (a 1-for-1 swap that doesn't bump updatedAt); 7 days matches the TMDB/Trakt
 # caches — a 1-for-1 swap that never bumps updatedAt is rare enough that a fortnight-scale backstop
@@ -264,7 +264,8 @@ INDEX_CACHE_TTL_S = 7 * 24 * 3600
 def _library_index(ctx: EngineContext, section, genre_counts: Counter[str] | None = None) -> dict[int, int]:
     """This section's ``tmdb_id -> ratingKey`` index — from the cross-run cache when unchanged.
 
-    Keyed on the section + a cheap change signature (item count + last-updated); a signature change
+    Keyed on the section + a change signature (item count + last-updated + Agregarr trailers, one small PMS
+    read per section per run, `PlexClient.section_signature`); a signature change
     (a title added/removed/edited) misses and re-scans. JSON object keys are strings, so tmdb ids
     round-trip through ``str()``/``int()``. A missing signature or NullCache just always re-scans.
 

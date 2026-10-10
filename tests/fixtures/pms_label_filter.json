@@ -1,0 +1,183 @@
+{
+  "_why": [
+    "What a real PMS does with an ITEM-label filter on GET /library/sections/{key}/all, and whether a",
+    "show's leafCount counts Season 0. Issue #151: Shortlist finds Agregarr's trailer stand-ins by the",
+    "`trailer-placeholder` label Agregarr puts on them, and item labels are not inline in a listing",
+    "(see pms_collections_listing.json for the same fact about collections), so a filtered listing is the",
+    "only cheap way to find them. Measured read-only with the owner token; counts only, no titles.",
+    "",
+    "Conclusions the code relies on:",
+    "1. `label=<name>` and `label!=<name>` take the tag NAME and are honoured: the two partition a library",
+    "   exactly (10053 + 11 = 10064). So a reader can check its own answer: positives + negatives must",
+    "   equal the library total, and a filter this endpoint ignored (it answers an ignored parameter with",
+    "   the whole library, see pms_watched_incremental.xml.txt) fails that check instead of reading as",
+    "   'every item is a placeholder'.",
+    "2. The match is case-insensitive (exact, lower and upper case give the same count), which matters",
+    "   because Plex title-cases a tag it creates.",
+    "3. `includeLabels=1` inlines nothing: still 0 items carrying <Label> in the first 200.",
+    "4. A request with no X-Plex-Container-Size answers the whole filtered set in one page.",
+    "5. A show's leafCount INCLUDES its Season 0 episodes (every one of 28 shows with specials checked:",
+    "   e.g. 21 = 1 special + 10 + 10). So Agregarr's S00E00 trailer makes a trailer-only show read",
+    "   1 of 1 episodes watched after one play, which the finished-show rule reads as finished.",
+    "",
+    "Not recorded here: an Agregarr placeholder item itself. This server had none on the day. Its shape is",
+    "taken from Agregarr's source (bitr8/agregarr-dev @fa600a14): a movie stand-in is a separate item, a",
+    "`{edition-Trailer}` file matched to the film's own tmdb id; a TV stand-in is Season 00/S00E00.Trailer.mp4",
+    "under the show, and the label goes on the SHOW.",
+    "",
+    "show_children: GET /library/metadata/{show}/children for a real show with specials, shape only (titles",
+    "and keys dropped). Seasons are <Directory type=\"season\" index=...>; the 'All episodes' entry listed first",
+    "carries no type and no index. That is what `_only_season_zero` reads. Not recorded: a library with 'hide",
+    "seasons' on (flattenSeasons=1), where /children lists episodes; neither show library here has it on."
+  ],
+  "pms_version": "1.43.5.11029",
+  "recorded": "2026-10-11",
+  "movies": {
+    "total": 10064,
+    "label=trailer-placeholder": 0,
+    "label!=trailer-placeholder": 10064,
+    "label=<made-up name>": 0,
+    "label=<most-used item label, by name>": 10053,
+    "label=<same label, by tag id>": 10053,
+    "label!=<same label, by name>": 11,
+    "case_insensitive": [
+      {
+        "exact": 10052,
+        "lower": 10052,
+        "upper": 10052
+      },
+      {
+        "exact": 178,
+        "lower": 178,
+        "upper": 178
+      },
+      {
+        "exact": 181,
+        "lower": 181,
+        "upper": 181
+      }
+    ],
+    "items_with_inline_Label": 0,
+    "includeLabels=1_items_with_inline_Label_first_200": 0,
+    "duplicate_tmdb_ids": 0
+  },
+  "shows": {
+    "total": 5024,
+    "label=trailer-placeholder": 0,
+    "label!=trailer-placeholder": 5024,
+    "label=<most-used item label, by name>": 5015,
+    "label!=<same label, by name>": 9,
+    "seasons_total": 10901,
+    "seasons_with_index_0": 28,
+    "shows_with_specials_checked": 28,
+    "show_leafCount_includes_season_0": 28
+  },
+  "show_children": {
+    "container": {
+      "size": "14",
+      "viewGroup": "season"
+    },
+    "entries": [
+      {
+        "tag": "Directory",
+        "leafCount": "138",
+        "key_tail": "allLeaves"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "0",
+        "leafCount": "2",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "8",
+        "leafCount": "10",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "9",
+        "leafCount": "8",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "10",
+        "leafCount": "12",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "11",
+        "leafCount": "10",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "12",
+        "leafCount": "22",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "13",
+        "leafCount": "10",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "14",
+        "leafCount": "10",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "15",
+        "leafCount": "10",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "16",
+        "leafCount": "10",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "17",
+        "leafCount": "12",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "18",
+        "leafCount": "12",
+        "key_tail": "children"
+      },
+      {
+        "tag": "Directory",
+        "type": "season",
+        "index": "19",
+        "leafCount": "10",
+        "key_tail": "children"
+      }
+    ],
+    "flattenSeasons_per_show_library": {
+      "12": "0",
+      "2": "0"
+    }
+  }
+}

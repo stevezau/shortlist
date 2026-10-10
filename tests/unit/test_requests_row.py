@@ -690,6 +690,17 @@ class TestBuildRequestsPicks:
         results = {r["tmdb_id"]: r["result"] for r in policy.report.trace["selection"][0]["requests"]}
         assert results == {1: "not_on_plex", 2: "in_row"}
 
+    def test_a_trailer_standing_in_for_the_title_is_not_on_plex(self):
+        """An Agregarr trailer (#151) carries the film's tmdb id, but it is not the film they asked for."""
+        ledger = RequestLedger(titles=[_title(1), _title(2)], complete=True)
+        policy = _policy({"1": {1: 11, 2: 22}})
+        policy.ctx.plex.placeholder_keys.return_value = frozenset({11})
+        picks = build_requests_picks(policy, SPEC, [_section()], 20, ledger, now=NOW)
+        assert [p.tmdb_id for p in picks["1"]] == [2]
+        policy.ctx.plex.placeholder_keys.assert_called_with("1", MediaType.MOVIE)
+        results = {r["tmdb_id"]: r["result"] for r in policy.report.trace["selection"][0]["requests"]}
+        assert results == {1: "not_on_plex", 2: "in_row"}
+
 
 BOB_TAG = [{"id": 1, "label": "req-bob"}]
 BOB_ITEM = {

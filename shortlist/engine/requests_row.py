@@ -504,6 +504,9 @@ def build_requests_picks(
     for section in targets:
         kind = section_kind(section)
         sec_idx = ctx.section_index.get(section.key, {})
+        # The index keeps an Agregarr trailer for a title Plex has nothing else of (#151) — on a request
+        # row that would hand them the trailer as the film they asked for.
+        trailers = ctx.plex.placeholder_keys(section.key, kind) or frozenset()
         # One trace row per title, keyed by tmdb_id: `mine` holds a title once (a second copy carries
         # another row's pattern), and a section holds one media type, so the key is unique within a section.
         rows: dict[int, dict] = {}
@@ -513,7 +516,7 @@ def build_requests_picks(
             result = "in_row"
             # The library index comes first on purpose: a completed request whose media Seerr has
             # since deleted still reads on_disk=True, and only Plex knows whether the title is here.
-            if key is None or not t.on_disk:
+            if key is None or key in trailers or not t.on_disk:
                 result = "not_on_plex"
             elif not t.seasons_landed:
                 result = "season_not_landed"

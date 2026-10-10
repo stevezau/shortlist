@@ -10,8 +10,10 @@ Plex quirks encoded here (all live-verified in Phase 0, 2026-07-12):
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
 from bisect import bisect_left
@@ -20,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from itertools import pairwise
+from urllib.parse import quote
 
 import httpx
 import requests
@@ -37,6 +40,12 @@ from shortlist.engine.watch_replica import ItemState, OpKind, WatchState, WriteO
 
 # Label restrictions only apply on Home/Recommended/Related from this PMS build (PM-5174).
 MIN_PMS_VERSION = (1, 43, 2, 10687)
+
+#: The label Agregarr puts on every trailer it adds as a stand-in ("placeholder") for a title the server
+#: does not have (issue #151). Hardcoded in Agregarr, not a setting (bitr8/agregarr-dev,
+#: PlaceholderCreation.ts). A movie stand-in is its own item matched to the film's tmdb id; a TV
+#: stand-in is a Season 00 / S00E00 trailer, with the label on the SHOW.
+PLACEHOLDER_LABEL = "trailer-placeholder"
 
 
 @dataclass(frozen=True)
@@ -364,6 +373,10 @@ def parse_pms_version(version: str) -> tuple[int, ...]:
     """'1.43.3.10793-cd55560bb' -> (1, 43, 3, 10793)."""
     numbers = version.split("-")[0].split(".")
     return tuple(int(n) for n in numbers if n.isdigit())
+
+
+def _section_media_type(section: LibrarySection) -> MediaType:
+    return MediaType.SHOW if getattr(section, "type", None) == "show" else MediaType.MOVIE
 
 
 def _tmdb_guid(item) -> int | None:
@@ -735,6 +748,9 @@ class PlexClient:
         ``test_genres_ride_free_on_the_section_listing_but_labels_do_not`` because the whole
         library-genre baseline depends on it staying free.
         """
+        # A title with both a real copy and an Agregarr trailer resolves to the real copy, whichever Plex
+        # lists last; a trailer-only title keeps the trailer, so it stays pickable (#151).
+        trailers = self.placeholder_keys(section.key, _section_media_type(section)) or frozenset()
         index: dict[int, int] = {}
         for item in section.all():
             if genre_counts is not None:
@@ -743,23 +759,138 @@ class PlexClient:
                 with contextlib.suppress(Exception):
                     genre_counts.update(g.tag for g in (item.genres or []) if getattr(g, "tag", None))
             tmdb_id = _tmdb_guid(item)
-            if tmdb_id is not None:
-                index[tmdb_id] = item.ratingKey
+            if tmdb_id is None:
+                continue
+            held = index.get(tmdb_id)
+            if item.ratingKey in trailers and held is not None and held not in trailers:
+                continue
+            index[tmdb_id] = item.ratingKey
         logger.debug(
-            "library index for '{}': {} of {} items have TMDB ids", section.title, len(index), section.totalSize
+            "library index for '{}': {} of {} items have TMDB ids ({} Agregarr trailers)",
+            section.title,
+            len(index),
+            section.totalSize,
+            len(trailers),
         )
         return index
 
+    def placeholder_keys(self, section_key: str | int, media_type: MediaType) -> frozenset[int] | None:
+        """The ratingKeys in one library that are nothing but an Agregarr trailer, or None if unknown.
+
+        Every labelled movie counts. A labelled SHOW counts only while Season 0 is all it has (see
+        `_only_season_zero`).
+
+        Read once per client — a client lives for one run or one sync — because every person's watch read
+        asks for the same library.
+
+        Returns:
+            The keys; empty when the library has none. None when the read failed or Plex's answer does not
+            add up, which callers treat as "no trailers known", today's behaviour. Guessing instead would
+            be worse: an ignored label filter answers with the whole library, and taking that as the answer
+            would make every title a trailer and nobody's watch history count.
+        """
+        memo: dict[str, frozenset[int] | None] = self.__dict__.setdefault("_placeholder_memo", {})
+        key = str(section_key)
+        # Locked because a sync reads every person at once on a thread pool: unlocked, each would miss
+        # together, read the library again, and one failing read would leave people in the same pass with
+        # different answers. One lock per library, so a slow TV read never holds up the films.
+        # `setdefault` is atomic, so the locks themselves need no lock.
+        locks: dict[str, threading.Lock] = self.__dict__.setdefault("_placeholder_locks", {})
+        with locks.setdefault(key, threading.Lock()):
+            if key not in memo:
+                try:
+                    memo[key] = self._read_placeholder_keys(key, media_type)
+                except Exception as e:
+                    logger.warning(
+                        "placeholder read: section {} failed ({}), so Agregarr trailers count as titles this pass",
+                        key,
+                        type(e).__name__,
+                    )
+                    memo[key] = None
+            return memo[key]
+
+    def _read_placeholder_keys(self, section_key: str, media_type: MediaType) -> frozenset[int] | None:
+        url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
+        plex_type = 1 if media_type is MediaType.MOVIE else 2
+        label = quote(PLACEHOLDER_LABEL)
+
+        def read(condition: str, *, count_only: bool) -> ET.Element:
+            headers = {"X-Plex-Token": self._token}
+            if count_only:
+                headers |= {"X-Plex-Container-Start": "0", "X-Plex-Container-Size": "0"}
+            # Built by hand: httpx percent-encodes a params KEY, and the `!=` operator lives in the key
+            # (see `_read_watched_page`).
+            r = http_retry.get(f"{url}?type={plex_type}{condition}", headers=headers, timeout=self._timeout)
+            r.raise_for_status()
+            return ET.fromstring(r.text)
+
+        labelled = list(read(f"&label={label}", count_only=False))
+        if not labelled:
+            # An ignored filter answers with the whole library, never with nothing, so none is the truth.
+            return frozenset()
+        # Item labels are not inline in a listing (pms_label_filter.json), so the answer is checked the
+        # one way available: what carries the label and what does not must add up to the library.
+        others = read(f"&label!={label}", count_only=True).get("totalSize")
+        total = read("", count_only=True).get("totalSize")
+        if others is None or total is None or len(labelled) + int(others) != int(total):
+            logger.warning(
+                "placeholder read: section {} answered {} labelled + {} unlabelled of {} items, which does not "
+                "add up, so Agregarr trailers count as titles this pass",
+                section_key,
+                len(labelled),
+                others,
+                total,
+            )
+            return None
+        keys = frozenset(int(el.get("ratingKey")) for el in labelled if el.get("ratingKey"))
+        if media_type is MediaType.MOVIE:
+            return keys
+        return frozenset(key for key in keys if self._only_season_zero(key))
+
+    def _only_season_zero(self, show_key: int) -> bool:
+        """Whether a labelled show holds nothing but Season 0 — Agregarr's own test for a TV stand-in.
+
+        Asked of the show's seasons, not its episode count: the label stays on until Agregarr's cleanup,
+        which runs after real episodes have landed, and a show with real episodes in it has real plays.
+        A read that fails answers False: the show's plays are kept, which loses nobody's history, and the
+        library index and a "Your requests" row treat the show as before #151.
+        """
+        try:
+            r = http_retry.get(
+                self._server.url(f"/library/metadata/{show_key}/children", includeToken=False),
+                headers={"X-Plex-Token": self._token},
+                timeout=self._timeout,
+            )
+            r.raise_for_status()
+            # Seasons carry an `index`; the "All episodes" entry a real PMS lists beside them does not.
+            indexes = [el.get("index") for el in ET.fromstring(r.text) if el.get("index") is not None]
+        except Exception as e:
+            logger.warning(
+                "placeholder read: show {} seasons unreadable ({}), so its plays count", show_key, type(e).__name__
+            )
+            return False
+        return bool(indexes) and all(index == "0" for index in indexes)
+
     def section_signature(self, section: LibrarySection) -> str | None:
         """A cheap fingerprint of a section's contents for the cross-run index cache — its item count
-        plus last-updated stamp, both already loaded on the section (no extra PMS call). Returns None
-        when neither is available, which tells the caller to scan rather than trust a cache."""
+        plus last-updated stamp, both already loaded on the section, plus which items are Agregarr
+        trailers. Returns None when neither count nor stamp is available, which tells the caller to scan
+        rather than trust a cache.
+
+        The trailers are part of it because they decide which copy the index keeps, and Agregarr labels
+        an item AFTER Plex has scanned it: a signature blind to the label would serve the trailer's key
+        from the cache for a week. Added only when there are some, so every other server keeps its key.
+        """
         total = getattr(section, "totalSize", None)
         updated = getattr(section, "updatedAt", None)
         if total is None and updated is None:
             return None
         stamp = int(updated.timestamp()) if hasattr(updated, "timestamp") else updated
-        return f"{total}:{stamp}"
+        signature = f"{total}:{stamp}"
+        key = getattr(section, "key", None)
+        if key is not None and (trailers := self.placeholder_keys(key, _section_media_type(section))):
+            signature += ":ph" + hashlib.sha256(",".join(map(str, sorted(trailers))).encode()).hexdigest()[:12]
+        return signature
 
     def top_rated(self, section: LibrarySection, limit: int) -> list[tuple[int, object]]:
         """Highest audience-rated titles that carry a TMDB id — the cold-start 'popular' source.

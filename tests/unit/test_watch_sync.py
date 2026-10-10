@@ -92,9 +92,14 @@ class FakePms:
         self._overlapped = threading.Event()
         self.peak = 0
         self.started: list[tuple[int, str]] = []
+        #: Agregarr trailers per library, as `PlexClient.placeholder_keys` answers (#151).
+        self.trailers: dict[str, frozenset[int]] = {}
 
     def sections(self) -> list[SimpleNamespace]:
         return list(SECTIONS)
+
+    def placeholder_keys(self, section_key, media_type) -> frozenset[int]:
+        return self.trailers.get(str(section_key), frozenset())
 
     def watched_titles(self, section_key, media_type, token: str, *, since=None) -> WatchedRead:
         account = self._account_by_token[token]
@@ -160,6 +165,39 @@ def _held(profile: UserProfile) -> set[tuple[int, str]]:
 
 def _own(account_id: int) -> set[tuple[int, str]]:
     return {(rating_key, title) for _key, rating_key, title in _expected(account_id)}
+
+
+class TestAgregarrTrailers:
+    """A trailer play carries the film's own tmdb id, so it must never sit in the watch cache (#151)."""
+
+    def test_a_trailer_play_is_never_cached(self, sessions):
+        (profile,) = _people(sessions, 1)
+        pms = FakePms([1])
+        trailer, real = (item.rating_key for item in _history_of(1, "1"))
+        pms.trailers = {"1": frozenset({trailer})}
+
+        _sync(WatchSync(sessions, EventBus()), _ctx(pms, concurrency=1), [profile])
+
+        assert {key for section, key, _title in _cached(sessions)[1] if section == "1"} == {real}
+
+    def test_a_trailer_play_cached_before_the_fix_goes_on_the_next_complete_read(self, sessions):
+        (profile,) = _people(sessions, 1)
+        pms = FakePms([1])
+        trailer, real = (item.rating_key for item in _history_of(1, "1"))
+        _sync(WatchSync(sessions, EventBus()), _ctx(pms, concurrency=1), [profile])
+        assert {key for section, key, _title in _cached(sessions)[1] if section == "1"} == {trailer, real}
+
+        pms.trailers = {"1": frozenset({trailer})}
+        with sessions() as s:
+            user_id = s.query(User.id).filter_by(plex_account_id=1).scalar()
+            for section in SECTIONS:
+                WatchCache(sessions).force_full_next_time(s, user_id, str(section.key))
+            s.commit()
+        _sync(WatchSync(sessions, EventBus()), _ctx(pms, concurrency=1), [profile])
+
+        cached = _cached(sessions)[1]
+        assert {key for section, key, _title in cached if section == "1"} == {real}
+        assert {key for section, key, _title in cached if section == "2"} == {i.rating_key for i in _history_of(1, "2")}
 
 
 class TestParallelSync:

@@ -20,6 +20,7 @@ import base64
 import io
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -63,6 +64,9 @@ class FakeMovie:
     #: rating and no labels, so only an allow list can hide the item.
     content_rating: str = ""
     labels: list[str] = field(default_factory=list)
+    #: A movie EDITION ("Director's Cut", or Agregarr's "Trailer" stand-in). Each edition is its own
+    #: Plex item carrying the film's own `tmdb://` guid; a real PMS serves `editionTitle` inline.
+    edition_title: str = ""
 
 
 def share_filter_admits(raw: str, labels, content_rating: str) -> bool:
@@ -265,6 +269,10 @@ class FakePlexState:
     # distinguish. "The fake must be no easier than the real server" (.claude/rules/testing.md).
     partial_shows: dict[tuple[int, int], int] = field(default_factory=dict)
     next_rating_key: int = 5000
+    #: Serve `label=`/`label!=` listings as if the filter were not there — what this endpoint does with
+    #: a parameter it ignores (the whole library, 200). The real PMS honours both (measured,
+    #: `pms_label_filter.json`); this exists to prove a reader does not trust an ignored one.
+    ignores_label_filter: bool = False
 
     def rate(self, account_id: int, rating_key: int, rating: float) -> None:
         """Record that one account rated one title — what tapping the stars in Plex does."""
@@ -768,6 +776,12 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
         # library's items would all claim to live in the first one.
         librarySectionID=section.key if section else state.section_id,
     )
+    if movie.edition_title:
+        element.set("editionTitle", movie.edition_title)
+    if is_show and watched_by is None:
+        # Every show listing carries its episode count inline; the per-user read sets its own below.
+        # Season 0 counts too (pms_label_filter.json: 28 of 28 shows with specials).
+        element.set("leafCount", str(movie.leaf_count))
     if watched_by is not None:
         # Omitted for a show in `undated_in_show_read`: see the field. The episode read is then the
         # only place its date exists, which is what the production date-repair path is built on.
@@ -1116,11 +1130,21 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
                 _movie_xml(root, state, item, watched_by=account_id)
             return _xml(root)
         listing = _sorted_items(list(items.values()), query.get("sort"))
+        # `type=1`/`type=2` lists films or shows, never the episodes a show library also holds.
+        if (kind := {"1": "movie", "2": "show"}.get(query.get("type") or "")) is not None:
+            listing = [item for item in listing if item.media_type == kind]
         # The season editor's film search (#137). A real PMS reads `title=` as a case-insensitive
         # SUBSTRING match and counts every match in totalSize before the container headers cut the page
         # (tests/fixtures/pms_section_title_search.xml.txt: "free" -> totalSize 21, size 5).
         if (title := query.get("title")) is not None:
             listing = [item for item in listing if title.casefold() in item.title.casefold()]
+        # Item labels, by tag NAME and case-insensitively, `=` and `!=` — as a real PMS answers them
+        # (tests/fixtures/pms_label_filter.json: the two partition a library exactly).
+        if not state.ignores_label_filter:
+            if (want := query.get("label")) is not None:
+                listing = [i for i in listing if want.casefold() in {lb.casefold() for lb in i.labels}]
+            if (avoid := query.get("label!")) is not None:
+                listing = [i for i in listing if avoid.casefold() not in {lb.casefold() for lb in i.labels}]
         if query.get("limit") is not None:
             listing = listing[: int(query["limit"])]
         start, size = _page(request, len(listing))
@@ -1269,6 +1293,16 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
 
     @app.get("/library/metadata/{rating_key}/children")
     def metadata_children(rating_key: int, request: Request) -> Response:
+        show = state.item(rating_key)
+        if show is not None and show.media_type == "show":
+            # A show's seasons, from its episodes, beside the "All episodes" entry a real PMS lists first
+            # with no `index` (tests/fixtures/pms_label_filter.json, `show_children`).
+            seasons = Counter(e.parent_index for e in state.episodes_of(rating_key))
+            root = _container(size=len(seasons) + 1)
+            _el(root, "Directory", key=f"/library/metadata/{rating_key}/allLeaves", title="All episodes")
+            for index, count in sorted(seasons.items()):
+                _el(root, "Directory", type="season", index=index, leafCount=count, parentRatingKey=rating_key)
+            return _xml(root)
         # Filtered, like a real PMS: 404 for a row the account cannot see, else only the items it can.
         user = state.user_for_token(request.headers.get("X-Plex-Token", ""))
         collection = _collection(rating_key)

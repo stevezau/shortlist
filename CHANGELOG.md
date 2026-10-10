@@ -8,6 +8,11 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
+- **Agregarr trailer placeholders no longer count as the real title** ([#151](https://github.com/stevezau/shortlist/issues/151)).
+  Playing one of Agregarr's stand-in trailers used to count as watching the film, and as finishing a show
+  that wasn't on the server yet. A title with both a real copy and a trailer could also put the trailer in a
+  row. Trailer plays are now ignored and rows use the real copy. A title that only has a trailer can
+  still go in a row.
 - **Adding a season to a row is quicker and keeps your place.** The Add button no longer waits for the whole
   rows list to reload, which took seconds while a run was going, and the page no longer jumps up to the
   season list afterwards.

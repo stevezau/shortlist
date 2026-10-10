@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Protocol
 
@@ -159,7 +159,30 @@ class ShareTokenWatchSource:
         if token is None:
             raise NoWatchToken(f"no server token for {user.username}")
         read = self._plex.watched_titles(section.key, media_type, token, since=since)
-        return self._note_unmatched(user, section, read)
+        return self._note_unmatched(user, section, self._without_trailers(user, section, media_type, read))
+
+    def _without_trailers(self, user: UserProfile, section, media_type: MediaType, read: WatchedRead) -> WatchedRead:
+        """The read minus plays of Agregarr trailers (#151): a trailer carries the film's own tmdb id, so
+        one play would otherwise mark the film watched and seed recommendations from it, and the S00E00
+        trailer of a show not yet on the server would read as the whole show finished.
+
+        Coverage is unchanged: a dropped play is one we chose not to count, not one we failed to read, so
+        the cache may still delete what a complete read leaves out — which is how a trailer play already
+        cached goes away.
+        """
+        trailers = self._plex.placeholder_keys(section.key, media_type)
+        if not trailers:
+            return read
+        kept = [w for w in read.items if w.rating_key not in trailers]
+        if len(kept) == len(read.items):
+            return read
+        logger.info(
+            "{}: {} Agregarr trailer play(s) in section {} not counted as watched",
+            user.username,
+            len(read.items) - len(kept),
+            section.key,
+        )
+        return replace(read, items=kept)
 
     def _note_unmatched(self, user: UserProfile, section, read: WatchedRead) -> WatchedRead:
         # getattr: this only feeds a log line, and must never be what turns a good read into a failed one.
@@ -212,6 +235,7 @@ class ShareTokenWatchSource:
             media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
             try:
                 read = self._plex.watched_titles(section.key, media_type, token, since=since)
+                read = self._without_trailers(user, section, media_type, read)
                 items.extend(self._note_unmatched(user, section, read).items)
             except SectionNotShared:
                 # Not shared with them, so "nothing watched there" is the right answer, not a
