@@ -704,8 +704,11 @@ export interface RunStats {
   requests_examined?: number;
   /** Live rating-API calls that cost quota; cached ratings are free and not counted. */
   requests_lookups?: number;
-  /** Titles waiting in the inbox for the owner to approve. */
+  /** Titles the pass held back instead of auto-sending. Includes ones already requested or already
+   *  in the library, which wait nowhere; `requests_waiting` is the inbox count. */
   requests_queued?: number;
+  /** Of those, the titles this run filed in the Requests inbox. Absent on runs recorded before it existed. */
+  requests_waiting?: number;
   /** The same figures per row, which is what answers "why did THAT row send nothing". Absent when
    *  requests are off or the run never reached the request phase. */
   requests_by_row?: Record<

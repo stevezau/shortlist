@@ -13,9 +13,12 @@ import type { Collection, RowEffectiveness } from "@/lib/types";
 function HistoryLine({
   data,
   state,
+  shared,
   onRetry,
 }: {
   data: RowEffectiveness | undefined;
+  /** A shared row is one collection for everyone, so it has no per-person delivery count. */
+  shared: boolean;
   state: "loading" | "error" | "ready";
   onRetry: () => void;
 }) {
@@ -41,9 +44,16 @@ function HistoryLine({
     <>
       Last built <b className="font-semibold text-foreground">{builtAt(data.last_delivered_at)}</b>
     </>,
-    <>
-      <b className="font-semibold text-foreground tabular-nums">{data.delivered}</b> titles delivered
-    </>,
+    // A shared row writes no per-person picks, so `delivered` is 0 for it by construction; printing
+    // "0 titles delivered" read as "this row put nothing on Plex".
+    shared ? (
+      <>One shared copy for everyone</>
+    ) : (
+      <>
+        <b className="font-semibold text-foreground tabular-nums">{data.delivered.toLocaleString()}</b> titles
+        delivered
+      </>
+    ),
   ];
   // The rate is only shown for picks old enough to judge: a row delivered last night lands 0% for no
   // reason but time, and reading that as failure sends someone to change settings that were fine.
@@ -146,7 +156,12 @@ export function RowLiveStrip({
           </p>
         )}
         <p>
-          <HistoryLine data={history} state={historyState} onRetry={onRetryHistory} />
+          <HistoryLine
+            data={history}
+            state={historyState}
+            shared={collection.build === "shared"}
+            onRetry={onRetryHistory}
+          />
           {" · "}
           <Link
             to={`/runs?row=${encodeURIComponent(collection.slug)}`}

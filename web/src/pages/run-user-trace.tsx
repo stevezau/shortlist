@@ -627,6 +627,8 @@ function LibraryTabs({
               buttons?.[next]?.focus();
             }}
             onClick={() => onSelect(lib.key)}
+            // The run page lists one row at a time ("30"); this adds up every row built in the library.
+            title={`Titles delivered in ${lib.label}, across every row`}
             className={cn(
               "-mb-px flex items-center gap-2 rounded-t-md border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               selected

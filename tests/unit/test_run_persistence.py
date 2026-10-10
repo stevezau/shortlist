@@ -374,7 +374,7 @@ class TestTheRequestsEventIsWrittenWheneverThePassDidAnything:
     sends — so a night that queued 51 titles for the owner's approval left no audit event at all."""
 
     @staticmethod
-    def _emit(requests) -> list[tuple[str, dict]]:
+    def _emit(requests, **kwargs) -> list[tuple[str, dict]]:
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -383,7 +383,7 @@ class TestTheRequestsEventIsWrittenWheneverThePassDidAnything:
         seen: list[tuple] = []
         report = SimpleNamespace(requests=requests, dry_run=False, users=[])
         with patch.object(rp, "add_audit", lambda session, scope, level, **f: seen.append((scope, level, f))):
-            rp._emit_request_events(None, 7, report)
+            rp._emit_request_events(None, 7, report, **kwargs)
         return [(level, fields) for scope, level, fields in seen if scope == "run.requests"]
 
     @staticmethod
@@ -407,6 +407,15 @@ class TestTheRequestsEventIsWrittenWheneverThePassDidAnything:
         assert (fields["considered"], fields["queued"], fields["sent"]) == (5, 3, 0)
         assert fields["outcomes"] == []
         assert fields["run_id"] == 7
+
+    def test_the_event_records_how_many_queued_titles_really_wait_in_the_inbox(self):
+        from shortlist.engine.models import RequestReport
+
+        requests = RequestReport(considered=5, queued=[self._title(i) for i in range(3)])
+
+        ((_, fields),) = self._emit(requests, waiting=1)
+
+        assert (fields["queued"], fields["waiting"]) == (3, 1)
 
     def test_a_pass_that_sent_carries_the_sent_count_beside_its_outcomes(self):
         from shortlist.engine.models import MediaType, RequestOutcome, RequestReport

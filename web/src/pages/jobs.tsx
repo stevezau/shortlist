@@ -475,7 +475,9 @@ export function JobsPanel() {
               className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive-text hover:bg-destructive/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="See what failed, and why"
             >
-              {totals.failed} failed
+              {/* The counts are every failure the history still holds, not a recent window: on a
+                  server whose last failure was weeks ago a bare "12 failed" read as an emergency. */}
+              {totals.failed} failed in job history
             </button>
           )}
           {active === 0 && totals.failed === 0 && entries.length > 0 && (

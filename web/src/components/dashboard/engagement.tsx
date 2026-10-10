@@ -71,8 +71,8 @@ function idlePeople(coverage: EffectivenessReport["coverage"]): Problem | null {
     key: "idle",
     text: (
       <>
-        <strong className="font-medium text-foreground">{idle}</strong> of{" "}
-        {coverage.users_with_picks} people got picks and watched none of them
+        <strong className="font-medium text-foreground">{idle}</strong> of the{" "}
+        {coverage.users_with_picks} people who got picks watched none of them
       </>
     ),
     hint:

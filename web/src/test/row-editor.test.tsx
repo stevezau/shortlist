@@ -267,6 +267,28 @@ describe("RowEditor — Live on Plex and the save bar", () => {
     }
   });
 
+  it("does not claim a shared row delivered zero titles", async () => {
+    effectivenessData.current = {
+      delivered: 0,
+      watched: 4,
+      finished: 1,
+      first_delivered_at: "2026-09-20T02:30:00Z",
+      last_delivered_at: "2026-09-28T02:30:00Z",
+      matured: null,
+      matured_days: 30,
+      per_library: [],
+      runs: 3,
+    };
+    try {
+      renderEditor(row({ build: "shared", placement: "both" }));
+      const live = screen.getByRole("region", { name: "Live on Plex" });
+      expect(await within(live).findByText(/One shared copy for everyone/)).toBeInTheDocument();
+      expect(live).not.toHaveTextContent("0 titles delivered");
+    } finally {
+      effectivenessData.current = null;
+    }
+  });
+
   it("says when it next runs, from the scheduler when the schedule on screen is the saved one", async () => {
     const next = new Date();
     next.setDate(next.getDate() + 1);

@@ -53,12 +53,20 @@ function requestHint(s: RunDetail["stats"]): string {
   // exactly as configured, and "none good enough" would send the owner hunting a rating problem that
   // does not exist. Caught on a real run whose auto_min_demand had just been raised (2026-08-18).
   const queued = s.requests_queued;
-  if (queued) return `${queued} waiting for you to approve in Requests`;
+  // `waiting`, not `queued`: queued also holds titles already requested or already in the library,
+  // which wait nowhere (the live server queued 32 a night with an empty inbox).
+  const waiting = s.requests_waiting;
+  if (waiting) return `${waiting} waiting for you to approve in Requests`;
   // ABSENT is not zero. A run recorded before this key existed cannot tell us whether titles are
   // waiting, so claiming "none were good enough" asserts something the data does not support — and
   // sends the reader at the rating floor when the auto-send bar may be what held them. Same trap as
   // `wanted` in the notification builder.
   if (queued === undefined) return "see Requests for anything waiting";
+  if (queued > 0) {
+    if (waiting === undefined) return "see Requests for anything waiting";
+    // Queued, none of it waiting: those titles cleared the bars, so the floors are not the story.
+    return "none are waiting: the rest were already requested or in your library";
+  }
   const wanted = s.requests_wanted;
   // A healthy run on a complete library also lands on pool === 0, so blaming the floors there would
   // report a fault where there is none. `wanted` is what tells the two apart.

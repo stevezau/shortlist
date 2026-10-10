@@ -61,6 +61,27 @@ class TestPersistRequestQueue:
                 assert {r.tmdb_id for r in rows} == {1, 2}
                 assert all(r.status == "pending" and r.first_seen_run_id == 7 for r in rows)
 
+    def test_it_returns_how_many_titles_are_actually_waiting_in_the_inbox(self, tmp_path: Path):
+        # A queued title that was already requested (`sent` row) or that the library already holds
+        # waits nowhere, so it must not be counted as "waiting for approval".
+        with _sessions(tmp_path) as sessions:
+            with sessions() as s:
+                RunService._persist_request_queue(s, 1, _report([], sent=[_title(1)], outcomes=[]))
+                s.commit()
+            with sessions() as s:
+                waiting = RunService._persist_request_queue(
+                    s, 2, _report([_title(1), _title(2), _title(3)], present={(3, MediaType.MOVIE)})
+                )
+                s.commit()
+            assert waiting == 1, "only title 2 is new; 1 was already sent and 3 is already in the library"
+            with sessions() as s:
+                # A refreshed pending row still waits.
+                assert RunService._persist_request_queue(s, 3, _report([_title(2)])) == 1
+
+    def test_a_dry_run_reports_nothing_waiting(self, tmp_path: Path):
+        with _sessions(tmp_path) as sessions, sessions() as s:
+            assert RunService._persist_request_queue(s, 1, _report([_title(1)], dry_run=True)) == 0
+
     def test_auto_sent_titles_persist_the_arr_slug(self, tmp_path: Path):
         # The nightly auto-send route must file the arr's titleSlug so the inbox deep-links to it —
         # both when the title was already queued (existing row) and brand new (fresh insert).

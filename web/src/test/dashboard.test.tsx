@@ -376,7 +376,7 @@ describe("the dashboard's Privacy", () => {
     renderDashboard();
 
     const cell = await within(await strip()).findByTestId("status-privacy");
-    expect(await within(cell).findByText("3 of 4 private")).toBeInTheDocument();
+    expect(await within(cell).findByText("3 of 4 accounts private")).toBeInTheDocument();
     expect(within(cell).getByText(/kid can see 3 rows that aren’t theirs/)).toBeInTheDocument();
     expect(within(cell).queryByRole("link")).toBeNull();
   });
@@ -456,7 +456,7 @@ describe("the dashboard's Privacy", () => {
     );
     renderDashboard();
 
-    expect(await within(await strip()).findByText("2 of 2 private")).toBeInTheDocument();
+    expect(await within(await strip()).findByText("2 of 2 accounts private")).toBeInTheDocument();
     expect(screen.queryByTestId("privacy-callout")).toBeNull();
   });
 });

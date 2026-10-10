@@ -162,6 +162,50 @@ class TestUsersApi:
         assert users["mike"]["picks_watched_30d"] is None
         assert users["mike"]["last_pick_watched_at"] is None
 
+    def test_the_header_count_includes_shared_row_watches_like_the_dashboard(self, client: TestClient):
+        """The dashboard's "watched" credits shared rows too. A header that left them out read 6 where
+        the dashboard read 11 for the same person and window."""
+        from shortlist.server.db.models import PickRow, Run, SharedRowWatch
+
+        now = datetime.now(UTC)
+        with client.app.state.sessions() as session:
+            sarah = session.query(User).filter_by(slug="sarah").one()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=sarah.id,
+                    tmdb_id=1,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Own pick",
+                    watched_at=now - timedelta(days=5),
+                )
+            )
+            # Title 1 is on a shared row too: one title watched, not two.
+            for tmdb_id, watched_at in ((1, now - timedelta(days=4)), (2, now - timedelta(days=2))):
+                session.add(
+                    SharedRowWatch(
+                        user_id=sarah.id,
+                        collection_slug="popular",
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        watched_at=watched_at,
+                    )
+                )
+            session.commit()
+
+        sarah_out = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+
+        assert sarah_out["picks_watched_30d"] == 2
+        assert sarah_out["last_pick_watched_at"] == (now - timedelta(days=2)).isoformat()
+
     def test_an_old_watch_sets_the_last_watched_date_but_adds_nothing_to_the_count(self, client: TestClient):
         from shortlist.server.db.models import PickRow, Run
 

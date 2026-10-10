@@ -107,6 +107,13 @@ describe("TraceView", () => {
     );
   });
 
+  it("says a tab's count is every row's titles in that library, not one row's", () => {
+    render(<TraceView data={okTrace()} />);
+    for (const tab of screen.getAllByRole("tab")) {
+      expect(tab).toHaveAttribute("title", expect.stringMatching(/delivered .* every row/));
+    }
+  });
+
   it("tags each seed with recency only — no play-count, since frequency no longer scores", () => {
     render(<TraceView data={okTrace()} />);
     expect(screen.getByText(/3 days ago/)).toBeTruthy();

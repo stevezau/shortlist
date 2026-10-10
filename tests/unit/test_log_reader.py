@@ -112,6 +112,15 @@ class TestReadLines:
         assert [x["level"] for x in log_reader.read_lines(tmp_path, level="WARNING")["lines"]] == ["WARNING", "ERROR"]
         assert len(log_reader.read_lines(tmp_path, level="DEBUG")["lines"]) == 4
 
+    def test_a_quiet_level_reaches_past_a_window_of_debug_chatter(self, tmp_path: Path):
+        info = LINE.format(level="INFO", message="the nightly run started")
+        chatter = [LINE.format(level="DEBUG", message=f"GET /library/{i}") for i in range(20_000)]
+        write_log(tmp_path, info, *chatter)
+
+        result = log_reader.read_lines(tmp_path, level="INFO")
+
+        assert [line["message"] for line in result["lines"]] == ["the nightly run started"]
+
     def test_search_matches_message_or_source(self, tmp_path: Path):
         write_log(
             tmp_path,

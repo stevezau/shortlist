@@ -973,11 +973,12 @@ def persist_report(
         audit_demotions(session, report, dry_run=report.dry_run, run_id=run_id)
         audit_orphan_deletes(session, report, dry_run=report.dry_run, run_id=run_id)
         _emit_hub_ordering_events(session, run_id, report)
-        _emit_request_events(session, run_id, report)
-        persist_request_queue(session, run_id, report)
+        # Filed first: the audit event and the run stats both say how many titles truly wait.
+        requests_waiting = persist_request_queue(session, run_id, report)
+        _emit_request_events(session, run_id, report, waiting=requests_waiting)
         if report.error:
             _add_event(session, "run", "error", run_id, error=report.error)
-        _finalize_run(run, report, status, error, ok, errors, skipped)
+        _finalize_run(run, report, status, error, ok, errors, skipped, requests_waiting)
         for account_id, username in report.restrictions_restored.items():
             add_audit(session, RESTRICTION_RESTORED_SCOPE, "info", account_id=account_id, username=username)
         session.commit()
@@ -1575,7 +1576,7 @@ def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
         )
 
 
-def _emit_request_events(session: Session, run_id: int, report) -> None:
+def _emit_request_events(session: Session, run_id: int, report, waiting: int = 0) -> None:
     # Sonarr/Radarr requests. Adding a title to a download app is a real outward-facing
     # write (it consumes disk and bandwidth), so every request — and every skip — is audited
     # with the app's own outcome message, dry-run included (plex-safety rule 10 spirit).
@@ -1632,6 +1633,9 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
         dry_run=report.dry_run,
         considered=report.requests.considered,  # qualifying: cleared the rating/vote thresholds
         queued=len(report.requests.queued),
+        # `queued` includes titles already requested or already in the library, which wait nowhere;
+        # `waiting` is the part that actually reached the Requests inbox.
+        waiting=waiting,
         sent=len(report.requests.sent),
         outcomes=[
             {
@@ -1646,7 +1650,7 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
     )
 
 
-def persist_request_queue(session: Session, run_id: int, report) -> None:
+def persist_request_queue(session: Session, run_id: int, report) -> int:
     """Save the titles a run wanted but did not auto-send, for the owner to approve by hand.
 
     Real runs only — a dry run is a preview and must not mutate the inbox. One row per
@@ -1658,9 +1662,14 @@ def persist_request_queue(session: Session, run_id: int, report) -> None:
     inbox never lingers on titles the owner already has. Same for one an ARR now tracks (added
     by hand, by another tool, or before the sent-ledger existed): while it downloads — or
     forever, if unaired — it's absent from Plex, so only the arr-presence prune can catch it.
+
+    Returns:
+        How many queued titles are now WAITING in the inbox because of this run (newly filed or
+        refreshed pending rows). Queued titles already sent or already present wait nowhere.
     """
     if report.requests is None or report.dry_run:
-        return
+        return 0
+    waiting: set[tuple[int, str]] = set()
     existing = {(r.tmdb_id, r.media_type): r for r in session.query(RequestCandidate).all()}
     # Drop pending candidates the library now holds; leave sent/rejected alone (owner-actioned).
     present = {(tid, mt.value) for tid, mt in report.library_present}
@@ -1689,8 +1698,10 @@ def persist_request_queue(session: Session, run_id: int, report) -> None:
             # this point, but the barrier belongs on both sides of that contract (issue #104).
             existing[key] = _candidate_row(m, run_id, status="pending")
             session.add(existing[key])
+            waiting.add(key)
         elif row.status == "pending":
             _refresh_pending(row, m)
+            waiting.add(key)
 
     # The titles this run AUTO-SENT are filed as `sent` too. Without this the ledger only knew
     # about titles the owner sent by hand, so an auto-sent title still downloading was "missing"
@@ -1720,10 +1731,19 @@ def persist_request_queue(session: Session, run_id: int, report) -> None:
                 row.detail = outcome.detail
             if m.arr_slug:  # keep an existing slug if this pass somehow didn't resolve one
                 row.arr_slug = m.arr_slug
+            waiting.discard(key)
+    return len(waiting)
 
 
 def _finalize_run(
-    run: Run, report, status: str | None, error: str | None, ok: int, errors: int, skipped: int = 0
+    run: Run,
+    report,
+    status: str | None,
+    error: str | None,
+    ok: int,
+    errors: int,
+    skipped: int = 0,
+    requests_waiting: int = 0,
 ) -> None:
     # `report.ok` — not `errors == 0`. A run-level failure (the sweep could not run, so we
     # refused to write) has no per-user error to count, and must never report success.
@@ -1759,6 +1779,9 @@ def _finalize_run(
         # How many are WAITING for the owner. Without it "0 requested" reads as a failure even when
         # the run worked perfectly and simply put five titles in the inbox for approval.
         "requests_queued": len(report.requests.queued) if report.requests else 0,
+        # The part of `requests_queued` that really sits in the Requests inbox. The rest was already
+        # requested or already in the library, so "N waiting for approval" would be false for it.
+        "requests_waiting": requests_waiting,
         "requests_wanted": report.requests.wanted if report.requests else 0,
         # Per row, because the aggregates cannot answer the question the feature exists to make
         # answerable: WHICH row was starved. Written only when there is something to say — a run with

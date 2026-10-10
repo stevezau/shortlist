@@ -115,7 +115,7 @@ describe("NeedsALook", () => {
     renderPanel();
 
     expect(
-      await screen.findByText(/got picks and watched none/),
+      await screen.findByText(/people who got picks watched none/),
     ).toBeInTheDocument();
     // 7, the API's own figure — NOT `users_with_picks - users_watched`, which is 6 here. The two used
     // to be equal in this fixture, which is what let the card derive it instead of reading it.
@@ -185,7 +185,7 @@ describe("NeedsALook", () => {
       } as never),
     );
 
-    await screen.findByText(/got picks and watched none/);
+    await screen.findByText(/people who got picks watched none/);
     expect(screen.queryByText("Tiny Row")).not.toBeInTheDocument();
   });
 
@@ -260,7 +260,7 @@ describe("NeedsALook", () => {
       } as never),
     );
 
-    await screen.findByText(/got picks and watched none/);
+    await screen.findByText(/people who got picks watched none/);
     expect(screen.queryByText(/titles were fetched/)).toBeNull();
   });
 
@@ -271,7 +271,7 @@ describe("NeedsALook", () => {
       } as never),
     );
 
-    await screen.findByText(/got picks and watched none/);
+    await screen.findByText(/people who got picks watched none/);
     expect(screen.queryByText(/titles were fetched/)).toBeNull();
   });
 });
@@ -379,7 +379,7 @@ describe("NeedsALook — the thresholds it acts on", () => {
     // nothing ever asserted its ABSENCE.
     renderPanel(report({ coverage: coverage({ users_watched: 8, users_idle: 2 }) }));
 
-    expect(await screen.findByText(/got picks and watched none/)).toBeTruthy();
+    expect(await screen.findByText(/people who got picks watched none/)).toBeTruthy();
     // No (i) at all when there is no hint to give — the control must not appear for its own sake.
     expect(screen.queryByRole("button", { name: /why/i })).toBeNull();
   });
@@ -387,7 +387,7 @@ describe("NeedsALook — the thresholds it acts on", () => {
   it("reports a single idle person rather than rounding them away", async () => {
     renderPanel(report({ coverage: coverage({ users_watched: 9, users_idle: 1 }) }));
 
-    expect(await screen.findByText(/got picks and watched none/)).toBeTruthy();
+    expect(await screen.findByText(/people who got picks watched none/)).toBeTruthy();
   });
 
   it("needs five sent requests before calling them unwatched", async () => {

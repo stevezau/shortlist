@@ -470,6 +470,25 @@ describe("ConnectionsSection", () => {
     ).toHaveAttribute("href", "https://www.themoviedb.org/settings/api");
   });
 
+  it("adds up the searches of a night's chained runs, not just the last run's", async () => {
+    const night = (id: number, started: string, finished: string, searches: number) => ({
+      id,
+      status: "ok",
+      trigger: "schedule",
+      dry_run: false,
+      started_at: started,
+      finished_at: finished,
+      stats: { exa_searches: searches },
+    });
+    getRuns.mockResolvedValue([
+      night(13, "2026-07-20T04:30:00Z", "2026-07-20T04:32:00Z", 0),
+      night(12, "2026-07-20T03:30:00Z", "2026-07-20T04:31:00Z", 102),
+    ]);
+    renderSection({ "exa.apikey": "•••••" });
+    const card = screen.getByTestId("connection-llm");
+    expect(await within(card).findByText(/Last run: 102 web searches/)).toBeInTheDocument();
+  });
+
   it("shows the last run's web-search count, without claiming it was billed", async () => {
     // Exa has no live-quota endpoint, so the most recent finished run's search count stands in for
     // "usage" — and it's a count of searches, never tokens.

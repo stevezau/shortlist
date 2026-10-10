@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import String, case, cast, func
+from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.http_retry import redact
@@ -297,24 +297,37 @@ def _unhidden_row_counts(session) -> dict[str, int]:
 def _pick_watching(session: Session) -> dict[int, tuple[int, datetime | None]]:
     """Per user with any pick: distinct titles watched in the last 30 days, and the latest watch ever.
 
-    One grouped query for everyone. DISTINCT title, not pick row: a title recommended over several
+    Shared-row watches count too, as on the dashboard (`report_service._counts`): a title on both a
+    personal and a shared row is ONE title, so the two sides are UNIONed per person, never added.
+
+    Two grouped queries for everyone. DISTINCT title, not pick row: a title recommended over several
     runs is one title, so counting rows would skew the figure. `||` via .concat(), NOT func.concat:
     the latter compiles to SQLite's concat() scalar, which only exists in SQLite >= 3.44 — the
     runtime image ships 3.40, so it would 500.
     """
     title = cast(PickRow.tmdb_id, String).concat("-").concat(PickRow.media_type)
+    shared_title = cast(SharedRowWatch.tmdb_id, String).concat("-").concat(SharedRowWatch.media_type)
     # `watched_at` is stored as UTC; SQLite drops the offset on write, so compare against UTC.
     cutoff = datetime.now(UTC) - timedelta(days=30)
-    rows = (
-        session.query(
-            PickRow.user_id,
-            func.count(func.distinct(case((PickRow.watched_at >= cutoff, title)))),
-            func.max(PickRow.watched_at),
+    recent = (
+        session.query(PickRow.user_id.label("user_id"), title.label("title"))
+        .filter(PickRow.watched_at >= cutoff)
+        .union(
+            session.query(SharedRowWatch.user_id, shared_title).filter(SharedRowWatch.watched_at >= cutoff),
         )
-        .group_by(PickRow.user_id)
-        .all()
+        .subquery()
     )
-    return {user_id: (count, last) for user_id, count, last in rows}
+    counts = dict(session.query(recent.c.user_id, func.count()).group_by(recent.c.user_id).all())
+    last = {
+        user_id: at
+        for user_id, at in session.query(PickRow.user_id, func.max(PickRow.watched_at)).group_by(PickRow.user_id)
+    }
+    for user_id, at in session.query(SharedRowWatch.user_id, func.max(SharedRowWatch.watched_at)).group_by(
+        SharedRowWatch.user_id
+    ):
+        if at is not None and (last.get(user_id) is None or at > last[user_id]):
+            last[user_id] = at
+    return {user_id: (counts.get(user_id, 0), at) for user_id, at in last.items()}
 
 
 def _latest_run_ids(session: Session):

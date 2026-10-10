@@ -211,7 +211,7 @@ function PrivacyCell({ privacy }: { privacy: UseQueryResult<PrivacyStatus> }) {
         : null;
       return cell(
         glance.hiding === glance.total ? "ok" : "warn",
-        `${glance.hiding} of ${glance.total} private`,
+        `${glance.hiding} of ${glance.total} ${glance.total === 1 ? "account" : "accounts"} private`,
         phrase === null ? (
           `Read from plex.tv ${timeAgo(privacy.data.read_at)}`
         ) : calloutShown ? (

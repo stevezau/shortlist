@@ -230,13 +230,15 @@ function shelfUnplaced(message: Message): ChangeDescription {
 function requestsSentence(message: Message, dry: boolean): string {
   const outcomes = records(message.outcomes);
   const titlesWith = (status: string) => outcomes.filter((o) => o.status === status).map((o) => str(o.title));
-  const queued = num(message.queued);
+  // `waiting`, not `queued`: queued also counts titles already requested or already in the library,
+  // which wait nowhere. An event from before `waiting` existed says nothing rather than guess.
+  const waiting = num(message.waiting);
   const failed = titlesWith("error").length;
   const asked = titlesWith(dry ? "would_request" : "requested");
   const askedCount = asked.length || num(message.sent);
   const parts = [
     askedCount ? `${dry ? "Would request" : "Requested"} ${asked.length ? nameList(asked) : plural(askedCount, "title")}` : "",
-    queued ? `${plural(queued, "title")} waiting for your approval` : "",
+    waiting ? `${plural(waiting, "title")} waiting in Requests` : "",
     failed ? `${plural(failed, "request")} failed` : "",
   ].filter(Boolean);
   return parts.length ? capitalise(parts.join("; ")) : "Nothing requested";

@@ -11,9 +11,10 @@ import { NotificationsSection, WebhookAlertsSwitch } from "@/components/settings
 import { useWebhookAlerts } from "@/components/settings/webhook-alerts";
 import { settingBool, settingString } from "@/lib/format";
 import { CURATOR_PROVIDERS, findProvider } from "@/lib/providers";
+import { latestRunChain } from "@/lib/dashboard-status";
 import { useRuns } from "@/lib/queries";
 import { hasExa, hasExternalSearch, hasSearxng } from "@/lib/sources";
-import type { Settings, TestableService } from "@/lib/types";
+import type { Run, Settings, TestableService } from "@/lib/types";
 
 /** The one "Search with" choice, matching the picker on the AI web search card so the two can never
  *  disagree — they are the same setting, shown where each is useful. */
@@ -224,6 +225,14 @@ function searchFootnote(
   return `Last run: ${lastSearches.toLocaleString()} web search${lastSearches === 1 ? "" : "es"} · results are shared by everyone and reused for ${WEB_SEARCH_CACHE_DAYS} days`;
 }
 
+/** Searches in the latest finished run plus the scheduled runs chained with it. Two cron groups run
+ *  back to back and the second often searches nothing, so its 0 must not stand in for the night. */
+function lastNightsSearches(runs: Run[] | undefined): number | undefined {
+  const chain = latestRunChain(runs)?.runs ?? [runs?.find((r) => r.finished_at)];
+  const counts = chain.map((run) => run?.stats?.exa_searches);
+  return counts.some((n) => n != null) ? counts.reduce<number>((sum, n) => sum + (n ?? 0), 0) : undefined;
+}
+
 /** "2 of 4 set up": how many of a group's services have something on file. Set up, not "connected" —
  *  whether each one actually answers is its own pill, from a real test. */
 function setUpCount(summaries: string[]): string {
@@ -268,7 +277,7 @@ function ConnectionGroup({
 /** Connections: every service Shortlist talks to, one row each, editable and testable in place. */
 export function ConnectionsSection({ settings }: { settings: Settings }) {
   const runs = useRuns();
-  const lastFinishedRun = runs.data?.find((r) => r.finished_at);
+  const lastSearches = lastNightsSearches(runs.data);
   // "No AI" is a choice, not a connection: rows use the built-in picker and there is nothing to test.
   const searchBuiltInOnly = settingString(settings, "curator.provider") === "none" && !hasExternalSearch(settings);
   const alerts = useWebhookAlerts(settings);
@@ -352,7 +361,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           glyph={<Globe aria-hidden className="text-primary" />}
           footnote={searchFootnote(
             settings,
-            lastFinishedRun?.stats?.exa_searches,
+            lastSearches,
           )}
           fields={[
             {

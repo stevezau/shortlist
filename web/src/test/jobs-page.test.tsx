@@ -606,7 +606,7 @@ describe("JobsPage — sync check", () => {
     // A failure is visible WITHOUT opening anything — on the row, and in the page-level chip.
     const row = await screen.findByTestId("job-sync.users");
     expect(row).toHaveTextContent(/Failed/);
-    expect(await screen.findByText(/1 failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/1 failed in job history/i)).toBeInTheDocument();
 
     // The reason is one click away.
     await userEvent.click(
