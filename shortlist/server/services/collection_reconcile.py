@@ -1044,95 +1044,136 @@ def reconcile_row_rename_iter(
         ledger_keys = _ledger_keys(session, slug) if seeded_old else {}
     ctx = state.run_service.build_context(dry_run=dry_run, plex_only=True)
     dry_run = ctx.config.dry_run or dry_run  # the chokepoint may force a preview ON, never off
-    total = 0
 
     if build == "shared":
-        # A shared row is ONE collection carrying `shortlist__shared_<row>`, not one per person under
-        # `shortlist_<slug>`. Walking the per-user labels found nothing and reported "renamed 0" —
-        # a success message for work that never happened, while the collection on Plex kept its old
-        # title and the database said otherwise.
-        label = f"{SHARED_LABEL_PREFIX}{slug}"
-        seasonal = uses_season(new_template) or uses_season(old_template or "")
-        for section in ctx.plex.sections():
-            lib_name = getattr(section, "title", "") or ""
-            # The label alone identifies a shared row's collection, so a plain name needs no old title. A
-            # seasonal one does: it is the only way to know which season the collection wears.
-            renamed = (
-                _renamed_titles(
-                    old_template or "",
-                    new_template,
-                    _shared_profile(),
-                    _shared_profile(),
-                    lib_name,
-                    catalogue=other_rows.catalogue,
-                )
-                if seasonal
-                else None
+        total = yield from _rename_shared_row(
+            ctx, slug, new_template, old_template, other_rows, may_free_name=may_free_name, dry_run=dry_run
+        )
+    else:
+        total = yield from _rename_per_person_rows(
+            ctx,
+            slug,
+            new_template,
+            old_template,
+            old_display_names,
+            users_data,
+            other_rows,
+            ledger_titles,
+            ledger_keys,
+            may_free_name=may_free_name,
+            dry_run=dry_run,
+        )
+    yield {"done": True, "total": total, "dry_run": dry_run}
+
+
+def _rename_shared_row(
+    ctx,
+    slug: str,
+    new_template: str,
+    old_template: str | None,
+    other_rows,
+    *,
+    may_free_name,
+    dry_run: bool,
+):
+    """Rename a shared row's one collection in each library; yields the events, returns the count renamed."""
+    total = 0
+    label = f"{SHARED_LABEL_PREFIX}{slug}"
+    seasonal = uses_season(new_template) or uses_season(old_template or "")
+    for section in ctx.plex.sections():
+        lib_name = getattr(section, "title", "") or ""
+        # The label alone identifies a shared row's collection, so a plain name needs no old title. A
+        # seasonal one does: it is the only way to know which season the collection wears.
+        renamed = (
+            _renamed_titles(
+                old_template or "",
+                new_template,
+                _shared_profile(),
+                _shared_profile(),
+                lib_name,
+                catalogue=other_rows.catalogue,
             )
-            new_display = (
-                "" if seasonal else render_row_name(new_template, _shared_profile(), [], library_name=lib_name)
-            )
-            if not seasonal and not new_display:  # unnameable — see render_row_name
-                continue
-            owned = [c for c in ctx.plex.find_owned_collections(section, label) if not is_name_freeing_helper(c.title)]
-            # A shared row wears `row_marker(0)`, as delivery writes it (`deliver_rows`), and delivery finds it
-            # again only by that marked title or by the marker. When a marked one is here, it is the row, and an
-            # unmarked collection under the same label is a copy an older rename left: renamed first, it would
-            # take the name and the next run would adopt it. A lone unmarked one IS the row, and gets its marker back.
-            if any(c.title.endswith(row_marker(0)) for c in owned):
-                owned = [c for c in owned if c.title.endswith(row_marker(0))]
-            for collection in owned:
-                old_title = strip_marker(collection.title)
-                if renamed is not None:
-                    if old_title not in renamed:
-                        continue
-                    new_display = renamed[old_title]
-                    if new_display is None:  # a `{top_seed}` name: a shared row has no seed to be named after
-                        continue
-                if collection.title == new_display + row_marker(0):
+            if seasonal
+            else None
+        )
+        new_display = "" if seasonal else render_row_name(new_template, _shared_profile(), [], library_name=lib_name)
+        if not seasonal and not new_display:  # unnameable — see render_row_name
+            continue
+        owned = [c for c in ctx.plex.find_owned_collections(section, label) if not is_name_freeing_helper(c.title)]
+        # A shared row wears `row_marker(0)`, as delivery writes it (`deliver_rows`), and delivery finds it
+        # again only by that marked title or by the marker. When a marked one is here, it is the row, and an
+        # unmarked collection under the same label is a copy an older rename left: renamed first, it would
+        # take the name and the next run would adopt it. A lone unmarked one IS the row, and gets its marker back.
+        if any(c.title.endswith(row_marker(0)) for c in owned):
+            owned = [c for c in owned if c.title.endswith(row_marker(0))]
+        for collection in owned:
+            old_title = strip_marker(collection.title)
+            if renamed is not None:
+                if old_title not in renamed:
                     continue
-                try:
-                    outcome = (
-                        rename_or_keep(
-                            ctx.plex,
-                            collection,
-                            new_display + row_marker(0),
-                            _shared_profile(),
-                            section,
-                            label=label,
-                            # Names a helper only: ours by marker even if its label write fails.
-                            marker=row_marker(0),
-                            read_spare_item=lambda c=collection: next(iter(c.items()), None),
-                            may_free_name=may_free_name,
-                        )
-                        if not dry_run
-                        else None
+                new_display = renamed[old_title]
+                if new_display is None:  # a `{top_seed}` name: a shared row has no seed to be named after
+                    continue
+            if collection.title == new_display + row_marker(0):
+                continue
+            try:
+                outcome = (
+                    rename_or_keep(
+                        ctx.plex,
+                        collection,
+                        new_display + row_marker(0),
+                        _shared_profile(),
+                        section,
+                        label=label,
+                        # Names a helper only: ours by marker even if its label write fails.
+                        marker=row_marker(0),
+                        read_spare_item=lambda c=collection: next(iter(c.items()), None),
+                        may_free_name=may_free_name,
                     )
-                    if outcome in (KEPT, HELD):
-                        yield {
-                            "user": slug,
-                            "display_name": "Everyone",
-                            "library": lib_name,
-                            "error": _refusal(outcome, new_display, lib_name),
-                        }
-                        continue
-                    event = {
+                    if not dry_run
+                    else None
+                )
+                if outcome in (KEPT, HELD):
+                    yield {
                         "user": slug,
                         "display_name": "Everyone",
-                        "old": old_title,
-                        "new": new_display,
-                        "libraries": [lib_name],
+                        "library": lib_name,
+                        "error": _refusal(outcome, new_display, lib_name),
                     }
-                    if outcome in (REBUILD, DEFERRED):
-                        event["next_run"] = True
-                    else:
-                        total += 1
-                    yield event
-                except Exception as e:  # pragma: no cover - PMS failure shape
-                    yield {"user": slug, "library": lib_name, "error": redact(str(e))}
-        yield {"done": True, "total": total, "dry_run": dry_run}
-        return
+                    continue
+                event = {
+                    "user": slug,
+                    "display_name": "Everyone",
+                    "old": old_title,
+                    "new": new_display,
+                    "libraries": [lib_name],
+                }
+                if outcome in (REBUILD, DEFERRED):
+                    event["next_run"] = True
+                else:
+                    total += 1
+                yield event
+            except Exception as e:  # pragma: no cover - PMS failure shape
+                yield {"user": slug, "library": lib_name, "error": redact(str(e))}
+    return total
 
+
+def _rename_per_person_rows(
+    ctx,
+    slug: str,
+    new_template: str,
+    old_template: str | None,
+    old_display_names: dict[str, str] | None,
+    users_data: list[dict],
+    other_rows,
+    ledger_titles: dict,
+    ledger_keys: dict,
+    *,
+    may_free_name,
+    dry_run: bool,
+):
+    """Rename this row's collection for each person in each library; yields the events, returns the count renamed."""
+    total = 0
     for udata in users_data:
         override = udata["prefs"].get("row_name_tpl") if slug == DEFAULT_SLUG else None
         effective_template = override or new_template
@@ -1257,7 +1298,7 @@ def reconcile_row_rename_iter(
                     message = redact(f"{type(e).__name__}: {e}")
                     logger.warning("{}: rename failed in {} ({})", udata["slug"], lib_name, message)
                     yield {"user": udata["slug"], "library": lib_name, "error": message}
-    yield {"done": True, "total": total, "dry_run": dry_run}
+    return total
 
 
 def _renamed_titles(

@@ -13,9 +13,12 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from sqlalchemy import Engine
+from sqlalchemy.orm import Session, sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse, HTMLResponse, Response
 
@@ -134,6 +137,305 @@ class _AccessNoiseFilter(logging.Filter):
         return not any(path in message for path in self._NOISY)
 
 
+def _open_database_and_wire_state(app: FastAPI, config_dir: Path) -> tuple[dict | None, str | None, Engine]:
+    """Apply a queued restore, migrate, open the database and hang the shared services on ``app.state``.
+
+    Returns the restore outcome (``None`` when none was pending), the what's-new notes the owner had
+    closed before a restore swapped the database, and the engine (disposed at shutdown).
+    """
+    # A restore the owner queued is swapped in here, before migrations or anything else opens the
+    # database: swapping it under open connections is how a restore used to be undone by the very
+    # restart it asked for (see `backups.restore_backup`). The notes they had closed are read first,
+    # so an older copy does not reopen them.
+    closed_notes = (
+        backups.read_setting(config_dir, whats_new.SEEN_KEY)
+        if (config_dir / backups.RESTORE_PENDING).exists()
+        else None
+    )
+    restore = backups.apply_pending_restore(config_dir)
+    run_migrations(config_dir)
+    engine = make_engine(config_dir)
+    sessions = make_session_factory(engine)
+    secret_box = SecretBox(config_dir)
+    bus = EventBus()
+
+    app.state.sessions = sessions
+    app.state.secrets = secret_box
+    app.state.bus = bus
+    app.state.session_secret = _instance_secret(config_dir, "session.secret")
+    app.state.client_id = _instance_secret(config_dir, "client.id")[:32]
+    app.state.run_service = RunService(sessions, bus, config_dir, secret_box)
+    # Handed back so a finished run can drain the queue it was blocking, instead of the jobs
+    # waiting out the worker's next 60s tick. Set after construction because `run_pending` needs
+    # the whole state (handlers reach for `run_service`, `secrets`, `sessions`), and that state
+    # is not complete until this line.
+    app.state.run_service.state = app.state
+    app.state.started_at = datetime.now(UTC)
+    # Plex tokens minted during setup, held server-side only (account_id -> token).
+    app.state.pending_plex_tokens = {}
+
+    def owner_account_id() -> int | None:
+        with sessions() as session:
+            server = session.query(Server).first()
+            return server.owner_account_id if server else None
+
+    def holds_secrets() -> bool:
+        """Is there anything on this instance worth protecting yet?
+
+        A linked server is the obvious case. The subtle one — and the kind that made an earlier
+        version of the open-wizard gate a secret-exfiltration hole — is a credential the
+        environment seeds with no server row: `PLEX_TOKEN` or `TAUTULLI_APIKEY` (docker-compose
+        ships these commented out). Either is a real, working secret an attacker would want.
+        "Nobody has claimed it" and "there is nothing to steal" are NOT the same question, and
+        only the second one may open the door — so this counts EVERY secret Shortlist stores, not
+        just the token (a curator key has no env-seed today, but SECRET_KEYS is the right list
+        to guard against, not a hand-picked subset that drifts).
+        """
+        with sessions() as session:
+            if session.query(Server).first() is not None:
+                return True
+            store = SettingsStore(session, secret_box)
+            return any(store.get(key) for key in SECRET_KEYS)
+
+    def verify_api_token(token: str) -> bool:
+        """True iff ``token`` matches the stored owner API token (decrypted, constant-time compare).
+
+        Fails closed on any error (e.g. a rotated/corrupt secret.key that can't decrypt) — a bad
+        token must yield a clean 401, never a 500.
+        """
+        if not token:
+            return False
+        try:
+            with sessions() as session:
+                stored = SettingsStore(session, secret_box).get(auth.API_TOKEN_KEY)
+        except Exception:
+            logger.exception("API-token verify failed to read/decrypt the stored token")
+            return False
+        return bool(stored) and hmac.compare_digest(str(stored), token)
+
+    app.state.owner_account_id = owner_account_id
+    app.state.holds_secrets = holds_secrets
+    app.state.verify_api_token = verify_api_token
+    return restore, closed_notes, engine
+
+
+def _seed_settings_and_configure_logging(
+    session: Session,
+    store: SettingsStore,
+    config_dir: Path,
+    restore: dict | None,
+    closed_notes: str | None,
+) -> None:
+    """Tidy the settings table, audit a restore, then configure logging from the DB setting."""
+    store.purge_legacy()  # drop stale rows from removed settings (e.g. old API-token hash)
+    # Heal any secret still stored in the clear — `tmdb.apikey` was, on every install that
+    # predates it joining SECRET_KEYS (rule 9). Both results are REPORTED below, after the
+    # file sink exists: this used to log at this point, which is before `configure_logging`
+    # attaches /config/logs, so the one persistent trace of a credential problem was written
+    # to a sink that did not exist yet and never reached the log file at all.
+    healed = store.encrypt_plaintext_secrets()
+    unreadable = store.undecryptable_secrets()
+    store.seed_from_env(dict(os.environ))
+    if restore is not None:
+        if restore["status"] == "restored":
+            whats_new.keep_closed(store, closed_notes)
+        # Audited in the database the boot ended up on: the restored one, or the one it kept (rule 10).
+        scope, level = _RESTORE_AUDIT[restore["status"]]
+        session.add(
+            Event(
+                scope=scope,
+                level=level,
+                message={"backup": restore["backup"], "at": datetime.now(UTC).isoformat()},
+            )
+        )
+        session.commit()
+    # Before the wizard can finish, so a fresh install starts with nothing to announce.
+    whats_new.initialise(store, shortlist.__version__)
+    # Configure logging from the DB setting (seeded from LOG_LEVEL on first boot). The
+    # rotating file sink under /config/logs always captures DEBUG, so a quiet console still
+    # leaves a full on-disk trail to diagnose a run after the fact.
+    (config_dir / "logs").mkdir(parents=True, exist_ok=True)
+    configure_logging(store.get("log.level"), log_file=str(config_dir / "logs" / "shortlist.log"))
+    if healed:
+        logger.warning("encrypted {} setting(s) that were stored in the clear: {}", len(healed), ", ".join(healed))
+    if unreadable:
+        # Boot DEGRADED rather than refusing to start. The irreversible damage is the
+        # overwrite (now prevented in `encrypt_plaintext_secrets`), not the boot — and a
+        # crash-loop is the worst possible diagnosis channel on a headless, auto-recreated
+        # host, because it removes the UI, which is exactly where these get re-entered.
+        logger.error(
+            "{} saved credential(s) cannot be decrypted with this /config/secret.key: {}. "
+            "They were encrypted with a different key — restore the original secret.key from "
+            "a backup, or re-enter them in Settings. Nothing has been overwritten.",
+            len(unreadable),
+            ", ".join(unreadable),
+        )
+    # State the console level plainly at boot, so `docker logs` answers "is DEBUG on?" at a
+    # glance (the log file is always DEBUG regardless).
+    logger.info(
+        "logging ready — console at {} (docker logs), file always DEBUG at {}",
+        normalize_level(store.get("log.level")),
+        config_dir / "logs" / "shortlist.log",
+    )
+
+
+def _abort_orphaned_runs(session: Session, restore: dict | None) -> tuple[list[Run], list[tuple], bool]:
+    """Mark runs a previous process left queued/running as aborted, and commit.
+
+    Returns the aborted runs, the interrupted scheduled runs worth finishing (``missed_by_restart``
+    plans) and whether a restore was applied this boot.
+    """
+    stale = session.query(Run).filter(Run.status.in_(("queued", "running"))).all()
+    # Queued assistant work has a durable dispatch job. A committed handoff, however,
+    # may already have reached external services and must never be replayed on restart.
+    stale = [
+        run
+        for run in stale
+        if not (
+            run.trigger == "assistant"
+            and run.status == "queued"
+            and run.began_at is None
+            and not (run.stats or {}).get("assistant_handoff_at")
+        )
+    ]
+    booted_at = datetime.now(UTC)
+    # Not after a restore: a run the BACKUP caught mid-flight is history, not a run this restart cut short.
+    restored = restore is not None and restore["status"] == "restored"
+    unfinished = [] if restored else [plan for run in stale if (plan := missed_by_restart(session, run, booted_at))]
+    for run in stale:
+        if run.trigger == "assistant" and (run.stats or {}).get("assistant_handoff_at"):
+            run.stats = {**run.stats, "assistant_outcome_unknown": True}
+        run.status = "aborted"
+        run.finished_at = booted_at
+    if stale:
+        logger.warning("aborted {} orphaned run(s) from a previous process", len(stale))
+    session.commit()
+    return stale, unfinished, restored
+
+
+def _recover_from_previous_process(sessions: sessionmaker[Session], stale: list[Run], restored: bool) -> None:
+    """Notify about cut-short runs and requeue the jobs a previous process died inside."""
+    crashed_runs = len(stale)
+    if not restored:
+        from shortlist.server.services import notify
+
+        # `run.stopped`: a restart cut these short. Not after a restore — those are history.
+        for run in stale:
+            notify.enqueue_run_outcome(sessions, run.id)
+
+    # Requeue jobs a previous process died inside. Handlers are idempotent (converge-to-desired,
+    # never a delta), so replaying is safe — and losing the work is not: a disable cleanup lost to
+    # a restart is never retried by anything, because no run revisits a disabled user.
+    from shortlist.server.assistant.run_spend import recover_assistant_run_calls
+    from shortlist.server.services.jobs import recover_stale
+    from shortlist.server.services.request_actions import recover_abandoned_request_dispatches
+
+    recover_abandoned_request_dispatches(sessions)
+    recover_assistant_run_calls(sessions)
+    recover_stale(sessions, boot=True)
+
+    # A run the previous process died inside leaves rows DELIVERED BUT UNPROMOTED — safe, but
+    # nobody sees them and nothing would rebuild until the next schedule, potentially a day away.
+    # Queue a share-filter pass so the half-finished state is at least made consistent; a full
+    # rebuild waits for the schedule rather than firing an expensive LLM run on every restart
+    # (a crash-loop would otherwise re-curate the whole server repeatedly).
+    if crashed_runs:
+        from shortlist.server.services.jobs import enqueue
+
+        with contextlib.suppress(Exception):
+            enqueue(sessions, "privacy.sync", {})
+            logger.warning(
+                "{} run(s) were interrupted by a restart — queued a privacy sync to make the server consistent",
+                crashed_runs,
+            )
+
+
+async def _resume_interrupted_runs(app: FastAPI, unfinished: list[tuple]) -> None:
+    """Finish, once, a scheduled run a restart cut short, for the people it never reached."""
+    # An auto-updater replacing the container mid-run otherwise costs them a day (see `missed_by_restart`).
+    for user_ids, collection_ids in unfinished:
+        try:
+            await app.state.run_service.start_run(
+                trigger="resume", dry_run=False, user_ids=user_ids, collection_ids=collection_ids
+            )
+            logger.warning(
+                "a scheduled run was cut short by a restart — rebuilding the {} person(s) it never reached",
+                len(user_ids),
+            )
+        except Exception:
+            logger.exception("could not start the run that finishes an interrupted scheduled run")
+
+
+def _start_watch_stream(app: FastAPI) -> tuple[WatchStream, asyncio.Task]:
+    """Start the live playback listener as a background task."""
+    from shortlist.server.services import jobs
+
+    # A long-lived socket rather than a scheduled job, because the
+    # thing it captures — someone STARTING something and giving up — exists nowhere else: Plex's
+    # own history log records completions only, so a poll of any frequency would miss it. It
+    # reconnects on its own and every gap it leaves is repaired by the play log on the next sweep,
+    # so a failure here degrades the data rather than breaking the app.
+    # `drain=`: the listener wakes the job worker the moment it queues a credit pass, instead of
+    # the job sitting out the worker's 60s tick. Measured before this: 87s from pressing play to
+    # the dashboard, 58.6s of it queue wait for 0.5s of work.
+    watch_stream = WatchStream(
+        app.state.sessions,
+        app.state.run_service.build_context,
+        # `drain_kind`, not `drain_now`: a playback event may only run the read-only credit
+        # pass it asked for. Draining the whole queue let pressing play start a plex.tv write.
+        drain=lambda: jobs.drain_kind(app.state, "watch.reconcile"),
+    )
+    app.state.watch_stream = watch_stream
+    return watch_stream, asyncio.create_task(watch_stream.run())
+
+
+def _warn_if_safe_mode_is_set_or_misspelt() -> None:
+    from shortlist.server.safe_mode import force_dry_run, misconfigured_dry_run
+
+    if force_dry_run():
+        logger.warning("SHORTLIST_DRY_RUN is ON — safe mode: nothing will be written to Plex/plex.tv")
+    elif (bad := misconfigured_dry_run()) is not None:
+        logger.warning("SHORTLIST_DRY_RUN={!r} is not a recognized value (use 1/true/yes/on) — safe mode is OFF", bad)
+
+
+async def _shutdown_services(
+    app: FastAPI,
+    bus: EventBus,
+    scheduler: AsyncIOScheduler,
+    watch_stream: WatchStream,
+    stream_task: asyncio.Task,
+    engine: Engine,
+) -> None:
+    """Stop everything `lifespan` started, in dependency order; each step runs even if one before it raises."""
+    from shortlist.server.services import jobs
+
+    bus.close()
+    scheduler.shutdown(wait=False)
+    watch_stream.stop()
+    # Awaited, not just cancelled: `run()` closes every in-flight session on its way out, and
+    # cancelling immediately makes that unreachable — every open session would survive the
+    # restart with no `ended_at`, reading as "still playing" for ever.
+    try:
+        try:
+            await asyncio.wait_for(stream_task, timeout=5)
+        except (TimeoutError, asyncio.CancelledError):
+            stream_task.cancel()
+            await asyncio.gather(stream_task, return_exceptions=True)
+    finally:
+        try:
+            await watch_stream.shutdown()
+        finally:
+            # Cancelled callers can still own executor threads. Jobs may launch runs, so
+            # join in that order before disposing the pool both services use.
+            try:
+                await jobs.shutdown_background(app.state)
+            finally:
+                try:
+                    await app.state.run_service.shutdown()
+                finally:
+                    engine.dispose()
+
+
 def create_app(config_dir: Path | None = None) -> FastAPI:
     config_dir = config_dir or Path(os.environ.get("SHORTLIST_CONFIG", "/config"))
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -150,239 +452,23 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         # route's request state on an app's first request (~0.12s for ~190 routes).
         config_dir: Path = app.state.config_dir
         jobs.start_background(app.state)
-        # A restore the owner queued is swapped in here, before migrations or anything else opens the
-        # database: swapping it under open connections is how a restore used to be undone by the very
-        # restart it asked for (see `backups.restore_backup`). The notes they had closed are read first,
-        # so an older copy does not reopen them.
-        closed_notes = (
-            backups.read_setting(config_dir, whats_new.SEEN_KEY)
-            if (config_dir / backups.RESTORE_PENDING).exists()
-            else None
-        )
-        restore = backups.apply_pending_restore(config_dir)
-        run_migrations(config_dir)
-        engine = make_engine(config_dir)
-        sessions = make_session_factory(engine)
-        secret_box = SecretBox(config_dir)
-        bus = EventBus()
-
-        app.state.sessions = sessions
-        app.state.secrets = secret_box
-        app.state.bus = bus
-        app.state.session_secret = _instance_secret(config_dir, "session.secret")
-        app.state.client_id = _instance_secret(config_dir, "client.id")[:32]
-        app.state.run_service = RunService(sessions, bus, config_dir, secret_box)
-        # Handed back so a finished run can drain the queue it was blocking, instead of the jobs
-        # waiting out the worker's next 60s tick. Set after construction because `run_pending` needs
-        # the whole state (handlers reach for `run_service`, `secrets`, `sessions`), and that state
-        # is not complete until this line.
-        app.state.run_service.state = app.state
-        app.state.started_at = datetime.now(UTC)
-        # Plex tokens minted during setup, held server-side only (account_id -> token).
-        app.state.pending_plex_tokens = {}
-
-        def owner_account_id() -> int | None:
-            with sessions() as session:
-                server = session.query(Server).first()
-                return server.owner_account_id if server else None
-
-        def holds_secrets() -> bool:
-            """Is there anything on this instance worth protecting yet?
-
-            A linked server is the obvious case. The subtle one — and the kind that made an earlier
-            version of the open-wizard gate a secret-exfiltration hole — is a credential the
-            environment seeds with no server row: `PLEX_TOKEN` or `TAUTULLI_APIKEY` (docker-compose
-            ships these commented out). Either is a real, working secret an attacker would want.
-            "Nobody has claimed it" and "there is nothing to steal" are NOT the same question, and
-            only the second one may open the door — so this counts EVERY secret Shortlist stores, not
-            just the token (a curator key has no env-seed today, but SECRET_KEYS is the right list
-            to guard against, not a hand-picked subset that drifts).
-            """
-            with sessions() as session:
-                if session.query(Server).first() is not None:
-                    return True
-                store = SettingsStore(session, secret_box)
-                return any(store.get(key) for key in SECRET_KEYS)
-
-        def verify_api_token(token: str) -> bool:
-            """True iff ``token`` matches the stored owner API token (decrypted, constant-time compare).
-
-            Fails closed on any error (e.g. a rotated/corrupt secret.key that can't decrypt) — a bad
-            token must yield a clean 401, never a 500.
-            """
-            if not token:
-                return False
-            try:
-                with sessions() as session:
-                    stored = SettingsStore(session, secret_box).get(auth.API_TOKEN_KEY)
-            except Exception:
-                logger.exception("API-token verify failed to read/decrypt the stored token")
-                return False
-            return bool(stored) and hmac.compare_digest(str(stored), token)
-
-        app.state.owner_account_id = owner_account_id
-        app.state.holds_secrets = holds_secrets
-        app.state.verify_api_token = verify_api_token
+        restore, closed_notes, engine = _open_database_and_wire_state(app, config_dir)
+        sessions = app.state.sessions
+        bus = app.state.bus
 
         with sessions() as session:
-            store = SettingsStore(session, secret_box)
-            store.purge_legacy()  # drop stale rows from removed settings (e.g. old API-token hash)
-            # Heal any secret still stored in the clear — `tmdb.apikey` was, on every install that
-            # predates it joining SECRET_KEYS (rule 9). Both results are REPORTED below, after the
-            # file sink exists: this used to log at this point, which is before `configure_logging`
-            # attaches /config/logs, so the one persistent trace of a credential problem was written
-            # to a sink that did not exist yet and never reached the log file at all.
-            healed = store.encrypt_plaintext_secrets()
-            unreadable = store.undecryptable_secrets()
-            store.seed_from_env(dict(os.environ))
-            if restore is not None:
-                if restore["status"] == "restored":
-                    whats_new.keep_closed(store, closed_notes)
-                # Audited in the database the boot ended up on: the restored one, or the one it kept (rule 10).
-                scope, level = _RESTORE_AUDIT[restore["status"]]
-                session.add(
-                    Event(
-                        scope=scope,
-                        level=level,
-                        message={"backup": restore["backup"], "at": datetime.now(UTC).isoformat()},
-                    )
-                )
-                session.commit()
-            # Before the wizard can finish, so a fresh install starts with nothing to announce.
-            whats_new.initialise(store, shortlist.__version__)
-            # Configure logging from the DB setting (seeded from LOG_LEVEL on first boot). The
-            # rotating file sink under /config/logs always captures DEBUG, so a quiet console still
-            # leaves a full on-disk trail to diagnose a run after the fact.
-            (config_dir / "logs").mkdir(parents=True, exist_ok=True)
-            configure_logging(store.get("log.level"), log_file=str(config_dir / "logs" / "shortlist.log"))
-            if healed:
-                logger.warning(
-                    "encrypted {} setting(s) that were stored in the clear: {}", len(healed), ", ".join(healed)
-                )
-            if unreadable:
-                # Boot DEGRADED rather than refusing to start. The irreversible damage is the
-                # overwrite (now prevented in `encrypt_plaintext_secrets`), not the boot — and a
-                # crash-loop is the worst possible diagnosis channel on a headless, auto-recreated
-                # host, because it removes the UI, which is exactly where these get re-entered.
-                logger.error(
-                    "{} saved credential(s) cannot be decrypted with this /config/secret.key: {}. "
-                    "They were encrypted with a different key — restore the original secret.key from "
-                    "a backup, or re-enter them in Settings. Nothing has been overwritten.",
-                    len(unreadable),
-                    ", ".join(unreadable),
-                )
-            # State the console level plainly at boot, so `docker logs` answers "is DEBUG on?" at a
-            # glance (the log file is always DEBUG regardless).
-            logger.info(
-                "logging ready — console at {} (docker logs), file always DEBUG at {}",
-                normalize_level(store.get("log.level")),
-                config_dir / "logs" / "shortlist.log",
-            )
-            stale = session.query(Run).filter(Run.status.in_(("queued", "running"))).all()
-            # Queued assistant work has a durable dispatch job. A committed handoff, however,
-            # may already have reached external services and must never be replayed on restart.
-            stale = [
-                run
-                for run in stale
-                if not (
-                    run.trigger == "assistant"
-                    and run.status == "queued"
-                    and run.began_at is None
-                    and not (run.stats or {}).get("assistant_handoff_at")
-                )
-            ]
-            booted_at = datetime.now(UTC)
-            # Not after a restore: a run the BACKUP caught mid-flight is history, not a run this restart cut short.
-            restored = restore is not None and restore["status"] == "restored"
-            unfinished = (
-                [] if restored else [plan for run in stale if (plan := missed_by_restart(session, run, booted_at))]
-            )
-            for run in stale:
-                if run.trigger == "assistant" and (run.stats or {}).get("assistant_handoff_at"):
-                    run.stats = {**run.stats, "assistant_outcome_unknown": True}
-                run.status = "aborted"
-                run.finished_at = booted_at
-            if stale:
-                logger.warning("aborted {} orphaned run(s) from a previous process", len(stale))
-            session.commit()
-        crashed_runs = len(stale)
-        if not restored:
-            from shortlist.server.services import notify
-
-            # `run.stopped`: a restart cut these short. Not after a restore — those are history.
-            for run in stale:
-                notify.enqueue_run_outcome(sessions, run.id)
-
-        # Requeue jobs a previous process died inside. Handlers are idempotent (converge-to-desired,
-        # never a delta), so replaying is safe — and losing the work is not: a disable cleanup lost to
-        # a restart is never retried by anything, because no run revisits a disabled user.
-        from shortlist.server.assistant.run_spend import recover_assistant_run_calls
-        from shortlist.server.services.jobs import recover_stale
-        from shortlist.server.services.request_actions import recover_abandoned_request_dispatches
-
-        recover_abandoned_request_dispatches(sessions)
-        recover_assistant_run_calls(sessions)
-        recover_stale(sessions, boot=True)
-
-        # A run the previous process died inside leaves rows DELIVERED BUT UNPROMOTED — safe, but
-        # nobody sees them and nothing would rebuild until the next schedule, potentially a day away.
-        # Queue a share-filter pass so the half-finished state is at least made consistent; a full
-        # rebuild waits for the schedule rather than firing an expensive LLM run on every restart
-        # (a crash-loop would otherwise re-curate the whole server repeatedly).
-        if crashed_runs:
-            from shortlist.server.services.jobs import enqueue
-
-            with contextlib.suppress(Exception):
-                enqueue(sessions, "privacy.sync", {})
-                logger.warning(
-                    "{} run(s) were interrupted by a restart — queued a privacy sync to make the server consistent",
-                    crashed_runs,
-                )
+            store = SettingsStore(session, app.state.secrets)
+            _seed_settings_and_configure_logging(session, store, config_dir, restore, closed_notes)
+            stale, unfinished, restored = _abort_orphaned_runs(session, restore)
+        _recover_from_previous_process(sessions, stale, restored)
 
         scheduler = build_scheduler(app)
         scheduler.start()
         app.state.scheduler = scheduler
 
-        # A scheduled run a restart cut short is finished once, for the people it never reached — an
-        # auto-updater replacing the container mid-run otherwise costs them a day (see `missed_by_restart`).
-        for user_ids, collection_ids in unfinished:
-            try:
-                await app.state.run_service.start_run(
-                    trigger="resume", dry_run=False, user_ids=user_ids, collection_ids=collection_ids
-                )
-                logger.warning(
-                    "a scheduled run was cut short by a restart — rebuilding the {} person(s) it never reached",
-                    len(user_ids),
-                )
-            except Exception:
-                logger.exception("could not start the run that finishes an interrupted scheduled run")
-
-        # The live playback listener. A long-lived socket rather than a scheduled job, because the
-        # thing it captures — someone STARTING something and giving up — exists nowhere else: Plex's
-        # own history log records completions only, so a poll of any frequency would miss it. It
-        # reconnects on its own and every gap it leaves is repaired by the play log on the next sweep,
-        # so a failure here degrades the data rather than breaking the app.
-        # `drain=`: the listener wakes the job worker the moment it queues a credit pass, instead of
-        # the job sitting out the worker's 60s tick. Measured before this: 87s from pressing play to
-        # the dashboard, 58.6s of it queue wait for 0.5s of work.
-        watch_stream = WatchStream(
-            app.state.sessions,
-            app.state.run_service.build_context,
-            # `drain_kind`, not `drain_now`: a playback event may only run the read-only credit
-            # pass it asked for. Draining the whole queue let pressing play start a plex.tv write.
-            drain=lambda: jobs.drain_kind(app.state, "watch.reconcile"),
-        )
-        app.state.watch_stream = watch_stream
-        stream_task = asyncio.create_task(watch_stream.run())
-
-        from shortlist.server.safe_mode import force_dry_run, misconfigured_dry_run
-
-        if force_dry_run():
-            logger.warning("SHORTLIST_DRY_RUN is ON — safe mode: nothing will be written to Plex/plex.tv")
-        elif (bad := misconfigured_dry_run()) is not None:
-            logger.warning(
-                "SHORTLIST_DRY_RUN={!r} is not a recognized value (use 1/true/yes/on) — safe mode is OFF", bad
-            )
+        await _resume_interrupted_runs(app, unfinished)
+        watch_stream, stream_task = _start_watch_stream(app)
+        _warn_if_safe_mode_is_set_or_misspelt()
         # A stop signal ends the open event streams, which uvicorn otherwise waits on before shutting down.
         close_on_stop_signals(bus, asyncio.get_running_loop())
         logger.info("shortlist server up (config: {})", config_dir)
@@ -392,31 +478,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             async with assistant_lifespan(app):
                 yield
         finally:
-            bus.close()
-            scheduler.shutdown(wait=False)
-            watch_stream.stop()
-            # Awaited, not just cancelled: `run()` closes every in-flight session on its way out, and
-            # cancelling immediately makes that unreachable — every open session would survive the
-            # restart with no `ended_at`, reading as "still playing" for ever.
-            try:
-                try:
-                    await asyncio.wait_for(stream_task, timeout=5)
-                except (TimeoutError, asyncio.CancelledError):
-                    stream_task.cancel()
-                    await asyncio.gather(stream_task, return_exceptions=True)
-            finally:
-                try:
-                    await watch_stream.shutdown()
-                finally:
-                    # Cancelled callers can still own executor threads. Jobs may launch runs, so
-                    # join in that order before disposing the pool both services use.
-                    try:
-                        await jobs.shutdown_background(app.state)
-                    finally:
-                        try:
-                            await app.state.run_service.shutdown()
-                        finally:
-                            engine.dispose()
+            await _shutdown_services(app, bus, scheduler, watch_stream, stream_task, engine)
             logger.info("shutdown complete: scheduler and playback listener stopped, database closed")
 
     # The interactive API docs + schema disclose the whole API surface unauthenticated. They're off
