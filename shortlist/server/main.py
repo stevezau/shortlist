@@ -406,7 +406,8 @@ async def _shutdown_services(
     stream_task: asyncio.Task,
     engine: Engine,
 ) -> None:
-    """Stop everything `lifespan` started, in dependency order; each step runs even if one before it raises."""
+    """Stop everything `lifespan` started, in dependency order; the awaited teardown steps each run even if one
+    before them raises (the first three synchronous stops are not guarded, as before)."""
     from shortlist.server.services import jobs
 
     bus.close()
