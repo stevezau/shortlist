@@ -6,8 +6,6 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
-## [1.11.1] - 2026-10-11
-
 ### Fixed
 
 - **Adding a season to a row is quicker and keeps your place.** The Add button no longer waits for the whole
