@@ -1427,21 +1427,22 @@ largest test-file splits and the shared fixtures. What is still open:
 - `braces`: no patched release yet. Re-run `pnpm -C web audit` and bump when one ships.
 - `postcss-selector-parser`: fixed only in a version that needs Tailwind 4. Clears with that upgrade.
 
-**Owner decision needed:**
+**Done in the 2026-10-10 follow-up (owner picked each one):**
 
-- `report_service.engagement`'s unused `losing` / `stop_points` / `observed` are in the public API
-  reference (`docs/reference/api.md`, `GET /api/report/engagement`). Removing them breaks a documented
-  response; nothing in web/ reads them.
+- FIXED 2026-10-10: `losing` / `stop_points` / `observed` removed from `GET /api/report/engagement`
+  (owner: "remove now"; it now returns `{window, people}`).
+- FIXED 2026-10-10: `_surface_flags` and the shared `_page_through` loop in `plex_pms.py`; `_run_user` and
+  `_build_section_picks` split into phases. Architecture Review: behaviour-identical, no findings.
+  `_warm_section_picks` (~330 lines) stays whole: its phases share ~10 locals.
+- FIXED 2026-10-10: migration 0111 drops `collection_user_overrides.prompt`; 0036 gained a column-exists
+  guard for replays at head (a no-op on a real upgrade path, pinned by `test_migration_0111.py`).
+- FIXED 2026-10-10: the four assistant grant edits share `_apply_revisioned_update`. Architecture Review:
+  predicate, written columns, events and commit unchanged. Note: `approve_updated_access` writes
+  constraints only, never capabilities — kept as it was.
 
-**Left for a change with a full test run and Architecture Review (Plex-writing or privacy-adjacent):**
+**Still open (needs a full test run and Architecture Review):**
 
-- `_surface_flags` helper for the triplicated promotion-flag tuples, and the shared paging loop in
-  `_newest_leaf_stamp` / `_newest_episode_stamps`.
-- Split `_run_user` and `_build_section_picks` (optional; no defect).
 - Split the ~270-line `lifespan` in `main.py` and the ~250-line `reconcile_row_rename_iter`.
-- Drop the dead `CollectionUserOverride.prompt` column (table-rebuild migration).
-- Assistant: fold the repeated CAS + Event + commit block in `patch_grant_constraints`,
-  `approve_updated_access`, `update_owner_managed` and `set_basic_access` (security-critical).
 
 **Smaller leftovers:**
 
@@ -1456,4 +1457,9 @@ largest test-file splits and the shared fixtures. What is still open:
   queues the outcome event after the run finishes could still pass.
 - Web absence assertions with no positive signal stay on a flush (connections-section ×2,
   row-shelf-placement re-pin, run-detail foreign SSE, connection-card `setTimeout(0)` tails).
-- `tests/fixtures/README.md` is missing rows for ~30 fixtures; each needs real provenance and date.
+- FIXED 2026-10-10: `tests/fixtures/README.md` has a row for every fixture (28 added). 14 PMS/plex.tv/GitHub
+  recordings were re-checked against the live server read-only and match in shape. One claim is unverified:
+  `plextv_home_users.xml.txt` says an unprofiled managed account OMITS `restrictionProfile`; live plex.tv
+  returns it present and empty on every account (the parser treats both as "none"). `pms_watched_shows.xml.txt`'s
+  `lastViewedAt` values are invented (its header says so). The seven `curator_*` LLM replies are
+  hand-written, not recordings; the four share-filter/collection measurement logs need writes to re-check.
