@@ -3173,29 +3173,11 @@
       "EngagementOut": {
         "additionalProperties": true,
         "properties": {
-          "losing": {
-            "items": {
-              "$ref": "#/components/schemas/LosingTitleOut"
-            },
-            "title": "Losing",
-            "type": "array"
-          },
-          "observed": {
-            "title": "Observed",
-            "type": "boolean"
-          },
           "people": {
             "items": {
               "$ref": "#/components/schemas/EngagementPersonOut"
             },
             "title": "People",
-            "type": "array"
-          },
-          "stop_points": {
-            "items": {
-              "$ref": "#/components/schemas/StopPointOut"
-            },
-            "title": "Stop Points",
             "type": "array"
           },
           "window": {
@@ -3205,10 +3187,7 @@
         },
         "required": [
           "window",
-          "people",
-          "losing",
-          "stop_points",
-          "observed"
+          "people"
         ],
         "title": "EngagementOut",
         "type": "object"
@@ -4724,48 +4703,6 @@
           "file"
         ],
         "title": "LogsOut",
-        "type": "object"
-      },
-      "LosingTitleOut": {
-        "additionalProperties": true,
-        "description": "A pick several people started and few finished. One person abandoning something is a night;\nthe pattern across people is what makes it a bad recommendation.",
-        "properties": {
-          "finished": {
-            "title": "Finished",
-            "type": "integer"
-          },
-          "media_type": {
-            "title": "Media Type",
-            "type": "string"
-          },
-          "started": {
-            "title": "Started",
-            "type": "integer"
-          },
-          "stops_at": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Stops At"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "title",
-          "media_type",
-          "started",
-          "finished",
-          "stops_at"
-        ],
-        "title": "LosingTitleOut",
         "type": "object"
       },
       "NotificationOut": {
@@ -9590,25 +9527,6 @@
           "seconds_remaining"
         ],
         "title": "StatusOut",
-        "type": "object"
-      },
-      "StopPointOut": {
-        "additionalProperties": true,
-        "properties": {
-          "count": {
-            "title": "Count",
-            "type": "integer"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          }
-        },
-        "required": [
-          "label",
-          "count"
-        ],
-        "title": "StopPointOut",
         "type": "object"
       },
       "SyncFinishedEvent": {

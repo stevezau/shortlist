@@ -1517,15 +1517,12 @@ def engagement(session: Session, window: str) -> dict:
     the "titles that lose people" table and the stop-point histogram it used to feed were removed
     (three cards that filled a screen to deliver, on a real 47-user server, one fact).
 
-    `losing`, `stop_points` and `observed` are still computed and still returned. Measured on that
-    server the whole call is 18ms and 15.8KB, so this is not a cost worth a breaking change to a
-    documented response — and they are the natural answers to questions an owner will ask again.
+    The response is `people` only: the "titles that lose people" table, the stop-point histogram and the
+    `observed` flag were removed with the cards that read them (owner decision 2026-10-10).
 
     Every outcome comes from :func:`resolve_outcomes`, the same function the headline split reads, so
-    the two can never disagree. Two views of one set, because they answer different questions: `people`
-    is "what did THIS person do with their row", which an owner opens when someone says the picks are
-    no good; `losing` is "what does everyone do with THIS pick", which says a title is a bad
-    recommendation rather than a bad night.
+    the two can never disagree. `people` is "what did THIS
+    person do with their row", which an owner opens when someone says the picks are no good.
     """
     if window not in WINDOWS:
         window = DEFAULT_WINDOW
@@ -1535,9 +1532,7 @@ def engagement(session: Session, window: str) -> dict:
     namer = RowNamer(session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE)
 
     people: dict[int, list[dict]] = defaultdict(list)
-    per_title: dict[tuple[int, str], dict] = {}
-    abandoned: list[int] = []
-    for (user_id, tmdb_id, media_type), entry in resolve_outcomes(session, since).items():
+    for (user_id, _tmdb_id, media_type), entry in resolve_outcomes(session, since).items():
         if user_id not in users:
             continue
         people[user_id].append(
@@ -1552,51 +1547,7 @@ def engagement(session: Session, window: str) -> dict:
                 "observed_at": iso_utc(entry["observed_at"]) if entry["observed_at"] else None,
             }
         )
-        agg = per_title.setdefault(
-            (tmdb_id, media_type),
-            {"title": entry["title"], "media_type": media_type, "started": 0, "finished": 0, "percents": []},
-        )
-        if entry["outcome"] == "finished":
-            agg["started"] += 1
-            agg["finished"] += 1
-        elif entry["percent"] is not None:
-            # STARTED, always — a percentage means playback happened, whoever is still mid-film.
-            agg["started"] += 1
-            # ABANDONED only when the outcome says so. Keyed on the outcome rather than on "has a
-            # percentage", because since `SETTLING_HOURS` those are no longer the same question: a
-            # watch still open, or stopped an hour ago, carries a percentage and is not an
-            # abandonment. Reading the raw percentage here put in-progress watches into the
-            # stop-point histogram while `resolve_outcomes` called them `watching`, so the chart and
-            # the tile beside it counted different sets — the exact disagreement
-            # `test_the_histogram_always_sums_to_the_abandonments` exists to catch, and did.
-            if entry["outcome"] in ("bounced", "dropped"):
-                agg["percents"].append(entry["percent"])
-                abandoned.append(entry["percent"])
 
-    def median(values: list[int]) -> int | None:
-        if not values:
-            return None
-        ordered = sorted(values)
-        return ordered[len(ordered) // 2]
-
-    # Titles that LOSE people. Gated on TWO OBSERVED abandonments, not on `started >= 2`: `started`
-    # used to include people whose progress is unknown, so one credited pre-tracking pick plus one
-    # real drop rendered as "2 started · 0 finished · stops at 2%" — a pattern claimed from a single
-    # data point, under a heading that says one person abandoning something is not a signal.
-    losing = [
-        {
-            "title": agg["title"],
-            "media_type": agg["media_type"],
-            "started": agg["started"],
-            "finished": agg["finished"],
-            "stops_at": median(agg["percents"]),
-        }
-        for agg in per_title.values()
-        if len(agg["percents"]) >= 2 and agg["finished"] * 2 <= agg["started"]
-    ]
-    losing.sort(key=lambda t: (-t["started"], t["stops_at"] or 0))
-
-    buckets = [("0-10%", 0, 10), ("10-25%", 10, 25), ("25-50%", 25, 50), ("50-75%", 50, 75), ("75%+", 75, 101)]
     # Sorted so the OBSERVED outcomes lead, then truncated. Sorting finished-first and cutting at 40
     # removed exactly the rows this page exists to show: a person with 45 finished picks and 5 fresh
     # drops saw forty "finished" and no drops at all, under a header reading "40 picks".
@@ -1621,12 +1572,4 @@ def engagement(session: Session, window: str) -> dict:
     return {
         "window": window,
         "people": out_people,
-        "losing": losing[:20],
-        "stop_points": [
-            {"label": label, "count": sum(1 for p in abandoned if lo <= p < hi)} for label, lo, hi in buckets
-        ],
-        # Whether any live playback has been OBSERVED at all. The panel's empty state used to gate on
-        # `people` being empty, which never happens on a server with existing picks — so the owner got
-        # a wall of "WATCHING · —" rows and five empty bars instead of the explanation.
-        "observed": bool(abandoned) or any(p["percent"] is not None for e in out_people for p in e["picks"]),
     }

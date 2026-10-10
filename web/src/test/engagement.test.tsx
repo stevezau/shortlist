@@ -13,7 +13,6 @@ vi.mock("@/lib/api", () => ({
 
 const ENGAGEMENT: EngagementReport = {
   window: "30",
-  observed: true,
   people: [
     {
       username: "alex",

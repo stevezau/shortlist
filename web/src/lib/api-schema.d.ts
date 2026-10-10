@@ -4772,14 +4772,8 @@ export interface components {
         };
         /** EngagementOut */
         EngagementOut: {
-            /** Losing */
-            losing: components["schemas"]["LosingTitleOut"][];
-            /** Observed */
-            observed: boolean;
             /** People */
             people: components["schemas"]["EngagementPersonOut"][];
-            /** Stop Points */
-            stop_points: components["schemas"]["StopPointOut"][];
             /** Window */
             window: string;
         } & {
@@ -5420,25 +5414,6 @@ export interface components {
             total_matched: number;
             /** Truncated */
             truncated: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * LosingTitleOut
-         * @description A pick several people started and few finished. One person abandoning something is a night;
-         *     the pattern across people is what makes it a bad recommendation.
-         */
-        LosingTitleOut: {
-            /** Finished */
-            finished: number;
-            /** Media Type */
-            media_type: string;
-            /** Started */
-            started: number;
-            /** Stops At */
-            stops_at: number | null;
-            /** Title */
-            title: string;
         } & {
             [key: string]: unknown;
         };
@@ -7446,15 +7421,6 @@ export interface components {
             expires_at: string | null;
             /** Seconds Remaining */
             seconds_remaining: number;
-        } & {
-            [key: string]: unknown;
-        };
-        /** StopPointOut */
-        StopPointOut: {
-            /** Count */
-            count: number;
-            /** Label */
-            label: string;
         } & {
             [key: string]: unknown;
         };

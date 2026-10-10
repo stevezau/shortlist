@@ -650,74 +650,6 @@ class TestTheRowPanelReportsFirstDeliveryNotLatest:
         )
 
 
-class TestTheTitlesThatLosePeople:
-    """`engagement()["losing"]` — "what does everyone do with THIS pick", as opposed to "what did
-    this person do with their row". No longer rendered (the card was removed), but still returned and
-    still documented, and the boundary that decides membership was pinned by nothing.
-    """
-
-    def _title_watched_by(self, sessions, *, finishers: int, abandoners: int, tmdb_id: int = 550):
-        """One title, watched by N people who finished it and M who gave up half way."""
-        from shortlist.server.db.models import PickRow, User
-
-        uid = 100
-        with sessions() as session:
-            for finished in [True] * finishers + [False] * abandoners:
-                uid += 1
-                session.add(User(id=uid, plex_account_id=uid, username=f"u{uid}", slug=f"u{uid}", enabled=True))
-                session.add(
-                    PickRow(
-                        user_id=uid,
-                        tmdb_id=tmdb_id,
-                        media_type="movie",
-                        rating_key=tmdb_id,
-                        rank=1,
-                        collection_slug="picked",
-                        section_key="1",
-                        library="Movies",
-                        title="Divisive Film",
-                        created_at=NOW - timedelta(days=10),
-                        watched_at=NOW - timedelta(days=2),
-                        finished_at=NOW - timedelta(days=1) if finished else None,
-                        max_percent=None if finished else 50,
-                    )
-                )
-            session.commit()
-
-    def test_a_title_exactly_half_of_whom_finished_it_still_counts_as_losing(self, sessions):
-        """`finished * 2 <= started`, not `<`. Two finished out of four is a title that loses half
-        the people who try it — the flat boundary, and integers, so it is an ordinary case rather
-        than an edge."""
-        from shortlist.server.services.report_service import engagement
-
-        self._title_watched_by(sessions, finishers=2, abandoners=2)
-
-        with sessions() as session:
-            losing = engagement(session, "30")["losing"]
-
-        assert [t["title"] for t in losing] == ["Divisive Film"], "half the audience giving up is not 'landing'"
-        assert (losing[0]["started"], losing[0]["finished"]) == (4, 2)
-
-    def test_a_title_most_people_finish_is_not_losing_anyone(self, sessions):
-        """The other side: three of four finishing is a title that works."""
-        from shortlist.server.services.report_service import engagement
-
-        self._title_watched_by(sessions, finishers=3, abandoners=2)
-
-        with sessions() as session:
-            assert engagement(session, "30")["losing"] == []
-
-    def test_one_abandonment_alone_is_never_a_pattern(self, sessions):
-        """`len(percents) >= 2`. A single person giving up on something is a bad night, not a bad
-        recommendation, and the heading says so."""
-        from shortlist.server.services.report_service import engagement
-
-        self._title_watched_by(sessions, finishers=0, abandoners=1)
-
-        with sessions() as session:
-            assert engagement(session, "30")["losing"] == []
-
-
 class TestAWatchIsNotJudgedTheMomentItStarts:
     """An outcome used to be decided on percentage alone, with no notion of time.
 
@@ -847,19 +779,6 @@ class TestAWatchIsNotJudgedTheMomentItStarts:
             session.commit()
 
         assert self._outcome(sessions) == "finished"
-
-    def test_the_histogram_only_counts_what_it_calls_abandoned(self, sessions):
-        """The chart and the tile must count one set. Reading the raw percentage here put
-        in-progress watches into the histogram while the outcome called them `watching`."""
-        from shortlist.server.services.report_service import engagement
-
-        self._started(sessions, watched_ago_hours=1, percent=40, tmdb_id=550)  # too early to judge
-        self._started(sessions, watched_ago_hours=SETTLING_HOURS + 2, percent=30, tmdb_id=680)  # settled
-
-        with sessions() as session:
-            data = engagement(session, "all")
-
-        assert sum(b["count"] for b in data["stop_points"]) == 1, "an in-progress watch entered the histogram"
 
 
 class TestRowNamerLabel:

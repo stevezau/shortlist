@@ -272,29 +272,6 @@ class TestReportInvariants:
             listed = [p for person in data["people"] for p in person["picks"]]
             assert len(listed) == len(outcomes), "the detail page and the split must see the same set"
 
-    @given(
-        deliveries=st.lists(days_ago, min_size=1, max_size=3),
-        sess=st.lists(st.tuples(days_ago, percents), max_size=4),
-    )
-    # Every histogram bucket edge, always drawn — same reason as the boundary test below. The bucket
-    # table (`0-10 / 10-25 / 25-50 / 50-75 / 75+`) is half-open, so the edge value belongs to the
-    # bucket ABOVE it, and that was landing in a run only when hypothesis happened to pick it.
-    @example(deliveries=[2], sess=[(1, 0), (1, 10), (1, 25), (1, 50), (1, 75)])
-    @example(deliveries=[2], sess=[(1, 9), (1, 24), (1, 49), (1, 74)])
-    @SETTINGS
-    def test_the_histogram_always_sums_to_the_abandonments(self, deliveries, sess):
-        """The tile and the chart beside it are the same quantity; they disagreed once already."""
-        with fresh() as sessions:
-            _seed(sessions, deliveries, [], sess)
-            reconcile_watched(sessions, [_profile()])
-
-            with sessions() as s:
-                data = engagement(s, "all")
-                outcomes = resolve_outcomes(s, None).values()
-
-            abandoned = sum(1 for o in outcomes if o["outcome"] in {"bounced", "dropped"})
-            assert sum(b["count"] for b in data["stop_points"]) == abandoned
-
     @given(pct=percents)
     # The boundaries, ALWAYS drawn. `st.integers(0, 100)` with 50 examples reaches an exact edge only
     # by luck: a mutation audit (2026-08-24) found this test killed `FINISHED_PERCENT >= ` -> ` > `

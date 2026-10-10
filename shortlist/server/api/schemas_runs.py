@@ -491,30 +491,6 @@ class EngagementPersonOut(PassthroughModel):
     total: int
 
 
-class LosingTitleOut(PassthroughModel):
-    """A pick several people started and few finished. One person abandoning something is a night;
-    the pattern across people is what makes it a bad recommendation."""
-
-    title: str
-    media_type: str
-    started: int
-    finished: int
-    #: The median point people stop at, as a percentage. An early number is a pick problem; a late one
-    #: is usually the title rather than the recommendation.
-    stops_at: int | None
-
-
-class StopPointOut(PassthroughModel):
-    label: str
-    count: int
-
-
 class EngagementOut(PassthroughModel):
     window: str
     people: list[EngagementPersonOut]
-    losing: list[LosingTitleOut]
-    stop_points: list[StopPointOut]
-    #: Whether any live playback has been observed at all. False on every server until the listener
-    #: has run — which is not the same as "nobody watches anything", and the page says so instead of
-    #: rendering zeroes.
-    observed: bool

@@ -28,6 +28,8 @@ changing, and assistant access stays off until you opt in.
 
 ### Changed
 
+- **`GET /api/report/engagement` no longer returns `losing`, `stop_points` or `observed`.** Nothing in the
+  app read them; `people` is unchanged.
 - **Redesigned screens.** The dashboard, rows list, row editor, **Add a row** (now its own page), Users and
   person page, Privacy, Runs and run detail, Activity, Settings and the first-run wizard were reworked.
   Runs show one verdict ("OK · N warnings") everywhere, and the Privacy page leads with its enforcement

@@ -606,9 +606,7 @@ class TestOutcomesAreDecidedPerTitleNotPerRow:
         assert [p["outcome"] for p in picks] == ["finished"]
 
     def test_an_abandoned_title_counts_once_however_many_nights_it_was_delivered(self, world):
-        """`stop_points` used to count delivery ROWS: one abandonment redelivered five nights read as
-        five, and the error scales with how long a title lingers — which for an abandoned title is
-        exactly the ones that linger longest."""
+        """One abandonment redelivered on several nights is one pick, not one per delivery."""
         for run_id, day in ((1, 2), (2, 1)):
             pick(
                 world,
@@ -623,7 +621,6 @@ class TestOutcomesAreDecidedPerTitleNotPerRow:
         with world() as s:
             data = engagement(s, "30")
 
-        assert sum(b["count"] for b in data["stop_points"]) == 1
         assert len(data["people"][0]["picks"]) == 1
 
 
