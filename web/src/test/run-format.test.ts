@@ -202,7 +202,7 @@ describe("currentPhase", () => {
   });
 
   it("does not let the LIBRARY INDEX start the per-user stretch or pad its total", () => {
-    // `_build_indexes` narrates under the SECTION TITLE, not a slug (in the pipeline), and it
+    // `build_indexes` narrates under the SECTION TITLE, not a slug (in the pipeline), and it
     // runs inside `preparing`. Counting log subjects made "Movies"/"TV Shows" two extra people AND
     // declared the run was building rows while it was still reading libraries.
     const phase = currentPhase(runWith(["sarah", "mike", "ana"]), [

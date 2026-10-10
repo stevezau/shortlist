@@ -17,9 +17,9 @@ from shortlist.engine import ranking
 from shortlist.engine.models import Candidate, MediaType, Pick
 
 # Why a seedless pick is here, by the source that produced it. A seedless candidate has no "because
-# you watched X" to point at, but the reason must still be TRUE to its source — the old blanket
-# "Popular in your library" was wrong for all three (web picks aren't from the library at all) and
-# contradicted the provenance line shown right beneath it. The web line no longer says "AI" either:
+# you watched X" to point at, but the reason must still be TRUE to its source — a blanket
+# "Popular in your library" would be wrong for all three (web picks aren't from the library at all) and
+# contradict the provenance line shown right beneath it. The web line does not say "AI" either:
 # with Exa the source runs with no AI provider at all, so claiming one on the row was untrue.
 _SEEDLESS_REASON = {
     # No genre claim: a season candidate is admitted on season FIT (weighted 0.5-1.0 in

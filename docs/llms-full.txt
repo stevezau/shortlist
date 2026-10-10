@@ -2666,9 +2666,10 @@ editor, under **Requests** — a kids row can file into its own folder at a lowe
 only the first season of a show, stay English-only, ask for a lower rating, and hold itself to one
 title a night, while your main row carries on as it was.
 
-A field left on "use the setting from Settings → Requests" follows the global, and follows it as you
-change it. Only the ones you deliberately override differ. Every on/off setting in this group,
-including that "use the setting from Settings" choice, is a switch — there are no checkboxes here,
+The row editor lists these under **Server defaults**. A setting marked "server default" follows
+**Settings → Requests**, and follows it as you change it; the line shows the current value. Press
+**Override** to set this row's own value, and the line is marked "overridden here". Press **Reset** to
+follow the global again. Every on/off setting in this group is a switch — there are no checkboxes here,
 only where you're picking items from a list (languages, tags, and the like).
 
 The group only shows a setting the row can actually use: Radarr's root folder and quality profile

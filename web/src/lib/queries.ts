@@ -960,10 +960,9 @@ export function arrStatusInterval(
 /**
  * Live Sonarr/Radarr state for the inbox's badges.
  *
- * It POLLS. It used to fetch once on mount with a 30s `staleTime` and no interval, so a title that
- * finished downloading while you watched the page went on reading "Searching" until you reloaded —
- * which is exactly the "it takes ages to say Downloaded" the inbox was reported for. Nothing
- * invalidated this key either, so a title you had just sent showed no status at all.
+ * It POLLS. A single fetch on mount would leave a title that finished downloading while you watched
+ * the page reading "Searching" until you reloaded, and a title you had just sent would show no
+ * status at all unless sending invalidates this key.
  *
  * Polls ONLY while a title is actually moving. One fetch is a whole-library read from each Arr
  * (`RadarrClient.status_by_tmdb` pulls `/api/v3/movie` entire), which is the right shape for asking
@@ -1060,9 +1059,9 @@ export function useReport(window: ReportWindow = "30") {
  * Kick off a watch-history sync, and refresh the report once it actually finishes.
  *
  * The sync runs in the background, so the POST returning tells you nothing about when it's done —
- * this used to guess with a flat 4s `setTimeout`, which could refetch before the sync landed (a
- * slow server) or long after (a fast one, leaving the "last synced" time stale in between). The
- * sync already emits `sync.finished` on the shared SSE bus the moment it's actually done; this
+ * a flat `setTimeout` guess would refetch before the sync landed (a slow server) or long after (a
+ * fast one, leaving the "last synced" time stale in between). The
+ * sync emits `sync.finished` on the shared SSE bus the moment it's actually done; this
  * listens for that instead of guessing.
  */
 export function useSyncWatched() {

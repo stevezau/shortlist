@@ -103,7 +103,7 @@ Runs keep their identity. Four changes:
 
 1. **`_promote_phase` returns the ratingKeys it promoted** so converge knows what it need not revisit.
    _(done)_
-2. **`_converge_phase` runs after promotion** — walks every library, clears `promotedToOwnHome` on
+2. **`converge_phase` runs after promotion** — walks every library, clears `promotedToOwnHome` on
    any Shortlist collection promote did not reach. Narrow on purpose: own-home only, clear-only, so
    it is monotonically private and needs no `filters_ok` gate. _(done)_
 3. **Boot recovery — half of this already exists.** `create_app` already aborts orphaned
@@ -237,7 +237,7 @@ Payload is data, never a closure, so a job survives the process that queued it.
 ## 8. Phasing
 
 1. ✅ Placement grid + `off` state + per-collection Recommended + managed-user routing fix
-2. ✅ `_converge_phase` (own-home, clear-only) + `promote()` no longer defaults `home=True`
+2. ✅ `converge_phase` (own-home, clear-only) + `promote()` no longer defaults `home=True`
 3. ✅ `dry_run` recorded in the disable-cleanup audit
 4. ✅ Jobs table + worker + boot recovery + notification on failure (`services/jobs.py`;
    APScheduler drains every 10s and sweeps abandoned jobs every 5m; `BEGIN IMMEDIATE` claim)
@@ -527,7 +527,7 @@ collections — unattended, on the daily sync. It is bounded twice:
   from a mass departure as an empty one. One person leaving is routine and still acts immediately; half
   of them at once is a partial read, so it writes a `user.departed.refused` Event instead of acting.
 
-Both mirror `_converge_phase`, which gates orphan DELETION on `bool(known)` for the same reason. Caught
+Both mirror `converge_phase`, which gates orphan DELETION on `bool(known)` for the same reason. Caught
 in review, 2026-07-29 — the happy-path test passed throughout.
 
 The sweep has two halves, and only one of them is destructive:
@@ -1050,15 +1050,15 @@ the faster clock won every round but one.
 Both are the §12 shape — **a state change reported as done that never reached Plex** — and either
 alone was enough to guarantee the loss. This is why "Fix privacy" and "Fix rows" changed nothing.
 
-**1. `delivery_sections` was empty on every run with no users.** `_build_indexes` answered two
+**1. `delivery_sections` was empty on every run with no users.** `build_indexes` answered two
 different questions with one list: WHICH libraries rows live in, and WHETHER to walk their contents.
-With no users it returned `[]` for both, so `ctx.delivery_sections` was empty and `_order_phase`
+With no users it returned `[]` for both, so `ctx.delivery_sections` was empty and `order_phase`
 iterated nothing. Every `privacy.sync` — the nightly job, and the "Fix privacy" button — was
 structurally incapable of ordering anything. Naming the sections is in-memory filtering of a list
 already held; only the INDEXING costs thousands of PMS reads, and that is what stays gated on users.
 
 **2. The rows to move came from the run in progress.** A per-library `hub_anchor` override sent
-`_order_phase` down a branch that took its rows from `report.users[].placement_titles`, which only
+`order_phase` down a branch that took its rows from `report.users[].placement_titles`, which only
 ever holds what THIS run delivered. A no-user run produced an empty map, so no group was built and no
 move was issued — silently, with no log line. It also dropped any paused, errored or skipped user's
 row from the ordering pass on a full run. Now: when every row in a library resolves to the same
@@ -1131,7 +1131,7 @@ collections in one library on `homeVisibility="all"`.
 
 **It matters because the owner is the one account with no share filter** (rule 5), so
 `promotedToOwnHome` is the single surface a `label!=` exclude cannot cover — which is exactly why
-`_converge_phase` clears that flag, and only that flag, on every run (`pipeline.py:908`). So
+`converge_phase` clears that flag, and only that flag, on every run. So
 Shortlist already repairs this: the exposure is the window between runs, not permanent. Say it that
 way. An earlier draft of the notification copy claimed the rows simply "appear on your own home
 screen", which reads as a standing leak and overstates it.

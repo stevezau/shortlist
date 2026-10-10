@@ -270,8 +270,8 @@ function Synopsis({ text }: { text: string }) {
 
 /**
  * Requests are off, but titles queued before that are still on file. The inbox stays readable —
- * hiding it would lose them — but nothing here can be acted on, and it has to say so: the live
- * "Send to Sonarr/Radarr" button used to render exactly as it does when the feature is on.
+ * hiding it would lose them — but nothing here can be acted on, and it has to say so, because the live
+ * "Send to Sonarr/Radarr" button would otherwise look exactly as it does when the feature is on.
  */
 export function RequestsOffBanner() {
   return (
@@ -310,10 +310,9 @@ const ARR_STATUS_LABELS: Record<
     variant: "warning",
     hint: "Shortlist filed this request and Overseerr is holding it for someone to approve. Approve it there and it will go to Radarr or Sonarr — or change who requests go out as, in Settings › Requests, if you would rather they were approved automatically.",
   },
-  // Amber, because nothing is coming and only a person can change that. It used to have exactly one
-  // cause — somebody unmonitored it by hand — so the colour was the whole message. "How much of a
-  // show to grab" set to None now produces the same state on purpose, so the badge has to say which
-  // it might be rather than leaving a warning colour to imply something went wrong.
+  // Amber, because nothing is coming and only a person can change that. It has two causes —
+  // somebody unmonitored it by hand, or "How much of a show to grab" is set to None on purpose — so
+  // the badge has to say which it might be rather than leaving a warning colour to imply something went wrong.
   unmonitored: {
     label: "Not monitored",
     variant: "warning",
@@ -324,10 +323,10 @@ const ARR_STATUS_LABELS: Record<
 /**
  * Which of the four things the Arr column can be saying about one title.
  *
- * Three of these used to render as the SAME nothing. The badge only knew a status string, so a
+ * Three of these would render as the SAME nothing if the badge only knew a status string: a
  * lookup still in flight, an Arr that never answered, and a title genuinely absent from both apps
- * were indistinguishable on screen — and since the query fetched once with no polling, "in flight"
- * and "never answered" were both states you could sit in indefinitely with no way to tell.
+ * are indistinguishable on screen, and without polling, "in flight" and "never answered" are both
+ * states you could sit in indefinitely with no way to tell.
  */
 export type ArrView =
   | { kind: "checking" }
@@ -509,7 +508,7 @@ export function PendingRow({
       ? "Radarr"
       : "Sonarr";
   return (
-    // A div, not the <label> this used to be: a <button> is a labelable element, so a label may not
+    // A div, not a <label>: a <button> is a labelable element, so a label may not
     // contain one — the row now has three.
     //
     // Re-creating click-anywhere-to-select by hand means re-creating the rule the label gave us for
@@ -574,7 +573,7 @@ export function PendingRow({
             you don&rsquo;t need to send it again.
           </p>
         ) : null}
-        {/* Weaker than it used to be, on purpose: nothing here proves the Arr refuses a hand-made
+        {/* A weak claim, on purpose: nothing here proves the Arr refuses a hand-made
             add, only that `request_missing` never auto-sends an excluded title. */}
         {item.excluded ? (
           <p className="order-4 text-xs text-warning sm:col-span-2">

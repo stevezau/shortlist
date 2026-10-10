@@ -276,9 +276,9 @@ export function rowOverrides(
     parts.push(recencyBadgeLabel(collection.recency));
   }
 
-  // These two badges are the same unit — a number of watches — for two different scopes, and they
-  // used to read "Recent watches: 3" and "Built from 1 watch": two counts of watches, neither
-  // saying what counted them, on the same card. Named for the scope each governs instead, so the
+  // These two badges are the same unit — a number of watches — for two different scopes. Labelled
+  // "Recent watches: 3" and "Built from 1 watch" they would be two counts neither saying what
+  // counted them, on the same card, so each is named for the scope each governs instead, so the
   // pair reads as one setting and the slice of it that it is (`candidates.py` searches
   // `seeds[:recent_count]`). null inherits the global on both, so only an override is badged.
   if (collection.max_seeds !== null && collection.max_seeds !== undefined) {

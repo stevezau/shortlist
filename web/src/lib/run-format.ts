@@ -128,7 +128,7 @@ export function webSearchSummary(count?: number): string {
 /**
  * The breakdown behind a row's total time, as one sentence for a `title`.
  *
- * The line used to read "25ms · 8ms waiting · shared setup 159ms", which is three numbers and two
+ * Not "25ms · 8ms waiting · shared setup 159ms", which is three numbers and two
  * engineer concepts: "waiting" is blocked on the Plex write lock, and "shared setup" is work
  * amortised across everyone in the run. Neither is something the owner acts on, and neither is
  * guessable. The total is what belongs on screen; this is what belongs behind it.
@@ -259,8 +259,8 @@ export function inFlight(run: RunDetail, entries: RunLogEntry[]): InFlightPerson
 
 /** The stage the run is in RIGHT NOW, phrased for the header.
  *
- *  Everything after the last person finishes is server-wide, and used to be silent — so a run in its
- *  tail looked identical to a wedged one. Naming the phase is the whole fix.
+ *  Everything after the last person finishes is server-wide and would otherwise be silent — a run in its
+ *  tail would look identical to a wedged one. Naming the phase is the whole point.
  *
  *  But "server-wide" is not the same as "the tail". Reading back to the newest `Shortlist` line and
  *  calling it the current phase meant that for the whole per-user stretch — the long part — the

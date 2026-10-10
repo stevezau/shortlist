@@ -176,11 +176,11 @@ class GoogleCurator:
         self.last_tokens = getattr(usage, "total_token_count", 0) or 0
         self.last_output_tokens = _output_tokens(usage)
         if not _searched(r):
-            # INFO, not WARNING, and no longer "these titles are stale". Re-measured 2026-09-03 under
+            # INFO, not WARNING, and not "these titles are stale". Re-measured 2026-09-03 under
             # the year-anchored prompt: Gemini still issues no search queries for this task, but the
             # titles it returns from memory were 12 of 12 from 2024 or later, and matched what the
-            # searching control found. The behaviour is real; the old conclusion drawn from it was
-            # wrong. What remains true is that it cannot self-correct as its cutoff recedes.
+            # searching control found. The behaviour is real, but it does not make the titles stale.
+            # What remains true is that it cannot self-correct as its cutoff recedes.
             logger.info(
                 "llm_web (google): Gemini answered from its own knowledge rather than searching. Its "
                 "picks are current today, but unlike Claude and GPT it will not refresh them by "

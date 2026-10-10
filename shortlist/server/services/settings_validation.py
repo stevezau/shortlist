@@ -336,7 +336,7 @@ VALIDATORS = {
     # the Plex writer lock, so a large value stalls the run and everything queued behind it.
     "plex.orphan_confirm_delay_s": _bounded_float(0.0, 300.0),
     # Refresh cadence in days. 0 = frozen; the ceiling is a validation bound, not a behaviour cap —
-    # the old 0..1 fraction could not express anything slower than a fortnight, and a monthly or
+    # a monthly or
     # quarterly row is a legitimate thing to want.
     "recommendations.refresh_days": _bounded_int(0, MAX_REFRESH_DAYS),
     "recommendations.idle_hold_days": _bounded_int(0, MAX_REFRESH_DAYS),

@@ -366,10 +366,10 @@ interface ShortlistGroup {
 
 /** Every candidate this library saw, grouped by what became of it.
  *
- * The step this feeds used to state only counts — "40 candidates survived filtering" — which is a
- * summary, not a trace: it cannot answer "why isn't X in my row", the question the page exists for.
- * The per-title verdicts were already recorded (`fate`, plus the `year`/`rating`/`age_weight` it was
- * judged on); they were just buried per-seed inside each source and never gathered into one view.
+ * Counts alone ("40 candidates survived filtering") are a summary, not a trace: they cannot answer
+ * "why isn't X in my row", the question the page exists for. The per-title verdicts (`fate`, plus the
+ * `year`/`rating`/`age_weight` it was judged on) are recorded per-seed inside each source; this gathers
+ * them into one view.
  *
  * Deduped by tmdb_id, because the pool dedupes by (tmdb_id, media): a title two sources both
  * returned is ONE candidate, and counting it twice would make the totals disagree with the row.

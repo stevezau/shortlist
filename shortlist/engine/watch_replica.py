@@ -3,10 +3,10 @@
 Pure: state in, an ordered list of writes out. The caller applies them (and can dry-run them, count
 them, or show them to someone) without this module knowing what a PMS is.
 
-**Why this exists.** The transfer used to scrobble a SHOW's rating key, which marks every episode
+**Why this exists.** Scrobbling a SHOW's rating key marks every episode
 watched. Someone 400 episodes into One Piece arrived on their new account with all 1,100 finished.
-On the maintainer's own account 342 of 535 watched shows are partial, so that was the common case.
-The cache it read from could not have done better: `watched_titles` is built from `?unwatched=0`,
+On the maintainer's own account 342 of 535 watched shows are partial, so that is the common case.
+The cache cannot do better: `watched_titles` is built from `?unwatched=0`,
 which is show-level and completions-only — it knows how MANY episodes were watched, never which.
 
 Three rules, each measured against a real server (see

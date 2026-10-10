@@ -6,9 +6,8 @@ type CopyState = "idle" | "copied" | "error";
  * One copy-to-clipboard implementation, shared by every "Copy" button in the app.
  *
  * `navigator.clipboard.writeText` can reject — plain HTTP, a denied permission, an unsupported
- * browser — and the most important caller (the API token) used to have no `catch` at all, so a
- * failed copy there threw an unhandled rejection and did nothing visible. Every caller now gets an
- * explicit `"error"` state to render, not just a silent no-op.
+ * browser — and a failed copy must not throw an unhandled rejection and do nothing visible, so every
+ * caller gets an explicit `"error"` state to render.
  *
  * `copy` also accepts a `Promise<string>` so a caller that has to fetch the text first (the
  * diagnostics bundle) can report EITHER failure — the fetch or the clipboard write — through the

@@ -30,8 +30,8 @@ reviewer who rediscovers a finding checks the history before fixing it again.
   cannot split a class.
 - A full run reports two unclosed loopback sockets from `test_assistant_mcp_tool_matrix.py`; they do not
   reproduce when the file runs alone, so the leaking test is not yet identified.
-- Every `TestPlexRatingsEndToEnd` test in `test_engine_vs_fake.py` costs ~10.5s; a shared fixture would
-  likely cut most of it.
+- Every `TestPlexRatingsEndToEnd` test in `test_engine_vs_fake.py` costs ~10.5s (re-measured 2026-10-10, run alone;
+  `.test_durations` records ~1.7s and is stale for these); a shared fixture would likely cut most of it.
 
 ---
 

@@ -630,8 +630,8 @@ class PlexClient:
         # On why the default is 20, not 60: on a LAN PMS a single call taking >20s means the server is
         # stalled, not working, and waiting the full 60s just multiplied the damage (a stuck GET retried
         # 4x = ~240s, serialized behind the write-lock; a large production server, 2026-07-19). The retrying
-        # session's backoff still covers real transients, and the reorder no longer holds the write-lock (deferred,
-        # best-effort) so the old "keep the ceiling high for the busy reorder" reason is gone.
+        # session's backoff still covers real transients, and the reorder does not hold the write-lock (deferred,
+        # best-effort), so there is no reason to keep the ceiling high for it.
         session = _retrying_session()
         if not follow_redirects:
             # `net_guard.check_url` validates the ADDRESS, and its own docstring says the check is

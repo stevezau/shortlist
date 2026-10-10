@@ -61,7 +61,7 @@ _NO_TMDB = "Add a TMDB API key in Settings first."
 _NO_PLEX = "Plex isn't connected yet — finish setup first."
 
 
-# Request and response share these, so they pass undeclared keys through (`schemas.PassthroughModel`); the
+# Request and response share these, so they pass undeclared keys through (`schema_base.PassthroughModel`); the
 # bodies that SAVE a season refuse an unknown top-level field instead (`SeasonIn`).
 class DateRuleIO(PassthroughModel):
     """When a season falls: see `seasons.DateRule`. ``weekday`` is Monday=0; ``nth`` is 1-4, or -1 for the last."""

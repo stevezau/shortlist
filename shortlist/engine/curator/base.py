@@ -109,7 +109,7 @@ class _WebPrompt(NamedTuple):
 #
 # Neither is a guess. Asked "best-reviewed TV shows that premiered in 2026" — a question that names
 # the year and cannot be answered from memory — both models fired real searches and returned 2026
-# titles with citations. The tool works; the old prompt simply never asked it to look forward.
+# titles with citations. The tool works; a prompt has to ask it to look forward.
 #
 # Gemini is the exception and no prompt fixes it: it declines to search for this task under every
 # phrasing tried, including `tool_config mode="ANY"`. See GoogleCurator.recommend_web.

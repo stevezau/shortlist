@@ -48,6 +48,12 @@ changing, and assistant access stays off until you opt in.
   Runs show one verdict ("OK · N warnings") everywhere, and the Privacy page leads with its enforcement
   check and a who-sees-what grid. Breadcrumb headers, plain-word row names and a 12px text floor apply
   throughout.
+- **Requests page.** Each waiting request has one Send action, with Reject and Dismiss in its menu. Waiting
+  requests sit in one divided card, and the bulk bar shows how many are selected.
+- **Jobs page** shows each job's details in plain English.
+- **The Plex card** in **Settings, Connections** has a "Find your token" link.
+- **Linking a Plex server checks the address.** A Plex URL that is not http or https, or that points at a
+  cloud-metadata address, is refused.
 - **The uninstall preview** is grouped by library, person and row, and names a shared row "Shared row".
 - **Confirmed row membership is kept separately from run logs** (migration 0102), so clearing run history
   no longer loses what a row delivered or where a watch is credited.
@@ -78,6 +84,7 @@ changing, and assistant access stays off until you opt in.
 
 - **`GET /api/report/engagement` no longer returns `losing`, `stop_points` or `observed`.** Nothing in the
   app read them; `people` is unchanged.
+- **`GET /api/system/syncs` is gone.** Nothing in the app used it.
 
 ## [1.10.0] - 2026-10-05
 

@@ -1,7 +1,7 @@
 /** Where Help / Report-a-bug send people: the project's GitHub. */
 export const GITHUB_REPO = "https://github.com/stevezau/shortlist";
 
-/** The documentation SITE, not the repo README. "Help & docs" used to open GitHub, which drops a
+/** The documentation SITE, not the repo README. "Help & docs" opens this rather than GitHub, which would drop a
  *  non-technical owner into a source tree with a long README at the bottom of it; the site has the
  *  same material split into pages, searchable, and readable on a phone. */
 export const DOCS_URL = "https://shortlistapp.dev/";
@@ -10,7 +10,7 @@ export const DOCS_URL = "https://shortlistapp.dev/";
 export const DOCS_ASSISTANT_URL = "https://shortlistapp.dev/guides/assistant-access/";
 
 /** The guides section on tools that fight Shortlist for the Plex Recommended shelf. Linked from
- *  Settings → Row placement, which used to carry the whole explanation inline.
+ *  Settings → Row placement, which links here instead of carrying the whole explanation inline.
  *
  *  Points at the Agregarr VERSION check, not the shelf-shuffling section next to it. The sentence
  *  in the app names one specific exposure — an out-of-date Agregarr putting other people's rows on

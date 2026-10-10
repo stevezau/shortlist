@@ -83,7 +83,7 @@ export function formatSize(bytes: number): string {
 }
 
 /** A duration in ms, or "—" when there isn't one yet — a run user who hasn't started has
- *  `duration_ms: null`, which used to render as the literal "nullms". */
+ *  `duration_ms: null`, which must not render as the literal "nullms". */
 export function formatDuration(ms: number | null): string {
   if (ms === null) return "—";
   if (ms < 1000) return `${ms}ms`;

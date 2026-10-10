@@ -297,7 +297,7 @@ def _media_filter(items: list, media: str) -> list:
 # limited series; but 3 of a 200-episode run is 1.5%, still plainly a discovery. ``_ENGAGED_FRACTION``
 # lifts the floor toward ~15% of length for long shows (200 eps -> 30) while ``_ENGAGED_EPISODES`` holds
 # the 3-episode minimum for short ones. The counts are Plex's own per-user ``viewedLeafCount`` (marks
-# included), so this no longer has to over-count to compensate for invisible marks (was issue #12).
+# included), so the floor needs no over-count to compensate for invisible marks.
 _ENGAGED_EPISODES = 3
 _ENGAGED_FRACTION = 0.15
 
@@ -4391,7 +4391,7 @@ def _shared_row(
                     title=item.title,
                     rank=len(sec_picks) + 1,
                     # The real number, not a fixed label. It is the entire reason the title is here,
-                    # and the old constant "Popular on this server" was untrue of every pick it sat on.
+                    # and a constant "Popular on this server" would be untrue of every pick it sat on.
                     reason=f"{count} people watched it",
                     media_type=media_type,
                     collection_slug=spec.slug,

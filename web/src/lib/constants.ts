@@ -5,9 +5,8 @@
  * (`row.size`, `CollectionIn.size`, `RowOverridePatch.row_size`) import rather than restate.
  *
  * These two are the authority's mirror, not a second opinion: `tests/unit/test_web_constant_parity.py`
- * reads this file and fails if either side moves alone. The ceiling used to be described as matching
- * `EngineConfig.candidates_pre_rank` (then a flat 40) — that equality was the bug, not the design. The
- * pool is now twice the ceiling, so a row at the maximum still has candidates to spare on a refresh.
+ * reads this file and fails if either side moves alone. The candidate pool (`EngineConfig.candidates_pre_rank`)
+ * is twice the ceiling, not equal to it, so a row at the maximum still has candidates to spare on a refresh.
  */
 export const ROW_SIZE_MIN = 5;
 export const ROW_SIZE_MAX = 40;
@@ -58,12 +57,9 @@ export function watchedBadgeLabel(pct: number): string {
  * strongest ~two-thirds stay and the weakest third is swapped for new picks; other nights the row is
  * reused unchanged (no re-curation, no Plex write).
  *
- * 8 rather than 7 because 8 is exactly what the old `freshness` default of 50% resolved to, and
+ * 8 rather than 7 because 8 is exactly what the former `freshness` default of 50% resolved to, and
  * migration 0065 must not shift the cadence of a server that never set it. MUST equal
  * `recommendations.refresh_days` in settings_store.py — pinned by test_web_constant_parity.py.
- *
- * This was a 0..100 percent that a curve stretched onto 1..14 days, which is why the helper text
- * below used to spend a sentence translating the number back for the reader.
  */
 export const REFRESH_DAYS_DEFAULT = 8;
 
@@ -174,7 +170,7 @@ export function recencyDescription(pct: number, currentYear: number): string {
   const halfAge = Math.round(
     RECENCY_HALF_LIFE_YEARS / (Math.min(100, pct) / 100),
   );
-  // Below ~20% that age falls outside the era strip, and clamping it to 40 used to make this
+  // Below ~20% that age falls outside the era strip, and clamping it to 40 would make this
   // sentence claim "1986 ranks about half" while the bar directly above it read 84%. When the
   // half-point is off the end of the strip, state the weight the strip actually shows instead.
   const oldestAge = Math.max(...RECENCY_ERA_AGES);

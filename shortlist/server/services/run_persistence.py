@@ -749,8 +749,8 @@ def reconcile_watched(
     `picks.watched_at` was declared, migrated and read by the hit-rate query, but never WRITTEN:
     every user's hit rate was structurally 0%, while the docs promised "expect 20-40%".
 
-    **A pick is credited only if the title was in one of their LIVE rows at the time.** It used to be
-    credited on a 30-day clock from delivery with no membership test at all, which credited a title
+    **A pick is credited only if the title was in one of their LIVE rows at the time.** Crediting on a 30-day
+    clock from delivery with no membership test would credit a title
     the row had dropped weeks earlier — they could not have watched it from a shelf that no longer
     showed it, so ~27 of those 30 days were only ever measuring "they found it some other way". This
     cannot be done by asking "is it in the row now" at the far end of a run: the engine drops titles

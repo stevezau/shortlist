@@ -143,8 +143,8 @@ def known_identifiers(session: Session) -> dict[str, str]:
                 host = urlsplit(row.url).hostname or ""
             except ValueError:
                 host = ""
-            # Hosts are boundary-matched, so a short one is safe to carry — unlike the old length
-            # floor, which dropped `pms` while admitting the far more destructive `plex`.
+            # Hosts are boundary-matched, so a short one is safe to carry — a length
+            # floor would drop `pms` while admitting the far more destructive `plex`.
             if host:
                 values.setdefault(host, HOST)
     return dict(sorted(values.items(), key=lambda kv: -len(kv[0])))

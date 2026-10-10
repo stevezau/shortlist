@@ -2,10 +2,9 @@
  * Cron helpers for the schedule pickers: read plain English into a cron expression, and read a cron
  * expression back out as a sentence.
  *
- * Owners are not sysadmins. The "Custom" schedule boxes used to take a bare five-field cron with no
- * label saying what it was and no feedback on what it meant, so a typo saved happily and the
- * scheduler silently fell back to its built-in default (`_resolve_watch_cron` and friends in
- * server/scheduler.py log a warning nobody reads). `describeCron` closes that loop before the save,
+ * Owners are not sysadmins. A bare five-field cron box gives no feedback on what it means, so a typo
+ * would save happily and the scheduler would silently fall back to its built-in default
+ * (`_resolve_watch_cron` and friends in server/scheduler.py log a warning nobody reads). `describeCron` closes that loop before the save,
  * and `parseNaturalSchedule` means most people never have to write cron at all.
  */
 

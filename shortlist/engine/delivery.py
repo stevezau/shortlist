@@ -1158,10 +1158,9 @@ def remove_row(
         # `_rating_key` also returns 0 for a collection carrying no key — so a 0 would match every
         # keyless collection under this label. Only a real key may ever select an object for deletion.
         ledger_key = (delivered_keys or {}).get(str(section.key)) or None
-        # "" IS the unrenderable signal now — `render_row_name` no longer answers with a substitute
-        # name, so this no longer has to infer "unnameable" from a title that merely LOOKS like the
-        # default. That inference was always slightly wrong: a row deliberately titled exactly
-        # "✨ Picked for You" was treated as unnameable and left for a sweep.
+        # "" IS the unrenderable signal: `render_row_name` answers with no substitute name, so
+        # "unnameable" is never inferred from a title that merely LOOKS like the default (a row
+        # deliberately titled exactly "✨ Picked for You" is a real name, not one to leave for a sweep).
         # A `{top_seed}` template is unrenderable HERE whatever its fallback says. This function
         # renders with no picks, so a row with a fallback renders the FALLBACK title — but a seeded
         # user's collection wears "Because you watched X", so matching on it finds nothing (a muted

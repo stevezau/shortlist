@@ -118,10 +118,8 @@ export function hasExternalSearch(settings: Settings): boolean {
  * Whether the llm_web source can actually search under the chosen backend — the mode decides which
  * capability is required, so the toggle can never claim "on" where it would silently do nothing.
  *
- * Whether an AI provider is needed depends on the BACKEND, and this used to ask it as one blanket
- * question ("EVERY backend needs a real AI provider"). That stopped being true when Exa began
- * returning extracted titles: Exa reads its own results, so Exa alone is a complete setup. SearXNG
- * returns raw snippets that only a model can read, and native search IS the model.
+ * Whether an AI provider is needed depends on the BACKEND, not on one blanket rule: Exa returns
+ * extracted titles and reads its own results, so Exa alone is a complete setup. SearXNG returns raw snippets that only a model can read, and native search IS the model.
  *
  * Mirrors `candidates._web_search_capable` on the server — the two must agree, or the toggle and the
  * run disagree about whether the source can run.
