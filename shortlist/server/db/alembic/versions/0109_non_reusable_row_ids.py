@@ -11,6 +11,7 @@ from collections.abc import Iterator
 
 import sqlalchemy as sa
 from alembic import op
+from loguru import logger
 from sqlalchemy.engine import Connection
 
 revision = "0109"
@@ -69,12 +70,21 @@ def _snapshot_ids(diff: object) -> Iterator[int]:
                 yield _positive_id(snapshot.get("id"))
 
 
+#: History the app only ever writes and reads back as JSON. A value it cannot parse (a hand edit) cannot point
+#: anything at a row either, so it is skipped rather than blocking startup. Assistant records are authority:
+#: one that cannot be read still stops the upgrade.
+_SKIPPABLE = {"runs", "jobs", "events"}
+
+
 def _json(value: object, table: str, column: str) -> object:
     if value is None or isinstance(value, (dict, list)):
         return value
     try:
         return json.loads(value)
     except (TypeError, ValueError) as exc:
+        if table in _SKIPPABLE:
+            logger.warning("row identity migration: skipped a value in {}.{} that is not valid JSON", table, column)
+            return None
         raise RuntimeError(f"Cannot reserve historical row IDs: invalid JSON in {table}.{column}") from exc
 
 

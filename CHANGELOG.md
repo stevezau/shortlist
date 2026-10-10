@@ -11,6 +11,9 @@ All notable changes to this project are documented here. This project follows
 - **Adding a season to a row is quicker and keeps your place.** The Add button no longer waits for the whole
   rows list to reload, which took seconds while a run was going, and the page no longer jumps up to the
   season list afterwards.
+- **An upgrade no longer stops on one unreadable history record.** Upgrading to 1.11 refused to start if a
+  run, job or activity-log entry held text that was not valid JSON (only possible after a hand edit). It is
+  now skipped with a warning in the log.
 
 ## [1.11.0] - 2026-10-10
 
