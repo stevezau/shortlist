@@ -115,9 +115,8 @@ export function RequestsEmptyState({ requestsEnabled, autoSend }: { requestsEnab
         }
       />
     ) : (
-      // The hint used to restate the page subtitle directly above it in different
-      // words. An empty state's job is to say what to do next, not to re-introduce the
-      // feature the reader just read about.
+      // An empty state's job is to say what to do next, not to restate the page subtitle
+      // directly above it or re-introduce the feature the reader just read about.
       <EmptyState
         title="Requests are off"
         hint="Switch them on and missing titles start collecting here."

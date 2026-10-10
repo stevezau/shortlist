@@ -4,7 +4,7 @@ import type { RowSettingKey } from "@/lib/row-kinds";
 import type { CollectionInput } from "@/lib/types";
 
 /** Why "Take turns" is shown but disabled on a Because you watched blend (design §5). */
-export const TAKE_TURNS_BLEND_REASON =
+const TAKE_TURNS_BLEND_REASON =
   "Doesn't work with a blend of 3 or more. Choose one of the other Based on options to use it.";
 
 /**

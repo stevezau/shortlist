@@ -491,9 +491,9 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  /** Transfers that can still be undone. The undo used to be reachable only from the response of
-   *  the transfer that created it — so a timed-out request, a 503, or a page reload left a
-   *  completed destructive run with no way back. */
+  /** Transfers that can still be undone. The undo is not tied to the response of the
+   *  transfer that created it, so a timed-out request, a 503, or a page reload still leaves a way
+   *  back from a completed destructive run. */
   listWatchSnapshots: (): Promise<WatchSnapshot[]> =>
     request("/api/watching-account/snapshots"),
 

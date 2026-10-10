@@ -9,7 +9,7 @@ import { usePatchUser } from "@/lib/queries";
 import type { User } from "@/lib/types";
 
 /** The free-text columns of a user that save from their own card on the person's page. */
-export type BlurSaveKey = "nickname" | "request_tag" | "requested_by_tag";
+type BlurSaveKey = "nickname" | "request_tag" | "requested_by_tag";
 
 /**
  * A card with one text input that PATCHes the user when the field loses focus.

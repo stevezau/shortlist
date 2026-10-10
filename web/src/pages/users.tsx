@@ -47,7 +47,7 @@ import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import { profileName, USER_TYPE_LABEL } from "@/lib/user-profile";
 import { profileBlocksRows, userState, type UserState } from "@/lib/user-state";
 import type { AccountPrivacy, Collection, PrivacyStatus, RowSources, User } from "@/lib/types";
-import { formatDate, timeAgo } from "@/lib/format";
+import { capitalise, formatDate, timeAgo } from "@/lib/format";
 import { dayTime } from "@/lib/when";
 import { coarseHitArea } from "@/lib/hit-area";
 import {
@@ -142,11 +142,6 @@ const PRIVACY_WORDS: Record<string, { label: string; dot: string }> = {
 };
 
 type PrivacyQuery = { data?: PrivacyStatus; isPending: boolean; isError: boolean; error: unknown };
-
-/** "can see 3 rows…" opens a cell of its own here, so it starts with a capital. */
-function capitalise(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
 
 /** Rows on the server this person can see that are not theirs; 0 until the live reading is in. */
 function exposedRows(user: User, privacy: PrivacyQuery): number {

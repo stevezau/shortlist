@@ -5,7 +5,7 @@ import type { WatchedPage } from "@/lib/types";
 /** The page-level facts that decide whether a rating is acting on anything. */
 type RatingContext = Pick<WatchedPage, "dislike_threshold" | "ratings_trusted">;
 
-export type RatingVerdict = {
+type RatingVerdict = {
   /** Their rating on Plex's five-star scale — 2/10 reads as 1. */
   stars: number;
   /** This rating is why the title stopped seeding their rows. */

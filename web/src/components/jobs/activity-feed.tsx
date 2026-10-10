@@ -49,8 +49,8 @@ function ActivityRow({
             className="size-2 shrink-0 animate-pulse rounded-full bg-primary"
           />
         )}
-        {/* Which JOB this was, in the same words as the Jobs tab — the old flat table showed the raw
-            kind (`sync.check`), which means nothing to someone reading their own server's history. */}
+        {/* Which JOB this was, in the same words as the Jobs tab — the raw kind (`sync.check`) means
+            nothing to someone reading their own server's history. */}
         <span className="min-w-0 flex-1 font-medium sm:w-36 sm:flex-none lg:w-48">
           {label}
         </span>

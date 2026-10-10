@@ -140,8 +140,7 @@ export function UserDetailHeader({ user }: { user: User }) {
         </p>
       )}
 
-      {/* A run that fails to start says exactly why; it used to be dropped, leaving the button
-          simply stopping. */}
+      {/* A run that fails to start says exactly why, rather than the button simply stopping. */}
       {startRun.isError && (
         <MutationAlert
           error={startRun.error}

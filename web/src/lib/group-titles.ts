@@ -5,7 +5,7 @@ export function groupTitles(titles: string[]): string[] {
   return [...counts].map(([title, count]) => (count > 1 ? `${title} ×${count}` : title));
 }
 
-export type CollectionGroup = { library: string; people: { person: string; titles: string[] }[] };
+type CollectionGroup = { library: string; people: { person: string; titles: string[] }[] };
 
 /** Group the collections an uninstall deletes as library, then person, then their rows, each in the
  *  order first seen. A title repeated within one person's list collapses to "title ×N". */

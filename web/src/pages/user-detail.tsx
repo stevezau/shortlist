@@ -33,10 +33,8 @@ type UserTab = "rows" | "runs" | "settings" | "watched";
 
 const TABS: UserTab[] = ["rows", "runs", "settings", "watched"];
 
-/** The tab was renamed on screen ("Watch History" → "Watched") and the URL kept the old word, so
- *  `?tab=history` addressed a tab labelled "Watched". Links in the wild — the dashboard's, and any
- *  bookmark — still say `history`, and a URL that silently lands on the wrong tab is worse than the
- *  mismatch was. */
+/** `?tab=history` is an alias for the "Watched" tab. Links in the wild — the dashboard's, and any
+ *  bookmark — say `history`, and a URL that silently lands on the wrong tab is worse than an alias. */
 const LEGACY_TAB_ALIASES: Record<string, UserTab> = { history: "watched" };
 
 export function UserDetailBody({ user }: { user: User }) {
@@ -67,10 +65,9 @@ export function UserDetailBody({ user }: { user: User }) {
           { value: "rows", label: "Rows" },
           { value: "runs", label: "Runs" },
           { value: "settings", label: "Settings" },
-          // "Watched" rather than "Watch History": the tab now holds two different things — what
-          // they did with SHORTLIST'S picks, and everything they have ever watched on Plex. The old
-          // label described only the second. The VALUE follows the label (it used to stay
-          // "history", so the URL and the tab disagreed about what the tab was called).
+          // "Watched" rather than "Watch History": the tab holds two different things — what
+          // they did with SHORTLIST'S picks, and everything they have ever watched on Plex — and
+          // "Watch History" describes only the second. The VALUE follows the label.
           { value: "watched", label: "Watched" },
         ]}
         value={tab}

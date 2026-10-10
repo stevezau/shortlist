@@ -13,7 +13,7 @@ import type { JobCatalogEntry } from "@/lib/types";
  * The last outcome as ONE scannable token — the thing you sweep your eye down the list for.
  *
  * Deliberately not a sentence: nine of these stack up, and "Done · Synced 7 people from plex.tv ·
- * 2h ago" on every line is what made the old card list unreadable. The full detail is one click away.
+ * 2h ago" on every line would be unreadable. The full detail is one click away.
  */
 function StatusChip({
   entry,

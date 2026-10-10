@@ -85,7 +85,7 @@ export function PickList({
                 — {pick.reason}
                 {seedNote(pick)}
               </span>
-              {/* Where it came from, on its own line: "why is this here?" was previously
+              {/* Where it came from, on its own line: "why is this here?" is otherwise
                   unanswerable without reading the logs. */}
               {provenanceLabel(pick) ? (
                 <span className="block text-xs text-muted-foreground/80">

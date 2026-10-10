@@ -7,7 +7,7 @@ import type { User } from "@/lib/types";
  * "Type" column that showed "owner" for one person and an em dash for everyone else read as
  * "unknown", when the answer was simply "a shared user", which is the ordinary case.
  */
-export function UserTypeBadge({ user }: { user: User }) {
+function UserTypeBadge({ user }: { user: User }) {
   if (user.user_type === "owner") {
     return (
       <Badge
@@ -45,7 +45,7 @@ export function UserTypeBadge({ user }: { user: User }) {
  * told people with an ordinary Home user that Plex was hiding content from them when it wasn't, and
  * greyed out their enable toggle for no reason (#20).
  */
-export function RestrictedBadge({ user }: { user: User }) {
+function RestrictedBadge({ user }: { user: User }) {
   if (!user.restriction_profile) return null;
   return (
     <Badge

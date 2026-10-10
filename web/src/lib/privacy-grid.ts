@@ -23,7 +23,7 @@ export type GridCell =
 const PREFIX = "shortlist_";
 
 /** "mike" for `shortlist_mike`: the slug a per-person row label carries. */
-export function labelSlug(label: string): string {
+function labelSlug(label: string): string {
   return label.toLowerCase().startsWith(PREFIX) ? label.slice(PREFIX.length) : label;
 }
 
@@ -57,7 +57,7 @@ export function gridCell(account: AccountPrivacy, label: string, status: Privacy
 }
 
 /** How many rows fall in each {@link GridCell} kind for one account. */
-export type AccountSummary = Record<GridCell, number>;
+type AccountSummary = Record<GridCell, number>;
 
 /** One account's cells across every row on Plex, counted by kind. */
 export function accountSummary(account: AccountPrivacy, status: PrivacyStatus): AccountSummary {

@@ -9,7 +9,7 @@ export function latestFinishedRun(runs: Run[] | undefined): Run | undefined {
 
 /** One night's scheduled runs summed up: two cron groups can queue behind each other, and the
  *  later, near-empty run would otherwise stand in for the whole night. */
-export type RunChain = {
+type RunChain = {
   runs: Run[];
   /** The run the summary links to: the only run, or the one that processed the most people. */
   linkRun: Run;

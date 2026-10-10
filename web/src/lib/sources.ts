@@ -6,7 +6,7 @@ import { settingString } from "@/lib/format";
  * only what's already in the library, then ranks them in code. Enabled globally in Settings →
  * Defaults → Title sources, or overridden per row in the row editor. Mirrors engine `KNOWN_SOURCES`.
  */
-export interface SourceInfo {
+interface SourceInfo {
   id: string;
   label: string;
   desc: string;

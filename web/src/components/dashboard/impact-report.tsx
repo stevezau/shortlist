@@ -24,7 +24,7 @@ import {
 import type { EffectivenessReport, ReportWindow } from "@/lib/types";
 import { scrollStrip, useScrollStrip } from "@/lib/use-scroll-strip";
 import { cn } from "@/lib/utils";
-import { dayTime } from "@/lib/when";
+import { dayTime, timeOfDay } from "@/lib/when";
 import { personName } from "@/lib/user-names";
 import { coarseHitArea } from "@/lib/hit-area";
 
@@ -51,9 +51,8 @@ const WINDOW_PHRASE: Record<ReportWindow, string> = {
  */
 function WatchSyncButton() {
   const syncNow = useSyncWatched();
-  // Disabled only while the request is actually in flight — it used to also stay disabled (and
-  // stuck reading "Syncing…") forever after a SUCCESSFUL sync, with no way to run it again short of
-  // reloading the page, and no way to tell a failure from success at all.
+  // Disabled only while the request is actually in flight, so the button can be pressed again after
+  // a finished sync, and a failure reads differently from a success.
   const label = syncNow.isPending
     ? "Syncing…"
     : syncNow.isError
@@ -255,11 +254,10 @@ function Delta({
 /**
  * A tiny watches-per-week bar chart — no library, just normalized divs.
  *
- * The count is readable. It used to hang off a native `title` on the BAR, which made the hover
- * target the drawn rectangle: a quiet week is a ~3px sliver glued to the bottom of an 80px box, so
- * most of each column hit nothing, and even a direct hit needed a second of stillness to pay out.
- * Each week is now a full-height column that reports into a readout line under the chart, and the
- * two ends of the axis are labelled — 16 unnamed bars said nothing about *when*.
+ * The count is not a native `title` on the BAR: a quiet week is a ~3px sliver glued to the bottom
+ * of an 80px box, so most of each column would hit nothing, and even a direct hit needs a second of
+ * stillness to pay out. Each week is a full-height column that reports into a readout line under the
+ * chart, and the two ends of the axis are labelled — 16 unnamed bars say nothing about *when*.
  */
 function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
   // Which week the pointer is over; null falls back to the latest week, so the readout says
@@ -392,9 +390,8 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
  * One line in a breakdown: the name and its counts, and under them a bar scaled to the BIGGEST
  * value in its own list.
  *
- * Not a percentage of anything. The bar used to be a share of a 0–100% hit rate, so real values
- * (0–3%) were a one-pixel sliver on every row and the chart said nothing. Scaling to the list's own
- * maximum is what makes "Luke watched four times what Cassie did" visible at a glance. The bar is
+ * Not a percentage of anything: a share of a 0–100% hit rate would make real values (0–3%) a
+ * one-pixel sliver on every row. Scaling to the list's own maximum is what makes "Luke watched four times what Cassie did" visible at a glance. The bar is
  * the chart hue: amber marks the one action on a screen, not a data series.
  */
 function CountLine({
@@ -567,8 +564,8 @@ function ByPerson({ people }: { people: EffectivenessReport["per_user"] }) {
   const idle = people.filter((p) => p.watched === 0 && p.enabled !== false);
   const max = Math.max(1, ...active.map((p) => p.watched));
   // The first few are shown outright, so the list ends near the foot of the weekly chart beside it
-  // (ten left a chart-sized gap under it on a real server). The rest sit behind a disclosure: they
-  // used to just vanish with no count — the asymmetry ZeroDisclosure already fixed for the IDLE half.
+  // (ten left a chart-sized gap under it on a real server). The rest sit behind a disclosure, so
+  // they are counted rather than vanishing — the same as ZeroDisclosure does for the IDLE half.
   const shown = active.slice(0, PEOPLE_SHOWN);
   const overflow = active.slice(PEOPLE_SHOWN);
 
@@ -1080,9 +1077,8 @@ function RequestsSummary({ requests, reportWindow }: { requests: EffectivenessRe
 /**
  * The titles landing best, as a shelf of posters — the same thing Plex shows, so it reads at a glance.
  *
- * It used to be a bare "Ted Lasso · 10 watchers" list: nothing said what a title was, and nothing let
- * you look one up. Each title now carries its rank, poster, year, the newest few faces beside its
- * watcher count, and the TMDB/IMDb/Trakt links. Eight across on a wide screen; on a phone the shelf
+ * Each title carries its rank, poster, year, the newest few faces beside its watcher count, and
+ * the TMDB/IMDb/Trakt links, so it can be recognised and looked up. Eight across on a wide screen; on a phone the shelf
  * scrolls sideways rather than stacking eight posters into one very tall column.
  */
 function MostWatched({
@@ -1168,14 +1164,12 @@ const VERB_BADGE: Record<string, string> = {
 /**
  * The newest watches, newest first, filed under their day.
  *
- * Each line used to be one run of text — person, verb, title, row, time — so the title, which is the
- * news, sat in the middle of a sentence. It now leads with the poster and title, says finished /
- * started / watched as a badge, puts who and which row on the line under it, and keeps the time and
- * the look-up links at the end. The time is "3d ago", newest first.
+ * Each line leads with the poster and title (the title is the news), says finished / started /
+ * watched as a badge, puts who and which row on the line under it, and keeps the time and the
+ * look-up links at the end. The time is "3d ago", newest first.
  *
- * The extras used to be `slice(0, 12)` and nothing else: the server sends up to 20, so eight of
- * them were dropped on the floor with no count, no disclosure and nothing on screen admitting the
- * list was capped at all — which reads as "this is everything that happened" when it is not.
+ * The server sends up to 20 and the extras sit behind a disclosure with a count: a silently capped
+ * list reads as "this is everything that happened" when it is not.
  */
 function RecentlyWatched({
   recent,
@@ -1232,7 +1226,7 @@ function RecentlyWatched({
           {w.watched_at && (
             <time
               dateTime={w.watched_at}
-              title={new Date(w.watched_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+              title={timeOfDay(w.watched_at)}
               className="whitespace-nowrap text-xs tabular-nums text-muted-foreground"
             >
               {timeAgo(w.watched_at)}
@@ -1275,14 +1269,13 @@ function RecentlyWatched({
 /**
  * The dashboard tracking report — what got watched, by whom, from which row, over a chosen window.
  *
- * Windowed on purpose. Every figure here used to be lifetime-cumulative, which made each ratio a
- * measure of how long Shortlist had been installed rather than of how good the picks were: a pick
- * stops being creditable once the row drops it, but the old denominator kept every pick ever
- * delivered, forever.
+ * Windowed on purpose. A lifetime-cumulative figure measures how long Shortlist has been installed
+ * rather than how good the picks are: a pick stops being creditable once the row drops it, but a
+ * lifetime denominator would keep every pick ever delivered, forever.
  */
 export function ImpactReport() {
-  // Named `reportWindow`, not `window` — the global `window` object shadowed here used to be one
-  // character away from every reference inside this file and its children.
+  // Named `reportWindow`, not `window`: shadowing the global would leave it one character away
+  // from every reference inside this file and its children.
   const [reportWindow, setReportWindow] = useState<ReportWindow>("30");
   const report = useReport(reportWindow);
   return (

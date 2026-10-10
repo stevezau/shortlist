@@ -1174,7 +1174,7 @@ export function useLogs(
 }
 
 /** How many audit events one "Load older changes" press fetches (the server's default page). */
-export const PLEX_CHANGES_PAGE = 200;
+const PLEX_CHANGES_PAGE = 200;
 
 /**
  * Every write Shortlist made to Plex or plex.tv, newest first, paged backwards by event id.

@@ -25,11 +25,11 @@ function backendReady(backend: string, settings: Settings): boolean {
 
 /** What's missing, phrased as the thing to go and do. Null when the source can actually run.
  *
- *  Whether an AI provider is needed depends on the backend, and used to be asked as one blanket
- *  question. Exa extracts the titles itself, so it runs with no AI at all; SearXNG returns raw
- *  snippets that only a model can read; native search IS the model. Asking blankly told Exa owners
- *  to go and buy a key they did not need, and — worse — read as the reason the source was idle when
- *  it was actually running and being billed for. */
+ *  Whether an AI provider is needed depends on the backend, so it is not one blanket question.
+ *  Exa extracts the titles itself, so it runs with no AI at all; SearXNG returns raw snippets that
+ *  only a model can read; native search IS the model. Asking blankly would tell Exa owners to buy a
+ *  key they do not need, and read as the reason the source was idle when it was actually running
+ *  and being billed for. */
 function missing(backend: string, settings: Settings): string | null {
   if (!hasCurator(settings) && backend !== "exa")
     return backend === "searxng"

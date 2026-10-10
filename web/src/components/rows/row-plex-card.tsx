@@ -45,9 +45,9 @@ function nameCaption(input: CollectionInput, template: string): string | null {
 /**
  * The row as Plex shows it, filled in for a sample person: its poster, its name, its description.
  *
- * Beside the fields that set those three, because that is where the typing happens — it used to sit
- * at the top of the sidebar, a column away from the name and further still from the poster and
- * description, which lived in folded groups near the bottom of the page.
+ * Beside the fields that set those three, because that is where the typing happens; at the top of
+ * the sidebar it would be a column away from the name and further still from the poster and
+ * description.
  *
  * The poster is only a real image when one exists (an uploaded one). A text or AI poster is rendered
  * by the server, so this shows its words on a plain tile and the Poster field's Preview button makes

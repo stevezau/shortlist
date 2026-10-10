@@ -26,7 +26,7 @@ type Result<F extends (...args: never[]) => Promise<unknown>> = UseMutationResul
   void
 >;
 
-export function SyncBar({
+function SyncBar({
   done,
   total,
   label,

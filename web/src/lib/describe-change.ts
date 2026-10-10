@@ -9,7 +9,8 @@
  * Filter rules inside a sentence are wrapped in backticks (`label!=shortlist_kid`) so the table can set
  * them in the code face; everything else is plain text.
  */
-import { joinList, plural } from "@/lib/format";
+import { capitalise, joinList, plural } from "@/lib/format";
+import { nameList } from "@/lib/run-privacy";
 import type { AuditEvent } from "@/lib/types";
 
 export interface ChangeDescription {
@@ -99,18 +100,8 @@ function record(value: unknown): Message {
 
 // --- wording ---------------------------------------------------------------------------------------
 
-/** Up to three names, then "and N more" — a sweep can delete forty rows. */
-function nameList(items: string[], max = 3): string {
-  if (items.length <= max) return joinList(items);
-  return `${items.slice(0, max).join(", ")} and ${items.length - max} more`;
-}
-
 function unique(items: string[]): string[] {
   return [...new Set(items.filter(Boolean))];
-}
-
-function capitalise(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 // --- one helper per message shape -----------------------------------------------------------------

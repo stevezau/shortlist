@@ -10,19 +10,9 @@ interface GlyphProps {
 }
 
 // Official-ish brand colours.
-const PLEX_GOLD = "#E5A00D";
 const TAUTULLI_AMBER = "#DBA11E";
 const CLAUDE_CLAY = "#D97757";
 const OLLAMA_INK = "#EDEDED";
-
-export function PlexGlyph({ className }: GlyphProps) {
-  // Plex's brandmark is a chevron ">".
-  return (
-    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
-      <path fill={PLEX_GOLD} d="M7 3h5.2l6.8 9-6.8 9H7l6.8-9z" />
-    </svg>
-  );
-}
 
 export function TautulliGlyph({ className }: GlyphProps) {
   // Monitoring/analytics — an amber tile with a watch-activity pulse.

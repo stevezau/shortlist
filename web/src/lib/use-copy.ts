@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-export type CopyState = "idle" | "copied" | "error";
+type CopyState = "idle" | "copied" | "error";
 
 /**
  * One copy-to-clipboard implementation, shared by every "Copy" button in the app.

@@ -145,9 +145,8 @@ function GroupHeading({
 /**
  * The frequency editor, for any job that owns a cron.
  *
- * Generic on purpose. Panels used to be wired job by job, so the two that nobody wired — privacy sync
- * and the drift check — had no way to set a schedule at all: you could see when they would next run
- * and not change it. Anything with a `schedule_setting` now gets this.
+ * Generic on purpose: anything with a `schedule_setting` gets this, so no job can show when it
+ * next runs without letting you change it.
  */
 function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
   const queryClient = useQueryClient();
@@ -427,8 +426,7 @@ export function JobsPanel() {
     .join(" · ");
 
   // The same "why is this queued" explanation the activity popover gives, on the row's status
-  // chip — the maintainer looks at both, and a queued job used to say nothing more than "Queued"
-  // in either place.
+  // chip — the maintainer looks at both, and "Queued" alone explains nothing.
   const writesPlexFor = useWritesPlex();
   const runActive = useRunActive(totals.queued > 0);
   const queuedTitleFor = (kind: string): string | undefined =>

@@ -106,8 +106,8 @@ describe("UninstallPage", () => {
     renderPage();
 
     expect(uninstall).toHaveBeenCalledWith(true);
-    expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
     const counts = await screen.findByText(/^Restores /);
+    expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
     expect(counts).toHaveTextContent(
       "Restores 48 share filters from their snapshots, deletes 2 collections and switches off 3 rows.",
     );

@@ -19,7 +19,7 @@ import { fullCollection } from "@/test/collection-builders";
 import { BUILTINS } from "@/test/season-fixtures";
 import { makeUser } from "@/test/user-fixtures";
 
-const { updateCollection, settingsData, startRun, scheduleData, privacyData, effectivenessData, librariesData } = vi.hoisted(() => ({
+const { updateCollection, settingsData, settingsPending, startRun, scheduleData, privacyData, effectivenessData, librariesData } = vi.hoisted(() => ({
   librariesData: { current: [] as unknown[] },
   // null = that endpoint fails, which is what every test that doesn't set one gets.
   scheduleData: { current: null as unknown },
@@ -31,6 +31,8 @@ const { updateCollection, settingsData, startRun, scheduleData, privacyData, eff
   startRun: vi.fn((_body: unknown) => Promise.resolve({ run_id: 42 })),
   // Mutable so a test can serve a real server's globals; empty = "settings haven't loaded".
   settingsData: { current: {} as Record<string, unknown> },
+  // A settings read that never answers, so "still loading" is a state the test holds rather than hopes for.
+  settingsPending: { current: false },
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -40,7 +42,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       updateCollection: (id: number, body: unknown) =>
         updateCollection(id, body),
-      getSettings: () => Promise.resolve(settingsData.current),
+      getSettings: () => (settingsPending.current ? new Promise(() => {}) : Promise.resolve(settingsData.current)),
       getLibraries: () => Promise.resolve(librariesData.current),
       getSeasons: () => Promise.resolve(BUILTINS),
       getSeasonPresets: () => Promise.resolve([]),
@@ -480,9 +482,17 @@ describe("RowEditor — inherited globals", () => {
   });
 
   it("claims no global value while settings are still loading", () => {
-    renderEditor(row({ watched_pct: null }));
+    settingsPending.current = true;
+    try {
+      renderEditor(row({ watched_pct: null }));
 
-    expect(screen.queryByText(/^Currently/)).toBeNull();
+      // The field that would carry the caption is on screen with its settings read still pending,
+      // so the absence is a real answer.
+      expect(document.querySelector('[data-setting="watched_pct"]')).not.toBeNull();
+      expect(screen.queryByText(/^Currently/)).toBeNull();
+    } finally {
+      settingsPending.current = false;
+    }
   });
 
   it("says nothing about the global on a field that overrides it", async () => {

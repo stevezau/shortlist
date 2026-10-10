@@ -368,7 +368,7 @@ export function RequestsPage() {
               }
             >
               {() => {
-                // Tabs, not a long stack: with a big queue the send log used to sit far below the
+                // Tabs, not a long stack: with a big queue the send log would sit far below the
                 // fold and read as missing. Waiting + Sent are always offered; Rejected appears
                 // only once something's been rejected.
                 const tabs: { value: RequestView; label: string; count: number }[] = [

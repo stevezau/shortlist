@@ -90,7 +90,7 @@ function providerHint(values: Record<string, string>): string | undefined {
 /** How hard Exa works per search, cheapest first.
  *
  *  The buttons carry the name only; the trade-off goes in `hint`, shown one line at a time for
- *  whichever depth is selected. Labels used to carry price and caveat inline, which made a row of
+ *  whichever depth is selected. Price and caveat inline in the labels would make a row of
  *  six buttons unreadable.
  *
  *  The cheap modes are called erratic because they measurably are: on the same two searches
@@ -127,7 +127,7 @@ const EXA_SEARCH_TYPES = [
  *  - searxng — returns raw snippets, so something must read them: an AI is required.
  *
  *  Worth stating plainly because the failure was silent and expensive: Exa with the provider set to
- *  None used to pay for every search and discard the titles. */
+ *  None would pay for every search and discard the titles. */
 function backendHint(chosen: string | undefined): string | undefined {
   const backend = chosen || "native";
   if (backend === "exa")

@@ -40,7 +40,7 @@ export function privacyNeedsAttention(status: PrivacyStatus | undefined): boolea
   return status.accounts.some((account) => NOT_HIDING.has(account.state));
 }
 
-export type PrivacyGlance =
+type PrivacyGlance =
   /** plex.tv failed: nothing about anyone's filter is current. */
   | { kind: "unreadable" }
   /** The PMS rows read failed: there is nothing to check the filters against. */

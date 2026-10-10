@@ -95,8 +95,8 @@ export type ConnectionField =
     };
 
 /**
- * A connection to an external service: shows its status at a glance, tests it in place, and — the
- * part the wizard used to own exclusively — lets the owner edit, add, or clear it right here.
+ * A connection to an external service: shows its status at a glance, tests it in place, and lets
+ * the owner edit, add, or clear it right here as well as in the wizard.
  */
 export function ConnectionCard({
   service,

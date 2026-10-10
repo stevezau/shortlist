@@ -37,7 +37,7 @@ export function hasPrivacyWarning(run: { status: string; privacy?: RunPrivacy | 
   return run.status === "ok" && privacyWarnings(run.privacy).length > 0;
 }
 
-export type RunPrivacyVerdict =
+type RunPrivacyVerdict =
   /** The run never measured (older runs, dry runs, runs that died before the merge). */
   | { kind: "not_measured" }
   /** Plex's own filter read did not run, or the run did not record which accounts it could not vouch

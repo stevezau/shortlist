@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 import type { StepProps } from "./step-props";
 import { personName } from "@/lib/user-names";
 
-function formatDuration(seconds: number): string {
+function durationInWords(seconds: number): string {
   if (seconds < 60) return `${seconds} seconds`;
   const minutes = Math.round(seconds / 60);
   return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
@@ -259,7 +259,7 @@ export function StepFirstRun({ data, update, complete, setHeader }: StepProps) {
   const builtFor = (savedRun.data?.users ?? []).filter((person) => person.status === "ok" || person.status === "cold_start").length;
   const builtLine =
     builtFor > 0 && seconds !== null
-      ? `Built for ${builtFor} ${builtFor === 1 ? "person" : "people"} in ${formatDuration(seconds)}. `
+      ? `Built for ${builtFor} ${builtFor === 1 ? "person" : "people"} in ${durationInWords(seconds)}. `
       : "";
   const headerTitle = failed
     ? "The run needs attention"

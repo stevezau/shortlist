@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
  * A failed write, in plain English, with an optional button that tries the write again.
  *
  * Every mutation reports failure through this, so a refused run, a rejected mute and a failed
- * user toggle all read the same way — and none of them can fail silently, which used to leave the
- * UI asserting a state the server had rejected.
+ * user toggle all read the same way — and none of them can fail silently and leave the
+ * UI asserting a state the server rejected.
  */
 export function MutationAlert({
   error,

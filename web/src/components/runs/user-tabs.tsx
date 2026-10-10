@@ -64,8 +64,8 @@ function UserStatus({
   if (built === false) {
     // Nothing was written for them on THIS row — the run was cancelled before it got here, the
     // row was muted for them, or it produced no picks. A cost exists anyway: the row timer
-    // starts before the cancel check, so this used to render a green tick beside "0s", which
-    // says "built instantly" about a row that was never built at all.
+    // starts before the cancel check, so a green tick beside "0s" would say "built instantly" about a
+    // row that was never built at all.
     return (
       <span className={STATUS_CLASS}>
         Not built

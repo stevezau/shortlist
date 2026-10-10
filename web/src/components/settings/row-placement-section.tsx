@@ -13,18 +13,16 @@ import { settingBool } from "@/lib/format";
 import { DOCS_SHELF_CONTENTION_URL } from "@/lib/support";
 import type { Settings } from "@/lib/types";
 
-/** The one switch for shelf ordering. WHERE each row goes is chosen on the row itself — this used to
- *  also hold a per-library default, which was a second source of truth for the same decision and
- *  disagreed with the engine about what its own "Wherever Plex puts them" option meant. */
+/** The one switch for shelf ordering. WHERE each row goes is chosen on the row itself: a per-library
+ *  default here would be a second source of truth for the same decision. */
 export function RowPlacementSection({ settings }: { settings: Settings }) {
   const [manageOrder, setManageOrder] = useState<boolean>(() =>
     settingBool(settings, "rows.manage_shelf_order", true),
   );
 
-  // `rows.hub_anchor` is no longer written from here. It was a SECOND source of truth for the same
-  // decision, and it contradicted itself: "Wherever Plex puts them" wrote no entry, and with no
-  // library configured the engine read that as "top of the shelf", while the moment one library WAS
-  // configured every other one silently became "leave alone". Placement now lives on the row.
+  // `rows.hub_anchor` is not written from here: placement lives on the row. A per-library entry
+  // here contradicted itself ("Wherever Plex puts them" meant the top of the shelf with no library
+  // configured, and "leave alone" for every other library once one was).
   const save = useAutosavedSettings({ manageOrder }, () => ({
     "rows.manage_shelf_order": manageOrder,
   }));
@@ -79,14 +77,13 @@ export function RowPlacementSection({ settings }: { settings: Settings }) {
             (Kometa, Agregarr) orders that shelf, and Shortlist will leave it
             alone. Rows are still built, delivered and kept private either way.
           </p>
-          {/* One clause and a link, not the 458-character version this used to print
-              unconditionally — a fork recommendation, a GitHub URL and a Docker image name, on
-              a settings screen, for a tool most owners do not run.
+          {/* One clause and a link: a fork recommendation, a GitHub URL and a Docker image name
+              do not belong on a settings screen for a tool most owners do not run.
 
-              The WARNING survives the trim, because it is the half that matters and it is not
-              in the guides: an unmaintained Agregarr re-promotes collections with Plex's
-              defaults, which puts other people's rows on the owner's own Home. Hedged, as it
-              always was — Shortlist clears that every run, so it is a gap between runs.
+              The WARNING is kept, because it is the half that matters and it is not in the
+              guides: an unmaintained Agregarr re-promotes collections with Plex's
+              defaults, which puts other people's rows on the owner's own Home. Hedged —
+              Shortlist clears that every run, so it is a gap between runs.
 
               This line stays on screen at all rather than being left to the "something is
               reordering your shelf" notification, because that one only fires while this

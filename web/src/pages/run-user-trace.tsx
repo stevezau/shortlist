@@ -268,11 +268,10 @@ export function TraceView({
         </header>
 
         {data.error && <ErrorBanner error={data.error} />}
-        {/* Gated on the STATUS, not on `reason` alone. `reason` used to mean "nothing was built for
-            this person", and this page read it that way — but the engine now also sets it on an
-            `ok` person to say why their rows hold what they held last night, so on the second run
-            of any night this banner called a full, correct delivery trace a skip. `cold_start`
-            keeps the banner: that person really did get no row. */}
+        {/* Gated on the STATUS, not on `reason` alone: the engine also sets `reason` on an `ok`
+            person to say why their rows hold what they held last night, and a full, correct
+            delivery trace must not be called a skip. `cold_start` keeps the banner: that person
+            really did get no row. */}
         {data.status !== "ok" && data.reason && !data.error && (
           <SkipBanner reason={data.reason} />
         )}
@@ -761,10 +760,10 @@ function LibraryFlow({
       ),
     }),
   );
-  // Seeds are now pure-recency: the distinct titles someone watched most recently, newest first —
-  // which is exactly what the old "what they watched" panel showed. So the two panels were identical
-  // and are merged into one. Seeds are the richer object (they carry recency + drive the search), so
-  // they lead; we fall back to the raw recent-watch sample only when nothing resolved to a seed.
+  // Seeds are pure recency: the distinct titles someone watched most recently, newest first, which
+  // is also what a separate "what they watched" panel would show, so there is one panel. Seeds are
+  // the richer object (they carry recency + drive the search), so they lead; we fall back to the raw
+  // recent-watch sample only when nothing resolved to a seed.
   const recentBody = (
     <>
       {lib.seeds.length > 0 ? (
@@ -870,7 +869,7 @@ function LibraryFlow({
             ),
           },
         ]),
-    // How the shortlist was ORDERED — the step that used to be missing entirely. Not shown for cold
+    // How the shortlist was ORDERED. Not shown for cold
     // start (no taste ranking runs; the picks are just the top-rated titles, in rating order).
     ...(isCold
       ? []
@@ -1112,8 +1111,8 @@ function RequestsTable({
 // ── Stage 1: recent watches, newest first (the seeds we search from) ───────────
 
 /** The recent watches we search from — newest first, each tagged with how long ago. Seed weight is
- *  now pure recency (frequency no longer scores), so there's no "influence" to rank: this is just the
- *  list, in recency order. A play-count bar or "watched N×" here would imply a weighting we no longer
+ *  pure recency (frequency does not score), so there's no "influence" to rank: this is just the
+ *  list, in recency order. A play-count bar or "watched N×" here would imply a weighting we don't
  *  apply. Seeds arrive already sorted newest-first, so their order IS the recency order. */
 /** The per-seed block action.
  *
@@ -1220,7 +1219,7 @@ function stars(rating: number): string {
  *  the outcome and only one of them means the feature is working. The distrusted case is the one this
  *  exists for: it is a silent no-op that otherwise reads exactly like a healthy run.
  */
-export function ratingsSummary(ratings: TraceRatings): string {
+function ratingsSummary(ratings: TraceRatings): string {
   if (!ratings.enabled)
     return "Plex ratings are off for this run, so nothing they rated changed these picks.";
   if (!ratings.trusted)
@@ -1319,7 +1318,7 @@ function WatchList({ watched }: { watched: TraceWatch[] }) {
 }
 
 /** "3 days ago" from the recency ingredient — or "" on legacy runs that lack it. Frequency
- *  ("watched N×") is deliberately gone: watch count no longer scores a seed (recency alone does), so
+ *  ("watched N×") is deliberately absent: watch count does not score a seed (recency alone does), so
  *  surfacing it here would imply a weighting we don't apply. */
 function seedWhy(s: TraceSeed): string {
   if (s.recency_days === undefined) return "";
@@ -1389,12 +1388,10 @@ function BranchConnector() {
 /**
  * "The genres they watch most — movies: Drama, Thriller." — as an English sentence.
  *
- * This used to join the raw map: `${mediaLabel(m)} — ${gs.join(", ") || "none"}`, which on a
- * library with no genre lean printed "The genres they watch most: Movie — none." — a media-type
- * TOKEN mid-sentence, a dash standing in for a verb, and "none" answering a question the sentence
- * had just promised an answer to. Media types with nothing to report are dropped rather than
- * printed as "none", and when none of them has anything the sentence says that instead of
- * pretending to list something.
+ * Joining the raw map would put a media-type TOKEN mid-sentence and a "none" answering a question
+ * the sentence had just promised an answer to ("The genres they watch most: Movie — none."). Media
+ * types with nothing to report are dropped rather than printed as "none", and when none of them has
+ * anything the sentence says that instead of pretending to list something.
  */
 function discoverGenreSentence(genres: Record<string, string[]>): string {
   const listed = Object.entries(genres).filter(([, gs]) => gs.length > 0);
@@ -1446,12 +1443,10 @@ function SourceCard({
               </p>
               {(kept > 0 || droppedCount > 0) && (
                 <>
-                  {/* The two numbers count DIFFERENT things and nothing said so — the comment
-                      that used to sit here recorded a real person being confused by it, and then
-                      left the confusion in place. `contributed` is net-new after dedup;
+                  {/* The two numbers count DIFFERENT things, so the second line names its own
+                      denominator. `contributed` is net-new after dedup;
                       kept/dropped covers everything this source returned, including titles another
-                      source had already added. Both right, different denominators, so the second
-                      line names its own. */}
+                      source had already added. */}
                   <p className="text-xs text-muted-foreground">
                     Counting everything it returned, including titles another
                     source found first:
@@ -1911,7 +1906,7 @@ function WebSourceCard({
 
 // ── Stage 3.5: how the shortlist was ordered ──────────────────────────────────
 
-/** Plain-English explanation of the ranking — the step that used to be missing. There is no AI in the
+/** Plain-English explanation of the ranking — the step that explains the order. There is no AI in the
  *  ordering (the model is used only to FIND titles); it's `ranking.score` + two fair-share passes, so
  *  this says exactly that and grounds it in THIS library's picks: how many sources and how many
  *  different watched titles fed the row, which is what the fair-share passes actually produce. */

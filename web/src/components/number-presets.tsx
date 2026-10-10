@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { selectedClass, unselectedClass } from "@/lib/selected";
 
 /** One preset chip: the stored number and the label shown on it (e.g. 0 → "All", 45 → "45s"). */
-export interface NumberPreset {
+interface NumberPreset {
   value: number;
   label: string;
 }

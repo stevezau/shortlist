@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type OverflowMenuItem = {
+type OverflowMenuItem = {
   label: string;
   icon: LucideIcon;
   /** A link item; the menu closes as it navigates. */

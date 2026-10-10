@@ -21,13 +21,13 @@ export function titleNoun(media: RowMedia, count: number): string {
 
 /** Below this many titles, per-person rows of one season come out much alike: #124 judged 63 too few to
  *  make them differ. A heuristic, not a measured line (#137 D10). */
-export const ALIKE_BELOW = 100;
+const ALIKE_BELOW = 100;
 
 export type SeasonVerdict = { level: "few" | "alike" | "ok"; text: string };
 
 /** A season's count for one row (`POST /api/seasons/preview`): the total, and its films and shows — null
  *  for a type the row builds in no library of. */
-export type SeasonCount = { total: number; movies?: number | null; shows?: number | null };
+type SeasonCount = { total: number; movies?: number | null; shows?: number | null };
 
 /** What a season's count means for the row it is being added to (#137 D10). Never blocks a save.
  *

@@ -20,7 +20,7 @@ export type CuratorProvider =
   | "none";
 
 /** The wizard's persisted blob — round-tripped through /api/setup/state. */
-export interface WizardData {
+interface WizardData {
   plex_url?: string;
   server_name?: string;
   /** Step 1 gate: the server was probed and linked. */
@@ -41,7 +41,7 @@ export interface WizardData {
   first_run_id?: number;
 }
 
-export interface WizardStepMeta {
+interface WizardStepMeta {
   title: string;
   /** The one-line "what & why" shown under every step title (design doc §3). */
   why: string;

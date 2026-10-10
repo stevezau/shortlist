@@ -6,7 +6,7 @@ import {
 import type { CollectionInput } from "@/lib/types";
 
 /** A template's kind: one of the six, or "ai" (#138), which the kind picker never offers. */
-export type TemplateKind = RowKind | "ai";
+type TemplateKind = RowKind | "ai";
 
 export interface RowTemplate {
   id: string;

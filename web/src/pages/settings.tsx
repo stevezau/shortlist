@@ -54,8 +54,8 @@ function SystemTab({ settings }: { settings: Settings }) {
 /**
  * Settings: four tabs at `/settings/connections`, `/settings/defaults`, `/settings/requests` and
  * `/settings/system`.
- * `/settings` and the old single-page `/settings#section` links land on the tab that section lives
- * on now (see `SettingsTabs`).
+ * `/settings` and single-page `/settings#section` links land on the tab that section lives on (see
+ * `SettingsTabs`).
  */
 export function SettingsPage() {
   const settingsQuery = useSettings();

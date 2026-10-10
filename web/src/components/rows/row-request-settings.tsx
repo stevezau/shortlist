@@ -78,8 +78,7 @@ export type RowRequestInput = {
  * One "leave on the global default, or override it here" field.
  *
  * Uses the same `GlobalDefaultToggle` every other inheriting field in the row editor uses
- * (`row-editor.tsx`'s `InheritableField`) — this used to be a local raw checkbox, the one place in
- * the editor that didn't match.
+ * (`row-editor.tsx`'s `InheritableField`), so it matches the rest of the editor.
  */
 function RequestField({
   label,

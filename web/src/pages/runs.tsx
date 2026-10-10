@@ -113,9 +113,9 @@ export function RunDuration({ run }: { run: Run }) {
       </span>
     );
   }
-  // A run cancelled while still queued never executed, so it has no duration. It used to be measured
-  // from `started_at`, which is set when the row is CREATED — so three runs queued together and
-  // cancelled nine minutes later each claimed nine minutes of work none of them had done.
+  // A run cancelled while still queued never executed, so it has no duration. Measuring it from
+  // `started_at`, which is set when the row is CREATED, would make three runs queued together and
+  // cancelled nine minutes later each claim nine minutes of work none of them had done.
   if (!run.began_at) {
     return (
       <span className="text-muted-foreground" title="This run never started">
@@ -318,9 +318,9 @@ export function RunsPage() {
   const collections = useCollections();
   const startRun = useStartRun();
   // Live updates. Without this the list is a snapshot: a run that finishes leaves its row reading
-  // "Running" with a ticking timer for as long as the page stays open, because nothing refetches. On
-  // a real server that made a cancel that HAD worked look like one that was ignored — the operator
-  // watches this page, and this page never changed its mind (a large production server, 2026-08-13).
+  // "Running" with a ticking timer for as long as the page stays open, because nothing refetches. That
+  // makes a cancel that HAS worked look like one that was ignored: the operator watches this page,
+  // and this page never changes its mind.
   useSSE({
     onRunFinished: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.runs });

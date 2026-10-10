@@ -20,9 +20,8 @@ type Settleable = { finished_at: string | null };
  * (`run-detail.tsx` and `runs.tsx` both wire `run.finished` to `invalidateQueries`) — and
  * `EventSource` replays nothing it missed while it was disconnected. Its `onerror` retries with
  * backoff up to 30s forever, and until it reconnects `run.finished` is never delivered, so a run
- * that has ended still reads "Running" with a ticking timer. That is the 2026-08-13 symptom seen on a large production server
- * (`runs.tsx`) reached through a dropped connection rather than an idle one, and it is also what
- * leaves a cancelled run stuck on "Stopping…": cancelling records `cancel_requested`, and only the
+ * that has ended still reads "Running" with a ticking timer. That is how a dropped connection (rather than an idle one) leaves a finished run on "Running",
+ * and it is also what leaves a cancelled run stuck on "Stopping…": cancelling records `cancel_requested`, and only the
  * stream ever reports that the run then actually stopped.
  *
  * `false` once `finished_at` is set, so a settled run is never re-fetched for nothing.
@@ -164,7 +163,7 @@ export function rowTimingTitle(
 }
 
 /** What the run is doing right now, and whether that is the server-wide tail. */
-export type RunPhase = {
+type RunPhase = {
   /** The phrase itself — "merging share filters 12/46". */
   label: string;
   /** True once every person is terminal and only server-wide work is left, which is the only time
@@ -232,7 +231,7 @@ export function peopleProgress(
 }
 
 /** One person the run is working on right now, and what it is doing for them. */
-export type InFlightPerson = { slug: string; name: string; text: string };
+type InFlightPerson = { slug: string; name: string; text: string };
 
 /** Everyone started but not finished, each with their latest line as a sentence — sorted by name.
  *

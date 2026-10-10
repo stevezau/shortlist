@@ -11,7 +11,7 @@ import type { RunFinishedEvent } from "@/lib/types";
  * Kept as a function over the raw status rather than a boolean per caller, because a boolean is
  * exactly what collapsed three outcomes into two the first time.
  */
-export type RunOutcome = "ok" | "stopped" | "failed";
+type RunOutcome = "ok" | "stopped" | "failed";
 
 export function runOutcome(status: RunFinishedEvent["status"]): RunOutcome {
   if (status === "ok") return "ok";

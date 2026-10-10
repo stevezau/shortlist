@@ -58,7 +58,7 @@ export function RequestsSkeleton() {
   );
 }
 
-export function TypeBadge({
+function TypeBadge({
   mediaType,
 }: {
   mediaType: RequestCandidate["media_type"];
@@ -74,7 +74,7 @@ export function TypeBadge({
 /** "Wanted by …" — the actual names when a run recorded them, up to three then "+N more"; falls
  *  back to the bare count for rows queued before who-wanted-it was tracked. `wanters` holds bare
  *  Plex usernames, so every name goes through the lookup to read the same as it does on Users. */
-export function wantedByLabel(
+function wantedByLabel(
   item: RequestCandidate,
   nameOf: DisplayNameLookup,
 ): string {
@@ -86,13 +86,13 @@ export function wantedByLabel(
   return `Wanted by ${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
 }
 
-export const LINK_GLYPHS: Record<TitleLink["label"], ReactNode> = {
+const LINK_GLYPHS: Record<TitleLink["label"], ReactNode> = {
   TMDB: <TmdbGlyph className="h-3.5 w-3.5 rounded-[2px]" />,
   IMDb: <ImdbGlyph className="h-3.5 w-3.5 rounded-[2px]" />,
   Trakt: <TraktGlyph className="h-3.5 w-3.5" />,
 };
 
-export type QuickLink = {
+type QuickLink = {
   label: string;
   icon: ReactNode;
   href: string;
@@ -102,7 +102,7 @@ export type QuickLink = {
 /** Quick look-it-up links: TMDB and Trakt jump straight to the title by its TMDB id; IMDb is a
  *  title search (Shortlist doesn't store an IMDb id). `lead` prepends extra links (e.g. the sent
  *  log's "Open in Sonarr/Radarr") so they sit in the same row. All open in a new tab. */
-export function ExternalLinks({
+function ExternalLinks({
   item,
   lead = [],
 }: {
@@ -190,7 +190,7 @@ export function WhyBreakdown({
 /** The facts that let the owner judge a title at a glance: type, rating, and who wanted it. The
  *  "wanted by …" list gets its own line — on a popular title it runs to three names plus "+18 more",
  *  and inline it pushed the rating and tags off the end of a scannable row. */
-export function TitleMeta({
+function TitleMeta({
   item,
   globalTag,
   nameOf,
@@ -259,7 +259,7 @@ export function TitleMeta({
 }
 
 /** Full synopsis inside the title's disclosure; older candidates may not have one recorded. */
-export function Synopsis({ text }: { text: string }) {
+function Synopsis({ text }: { text: string }) {
   if (!text.trim()) return null;
   return (
     <p className="text-sm leading-relaxed text-muted-foreground" title={text}>
@@ -292,7 +292,7 @@ export function RequestsOffBanner() {
 
 /** What Sonarr/Radarr has for a title right now, in one word. Absent when neither app tracks it —
  *  which for a waiting title is the normal case, so nothing is drawn rather than "not found". */
-export const ARR_STATUS_LABELS: Record<
+const ARR_STATUS_LABELS: Record<
   string,
   {
     label: string;
@@ -335,7 +335,7 @@ export type ArrView =
   | { kind: "status"; status: string }
   | { kind: "none" };
 
-export function ArrStatusBadge({ view }: { view: ArrView }) {
+function ArrStatusBadge({ view }: { view: ArrView }) {
   if (view.kind === "checking") {
     return (
       <Badge variant="secondary" className="gap-1.5 font-normal">
@@ -390,7 +390,7 @@ export function ArrStatusBadge({ view }: { view: ArrView }) {
  * it does in the menu itself. A native `<details>` so it works with no script, closed again by a
  * pick, an outside click or Escape.
  */
-export function RowMoreMenu({
+function RowMoreMenu({
   title,
   disabled,
   onReject,
@@ -459,7 +459,7 @@ export function RowMoreMenu({
 }
 
 /** The opening words of a hold's reason, as `request_holds.HOLD_REASON_PREFIX` writes them. */
-export const HELD_PREFIX = "held by your request filter";
+const HELD_PREFIX = "held by your request filter";
 
 export function PendingRow({
   item,
@@ -958,7 +958,7 @@ export function FilterChip({
  *  who happen to answer to the same display name stay separate; `label` is what the chip shows. */
 /** `count` is how many titles ON THIS TAB they wanted, and 0 means "none here", NOT "none ever" —
  *  which is why the picker shows a count only when there is one. */
-export type PersonOption = { name: string; label: string; count: number };
+type PersonOption = { name: string; label: string; count: number };
 
 /**
  * Everyone you could filter by: your whole Plex roster, plus anyone named on a title who is no
@@ -991,7 +991,7 @@ export function peopleOn(
 
 /** How many matches the list shows at once. Past this you type another letter rather than scroll —
  *  a list long enough to scroll is the wall this control replaced. */
-export const PEOPLE_RESULTS = 8;
+const PEOPLE_RESULTS = 8;
 
 /**
  * "Wanted by": pick one person, or several, to see only what they asked for — the answer to "what do

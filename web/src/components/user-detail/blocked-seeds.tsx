@@ -226,9 +226,8 @@ function AddBlockedSeed({ userId }: { userId: number }) {
 /**
  * Titles that must never shape this person's recommendations.
  *
- * The list used to render bare TMDB ids — "tmdb 346648", a number nobody recognises — and there was
- * no way to add one at all: the API existed, the frontend wrapper existed, and nothing ever called
- * it. The empty state even told you to block titles from a trace page that had no such button.
+ * Blocked titles show by name rather than bare TMDB id ("tmdb 346648" means nothing to anyone), and
+ * the empty state points at the trace page's block button.
  */
 export function BlockedSeedsList({ user }: { user: User }) {
   const blocked = blockedSeeds(user.prefs);

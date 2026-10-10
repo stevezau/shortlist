@@ -22,7 +22,7 @@ const SOURCE_LABELS: Record<string, string> = {
  * Sources with no ranking of their own (Trakt, the AI sources) always report 1.0 — that is "no
  * ranking information", not "perfect match", which is why nothing here claims a strength for them.
  */
-export type MatchStrength = "close" | "related" | "loose";
+type MatchStrength = "close" | "related" | "loose";
 
 export function matchStrength(affinity: number): MatchStrength {
   if (affinity >= 0.8) return "close";
@@ -30,7 +30,7 @@ export function matchStrength(affinity: number): MatchStrength {
   return "loose";
 }
 
-export const STRENGTH_LABELS: Record<MatchStrength, string> = {
+const STRENGTH_LABELS: Record<MatchStrength, string> = {
   close: "close match",
   related: "related",
   loose: "loosely related",

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, apiErrorMessage } from "@/lib/api";
+import { plural } from "@/lib/format";
 import { groupCollections, groupTitles } from "@/lib/group-titles";
 import { useSSE } from "@/lib/sse";
 import type { UninstallResult } from "@/lib/types";
@@ -38,8 +39,6 @@ function LogBox({ lines }: { lines: string[] }) {
   );
 }
 
-const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-
 /**
  * What the uninstall will do, as counts. Labels have no count of their own: the only labels
  * Shortlist adds are on its collections, and they go with them.
@@ -51,8 +50,8 @@ function PlanSummary({ result }: { result: UninstallResult }) {
       : `${result.filters_restored} share filters from their snapshots`;
   return (
     <p className="font-medium">
-      Restores {filters}, deletes {plural(result.collections_deleted.length, "collection", "collections")} and
-      switches off {plural(result.rows_disabled, "row", "rows")}.
+      Restores {filters}, deletes {plural(result.collections_deleted.length, "collection")} and
+      switches off {plural(result.rows_disabled, "row")}.
     </p>
   );
 }
@@ -253,7 +252,7 @@ export function UninstallPage() {
                 {preview.data.collections_deleted.length > 0 && (
                   <details className="py-1">
                     <summary className="cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      Show the {plural(preview.data.collections_deleted.length, "collection", "collections")} it will delete
+                      Show the {plural(preview.data.collections_deleted.length, "collection")} it will delete
                     </summary>
                     <CollectionsToDelete result={preview.data} />
                   </details>

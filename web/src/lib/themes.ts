@@ -66,7 +66,7 @@ function previewKey(input: ThemePreviewInput, salt: string): string {
   ]);
 }
 
-export interface BuiltTheme {
+interface BuiltTheme {
   preview: ThemePreview;
   /** True when the owner asked the same question again, so no AI call was made and nothing was spent. */
   cached: boolean;

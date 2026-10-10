@@ -5,9 +5,9 @@ const MAX_SEEDS_MAX = 100;
 
 /** The one name this setting goes by, everywhere it appears (Settings → Finding titles and the row
  *  editor). It names its SCOPE — every source — because its neighbour, {@link RecentCountField},
- *  slices the front of this same list for a single source and the two were previously told apart
+ *  slices the front of this same list for a single source and the two are told apart
  *  only by wording. Exported so Settings, the row editor and the rename page import the name rather
- *  than retype it — the last rename shipped to some of those screens and not others. */
+ *  than retype it, so a rename reaches every screen. */
 export const MAX_SEEDS_LABEL = "How many recent watches to match";
 
 /**

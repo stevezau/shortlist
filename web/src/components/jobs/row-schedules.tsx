@@ -16,11 +16,9 @@ import { resolveRowName } from "@/lib/run-rows";
  * groups them: one trigger builds all of them, so listing them per row would imply N timers where
  * there is one.
  *
- * The SCHEDULE leads, because the schedule is what a group is. This block used to lead with the row
- * names, comma-joined into one truncating line — three rows on the same nightly cron rendered as
- * "✨ Picked for You, 🎯 Because you watched {top_seed}, 👥 Popular {library_name} on Home Server" with
- * the cron as its subtitle. That put the group's identity in the small print and made the rows
- * themselves unreadable and unclickable. Each row is now its own link into its own editor.
+ * The SCHEDULE leads, because the schedule is what a group is. Row names comma-joined into one
+ * truncating line would put the group's identity in the small print and make the rows themselves
+ * unreadable and unclickable, so each row is its own link into its own editor.
  *
  * Read-only on purpose. A row's schedule is edited in the row editor, so the cron has exactly one
  * owner and can never be validated two different ways.

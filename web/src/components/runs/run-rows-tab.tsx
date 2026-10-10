@@ -170,8 +170,8 @@ function SharedRowPanel({
 /**
  * "N people failed with the same problem" — one banner instead of the same error read off N rows.
  *
- * Lifted from the People tab when that went: it is about the RUN, not about any one row, so it sits
- * above them all. Losing it would have made a server-wide outage look like N unrelated failures.
+ * It is about the RUN, not about any one row, so it sits above them all. Without it a server-wide
+ * outage would look like N unrelated failures.
  */
 function CommonFailure({ run }: { run: RunDetail }) {
   const buckets = new Map<string, { count: number; msg: string }>();
@@ -327,9 +327,7 @@ function RowCard({
           </>
         )}
         {/* Trace sits on the thing it traces: the row when the row is SHARED (one build for the whole
-            server), and the PERSON otherwise — `UserPanel` renders their own "How we picked" button.
-            This comment used to claim the latter while nothing rendered it: the per-person button had
-            gone with the People tab, so a per-person trace was unreachable from the whole app. */}
+            server), and the PERSON otherwise — `UserPanel` renders their own "How we picked" button. */}
         {shared?.has_trace && (
           <Button asChild variant="ghost" size="sm" className="shrink-0">
             <Link to={`/runs/${run.id}/trace/row/${group.slug}`}>
@@ -357,9 +355,8 @@ function RowCard({
             <SharedRowPanel group={group} running={!run.finished_at} />
           </div>
         ) : (
-          // The People tab's own two components, scoped to this row: the searchable, status-grouped
-          // person list, and the formatted panel with its libraries, diff legend and "How we picked".
-          // Reusing them is what keeps the two tabs one design rather than two.
+          // The searchable, status-grouped person list, scoped to this row, and the formatted panel
+          // with its libraries, diff legend and "How we picked".
           <div className="grid gap-4 border-t p-4 lg:grid-cols-[minmax(0,20rem)_1fr]">
             <UserTabs
               results={results}

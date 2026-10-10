@@ -8,6 +8,7 @@ import { currentPhase, inFlight, peopleProgress } from "@/lib/run-format";
 import { describeCounts, STAGE_LABELS } from "@/lib/run-stages";
 import type { RunDetail, RunLogEntry } from "@/lib/types";
 import { useLiveClock } from "@/lib/use-live-clock";
+import { clockTime } from "@/lib/when";
 
 /** Live roster and row results share the same people, states, titles and detail destinations. */
 export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogEntry[] }) {
@@ -52,7 +53,7 @@ export function RunProgress({ run, entries }: { run: RunDetail; entries: RunLogE
           <span>{percent !== null ? `${percent}% processed · ` : ""}{working.length} {working.length === 1 ? "person" : "people"} in progress</span>
           <span className="flex flex-wrap gap-x-3">
             {elapsed !== null && <span>{formatDuration(elapsed)} elapsed</span>}
-            {last?.ts && <time dateTime={last.ts}>Updated {new Date(last.ts).toLocaleTimeString()}</time>}
+            {last?.ts && <time dateTime={last.ts}>Updated {clockTime(last.ts)}</time>}
           </span>
         </div>
         {/* Preserve the precise server phase for assistive technology, including shared-row work. */}

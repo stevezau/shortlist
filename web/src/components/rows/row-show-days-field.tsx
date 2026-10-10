@@ -51,10 +51,9 @@ export function RowShowDaysField({
         // Switching to "days" ticks the WHOLE week, which still means "every day" — so flipping the
         // mode alone changes nothing until you actually narrow it, and you narrow by unticking.
         //
-        // It used to seed today's weekday from `new Date()`. That is the BROWSER's day, and days turn
-        // over on the SERVER's clock: with the two either side of midnight it pre-selected a day that
-        // was not today on the server, so saving immediately hid the row. Seen live — the browser said
-        // Wednesday while the server was already on Thursday.
+        // Not seeded with today's weekday from `new Date()`: that is the BROWSER's day, and days turn
+        // over on the SERVER's clock. With the two either side of midnight it would pre-select a day
+        // that was not today on the server, so saving immediately would hide the row.
         onChange={(next) =>
           next === "always" ? onChange([]) : onChange(DAY_CHIPS.map((c) => c.iso))
         }

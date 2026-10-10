@@ -72,11 +72,11 @@ import {
   baselineTakes,
   DEFAULT_ROW_NAME_SETTINGS,
   describeKindChange,
-  FILL_META,
   followsAWatch as rowFollowsAWatch,
   hiddenButRead,
   isAiRow,
   KIND_META,
+  kindTitle,
   kindBaseline as baselineOf,
   kindDisabledReason,
   kindSwitchBase,
@@ -110,6 +110,7 @@ import {
 } from "@/lib/rating-sources";
 import type { Collection, CollectionInput, User } from "@/lib/types";
 import { personName } from "@/lib/user-names";
+import { dayAndTime } from "@/lib/when";
 
 /** The global `row.name_template` every install ships with, until Settings says otherwise. */
 const DEFAULT_ROW_NAME = "✨ {library_name} Picked for You";
@@ -141,12 +142,6 @@ function pickOrderHelp(
     default:
       return "Strongest suggestions first — how well each title matches what they watch.";
   }
-}
-
-function kindTitle(choice: RowKindChoice): string {
-  return choice.kind === "seasonal"
-    ? `${KIND_META.seasonal.title} · ${FILL_META[choice.fill].title}`
-    : KIND_META[choice.kind].title;
 }
 
 /** One section of the editor: a heading the jump list links to, a line on what it decides, and
@@ -191,13 +186,10 @@ function EditorSection({
 
 /** "today at 02:30", "tomorrow at 02:30", "Sun 5 Oct at 02:30": a run time in the reader's own clock. */
 function runTime(iso: string, now: Date = new Date()): string {
-  const when = new Date(iso);
-  const time = when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  if (when.toDateString() === now.toDateString()) return `today at ${time}`;
-  if (when.toDateString() === tomorrow.toDateString()) return `tomorrow at ${time}`;
-  return `${when.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} at ${time}`;
+  const parts = dayAndTime(iso, now);
+  if (!parts) return "—";
+  const day = /^(Today|Tomorrow|Yesterday)$/.test(parts.day) ? parts.day.toLowerCase() : parts.day;
+  return `${day} at ${parts.time}`;
 }
 
 /** When the row next runs. The scheduler's own answer when the schedule on screen is the saved one;
@@ -1013,8 +1005,8 @@ export function RowEditor({
                     // without anyone touching the flag. Its control is hidden then, and the API refuses
                     // that one combination — a save failing with no visible cause.
                     //
-                    // `=== "movie"`, matching the API exactly. It used to clear on anything that wasn't
-                    // shows-only, which silently switched the flag off when a row widened to "films and
+                    // `=== "movie"`, matching the API exactly. Clearing on anything that isn't
+                    // shows-only would silently switch the flag off when a row widened to "films and
                     // shows" — a combination both the API and the engine accept.
                     ...(next.media === "movie" ? { unstarted_only: false } : {}),
                   })

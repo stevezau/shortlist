@@ -71,7 +71,7 @@ export type SeasonDraft = {
 type Sources = Pick<SeasonDraft, "rule"> &
   Partial<Pick<SeasonDraft, "tags" | "genre" | "excluded_genres" | "collections" | "picks">>;
 
-export const DEFAULT_EMOJI = "🗓️";
+const DEFAULT_EMOJI = "🗓️";
 
 export function blankDraft(): SeasonDraft {
   return {

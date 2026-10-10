@@ -431,10 +431,9 @@ export function TransferSteps() {
 
   /** What to CALL the source in the page's copy.
    *
-   *  Every sentence here used to be second person — "it ends up matching yours", "your own account is
-   *  never written to", "that account now matches yours" — which was true while the owner was the
-   *  only possible source. The picker falsifies all of them: with another account chosen, the target
-   *  matches THAT account and it is THAT account we never write to. The last of those three is
+   *  No sentence here may be second person — "it ends up matching yours", "your own account is
+   *  never written to", "that account now matches yours" — because the picker lets another account
+   *  be the source: the target then matches THAT account and it is THAT account we never write to. The last of those three is
    *  printed after a real Plex write, as a verified claim, and the verify read compares the target
    *  against the source rather than against the owner.
    */

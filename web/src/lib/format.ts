@@ -186,6 +186,11 @@ export function plural(count: number, noun: string, irregularPlural = `${noun}s`
   return `${count} ${count === 1 ? noun : irregularPlural}`;
 }
 
+/** "rows" → "Rows". */
+export function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 /** "a", "a and b", "a, b and c". */
 export function joinList(items: string[]): string {
   if (items.length <= 1) return items[0] ?? "";

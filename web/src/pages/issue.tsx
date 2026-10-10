@@ -306,12 +306,12 @@ const ALL_RESULTS_ID = "issue-all-results";
 export function IssuePage() {
   const queryClient = useQueryClient();
   // WHERE it was opened from, not just which check. The panels render directly below the list that
-  // was clicked: opening one from the full list used to render it above that list, off-screen
-  // upward, so the click looked like it had done nothing at all.
+  // was clicked: opening one from the full list would render it above that list, off-screen
+  // upward, so the click would look like it had done nothing at all.
   const [openFrom, setOpenFrom] = useState<"problems" | "all" | null>(null);
-  // A LIST, not one id. Two things needed that: a problem now runs every check it promises rather
-  // than only the first, and answering "what's wrong with my server" takes three or four answers —
-  // opening the second used to destroy the first, so each had to be copied before moving on.
+  // A LIST, not one id. Two things need that: a problem runs every check it promises rather than
+  // only the first, and answering "what's wrong with my server" takes three or four answers —
+  // opening the second must not destroy the first, or each would have to be copied before moving on.
   const [openIds, setOpenIds] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [checkSearch, setCheckSearch] = useState("");

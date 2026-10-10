@@ -6,9 +6,8 @@ import { Button } from "@/components/ui/button";
 /**
  * The catch-all route.
  *
- * The hint used to end "Use the navigation on the left", which is false on a phone — `AppShell`
- * renders the nav as a slide-in drawer behind a hamburger, so the only instruction on the page
- * named something the reader could not see. A real way out needs no claim about the layout.
+ * The hint makes no claim about the layout ("Use the navigation on the left" is false on a phone,
+ * where `AppShell` renders the nav as a slide-in drawer behind a hamburger).
  */
 export function NotFoundPage() {
   const { pathname, search } = useLocation();

@@ -55,7 +55,7 @@ function cardName(collection: Collection): string {
  * picks are `preview_titles`, from the row's most recent delivery; fewer than four would leave holes
  * in the grid, so they are the useful fallback when no configured poster is available.
  */
-export function RowCollage({ collection, libraries = [] }: { collection: Collection; libraries?: PlexLibrary[] }) {
+function RowCollage({ collection, libraries = [] }: { collection: Collection; libraries?: PlexLibrary[] }) {
   const slot = "h-16 w-11 shrink-0 overflow-hidden rounded border sm:h-20 sm:w-14";
   const picks = collection.preview_titles;
   const poster = collection.poster;

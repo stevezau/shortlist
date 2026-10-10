@@ -16,9 +16,10 @@ import {
 } from "@/lib/run-stages";
 import type { RunLogEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { clockTime } from "@/lib/when";
 
 function LogLine({ entry }: { entry: RunLogEntry }) {
-  const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
+  const time = entry.ts ? clockTime(entry.ts) : "";
   const label = STAGE_LABELS[entry.stage] ?? entry.stage;
   const detail = describeCounts(entry.counts ?? {});
   // A line the run logged at a level carries no person either, so it shares the server-wide dash.
@@ -63,9 +64,8 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
 /**
  * A run's full activity log: filterable, searchable, downloadable, and pinned to the tail while live.
  *
- * The log used to be a squashed 18rem box at the very bottom of a long page — the one thing you
- * actually need while a run is in flight, placed where you had to scroll past everything else to
- * reach it.
+ * It is the one thing you need while a run is in flight, so it gets room and sits where it can be
+ * reached without scrolling past everything else.
  */
 export function RunLogPanel({
   runId,

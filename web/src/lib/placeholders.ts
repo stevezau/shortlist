@@ -54,7 +54,7 @@ export const PLACEHOLDER_SPLIT = new RegExp(`(\\{(?:${NAMES})\\})`);
 export const PLACEHOLDER_EXACT = new RegExp(`^\\{(?:${NAMES})\\}$`);
 
 /** The values a preview fills the placeholders with. */
-export interface PlaceholderValues {
+interface PlaceholderValues {
   topSeed: string;
   user: string;
   libraryName: string;

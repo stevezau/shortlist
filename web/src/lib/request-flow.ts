@@ -11,7 +11,7 @@
  * summary be tested exhaustively rather than eyeballed.
  */
 
-export interface RequestFlowInput {
+interface RequestFlowInput {
   /** Requests route through Overseerr rather than straight to Radarr/Sonarr. */
   viaSeerr: boolean;
   /** The strongest titles go out on their own, rather than every title waiting for approval. */
@@ -37,7 +37,7 @@ export interface RequestFlowInput {
   maxPerRun: number;
 }
 
-export interface RequestFlow {
+interface RequestFlow {
   /** The sentence. Always present, always true of the current settings. */
   summary: string;
   /**
@@ -63,7 +63,7 @@ export function describeRequestFlow(input: RequestFlowInput): RequestFlow {
   }
 
   // Overseerr route. What "sent" means here depends entirely on the account it is filed as, which is
-  // the fact the old copy quietly assumed away by saying "send" and meaning "added to your library".
+  // a fact "send" glosses over by meaning "added to your library".
   //
   // Two forms, because these phrases complete sentences with different subjects — "Titles that clear
   // the bars ..." against "once you approve it, it ...". One form for both produced

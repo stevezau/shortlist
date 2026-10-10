@@ -153,11 +153,11 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
 /** The things that differ per tab. The metrics and the failure banner are NOT tabbed: they are
  *  the answer to "how did this run go", which you want regardless of which detail you came for.
  *
- *  `rows` is the default and the primary axis, because a ROW is what a run builds. People-first left
- *  a SHARED row — which belongs to nobody — with nowhere to appear at all, so a run whose only work
- *  was a shared row rendered as a wall of "skipped" with its actual output off screen. There is no
- *  People tab any more: its person list and per-person panel were the right shape and are kept, but
- *  inside the row they belong to rather than as a second way of slicing the same run. */
+ *  `rows` is the default and the primary axis, because a ROW is what a run builds. People-first
+ *  would leave a SHARED row — which belongs to nobody — with nowhere to appear at all, so a run whose
+ *  only work was a shared row would render as a wall of "skipped" with its actual output off screen.
+ *  The person list and per-person panel live inside the row they belong to rather than as a second
+ *  way of slicing the same run. */
 type RunTab = "rows" | "log";
 
 export function RunDetailPage() {
@@ -178,9 +178,8 @@ export function RunDetailPage() {
   // from a person's Runs tab all land exactly where they said they would.
   const [searchParams, setSearchParams] = useSearchParams();
   const tab: RunTab = searchParams.get("tab") === "log" ? "log" : "rows";
-  // Deep link from a person's Recent runs. It survived the People tab's removal as a dead parameter:
-  // the link was still built, nothing read it, and clicking "Run #NN" from someone's page landed on
-  // the top of a run with forty others in it.
+  // Deep link from a person's Recent runs, so clicking "Run #NN" from someone's page lands on
+  // their row rather than the top of a run with forty others in it.
   const focusUser = searchParams.get("user");
   useHashScroll(runQuery.isSuccess);
   const setTab = (next: RunTab) => {
@@ -232,8 +231,8 @@ export function RunDetailPage() {
 
   // Keep an in-flight run's page live: refetch on every stage/finish event, and append the stage to
   // the activity log so it scrolls in real time. Guarded on run_id — appendStage/mergeRunLog already
-  // drop events for another run from the LOG, but the refetch used to fire regardless, so sitting on
-  // finished run #12 while run #40 streamed refetched #12 on every one of #40's events.
+  // drop events for another run from the LOG, and so is the refetch, or sitting on
+  // finished run #12 while run #40 streamed would refetch #12 on every one of #40's events.
   useSSE({
     onRunUserStage: (event) => {
       appendStage(event);
@@ -316,9 +315,9 @@ export function RunDetailPage() {
                     </>
                   ) : !run.began_at ? (
                     // Cancelled or reaped while still queued. Its status is no longer "queued", so
-                    // this used to fall through and claim "started 03:30 · finished 03:39" — the same
-                    // nine minutes the list row now correctly calls "never ran", one click away and
-                    // directly above a Duration cell reading "—".
+                    // without this branch it would claim "started 03:30 · finished 03:39" — the same
+                    // nine minutes the list row calls "never ran", directly above a Duration cell
+                    // reading "—".
                     <>
                       {triggerLabel(run.trigger)} · queued{" "}
                       {formatDate(run.started_at)} · never started

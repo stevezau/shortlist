@@ -110,9 +110,8 @@ export function RowRenamePage() {
   }
 
   // Start as soon as the collection has loaded. `handleSubmit`, NOT `startRename`: the name still
-  // has to be SAVED before it is applied to Plex. The old auto-start called `startRename("", prev)`
-  // because the card's dialog had already saved it on the way here — that dialog is gone, and
-  // reusing its path from the editor would have streamed a rename to the name already on record.
+  // has to be SAVED before it is applied to Plex. `startRename("", prev)` would stream a rename
+  // to the name already on record, because nothing on the way here has saved the new one.
   //
   // Guarded by a ref rather than by `running`/`events`, so a re-render between the click and the
   // first streamed event cannot start a second rename over the top of the first.

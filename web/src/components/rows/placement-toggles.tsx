@@ -24,7 +24,7 @@ function slugify(label: string): string {
 
 /** Collapsed by default — the grid should read on its own, and this is here for the "wait, who sees
  *  what?" moment. Native <details> so it is keyboard- and screen-reader-accessible with no library. */
-export function PlacementHelp({ isShared }: { isShared: boolean }) {
+function PlacementHelp({ isShared }: { isShared: boolean }) {
   return (
     <details className="group">
       <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">

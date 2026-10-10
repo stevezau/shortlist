@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 import { SeasonPreviewError } from "./season-preview-error";
 
-export type CountedPreview = SeasonPreview & { draft: SeasonPreviewInput };
+type CountedPreview = SeasonPreview & { draft: SeasonPreviewInput };
 
 /** What to do about a verdict, in the row's own word for its titles. */
 function verdictHelp(level: "few" | "alike" | "ok", titles: string): string {

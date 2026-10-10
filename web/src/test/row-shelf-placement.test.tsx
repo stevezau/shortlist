@@ -314,6 +314,7 @@ describe("RowShelfPlacement", () => {
     await waitFor(() => expect(latest.value).toEqual({ "2": { top: true } }));
 
     await userEvent.selectOptions(screen.getByLabelText("Position"), "off");
+    await waitFor(() => expect(latest.value).toEqual({ "2": { enabled: false } })); // the move landed
     await act(async () => {
       await new Promise((r) => setTimeout(r, 0)); // give the effect a chance to (wrongly) re-materialize
     });

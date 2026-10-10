@@ -41,16 +41,15 @@ const BOUNCE_FLOOR_PERCENT = 5;
 /** When the app is willing to call something a give-up AT ALL. Exported so the verdict card and this
  *  one cannot drift into saying different things about the same rule.
  *
- *  The two cards no longer COUNT the same set — the verdict tile totals every abandonment, the
- *  findings list below leaves out the ones under 5% — so they no longer share one sentence either.
+ *  The two cards do not COUNT the same set — the verdict tile totals every abandonment, the
+ *  findings list below leaves out the ones under 5% — so they do not share one sentence either.
  *  `WHY_GAVE_UP_FINDING` is this rule plus that floor, and it is the only one the findings card
- *  shows. Handing both cards the identical sentence while one of them silently applied an extra
- *  filter is precisely the drift this constant exists to prevent, and it read as a contradiction:
- *  "48 gave up part-way" above a list containing none of them. */
+ *  shows. The identical sentence on both cards would read as a contradiction: "48 gave up
+ *  part-way" above a list containing none of them. */
 export const WHY_GAVE_UP = `Only films, and only after ${SETTLED_AFTER_HOURS}h with no further play — the clock restarts if they come back, and a series is never counted here.`;
 
 /** The findings list's version: the same rule, plus why the shortest ones are missing from it. */
-export const WHY_GAVE_UP_FINDING = `${WHY_GAVE_UP} Ones under ${BOUNCE_FLOOR_PERCENT}% in are counted above but not listed here — that is too little to tell a wrong pick from a mis-click.`;
+const WHY_GAVE_UP_FINDING = `${WHY_GAVE_UP} Ones under ${BOUNCE_FLOOR_PERCENT}% in are counted above but not listed here — that is too little to tell a wrong pick from a mis-click.`;
 
 type Problem = {
   key: string;
@@ -125,10 +124,9 @@ function unwatchedRequests(
 /**
  * Somebody started a pick and gave up. The one signal Plex's own watched flag cannot give.
  *
- * "Gave up" is a real claim, and it only became a true one when `SETTLING_HOURS` landed: an outcome
- * used to be decided on percentage alone, so a film still playing, or paused an hour ago, was
- * reported here as abandoned. The server now answers `watching` for both, and this list shows only
- * what it is willing to call settled.
+ * "Gave up" is a real claim only once the watch has settled (`SETTLING_HOURS`): a film still
+ * playing, or paused an hour ago, is `watching` to the server, and this list shows only what it is
+ * willing to call settled.
  */
 function gaveUp(people: EngagementReport["people"]): Problem[] {
   const out: { person: string; pick: EngagementPick }[] = [];
@@ -174,9 +172,8 @@ function findProblems(
   data: EngagementReport,
 ): { tooEarly: boolean; problems: Problem[] } {
   // A maturity gate. `landing.rate === null` is the server saying no pick has had its full N
-  // days yet. Without it a five-minute-old install showed three amber warnings that nobody had
-  // watched anything. The card says so itself when it holds them back (below) — the Impact
-  // card that used to carry "Not enough time yet" now shows a viewing share instead.
+  // days yet. Without it a five-minute-old install would show three amber warnings that nobody had
+  // watched anything. The card says so itself when it holds them back (below).
   // `?.` because an older report — or a caller that builds `overall` by hand — may carry no
   // landing block at all. Absent is NOT the same as `null`: null is the server saying "too
   // early to judge", absent is no opinion, and only the first may suppress a warning.

@@ -120,7 +120,7 @@ export function seasonWindows(season: Pick<Season, "next_dates" | "next_windows"
   return season.next_dates.map((day) => ({ start: addDays(day, -lead), end: addDays(day, after) }));
 }
 
-export type SeasonOverlap<S> = { first: S; second: S } & DateSpan;
+type SeasonOverlap<S> = { first: S; second: S } & DateSpan;
 
 /**
  * Every pair of these seasons whose windows share days, with the first days they share, in the order

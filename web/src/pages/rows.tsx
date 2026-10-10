@@ -104,8 +104,8 @@ export function RowsPage() {
         }
       />
 
-      {/* Every row's audience is a statement about PEOPLE. A failed users query used to collapse to
-          `[] `, which turned "Sarah & Mike" into "No one yet" on a row that really does reach them.
+      {/* Every row's audience is a statement about PEOPLE. A failed users query must not collapse to
+          `[]`, which would turn "Sarah & Mike" into "No one yet" on a row that really does reach them.
           Nothing here renders until we actually know who the users are. */}
       <QueryBoundary query={usersQuery} skeleton={<RowsSkeleton />}>
         {(users) => (
