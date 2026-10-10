@@ -690,16 +690,19 @@ export function useLibrarySearch(q: string) {
 }
 
 /** After any season is saved or deleted: the catalogue, the presets still on offer, and the rows —
- *  a delete unticks the season from every row that had it. Awaited, so a caller that ticks the new
- *  season reads a catalogue that already has it. */
+ *  a delete unticks the season from every row that had it. The catalogue and presets are awaited, so a
+ *  caller that ticks the new season reads a catalogue that already has it and no card offers it twice.
+ *  The rows are not: building the list is the server's slowest read, and while a run is going it held
+ *  the save's spinner for seconds. */
 function useInvalidateSeasons() {
   const queryClient = useQueryClient();
-  return () =>
-    Promise.all([
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+    return Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.seasons }),
       queryClient.invalidateQueries({ queryKey: queryKeys.seasonPresets }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
     ]);
+  };
 }
 
 export function useCreateSeason() {

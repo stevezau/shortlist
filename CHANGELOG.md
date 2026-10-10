@@ -6,6 +6,12 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adding a season to a row is quicker and keeps your place.** The Add button no longer waits for the whole
+  rows list to reload, which took seconds while a run was going, and the page no longer jumps up to the
+  season list afterwards.
+
 ## [1.11.0] - 2026-10-10
 
 Back up `/config` before upgrading: this release adds database migrations 0102 to 0111. No settings need

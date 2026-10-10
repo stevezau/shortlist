@@ -95,7 +95,9 @@ export function RowSeasonsField({
       .find((item) => item.dataset.season === addedDirectly.current)
       ?.querySelector<HTMLInputElement>("input[type=checkbox]");
     if (checkbox) {
-      checkbox.focus();
+      // The owner is down among the presets, and may add another: the status line says it was ticked,
+      // and jumping up to the list lost their place.
+      checkbox.focus({ preventScroll: true });
       addedDirectly.current = null;
     }
   }, [saved, catalogue.data]);
