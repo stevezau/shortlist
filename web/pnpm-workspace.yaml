@@ -36,3 +36,5 @@ overrides:
   # the PostCSS/Vite build toolchain, never the runtime image (the Dockerfile ships web/dist, not
   # node_modules). 1.2.2 is a same-major patch, so nothing that depends on it changes shape.
   source-map-js@>=1.0.0 <1.2.2: 1.2.2
+  # GHSA-rj75-hqrm-r3gf: quadratic selector parsing. Reached only via tailwindcss 3 (build time).
+  postcss-selector-parser@<7.1.6: 7.1.6
