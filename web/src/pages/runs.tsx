@@ -34,6 +34,7 @@ import {
   runElapsedMs,
   runStatusVariant,
   timeAgo,
+  timeUntil,
   triggerLabel,
 } from "@/lib/format";
 import {
@@ -143,7 +144,8 @@ function RunRow({ run }: { run: Run }) {
       <TableCell>
         <Link
           to={`/runs/${run.id}`}
-          className="rounded-sm font-medium tabular-nums group-hover:text-primary group-hover:underline"
+          // Padded out to a 24px-plus target; the negative margin keeps the row's layout as it was.
+          className="-m-1.5 inline-block rounded-sm p-1.5 font-medium tabular-nums group-hover:text-primary group-hover:underline"
         >
           #{run.id}
         </Link>
@@ -196,13 +198,13 @@ function RunRow({ run }: { run: Run }) {
         {/* Each figure after the first carries its own "·"; the -ml + overflow-hidden pair clips the
             one that lands at the start of a wrapped line, so no line ever opens on a separator. */}
         <div className="overflow-hidden">
-        <div className="-ml-4 flex flex-wrap items-center gap-y-0.5 [&>*]:before:inline-block [&>*]:before:w-4 [&>*]:before:text-center [&>*]:before:content-['·']">
+        <div className="-ml-4 flex flex-wrap items-center gap-y-0.5 [&>*]:whitespace-nowrap [&>*]:before:inline-block [&>*]:before:w-4 [&>*]:before:text-center [&>*]:before:content-['·']">
           <span>
             {run.stats.users_ok} ok
             {/* A skipped person built nothing but nothing went wrong — counting them as "ok" made a
                 run where everyone was skipped read as a clean success. */}
             {(run.stats.users_skipped ?? 0) > 0 && (
-              <span className="text-warning">
+              <span>
                 {" "}
                 · {run.stats.users_skipped} skipped
               </span>
@@ -279,7 +281,7 @@ function RunsStats({ summary, runs }: { summary: RunsSummary; runs: Run[] }) {
           icon={Clock}
           label="Next run"
           value={next ? dayTime(next.at) : "Not scheduled"}
-          sub={next ? timeAgo(next.at) : "No row has a schedule"}
+          sub={next ? timeUntil(next.at) : "No row has a schedule"}
         />
         <StatusCell
           icon={ListChecks}

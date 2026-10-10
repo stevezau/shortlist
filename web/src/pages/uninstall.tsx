@@ -248,7 +248,16 @@ export function UninstallPage() {
             {preview.data && (
               <div className="space-y-1 border-y py-3 text-sm">
                 <PlanSummary result={preview.data} />
-                <CollectionsToDelete result={preview.data} />
+                {/* Layout only: 188 collections inline put the confirm box ~3000px down. The list is
+                    the same component, just folded away until asked for. */}
+                {preview.data.collections_deleted.length > 0 && (
+                  <details className="py-1">
+                    <summary className="cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      Show the {plural(preview.data.collections_deleted.length, "collection", "collections")} it will delete
+                    </summary>
+                    <CollectionsToDelete result={preview.data} />
+                  </details>
+                )}
                 <p className="text-muted-foreground">{preview.data.message}</p>
                 <div className="pt-1">
                   <AccountsNotRestored result={preview.data} preview />

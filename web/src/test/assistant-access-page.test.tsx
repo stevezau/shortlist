@@ -50,6 +50,22 @@ describe("simple assistant owner access", () => {
     updateAssistantGrant.mockResolvedValue(grant());
   });
 
+  it("says plainly, in a neutral card, that assistants are not set up and links to the guide", async () => {
+    getAssistantStatus.mockResolvedValue({ ...status, enabled: false, resource: null, issuer: null });
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "AI assistants aren’t set up" })).toBeVisible();
+    expect(screen.getAllByText("SHORTLIST_MCP_URL")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /setup guide/i })).toHaveAttribute("href", "https://shortlistapp.dev/guides/assistant-access/");
+    expect(document.querySelector(".text-warning")).toBeNull();
+  });
+
+  it("still warns when the server reports a configuration error", async () => {
+    getAssistantStatus.mockResolvedValue({ ...status, enabled: false, configuration_error: "MCP URL must be HTTPS." });
+    renderPage();
+    expect(await screen.findByText("MCP URL must be HTTPS.")).toBeVisible();
+    expect(document.querySelector(".text-warning")).not.toBeNull();
+  });
+
   it("creates Manage by default with only a name and two roles even with nine services configured", async () => {
     const user = userEvent.setup();
     renderPage();

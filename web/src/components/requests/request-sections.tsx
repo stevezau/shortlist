@@ -201,7 +201,7 @@ export function WaitingSection({
             : "",
         )}
       >
-        <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+        <label className="flex min-h-6 cursor-pointer items-center gap-2 text-sm font-medium">
           <input
             type="checkbox"
             checked={allChecked}

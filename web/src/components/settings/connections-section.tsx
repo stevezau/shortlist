@@ -518,7 +518,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionGroup
           id="connections-requests"
           title="Requests"
-          description="Where picks that aren’t in your library get sent, once requests are turned on under Defaults."
+          description="Where picks that aren’t in your library get sent, once requests are turned on in the Requests tab."
           count={setUpCount([summaries.overseerr, summaries.radarr, summaries.sonarr])}
         >
 <ConnectionCard

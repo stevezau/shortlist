@@ -65,6 +65,16 @@ describe("NotificationsSection", () => {
     expect(link.getAttribute("href")).toBe("#connection-notify");
   });
 
+  it("greys out the switch and the event ticks, and leaves them off, until there is an address", () => {
+    // The stored values stay as they are (enabled, events); only what the owner sees is honest.
+    renderSection({ "notify.webhook.enabled": true, "notify.webhook.events": ["run.failed"] });
+    const toggle = screen.getByRole("switch", { name: /Send alerts to a webhook/i });
+    expect(toggle).toBeDisabled();
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(screen.getByRole("checkbox", { name: /A run failed/i })).toBeDisabled();
+    expect(putSettings).not.toHaveBeenCalled();
+  });
+
   it("does not ask for an address it already has", () => {
     renderSection(on);
     expect(screen.queryByRole("link", { name: /Set up the webhook above/i })).toBeNull();

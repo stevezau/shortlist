@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, KeyRound, Link2, Plus, ShieldCheck, TriangleAlert, XCircle } from "lucide-react";
+import { Check, Copy, Info, KeyRound, Link2, Plus, ShieldCheck, TriangleAlert, XCircle } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { AssistantPermissionFields, type AssistantAccessRole } from "@/components/assistant-permissions";
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, api, apiErrorMessage } from "@/lib/api";
 import { formatDate, timeAgo } from "@/lib/format";
+import { DOCS_ASSISTANT_URL } from "@/lib/support";
 import type { AssistantGrant } from "@/lib/types";
 import { useCopy } from "@/lib/use-copy";
 
@@ -77,6 +78,25 @@ function GrantRow({ grant, onCredential, onEdit, onRevoke, onRemove }: {
     </div>
     {!grant.access_role && !revoked && <p className="mt-3 text-xs text-muted-foreground">Its existing permissions remain in force until you choose and save a new access level.</p>}
   </article>;
+}
+
+/** Assistant access is optional, so "off" is a neutral note; only a real configuration error warns. */
+function AssistantsOff({ error }: { error: string | null }) {
+  const Icon = error ? TriangleAlert : Info;
+  return <div className="rounded-lg border bg-card p-5"><div className="flex items-start gap-3">
+    <Icon aria-hidden="true" className={error ? "mt-0.5 h-5 w-5 shrink-0 text-warning" : "mt-0.5 h-5 w-5 shrink-0 text-muted-foreground"} />
+    <div className="space-y-2">
+      <h2 className="font-semibold">AI assistants aren’t set up</h2>
+      {error && <p className="max-w-prose text-sm">{error}</p>}
+      <p className="max-w-prose text-sm text-muted-foreground">
+        This is optional. To turn it on, give Shortlist its public web address in the container setting{" "}
+        <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">SHORTLIST_MCP_URL</code>{" "}
+        (that address followed by <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">/mcp</code>), then restart it. The{" "}
+        <a href={DOCS_ASSISTANT_URL} target="_blank" rel="noopener noreferrer" className="font-medium text-foreground underline underline-offset-4 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">setup guide</a>{" "}
+        has the steps.
+      </p>
+    </div>
+  </div></div>;
 }
 
 export function AssistantAccessPage() {
@@ -148,10 +168,10 @@ export function AssistantAccessPage() {
     if (editing && role) update.mutate(editing);
   }
 
-  if (status.isPending) return <div className="mx-auto max-w-5xl"><Skeleton className="h-96" /></div>;
-  if (status.isError) return <div className="mx-auto max-w-5xl"><ErrorState error={status.error} onRetry={() => void status.refetch()} /></div>;
+  if (status.isPending) return <div><Skeleton className="h-96" /></div>;
+  if (status.isError) return <div><ErrorState error={status.error} onRetry={() => void status.refetch()} /></div>;
 
-  return <div className="mx-auto max-w-5xl">
+  return <div>
     <PageHeader
       title="AI assistants"
       subtitle="Connect ChatGPT, Claude or Codex to manage Shortlist with your approval."
@@ -179,10 +199,7 @@ export function AssistantAccessPage() {
       </DialogContent>
     </Dialog>
 
-    {!status.data.enabled ? <div className="rounded-lg border bg-card p-5"><div className="flex items-start gap-3">
-      <TriangleAlert aria-hidden="true" className="mt-0.5 h-5 w-5 text-warning" />
-      <div className="space-y-2"><h2 className="font-semibold">AI assistants are off</h2><p className="max-w-prose text-sm text-muted-foreground">{status.data.configuration_error ?? status.data.configuration_hint}</p></div>
-    </div></div> : creating ? <form onSubmit={submitCreate} className="max-w-2xl space-y-5 rounded-lg border bg-card p-5 sm:p-6">
+    {!status.data.enabled ? <AssistantsOff error={status.data.configuration_error} /> : creating ? <form onSubmit={submitCreate} className="max-w-2xl space-y-5 rounded-lg border bg-card p-5 sm:p-6">
       <div className="space-y-2"><label htmlFor="assistant-name" className="block font-semibold">Connection name</label><Input id="assistant-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="My assistant" autoFocus maxLength={255} required /><p className="text-xs text-muted-foreground">Name the app or device so you can recognize it later.</p></div>
       <AssistantPermissionFields role={role} setRole={setRole} />
       {create.isError && <p role="alert" className="text-sm text-destructive-text">{apiErrorMessage(create.error, "Could not create this connection.")}</p>}

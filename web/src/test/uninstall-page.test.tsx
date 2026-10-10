@@ -136,6 +136,23 @@ describe("UninstallPage", () => {
     expect(screen.queryByText(/·/)).not.toBeInTheDocument();
   });
 
+  it("folds the per-collection list behind a disclosure so the confirm box stays within reach", async () => {
+    answer({
+      ...PREVIEW,
+      collections_deleted: ["✨ Picked", "✨ Picked"],
+      collections_detail: [
+        { library: "Movies", person: "sarah", title: "✨ Picked" },
+        { library: "TV", person: "sarah", title: "✨ Picked" },
+      ],
+    });
+    renderPage();
+
+    await screen.findByText(/^Restores /);
+    const summary = screen.getByText(/Show the 2 collections it will delete/i);
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByLabelText(/to confirm/i)).toBeInTheDocument();
+  });
+
   it("uses singular words for a count of one", async () => {
     answer({ ...PREVIEW, filters_restored: 1, collections_deleted: ["✨ Picked for You"], rows_disabled: 1 });
     renderPage();

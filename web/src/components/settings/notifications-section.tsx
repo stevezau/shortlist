@@ -11,7 +11,8 @@ export function WebhookAlertsSwitch({ alerts }: { alerts: WebhookAlerts }) {
     <label className="flex items-center gap-2 text-sm text-muted-foreground">
       Send alerts
       <Switch
-        checked={alerts.enabled}
+        checked={alerts.enabled && alerts.hasAddress}
+        disabled={!alerts.hasAddress}
         onCheckedChange={alerts.toggle}
         aria-label="Send alerts to a webhook"
       />
@@ -39,7 +40,8 @@ export function NotificationsSection({ settings, alerts }: { settings: Settings;
             </p>
           </div>
           <Switch
-            checked={enabled}
+            checked={enabled && hasAddress}
+            disabled={!hasAddress}
             onCheckedChange={toggle}
             aria-label="Send alerts to a webhook"
           />
@@ -55,7 +57,7 @@ export function NotificationsSection({ settings, alerts }: { settings: Settings;
         )}
       </div>
 
-      {enabled && !hasAddress && (
+      {!hasAddress && (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
           Nothing is sent until it has somewhere to go.
           <a
@@ -69,7 +71,8 @@ export function NotificationsSection({ settings, alerts }: { settings: Settings;
       )}
 
       {enabled ? (
-        <fieldset className="space-y-3">
+        // Stored choices stay as they are; with nowhere to send them they are greyed out, not live.
+        <fieldset disabled={!hasAddress} className="space-y-3 disabled:opacity-50">
           <legend className="text-sm font-medium">What to send</legend>
           <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
             {EVENT_GROUPS.map((group) => (

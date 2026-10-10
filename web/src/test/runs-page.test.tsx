@@ -8,8 +8,9 @@ import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { RunsPage } from "@/pages/runs";
 
-const { getRuns, startRun, getJobs, getRunsSummary } = vi.hoisted(() => ({
+const { getRuns, startRun, getJobs, getRunsSummary, getSchedule } = vi.hoisted(() => ({
   getRuns: vi.fn(),
+  getSchedule: vi.fn(async () => ({ rows: [], jobs: [] })),
   startRun: vi.fn(),
   // The page also renders the background-jobs history; unmocked it would error and put a second
   // alert on screen, which is not what these tests are about.
@@ -42,6 +43,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       startRun: (body: unknown) => startRun(body),
       getJobs: () => getJobs(),
       getRunsSummary: () => getRunsSummary(),
+      getSchedule: () => getSchedule(),
     },
   };
 });
@@ -122,6 +124,32 @@ describe("RunsPage", () => {
 
     await waitFor(() => expect(screen.getByText(/aborted/i)).toBeTruthy());
     expect(screen.queryByText(/^Running$/)).toBeNull();
+  });
+
+  it("counts skipped people in neutral text, and says how long until the next run", async () => {
+    // A skipped person is not a problem, so a healthy no-op run must not read like a warning; and
+    // "Next run" answers with a time until, not the "just now" of a time ago clamped at zero.
+    getRuns.mockResolvedValue([
+      {
+        id: 7,
+        trigger: "schedule",
+        status: "ok",
+        started_at: "2026-07-15T04:18:00Z",
+        began_at: "2026-07-15T04:18:00Z",
+        finished_at: "2026-07-15T04:19:00Z",
+        dry_run: false,
+        stats: { users_ok: 0, users_skipped: 46, users_error: 0 },
+      },
+    ]);
+    getRunsSummary.mockResolvedValue({ total: 1, ok: 1, error: 0, last_finished: "2026-07-15T04:19:00Z", last_status: "ok" });
+    getSchedule.mockResolvedValue({
+      rows: [{ cron: "30 2 * * *", next_run: new Date(Date.now() + 12.5 * 3600_000).toISOString() }],
+      jobs: [],
+    } as never);
+    renderPage();
+    const skipped = await screen.findByText(/46 skipped/);
+    expect(skipped.className).not.toContain("text-warning");
+    expect(await screen.findByText(/^in 12h/)).toBeInTheDocument();
   });
 
   it("surfaces the server's reason when a run can't start", async () => {

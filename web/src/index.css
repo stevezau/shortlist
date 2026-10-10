@@ -98,6 +98,17 @@
   }
 }
 
+/* Edge fade for a horizontally scrolling strip (lib/use-scroll-strip.ts sets the widths). */
+.scroll-strip {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--fade-left, 0px),
+    black calc(100% - var(--fade-right, 0px)),
+    transparent
+  );
+}
+
 /* Accessibility: honor reduced-motion preferences */
 @media (prefers-reduced-motion: reduce) {
   *,

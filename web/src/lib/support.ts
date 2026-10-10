@@ -6,6 +6,9 @@ export const GITHUB_REPO = "https://github.com/stevezau/shortlist";
  *  same material split into pages, searchable, and readable on a phone. */
 export const DOCS_URL = "https://shortlistapp.dev/";
 
+/** How to turn on assistant access (the MCP address) and connect a client. */
+export const DOCS_ASSISTANT_URL = "https://shortlistapp.dev/guides/assistant-access/";
+
 /** The guides section on tools that fight Shortlist for the Plex Recommended shelf. Linked from
  *  Settings → Row placement, which used to carry the whole explanation inline.
  *

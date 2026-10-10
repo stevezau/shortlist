@@ -214,7 +214,7 @@ export function JobRow({
         {action && (
           <Button
             size="sm"
-            variant="ghost"
+            variant="outline"
             // One width for every job's "Run", so the status and next-run columns line up down the
             // list on a desktop.
             className="col-start-2 row-start-2 justify-self-end sm:order-5 sm:min-w-[6.5rem]"

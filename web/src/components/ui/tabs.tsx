@@ -1,4 +1,5 @@
 import type { HTMLAttributes, ReactNode } from "react";
+import { scrollStrip, useScrollStrip } from "@/lib/use-scroll-strip";
 import { cn } from "@/lib/utils";
 
 /** A single keyboard stop for related views. `id` also connects the active TabPanel. */
@@ -10,7 +11,8 @@ export function Tabs<T extends string>({ id, value, onChange, options, ariaLabel
   ariaLabel: string;
   className?: string;
 }) {
-  return <div role="tablist" aria-label={ariaLabel} className={cn("flex max-w-full gap-1 overflow-x-auto border-b", className)}>
+  const [ref, style] = useScrollStrip<HTMLDivElement>();
+  return <div ref={ref} style={style} role="tablist" aria-label={ariaLabel} className={cn("relative flex max-w-full gap-1 overflow-x-auto border-b", scrollStrip, className)}>
     {options.map((option, index) => <button
       key={option.value}
       type="button"

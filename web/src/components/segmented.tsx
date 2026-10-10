@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
+import { scrollStrip, useScrollStrip } from "@/lib/use-scroll-strip";
 import { selectedClass, unselectedClass } from "@/lib/selected";
 import { cn } from "@/lib/utils";
 
@@ -34,11 +35,16 @@ export function Segmented<T extends string>({
    *  a filter or a window that sits in a header row beside other controls. */
   joined?: boolean;
 }) {
+  const [stripRef, stripStyle] = useScrollStrip<HTMLDivElement>();
   const buttons = joined ? (
     // Scrolls inside itself rather than wrapping: a joined bar broken over two lines reads as two
     // controls, and at 320px it must never push the page sideways. The focus ring is inset because
     // the scroller clips anything drawn outside it.
-    <div className="inline-flex max-w-full divide-x divide-border overflow-x-auto rounded-lg border border-border-strong bg-elevated">
+    <div
+      ref={stripRef}
+      style={stripStyle}
+      className={cn("relative inline-flex max-w-full divide-x divide-border overflow-x-auto rounded-lg border border-border-strong bg-elevated", scrollStrip)}
+    >
       {options.map((option) => (
         <button
           key={option.value}

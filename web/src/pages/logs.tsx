@@ -19,14 +19,18 @@ import { cn } from "@/lib/utils";
 // (`configure_logging`), so TRACE entries never reach disk and the option could only ever show the
 // same rows as DEBUG while implying something quieter was being hidden.
 const VIEWS = [
-  { value: "debug", label: "Debug", level: "DEBUG" },
   { value: "all", label: "All", level: "INFO" },
   // Reads at INFO and keeps only the warnings and the lines around them, so a warning is seen next
   // to what happened just before it rather than as a line with no story.
   { value: "warnings", label: "Warnings", level: "INFO" },
   { value: "errors", label: "Errors", level: "ERROR" },
+  // Last: the tabs run from the usual view to the most specific, and Debug is for digging.
+  { value: "debug", label: "Debug", level: "DEBUG" },
 ] as const;
 type View = (typeof VIEWS)[number]["value"];
+
+/** The view that shows more than this one, for the empty state's "show me more" button. */
+const MORE_VERBOSE: Record<View, View | null> = { errors: "warnings", warnings: "all", all: "debug", debug: null };
 
 /** How many lines either side of a warning the Warnings view keeps. */
 const CONTEXT = 2;
@@ -103,10 +107,10 @@ function toPlainText(lines: LogLine[]): string {
 /** The Log tab of the Activity page (it was the Logs page until the two merged). */
 export function LogsPanel() {
   const [view, setView] = useState<View>("all");
-  const { level } = VIEWS.find((option) => option.value === view) ?? VIEWS[1];
-  // The next view DOWN, for the empty state's "show me more" button — a hardcoded "Debug" would be
-  // a no-op when you are already on it, and the button has to disappear rather than do nothing.
-  const quieter = VIEWS[VIEWS.findIndex((option) => option.value === view) - 1];
+  const { level } = VIEWS.find((option) => option.value === view) ?? VIEWS[0];
+  // A hardcoded "Debug" would be a no-op when you are already on it, and the button has to
+  // disappear rather than do nothing.
+  const quieter = VIEWS.find((option) => option.value === MORE_VERBOSE[view]);
   const [search, setSearch] = useState("");
   const [follow, setFollow] = useState(true);
   const { state: copyState, copy } = useCopy();

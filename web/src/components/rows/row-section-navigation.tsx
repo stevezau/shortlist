@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { selectedClass } from "@/lib/selected";
+import { scrollStrip, useScrollStrip } from "@/lib/use-scroll-strip";
 import { cn } from "@/lib/utils";
 
 export type RowSection = {
@@ -24,6 +25,7 @@ export type RowSection = {
  */
 export function RowSectionNavigation({ sections }: { sections: RowSection[] }) {
   const [active, setActive] = useState(sections[0]?.id ?? "");
+  const [stripRef, stripStyle] = useScrollStrip<HTMLElement>();
   const inBand = useRef(new Set<string>());
   const key = sections.map((section) => section.id).join(",");
 
@@ -79,8 +81,11 @@ export function RowSectionNavigation({ sections }: { sections: RowSection[] }) {
 
   return (
     <nav
+      ref={stripRef}
+      style={stripStyle}
       aria-label="Row settings sections"
       className={cn(
+        scrollStrip,
         // A horizontal scroller under the phone header; a vertical list beside the form from `lg` up.
         "sticky top-14 z-20 -mx-4 flex gap-1 overflow-x-auto border-b bg-background/95 px-4 py-2 backdrop-blur-sm",
         "md:top-0 md:-mx-8 md:px-8",

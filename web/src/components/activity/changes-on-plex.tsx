@@ -165,7 +165,8 @@ function ChangeText({ text }: { text: string }) {
 }
 
 function ModePill({ mode }: { mode: ChangeMode }) {
-  if (mode === "real") return <Badge>Real</Badge>;
+  // Real is the normal case, so only the exceptions get a badge; the word stays for screen readers.
+  if (mode === "real") return <span className="sr-only">Real</span>;
   if (mode === "dry") {
     return (
       <Badge variant="outline" className="border-dashed text-muted-foreground">

@@ -27,14 +27,15 @@ export function useAutosave(value: unknown, save: () => void): () => void {
   // Keyed on content, not identity: callers pass a fresh object each render, which as an effect
   // dependency would re-arm the timer forever.
   const key = JSON.stringify(value);
-  const firstRender = useRef(true);
+  // The last content this hook has seen, starting with what the page opened on. Compared against
+  // rather than a "first render" flag: <StrictMode> runs every effect twice on mount in dev, and a
+  // flag the first run flips lets the second run through, so opening a page PUT its whole form back.
+  const seenKey = useRef(key);
 
   useEffect(() => {
     // Merely opening a page must write nothing.
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
-    }
+    if (seenKey.current === key) return;
+    seenKey.current = key;
     const timer = setTimeout(() => saveRef.current(), AUTOSAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [key]);
