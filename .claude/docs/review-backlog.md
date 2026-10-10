@@ -15,27 +15,24 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 
 **Engine tuning:**
 
-- The engine's scoring constants are reasoned, not measured. `scripts/replay_eval.py` (leave-one-out replay of a
-  person's history) exists and has never been run against real data. Every engine dial defaults off, so nothing
-  is at risk until one is turned up.
-
-**Migrations:**
-
-- `0109_non_reusable_row_ids.py:78` stops the upgrade on one unparseable JSON value in `events.message`,
-  `jobs.payload/result`, `runs.stats` or an assistant JSON column. The app only ever writes these through
-  JSON serialisation, and production passed it; a hand-edited row would block startup until fixed. Fix:
-  skip and log the table/column (the id floor still holds via `sqlite_sequence` and the max-id checks);
-  the file is frozen, so amend with `check_migration_freeze.py --amend` and a reason. (Release review
-  for 1.11.0, LOW.)
+- The engine's scoring constants are reasoned, not measured. First real `scripts/replay_eval.py` run (2026-10-11,
+  production, 46 people, 230 held-out watches, baseline vs `recency=0.8`): candidate recall 0.23, hit@row_size
+  0.02 → 0.03, MRR 0.014 → 0.016, better/worse/same 22/17/191 — 56% agreement, below the 70% the sample needs, so
+  noise. The finding is recall, not ranking: 77% of the next thing someone watched never entered the candidate
+  pool, so no ranking dial can surface it. Next: measure which sources (TMDB similar, AI search, trending) would
+  have gathered the misses before tuning any weight.
 
 **Test and structure leftovers:**
 
-- `test_pipeline_row_overrides.py` is ~2,500 lines because `TestPerRowOverrides` alone is ~1,980; a pure move
-  cannot split a class.
 - A full run reports two unclosed loopback sockets from `test_assistant_mcp_tool_matrix.py`; they do not
-  reproduce when the file runs alone, so the leaking test is not yet identified.
-- Every `TestPlexRatingsEndToEnd` test in `test_engine_vs_fake.py` costs ~10.5s (re-measured 2026-10-10, run alone;
-  `.test_durations` records ~1.7s and is stale for these); a shared fixture would likely cut most of it.
+  reproduce when the file runs alone, nor beside `test_assistant_mcp.py` with tracemalloc on (2026-10-11).
+  Candidate, unconfirmed: `_wire_app` (~line 249) binds sockets that only `stop()` inside the `try` closes, so
+  a raise in `create_app`/`start()`/`wait_until_up` before the `try` leaks them.
+- Every `TestPlexRatingsEndToEnd` test in `test_engine_vs_fake.py` costs ~10.3s. Profiled 2026-10-11: setup is
+  ~0.75s; the rest is `engine_run` itself — ~460 HTTP round trips to the fakes, mostly plexapi lazily reloading
+  items (`plexapi/base.py __getattribute__`, 7.4s). A shared fixture cannot help (each test runs the engine with
+  its own ratings). Cutting it means fewer per-item reloads in the engine (a product change, and it would speed
+  real runs too) or a smaller fake library.
 
 ---
 
@@ -132,6 +129,19 @@ the first run after the upgrade, not from the row's whole history.
 Everything below is fixed, resolved or not a bug. Newest first, then older audits.
 
 ---
+
+
+## CLOSED 2026-10-11 — 1.11.0 release review leftover
+
+- `0109_non_reusable_row_ids.py` stopped the upgrade on one unparseable JSON value. Now skips and logs a bad
+  value in `runs`/`jobs`/`events` (history the app cannot read back either, so it points nothing at a row);
+  an unreadable assistant record (authority) still stops it. Amended with `check_migration_freeze.py --amend`.
+  Tests: `test_migration_0109.py::test_0109_skips_unreadable_history_json_*`, `..._still_refuses_an_unreadable_assistant_grant`.
+
+- `test_pipeline_row_overrides.py` (~2,500 lines) split: `TestPerRowOverrides` + `TestSharedRowsAndRunControl`
+  stay, `test_pipeline_row_overrides_refresh.py` holds refresh/naming and pick order, shared helpers in
+  `row_overrides_support.py`. 102 tests before and after.
+- First real `replay_eval.py` run — results under OPEN → Engine tuning.
 
 ## CLOSED 2026-10-10 — pre-release review leftovers (reviewed 2026-10-09, worked 2026-10-10)
 
