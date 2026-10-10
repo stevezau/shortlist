@@ -96,8 +96,7 @@ class _WebPrompt(NamedTuple):
 # Note what this prompt does NOT ask for: tmdb_id or imdb_id. Measured 2026-09-02 against the live
 # curator, only 4 of 10 proposed tmdb_ids and 6 of 10 imdb_ids were correct — and a wrong id resolves
 # to a REAL but unrelated title ("Black Mirror" → "Wild China"), which reaches someone's row. A wrong
-# *title* simply fails to resolve and vanishes, so title+year is the safer contract. See
-# `.claude/docs/llm-web-search-upgrade.md` §3.
+# *title* simply fails to resolve and vanishes, so title+year is the safer contract.
 #
 # The year is demanded rather than requested, and the prompt says why: the resolver disambiguates on
 # it. At Anthropic's old `max_uses=3` only 4 of 12 proposals carried one.

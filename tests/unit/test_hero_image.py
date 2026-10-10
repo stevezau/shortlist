@@ -16,7 +16,7 @@ badge check on every commit, not only when someone regenerates the picture. Rege
 
     SHOTS_DIR=docs/images .venv/bin/python -m pytest tests/unit/test_hero_image.py --no-cov
 
-Its siblings — `two-account.png` and `social-preview.png` — are captured by
+Its siblings — `two-account.png` and `social-preview.jpg` — are captured by
 `tests/e2e/test_marketing_assets.py`, which does need a browser.
 """
 

@@ -1,7 +1,7 @@
 # Row editor cleanup — design (2026-09-27)
 
-Status: **approved by the owner, 2026-09-27 ("build it"). Being implemented.**
-Brief: [row-editor-cleanup-brief.md](row-editor-cleanup-brief.md). Mockup (private canvas, interactive):
+Status: **shipped** (approved by the owner 2026-09-27). `web/src/lib/row-kinds.ts` and
+`web/src/lib/row-kind-meta.ts` implement it and cite its sections. Mockup (private canvas, interactive):
 https://claude.ai/artifact/69KJGefNd3hmhJ2Ekf1JAT
 
 ## 1. Why

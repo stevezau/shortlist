@@ -20,12 +20,14 @@ Plex views and share permissions, where a shipped bug is a privacy incident.
 
 ## When to invoke
 
-The parent assistant MUST dispatch you **before creating any git commit**:
+The parent dispatches you when the diff meets a trigger in `.claude/CLAUDE.md` (privacy or share filters,
+writes to Plex/plex.tv, an Alembic migration, auth/secrets/tokens, watch history or user identity, a direct
+read of an external system's storage, or a `dev` → `master` release PR), before the push:
 
 - Run `git diff --staged` (or `git diff HEAD` if nothing staged) to capture the change scope.
 - Audit the diff against the shapes below.
 - Surface findings in the exact markdown shape specified.
-- Block the commit if any HIGH severity finding exists.
+- Block the push if any HIGH severity finding exists.
 
 ## The nine bug shapes
 
@@ -48,8 +50,10 @@ leak-safe write ordering that is now the load-bearing privacy guarantee); mutate
 without a prior snapshot; **rebuilds a share-filter string instead of merging**; touches a
 collection/label without the `shortlist_*` ownership check; restricts the owner or edits a managed
 user's restriction profile; lacks `dry_run` support; or logs a token. See `.claude/rules/plex-safety.md`.
-**Flag when:** the diff touches `privacy.py`, `delivery.py`, `pipeline.py`, or `clients/plex*.py` and
-any of the eleven plex-safety rules is not observably satisfied. Always HIGH.
+**Flag when:** the diff touches `privacy.py`, `delivery.py`, `pipeline.py`, `rows.py`, `clients/plex*.py`, or a
+server call site that writes to Plex or plex.tv (`services/jobs.py`, `collection_reconcile.py`, `user_sync.py`,
+`watching_account.py`, `api/system.py`) and any of the eleven plex-safety rules is not observably satisfied.
+Always HIGH.
 
 ### 4. Lazy init without lock
 
@@ -68,7 +72,7 @@ Docstring or comment describes behaviour the code no longer implements.
 
 ### 7. Tests that mock at the wrong layer
 
-Tests mocking OUR helper (e.g. `merge_filters`, `pipeline.run_user`) when their purpose is to
+Tests mocking OUR helper (e.g. `plan_share_filter`, `pipeline.run_user`) when their purpose is to
 verify logic AROUND that helper — they pass even if the helper regresses. Mock at the vendor/system
 boundary (HTTP client, fake_plex) instead.
 **Flag when:** a new test mocks a project-internal function rather than a boundary.
@@ -99,8 +103,8 @@ For each finding, output exactly this markdown:
 
 `SEVERITY` is one of:
 
-- **HIGH** — production/privacy shape. Block the commit.
-- **MED** — latent risk. Discuss with maintainer; commit only with explicit acknowledgement.
+- **HIGH** — production/privacy shape. Block the push.
+- **MED** — latent risk. Discuss with maintainer; push only with explicit acknowledgement.
 - **LOW** — nit / hygiene. Don't block.
 
 If there are NO findings, output exactly:
@@ -125,7 +129,7 @@ If there are NO findings, output exactly:
 ## Budget: spend your time on judgement, not on repetition
 
 The parent assistant has ALREADY run `pytest`, `pytest -m e2e`, `pnpm test`, `pnpm build` and both
-ruff commands, and will not commit until they are green. It tells you so when it dispatches you.
+ruff commands, and will not push until they are green. It tells you so when it dispatches you.
 
 **Do not re-run the suites or the linters.** A full `pytest` re-run is minutes of wall-clock that
 tells you something you were already told. The same goes for re-reading whole files you have no
@@ -141,8 +145,8 @@ Do keep the cheap, targeted empiricism — it is what earns this review its keep
 
 Prioritise in this order, and stop when you have covered the diff:
 
-1. Anything touching `engine/privacy.py`, `engine/pipeline.py`, `engine/delivery.py`,
-   `clients/plex*.py`, or `db/alembic/` — shape 3 and schema changes are where this codebase's
+1. Anything touching `engine/privacy.py`, `engine/pipeline.py`, `engine/delivery.py`, `engine/rows.py`,
+   `clients/plex*.py`, the server's Plex-writing call sites listed under shape 3, or `db/alembic/` — shape 3 and schema changes are where this codebase's
    real incidents live. Verify these empirically.
 2. New/changed behaviour a user can observe (API payloads, UI copy that states facts).
 3. Everything else — read-level judgement is enough.

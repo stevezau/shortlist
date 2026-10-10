@@ -35,8 +35,7 @@ EXA_SEARCH_URL = "https://api.exa.ai/search"
 _DEFAULT_RESULTS = 8
 _DEFAULT_MAX_CHARS = 800  # per-result text budget — enough to name titles, small enough to stay cheap
 
-# Exa's search modes, cheapest first. Measured on 2026-09-02 (see
-# `.claude/docs/llm-web-search-upgrade.md`): `deep-lite` returned 47 and 36 TMDB-resolvable titles
+# Exa's search modes, cheapest first. Measured on 2026-09-02: `deep-lite` returned 47 and 36 TMDB-resolvable titles
 # on two seeds against `auto`'s 13 and 8, for $0.012 a search against $0.007. `auto` is NOT a safe
 # default here — with `outputSchema` attached it returned ZERO titles on one run despite 26k
 # characters of page text, and `instant` puts a year on barely one title in nine, which the TMDB

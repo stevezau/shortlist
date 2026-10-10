@@ -25,6 +25,22 @@ Moved out of `.claude/CLAUDE.md`. Read before pushing to `master`, cutting a rel
   lands on `master` alone diverges the branches for real, and the next `dev` → `master` PR reverts
   it silently, because `dev` never had it.
 
-  Ignore GitHub's "`master` is N commits ahead of `dev`". Every PR merge mints a merge commit that
-  lives only on the base branch, so that counter can never read 0 and is not drift. The real check
-  is content: `git fetch origin && git diff --quiet origin/master origin/dev`.
+  After a release, fast-forward `dev` to `master` (`git push origin master:dev`): the merge commit then
+  lives on both branches and GitHub's "ahead/behind" counter reads 0/0. Until then it reads "`master` is N
+  commits ahead of `dev`", which is cosmetic (every PR merge mints a merge commit on the base branch). The
+  real drift check is content: `git fetch origin && git diff --quiet origin/master origin/dev`.
+
+## Cutting a release
+
+Only the owner decides to release. The checklist, in order:
+
+1. On `dev`: add a dated `## [X.Y.Z]` section to `CHANGELOG.md`. The `release` CI job extracts it for the
+   GitHub Release notes and fails the tag build if it is missing.
+2. Bump `__version__` in `shortlist/__init__.py` (`pyproject.toml` reads it).
+3. Regenerate `web/openapi.snapshot.json` (command in `tests/unit/test_openapi_snapshot.py`) and the two
+   generated website files, `python scripts/build_feed.py` and `python scripts/build_llms_full.py`.
+4. Open the `dev` → `master` PR, run the Architecture Review on it (a release PR always gets one), and merge
+   once CI is green.
+5. Tag `vX.Y.Z` on `master`, and wait for the tag build to finish before pushing anything to `dev`: a push of the
+   same SHA shares the tag build's concurrency group and can displace it, so `:latest` never publishes.
+6. Fast-forward `dev` to `master`.

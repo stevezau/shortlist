@@ -12,7 +12,7 @@ wording.
 cannot see before their next login — a whole run failing, and a live privacy exposure — so a notifier
 nobody asked to be chatty is not. The rules under each event are what make the rest usable: a dry run is
 a preview somebody is watching, routine jobs start and finish every few minutes, and this sender never
-reports on itself (see `.claude/docs/notifications-design.md`, v1.1).
+reports on itself.
 
 Three constraints, all load-bearing:
 

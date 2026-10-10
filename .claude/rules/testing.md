@@ -7,9 +7,12 @@ paths:
 
 ## Structure
 
-- Files: `test_{module}.py`
+- Files: `test_{module}.py`; a module too big for one file splits into `test_{module}_{topic}.py`
+  (`test_delivery_rows.py`, `test_pipeline_privacy_order.py`, `test_clients_plextv.py`…), with shared
+  helpers in a `*_support.py` beside them
 - Classes: `Test{ClassName}` or `Test{FunctionGroup}`
-- Methods: `test_{behavior}_when_{condition}`
+- Methods: a plain sentence naming the behaviour, e.g.
+  `test_a_managed_user_absent_from_the_roster_is_read_via_a_switched_token`
 - Pattern: Arrange / Act / Assert
 
 ## Fixtures (from tests/conftest.py)
@@ -33,6 +36,7 @@ paths:
 @pytest.mark.integration  # Crosses module boundaries
 @pytest.mark.plex         # Requires a real Plex server (skipped in CI)
 @pytest.mark.slow         # Long-running
+@pytest.mark.real_migrations  # Needs an empty config dir, not the pre-seeded schema template
 @pytest.mark.e2e          # Playwright vs an in-process app (uvicorn + built SPA) + fake_plex
 ```
 
@@ -71,8 +75,8 @@ variables, each of which needs its full matrix:
 - `user_type`: shared / managed / owner
 - watch-history token acquisition: owner (admin token) / shared (own roster token) / managed (roster
   miss, switched to a switch-exchanged token) — the one `HistorySource` implementation
-  (`history.py:34`) branches on this, not on which history backend is in play; see
-  `test_history.py:31,41,61,74`
+  (`ShareTokenWatchSource` in `history.py`) branches on this, not on which history backend is in play; see
+  `TestShareTokenWatchSource` in `test_history.py`
 - curator provider: anthropic / openai / google / ollama / null
 - filter state: empty / shortlist-only / pre-existing-foreign-filters / mixed
 

@@ -50,7 +50,7 @@ def test_every_referenced_image_exists(source: str) -> None:
 def test_no_committed_image_is_unreferenced() -> None:
     """An orphan is a file nobody serves — usually a leftover from a format change.
 
-    `social-preview.png` is the exception: it is named in `_config.yml` as the og:image, which this
+    `social-preview.jpg` is the exception: it is named in `_config.yml` as the og:image, which this
     does count, so it needs no special case. A capture run writes several more screenshots than the
     site uses, and they should not be committed.
     """

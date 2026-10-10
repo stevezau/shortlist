@@ -5,7 +5,7 @@ FastAPI backend + React SPA + SQLite, with a pure-Python engine (per-user watche
 PMS via each share's server token → TMDB similar-titles (+ optional AI web search) → ranking and reasons in code → per-user Plex
 collection + label-restriction privacy).
 
-**Status: 1.x (1.10.0 is the latest tag; run `git tag` before trusting a version).** In production on the maintainer's server: the FastAPI server runs the engine on
+**Status: 1.x (run `git tag` for the current version).** In production on the maintainer's server: the FastAPI server runs the engine on
 its own nightly schedule (APScheduler), with the React SPA and Docker
 packaging, plus optional MCP assistant access (`shortlist/server/assistant*`, off unless
 `SHORTLIST_MCP_URL` is set). Read these before any feature work:
@@ -15,7 +15,7 @@ packaging, plus optional MCP assistant access (`shortlist/server/assistant*`, of
 - [.claude/docs/jobs-and-runs-design.md](docs/jobs-and-runs-design.md) — runs vs. jobs, the durable
   queue, the delivery ledger, and §12's mutation audit: every state change and whether it actually
   reaches Plex. **Read §12 before touching any handler that changes who can see what** — it is the
-  register of a bug class this codebase has had 15 instances of.
+  register of a recurring bug class in this codebase.
 
 Personal deployment details (Steve's servers) live in `CLAUDE.local.md` — gitignored, never commit
 it, and never leak environment-specific hostnames/IPs/paths into the public repo or docs.
@@ -94,7 +94,7 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   or the wizard changed. That pass is the bar before any commit — CI runs it all regardless, so a
   green full pass immediately before the commit is what counts, not a green one mid-edit.
 - **One pytest at a time on this host.** Several agent sessions share it, and each run fans out to
-  `PYTEST_XDIST_AUTO_NUM_WORKERS` processes — four overlapping runs is four times that, which is the
+  its xdist workers (`-n 2` by default) — four overlapping runs is four times that, which is the
   shape that took the plex host down (2026-09-12: 189 workers, ~30 GB into swap). A `PreToolUse` hook
   (`.claude/hooks/pytest-serialize.sh`) denies a `pytest` command while another one is in flight; when
   it fires, wait and retry rather than working around it. Scoped runs stay cheap and stay encouraged —
@@ -107,7 +107,7 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   and fixture `yield`, including each property-test example. SQLite's connection context manager
   only commits/rolls back; use `contextlib.closing` as well to close it. `tests/resources.py` fails
   Linux tests that leave database files open in their temporary directory, and collects unreachable
-  metadata every 50 tests. Backend runs default to two workers; keep parallelism limited on this host.
+  metadata every 50 tests.
 - **Don't re-verify what a tool already told you.** No re-reading a file you just wrote, no re-running
   a suite after a formatting-only change, no full-suite run to confirm a docs edit.
 - **Architecture Review is the only strong-model subagent** (a hook blocks other Opus/Fable subagents). It found

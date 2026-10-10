@@ -1,6 +1,6 @@
 # `migration-ci` — freezing a migration's content once it has run
 
-Item: **`migration-ci`** (Wave 7 — Process). Origin: `.claude/docs/audit-2026-09-programme.md`, which
+Item: **`migration-ci`** (Wave 7 — Process). Origin: the September 2026 audit, which
 records it as _"CI check that a merged migration's blob hasn't changed since first commit"_ and its
 justification as _"The `0032` no-op bug shape recurred in `0082`/`0083` because the fast dev loop runs
 against the live database. Nothing prevents a third occurrence except memory."_
