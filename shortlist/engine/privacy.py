@@ -813,10 +813,10 @@ def sync_user_restrictions(
         # managed account, preset or not — so keying on it also skipped managed users with NO age
         # restriction, who see everything and genuinely need their excludes (#20).
         #
-        # BOTH are required so the skip is a strict SUBSET of "every account gets excludes": no account
-        # that should receive excludes can lose them here. The two flags come from different endpoints and nothing
-        # enforces a relationship, so a `restricted="0"` account that somehow reports a profile keeps
-        # its excludes rather than silently losing them.
+        # BOTH are required so this skip never covers an account that `restricted` alone would not:
+        # narrowing it can only stop skipping accounts, never start. The two flags come from different
+        # endpoints and nothing enforces a relationship, so a `restricted="0"` account that somehow
+        # reports a profile keeps its excludes rather than silently losing them.
         logger.debug(
             "{}: managed account with a '{}' profile — Plex refuses label filters for these, so it "
             "is left out of them; what it can actually see is measured separately (#76)",

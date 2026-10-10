@@ -276,7 +276,8 @@ async def link_server(body: LinkRequest, request: Request) -> dict:
     if session_data["account_id"] != body.owner_account_id:
         raise HTTPException(status_code=403, detail="you can only link a server your account owns")
     try:
-        check_url(body.plex_url, what="The Plex URL")
+        # check_url resolves the host; off the event loop so a slow resolver stalls only this request.
+        await asyncio.to_thread(check_url, body.plex_url, what="The Plex URL")
     except BlockedUrl as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     state = request.app.state

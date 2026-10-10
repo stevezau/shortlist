@@ -37,6 +37,7 @@ from shortlist.server.services.row_editing import (
     REQUEST_COLUMNS,
     TITLE_MOVING_FIELDS,
     CollectionIn,
+    anchored_to,
     apply_row_patch,
     known_seasons,
     projected_snapshot,
@@ -45,6 +46,7 @@ from shortlist.server.services.row_editing import (
     reject_season_name_without_seasons,
     row_change,
     row_snapshot,
+    rows_anchored_to,
     serialize_row,
     set_audience,
     stored_instructions,
@@ -500,19 +502,11 @@ def steps_for_row_plan(plan: list[PlannedWork] | tuple[PlannedWork, ...], *, slu
     return steps
 
 
-def _anchored_to(entry: object, gone: str) -> bool:
-    return isinstance(entry, dict) and str(entry.get("row") or "").strip() == gone
-
-
 def _forget_anchor_row(session: Session, gone: str) -> tuple[str, ...]:
-    changed = tuple(
-        row.slug
-        for row in session.query(Collection).all()
-        if any(_anchored_to(entry, gone) for entry in (row.hub_anchor or {}).values())
-    )
+    changed = tuple(rows_anchored_to(session, gone))
     for row in session.query(Collection).filter(Collection.slug.in_(changed)).all():
         row.hub_anchor = {
-            library: entry for library, entry in (row.hub_anchor or {}).items() if not _anchored_to(entry, gone)
+            library: entry for library, entry in (row.hub_anchor or {}).items() if not anchored_to(entry, gone)
         }
     return changed
 

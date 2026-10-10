@@ -890,8 +890,8 @@ def _shelf_contention(session: Session) -> dict | None:
             # row back 50 times ... so something else is moving it" and named Kometa and Agregarr.
             #
             # `is not True` rather than `is False`: a record with no verdict at all — an older row, a
-            # shape from before this field existed — is not evidence either. `_recent_service_errors` is
-            # where the failures are reported, in their own words.
+            # shape from before this field existed — is not evidence either. An unverified move is written
+            # as a warning, so it shows in the event log, not in the bell.
             continue
         library = message.get("library") or "a library"
         moved = message.get("moved")

@@ -1694,7 +1694,7 @@ def promote_user_rows(
     on a PMS failure; the caller owns how that is reported.
     """
     # Which row produced each of this user's collections, so promotion honours that row's placement
-    # (Home / Library) and pin-to-top. Keyed by the exact title delivery wrote and recorded per library
+    # (Home / Library). Keyed by the exact title delivery wrote and recorded per library
     # during this user's run (a {top_seed} title differs per library).
     # `per_person_rows()`, NOT `config.rows`: with no rows configured it synthesizes the legacy default
     # spec, which is what every other phase builds from (build_indexes, delivery). Reading the raw

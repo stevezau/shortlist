@@ -288,7 +288,8 @@ class CollectionIn(StrictRequestModel):
         default_factory=list,
         description="Days this row appears, as ISO weekdays (1=Monday .. 7=Sunday). Empty means every day.",
     )
-    pin_top: bool = False  # pin to top of the library's Recommended shelf
+    # Legacy: the engine never reads it; the web editor turns it into a per-library "Top" in `hub_anchor`.
+    pin_top: bool = False
     # Per-library Recommended-shelf override for this row, keyed by section key. {} -> inherit the
     # the default, which is the top of the shelf.
     hub_anchor: dict[str, HubAnchorIn] = Field(default_factory=dict)
