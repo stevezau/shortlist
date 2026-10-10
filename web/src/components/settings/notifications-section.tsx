@@ -71,8 +71,8 @@ export function NotificationsSection({ settings, alerts }: { settings: Settings;
       )}
 
       {enabled ? (
-        // Stored choices stay as they are; with nowhere to send them they are greyed out, not live.
-        <fieldset disabled={!hasAddress} className="space-y-3 disabled:opacity-50">
+        // Choosing what to send works before there is an address; only the switch waits for one.
+        <fieldset className="space-y-3">
           <legend className="text-sm font-medium">What to send</legend>
           <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2 lg:grid-cols-3">
             {EVENT_GROUPS.map((group) => (
