@@ -6374,6 +6374,10 @@ export interface components {
             per_library: components["schemas"]["RowLibraryEffectiveness"][];
             /** Runs */
             runs: number;
+            /** Shared Titles */
+            shared_titles: {
+                [key: string]: number;
+            } | null;
             /** Watched */
             watched: number;
         } & {

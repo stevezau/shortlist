@@ -197,3 +197,27 @@ def test_confirmed_shared_snapshot_ignores_an_older_migration_inference(sessions
     assert panel["first_delivered_at"] == confirmed_delivery.isoformat()
     assert panel["last_delivered_at"] == confirmed_delivery.isoformat()
     assert panel["runs"] == 0
+
+
+def test_shared_row_reports_how_many_titles_its_latest_delivery_holds(sessions):
+    """The strip says "N titles, one shared copy": N is the newest real delivery, across libraries."""
+
+    def pick(tmdb_id: int, media_type: str) -> dict:
+        return {"tmdb_id": tmdb_id, "media_type": media_type, "title": f"T{tmdb_id}"}
+
+    with sessions() as session:
+        _shared_run(session, run_id=1, when=NOW - timedelta(days=2), delivered_at=NOW - timedelta(days=2))
+        _shared_run(session, run_id=2, when=NOW - timedelta(hours=2), delivered_at=NOW - timedelta(hours=2))
+        # A dry run is newer but never reached Plex, so it must not set the count.
+        _shared_run(
+            session, run_id=3, when=NOW - timedelta(hours=1), dry_run=True, delivered_at=NOW - timedelta(hours=1)
+        )
+        session.get(RunSharedRow, (1, "shared")).picks = [pick(1, "movie")]
+        # The same tmdb id as a movie and as a show is two titles, counted per media type.
+        session.get(RunSharedRow, (2, "shared")).picks = [pick(7, "movie"), pick(7, "show"), pick(8, "movie")]
+        session.get(RunSharedRow, (3, "shared")).picks = [pick(9, "movie")] * 5
+        session.commit()
+
+    with sessions() as session:
+        assert row_effectiveness(session, "shared", now=NOW)["shared_titles"] == {"movie": 2, "show": 1}
+        assert row_effectiveness(session, "never-built", now=NOW)["shared_titles"] is None

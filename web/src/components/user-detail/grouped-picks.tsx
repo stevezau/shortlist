@@ -1,8 +1,10 @@
 import { useState } from "react";
 
 import { TitlePoster } from "@/components/title-poster";
+import { coarseHitArea } from "@/lib/hit-area";
 import { provenanceLabel } from "@/lib/pick-provenance";
 import type { Pick } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 /** Why a pick is here, as one short line. The API already says it: the title it was seeded from. */
 function pickReason(pick: Pick): string | null {
@@ -59,7 +61,7 @@ export function GroupedPicks({ picks, collapseAfter }: { picks: Pick[]; collapse
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
-            className="text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:underline focus-visible:outline-none"
+            className={cn("text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:underline focus-visible:outline-none", coarseHitArea)}
             aria-expanded={expanded}
           >
             {expanded ? "Show fewer" : `Show all ${ordered.length} titles`}

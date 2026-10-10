@@ -432,6 +432,28 @@ describe("ImpactReport", () => {
     expect(delta.className).toMatch(/success/);
   });
 
+  it("names the period a change is measured against", async () => {
+    renderReport();
+
+    const delta = await screen.findByText(/vs previous/);
+    expect(delta.textContent).toMatch(/vs previous 30 days/);
+  });
+
+  it("says the time to watch is an average, from first pick to first watch", async () => {
+    getReport.mockResolvedValue({ ...REPORT, overall: { ...REPORT.overall, avg_days_to_watch: 28 } });
+    renderReport();
+
+    await screen.findByTestId("verdict-time");
+    expect(screen.getByText("average, first pick to first watch")).toBeInTheDocument();
+    expect(screen.queryByText(/typical/)).toBeNull();
+  });
+
+  it("fades the Most watched shelf's edge while it still scrolls", async () => {
+    renderReport();
+
+    expect(await screen.findByRole("list", { name: "Most watched" })).toHaveClass("scroll-strip");
+  });
+
   it("draws a drop as a drop", async () => {
     getReport.mockResolvedValue({
       ...REPORT,

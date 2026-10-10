@@ -28,7 +28,11 @@ const PREVIEW_FOOTNOTES: Record<string, string> = {
 /** Native search also ends its user message by asking for recent releases, unless guidance replaces the default. */
 const RECENCY_LINE = " It ends by asking for titles released in the last two years.";
 
-/** "A", "A and B", "A, B and C". */
+/** Source names the owner may not recognise, with what they do in plain words. */
+const SOURCE_GLOSS: Record<string, string> = {
+  "TMDB discover": "TMDB discover (popular titles in their favourite genres)",
+};
+
 /** What the search backend lets the instructions steer; null when there is nothing to add (native). */
 function backendNote(backend: string, inert: AiInstructionsInert): string | null {
   // With no AI provider nothing reads the instructions: Exa's titles are kept as found
@@ -42,10 +46,10 @@ function backendNote(backend: string, inert: AiInstructionsInert): string | null
     return "Your AI provider can't search the web itself, so these instructions have no effect. Choose Exa or SearXNG in Settings → Connections.";
   }
   if (backend === "exa") {
-    return "You search with Exa. Exa's searches start from each person's recent watches and are shared between people, so these instructions decide which of Exa's titles the AI keeps, not what Exa looks for.";
+    return "You search with Exa, a web-search service. Exa's searches start from each person's recent watches and are shared between people, so these instructions decide which of Exa's titles the AI keeps, not what Exa looks for.";
   }
   if (backend === "searxng") {
-    return "You search with SearXNG. Its results start from each person's recent watches; these instructions decide which titles the AI picks from them.";
+    return "You search with SearXNG, a self-hosted search engine. Its results start from each person's recent watches; these instructions decide which titles the AI picks from them.";
   }
   return null;
 }
@@ -104,7 +108,7 @@ export function RowAiInstructionsField({
 
       {otherSources.length > 0 && (
         <p className="text-sm text-warning">
-          {joinList(otherSources)} {otherSources.length === 1 ? "doesn't" : "don't"} read these
+          {joinList(otherSources.map((name) => SOURCE_GLOSS[name] ?? name))} {otherSources.length === 1 ? "doesn't" : "don't"} read these
           instructions, so this row will be a mix.
         </p>
       )}

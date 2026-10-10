@@ -276,7 +276,7 @@ function RowCard({
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          className="flex min-w-0 flex-1 basis-full items-center gap-2.5 text-left sm:basis-0"
         >
           <ChevronRight
             aria-hidden="true"

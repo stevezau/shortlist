@@ -4,6 +4,7 @@ import { TitlePoster } from "@/components/title-poster";
 import { provenanceLabel } from "@/lib/pick-provenance";
 import type { Pick } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { coarseHitArea } from "@/lib/hit-area";
 
 /**
  * The seed credit, appended only when the reason has not already named it.
@@ -99,7 +100,7 @@ export function PickList({
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+          className={cn("text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none", coarseHitArea)}
           aria-expanded={expanded}
         >
           {expanded ? "Show fewer" : `Show all ${ordered.length} (+${hidden})`}

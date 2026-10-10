@@ -22,9 +22,11 @@ import {
   useSyncWatched,
 } from "@/lib/queries";
 import type { EffectivenessReport, ReportWindow } from "@/lib/types";
+import { scrollStrip, useScrollStrip } from "@/lib/use-scroll-strip";
 import { cn } from "@/lib/utils";
 import { dayTime } from "@/lib/when";
 import { personName } from "@/lib/user-names";
+import { coarseHitArea } from "@/lib/hit-area";
 
 const WINDOW_OPTIONS: { value: ReportWindow; label: string }[] = [
   { value: "7", label: "7 days" },
@@ -196,7 +198,7 @@ function Verdict({
         </span>
       </Stat>
 
-      <Stat label="Time to watch" sub="typical, from pick to play">
+      <Stat label="Time to watch" sub="average, first pick to first watch">
         <span data-testid="verdict-time">
           {overall.avg_days_to_watch !== null ? (
             <>
@@ -245,7 +247,7 @@ function Delta({
     <span className={good ? "text-success" : "text-muted-foreground"}>
       {up ? "▲" : "▼"} {up ? "+" : "−"}
       {Math.abs(value)}
-      {suffix} vs previous
+      {suffix} vs previous {WINDOW_PHRASE[reportWindow].replace("the last ", "")}
     </span>
   );
 }
@@ -1090,11 +1092,14 @@ function MostWatched({
   titles: EffectivenessReport["top_titles"];
   reportWindow: ReportWindow;
 }) {
+  const [stripRef, stripStyle] = useScrollStrip<HTMLUListElement>();
   return (
     <Section title="Most watched" hint={`Most watchers first · ${WINDOW_PHRASE[reportWindow]}`}>
       <ul
+        ref={stripRef}
+        style={stripStyle}
         aria-label="Most watched"
-        className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-2 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-8"
+        className={`${scrollStrip} -mx-1 flex gap-3 overflow-x-auto px-1 pb-2 sm:mx-0 sm:grid sm:grid-cols-4 sm:overflow-visible sm:px-0 sm:pb-0 lg:grid-cols-8`}
       >
         {titles.map((t, i) => (
           // `relative` so the tile's sr-only text stays inside the scrolling shelf: absolutely
@@ -1252,7 +1257,7 @@ function RecentlyWatched({
             type="button"
             onClick={() => setAll((v) => !v)}
             aria-expanded={all}
-            className="rounded-sm text-[13px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={cn("rounded-sm text-[13px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", coarseHitArea)}
           >
             {all ? "Show fewer" : `See all ${recent.length} →`}
           </button>

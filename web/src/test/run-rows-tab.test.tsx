@@ -123,6 +123,16 @@ describe("RunRowsTab", () => {
     expect(screen.getByText(/1 row wasn.t in this run/i)).toBeInTheDocument();
   });
 
+  it("lets the row title take the full card width on a phone, with status and actions wrapping under it", () => {
+    // jsdom has no layout, so pin the classes: a zero flex-basis let the title be squeezed to one word
+    // per line beside the status badge at 320px.
+    renderTab();
+
+    const header = screen.getByRole("button", { name: /Picked for You/ });
+    expect(header).toHaveClass("basis-full");
+    expect(header).toHaveClass("sm:basis-0");
+  });
+
   it("fills {library_name} in the row header with each library, never a placeholder chip", () => {
     // The header spans every library the row built, so it names one title per library instead of
     // drawing the token as a "library name" chip.

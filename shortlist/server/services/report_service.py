@@ -1436,6 +1436,23 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
         .filter(*shared_delivery_filters)
         .one()
     )
+    # How many titles the shared copy holds right now: the newest real delivery's picks, which span every
+    # library the row builds. None when no shared delivery is on record (a per-person row, or one never built).
+    latest_picks = (
+        session.query(RunSharedRow.picks)
+        .join(Run, Run.id == RunSharedRow.run_id)
+        .filter(*shared_delivery_filters)
+        .order_by(RunSharedRow.delivered_at.desc())
+        .limit(1)
+        .scalar()
+    )
+    shared_titles: dict[str, int] | None = None
+    if latest_picks is not None:
+        distinct = {(pick.get("media_type"), pick.get("tmdb_id")) for pick in latest_picks}
+        shared_titles = {}
+        for media_type, _ in sorted(distinct, key=lambda key: (str(key[0]), str(key[1]))):
+            kind = str(media_type or "")
+            shared_titles[kind] = shared_titles.get(kind, 0) + 1
     # Before `RunSharedRow.delivered_at` existed, a non-legacy delivery snapshot is durable evidence
     # that a shared row actually reached Plex. It is written only for confirmed, non-dry deliveries
     # and survives run-log retention; a run's queued/start time and a later watch are not
@@ -1501,6 +1518,7 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
         "first_delivered_at": iso_utc(first) if first else None,
         "last_delivered_at": iso_utc(last) if last else None,
         "matured_days": HIT_WINDOW_DAYS,
+        "shared_titles": shared_titles,
         # None, not a zeroed dict: "no cohort yet" and "a cohort that landed nothing" are different
         # answers and the panel says different things about them.
         "matured": (

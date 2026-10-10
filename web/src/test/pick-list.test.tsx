@@ -59,4 +59,13 @@ describe("PickList", () => {
     const ranks = screen.getAllByText(/^#\d$/).map((el) => el.textContent);
     expect(ranks).toEqual(["#1", "#3"]);
   });
+
+  it("gives the Show all text button a tap target beyond its 19px of text, on touch screens only", () => {
+    const picks = Array.from({ length: 12 }, (_, n) => pick(n + 1, `Title ${n + 1}`));
+    render(<PickList picks={picks} collapseAfter={5} />);
+
+    const classes = screen.getByRole("button", { name: /Show all/ }).className.split(" ");
+    expect(classes).toContain("[@media(pointer:coarse)]:before:h-11");
+    expect(classes).not.toContain("relative");
+  });
 });

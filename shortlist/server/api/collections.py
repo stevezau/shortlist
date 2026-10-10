@@ -1453,6 +1453,7 @@ class RowEffectivenessOut(PassthroughModel):
     first_delivered_at: str | None  # None = this row has never delivered anything
     last_delivered_at: str | None  # None = same; otherwise the most recent delivery
     matured_days: int
+    shared_titles: dict[str, int] | None  # titles the shared copy holds now, by media type; None if never delivered
     matured: RowMaturedCohort | None  # None = nothing is old enough to judge yet
     per_library: list[RowLibraryEffectiveness]
 

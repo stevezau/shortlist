@@ -39,6 +39,7 @@ import { selectedClass } from "@/lib/selected";
 import type { CollectionInput, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { personName } from "@/lib/user-names";
+import { coarseHitArea } from "@/lib/hit-area";
 
 
 /** The templates of one kind, in the gallery's order. */
@@ -437,7 +438,7 @@ function ReachList({ names }: { names: string[] }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((shown) => !shown)}
-        className="rounded-sm text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={cn("rounded-sm text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", coarseHitArea)}
       >
         {open ? "Hide" : "Show all"}
       </button>

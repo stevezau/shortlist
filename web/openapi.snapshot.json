@@ -6940,6 +6940,20 @@
             "title": "Runs",
             "type": "integer"
           },
+          "shared_titles": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Titles"
+          },
           "watched": {
             "title": "Watched",
             "type": "integer"
@@ -6953,6 +6967,7 @@
           "first_delivered_at",
           "last_delivered_at",
           "matured_days",
+          "shared_titles",
           "matured",
           "per_library"
         ],

@@ -215,6 +215,19 @@ describe("ActivityIndicator toasts", () => {
     expect(toastSuccess.mock.calls[0]?.[1]).toMatchObject({ id: "job-9" });
     expect(toastLoading).toHaveBeenCalledTimes(1);
   });
+
+  it("does not pop a spinner toast for a job the timer started, only for work someone asked for", async () => {
+    // A privacy sync fires every 30 minutes on its own cron; its spinner toast landed on whatever
+    // page was open and covered it. The header badge still shows it running.
+    const { poll } = await renderIndicator();
+
+    await poll([job({ id: 10, kind: "privacy.sync", status: "running", payload: { scheduled: true } })]);
+    await act(async () => {});
+    expect(toastLoading).not.toHaveBeenCalled();
+
+    await poll([job({ id: 11, kind: "privacy.sync", status: "running", payload: {} })]);
+    await waitFor(() => expect(toastLoading).toHaveBeenCalledTimes(1));
+  });
 });
 
 describe("ActivityIndicator — not announcing the same decision twice", () => {

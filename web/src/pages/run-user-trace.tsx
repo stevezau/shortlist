@@ -82,6 +82,7 @@ import type {
   TraceWeb,
   TraceSelection,
 } from "@/lib/types";
+import { coarseHitArea } from "@/lib/hit-area";
 import { cn } from "@/lib/utils";
 import { personName } from "@/lib/user-names";
 
@@ -1576,7 +1577,7 @@ function ReturnList({
       {rest.length > 0 && (
         <li>
           <details className="group">
-            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <summary className={cn("flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden", coarseHitArea)}>
               <ChevronRight
                 className="h-3 w-3 transition-transform group-open:rotate-90"
                 aria-hidden="true"

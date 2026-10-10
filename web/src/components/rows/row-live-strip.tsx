@@ -9,6 +9,19 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Collection, RowEffectiveness } from "@/lib/types";
 
+const MEDIA_PLURAL: Record<string, string> = { movie: "movies", show: "shows" };
+
+/** "40 movies · 40 shows", or "40 titles" when the copy is one kind; null when nothing is on record. */
+function sharedTitlesLabel(counts: Record<string, number> | null | undefined): string | null {
+  const entries = Object.entries(counts ?? {}).filter(([, count]) => count > 0);
+  if (entries.length === 0) return null;
+  if (entries.length === 1) return `${entries[0]?.[1].toLocaleString()} titles`;
+  return entries
+    .sort(([a], [b]) => Object.keys(MEDIA_PLURAL).indexOf(a) - Object.keys(MEDIA_PLURAL).indexOf(b))
+    .map(([type, count]) => `${count.toLocaleString()} ${MEDIA_PLURAL[type] ?? "titles"}`)
+    .join(" · ");
+}
+
 /** The row's record in one line: when it last built, what it delivered, and whether anyone watched. */
 function HistoryLine({
   data,
@@ -47,7 +60,11 @@ function HistoryLine({
     // A shared row writes no per-person picks, so `delivered` is 0 for it by construction; printing
     // "0 titles delivered" read as "this row put nothing on Plex".
     shared ? (
-      <>One shared copy for everyone</>
+      <>
+        {sharedTitlesLabel(data.shared_titles)
+          ? `${sharedTitlesLabel(data.shared_titles)} — one shared copy for everyone`
+          : "One shared copy for everyone"}
+      </>
     ) : (
       <>
         <b className="font-semibold text-foreground tabular-nums">{data.delivered.toLocaleString()}</b> titles
