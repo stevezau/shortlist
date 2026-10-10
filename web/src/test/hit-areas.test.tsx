@@ -9,7 +9,7 @@ describe("small controls keep a 24px hit area", () => {
     render(<Switch aria-label="On" />);
     const classes = screen.getByRole("switch").className;
     expect(classes).toContain("relative");
-    expect(classes).toContain("before:-inset-y-[2px]");
+    expect(classes).toContain("before:-inset-y-[4px]");
     expect(classes).toContain("h-5");
   });
 
