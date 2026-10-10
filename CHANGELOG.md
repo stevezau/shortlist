@@ -13,6 +13,10 @@ All notable changes to this project are documented here. This project follows
   that wasn't on the server yet. A title with both a real copy and a trailer could also put the trailer in a
   row. Trailer plays are now ignored and rows use the real copy. A title that only has a trailer can
   still go in a row.
+- **AI web search no longer describes titles it shouldn't** ([#152](https://github.com/stevezau/shortlist/issues/152)). The list of someone's recent watches sent to the
+  AI now leaves out titles marked "Don't seed" and titles they rated at or below the "didn't like it" line
+  (when "Respect Plex ratings" is on). A row pinned to some libraries now describes only what was watched in
+  them, as its seeds already did.
 - **Adding a season to a row is quicker and keeps your place.** The Add button no longer waits for the whole
   rows list to reload, which took seconds while a run was going, and the page no longer jumps up to the
   season list afterwards.

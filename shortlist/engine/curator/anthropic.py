@@ -11,6 +11,7 @@ from shortlist.engine.curator.base import (
 )
 from shortlist.engine.models import UserProfile
 from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls, provider_call
+from shortlist.engine.taste import TastePrompt
 from shortlist.engine.web_guidance import Guidance
 
 # Design doc §3: cheap tier is plenty for a web-search title lookup.
@@ -87,7 +88,13 @@ class AnthropicCurator:
             ]
 
     def recommend_web(
-        self, profile: UserProfile, seeds: list, k: int, *, guidance: Guidance | None = None
+        self,
+        profile: UserProfile,
+        seeds: list,
+        k: int,
+        *,
+        guidance: Guidance | None = None,
+        taste: TastePrompt | None = None,
     ) -> list[dict]:
         """Propose up to k titles to watch next via Claude's web-search tool (the ``llm_web`` source).
 
@@ -95,11 +102,12 @@ class AnthropicCurator:
         empty list on a provider error; the source's own try/except in candidates.py is the backstop
         for any other failure (unexpected response shape, etc.), so a run never fails here.
 
-        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt.
+        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt. ``taste`` is the
+        history text (#152); only a wide one changes the prompt.
         """
         import anthropic
 
-        system, user = build_web_prompt(profile, seeds, k, guidance=guidance)
+        system, user = build_web_prompt(profile, seeds, k, guidance=guidance, taste=taste)
         controls = self._provider_controls
         output_tokens = controls.output_limit(2048) if controls is not None else 2048
         tool_uses = (

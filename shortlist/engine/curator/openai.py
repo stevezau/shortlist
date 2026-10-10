@@ -11,6 +11,7 @@ from shortlist.engine.curator.base import (
 )
 from shortlist.engine.models import UserProfile
 from shortlist.engine.provider_calls import ProviderCall, ProviderCallControls, provider_call
+from shortlist.engine.taste import TastePrompt
 from shortlist.engine.web_guidance import Guidance
 
 # Must match `defaultModel` for "openai" in web/src/lib/providers.ts, which the wizard writes into
@@ -139,7 +140,13 @@ class OpenAICurator:
         return chat or ids
 
     def recommend_web(
-        self, profile: UserProfile, seeds: list, k: int, *, guidance: Guidance | None = None
+        self,
+        profile: UserProfile,
+        seeds: list,
+        k: int,
+        *,
+        guidance: Guidance | None = None,
+        taste: TastePrompt | None = None,
     ) -> list[dict]:
         """Propose up to k titles to watch next via the Responses API web-search tool (``llm_web``).
 
@@ -147,11 +154,12 @@ class OpenAICurator:
         empty list on a provider error; the source's own try/except in candidates.py is the backstop
         for any other failure, so a run never fails here.
 
-        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt.
+        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt. ``taste`` is the
+        history text (#152); only a wide one changes the prompt.
         """
         import openai
 
-        system, user = build_web_prompt(profile, seeds, k, guidance=guidance)
+        system, user = build_web_prompt(profile, seeds, k, guidance=guidance, taste=taste)
         try:
             r = self._web_search_call(system, user, with_schema=self._schema_supported)
         except openai.OpenAIError as e:

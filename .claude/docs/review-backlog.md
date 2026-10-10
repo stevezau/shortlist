@@ -18,9 +18,14 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 - The engine's scoring constants are reasoned, not measured. First real `scripts/replay_eval.py` run (2026-10-11,
   production, 46 people, 230 held-out watches, baseline vs `recency=0.8`): candidate recall 0.23, hit@row_size
   0.02 → 0.03, MRR 0.014 → 0.016, better/worse/same 22/17/191 — 56% agreement, below the 70% the sample needs, so
-  noise. The finding is recall, not ranking: 77% of the next thing someone watched never entered the candidate
-  pool, so no ranking dial can surface it. Next: measure which sources (TMDB similar, AI search, trending) would
-  have gathered the misses before tuning any weight.
+  noise. That run had only TMDB similar on and no AI, and half its 230 cases were not discoveries (99 shows
+  already started, 17 rewatches); the replay now keeps discoveries only and runs every configured source.
+- #152 replay (2026-10-11, production copy, 138 discoveries, 46 people, production sources incl. Exa + Claude):
+  AI picked / in row: A today 10/9, A rerun 9/8 (noise floor), B wide taste profile 9/9, C + 8 favourite
+  searches 7/9 (search found 25 -> 29), D no AI pick (first 40 of the extraction) -/10. Nothing beats noise, so
+  the wide profile and favourite searches stay replay-only (`EngineConfig.taste_mode`, `favourite_count`).
+  The loss is the pick step: the search finds ~18% of discoveries, the AI keeps ~7%. Next candidates: give the
+  pick step the library (only in-library titles) or let code rank the whole extraction uncapped, then replay.
 
 **Test and structure leftovers:**
 

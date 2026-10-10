@@ -1298,6 +1298,12 @@ class EngineConfig:
     # How many of a person's most recent watched titles the web-search source searches per row (one
     # cached Exa search each). Row-overridable via RowSpec.recent_count.
     recent_count: int = 10
+    # Replay experiments (#152), not settings: nothing reads them from the database or the UI. "wide" tells
+    # the AI web search a person's whole `TasteProfile` rather than the recent titles, and `favourite_count`
+    # adds web searches for their long-time favourites (wide mode only). Measured 2026-10-11 over 138
+    # discoveries and 46 people: no gain from either, so both stay at their defaults, "recent" and 0.
+    taste_mode: str = "recent"
+    favourite_count: int = 0
     # When True (default), a DISABLED (opted-out) Shortlist user has EVERY shared row hidden too — even
     # public "Popular on this server" rows — so disabling someone removes them from Shortlist entirely.
     hide_shared_from_disabled: bool = True

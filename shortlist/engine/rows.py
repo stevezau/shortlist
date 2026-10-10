@@ -62,6 +62,7 @@ from shortlist.engine.models import (
 from shortlist.engine.over_time import apply_exclusions, excluded_titles
 from shortlist.engine.placeholders import fill_season, fill_theme, names_a_seed
 from shortlist.engine.requests_row import build_requests_picks
+from shortlist.engine.taste import TastePrompt, recent_taste, taste_and_favourites
 from shortlist.engine.themes import theme_content_hash
 from shortlist.engine.web_guidance import BUILTIN, Guidance, resolve_guidance
 
@@ -1347,6 +1348,9 @@ def _gather_pool(
     season: seasons_mod.SeasonTitles | None = None,
     season_source: str = "season",
     guidance: Guidance | None = None,
+    taste: TastePrompt | None = None,
+    favourite_seeds: list[Seed] | None = None,
+    favourite_count: int = 0,
 ) -> _Gathered:
     """The first half of the candidate pool: gather, then keep what the libraries hold and this person may see."""
     # The titles this person has already watched (per the row's policy), not just the ~30 seeds — a
@@ -1379,6 +1383,9 @@ def _gather_pool(
         ),
         season_source=season_source,
         web_guidance=guidance,
+        taste=taste,
+        favourite_seeds=favourite_seeds,
+        favourite_count=favourite_count,
     )
     # `dropped` collects (candidate, reason) as filter_candidates works — observation only, it does
     # not change which candidates are kept.
@@ -2200,6 +2207,8 @@ class RowPolicy:
     recency_cuts: dict[tuple, list[Candidate]] = field(default_factory=dict)
     pool_failures: dict[tuple, str] = field(default_factory=dict)  # pool key -> why every source for it failed
     seed_cache: dict[tuple, list] = field(default_factory=dict)
+    # (wide, media, libraries) -> the taste text and the favourite titles to search, for `taste_for`.
+    taste_cache: dict[tuple, tuple[TastePrompt, list[Seed]]] = field(default_factory=dict)
     # Set by the first failed TMDB genre lookup for a rewatch row; every later title is then kept out
     # without asking (`_in_excluded_genre`).
     genres_unreadable: bool = False
@@ -2533,6 +2542,43 @@ class RowPolicy:
             )
         return self.seed_cache[key]
 
+    def uses_wide_taste(self, spec: RowSpec) -> bool:
+        """Whether this row's AI web search is told the person's whole viewing profile (#152).
+
+        Not for a row seeded from a single title ("because you watched X"): it is about that one title,
+        and a profile would drown it.
+        """
+        return (
+            self.cfg.taste_mode == "wide"
+            and "llm_web" in self.effective_sources(spec)
+            and effective_max_seeds(spec, self.cfg) != 1
+        )
+
+    def taste_for(self, spec: RowSpec) -> tuple[TastePrompt | None, list[Seed]]:
+        """What this row's AI web search is told of the person's history, and the favourites to look up.
+
+        A wide profile when `uses_wide_taste`; otherwise, for any other row with AI web search, the recent
+        titles from this row's libraries minus their "Don't seed" and disliked ones, so the pick prompt
+        matches the row's seeds. ``(None, [])`` for a row without AI web search.
+
+        Built from the watches this row's libraries hold (as its seeds are), over the person's whole-history
+        ratings verdict. Memoised per (mode, media, libraries), the only things it depends on.
+        """
+        wide = self.uses_wide_taste(spec)
+        if not wide and "llm_web" not in self.effective_sources(spec):
+            return None, []
+        key = (wide, spec.media, tuple(sorted(str(k) for k in spec.library_keys)))
+        if key not in self.taste_cache:
+            history = _history_for_row(self.ctx, self.user.history, spec)
+            if wide:
+                self.taste_cache[key] = taste_and_favourites(
+                    history, blocked=self.user.blocked_seeds, ratings=self.ratings, resolve=self.resolve
+                )
+            else:
+                prompt = recent_taste(history, blocked=self.user.blocked_seeds, ratings=self.ratings)
+                self.taste_cache[key] = (prompt, [])
+        return self.taste_cache[key]
+
     def gathered_specs(self) -> list[RowSpec]:
         """The rows built from a candidate pool — every row of theirs except a requests row, which is
         built from the request ledger and must never cost a seed derivation or a TMDB/LLM gather."""
@@ -2591,6 +2637,9 @@ class RowPolicy:
             # An AI row's pool is its theme's titles, so two themes — or one theme's contents before and after
             # an edit — never share a gather (#138). Nothing is added for any other row, so no key changes.
             *((spec.theme.slug, theme_content_hash(spec.theme)) if spec.theme is not None else ()),
+            # A wide taste profile (and the favourites searched) changes what the AI is shown (#152). Added
+            # only for a row that gets one, so every other row's key is what it always was.
+            *(("wide_taste", self.cfg.favourite_count) if self.uses_wide_taste(spec) else ()),
         )
 
     def pool_slot(self, spec: RowSpec) -> tuple:
@@ -2616,6 +2665,7 @@ class RowPolicy:
             gather_started = time.monotonic()
             guidance = self.effective_guidance(spec)
             limits = spec.limits()
+            taste, favourite_seeds = self.taste_for(spec)
             gathering = gather_key not in self.gathers
             try:
                 if gathering:
@@ -2642,6 +2692,9 @@ class RowPolicy:
                         season=season,
                         season_source="theme" if spec.theme is not None else "season",
                         guidance=guidance,
+                        taste=taste,
+                        favourite_seeds=favourite_seeds,
+                        favourite_count=self.cfg.favourite_count if taste is not None and taste.wide else 0,
                     )
             except Exception as e:
                 self.pool_failures[gather_key] = f"{type(e).__name__}: {e}"

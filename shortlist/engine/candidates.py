@@ -34,6 +34,7 @@ from shortlist.engine.curator.base import (
     try_parse_web_titles,
 )
 from shortlist.engine.models import MAX_ROW_SIZE, Attribution, Candidate, MediaType, Seed, UserProfile
+from shortlist.engine.taste import TastePrompt
 from shortlist.engine.web_guidance import Guidance
 
 # One cached web search PER recent title (Exa bills per search): cache the RESULTS by (media, tmdb_id)
@@ -123,6 +124,9 @@ class GatherStats:
     # never reads it back. Shape: {"sources": [{source, status, contributed, sample, detail}],
     # "web": {mode, searches, rag_system, rag_user, proposed, resolved}}.
     trace: dict = field(default_factory=dict)
+    # Everything the web search extracted, deduped, before the AI picked from it. Not persisted and not in
+    # the trace: it exists so the replay can tell "the search found it" from "the AI picked it" (#152).
+    web_found: list[TitleCandidate] = field(default_factory=list)
 
     def add_tokens(self, source: str, n: int, output: int = 0) -> None:
         """Add a source's token spend, `output` of it being output (a no-op for 0, e.g. NullCurator or a
@@ -175,6 +179,9 @@ def web_recommendations(
     cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
     guidance: Guidance | None = None,
+    taste: TastePrompt | None = None,
+    favourite_seeds: list[Seed] | None = None,
+    favourite_count: int = 0,
 ) -> list[dict]:
     """Titles to watch next from a web search, as ``[{title, year, media}]`` for TMDB resolution.
 
@@ -194,6 +201,9 @@ def web_recommendations(
     ``stats`` accumulates this source's token spend (and searches) for per-run AI accounting —
     read ``last_tokens`` right after each LLM call, before the next one overwrites it.
     ``guidance`` is this row's AI instructions (#138), handed to whichever prompt the backend sends.
+    ``taste`` is the history text for the pick prompt (#152), scoped to the row; None keeps the 20 newest titles.
+    ``favourite_seeds`` / ``favourite_count`` add up to that many long-time favourites to the external path's
+    searches. The native path takes ``taste`` but not the favourites: the model picks its own.
     """
     web_trace: dict = {"mode": mode}
     stats.trace["web"] = web_trace
@@ -211,12 +221,17 @@ def web_recommendations(
             cache=cache,
             recent_count=recent_count,
             guidance=guidance,
+            taste=taste,
+            favourite_seeds=favourite_seeds,
+            favourite_count=favourite_count,
         )
     elif not getattr(curator, "supports_native_web_search", False):
         return []
     else:
         _clear_last_tokens(curator)
-        recs = curator.recommend_web(profile, seeds, k, guidance=guidance)
+        # Only passed when there is one, so a curator that predates the argument is called as it always was.
+        native_extras = {"taste": taste} if taste is not None and taste.wide else {}
+        recs = curator.recommend_web(profile, seeds, k, guidance=guidance, **native_extras)
         stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0), getattr(curator, "last_output_tokens", 0))
     recs = _drop_watched_proposals(recs, seeds, profile, web_trace)
     # Cap here, not before the filter: the keyless path hands back every extracted title so that
@@ -283,6 +298,9 @@ def _web_via_search(
     cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
     guidance: Guidance | None = None,
+    taste: TastePrompt | None = None,
+    favourite_seeds: list[Seed] | None = None,
+    favourite_count: int = 0,
 ) -> list[dict]:
     """External-search path: one CACHED web search per recent title, then the curator picks from the
     union. Caching by (media, tmdb_id) means a title many users watched is searched once server-wide —
@@ -312,8 +330,11 @@ def _web_via_search(
         # configured mode.
         web_trace["provider"] = provider
         web_trace["structured"] = structured
-    searched = seeds[: max(1, recent_count)]
-    for seed in searched:
+    searched = [(seed, "recent") for seed in seeds[: max(1, recent_count)]]
+    already = {(seed.tmdb_id, seed.media_type) for seed, _ in searched}
+    extra = [f for f in (favourite_seeds or []) if (f.tmdb_id, f.media_type) not in already]
+    searched += [(seed, "favourite") for seed in extra[: max(0, favourite_count)]]
+    for seed, kind in searched:
         key = f"{_WEB_SEARCH_CACHE_PREFIX}:{provider}:{seed.media_type.value}:{seed.tmdb_id}"
         query = build_web_query_for_title(seed.title)
         cached = cache.get(key)
@@ -365,6 +386,7 @@ def _web_via_search(
                 "seed": seed.title,
                 "query": query,
                 "cached": cached is not None,
+                "kind": kind,
                 "returned": returned[:_TRACE_RETURNS_SAMPLE],
             }
         )
@@ -376,7 +398,11 @@ def _web_via_search(
     if failed_seeds and len(failed_seeds) == len(searched):
         raise RuntimeError(f"every web search failed ({len(failed_seeds)} seeds)")
     results = _interleave(per_seed)
-    candidates = _drop_seed_titles(_dedupe_titles(_interleave(per_seed_titles)), seeds)
+    candidates = _drop_seed_titles(
+        _dedupe_titles(_interleave(per_seed_titles)),
+        [*seeds, *(seed for seed, kind in searched if kind == "favourite")],
+    )
+    stats.web_found = list(candidates)
     if web_trace is not None:
         web_trace["searches"] = trace_queries
         # Sampled like every other trace list. The prompt may carry 300 candidates; the trace is
@@ -394,9 +420,9 @@ def _web_via_search(
     # empty — a mode that declined to synthesise, a shape change — still has the snippets, so this
     # degrades to exactly the path that shipped before rather than to nothing.
     if candidates:
-        system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k, guidance=guidance)
+        system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k, guidance=guidance, taste=taste)
     elif results:
-        system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k, guidance=guidance)
+        system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k, guidance=guidance, taste=taste)
     else:
         return []
     # No model to ask: Exa's `outputSchema` already returned clean titles, so hand those straight to
@@ -866,6 +892,9 @@ def gather_candidates(
     season_items: dict[MediaType, list[dict]] | None = None,
     season_source: str = "season",
     web_guidance: Guidance | None = None,
+    taste: TastePrompt | None = None,
+    favourite_seeds: list[Seed] | None = None,
+    favourite_count: int = 0,
 ) -> list[Candidate]:
     """Pool candidates from every enabled source, deduped by (tmdb_id, media_type).
 
@@ -878,6 +907,8 @@ def gather_candidates(
     source; the TMDB sources ignore them. ``search``/``web_search_mode`` drive the ``llm_web``
     source's external-search backend (Exa) — ``search`` is None when no key is configured.
     ``web_guidance`` is the row's AI instructions for that source's prompt (#138); None = built-in.
+    ``taste`` / ``favourite_seeds`` / ``favourite_count`` widen what the AI sees of the person's history
+    (#152); see `web_recommendations`. The defaults send exactly what this source has always sent.
 
     Pass a ``stats`` (a :class:`GatherStats`) to have the AI token spend of the ``llm_web`` source
     (and Exa searches) accumulated into it, for per-run AI accounting.
@@ -1073,6 +1104,9 @@ def gather_candidates(
                 cache=web_search_cache,
                 recent_count=recent_count,
                 guidance=web_guidance,
+                taste=taste,
+                favourite_seeds=favourite_seeds,
+                favourite_count=favourite_count,
             ):
                 media_type = MediaType.SHOW if rec.get("media") == "show" else MediaType.MOVIE
                 found = tmdb.search(rec["title"], media_type, year=rec.get("year"))

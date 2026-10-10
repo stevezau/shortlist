@@ -25,13 +25,16 @@ imply more confidence than it can carry.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 
 from shortlist.engine import candidates as candidates_mod
 from shortlist.engine import history as history_mod
 from shortlist.engine import ranking
-from shortlist.engine.clients.tmdb import TmdbClient
+from shortlist.engine.clients.tmdb import Cache, TmdbClient
 from shortlist.engine.models import Candidate, EngineConfig, MediaType, UserProfile, WatchedItem
+from shortlist.engine.taste import recent_taste, taste_and_favourites
 
 #: Agreement among non-tied paired cases below which the aggregate direction means nothing at this
 #: sample size. Reported, never enforced — it exists to stop a 51/49 split reading as a result.
@@ -71,6 +74,17 @@ class ReplayOutcome:
     #: (`history.ratings_are_trustworthy` judges the whole account at once). Surfaced so a flat
     #: result reads as "not applicable here", not "the change did nothing".
     ratings_trusted: bool = True
+    #: The web search's own extraction held the title, before the AI chose anything (#152). With
+    #: `ai_picked` it separates "the search never found it" from "the search found it and the AI passed".
+    found_by_search: bool = False
+    #: The AI proposed the title (and it resolved to TMDB). False when the AI path did not run.
+    ai_picked: bool = False
+    #: LLM tokens this case spent, and the web searches that were not served from the cache.
+    tokens: int = 0
+    new_searches: int = 0
+    #: The AI answered with nothing usable, so the run used the search's whole extraction instead. Counted apart:
+    #: it makes `ai_picked` true for reasons that have nothing to do with what the AI was told.
+    ai_fallback: bool = False
 
     @property
     def hit(self) -> bool:
@@ -92,8 +106,13 @@ def holdout_cases(
     history: list[WatchedItem],
     *,
     max_holdouts: int = 5,
+    keep: Callable[[WatchedItem], bool] | None = None,
 ) -> list[HoldoutCase]:
     """Up to `max_holdouts` of this person's most recent watches, each with the history before it.
+
+    A movie watched more than once is never a case: it is a rewatch, not a discovery. ``keep`` drops
+    anything else the caller knows is not one (a show started long before this watch), BEFORE the newest
+    `max_holdouts` are taken, so the cap counts discoveries rather than whatever happened to be newest.
 
     Each case slices the history independently at its own timestamp rather than removing one item
     from the whole list. Removing one item leaves every LATER watch in place, so testing a person's
@@ -103,8 +122,22 @@ def holdout_cases(
     No completion filter: `WatchCache` applies `min_completion` when it stores a watch, so anything
     reaching this function already qualified.
     """
+    # Each library's copy of a title carries its own play count, so a film played once in "Movies" last
+    # year and once in "4K Movies" last week reads as watch_count 1 twice. Any earlier copy makes it a rewatch.
+    first_seen: dict[tuple[int, MediaType], datetime] = {}
+    for w in history:
+        if w.tmdb_id is not None:
+            key = (w.tmdb_id, w.media_type)
+            first_seen[key] = min(first_seen.get(key, w.watched_at), w.watched_at)
     eligible = sorted(
-        (w for w in history if w.tmdb_id is not None),
+        (
+            w
+            for w in history
+            if w.tmdb_id is not None
+            and not (w.media_type is MediaType.MOVIE and w.watch_count > 1)
+            and first_seen[(w.tmdb_id, w.media_type)] == w.watched_at
+            and (keep is None or keep(w))
+        ),
         key=lambda w: w.watched_at,
         reverse=True,
     )[:max_holdouts]
@@ -130,6 +163,7 @@ def replay_case(
     curator=None,
     trakt=None,
     search=None,
+    web_search_cache: Cache | None = None,
 ) -> ReplayOutcome:
     """Rebuild the pool from `case.history_before` alone and report where the hidden title landed.
 
@@ -152,16 +186,45 @@ def replay_case(
         max_seeds=config.max_seeds,
         disliked=disliked,
     )
+    # The profile carries the REDUCED history, never the full one: the AI is shown it, and a held-out title in
+    # a prompt would hand the model the answer.
+    profile = replace(case.user, history=case.history_before)
+    taste, favourite_seeds = None, []
+    if "llm_web" in config.candidate_sources:
+        ratings = history_mod.ratings_policy(case.history_before, config.dislike_threshold)
+        if config.taste_mode == "wide" and config.max_seeds != 1:
+            taste, favourite_seeds = taste_and_favourites(
+                case.history_before, blocked=profile.blocked_seeds, ratings=ratings, resolve=resolve_tmdb_id
+            )
+        else:
+            # Arm A sends what a run sends for a films-and-TV row over every library: the recent list without
+            # their blocked and disliked titles. A run scopes it to each row's libraries and media.
+            taste = recent_taste(case.history_before, blocked=profile.blocked_seeds, ratings=ratings)
+    stats = candidates_mod.GatherStats()
     pool = candidates_mod.gather_candidates(
         tmdb,
         seeds,
         sources=config.candidate_sources,
         curator=curator,
+        profile=profile,
         trakt=trakt,
         search=search,
+        web_search_mode=config.web_search_provider,
+        web_search_cache=web_search_cache,
         recent_count=config.recent_count,
+        stats=stats,
+        taste=taste,
+        favourite_seeds=favourite_seeds,
+        favourite_count=config.favourite_count if taste is not None and taste.wide else 0,
     )
     gathered = any((c.tmdb_id, c.media_type) == key for c in pool)
+    held_title = case.held_out.title.strip().lower()
+    found_by_search = any(
+        t.title.strip().lower() == held_title and t.media == case.held_out.media_type.value for t in stats.web_found
+    )
+    proposals = stats.trace.get("web", {}).get("proposals", [])
+    curator_can_complete = curator is not None and getattr(curator, "can_complete", True)
+    ai_picked = any((p["tmdb_id"], p["media"]) == (key[0], key[1].value) for p in proposals)
 
     dropped: list[tuple[Candidate, str]] = []
     watched = {(w.tmdb_id, w.media_type) for w in case.history_before if w.tmdb_id is not None}
@@ -195,6 +258,11 @@ def replay_case(
         reciprocal_rank=(1.0 / rank) if rank else 0.0,
         # The RATINGS, not the items — matching how `history.disliked_seed_keys` calls it.
         ratings_trusted=history_mod.ratings_are_trustworthy(item.user_rating for item in case.history_before),
+        found_by_search=found_by_search,
+        ai_picked=ai_picked,
+        ai_fallback=bool(stats.trace.get("web", {}).get("unpicked")) and curator_can_complete,
+        tokens=sum(stats.tokens_by_source.values()),
+        new_searches=stats.exa_searches,
     )
 
 
@@ -239,3 +307,77 @@ def summarise(comparison: Comparison) -> str:
                 f"sample size). Treat as noise and read the per-case table."
             )
     return "\n".join(lines)
+
+
+#: How far a held-out title got, in order. A title that fell out at a stage is reported at the last one it reached.
+STAGES = ("not found", "found by search", "AI picked", "kept", "in row")
+
+#: A show first played this long before the watch we hold out was already started, not discovered.
+_ALREADY_STARTED = timedelta(days=1)
+
+
+def first_watch_keep(first_viewed: dict[int, datetime]) -> Callable[[WatchedItem], bool]:
+    """A `holdout_cases` filter that keeps discoveries: watches whose title was not started long before.
+
+    Plex's library read stamps a show with its LATEST watch, so a show someone has followed for a year
+    looks like a fresh discovery on the night they watch its newest episode. The play log knows when the
+    show was first played.
+
+    Args:
+        first_viewed: Show rating key -> when the person first played any episode of it.
+
+    Returns:
+        A predicate that is False for a show first played more than a day before this watch. Anything with
+        no recorded first play is kept: not knowing is not evidence it was started.
+    """
+
+    def keep(item: WatchedItem) -> bool:
+        first = first_viewed.get(item.rating_key) if item.rating_key is not None else None
+        if first is None:
+            return True
+        return first >= item.watched_at - _ALREADY_STARTED
+
+    return keep
+
+
+def furthest_stage(outcome: ReplayOutcome) -> str:
+    """The last stage of `STAGES` this outcome's held-out title reached."""
+    if outcome.in_final_row:
+        return STAGES[4]
+    if outcome.rank is not None:
+        return STAGES[3]
+    if outcome.ai_picked:
+        return STAGES[2]
+    if outcome.found_by_search:
+        return STAGES[1]
+    return STAGES[0]
+
+
+def paired_picked(before: list[ReplayOutcome], after: list[ReplayOutcome]) -> tuple[int, int, int]:
+    """(better, worse, same) over the same cases, judged on whether the AI picked the held-out title."""
+    better = sum(1 for x, y in zip(before, after, strict=True) if y.ai_picked and not x.ai_picked)
+    worse = sum(1 for x, y in zip(before, after, strict=True) if x.ai_picked and not y.ai_picked)
+    return better, worse, len(before) - better - worse
+
+
+def summarise_picked(
+    label_before: str, label_after: str, before: list[ReplayOutcome], after: list[ReplayOutcome]
+) -> str:
+    """One paired comparison on "the AI picked it", with the same refusal to call a split a result as `summarise`."""
+    if not before or len(before) != len(after):
+        return f"{label_before} vs {label_after}: no comparable cases."
+    better, worse, same = paired_picked(before, after)
+    picked_before = sum(o.ai_picked for o in before)
+    picked_after = sum(o.ai_picked for o in after)
+    line = (
+        f"{label_before} -> {label_after}: AI picked {picked_before} -> {picked_after} of {len(before)}; "
+        f"better/worse/same {better} / {worse} / {same}."
+    )
+    decided = better + worse
+    if decided == 0:
+        return line + " Every case tied."
+    agreement = max(better, worse) / decided
+    direction = "better" if better > worse else "worse"
+    if agreement >= TRUST_THRESHOLD:
+        return line + f" {agreement:.0%} of decided cases agree it is {direction}."
+    return line + f" Only {agreement:.0%} agree (need {TRUST_THRESHOLD:.0%}): treat as noise."

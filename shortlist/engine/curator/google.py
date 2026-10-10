@@ -16,6 +16,7 @@ from shortlist.engine.provider_calls import (
     ProviderCallRefused,
     provider_call,
 )
+from shortlist.engine.taste import TastePrompt
 from shortlist.engine.web_guidance import Guidance
 
 # An ALIAS, not a pinned model, and that is the whole point. This was `gemini-2.5-flash` until it
@@ -129,7 +130,13 @@ class GoogleCurator:
         return sorted(out)
 
     def recommend_web(
-        self, profile: UserProfile, seeds: list, k: int, *, guidance: Guidance | None = None
+        self,
+        profile: UserProfile,
+        seeds: list,
+        k: int,
+        *,
+        guidance: Guidance | None = None,
+        taste: TastePrompt | None = None,
     ) -> list[dict]:
         """Propose up to k titles via Gemini's Google Search grounding tool (the ``llm_web`` source).
 
@@ -150,9 +157,10 @@ class GoogleCurator:
         itself as its cutoff recedes, where Claude and GPT can. Degrades to an empty list on any
         provider error.
 
-        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt.
+        ``guidance`` is the row's AI instructions (#138); None sends the built-in prompt. ``taste`` is the
+        history text (#152); only a wide one changes the prompt.
         """
-        system, user = build_web_prompt(profile, seeds, k, guidance=guidance)
+        system, user = build_web_prompt(profile, seeds, k, guidance=guidance, taste=taste)
         try:
             r = self._grounded_call(system, user, with_schema=self._schema_supported)
         except Exception as e:  # google-genai raises provider-specific exceptions
