@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import anyio
 import pytest
 
@@ -41,25 +43,31 @@ def test_bridge_settings_require_named_assistant_credential_and_canonical_endpoi
 
 def test_relay_forwards_both_directions_without_interpreting_messages() -> None:
     async def exercise() -> None:
-        local_in_send, local_in_receive = anyio.create_memory_object_stream[object](1)
-        local_out_send, local_out_receive = anyio.create_memory_object_stream[object](1)
-        remote_in_send, remote_in_receive = anyio.create_memory_object_stream[object](1)
-        remote_out_send, remote_out_receive = anyio.create_memory_object_stream[object](1)
-        async with anyio.create_task_group() as group:
-            group.start_soon(
-                relay_streams,
-                local_in_receive,
-                local_out_send,
-                remote_in_receive,
-                remote_out_send,
-            )
-            request = object()
-            response = object()
-            await local_in_send.send(request)
-            assert await remote_out_receive.receive() is request
-            await remote_in_send.send(response)
-            assert await local_out_receive.receive() is response
-            await local_in_send.aclose()
+        async with contextlib.AsyncExitStack() as streams:
+
+            async def pair() -> tuple:
+                send, receive = anyio.create_memory_object_stream[object](1)
+                return await streams.enter_async_context(send), await streams.enter_async_context(receive)
+
+            local_in_send, local_in_receive = await pair()
+            local_out_send, local_out_receive = await pair()
+            remote_in_send, remote_in_receive = await pair()
+            remote_out_send, remote_out_receive = await pair()
+            async with anyio.create_task_group() as group:
+                group.start_soon(
+                    relay_streams,
+                    local_in_receive,
+                    local_out_send,
+                    remote_in_receive,
+                    remote_out_send,
+                )
+                request = object()
+                response = object()
+                await local_in_send.send(request)
+                assert await remote_out_receive.receive() is request
+                await remote_in_send.send(response)
+                assert await local_out_receive.receive() is response
+                await local_in_send.aclose()
 
     anyio.run(exercise)
 

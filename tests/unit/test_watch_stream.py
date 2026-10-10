@@ -604,12 +604,16 @@ class TestTheOwnerIsToldWhenTrackingIsOffline:
         """It runs inside the reconnect loop. A failure here must never be what stops the retries."""
         from shortlist.server.services.watch_stream import WatchStream
 
+        attempts: list[bool] = []
+
         def boom():
+            attempts.append(True)
             raise RuntimeError("db is gone")
 
         stream = WatchStream(boom, lambda **_: None)
         stream._write_health(connected=False)  # must not raise
         asyncio.run(stream._mark_connected())  # must not raise
+        assert len(attempts) >= 2, "the health write never reached the database"
 
 
 class TestAnUnreachablePlexIsAnOutageToo:
@@ -1000,11 +1004,15 @@ class TestStoppingPlaybackAsksForTheCreditNow:
 
         stream = WatchStream(sessions, lambda **_: None)
 
+        attempts: list[bool] = []
+
         def boom():
+            attempts.append(True)
             raise RuntimeError("db gone")
 
         stream._sessions = boom
         stream._queue_reconcile()  # must not raise
+        assert attempts, "the queue insert was never attempted, so the failure was never injected"
 
     def test_a_session_too_short_to_persist_queues_nothing(self, sessions):
         """A mis-click is not a watch, and it does not deserve a pass over the whole event log."""

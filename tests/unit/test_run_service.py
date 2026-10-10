@@ -1265,11 +1265,15 @@ class TestRunLogBuffer:
         sink = service._new_run_log(1)
         sink({"stage": "history", "user": "sarah"})
 
+        attempts: list[bool] = []
+
         def boom():
+            attempts.append(True)
             raise RuntimeError("disk is on fire")
 
         monkeypatch.setattr(service._log, "_sessions", boom)
         service.flush_run_log(1)  # must not raise
+        assert attempts, "the flush never reached the database, so the failure was never injected"
 
     def test_a_lines_level_survives_the_durable_read(self, sessions, tmp_path):
         """`level` was written to `run_log_lines` and then left out of the read, so a warning that made
@@ -1328,12 +1332,16 @@ class TestTheWatchSyncSaysItsUnmatchedWatchedSummaryOnce:
         """Plex not configured: the sync skips, and there is no source to ask."""
         service = RunService(sessions, EventBus(), SecretBox(tmp_path))
 
+        attempts: list[bool] = []
+
         def unconfigured(**kwargs):
+            attempts.append(True)
             raise RuntimeError("plex is not configured")
 
         monkeypatch.setattr(service, "build_context", unconfigured)
 
         asyncio.run(service.sync_watched())  # must not raise
+        assert attempts, "the sync never tried to build a context, so the failure was never injected"
 
 
 class TestTheRunLogCarriesTheEnginesWarnings:

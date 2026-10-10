@@ -1228,3 +1228,69 @@ class TestShelfSequence:
             ("anchor", "Recently Added Movies"),
             ("rows", {21}),
         ]
+
+
+class TestAFailedOrderingNeverLogsTheToken:
+    """plexapi error text carries the request URL, token and all (plex-safety rule 9)."""
+
+    TOKEN = "tOkEn1234567890abcdXYZ"
+    LEAKY = f"HTTP 500 for http://pms.local:32400/library/collections/1/items?X-Plex-Token={TOKEN}"
+
+    def _warnings_from(self, call) -> list[str]:
+        from loguru import logger as loguru_logger
+
+        lines: list[str] = []
+        sink = loguru_logger.add(lines.append, level="WARNING")
+        try:
+            call()
+        finally:
+            loguru_logger.remove(sink)
+        return lines
+
+    def test_the_redactor_recognises_this_token_shape(self):
+        """Positive control: without it the absence assertions below would pass on any shape."""
+        from shortlist.engine.clients.http_retry import redact
+
+        assert self.TOKEN not in redact(self.LEAKY)
+
+    def test_a_collection_ordering_failure_is_logged_redacted(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.models import EngineConfig
+        from shortlist.engine.pipeline import _collection_order_phase
+
+        plex = MagicMock()
+        plex.order_collection.side_effect = RuntimeError(self.LEAKY)
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig(dry_run=False), progress=None)
+        collection = MagicMock(ratingKey=1)
+        collection.title = "Picked for You"
+
+        lines = self._warnings_from(lambda: _collection_order_phase(ctx, [(collection, [1, 2])]))
+
+        assert any("ordering 'Picked for You' failed" in line for line in lines), "the failure path was not reached"
+        assert not any(self.TOKEN in line for line in lines)
+
+    def test_a_hub_ordering_failure_is_logged_and_recorded_redacted(self):
+        import threading
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import EngineConfig
+        from shortlist.engine.pipeline import RunReport, _apply_placement
+
+        def boom(*args, **kwargs):
+            raise RuntimeError(self.LEAKY)
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(place_rows=boom), config=EngineConfig(dry_run=False), write_lock=threading.Lock()
+        )
+        report = RunReport(started_at=datetime.now(UTC))
+
+        lines = self._warnings_from(
+            lambda: _apply_placement(ctx, report, SimpleNamespace(title="Movies", key=1), [("rows", {11})])
+        )
+
+        assert any("hub ordering failed" in line for line in lines), "the failure path was not reached"
+        assert not any(self.TOKEN in line for line in lines)
+        assert self.TOKEN not in repr(report.hub_orderings)

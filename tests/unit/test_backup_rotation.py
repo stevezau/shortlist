@@ -45,6 +45,8 @@ class TestRotateSurvivesAVanishingFile:
             mp.setattr(Path, "unlink", vanishing)
             backup_mod._rotate(tmp_path, max_keep=2)  # must not raise
 
+        assert len(list(tmp_path.glob("shortlist_*.db"))) == 2, "rotation stopped at the vanished file"
+
     def test_it_still_deletes_everything_it_can(self, tmp_path: Path):
         _make_backups(tmp_path, 5)
 

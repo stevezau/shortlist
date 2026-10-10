@@ -192,7 +192,8 @@ class TestWebhookBody:
 
     def test_the_body_is_json_serialisable_as_sent(self):
         # httpx would raise at send time otherwise, on a code path that only runs at 3am.
-        json.dumps(notify.webhook_body(notify.sample_item()))
+        body = notify.webhook_body(notify.sample_item())
+        assert json.loads(json.dumps(body)) == body
 
     def test_the_body_names_no_account(self):
         """v1's privacy floor, asserted rather than assumed.

@@ -392,8 +392,15 @@ class TestAfterRun:
 
     def test_it_never_raises_into_the_run(self, sessions, secrets, monkeypatch):
         configure(sessions, secrets, events=ALL_EVENTS)
-        monkeypatch.setattr(notify, "check_for_update", _raise)
+        reached: list[bool] = []
+
+        def failing_check(*_args, **_kwargs):
+            reached.append(True)
+            raise RuntimeError("unavailable")
+
+        monkeypatch.setattr(notify, "check_for_update", failing_check)
         notify.after_run(sessions, make_run(sessions), "1.9.0")
+        assert reached, "the update check was never reached, so nothing was proven"
 
 
 class TestAuthHeader:

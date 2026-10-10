@@ -174,6 +174,7 @@ class TestApplyPoster:
             artist=None,
             dry_run=False,
         )
+        plex.upload_poster.assert_called_once()
 
     def test_empty_rendered_image_leaves_plex_artwork(self):
         plex, artist = MagicMock(), MagicMock()

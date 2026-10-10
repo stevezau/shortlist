@@ -165,11 +165,16 @@ class TestPersonThemeTitles:
 
     def test_a_sibling_the_person_is_not_in_the_audience_of_does_not_clash(self, session):
         explore, person_theme, user = self.seed(session)
-        session.add(
-            Collection(
-                slug="sibling", name="Cosy Nights", build="per_person", enabled=True, media="movie", audience="subset"
-            )
+        sibling = Collection(
+            slug="sibling", name="Cosy Nights", build="per_person", enabled=True, media="movie", audience="subset"
         )
+        session.add(sibling)
         session.flush()
 
         theme_store.reject_person_title_clash(session, SECRETS, explore, user.id, person_theme)
+
+        # Control: the same sibling, once the person is in its audience, is a clash.
+        sibling.audience = "all"
+        session.flush()
+        with pytest.raises(theme_store.TitleClash):
+            theme_store.reject_person_title_clash(session, SECRETS, explore, user.id, person_theme)

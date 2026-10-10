@@ -657,9 +657,16 @@ class TestScheduledWorkIsDurable:
         still come round."""
         from shortlist.server.services import jobs
 
-        monkeypatch.setattr(jobs, "enqueue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db locked")))
+        attempts: list[bool] = []
+
+        def locked(*a, **k):
+            attempts.append(True)
+            raise RuntimeError("db locked")
+
+        monkeypatch.setattr(jobs, "enqueue", locked)
 
         self._fire(app, "user-sync")  # must not raise
+        assert attempts, "the scheduler never tried to queue, so the failure was never injected"
 
 
 class TestSyncUsersOnAnUnlinkedServer:
