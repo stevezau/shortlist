@@ -490,6 +490,7 @@ export function RowEditor({
     input.media === "movie" ? "every movie library" : input.media === "show" ? "every TV library" : "every library";
   const landsIn = libraries.data ? rowLibraries(input, libraries.data) : null;
   const reach = rowReach(input, users);
+  const savedSeason = collection?.season_status?.showing ?? collection?.season_status?.next ?? undefined;
   const savedReach = savedRow ? rowReach(savedRow, users) : null;
   const changes = [
     ...draftChanges(input, savedRow, pendingRename ? { name: pendingRename.name, from: savedName } : null),
@@ -676,7 +677,7 @@ export function RowEditor({
         savedRow.build === "shared" ? "Shared" : "Per person",
         savedRow.audience === "everyone"
           ? `everyone${savedReach === null ? "" : ` (${savedReach})`}`
-          : `chosen people${savedReach === null ? "" : ` (${savedReach})`}`,
+          : `${savedReach === null ? "" : `${savedReach} `}chosen people`,
         mediaLabel(savedRow.media),
         ...(isDefault ? ["the default row"] : []),
       ].join(" · ")
@@ -692,7 +693,12 @@ export function RowEditor({
               key={library.key}
               className="rounded-full border border-border-strong bg-elevated px-2.5 py-0.5 text-xs text-foreground"
             >
-              <RowName name={savedName} libraryName={savedName.includes(LIBRARY_NAME) ? library.title : undefined} className="" />
+              <RowName
+                name={savedName}
+                libraryName={savedName.includes(LIBRARY_NAME) ? library.title : undefined}
+                season={savedSeason}
+                className=""
+              />
             </span>
           ))}
         </span>
@@ -715,7 +721,7 @@ export function RowEditor({
               Rows
             </Link>
             <span className="font-normal text-faint-foreground">{" / "}</span>
-            {collection ? <RowName name={savedName} libraryName="" className="" /> : "Add a row"}
+            {collection ? <RowName name={savedName} libraryName="" season={savedSeason} className="" /> : "Add a row"}
           </>
         }
         subtitle={subtitle}

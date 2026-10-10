@@ -57,7 +57,7 @@ export function BlurSaveField({
           <Label htmlFor={id}>{label}</Label>
           <SavedIndicator show={saved} />
           <span className="ml-auto text-xs text-muted-foreground">
-            {patchUser.isPending ? "Saving…" : "Saves when you leave the field"}
+            {patchUser.isPending ? "Saving…" : "Saved as you go"}
           </span>
         </div>
         <Input

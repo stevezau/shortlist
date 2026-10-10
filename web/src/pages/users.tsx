@@ -47,7 +47,8 @@ import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import { profileName, USER_TYPE_LABEL } from "@/lib/user-profile";
 import { profileBlocksRows, userState, type UserState } from "@/lib/user-state";
 import type { AccountPrivacy, Collection, PrivacyStatus, RowSources, User } from "@/lib/types";
-import { timeAgo } from "@/lib/format";
+import { formatDate, timeAgo } from "@/lib/format";
+import { dayTime } from "@/lib/when";
 import { coarseHitArea } from "@/lib/hit-area";
 import {
   queryKeys,
@@ -93,9 +94,11 @@ function stateTitle(user: User, state: UserState): string {
   return "Their rows run on each row's schedule.";
 }
 
+/** Paused and Off say something the row's switch can't; On is exactly what the switch already shows. */
 function StatePill({ user }: { user: User }) {
   const state = userState(user);
-  const variant = state === "on" ? "success" : state === "paused" ? "warning" : "outline";
+  if (state === "on") return null;
+  const variant = state === "paused" ? "warning" : "outline";
   return (
     <Badge
       variant={variant}
@@ -255,18 +258,9 @@ function PicksCell({ user }: { user: User }) {
   );
 }
 
-/** "02:30 today", "02:30 yesterday", "28 Sept, 02:30" — when the last run that included the person finished. It counts dry and cancelled runs too, so it must never be labelled as a build. */
+/** "Today 02:30", "Yesterday 02:30", "Fri 9 Oct 02:30" — when the last run that included the person finished. It counts dry and cancelled runs too, so it must never be labelled as a build. */
 function builtAt(iso: string | null): string {
-  if (!iso) return "Never";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === today.toDateString()) return `${time} today`;
-  if (date.toDateString() === yesterday.toDateString()) return `${time} yesterday`;
-  return date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return iso ? dayTime(iso) : "Never";
 }
 
 /** A data cell's own label on a phone, where the person is a card and there are no column headers. */
@@ -765,7 +759,7 @@ export function UsersPage() {
                   </TableHeader>
                   <TableBody className="grid lg:table-row-group">
                     {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
-                      <TableCell className="min-w-0 lg:w-[30%] lg:pl-4">
+                      <TableCell className="col-span-2 min-w-0 lg:col-span-1 lg:w-[30%] lg:pl-4">
                         <div className="flex items-start gap-3">
                           {selecting && <label className={`mt-1.5 flex shrink-0 cursor-pointer ${coarseHitArea}`}><input type="checkbox" aria-label={`Select ${personName(user)}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="size-4 shrink-0 accent-primary" /></label>}
                           <UserAvatar name={user.username} size="sm" />
@@ -784,11 +778,11 @@ export function UsersPage() {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="justify-self-end lg:justify-self-auto"><StatePill user={user} /></TableCell>
+                      <TableCell className="col-span-2 empty:hidden lg:col-span-1 lg:empty:table-cell"><StatePill user={user} /></TableCell>
                       <TableCell className="text-sm lg:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
                       <TableCell className="text-sm lg:pr-6 lg:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
                       <TableCell className={`text-sm ${exposedRows(user, privacy) > 0 ? "bg-warning/10 text-warning lg:px-3" : ""} lg:min-w-44`}><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
-                      <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? new Date(user.last_run_at).toLocaleString() : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? formatDate(user.last_run_at) : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
                       <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap lg:table-cell lg:pr-4 lg:text-right">
                         <GatedSwitch
                           checked={user.enabled && !user.restriction_profile}

@@ -63,7 +63,7 @@ export function AudiencePicker({
 
   return (
     <div className="space-y-2">
-      <Label>Who gets it?</Label>
+      <Label>Audience</Label>
       <Segmented
         value={audience}
         onChange={(next) => {

@@ -1,4 +1,3 @@
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useAccountExposure } from "@/components/user-detail/use-account-exposure";
@@ -25,9 +24,6 @@ export function OffBanner({ user }: { user: User }) {
   return (
     <Card data-testid="off-banner" className="overflow-hidden p-0">
       <div className="flex items-center gap-3 px-6 py-4">
-        <Badge variant="outline" className="text-muted-foreground">
-          Off
-        </Badge>
         <p className="font-medium">Off &mdash; No new rows are built for {name}.</p>
       </div>
       {live && exposed > 0 && (

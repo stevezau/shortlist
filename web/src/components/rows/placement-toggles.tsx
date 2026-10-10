@@ -52,7 +52,7 @@ export function PlacementHelp({ isShared }: { isShared: boolean }) {
           <p>
             This decides <strong className="text-foreground">where</strong> the
             row appears, not who gets one &mdash; that&rsquo;s{" "}
-            <em>Who gets it?</em> above.
+            <em>Audience</em> above.
           </p>
           <p>
             <strong className="text-foreground">Just me</strong> &mdash; the

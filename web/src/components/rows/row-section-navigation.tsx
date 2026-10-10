@@ -87,7 +87,7 @@ export function RowSectionNavigation({ sections }: { sections: RowSection[] }) {
         "lg:top-6 lg:mx-0 lg:flex-col lg:overflow-visible lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none",
       )}
     >
-      <p className="mb-1 hidden px-3 text-sm font-medium text-muted-foreground lg:block">Saved with Save changes</p>
+      <p className="mb-1 hidden px-3 text-sm font-medium text-muted-foreground lg:block">Needs the Save button</p>
       {sections.map((section) => {
         const current = active === section.id;
         return (

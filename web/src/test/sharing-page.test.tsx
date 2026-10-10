@@ -148,7 +148,7 @@ describe("the sharing page's four states", () => {
 
     expect(await screen.findByRole("heading", { name: "Who sees what" })).toBeVisible();
     expect(screen.getByText("Hides all 1 other row")).toBeVisible();
-    expect(screen.getByText(/one line per plex account, problems first\. read from plex.tv at \d/i)).toBeVisible();
+    expect(screen.getByText(/one line per plex account, problems first\. read from plex.tv .*\d/i)).toBeVisible();
     // A clean account keeps its per-row cells behind a toggle.
     expect(screen.queryByText("Hidden")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Show each row (1)" }));

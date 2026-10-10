@@ -1,4 +1,4 @@
-import { LIBRARY_NAME, PLACEHOLDER_EXACT, PLACEHOLDER_SPLIT } from "@/lib/placeholders";
+import { LIBRARY_NAME, PLACEHOLDER_EXACT, PLACEHOLDER_SPLIT, SEASON, SEASON_EMOJI } from "@/lib/placeholders";
 
 /**
  * A row's configured name, rendered honestly wherever the app names a row.
@@ -12,18 +12,24 @@ import { LIBRARY_NAME, PLACEHOLDER_EXACT, PLACEHOLDER_SPLIT } from "@/lib/placeh
 export function RowName({
   name,
   libraryName,
+  season,
   className = "font-medium",
 }: {
   name: string;
   /** The one library this rendering is about, when there is one. */
   libraryName?: string;
+  /** The season the row is in (or next in), for a caller that knows it: its two tokens then read as the real words. */
+  season?: { name: string; emoji: string };
   className?: string;
 }) {
   // The engine collapses the gap a filled token leaves, so match it — never "📬  you asked for".
+  const withSeason = season
+    ? name.replaceAll(SEASON_EMOJI, season.emoji).replaceAll(SEASON, season.name)
+    : name;
   const filled =
     libraryName === undefined
-      ? name
-      : name.replaceAll(LIBRARY_NAME, libraryName).replace(/\s+/g, " ").trim();
+      ? withSeason
+      : withSeason.replaceAll(LIBRARY_NAME, libraryName).replace(/\s+/g, " ").trim();
   const parts = filled.split(PLACEHOLDER_SPLIT);
   return (
     <span className={className}>

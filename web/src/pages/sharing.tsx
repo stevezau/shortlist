@@ -12,7 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { settingBool } from "@/lib/format";
+import { formatDate, settingBool } from "@/lib/format";
+import { dayTime } from "@/lib/when";
 import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import { type GridCell, accountHasProblem, accountSummary, gridCell, rowColumnName } from "@/lib/privacy-grid";
 import { usePrivacyStatus, useSaveSettings, useSettings, useStartRun } from "@/lib/queries";
@@ -332,7 +333,7 @@ function Banner({
 function ReadAt({ at }: { at: string }) {
   return (
     <span className="text-muted-foreground">
-      Read from plex.tv at {new Date(at).toLocaleTimeString()}.
+      Read from plex.tv {dayTime(at)}.
     </span>
   );
 }
@@ -447,14 +448,14 @@ function AccountSummaryLine({ account, data }: { account: AccountPrivacy; data: 
 function AccountsGrid({ data }: { data: PrivacyStatus }) {
   const problems = data.accounts.filter((account) => accountHasProblem(account, data));
   const rest = data.accounts.filter((account) => !accountHasProblem(account, data));
-  const readAt = new Date(data.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const readAt = dayTime(data.read_at);
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle role="heading" aria-level={2}>
           Who sees what
         </CardTitle>
-        <CardDescription>One line per Plex account, problems first. Read from plex.tv at {readAt}.</CardDescription>
+        <CardDescription>One line per Plex account, problems first. Read from plex.tv {readAt}.</CardDescription>
       </CardHeader>
       <ul aria-label="Plex accounts">
         {[...problems, ...rest].map((account) => (
@@ -645,7 +646,7 @@ function EnforcementPanel({ data }: { data: PrivacyStatus }) {
             {measured && !ignored && (
               <p className="text-sm text-muted-foreground">
                 Checked in run #{run_id}
-                {measured_at ? ` on ${new Date(measured_at).toLocaleString()}` : ""}: Plex was applying the
+                {measured_at ? ` on ${formatDate(measured_at)}` : ""}: Plex was applying the
                 hide rules on the accounts checked.
               </p>
             )}

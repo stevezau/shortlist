@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { PeopleBrowser } from "@/components/rows/people-browser";
 import { RowName } from "@/components/rows/row-name";
 import { RowPlexCard } from "@/components/rows/row-plex-card";
-import { reachedUsers } from "@/components/rows/row-facts";
+import { peopleCount, reachedUsers } from "@/components/rows/row-facts";
 import { TemplateVarsHint } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
@@ -397,7 +397,7 @@ export function RowNewPage() {
               <div className="flex justify-between gap-4 px-4 py-2.5">
                 <dt className="text-muted-foreground">Gets it</dt>
                 <dd className="text-right">
-                  {reach.length === 0 ? "No one yet" : reach.map(personName).join(", ")}
+                  <ReachList names={reach.map(personName)} />
                 </dd>
               </div>
               <div className="flex justify-between gap-4 px-4 py-2.5">
@@ -422,5 +422,26 @@ export function RowNewPage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+/** A few names in full; a long roster as a count, because a wall of right-aligned names says nothing. */
+function ReachList({ names }: { names: string[] }) {
+  const [open, setOpen] = useState(false);
+  if (names.length === 0) return <>No one yet</>;
+  if (names.length <= 3) return <>{names.join(", ")}</>;
+  return (
+    <>
+      {peopleCount(names.length)}{" "}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((shown) => !shown)}
+        className="rounded-sm text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {open ? "Hide" : "Show all"}
+      </button>
+      {open && <span className="mt-1 block text-muted-foreground">{names.join(", ")}</span>}
+    </>
   );
 }

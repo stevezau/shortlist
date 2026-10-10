@@ -251,10 +251,7 @@ function OffRowsList({ rows, name }: { rows: UserRow[]; name: string }) {
                   {row.media === "both" ? "movies & shows" : `${row.media}s`}
                 </div>
               </div>
-              <label className="flex items-center gap-4 text-sm text-muted-foreground">
-                No new rows &mdash; {name} is off
-                <Switch checked={false} disabled aria-label={`${row.name} does not apply while ${name} is off`} />
-              </label>
+              <Switch checked={false} disabled aria-label={`${row.name} does not apply while ${name} is off`} />
             </div>
             {row.picks.length > 0 && <GroupedPicks picks={row.picks} collapseAfter={10} />}
           </li>

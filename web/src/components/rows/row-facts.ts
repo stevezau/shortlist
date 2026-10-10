@@ -1,5 +1,6 @@
 import { toInput } from "@/lib/collections";
 import { settingString } from "@/lib/format";
+import { dayTime } from "@/lib/when";
 import { DEFAULT_ROW_SLUG } from "@/lib/constants";
 import { AI_KIND_META, KIND_META } from "@/lib/row-kind-meta";
 import { maxSeedsSeed } from "@/lib/row-globals";
@@ -40,16 +41,9 @@ export function rowLibraries(
   return libraries.filter((library) => row.media === "both" || library.type === row.media);
 }
 
-/** When a row was last built: "02:30 today", "02:30 yesterday", then "28 Sep". Local time, like the rest of the app. */
+/** When a row was last built, in the app's one timestamp format ("Today 02:30", then "Fri 9 Oct 02:30"). */
 export function builtAt(iso: string, now: Date = new Date()): string {
-  const when = new Date(iso);
-  if (Number.isNaN(when.getTime())) return "at an unknown time";
-  const time = when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  if (when.toDateString() === now.toDateString()) return `${time} today`;
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (when.toDateString() === yesterday.toDateString()) return `${time} yesterday`;
-  return when.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return Number.isNaN(new Date(iso).getTime()) ? "at an unknown time" : dayTime(iso, now);
 }
 
 /** The row's kind in the words the kind picker uses: "Picked for You", "Seasonal", "AI row"… */

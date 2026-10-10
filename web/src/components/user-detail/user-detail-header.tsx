@@ -26,9 +26,8 @@ export function UserDetailHeader({ user }: { user: User }) {
   const paused = state === "paused";
   const name = personName(user);
   const profileBlocked = profileBlocksRows(user);
-  const offReason = profileBlocked
-    ? `Clear ${name}’s Restriction Profile in Plex first`
-    : `Turn ${name} on first`;
+  // A plainly switched-off person needs no reason here: the banner says so and "Turn on" sits beside Run now.
+  const offReason = profileBlocked ? `Clear ${name}’s Restriction Profile in Plex first` : null;
 
   return (
     <div className="space-y-4">
@@ -47,7 +46,6 @@ export function UserDetailHeader({ user }: { user: User }) {
                 {name}
               </h1>
               <UserBadges user={user} />
-              {off && <Badge variant="secondary">off</Badge>}
               {paused && <Badge variant="secondary">paused</Badge>}
             </div>
             <p className="break-words text-sm text-muted-foreground">
@@ -56,7 +54,6 @@ export function UserDetailHeader({ user }: { user: User }) {
               )}
               {user.history_depth} titles watched · last run{" "}
               {timeAgo(user.last_run_at)}
-              {off && " · no new rows"}
               {/* Dropped, never printed as "· — picks watched": in a table cell an em dash reads as
                   "nothing to report", but in a sentence it is a hole. */}
               {user.picks_watched_30d !== null ? (
@@ -106,7 +103,7 @@ export function UserDetailHeader({ user }: { user: User }) {
               {!startRun.isPending && <RefreshCw aria-hidden="true" />}
               Run now
             </Button>
-            {off && <p className="mt-1 text-xs text-muted-foreground">{offReason}</p>}
+            {offReason && <p className="mt-1 text-xs text-muted-foreground">{offReason}</p>}
           </div>
           {/* "Turn on" only where it changes something. A Restriction Profile keeps the person Off
               whatever `enabled` says (`userState`), so a Turn on there would save and still read Off:

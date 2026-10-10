@@ -85,6 +85,16 @@ describe("RowNewPage", () => {
     expect(await screen.findByText("row editor")).toBeInTheDocument();
   });
 
+  it("sums up a long roster as a count with a Show all disclosure", async () => {
+    getUsers.mockResolvedValue(Array.from({ length: 12 }, (_, i) => person(i + 1, `viewer${i + 1}`)));
+    renderPage();
+    const preview = within(await screen.findByRole("complementary", { name: "Preview" }));
+    expect(await preview.findByText(/12 people/)).toBeInTheDocument();
+    expect(preview.queryByText(/viewer1, viewer2/)).not.toBeInTheDocument();
+    await userEvent.click(preview.getByRole("button", { name: "Show all" }));
+    expect(preview.getByText(/viewer1, viewer2/)).toBeInTheDocument();
+  });
+
   it("starts from the kind and the name you pick", async () => {
     renderPage();
     await screen.findAllByText(/sarah, mike/);

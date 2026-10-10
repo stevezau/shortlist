@@ -979,7 +979,9 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
 
     const stateOf = async (name: string) =>
       within((await screen.findByRole("link", { name })).closest("tr") as HTMLElement).getByTestId("user-state");
-    expect(await stateOf("sarah")).toHaveTextContent(/^On$/);
+    // On is what the switch already says, so it gets no pill.
+    await screen.findByRole("link", { name: "sarah" });
+    expect(within((screen.getByRole("link", { name: "sarah" })).closest("tr") as HTMLElement).queryByTestId("user-state")).toBeNull();
     expect(await stateOf("mike")).toHaveTextContent(/^Paused$/);
     expect(await stateOf("jess")).toHaveTextContent(/^Off$/);
     expect(screen.queryByText("Active")).toBeNull();

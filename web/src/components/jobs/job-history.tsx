@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { timeAgo } from "@/lib/format";
+import { formatDate, timeAgo } from "@/lib/format";
 import { isInFlight } from "@/lib/job-activity";
 import { jobDuration, jobStatusLabel, jobStatusTone } from "@/lib/job-status";
 import type { Job } from "@/lib/types";
@@ -28,7 +28,7 @@ export function JobDetail({ job }: { job: Job }) {
   if (job.started_at) {
     rows.push([
       retrying ? "Last attempt" : "Started",
-      new Date(job.started_at).toLocaleString(),
+      formatDate(job.started_at),
     ]);
   }
   const took = jobDuration(job);

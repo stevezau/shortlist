@@ -81,8 +81,8 @@ describe("an Off person's page", () => {
     expect(screen.getByRole("button", { name: /Run for kid/ })).toBeDisabled();
     expect(screen.getByText(/Clear kid’s Restriction Profile in Plex first/)).toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: /Pause or resume/ })).toBeNull();
-    expect(await screen.findByText(/No new rows — kid is off/)).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: /does not apply while kid is off/ })).toBeDisabled();
+    expect(await screen.findByRole("switch", { name: /does not apply while kid is off/ })).toBeDisabled();
+    expect(screen.queryByText(/No new rows — kid is off/)).toBeNull();
   });
 
   it("offers the fix in Plex, not a Turn on that could not change anything, when a profile keeps them off", () => {
@@ -243,7 +243,7 @@ describe("an Off person's page", () => {
     renderBody({ ...KID, restricted: false, restriction_profile: "" });
 
     expect(screen.getByRole("button", { name: "Turn on" })).toBeInTheDocument();
-    expect(screen.getByText("Turn kid on first")).toBeInTheDocument();
+    expect(screen.queryByText("Turn kid on first")).toBeNull();
   });
 });
 
