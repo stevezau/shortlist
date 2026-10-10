@@ -55,7 +55,7 @@ the last group can be private, and that is where they differ most.
 <td><span class="yes">Yes</span><span class="q">hidden by sharing filters before the row is shown</span></td>
 <td><span class="yes">Yes</span><span class="q">only after the hiding is in place</span></td>
 <td><span class="yes">Yes</span><span class="q">built-in picker needs no key</span></td>
-<td><span class="yes">Yes</span><span class="q">v1.11.0, 10 Oct 2026</span></td>
+<td><span class="yes">Yes</span><span class="q">v1.11.1, 11 Oct 2026</span></td>
 <td class="compare__pick">each person should get rows nobody else can see</td>
 </tr>
 <tr>
