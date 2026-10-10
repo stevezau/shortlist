@@ -29,9 +29,6 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 - No test pins the `redact()` on plexapi error text in the shelf-ordering logs (`pipeline.py`,
   `_collection_order_phase` and the hub-ordering warning). The guard that did was removed with the shelf
   rewrite; the redaction itself is still in the code.
-- Two services still import `api.schemas` (a pure base-model module; moving it touches ~60 files). Engine
-  privates imported across modules: `rows._started_shows`, `rows._watched_titles`,
-  `pipeline._build_indexes` / `_converge_phase` / `_order_phase`, `seasons._CollectionReader`.
 - `test_pipeline_row_overrides.py` is ~2,500 lines because `TestPerRowOverrides` alone is ~1,980; a pure move
   cannot split a class.
 - `test_notifications_e2e` "dry run sends nothing" asserts no `notify.send` jobs; a regression that queues the
@@ -772,7 +769,7 @@ was sound but the conclusion was not: `model_config = ConfigDict(extra="allow")`
 **without** filtering it, so undeclared keys pass through untouched and the failure mode cannot occur.
 
 Now **65 routes / 115 schemas**, every model inheriting `PassthroughModel`
-(`shortlist/server/api/schemas.py`), which is the single home for that rule.
+(`shortlist/server/schema_base.py`), which is the single home for that rule.
 
 Two things worth remembering from doing it:
 

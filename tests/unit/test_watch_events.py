@@ -323,7 +323,7 @@ class TestTheSharedPathNeverCreditsAPersonalRow:
 
 
 class TestStartsCountEvenWhenTheFinishComesLater:
-    """Steve's case, end to end: watch 20% of something from your row, finish it four days later once
+    """The maintainer's case, end to end: watch 20% of something from your row, finish it four days later once
     the row has moved on. The START is what the row earned, so the START is what counts."""
 
     def _session(self, sessions, rating_key, started, *, offset, duration, ended=None):

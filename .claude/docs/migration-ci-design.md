@@ -953,20 +953,11 @@ review should read first.
   `compare_metadata` run against a non-SQLite target) treats it differently. Classified as "the bug,
   benign" above on that basis.
 - **Whether the maintainer's live database is stamped past every revision in §2's table.** The four
-  bug-shaped edits only did damage if `/config/shortlist/shortlist.db` had already run the old file.
-  For `0070` the commit message makes it certain; for `0078` and `0081` it is inferred from the
-  fast-loop workflow, not confirmed. Confirming it is a read-only `SELECT version_num FROM
-alembic_version` plus the dates — worth doing before deciding whether any of them still needs a
-  fix-forward migration today.
-- ~~**Whether `scripts/deploy.sh` or the ad-hoc rsync loop is the current deploy path.**~~
-  **Settled 2026-09-08 by inspecting the host.** Neither. The live `shortlist` container carries no
-  `com.centurylinklabs.watchtower.enable=false` label, so it was not created by `deploy.sh`, and
-  watchtower — `WATCHTOWER_SCHEDULE=0 30 4 * * *`, nightly at 04:30, not label-scoped, with
-  `shortlist` absent from `WATCHTOWER_DISABLE_CONTAINERS` — owns it. So the deploy path is: push to
-  `dev` → CI publishes `:dev` → watchtower recreates the container at the next 04:30. `deploy.sh` was
-  unused and has since been deleted. The pre-commit half of this design still stands: the
-  developer loop now runs migrations via a local `uvicorn` boot (see §4), which is even earlier than
-  the build it used to assume.
+  bug-shaped edits only did damage if the production database had already run the old file. For `0070`
+  the commit message makes it certain; for `0078` and `0081` it is inferred, not confirmed.
+- **The deploy path.** Settled: push to `dev` → CI publishes `:dev` → the container updater recreates the
+  container. The pre-commit half of this design still stands: the developer loop runs migrations via a
+  local `uvicorn` boot (see §4), earlier than any build.
 - **The literal in `test_the_fingerprint_does_not_depend_on_the_python_minor`** is written as `"0f1a…"`
   above. It must be generated on 3.12 when the file is written; I did not have a 3.12 interpreter
   available (this machine has 3.9.6 and 3.14.6, which is what the cross-version check used).

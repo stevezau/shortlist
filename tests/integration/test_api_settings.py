@@ -305,7 +305,7 @@ class TestSettingsValidation:
         import shortlist.engine.curator as curator_mod
 
         # A DIFFERENT provider is saved; the form is editing OpenAI with a not-yet-saved key. The picker
-        # must list what's in the request, so the dropdown updates before Save — the bug Steve hit.
+        # must list what's in the request, so the dropdown updates before Save — the bug the maintainer hit.
         client.put("/api/settings", json={"values": {"curator.provider": "anthropic", "curator.api_key": "sk-saved"}})
         captured: dict = {}
 
