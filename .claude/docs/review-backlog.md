@@ -19,6 +19,15 @@ reviewer who rediscovers a finding checks the history before fixing it again.
   person's history) exists and has never been run against real data. Every engine dial defaults off, so nothing
   is at risk until one is turned up.
 
+**Migrations:**
+
+- `0109_non_reusable_row_ids.py:78` stops the upgrade on one unparseable JSON value in `events.message`,
+  `jobs.payload/result`, `runs.stats` or an assistant JSON column. The app only ever writes these through
+  JSON serialisation, and production passed it; a hand-edited row would block startup until fixed. Fix:
+  skip and log the table/column (the id floor still holds via `sqlite_sequence` and the max-id checks);
+  the file is frozen, so amend with `check_migration_freeze.py --amend` and a reason. (Release review
+  for 1.11.0, LOW.)
+
 **Test and structure leftovers:**
 
 - `test_pipeline_row_overrides.py` is ~2,500 lines because `TestPerRowOverrides` alone is ~1,980; a pure move
