@@ -322,7 +322,14 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               kind: "text",
               placeholder: "http://your-host:32400",
             },
-            { key: "plex.token", label: "Plex token", kind: "password" },
+            {
+              key: "plex.token",
+              label: "Plex token",
+              kind: "password",
+              helpUrl:
+                "https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/",
+              helpLabel: "Find your token",
+            },
           ]}
         />
 <ConnectionCard

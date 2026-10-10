@@ -67,6 +67,8 @@ export type ConnectionField =
           values so a provider-specific URL can be chosen (e.g. the AI curator's key link). */
       helpUrl?:
         string | ((values: Record<string, string>) => string | undefined);
+      /** The link's text when the field holds something other than an API key. */
+      helpLabel?: string;
     }
   | {
       key: string;
@@ -411,7 +413,7 @@ export function ConnectionCard({
                         rel="noreferrer"
                         className="inline-flex items-center gap-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
                       >
-                        Get a key
+                        {("helpLabel" in field && field.helpLabel) || "Get a key"}
                         <ExternalLink className="h-3 w-3" aria-hidden="true" />
                       </a>
                     )}

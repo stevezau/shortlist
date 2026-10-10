@@ -191,8 +191,8 @@ class PlexTvClient:
         parental-controlled one from a plain one — so Shortlist skipped both, and a managed user with no
         age restriction never got the `label!=` excludes that hide other people's rows (issue #20).
 
-        `/api/home/users` carries `restrictionProfile` ("little_kid" | "older_kid" | "teen", absent for
-        none), which is exactly that distinction. It matters because Plex will not accept label
+        `/api/home/users` carries `restrictionProfile` ("little_kid" | "older_kid" | "teen", empty or absent
+        for none), which is exactly that distinction. It matters because Plex will not accept label
         restrictions at all while a preset is applied — "For Managed users, the restriction profile must
         be set to None if you wish to edit Rating and Label restrictions on the library types"
         (support.plex.tv/articles/204232573-restricting-the-shares/).

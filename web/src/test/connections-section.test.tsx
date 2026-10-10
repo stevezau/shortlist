@@ -470,6 +470,21 @@ describe("ConnectionsSection", () => {
     ).toHaveAttribute("href", "https://www.themoviedb.org/settings/api");
   });
 
+  it("points the Plex token field at Plex's token article", async () => {
+    renderSection({});
+    const card = screen.getByTestId("connection-plex");
+    await userEvent.click(
+      within(card).getByRole("button", { name: /set up/i }),
+    );
+
+    expect(
+      within(card).getByRole("link", { name: /find your token/i }),
+    ).toHaveAttribute(
+      "href",
+      "https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/",
+    );
+  });
+
   it("adds up the searches of a night's chained runs, not just the last run's", async () => {
     const night = (id: number, started: string, finished: string, searches: number) => ({
       id,

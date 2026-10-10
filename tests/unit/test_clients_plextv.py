@@ -97,6 +97,18 @@ class TestPlexTvClient:
         assert profiles[555000001] == ""  # the owner
 
     @respx.mock
+    def test_an_empty_profile_attribute_means_no_preset(self):
+        """Live plex.tv sends `restrictionProfile=""` on an unprofiled account rather than omitting it (read
+        2026-10-10); the fixture omits it. Both must read as "no preset", or a plain managed user is skipped."""
+        xml = '<MediaContainer><User id="555000300" restricted="1" restrictionProfile=""/>'
+        xml += '<User id="555000200" restricted="1" restrictionProfile="little_kid"/></MediaContainer>'
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(200, text=xml))
+
+        profiles = self._client().home_restriction_profiles()
+
+        assert profiles == {555000300: "", 555000200: "little_kid"}
+
+    @respx.mock
     def test_the_profile_lands_on_the_right_user_through_list_users(self):
         """The JOIN is the load-bearing step, and it is invisible if the two endpoints disagree about
         the id space. With disjoint ids every other test still passes while the enrichment matches

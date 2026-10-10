@@ -26,28 +26,12 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 
 **Test and structure leftovers:**
 
-- No test pins the `redact()` on plexapi error text in the shelf-ordering logs (`pipeline.py`,
-  `_collection_order_phase` and the hub-ordering warning). The guard that did was removed with the shelf
-  rewrite; the redaction itself is still in the code.
 - `test_pipeline_row_overrides.py` is ~2,500 lines because `TestPerRowOverrides` alone is ~1,980; a pure move
   cannot split a class.
-- `test_notifications_e2e` "dry run sends nothing" asserts no `notify.send` jobs; a regression that queues the
-  outcome event after the run finishes could still pass.
-- Web absence assertions with no positive signal stay on a flush (connections-section ×2,
-  row-shelf-placement re-pin, run-detail foreign SSE, connection-card `setTimeout(0)` tails).
-- `tests/fixtures/README.md`: one claim is unverified (`plextv_home_users.xml.txt` says an unprofiled managed
-  account OMITS `restrictionProfile`; live plex.tv returns it present and empty on every account, and the
-  parser treats both as "none"). `pms_watched_shows.xml.txt`'s `lastViewedAt` values are invented (its header
-  says so). The seven `curator_*` LLM replies are hand-written, not recordings; the four
-  share-filter/collection measurement logs need writes to re-check.
-
-**Copy-audit leftovers:**
-
-- The Plex card's "Plex token" field has no "where do I get this" link, unlike TMDB/MDBList/Exa. It is normally
-  filled by the wizard's PIN flow, so it only bites someone re-entering it by hand.
-- `JobDetail` renders raw result keys ("Asked to" + a JSON blob, then `fixed`/`orphans`/`demoted` verbatim).
-- Backend job-catalogue copy lives in `services/jobs.py`, not the SPA — the one place a copy pass over `web/`
-  will always miss.
+- A full run reports two unclosed loopback sockets from `test_assistant_mcp_tool_matrix.py`; they do not
+  reproduce when the file runs alone, so the leaking test is not yet identified.
+- Every `TestPlexRatingsEndToEnd` test in `test_engine_vs_fake.py` costs ~10.5s; a shared fixture would
+  likely cut most of it.
 
 ---
 
@@ -70,6 +54,14 @@ Owner decisions and accepted risks. Do not change these without asking.
 - A person's rows sharing titles is accepted (2026-09-23).
 - `ARR_STATUS_LABELS` keeps "Not monitored", Sonarr/Radarr's own word: matching the Arr's vocabulary is how the
   owner finds the toggle there.
+- Migrations `0063` and `0065` bind a `datetime` to SQLite, which Python 3.12 warns about (17 warnings in
+  `test_migrations.py`). The files are frozen (`frozen_migrations.txt`); the value they write is correct.
+- Pages are titled "Users" while body copy says "person/people": "Users" is the page's name.
+- ~25 arbitrary font sizes (`text-[13px]` and others) sit outside the Tailwind scale; a design call, not a defect.
+- Fixture caveats that are stated in the files themselves: `pms_watched_shows.xml.txt`'s `lastViewedAt` values
+  are invented, the seven `curator_*` LLM replies are hand-written, and the four share-filter/collection
+  measurement logs need live writes to re-check.
+- Job-catalogue copy lives in `services/jobs.py`, not the SPA; a copy pass over `web/` alone will miss it.
 - The two sections below: an unobserved race, and an accepted data gap.
 
 

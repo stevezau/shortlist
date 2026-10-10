@@ -6,21 +6,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { formatDate, timeAgo } from "@/lib/format";
 import { isInFlight } from "@/lib/job-activity";
+import { fieldRows } from "@/lib/job-fields";
 import { jobDuration, jobStatusLabel, jobStatusTone } from "@/lib/job-status";
 import type { Job } from "@/lib/types";
 
 /** What it was asked to do, what came back, and why it failed — so a failure is diagnosable here
  *  rather than in the container log. */
 export function JobDetail({ job }: { job: Job }) {
-  const rows: [string, string][] = [];
-  if (Object.keys(job.payload ?? {}).length) {
-    rows.push(["Asked to", JSON.stringify(job.payload)]);
-  }
-  for (const [key, value] of Object.entries(job.result ?? {})) {
-    if (key === "detail") continue; // already the summary line
-    const rendered = Array.isArray(value) ? value.join(", ") : String(value);
-    if (rendered) rows.push([key, rendered]);
-  }
+  const rows: [string, string][] = [
+    ...fieldRows(job.payload).map(([label, value]): [string, string] => [
+      `Asked: ${label.toLowerCase()}`,
+      value,
+    ]),
+    ...fieldRows(job.result, { skipHidden: true }),
+  ];
   // A job back in `queued` after a failure still carries the timestamps of the attempt BEFORE this
   // one — the server never clears them, because `finished_at` is also the backoff clock. Labelling
   // those "Started"/"Took" would date work that has not begun, so say which attempt they describe.
@@ -43,10 +42,10 @@ export function JobDetail({ job }: { job: Job }) {
         </p>
       )}
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-        {rows.map(([label, value]) => (
-          <div key={label} className="contents">
+        {rows.map(([label, value], index) => (
+          <div key={`${label}-${index}`} className="contents">
             <dt className="text-muted-foreground">{label}</dt>
-            <dd className="break-all font-mono text-xs">{value}</dd>
+            <dd className="break-words text-xs">{value}</dd>
           </div>
         ))}
       </dl>
