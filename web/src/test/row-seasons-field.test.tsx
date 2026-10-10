@@ -446,6 +446,27 @@ describe("RowSeasonsField", () => {
     focus.mockRestore();
   });
 
+  it("unticks a deleted season only once the rows list has caught up, so the row never looks edited", async () => {
+    mocks.deleteSeason.mockResolvedValue(undefined);
+    mocks.listCollections.mockResolvedValueOnce([]);
+    let rowsCaughtUp: (rows: never[]) => void = () => {};
+    mocks.deleteSeason.mockImplementation(() => {
+      mocks.listCollections.mockReturnValue(new Promise((resolve) => (rowsCaughtUp = resolve)));
+      return Promise.resolve(undefined);
+    });
+    const onChange = renderField({ ...ON, seasons: ["thanksgiving", "christmas"] }, { withRowsList: true });
+    await waitFor(() => expect(mocks.listCollections).toHaveBeenCalledTimes(1));
+    await userEvent.click(await screen.findByRole("button", { name: "Edit Thanksgiving" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Delete season" }));
+    const confirm = await screen.findByRole("dialog", { name: "Delete “Thanksgiving”?" });
+    await userEvent.click(within(confirm).getByRole("button", { name: "Delete season" }));
+
+    await waitFor(() => expect(mocks.listCollections).toHaveBeenCalledTimes(2));
+    expect(onChange).not.toHaveBeenCalledWith({ seasons: ["christmas"] });
+    rowsCaughtUp([]);
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith({ seasons: ["christmas"] }));
+  });
+
   it("gives the server's reason when a count fails, and Settings rather than Retry for a missing TMDB key", async () => {
     mocks.previewSeason.mockRejectedValue(new ApiError(503, "Add a TMDB API key in Settings first."));
     renderField(ON);

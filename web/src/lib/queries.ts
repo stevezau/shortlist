@@ -689,18 +689,20 @@ export function useLibrarySearch(q: string) {
   return useSeasonSearch("library", q, api.searchLibrary);
 }
 
-/** After any season is saved or deleted: the catalogue, the presets still on offer, and the rows —
- *  a delete unticks the season from every row that had it. The catalogue and presets are awaited, so a
- *  caller that ticks the new season reads a catalogue that already has it and no card offers it twice.
- *  The rows are not: building the list is the server's slowest read, and while a run is going it held
- *  the save's spinner for seconds. */
-function useInvalidateSeasons() {
+/** After any season is saved or deleted: the catalogue, the presets still on offer, and the rows.
+ *  The catalogue and presets are always awaited, so a caller that ticks the new season reads a catalogue
+ *  that already has it and no card offers it twice. The rows are awaited only after a delete, which
+ *  unticks the season from every row that had it: the editor compares its form with the saved row, and
+ *  a stale one would show the deletion as an unsaved change. A save changes no row, and building the
+ *  list is the server's slowest read (it held the save's spinner for seconds while a run was going). */
+function useInvalidateSeasons({ awaitRows = false }: { awaitRows?: boolean } = {}) {
   const queryClient = useQueryClient();
   return () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+    const rows = queryClient.invalidateQueries({ queryKey: queryKeys.collections });
     return Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.seasons }),
       queryClient.invalidateQueries({ queryKey: queryKeys.seasonPresets }),
+      awaitRows ? rows : undefined,
     ]);
   };
 }
@@ -723,7 +725,7 @@ export function useUpdateSeason() {
 }
 
 export function useDeleteSeason() {
-  const invalidate = useInvalidateSeasons();
+  const invalidate = useInvalidateSeasons({ awaitRows: true });
   return useMutation({
     mutationFn: (slug: string) => api.deleteSeason(slug),
     onSuccess: invalidate,
