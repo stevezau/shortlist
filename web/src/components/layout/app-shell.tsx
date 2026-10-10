@@ -62,8 +62,7 @@ const navLinkIdleClass = "text-muted-foreground hover:bg-elevated hover:text-for
  * What the rail says beside its items, from answers the app already has.
  *
  * The Rows and Users counts fetch on first render (each shares its page's cache entry), so the
- * numbers are there before anyone opens either page. The Users list used to stay cache-only because
- * `/api/users` ran two queries per person; it is now one grouped query per metric, so it is cheap
+ * numbers are there before anyone opens either page. `/api/users` is one grouped query per metric, so it is cheap
  * enough to load with the app. The privacy status and settings are fetched too (the
  * privacy one is held for five minutes — see `usePrivacyGlance`), because a warning that only appears after visiting the page it warns about is
  * no warning.
@@ -84,10 +83,9 @@ function useNavBadges() {
 
 /** Help, and one door for everything that goes wrong.
  *
- *  "Report a bug" and "Copy diagnostics" used to sit here as two separate actions, which asked the
- *  person to know that a bug report wants diagnostics attached and that the copy button is where
- *  they come from. Both now live on the "Have an issue?" page, along with the checks that answer
- *  most reports before they are filed. */
+ *  "Report a bug" and "Copy diagnostics" live on the "Have an issue?" page, not here: a bug report
+ *  wants diagnostics attached, and that page puts both together with the checks that answer most
+ *  reports before they are filed. */
 export function HelpLinks() {
   return (
     <>
@@ -160,7 +158,7 @@ function SessionFooter() {
 }
 
 /** A star and a coffee, visible in the rail's bottom block beside Help — never behind an About menu
- *  (owner decision, design refresh 2026-10-03). Only the icons take colour: enough to be seen,
+ *  (owner decision). Only the icons take colour: enough to be seen,
  *  while the words stay as quiet as their neighbours. Still not among the main nav items, and never
  *  floating over the page: people self-host to get away from being sold to, and a donate prompt
  *  that follows them around costs more goodwill than it raises. Exported for its test. */

@@ -4,7 +4,7 @@ import { CronInput } from "@/components/cron-input";
 import { Segmented } from "@/components/segmented";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { cronFromTime, isPresetCron, timeFromCron } from "@/lib/format";
+import { cronFromTime, isPresetCron, timeFromCron } from "@/lib/cron";
 
 type Mode = "nightly" | "weekly" | "custom" | "off";
 

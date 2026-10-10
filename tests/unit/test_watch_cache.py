@@ -19,6 +19,7 @@ from shortlist.engine.models import MediaType, WatchedItem
 from shortlist.server.db.models import User, WatchedTitle, WatchSyncState
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.watch_cache import CURSOR_OVERLAP, WatchCache
+from tests.db_helpers import disposing_engine
 
 SECTION = "1"
 
@@ -26,7 +27,8 @@ SECTION = "1"
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    return make_session_factory(make_engine(tmp_path))
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 @pytest.fixture
@@ -115,7 +117,7 @@ def sync_pms(
     This models the IDEAL reader. Whether the real `PlexClient.watched_titles` can actually deliver
     that coverage — and correctly refuses to claim it when it cannot — is the contract between the
     client and this cache, and is covered against real HTTP in
-    `test_clients.py::TestWatchedWindowCoverage`.
+    `test_clients_watched.py::TestWatchedWindowCoverage`.
     """
 
     def read(since):

@@ -4,11 +4,12 @@ import { TitlePoster } from "@/components/title-poster";
 import { provenanceLabel } from "@/lib/pick-provenance";
 import type { Pick } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { coarseHitArea } from "@/lib/hit-area";
 
 /**
  * The seed credit, appended only when the reason has not already named it.
  *
- * The engine's own reason usually names the seed — "Because you watched drama like Movie 08" — so
+ * The engine's own reason usually names the seed — "Because you watched Movie 08 — more drama" — so
  * appending "· inspired by Movie 08" restated the first clause on the same line.
  *
  * Matched on WORD BOUNDARIES, not with `includes`: a bare substring test suppresses the credit for
@@ -67,14 +68,12 @@ export function PickList({
                 sits on the poster's corner instead of taking its own 20px column, which is what
                 buys the title enough width to read at 320px.
 
-                Amber on the top pick alone. Painted on every rank it was chrome — #1 and #15 read
-                identically — and the engine's own ordering, the one fact this list exists to show,
-                was carried by nothing but the digits. */}
+                Neutral on every rank: amber is reserved for the one action on a screen. */}
             <span
               className={cn(
                 "absolute left-0 top-0 rounded-br rounded-tl bg-background/90 px-1 text-xs font-semibold",
                 "sm:static sm:w-5 sm:shrink-0 sm:bg-transparent sm:px-0 sm:pt-0.5 sm:text-sm",
-                pick.rank === 1 ? "text-primary" : "text-muted-foreground",
+                "tabular-nums text-muted-foreground",
               )}
             >
               #{pick.rank}
@@ -86,7 +85,7 @@ export function PickList({
                 — {pick.reason}
                 {seedNote(pick)}
               </span>
-              {/* Where it came from, on its own line: "why is this here?" was previously
+              {/* Where it came from, on its own line: "why is this here?" is otherwise
                   unanswerable without reading the logs. */}
               {provenanceLabel(pick) ? (
                 <span className="block text-xs text-muted-foreground/80">
@@ -101,7 +100,7 @@ export function PickList({
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+          className={cn("text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none", coarseHitArea)}
           aria-expanded={expanded}
         >
           {expanded ? "Show fewer" : `Show all ${ordered.length} (+${hidden})`}

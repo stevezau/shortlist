@@ -4,7 +4,7 @@ No real Plex server, no network. The app runs with a temp /config, its Plex sett
 the fake, and Playwright drives a browser against it. Run with `pytest -m e2e`
 (needs `playwright install chromium` once, and a built SPA: `pnpm -C web build`).
 
-Three boundaries are faked so the suite never touches the network:
+Two boundaries are faked so the suite never touches the network:
 - PMS + plex.tv          -> tests/fakes/fake_plex.py (real HTTP on loopback)
 - TMDB                   -> `_make_fake_tmdb` below (real HTTP on loopback)
 The Plex PIN endpoints are stubbed in the BROWSER instead (`stub_plex_pin`), because that is
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import socket
-import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -23,7 +22,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 
 pytest.importorskip("playwright.sync_api", reason="playwright is not installed")
@@ -35,6 +33,7 @@ from shortlist.server.db.models import Server, User
 from shortlist.server.main import create_app
 from shortlist.server.settings_store import SettingsStore
 from tests.fakes.fake_plex import FakeHistoryEntry, FakePlexState, make_fake_plex, make_fake_plextv, seed_state
+from tests.uvicorn_thread import UvicornThread
 
 #: The built SPA these tests drive, and the sources it is built from.
 _REPO = Path(__file__).resolve().parents[2]
@@ -110,30 +109,6 @@ def _free_port(preferred: int | None = None) -> int:
         return sock.getsockname()[1]
 
 
-class _ThreadedServer(threading.Thread):
-    def __init__(self, app, port: int):
-        super().__init__(daemon=True)
-        self._server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
-        self.port = port
-
-    def run(self) -> None:
-        self._server.run()
-
-    def wait_until_up(self, path: str, timeout_s: float = 20) -> None:
-        deadline = time.monotonic() + timeout_s
-        while time.monotonic() < deadline:
-            try:
-                httpx.get(f"http://127.0.0.1:{self.port}{path}", timeout=1)
-                return
-            except httpx.HTTPError:
-                time.sleep(0.1)
-        raise RuntimeError(f"server on port {self.port} never came up")
-
-    def stop(self) -> None:
-        self._server.should_exit = True
-        self.join(timeout=5)
-
-
 @dataclass
 class ShortlistApp:
     url: str
@@ -168,6 +143,35 @@ class ShortlistApp:
             **kwargs,
         )
 
+    def wait_for_setting(self, key: str, expected: object, timeout_s: float = 10) -> None:
+        """Block until ``/api/settings`` reports ``key == expected``.
+
+        The SPA autosaves, so a UI change is not in the database yet when the click returns. Wait on the
+        stored value itself, not a fixed pause: a pause is too long on a quiet host and too short on a busy one.
+        """
+        self._wait_until(
+            lambda: self.api("GET", "/api/settings").json().get(key), expected, f"setting {key}", timeout_s
+        )
+
+    def wait_for_row_field(self, slug: str, field: str, expected: object, timeout_s: float = 10) -> dict:
+        """Block until the row ``slug`` reports ``field == expected``; returns that row."""
+
+        def current() -> object:
+            rows = {c["slug"]: c for c in self.api("GET", "/api/collections").json()}
+            return rows.get(slug, {}).get(field)
+
+        self._wait_until(current, expected, f"row {slug!r} field {field}", timeout_s)
+        return {c["slug"]: c for c in self.api("GET", "/api/collections").json()}[slug]
+
+    @staticmethod
+    def _wait_until(read, expected: object, what: str, timeout_s: float) -> None:
+        deadline = time.monotonic() + timeout_s
+        value = read()
+        while value != expected and time.monotonic() < deadline:
+            time.sleep(0.1)
+            value = read()
+        assert value == expected, f"{what} never became {expected!r} (last read {value!r})"
+
     def wait_for_run(self, run_id: int, timeout_s: float = 120) -> dict:
         """Block until a run reaches a terminal state (runs execute as background tasks)."""
         deadline = time.monotonic() + timeout_s
@@ -190,8 +194,8 @@ def fake_plex() -> Iterator[tuple[str, str, FakePlexState]]:
     state = seed_state()
     # Plex's own port while capturing, so the wizard screenshot shows an address a reader
     # recognises. Ordinary runs stay ephemeral: parallel workers would otherwise all want 32400.
-    pms = _ThreadedServer(make_fake_plex(state), _free_port(32400 if os.environ.get("SHOTS_DIR") else None))
-    plextv = _ThreadedServer(make_fake_plextv(state), _free_port())
+    pms = UvicornThread(make_fake_plex(state), _free_port(32400 if os.environ.get("SHOTS_DIR") else None))
+    plextv = UvicornThread(make_fake_plextv(state), _free_port())
     pms.start()
     plextv.start()
     pms.wait_until_up("/identity")
@@ -363,6 +367,17 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
             "total_results": len(listing),
         }
 
+    # Declared before the two-segment catch-all below, which would answer it with a suggestion list.
+    @app.get("/movie/{tmdb_id}/keywords")
+    def movie_keywords(tmdb_id: int) -> dict:
+        """A film's tags, shaped as TMDB serves `/movie/{id}/keywords`: `keywords`, not `results`."""
+        tags = [
+            {"id": tag_id, "name": tag.name}
+            for tag_id, tag in FAKE_TMDB_TAGS.items()
+            if tmdb_id in tag.movies_in_library
+        ]
+        return {"id": tmdb_id, "keywords": tags}
+
     @app.get("/movie/{tmdb_id}/{endpoint}")
     def movie_suggestions(tmdb_id: int, endpoint: str) -> dict:
         return _suggest(movies, tmdb_id, "title")
@@ -394,7 +409,7 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
 @pytest.fixture(scope="session")
 def fake_tmdb(fake_plex) -> Iterator[str]:
     _, _, state = fake_plex
-    server = _ThreadedServer(_make_fake_tmdb(state), _free_port())
+    server = UvicornThread(_make_fake_tmdb(state), _free_port())
     server.start()
     server.wait_until_up("/configuration")
     yield f"http://127.0.0.1:{server.port}"
@@ -447,9 +462,9 @@ def reset_fake_plex(fake_plex) -> Iterator[FakePlexState]:
     yield state
 
 
-def _boot_app(config_dir: Path) -> tuple[FastAPI, _ThreadedServer]:
+def _boot_app(config_dir: Path) -> tuple[FastAPI, UvicornThread]:
     fastapi_app = create_app(config_dir=config_dir)
-    server = _ThreadedServer(fastapi_app, _free_port())
+    server = UvicornThread(fastapi_app, _free_port())
     server.start()
     server.wait_until_up("/api/system/health")
     # The PIN flow stashes the owner's Plex token server-side (it never goes to the browser);

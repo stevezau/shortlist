@@ -1,8 +1,7 @@
 ---
-title: "Schedules: when rows run"
+title: "Schedules: when Plex recommendation rows run"
 description: Every row runs on its own schedule. How to set it, how to write a custom one, and which background jobs matter.
 heading: Schedules and runs
-nav_order: 4
 ---
 
 ## Schedules
@@ -17,7 +16,7 @@ It lives with Jobs rather than in its own nav entry because "what background wor
 does it run" are two views of one thing. As separate pages, every job was listed twice and neither
 page could answer a whole question. `/schedule` still redirects here.
 
-Two jobs are worth knowing about there:
+These jobs are worth knowing about there:
 
 - **Sync watch history** re-reads every watched title in every library, every time it runs — and so
   does a run's own history top-up, so pressing Run now sees the same thing. Reading everything
@@ -43,6 +42,13 @@ Two jobs are worth knowing about there:
   to Plex, so its frequency picker offers **Off** where every other job offers **Daily**, and Off
   means off rather than "fall back to the default" the way every other blank cron does. **Check now**
   still works by hand with the schedule off.
+- **Show and hide rows for today** runs at midnight by default (`rows.visibility_cron`), and again
+  whenever you change which days or seasons a row appears in. It puts each row on or off Plex's shelves
+  to match its day schedule and seasons. A hidden row keeps its titles, so it comes straight back
+  without being built again, and everybody's privacy filters are re-merged before anything is shown.
+- **Pick new row themes** runs daily at 01:30 by default (`themes.rotate_cron`). It gives each person
+  on an AI row set to Explore their next theme, and changes nothing on Plex. Like **Check and fix rows
+  on Plex**, its frequency picker offers **Off**. See [AI and cost](ai.md).
 
 **Every row runs on its own schedule**. There is no single server-wide one. Open a row (Rows → edit)
 and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for

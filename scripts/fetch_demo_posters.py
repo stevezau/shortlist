@@ -78,7 +78,7 @@ def main() -> int:
             target.write_bytes(client.get(f"{TMDB_IMAGE}{poster}").content)
 
     have = len(list(OUT.glob("*.jpg")))
-    print(f"{have}/{len(wanted)} posters in {OUT.relative_to(Path.cwd())}")
+    print(f"{have}/{len(wanted)} posters in {OUT}")
     if missing:
         print("no poster found for: " + ", ".join(missing), file=sys.stderr)
     return 1 if missing else 0

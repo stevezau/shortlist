@@ -9,6 +9,14 @@ import type {
   JobStatus,
   ApiTokenCreated,
   ApiTokenStatus,
+  AssistantConsentFlow,
+  AssistantChangeReview,
+  AssistantCredentialCreated,
+  AssistantGrant,
+  AssistantDestination,
+  AssistantGrantCreate,
+  AssistantGrantUpdate,
+  AssistantStatus,
   NotificationsPage,
   WhatsNew,
   ArrOptions,
@@ -32,6 +40,8 @@ import type {
   WebPromptPreviewInput,
   SeasonPreview,
   SeasonPreviewInput,
+  HoldPreview,
+  HoldPreviewInput,
   TmdbTag,
   Theme,
   ThemeCapabilities,
@@ -57,6 +67,7 @@ import type {
   ArrStatus,
   RequestCandidate,
   RequestSendResult,
+  AcquisitionClaimsPage,
   Run,
   RunCreated,
   RunDetail,
@@ -79,7 +90,6 @@ import type {
   Session,
   Settings,
   SetupState,
-  SyncsInfo,
   TestableService,
   TitleMatch,
   UninstallResult,
@@ -228,6 +238,74 @@ export const api = {
 
   logout: (): Promise<void> => request("/api/auth/logout", { method: "POST" }),
 
+  // --- Assistant access (browser owner session only) ---
+  getAssistantStatus: (): Promise<AssistantStatus> =>
+    request("/api/assistant/status"),
+
+  getAssistantGrants: (): Promise<AssistantGrant[]> =>
+    request("/assistant/grants"),
+
+  getAssistantDestinations: (): Promise<AssistantDestination[]> =>
+    request("/assistant/destinations"),
+
+  createAssistantGrant: (body: AssistantGrantCreate): Promise<AssistantGrant> =>
+    request("/assistant/grants", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateAssistantGrant: (grantId: string, body: AssistantGrantUpdate): Promise<AssistantGrant> =>
+    request(`/assistant/grants/${encodeURIComponent(grantId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  issueAssistantCredential: (
+    grantId: string,
+    expiresInDays = 90,
+  ): Promise<AssistantCredentialCreated> =>
+    request(`/assistant/grants/${encodeURIComponent(grantId)}/credentials`, {
+      method: "POST",
+      body: JSON.stringify({ expires_in_days: expiresInDays }),
+    }),
+
+  revokeAssistantGrant: (grantId: string): Promise<{ revoked: boolean }> =>
+    request(`/assistant/grants/${encodeURIComponent(grantId)}/revoke`, {
+      method: "POST",
+    }),
+
+  removeAssistantGrant: (grantId: string): Promise<void> =>
+    request(`/assistant/grants/${encodeURIComponent(grantId)}`, {
+      method: "DELETE",
+    }),
+
+  beginAssistantConsent: (
+    body: Record<string, string>,
+  ): Promise<AssistantConsentFlow> =>
+    request("/assistant/oauth/authorize", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  decideAssistantConsent: (body: {
+    flow_id: string;
+    csrf_token: string;
+    approved: boolean;
+    grant_id: string | null;
+  }): Promise<{ redirect_to: string }> =>
+    request("/assistant/oauth/consent", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getAssistantChange: (changeId: string): Promise<AssistantChangeReview> =>
+    request(`/api/assistant/changes/${encodeURIComponent(changeId)}`),
+
+  approveAssistantChange: (changeId: string): Promise<Record<string, unknown>> =>
+    request(`/api/assistant/changes/${encodeURIComponent(changeId)}/approve`, {
+      method: "POST",
+    }),
+
   // --- Setup wizard ---
   /** Servers this account can see, each advertised address already probed for reachability. */
   getServers: (): Promise<PlexServer[]> => request("/api/setup/servers"),
@@ -375,12 +453,12 @@ export const api = {
   getUserHistory: (id: number): Promise<WatchItem[]> =>
     request(`/api/users/${id}/history`),
 
-  /** Search one person's cached watched set. Unlike `getUserHistory` this never touches Plex, so it
-   *  can search the whole set rather than the page on screen. */
   /** What this person did with the picks they were given: finished, part-watched, or abandoned. */
   getUserOutcomes: (id: number): Promise<UserPickOutcome[]> =>
     request(`/api/users/${id}/outcomes`),
 
+  /** Search one person's cached watched set. Unlike `getUserHistory` this never touches Plex, so it
+   *  can search the whole set rather than the page on screen. */
   getUserWatched: (
     id: number,
     { q, mediaType, library, limit }: WatchedFilters,
@@ -413,9 +491,9 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  /** Transfers that can still be undone. The undo used to be reachable only from the response of
-   *  the transfer that created it — so a timed-out request, a 503, or a page reload left a
-   *  completed destructive run with no way back. */
+  /** Transfers that can still be undone. The undo is not tied to the response of the
+   *  transfer that created it, so a timed-out request, a 503, or a page reload still leaves a way
+   *  back from a completed destructive run. */
   listWatchSnapshots: (): Promise<WatchSnapshot[]> =>
     request("/api/watching-account/snapshots"),
 
@@ -467,7 +545,7 @@ export const api = {
   /** Everything on a timer — rows and jobs together, for the Schedule page. */
   getSchedule: (): Promise<ScheduleResponse> => request("/api/schedule"),
 
-  /** Delete ALL run history (runs, per-user rows, picks — and thus the report). Irreversible. */
+  /** Delete run history and logs; keep saved picks and watch tracking. */
   clearRuns: (): Promise<{ deleted: number }> =>
     request("/api/runs", { method: "DELETE" }),
 
@@ -512,6 +590,9 @@ export const api = {
 
   // --- Settings ---
   getSettings: (): Promise<Settings> => request("/api/settings"),
+
+  /** Built-in default of every setting (no secrets), for the "Modified" markers. */
+  getSettingDefaults: (): Promise<Settings> => request("/api/settings/defaults"),
 
   /** PUT /api/settings — send only the keys being changed; the server merges. */
   putSettings: (values: Settings): Promise<Settings> =>
@@ -636,6 +717,11 @@ export const api = {
   getSeasonNextDate: (rule: DateRule): Promise<SeasonDate> =>
     request("/api/seasons/next-date", { method: "POST", body: JSON.stringify(rule) }),
 
+  /** Which movies waiting in the inbox these genres/tags would hold. Saves nothing; the first call can
+   *  take a few seconds while TMDB is read. */
+  previewHolds: (body: HoldPreviewInput): Promise<HoldPreview> =>
+    request("/api/requests/hold-preview", { method: "POST", body: JSON.stringify(body) }),
+
   /** TMDB tags whose name matches, each with how many films TMDB gives it. */
   getTmdbTags: (q: string): Promise<TmdbTag[]> =>
     request(`/api/seasons/tmdb-tags?q=${encodeURIComponent(q)}`),
@@ -683,22 +769,6 @@ export const api = {
       body: JSON.stringify({ version }),
     }),
 
-  /** The plain-text diagnostics bundle for bug reports (secrets-free). */
-  getDebugBundle: async (): Promise<string> => {
-    const response = await fetch(apiUrl("/api/system/debug"), {
-      headers: { Accept: "text/plain" },
-    });
-    if (!response.ok)
-      throw new ApiError(
-        response.status,
-        "Couldn't build the diagnostics bundle.",
-      );
-    return response.text();
-  },
-
-  /** When each sync last ran and when it next fires (Tools page). */
-  getSyncs: (): Promise<SyncsInfo> => request("/api/system/syncs"),
-
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
   getReport: (window: ReportWindow = "30"): Promise<EffectivenessReport> =>
     request(`/api/report?window=${window}`),
@@ -726,7 +796,6 @@ export const api = {
   syncWatched: (): Promise<{ started: boolean }> =>
     request("/api/report/sync", { method: "POST" }),
 
-  /** A library's managed collections — the candidate anchors for placing rows in the shelf. */
   /** A library's FOREIGN collections — ours are excluded server-side, because a Shortlist row is
    *  anchored by row slug rather than by title (a per-person row is one collection per person).
    *  `on_shelf` is whether it has a position on a Plex shelf at all: a collection that has none
@@ -835,6 +904,23 @@ export const api = {
     request("/api/requests/send", {
       method: "POST",
       body: JSON.stringify({ ids, dry_run: dryRun }),
+    }),
+
+  listAcquisitionClaims: (limit = 100, offset = 0): Promise<AcquisitionClaimsPage> =>
+    request(`/api/requests/acquisition-claims?limit=${limit}&offset=${offset}`),
+
+  releaseAcquisitionClaim: (
+    claimId: number,
+    reviewToken: string,
+    expectedStatus: "outcome_unknown" | "succeeded",
+  ): Promise<{ id: number; status: "released" }> =>
+    request(`/api/requests/acquisition-claims/${claimId}/release`, {
+      method: "POST",
+      body: JSON.stringify({
+        review_token: reviewToken,
+        expected_status: expectedStatus,
+        checked_destination: true,
+      }),
     }),
 
   rejectRequests: (ids: number[]): Promise<{ rejected: number }> =>
@@ -1000,8 +1086,6 @@ export const api = {
    *  `.txt` remains for anyone who wants only the pasteable part. */
   supportReportZipUrl: (): string => apiUrl("/api/support/report.zip"),
 
-  supportBundleUrl: (): string => apiUrl("/api/support/bundle.txt"),
-
   /** The pasteable report. Not `request()`: the response is text/plain. */
   getSupportBundle: async (): Promise<string> => {
     const response = await fetch(apiUrl("/api/support/bundle.txt"), {
@@ -1013,6 +1097,66 @@ export const api = {
     return response.text();
   },
 };
+
+/** One server-sent event from a row rename: a person's result, an error, or the final `done`. */
+export interface RenameEvent {
+  user?: string;
+  display_name?: string;
+  old?: string;
+  new?: string;
+  libraries?: string[];
+  library?: string;
+  /** Plex only lets a new collection share this name, so the row's next run rebuilds it under it. */
+  next_run?: boolean;
+  done?: boolean;
+  total?: number;
+  /** With `user`: that one person's collection could not be renamed, and the rest carry on. */
+  error?: string;
+}
+
+/**
+ * Rename a row's collections on Plex and read the progress stream, calling `onEvent` for each event.
+ *
+ * `onEvent` returns `false` to stop reading. Throws if the request fails or the server refuses it.
+ */
+export async function streamRename(
+  collectionId: number,
+  body: { name_template: string; old_template: string },
+  onEvent: (event: RenameEvent) => boolean | void,
+): Promise<void> {
+  const response = await fetch(apiUrl(`/api/collections/${collectionId}/rename`), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-shortlist-csrf": "1",
+    },
+    credentials: "include",
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) throw new Error(`Server returned ${response.status}`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() ?? "";
+    for (const chunk of chunks) {
+      const dataLine = chunk.split("\n").find((l) => l.startsWith("data: "));
+      if (!dataLine) continue;
+      // One malformed chunk must not abort the display: the server is still renaming on Plex.
+      let event: RenameEvent;
+      try {
+        event = JSON.parse(dataLine.slice(6));
+      } catch {
+        continue;
+      }
+      if (onEvent(event) === false) return;
+    }
+  }
+}
 
 /** URL for the shared SSE stream (used by lib/sse.ts only). */
 export function eventsUrl(): string {

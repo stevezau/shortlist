@@ -45,6 +45,8 @@ class TestRotateSurvivesAVanishingFile:
             mp.setattr(Path, "unlink", vanishing)
             backup_mod._rotate(tmp_path, max_keep=2)  # must not raise
 
+        assert len(list(tmp_path.glob("shortlist_*.db"))) == 2, "rotation stopped at the vanished file"
+
     def test_it_still_deletes_everything_it_can(self, tmp_path: Path):
         _make_backups(tmp_path, 5)
 
@@ -121,12 +123,12 @@ class TestARestoreNeverOverwritesTheOnlyCopy:
         import sqlite3
 
         chosen = self._install(tmp_path)
-        with sqlite3.connect(tmp_path / "shortlist.db") as con:
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con, con:
             con.execute("CREATE TABLE only_in_the_live_db (id INTEGER PRIMARY KEY)")
 
         assert backup_mod.restore_backup(tmp_path, chosen.name) is True
 
-        with sqlite3.connect(tmp_path / "shortlist.db") as con:
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as con, con:
             tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "only_in_the_live_db" not in tables, "the chosen backup did not replace the live database"
 
@@ -444,3 +446,19 @@ class TestRestoreChecksIntegrity:
 
         assert not (tmp_path / "staged.db-wal").exists()
         assert not (tmp_path / "staged.db-shm").exists()
+
+
+class TestBackupNames:
+    """`config_dir / "backups" / name` with an unvalidated name escapes the directory, and restore
+    then copies whatever it finds over the database."""
+
+    @pytest.mark.parametrize(
+        "name",
+        ["../../etc/passwd", "../shortlist.db", "sub/dir.db", "..\\..\\windows", "/etc/passwd", "..", ""],
+    )
+    def test_traversal_is_refused(self, name):
+        with pytest.raises(ValueError):
+            backup_mod.safe_backup_name(name)
+
+    def test_a_real_backup_name_passes(self):
+        assert backup_mod.safe_backup_name("shortlist_20260729_002652_pre-migration.db").endswith(".db")

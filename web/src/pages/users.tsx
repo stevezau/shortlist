@@ -42,10 +42,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { noRequestSource } from "@/lib/row-kinds";
 import { rowsNotHidden, rowsNotTheirs } from "@/lib/privacy-attention";
 import { profileName, USER_TYPE_LABEL } from "@/lib/user-profile";
+import { profileBlocksRows, userState, type UserState } from "@/lib/user-state";
 import type { AccountPrivacy, Collection, PrivacyStatus, RowSources, User } from "@/lib/types";
-import { timeAgo } from "@/lib/format";
+import { capitalise, formatDate, timeAgo } from "@/lib/format";
+import { dayTime } from "@/lib/when";
 import { coarseHitArea } from "@/lib/hit-area";
 import {
   queryKeys,
@@ -57,19 +60,7 @@ import {
   usePatchUser,
   useUsers,
 } from "@/lib/queries";
-
-/** The one state vocabulary for a person (design refresh, app-users): On, Paused or Off. */
-type UserState = "on" | "paused" | "off";
-
-/**
- * What a run will do for this person. A restriction profile is Off whatever `enabled` says: Plex
- * refuses hide rules for a profiled account, so the engine builds no row for it — which is also what
- * the person's switch shows (`checked={enabled && !restriction_profile}`).
- */
-function userState(user: User): UserState {
-  if (!user.enabled || user.restriction_profile) return "off";
-  return user.prefs.paused ? "paused" : "on";
-}
+import { personName } from "@/lib/user-names";
 
 function needsAttention(user: User): boolean {
   return Boolean(user.restriction_profile || user.unhidden_rows || user.departed);
@@ -95,17 +86,19 @@ const STATE_LABEL: Record<UserState, string> = { on: "On", paused: "Paused", off
 
 function stateTitle(user: User, state: UserState): string {
   if (user.departed) return "Plex no longer lists this account, so Shortlist switched them off and removed their rows.";
-  if (user.restriction_profile) {
-    return `Plex's ${profileName(user)} restriction profile is set on this account, so Shortlist builds no row for it.`;
+  if (profileBlocksRows(user)) {
+    return `Plex's ${profileName(user)} restriction profile is set on this account, so Shortlist builds no new rows for it.`;
   }
   if (state === "paused") return "Their rows are off Home and Recommended and stop updating until you resume them.";
-  if (state === "off") return "Shortlist builds no rows for them, and their rows are off Plex.";
+  if (state === "off") return "Shortlist builds no new rows for them.";
   return "Their rows run on each row's schedule.";
 }
 
+/** Paused and Off say something the row's switch can't; On is exactly what the switch already shows. */
 function StatePill({ user }: { user: User }) {
   const state = userState(user);
-  const variant = state === "on" ? "success" : state === "paused" ? "warning" : "outline";
+  if (state === "on") return null;
+  const variant = state === "paused" ? "warning" : "outline";
   return (
     <Badge
       variant={variant}
@@ -150,28 +143,33 @@ const PRIVACY_WORDS: Record<string, { label: string; dot: string }> = {
 
 type PrivacyQuery = { data?: PrivacyStatus; isPending: boolean; isError: boolean; error: unknown };
 
-/** "can see 3 rows…" opens a cell of its own here, so it starts with a capital. */
-function capitalise(text: string): string {
-  return text.charAt(0).toUpperCase() + text.slice(1);
+/** Rows on the server this person can see that are not theirs; 0 until the live reading is in. */
+function exposedRows(user: User, privacy: PrivacyQuery): number {
+  const account = privacy.data?.accounts.find((a) => a.user_id === user.id);
+  return account && privacy.data ? rowsNotHidden(account, privacy.data) : 0;
 }
 
 function PrivacyCell({ user, privacy }: { user: User; privacy: PrivacyQuery }) {
   const account: AccountPrivacy | undefined = privacy.data?.accounts.find((a) => a.user_id === user.id);
   // The same figure, in the same words, as the Dashboard's Privacy cell and the Privacy page's
-  // "Hides X of Y rows" (`rowsNotHidden`) — never the run's per-library collection count. It sits under
-  // the state that explains it and leads to the remedy: a profiled account's own page says how to clear
-  // the profile; anything else is the Privacy page's to explain.
-  const exposed = account && privacy.data ? rowsNotHidden(account, privacy.data) : 0;
-  const name = user.display_name || user.username;
+  // "Hides X of Y rows" (`rowsNotHidden`) — never the run's per-library collection count. The cell
+  // is tinted by the row (see `exposedRows`) and leads to the remedy: a profiled account's own page
+  // says how to clear the profile; anything else is the Privacy page's to explain.
+  const exposed = exposedRows(user, privacy);
+  const name = personName(user);
   const exposure =
     exposed > 0 ? (
-      <Link
-        to={account?.state === "refused_by_plex" ? `/users/${user.id}` : "/privacy"}
-        aria-label={`${name} ${rowsNotTheirs(exposed)} — how to fix it`}
-        className="mt-0.5 block text-sm text-accent-foreground underline underline-offset-4"
-      >
-        {capitalise(rowsNotTheirs(exposed))}
-      </Link>
+      <p className="mt-0.5" title={capitalise(rowsNotTheirs(exposed))}>
+        <span className="font-medium">Sees {exposed} {exposed === 1 ? "row" : "rows"} not theirs</span>
+        {" · "}
+        <Link
+          to={account?.state === "refused_by_plex" ? `/users/${user.id}` : "/privacy"}
+          aria-label={`${name} ${rowsNotTheirs(exposed)} — how to fix it`}
+          className="whitespace-nowrap underline underline-offset-2"
+        >
+          {account?.state === "refused_by_plex" ? "Fix in Plex →" : "See Privacy →"}
+        </Link>
+      </p>
     ) : null;
 
   if (privacy.isPending) return <Skeleton className="h-5 w-32" />;
@@ -222,7 +220,7 @@ function RowsCell({ user, collections }: { user: User; collections: CollectionsQ
   }
   if (userState(user) === "off") {
     return (
-      <span data-testid="user-rows" title="Off: no rows are built for them">
+      <span data-testid="user-rows" title="Off: no new rows are built for them">
         —
       </span>
     );
@@ -255,24 +253,15 @@ function PicksCell({ user }: { user: User }) {
   );
 }
 
-/** "02:30 today", "02:30 yesterday", "28 Sept, 02:30" — when the last run that included the person finished. It counts dry and cancelled runs too, so it must never be labelled as a build. */
+/** "Today 02:30", "Yesterday 02:30", "Fri 9 Oct 02:30" — when the last run that included the person finished. It counts dry and cancelled runs too, so it must never be labelled as a build. */
 function builtAt(iso: string | null): string {
-  if (!iso) return "Never";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
-  const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === today.toDateString()) return `${time} today`;
-  if (date.toDateString() === yesterday.toDateString()) return `${time} yesterday`;
-  return date.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return iso ? dayTime(iso) : "Never";
 }
 
 /** A data cell's own label on a phone, where the person is a card and there are no column headers. */
 function CellLabel({ children }: { children: ReactNode }) {
   return (
-    <span className="mb-0.5 block text-xs font-semibold uppercase tracking-wide text-faint-foreground xl:hidden">
+    <span className="mb-0.5 block text-xs font-semibold uppercase tracking-wide text-faint-foreground lg:hidden">
       {children}
     </span>
   );
@@ -345,10 +334,6 @@ function RequestsCell({
   );
 }
 
-function noRequestSource(data: RowSources): boolean {
-  return [data.overseerr, data.radarr, data.sonarr].every((s) => s === "off");
-}
-
 /** Why the Requests column is blank after a failed read. A failed REFETCH still has the last answer,
  *  which says which sources are configured — so an install with only Radarr/Sonarr is not told that
  *  an Overseerr it never connected is down. With no answer at all, nothing can be blamed by name. */
@@ -400,7 +385,7 @@ export function UsersPage() {
     return matchesName && matchesStatus(user, status);
   }).sort((a, b) => sort === "history" ? b.history_depth - a.history_depth :
     sort === "last-run" ? (b.last_run_at ?? "").localeCompare(a.last_run_at ?? "") :
-    (a.display_name || a.username).localeCompare(b.display_name || b.username));
+    (personName(a)).localeCompare(personName(b)));
   const navigate = useNavigate();
   const patchUser = usePatchUser();
   const toggleSelected = (id: number) => setSelected((before) => { const next = new Set(before); if (next.has(id)) next.delete(id); else next.add(id); return next; });
@@ -433,7 +418,7 @@ export function UsersPage() {
    * decision. This names the person and the consequence, up front, and resolves in place.
    */
   const toggleUser = (user: User, enabled: boolean) => {
-    const who = user.display_name || user.username;
+    const who = personName(user);
     const id = `user-toggle-${user.id}`;
     toast.loading(enabled ? `Turning on ${who}…` : `Turning off ${who}…`, {
       id,
@@ -506,25 +491,6 @@ export function UsersPage() {
         subtitle="Who gets a row, whether it’s private, and whether they watch it."
         actions={
           <>
-            <div className="relative w-full sm:w-60" role="search" aria-label="Find a user">
-              <Search aria-hidden="true" className="absolute left-3 top-2.5 size-4 text-faint-foreground" />
-              <Input type="search" aria-label="Search users" placeholder="Find a person…" value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" />
-            </div>
-            <Segmented<StatusFilter>
-              joined
-              ariaLabel="Show"
-              value={status}
-              onChange={setStatus}
-              options={STATUS_FILTERS.map(({ value, label }) => ({
-                value,
-                label: (
-                  <>
-                    {label}
-                    <span className="ml-1.5 tabular-nums opacity-70">{users.filter((user) => matchesStatus(user, value)).length}</span>
-                  </>
-                ),
-              }))}
-            />
             {/* Neither the trigger nor its items carry `loading` — they merely OPEN a confirmation; the
                 mutation (and its loading state) belongs to the confirm button inside it. */}
             <HeaderPopover open={allActionsOpen} onOpenChange={setAllActionsOpen} align="right" label="All user actions" width={192} className="grid gap-2 p-2" trigger={<Button variant="outline">All users…</Button>}>
@@ -580,7 +546,7 @@ export function UsersPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Remove {removing?.display_name || removing?.username}?
+              Remove {removing && personName(removing)}?
             </DialogTitle>
             <DialogDescription>
               Plex no longer has this account, so their rows are already gone
@@ -605,7 +571,7 @@ export function UsersPage() {
                 removeUser.mutate(target.id, {
                   onSuccess: (result) => {
                     toast.success(
-                      `${target.display_name || target.username} removed — ${result.picks_deleted} picks and ${result.runs_deleted} runs dropped`,
+                      `${personName(target)} removed — ${result.picks_deleted} picks and ${result.runs_deleted} runs dropped`,
                     );
                     setRemoving(null);
                   },
@@ -716,6 +682,28 @@ export function UsersPage() {
                 </span>
               </p>
             )}
+            <div role="group" aria-label="Filter and sort users" className="flex flex-wrap items-center gap-3">
+            <div className="relative w-full sm:w-60" role="search" aria-label="Find a user">
+              <Search aria-hidden="true" className="absolute left-3 top-2.5 size-4 text-faint-foreground" />
+              <Input type="search" aria-label="Search users" placeholder="Find a person…" value={search} onChange={(event) => setSearch(event.target.value)} className="pl-9" />
+            </div>
+            <Segmented<StatusFilter>
+              joined
+              ariaLabel="Show"
+              value={status}
+              onChange={setStatus}
+              options={STATUS_FILTERS.map(({ value, label }) => ({
+                value,
+                label: (
+                  <>
+                    {label}
+                    <span className="ml-1.5 tabular-nums opacity-70">{users.filter((user) => matchesStatus(user, value)).length}</span>
+                  </>
+                ),
+              }))}
+            />
+              <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">Sort by<select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground"><option value="name">Name A–Z</option><option value="history">Most watch history</option><option value="last-run">Last run</option></select></label>
+            </div>
             <div role="group" aria-label="User list controls" className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 text-xs text-muted-foreground">
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 {selecting ? (
@@ -732,7 +720,6 @@ export function UsersPage() {
                 <p role="status">Showing {visibleUsers.length} of {list.length} people</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-2">Sort by<select aria-label="Sort users" value={sort} onChange={(event) => setSort(event.target.value)} className="rounded-md border bg-background px-2 py-1.5 text-xs"><option value="name">Name A–Z</option><option value="history">Most watch history</option><option value="last-run">Last run</option></select></label>
                 {/* Always here, and deliberately not behind the owner note — that note is dismissible,
                     and dismissing "you see everyone's rows" is how people say "yes, I know" rather than
                     "I never want the tool again". Before this, hiding the note hid the only way back to
@@ -762,18 +749,18 @@ export function UsersPage() {
             ) : (
               <div className="overflow-hidden rounded-xl border bg-card">
                 <Table>
-                  <TableHeader className="hidden xl:table-header-group">
-                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead className="pr-8 text-right">Picks watched (30 days)</TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
+                  <TableHeader className="hidden lg:table-header-group">
+                    <TableRow className="hover:bg-transparent"><TableHead className="pl-4">Person</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Rows</TableHead><TableHead className="text-right lg:pr-6">Picks watched<span className="block text-xs font-normal text-faint-foreground">30 days</span></TableHead><TableHead>Privacy</TableHead><TableHead>Last run</TableHead><TableHead className="pr-4 text-right"><span className="sr-only">Shortlist row on or off</span></TableHead></TableRow>
                   </TableHeader>
-                  <TableBody className="grid xl:table-row-group">
-                    {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 xl:table-row xl:p-0 [&>td]:p-0 xl:[&>td]:px-3 xl:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
-                      <TableCell className="min-w-0 xl:w-[34%] xl:pl-4">
+                  <TableBody className="grid lg:table-row-group">
+                    {visibleUsers.map((user) => <TableRow key={user.id} className={`grid grid-cols-2 gap-x-4 gap-y-3 px-4 py-4 lg:table-row lg:p-0 [&>td]:p-0 lg:[&>td]:px-3 lg:[&>td]:py-3 ${selecting && selected.has(user.id) ? "bg-raised" : ""}`}>
+                      <TableCell className="col-span-2 min-w-0 lg:col-span-1 lg:w-[30%] lg:pl-4">
                         <div className="flex items-start gap-3">
-                          {selecting && <label className={`mt-1.5 flex shrink-0 cursor-pointer ${coarseHitArea}`}><input type="checkbox" aria-label={`Select ${user.display_name || user.username}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="size-4 shrink-0 accent-primary" /></label>}
+                          {selecting && <label className={`mt-1.5 flex shrink-0 cursor-pointer ${coarseHitArea}`}><input type="checkbox" aria-label={`Select ${personName(user)}`} checked={selected.has(user.id)} disabled={batchBusy} onChange={() => toggleSelected(user.id)} className="size-4 shrink-0 accent-primary" /></label>}
                           <UserAvatar name={user.username} size="sm" />
                           <div className="min-w-0 space-y-1">
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                              <Link to={`/users/${user.id}`} className="min-w-0 break-words font-semibold hover:text-primary hover:underline" title={`Plex username: ${user.username}`}>{user.display_name || user.username}</Link>
+                              <Link to={`/users/${user.id}`} className="min-w-0 break-words font-semibold hover:text-primary hover:underline" title={`Plex username: ${user.username}`}>{personName(user)}</Link>
                               <RestrictedPill user={user} />
                             </div>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -786,12 +773,12 @@ export function UsersPage() {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="justify-self-end xl:justify-self-auto"><StatePill user={user} /></TableCell>
-                      <TableCell className="text-sm xl:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
-                      <TableCell className="text-sm xl:pr-8 xl:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
-                      <TableCell className="text-sm"><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
-                      <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? new Date(user.last_run_at).toLocaleString() : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
-                      <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap xl:table-cell xl:pr-4 xl:text-right">
+                      <TableCell className="col-span-2 empty:hidden lg:col-span-1 lg:empty:table-cell"><StatePill user={user} /></TableCell>
+                      <TableCell className="text-sm lg:text-right"><CellLabel>Rows</CellLabel><RowsCell user={user} collections={collections} /></TableCell>
+                      <TableCell className="text-sm lg:pr-6 lg:text-right"><CellLabel>Picks watched (30 days)</CellLabel><PicksCell user={user} /></TableCell>
+                      <TableCell className={`text-sm ${exposedRows(user, privacy) > 0 ? "bg-warning/10 text-warning lg:px-3" : ""} lg:min-w-44`}><CellLabel>Privacy</CellLabel><PrivacyCell user={user} privacy={privacy} /></TableCell>
+                      <TableCell className="whitespace-nowrap text-sm" title={user.last_run_at ? formatDate(user.last_run_at) : undefined}><CellLabel>Last run</CellLabel>{builtAt(user.last_run_at)}</TableCell>
+                      <TableCell className="col-span-2 flex items-center justify-end gap-2 whitespace-nowrap lg:table-cell lg:pr-4 lg:text-right">
                         <GatedSwitch
                           checked={user.enabled && !user.restriction_profile}
                           reason={

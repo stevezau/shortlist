@@ -29,7 +29,10 @@ class TestAppLoads:
         errors: list[str] = []
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
         page.goto("/")
-        page.wait_for_timeout(2500)
+        expect(page.get_by_role("heading", name="Build everyone\u2019s rows for the first time")).to_be_visible(
+            timeout=20_000
+        )
+        page.wait_for_load_state("networkidle")
         assert not errors, errors
 
 
@@ -49,8 +52,8 @@ class TestMutationContract:
 
         responses: list[int] = []
         page.on("response", lambda r: responses.append(r.status) if "/api/users/" in r.url else None)
-        toggle.click()
-        page.wait_for_timeout(2500)
+        with page.expect_response(lambda r: "/api/users/" in r.url and r.request.method == "PATCH"):
+            toggle.click()
 
         assert responses, "the toggle issued no PATCH to /api/users/{id}"
         assert 403 not in responses, "the SPA's mutation was rejected — CSRF header missing"
@@ -72,6 +75,6 @@ class TestMutationContract:
         page.on("request", check)
         page.goto("/users")
         expect(page.get_by_role("switch").first).to_be_visible(timeout=20_000)
-        page.get_by_role("switch").first.click()
-        page.wait_for_timeout(2000)
+        with page.expect_response(lambda r: "/api/users/" in r.url and r.request.method == "PATCH"):
+            page.get_by_role("switch").first.click()
         assert not missing, f"SPA sent mutations without the CSRF header: {missing}"

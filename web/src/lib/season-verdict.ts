@@ -21,13 +21,13 @@ export function titleNoun(media: RowMedia, count: number): string {
 
 /** Below this many titles, per-person rows of one season come out much alike: #124 judged 63 too few to
  *  make them differ. A heuristic, not a measured line (#137 D10). */
-export const ALIKE_BELOW = 100;
+const ALIKE_BELOW = 100;
 
 export type SeasonVerdict = { level: "few" | "alike" | "ok"; text: string };
 
 /** A season's count for one row (`POST /api/seasons/preview`): the total, and its films and shows — null
  *  for a type the row builds in no library of. */
-export type SeasonCount = { total: number; movies?: number | null; shows?: number | null };
+type SeasonCount = { total: number; movies?: number | null; shows?: number | null };
 
 /** What a season's count means for the row it is being added to (#137 D10). Never blocks a save.
  *
@@ -60,7 +60,7 @@ export function seasonVerdict(count: SeasonCount, row: Pick<SeasonRow, "size" | 
   if (total < size) return { level: "few", text: `Too few ${titles} to fill this row (${total} of ${size})` };
   if (row.perPerson && total < ALIKE_BELOW)
     return { level: "alike", text: "People's rows will be much alike. Choose Shared in the row editor to use the season's most-watched titles." };
-  return { level: "ok", text: `Enough ${titles} for this row` };
+  return { level: "ok", text: "Enough matches before row filters" };
 }
 
 /** A verdict in a few words, for the one-line count the editor keeps in view on a narrow screen:
@@ -68,5 +68,5 @@ export function seasonVerdict(count: SeasonCount, row: Pick<SeasonRow, "size" | 
 export function verdictInBrief(verdict: SeasonVerdict): string {
   if (verdict.level === "few") return "Too few for this row";
   if (verdict.level === "alike") return "People's rows will be much alike";
-  return "Enough for this row";
+  return "Enough before row filters";
 }

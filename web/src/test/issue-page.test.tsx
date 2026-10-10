@@ -69,7 +69,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
       supportRows: () => supportRows(),
       supportLibraries: () => supportLibraries(),
       supportPerson: (slug: string) => supportPerson(slug),
-      supportBundleUrl: () => "/api/support/bundle.txt",
       supportReportZipUrl: () => "/api/support/report.zip",
       getSupportBundle: () => getSupportBundle(),
       supportSuggestions: () => supportSuggestions(),

@@ -5,34 +5,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import type { CollectionInput, User } from "@/lib/types";
+import { makeUser } from "@/test/user-fixtures";
 
 function user(id: number, username: string): User {
-  return {
-    manage_sharing: true,
-    id,
-    username,
-    slug: username.toLowerCase(),
-    user_type: "shared",
-    restricted: false,
-    enabled: true,
-    cold_start: false,
-    history_depth: 10,
-    last_run_at: null,
-    request_tag: "",
-    requested_by_tag: "",
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    nickname: "",
-    friendly_name: "",
-    display_name: "",
-    avatar_url: "",
-    plex_account_id: 0,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    preview_titles: [],
-    prefs: {},
-  };
+  return makeUser({ id, username, slug: username.toLowerCase(), history_depth: 10 });
 }
 
 describe("AudiencePicker", () => {

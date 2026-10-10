@@ -12,8 +12,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from shortlist.server.db.models import Base
 from shortlist.server.db.session import make_engine, run_migrations
+from tests.db_helpers import create_schema, disposing_engine
 
 
 def _head_revision() -> str:
@@ -52,9 +52,8 @@ def test_initial_migration_schema_matches_the_models(tmp_path: Path):
 
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    engine = make_engine(model_dir)
-    Base.metadata.create_all(engine)
-    engine.dispose()
+    with disposing_engine(make_engine(model_dir)) as engine:
+        create_schema(engine)
     from_models = _columns(str(model_dir / "shortlist.db"))
 
     assert from_migration == from_models, (
@@ -69,15 +68,19 @@ def test_a_db_stamped_at_a_squashed_revision_is_healed_not_crashed(tmp_path: Pat
     run_migrations(tmp_path)  # full schema, stamped at head
     db = tmp_path / "shortlist.db"
     conn = sqlite3.connect(db)
-    conn.execute("update alembic_version set version_num = '0028'")  # a squashed-away revision
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("update alembic_version set version_num = '0028'")  # a squashed-away revision
+        conn.commit()
+    finally:
+        conn.close()
 
     run_migrations(tmp_path)  # must heal, not raise
 
     conn = sqlite3.connect(db)
-    version = conn.execute("select version_num from alembic_version").fetchone()[0]
-    conn.close()
+    try:
+        version = conn.execute("select version_num from alembic_version").fetchone()[0]
+    finally:
+        conn.close()
     # Healed to the baseline, then carried on to HEAD like any other DB. Asserted against the real
     # head rather than a literal, so adding a migration never breaks this test's meaning — plus the
     # observable consequence, because "stamped at head" is also true of a heal that stamped straight
@@ -95,17 +98,21 @@ def test_an_incomplete_db_at_a_squashed_revision_is_not_silently_healed(tmp_path
     run_migrations(tmp_path)
     db = tmp_path / "shortlist.db"
     conn = sqlite3.connect(db)
-    conn.execute("update alembic_version set version_num = '0028'")
-    conn.execute("drop table events")  # schema now incomplete
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("update alembic_version set version_num = '0028'")
+        conn.execute("drop table events")  # schema now incomplete
+        conn.commit()
+    finally:
+        conn.close()
 
     with pytest.raises(CommandError):  # heal skips (table missing); upgrade then can't resolve '0028'
         run_migrations(tmp_path)
 
     conn = sqlite3.connect(db)
-    version = conn.execute("select version_num from alembic_version").fetchone()[0]
-    conn.close()
+    try:
+        version = conn.execute("select version_num from alembic_version").fetchone()[0]
+    finally:
+        conn.close()
     assert version == "0028"  # left as-is, NOT rewritten to 0001
 
 
@@ -130,15 +137,15 @@ class TestOllamaProviderMerge:
         cfg.set_main_option("sqlalchemy.url", db_url(config_dir))
         command.upgrade(cfg, "0031")  # the revision an instance running `dev` sat at
 
-        engine = make_engine(config_dir)
-        from sqlalchemy.orm import Session
+        with disposing_engine(make_engine(config_dir)) as engine:
+            from sqlalchemy.orm import Session
 
-        with Session(engine) as session:
-            store = SettingsStore(session)
-            store.set("curator.provider", provider)
-            if provider == "ollama":
-                store.set("curator.ollama_url", "http://nas:11434")
-            session.commit()
+            with Session(engine) as session:
+                store = SettingsStore(session)
+                store.set("curator.provider", provider)
+                if provider == "ollama":
+                    store.set("curator.ollama_url", "http://nas:11434")
+                session.commit()
 
     @staticmethod
     def _read(config_dir: Path, key: str):
@@ -146,7 +153,7 @@ class TestOllamaProviderMerge:
 
         from shortlist.server.settings_store import SettingsStore
 
-        with Session(make_engine(config_dir)) as session:
+        with disposing_engine(make_engine(config_dir)) as engine, Session(engine) as session:
             return SettingsStore(session).get(key)
 
     def test_an_ollama_instance_is_carried_onto_the_merged_provider(self, tmp_path: Path):
@@ -168,7 +175,7 @@ class TestOllamaProviderMerge:
 
         from shortlist.server.settings_store import SettingsStore
 
-        with Session(make_engine(tmp_path)) as session:
+        with disposing_engine(make_engine(tmp_path)) as engine, Session(engine) as session:
             assert SettingsStore(session).all_public()["curator.provider"] == "openai_compatible"
 
     def test_an_instance_on_another_provider_is_left_alone(self, tmp_path: Path):
@@ -197,12 +204,11 @@ class TestCurateSettingsCleared:
 
         from sqlalchemy.orm import Session
 
-        from shortlist.server.db.models import Collection, CollectionUserOverride, User
+        from shortlist.server.db.models import Collection, User
         from shortlist.server.settings_store import SettingsStore
 
         run_migrations(tmp_path)  # full schema at head
-        engine = make_engine(tmp_path)
-        with Session(engine) as session:
+        with disposing_engine(make_engine(tmp_path)) as engine, Session(engine) as session:
             store = SettingsStore(session)
             store.set("curator.prompt_tone", "adventurous")
             store.set("curator.prompt_guidance", "be bold")
@@ -226,30 +232,30 @@ class TestCurateSettingsCleared:
             )
             session.add(row)
             session.flush()
-            session.add(CollectionUserOverride(collection_id=row.id, user_id=user.id, prompt={"tone": "z"}))
             session.commit()
             ids = (row.id, user.id)
-        engine.dispose()
 
         # Stamp back to 0035 and re-migrate — twice, to prove idempotency (a second replay is a no-op).
         db = tmp_path / "shortlist.db"
         for _ in range(2):
             conn = sqlite3.connect(db)
-            conn.execute("update alembic_version set version_num = '0035'")
-            conn.commit()
-            conn.close()
+            try:
+                conn.execute("update alembic_version set version_num = '0035'")
+                conn.commit()
+            finally:
+                conn.close()
             run_migrations(tmp_path)
         return ids
 
     def test_dead_recipe_settings_and_cut_source_are_gone(self, tmp_path: Path):
         from sqlalchemy.orm import Session
 
-        from shortlist.server.db.models import Collection, CollectionUserOverride, User
+        from shortlist.server.db.models import Collection, User
         from shortlist.server.settings_store import SettingsStore
 
         collection_id, user_id = self._seed_and_replay(tmp_path)
 
-        with Session(make_engine(tmp_path)) as session:
+        with disposing_engine(make_engine(tmp_path)) as engine, Session(engine) as session:
             store = SettingsStore(session)
             assert store.get("curator.prompt_tone") is None
             assert store.get("curator.prompt_guidance") is None
@@ -261,4 +267,3 @@ class TestCurateSettingsCleared:
             row = session.get(Collection, collection_id)
             assert row.candidate_sources == ["tmdb_discover"]  # llm_library stripped, order kept
             assert row.prompt == {}  # dead recipe cleared
-            assert session.get(CollectionUserOverride, (collection_id, user_id)).prompt == {}

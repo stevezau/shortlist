@@ -1,6 +1,6 @@
 # Discussion #138 — Rows described in your own words
 
-Status: **phase 1 (AI instructions) built 2026-10-03, shipped to dev at `43d9d26b` and proven live 2026-10-04; phase 2 (limits) shipped and live; phase 3 (AI row) built on branch `stevezau/ai-custom-rows`, not yet released; phase 4 (Explore + over-time controls) built on the same branch, not yet released.** Plans: `.claude/docs/plans/2026-10-03-ai-instructions-phase1.md`, `.claude/docs/plans/2026-10-04-ai-custom-rows-phase2-limits.md`, `.claude/docs/plans/2026-10-04-ai-custom-rows-phase3-ai-row.md`. As built, owner text may use `{count}`, `{year}` and `{last_year}`; with no AI provider (or a provider that can't search the web itself on the native backend) the instructions are shown as having no effect. Mockups and the decisions board: the "AI Rows Proposal"
+Status: **phase 1 (AI instructions) built 2026-10-03, shipped to dev at `43d9d26b` and proven live 2026-10-04; phase 2 (limits) shipped and live; phase 3 (AI row) and phase 4 (Explore + over-time controls) shipped in 1.10.0.** As built, owner text may use `{count}`, `{year}` and `{last_year}`; with no AI provider (or a provider that can't search the web itself on the native backend) the instructions are shown as having no effect. Mockups and the decisions board: the "AI Rows Proposal"
 canvas, https://claude.ai/artifact/Y8CMBv8UQYbVTgFmE8cnwC. The owner's direction (2026-10-03): rows should be
 able to override the AI prompts, AND there should be a fully customisable AI row. So the proposal has two parts:
 **A** (AI instructions on any row) and **B** (the AI row, the design below). Every number
@@ -254,6 +254,6 @@ exposed only on themed rows in v1.
 Phase 4 shipped on the branch: Explore (`theme_mode`, `explore_brief`, `theme_days`; Up next, Recent themes and the
 `themes.rotate` job) and the over-time controls (`refresh_share`, `repeat_cooldown_days`, `avoid_rows`). Decision 4's
 "Whose taste" starts at "Each person's own" as built: Explore is per person, never shared. Decision 8's
-phase 4 row is built; the plan is `.claude/docs/plans/` (phase 4).
+phase 4 row is built.
 
-Every new setting defaults to today's behaviour. Each phase gets its own plan in `.claude/docs/plans/`.
+Every new setting defaults to today's behaviour.

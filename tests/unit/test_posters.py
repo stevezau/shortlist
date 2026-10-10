@@ -6,12 +6,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.delivery import apply_poster, render_poster_text
 from shortlist.engine.models import LABEL_PREFIX, PosterSpec, UserProfile, UserType
-from shortlist.server.db.models import Base
 from shortlist.server.services.poster_service import (
     PosterStudio,
     clear_assets,
@@ -177,6 +174,7 @@ class TestApplyPoster:
             artist=None,
             dry_run=False,
         )
+        plex.upload_poster.assert_called_once()
 
     def test_empty_rendered_image_leaves_plex_artwork(self):
         plex, artist = MagicMock(), MagicMock()
@@ -239,13 +237,6 @@ class TestImageProviderStatus:
         assert image_provider_status(self._Store({"curator.provider": "google", "curator.api_key": "k"}))["capable"]
 
 
-@pytest.fixture
-def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
-
-
 class TestImageStorage:
     def test_upload_roundtrip(self, sessions):
         with sessions() as session:
@@ -301,7 +292,6 @@ class TestPosterStudio:
     def test_ai_engine_without_provider_returns_none(self, sessions):
         studio = PosterStudio(sessions, ai=None)
         assert studio.render(title="Hi", subtitle="", style="", engine="ai") is None
-        assert studio.ai_available is False
 
     def test_ai_engine_uses_the_injected_artist(self, sessions):
         ai = MagicMock()

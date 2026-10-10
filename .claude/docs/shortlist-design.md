@@ -1,7 +1,6 @@
 # Shortlist — Product & Technical Design
 
-**Status:** design complete; execution gated on one live privacy test · **Date:** 2026-07-12 ·
-**Predecessors:** [`ai-recommendations-design.md`](ai-recommendations-design.md) (the personal-script design this productizes) + [`ai-recommendations-research.md`](ai-recommendations-research.md) (May research) + July 2026 deep-research re-validation (99-agent sweep, 25/25 claims verified).
+**Status:** shipped (1.x, in production) · **Date:** 2026-07-12 · Original design, kept as the product and UX record; where it and the code disagree, the code wins. It rests on a personal-script prototype, May 2026 research and a July 2026 re-validation (99-agent sweep, 25/25 claims verified).
 
 ---
 
@@ -78,10 +77,10 @@ Animated mock of a Plex Home screen gaining a "✨ Picked for You" row. One butt
   - Library sections found (movie + show types listed with counts, checkboxes, all on by default)
 - UX detail: results render as a live checklist ✅/❌ with plain-English explanations, not error codes.
 
-### Step 2 — History source
+### Step 2 — TMDB key (and optional Tautulli)
 
-- Watch history is read straight from the PMS per user via the share token (see engine step 1), so
-  it needs no configuration on this step.
+- A TMDB API key: candidates come from TMDB similar-titles. Watch history needs no configuration here; it is
+  read straight from the PMS per user via the share token (see engine step 1).
 - Auto-detect **Tautulli** (common hosts/ports probe + manual URL/API-key fields; validated with a
   test call), now used only for the friendlier display names it knows people by. Copy: _"Tautulli
   supplies the friendlier display names it knows people by. Optional."_ Skip it and Shortlist uses
@@ -97,7 +96,7 @@ Animated mock of a Plex Home screen gaining a "✨ Picked for You" row. One butt
   local. **None** needs nothing.
 - **None** = heuristic mode: frequency-across-seeds × rating × recency ranking, template reasons
   ("Because you watched Suits"). The app is fully functional without any AI key — say so proudly.
-- Default model per provider pre-selected (e.g. Anthropic → `claude-haiku-4-5-20251001`; cheap tier
+- Default model per provider pre-selected (e.g. Anthropic → `claude-haiku-4-5`; cheap tier
   is plenty for re-ranking 40 titles). Advanced: model override, max monthly spend estimate shown.
 
 ### Step 4 — Pick your users
@@ -133,7 +132,7 @@ fixed). Servers that can't hide rows (old PMS, no Plex Pass) fall back to **Shar
 makes no privacy claims. The owner is a Plex limitation: their own Home shows every user's row (the
 §3 Step-4 caveat) — QA privacy from a non-owner account.
 
-### Step 6 — Make it yours (customization)
+### Step 5 — Make it yours (customization)
 
 - **Row name template:** `✨ Picked for You` · `Because you watched {top_seed}` (dynamic nightly!) ·
   custom text + emoji picker. Live preview rendered as a fake Plex row.
@@ -147,7 +146,7 @@ makes no privacy claims. The owner is a Plex limitation: their own Home shows ev
 - **Acquisition (off by default):** "when the curator loves something you don't own" → connect
   Radarr/Sonarr _or_ Seerr → cap per week (default 2) → auto-add or suggest-only queue in dashboard.
 
-### Step 7 — First run
+### Step 6 — First run
 
 - Fires the pipeline for all enabled users, streaming per-user progress (SSE): history → candidates
   → curating → collection → privacy sync, with counts at each stage.
@@ -158,7 +157,7 @@ makes no privacy claims. The owner is a Plex limitation: their own Home shows ev
 
 ## 4. Main app UI
 
-Four sections in a left rail: **Dashboard · Users · Runs · Settings**. Dark theme default,
+Eight sections in a left rail: **Dashboard · Rows · Users · Privacy · Runs · Requests · Activity · Settings**. Dark theme default,
 Plex-adjacent accent color, responsive (phone-usable — owners administer from couches).
 
 ### Dashboard (wireframe)
@@ -290,9 +289,9 @@ users are independent (`try/except` per user), shared caches across the loop.
 unwatched in library, LLM-themed if available) and a dashboard badge; auto-upgrades to personal mode
 once history crosses the threshold.
 
-**LLM contract:** structured output (JSON schema enforced), inputs are titles+year+genres only (no
-PII), output validated against the candidate set — any title not in the input list is dropped and
-logged. Temperature low. One call per user per run; ~40 users ≈ pennies/night on a cheap-tier model.
+**LLM contract:** the LLM only FINDS titles (the `llm_web` candidate source); ranking and reasons are pure
+Python. Inputs are titles+year+genres only (no PII). Every title it proposes must resolve on TMDB by
+title+year or it vanishes. Temperature low; ~40 users ≈ pennies/night on a cheap-tier model.
 
 ---
 
@@ -318,7 +317,7 @@ for each enabled user U:
   merged = current AND label!= (existing enforced label!= values ∪ desired_excludes)   # MERGE, never clobber
             # joined with `&`, never `|` — Plex reads `|` as OR (#116, see plex-safety rule 3)
   if merged == current: skip (steady-state nights are zero PUTs)
-  PUT plex.tv/api/users/{U.id}?filterMovies=…&filterTelevision=…   # throttle 1 req/s, 429 backoff
+  PUT plex.tv/api/users/{U.id}?filterMovies=…&filterTelevision=…   # adaptive throttle, 429 backoff (plex-safety rule 6)
   read back; assert; log diff
 ```
 
@@ -348,7 +347,7 @@ snapshots, posters). Multi-arch (amd64/arm64) on GHCR + Docker Hub.
 | DB          | **SQLite + SQLAlchemy**                                                            | homelab-right; `/config/shortlist.db`; Alembic migrations                  |
 | Frontend    | **React + Vite + Tailwind**                                                        | SPA served by FastAPI; SSE for live run progress                           |
 | Plex        | **plexapi** + thin raw client for plex.tv (pins, users, filters, home-user switch) | plexapi lacks some plex.tv surfaces                                        |
-| LLM         | provider interface: `curate(profile, candidates) → ranked picks`                   | Anthropic/OpenAI/Google SDKs + Ollama HTTP + Null provider                 |
+| LLM         | provider interface: find titles for a seed (web-search source); ranking is code    | Anthropic/OpenAI/Google SDKs + Ollama HTTP + Null provider                 |
 | Packaging   | Dockerfile (multi-stage), GH Actions: lint (ruff) → pytest → build → GHCR          | *arr-standard distribution                                                 |
 
 **Code layout (monorepo, MIT):**
@@ -364,7 +363,7 @@ The engine/app split is contractual: the FastAPI server is the **only** adapter 
 its APScheduler fires the same engine run nightly, so a scheduled build and a manual "Run now" run
 byte-identical logic. No throwaway code.
 
-**Data model (core tables):** `settings` · `plex_server` · `users` (plex_id, slug, enabled,
+**Data model (core tables):** `settings` · `server` · `users` (plex_id, slug, enabled,
 prefs JSON, label) · `runs` · `picks` (run_id, user, tmdb_id, rank, reason, seed, watched_at →
 hit-rate) · `restriction_snapshots` (user, before, after, ts) · `caches` (tmdb, library index).
 
@@ -372,7 +371,7 @@ hit-rate) · `restriction_snapshots` (user, before, after, ts) · `caches` (tmdb
 id must match the linked server's owner). No local passwords to leak. Session cookie, CSRF on
 mutations. Docs firmly recommend not exposing Shortlist publicly; subpath + reverse-proxy documented.
 
-**Secrets:** in SQLite, encrypted at rest with a key derived from an instance secret in `/config`
+**Secrets:** in SQLite, encrypted at rest (Fernet) with a key file, `/config/secret.key`,
 (sufficient for homelab threat model; documented honestly).
 
 ---
@@ -388,7 +387,7 @@ mutations. Docs firmly recommend not exposing Shortlist publicly; subpath + reve
 | Owner/admin account                     | always                        | Excluded from restrictions (Plex limit); banner + "use a viewing account" tip                                                                                                                                 |
 | Thin history (<10)                      | Step 4 + nightly              | Cold-start row (§5), auto-upgrade                                                                                                                                                                             |
 | User removed from server                | nightly diff                  | Their collection deleted, their label dropped from everyone's excludes, snapshot kept                                                                                                                         |
-| plex.tv 429s                            | response codes                | 1 req/s throttle + exponential backoff + resume; runs never half-apply (per-user transaction)                                                                                                                 |
+| plex.tv 429s                            | response codes                | adaptive throttle with 429 backoff (plex-safety rule 6) + resume; runs never half-apply (per-user transaction)                                                                                                                 |
 | TMDB down / LLM down                    | health probes per run         | degrade gracefully: reuse last candidates / heuristic mode; warn, never fail the whole run                                                                                                                    |
 | Very large libraries                    | index once/run + SQLite cache | O(library) once, O(user-history) per user; 10k-item library ≈ seconds                                                                                                                                         |
 | ~40 collections on owner's Home         | —                             | only the owner sees all (verified); collection mode "hide" keeps them out of library browse, and only the `label!=` excludes keep other accounts off them in the Collections tab (measured; the owner has no share, so sees every row there — docs/faq.md); incremental rollout guidance in docs; no evidence of Home-render degradation (researched July 2026)  |
@@ -399,14 +398,14 @@ mutations. Docs firmly recommend not exposing Shortlist publicly; subpath + reve
 ## 9. What's verified vs. what Phase 0 must prove
 
 **Verified (don't re-litigate):** the fix timeline + versions (PM-617/PM-5174, public 2026-05-19);
-Steve's server on 1.43.3.10793; exclude-labels are the correct mechanism (allow-labels whitelist the
+the maintainer's server on 1.43.3.10793; exclude-labels are the correct mechanism (allow-labels whitelist the
 library); plexapi `updateVisibility` exists; Curatarr's restriction PUT pattern works in the field;
 Plex history API works per-invited-user with owner token; label restrictions need Plex Pass;
 managed-user profile constraint; no competing maintained OSS tool (July 2026 sweep).
 
 **Phase 0 must prove (the one assumption left):** on a real 1.43.3 server, a promoted labeled
 collection is invisible on Home/Recommended/**Related** for an excluded _invited_ user and visible
-for others. 30 minutes, reversible, on Steve's server with a test account. **This is the go/no-go
+for others. 30 minutes, reversible, on the maintainer's server with a test account. **This is the go/no-go
 for everything above** — the same label-restriction behaviour every real run then relies on.
 
 ---
@@ -415,9 +414,9 @@ for everything above** — the same label-restriction behaviour every real run t
 
 | Phase                  | Scope                                                                                                                                                                           | Exit criteria                                                                                         | Effort         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------- |
-| **0 — Validate**       | Manual privacy test on Steve's server (probe collection + one invited test account + a non-owner viewing account). Scaffold repo (engine/server/web skeleton, CI, ruff/pytest). | Privacy test passes on Home/Recommended/Related; repo builds                                          | ~1 day         |
-| **1 — Engine + pilot** | `shortlist/engine` complete (history→TMDB→LLM→collections→privacy sync w/ snapshots), run nightly on the plex host. Roll out 5 → 15 → 40 of Steve's users.                      | 40 users have private rows nightly for 1–2 weeks; zero privacy incidents; hit-rate baseline collected | ~1 week + soak |
-| **2 — App core**       | FastAPI + DB + scheduler + API; React shell; Dashboard, Users, Runs, Settings on the live engine                                                                                | Steve administers his own server through the UI instead of cron                                       | ~2 weeks       |
+| **0 — Validate**       | Manual privacy test on the maintainer's server (probe collection + one invited test account + a non-owner viewing account). Scaffold repo (engine/server/web skeleton, CI, ruff/pytest). | Privacy test passes on Home/Recommended/Related; repo builds                                          | ~1 day         |
+| **1 — Engine + pilot** | `shortlist/engine` complete (history→TMDB→LLM→collections→privacy sync w/ snapshots), run nightly on the maintainer's server. Roll out 5 → 15 → 40 of the maintainer's users.                      | 40 users have private rows nightly for 1–2 weeks; zero privacy incidents; hit-rate baseline collected | ~1 week + soak |
+| **2 — App core**       | FastAPI + DB + scheduler + API; React shell; Dashboard, Users, Runs, Settings on the live engine                                                                                | The maintainer administers their server through the UI instead of cron                                       | ~2 weeks       |
 | **3 — Onboarding**     | PIN auth, capability probes, wizard steps 0–6, uninstall/rollback flow                                                                                                          | Fresh `docker run` on a clean test server → rows, no docs needed                                      | ~1 week        |
 | **4 — Ship-ready**     | GHCR/Docker Hub images, README + docs site, screenshots/GIF, issue templates, 3–5 external beta testers recruited from r/PleX                                                   | Beta testers onboard unassisted; blockers fixed                                                       | ~1 week        |
 | **5 — Launch**         | r/selfhosted + r/PleX posts (lead with per-user private rows + "works without AI"), Awesome-Selfhosted PR                                                                       | Public v1.0                                                                                           | —              |
@@ -438,5 +437,5 @@ post can follow in ~a month).
 
 1. **Name:** working title **Shortlist** (GitHub-free as of 2026-07-12; "Pickarr" is taken by an
    adjacent Claude/Radarr project). Rename is trivial until Phase 4.
-2. **Steve's instance cadence:** nightly (recommended) vs weekly — pick during Phase 1.
-3. **Acquisition default for Steve's server:** suggest-only vs auto-add capped — pick during Phase 1.
+2. **The maintainer's instance cadence:** nightly (recommended) vs weekly — pick during Phase 1.
+3. **Acquisition default for the maintainer's server:** suggest-only vs auto-add capped — pick during Phase 1.

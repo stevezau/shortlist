@@ -56,7 +56,7 @@ class TautulliClient:
         # get_users returns the user list AS the response `data` — unlike get_history, whose `data`
         # is a {data: [...], recordsFiltered: ...} envelope. `_cmd` already unwraps `data`, so this
         # is the list; calling `.get("data")` on it raised AttributeError, which sync_users swallowed
-        # (0 friendly names for everyone — SFLIX shipped that way).
+        # (0 friendly names for everyone — a large production server shipped that way).
         rows = self._cmd("get_users")
         names: dict[int, str] = {}
         for row in rows:

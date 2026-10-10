@@ -14,26 +14,27 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from shortlist.server.db.models import Base, Collection, PickRow, Run, SharedRowWatch, User, WatchedTitle
+from shortlist.server.db.models import Collection, PickRow, Run, SharedRowWatch, User, WatchedTitle
 from shortlist.server.services.report_service import effectiveness
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime.now(UTC)
 
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(engine)
-    with factory() as session:
-        session.add(User(id=1, plex_account_id=7, username="alex", slug="alex", enabled=True))
-        session.add(User(id=2, plex_account_id=8, username="sam", slug="sam", enabled=True))
-        session.add(User(id=3, plex_account_id=9, username="off", slug="off", enabled=False))
-        session.add(Collection(slug="picked", name="Picked for You", enabled=True))
-        # Shortlist has been running for 60 days; the "all" window starts here, not at the dawn of Plex.
-        session.add(Run(trigger="nightly", status="ok", started_at=NOW - timedelta(days=60)))
-        session.commit()
-    return factory
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        create_schema(engine)
+        factory = sessionmaker(engine)
+        with factory() as session:
+            session.add(User(id=1, plex_account_id=7, username="alex", slug="alex", enabled=True))
+            session.add(User(id=2, plex_account_id=8, username="sam", slug="sam", enabled=True))
+            session.add(User(id=3, plex_account_id=9, username="off", slug="off", enabled=False))
+            session.add(Collection(slug="picked", name="Picked for You", enabled=True))
+            # Shortlist has been running for 60 days; the "all" window starts here, not at the dawn of Plex.
+            session.add(Run(trigger="nightly", status="ok", started_at=NOW - timedelta(days=60)))
+            session.commit()
+        yield factory
 
 
 def watched(

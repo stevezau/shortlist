@@ -14,7 +14,8 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
-import type { TransferResult, User } from "@/lib/types";
+import type { TransferResult } from "@/lib/types";
+import { makeUser } from "@/test/user-fixtures";
 import { TransferSteps } from "@/pages/watching-account";
 
 const {
@@ -92,13 +93,18 @@ function renderSteps() {
   };
 }
 
+/** Pick the candidate account and run the preview, waiting until its result is on screen. */
+async function previewOnto(name: RegExp, shown = /nothing has been changed yet/i) {
+  await userEvent.click(await screen.findByRole("radio", { name }));
+  await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+  await screen.findByText(shown);
+}
+
 /** Pick the one candidate account and press the real (non-preview) button. */
 async function transferOnto(name: RegExp) {
   // Preview first, because the UI now REQUIRES it: pressing the real button with no preview used to
   // un-tick a Home user's watch history with nothing shown beforehand.
-  await userEvent.click(await screen.findByRole("radio", { name }));
-  await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-  await screen.findByText(/nothing has been changed yet|hasn.t read your watch history/i);
+  await previewOnto(name, /nothing has been changed yet|hasn.t read your watch history/i);
   await userEvent.click(
     screen.getByRole("button", { name: /copy my history across/i }),
   );
@@ -109,7 +115,7 @@ beforeEach(() => {
   // TransferSteps scrolls itself into view on mount; jsdom has no scrollIntoView.
   Element.prototype.scrollIntoView = vi.fn();
   getUsers.mockResolvedValue([
-    {
+    makeUser({
       id: 7,
       username: "steve-tv",
       slug: "steve-tv",
@@ -117,7 +123,7 @@ beforeEach(() => {
       user_type: "managed",
       enabled: false,
       prefs: {},
-    } as unknown as User,
+    }),
   ]);
   listHomeUsers.mockResolvedValue([
     {
@@ -348,15 +354,13 @@ describe("TransferSteps guards the real run", () => {
       },
     ]);
     getUsers.mockResolvedValue([
-      { id: 7, plex_account_id: 300, username: "steve-tv" } as unknown as User,
-      { id: 8, plex_account_id: 301, username: "spare-tv" } as unknown as User,
+      makeUser({ id: 7, plex_account_id: 300, username: "steve-tv" }),
+      makeUser({ id: 8, plex_account_id: 301, username: "spare-tv" }),
     ]);
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 5 }));
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
     expect(
       screen.getByRole("button", { name: /copy my history across/i }),
     ).toBeEnabled();
@@ -482,9 +486,7 @@ describe("TransferSteps keeps the undo reachable and correctly attributed", () =
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 5 }));
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
 
     expect(
       screen.getByRole("button", {
@@ -514,9 +516,7 @@ describe("TransferSteps keeps the undo reachable and correctly attributed", () =
 
     // Now a REAL copy, whose snapshot (77) is a different one.
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 3 }));
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
     transferWatchHistory.mockResolvedValue(
       result({ applied: 3, marks: 3, snapshot_id: 77 }),
     );
@@ -733,9 +733,7 @@ describe("TransferSteps does not contradict itself", () => {
     );
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
 
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 5 }));
     await userEvent.click(
@@ -775,9 +773,7 @@ describe("TransferSteps keeps the undo reachable after a converged re-run", () =
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
 
     transferWatchHistory.mockResolvedValue(
       result({ planned: 0, applied: 0, snapshot_id: null }),
@@ -810,9 +806,7 @@ describe("TransferSteps keeps the undo reachable after a converged re-run", () =
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
     transferWatchHistory.mockResolvedValue(
       result({ planned: 0, applied: 0, snapshot_id: null, verify_mismatched: 0 }),
     );
@@ -861,9 +855,7 @@ describe("TransferSteps attributes a restore to the right account", () => {
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
     transferWatchHistory.mockResolvedValue(
       result({ planned: 0, applied: 0, snapshot_id: null, verify_mismatched: 0 }),
     );
@@ -891,9 +883,7 @@ describe("TransferSteps attributes a restore to the right account", () => {
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
     transferWatchHistory.mockResolvedValue(
       result({ planned: 0, applied: 0, snapshot_id: null, verify_mismatched: 0 }),
     );
@@ -935,8 +925,8 @@ describe("TransferSteps does not re-claim a restored copy when the selection cha
       },
     ]);
     getUsers.mockResolvedValue([
-      { id: 7, plex_account_id: 300, username: "steve-tv" } as unknown as User,
-      { id: 8, plex_account_id: 301, username: "kids-tv" } as unknown as User,
+      makeUser({ id: 7, plex_account_id: 300, username: "steve-tv" }),
+      makeUser({ id: 8, plex_account_id: 301, username: "kids-tv" }),
     ]);
     listWatchSnapshots.mockResolvedValue([
       {
@@ -951,9 +941,7 @@ describe("TransferSteps does not re-claim a restored copy when the selection cha
     transferWatchHistory.mockResolvedValue(result({ dry_run: true, marks: 0 }));
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
     transferWatchHistory.mockResolvedValue(
       result({ planned: 0, applied: 0, snapshot_id: null, verify_mismatched: 0 }),
     );
@@ -985,21 +973,21 @@ describe("TransferSteps does not re-claim a restored copy when the selection cha
 describe("TransferSteps can copy from an account other than the owner", () => {
   beforeEach(() => {
     getUsers.mockResolvedValue([
-      {
+      makeUser({
         id: 7,
         plex_account_id: 300,
         username: "steve-tv",
         user_type: "managed",
         enabled: false,
-      } as unknown as User,
-      {
+      }),
+      makeUser({
         id: 29,
-        plex_account_id: 218833834,
-        username: "moohouse",
-        display_name: "MooHouse",
+        plex_account_id: 1000001,
+        username: "guest",
+        display_name: "Guest",
         user_type: "shared",
         enabled: true,
-      } as unknown as User,
+      }),
     ]);
   });
 
@@ -1044,9 +1032,7 @@ describe("TransferSteps can copy from an account other than the owner", () => {
     );
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
 
     await userEvent.selectOptions(
       screen.getByRole("combobox", { name: /copy the history from/i }),
@@ -1057,7 +1043,7 @@ describe("TransferSteps can copy from an account other than the owner", () => {
       screen.queryByText(/nothing has been changed yet/i),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /copy moohouse.s history across/i }),
+      screen.getByRole("button", { name: /copy guest.s history across/i }),
     ).toBeDisabled();
   });
 
@@ -1076,14 +1062,14 @@ describe("TransferSteps can copy from an account other than the owner", () => {
       "29",
     );
 
-    expect(screen.getByText(/it ends up matching moohouse/i)).toBeInTheDocument();
+    expect(screen.getByText(/it ends up matching guest/i)).toBeInTheDocument();
     expect(screen.queryByText(/it ends up matching yours/i)).toBeNull();
     // "Your own account is never written to" is the one that would be a lie about safety.
     expect(
-      screen.getByText(/moohouse.{0,3}s own account is never written to/i),
+      screen.getByText(/guest.{0,3}s own account is never written to/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /copy moohouse.s history across/i }),
+      screen.getByRole("button", { name: /copy guest.s history across/i }),
     ).toBeInTheDocument();
   });
 
@@ -1111,7 +1097,7 @@ describe("TransferSteps can copy from an account other than the owner", () => {
     );
 
     expect(screen.getByText(/now matches yours/i)).toBeInTheDocument();
-    expect(screen.queryByText(/now matches moohouse/i)).toBeNull();
+    expect(screen.queryByText(/now matches guest/i)).toBeNull();
   });
 
   it("says whose history is missing, not always yours", async () => {
@@ -1131,7 +1117,7 @@ describe("TransferSteps can copy from an account other than the owner", () => {
     await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
 
     expect(
-      await screen.findByText(/hasn.t read moohouse.s watch history yet/i),
+      await screen.findByText(/hasn.t read guest.s watch history yet/i),
     ).toBeInTheDocument();
   });
 
@@ -1151,11 +1137,11 @@ describe("TransferSteps can copy from an account other than the owner", () => {
     await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /copy moohouse.s history across/i,
+        name: /copy guest.s history across/i,
       }),
     );
 
-    expect(await screen.findByText(/now matches moohouse/i)).toBeInTheDocument();
+    expect(await screen.findByText(/now matches guest/i)).toBeInTheDocument();
   });
 
   it("falls back to the owner when the chosen account disappears", async () => {
@@ -1172,17 +1158,17 @@ describe("TransferSteps can copy from an account other than the owner", () => {
       "29",
     );
     expect(
-      screen.getByRole("button", { name: /copy moohouse.s history across/i }),
+      screen.getByRole("button", { name: /copy guest.s history across/i }),
     ).toBeInTheDocument();
 
     getUsers.mockResolvedValue([
-      {
+      makeUser({
         id: 7,
         plex_account_id: 300,
         username: "steve-tv",
         user_type: "managed",
         enabled: false,
-      } as unknown as User,
+      }),
     ]);
     await act(async () => {
       await client.refetchQueries();
@@ -1199,8 +1185,8 @@ describe("TransferSteps can copy from an account other than the owner", () => {
   });
 
   it("will not let a preview of one account authorise a run against another", async () => {
-    // The pair, not the target. A preview taken FROM MooHouse that survives MooHouse leaving the
-    // list would put MooHouse's numbers and MooHouse's acknowledgement in front of a real run that
+    // The pair, not the target. A preview taken FROM Guest that survives Guest leaving the
+    // list would put Guest's numbers and Guest's acknowledgement in front of a real run that
     // silently reads the owner instead — a different account's history, under a checked-looking
     // count that was never measured for it.
     transferWatchHistory.mockResolvedValue(
@@ -1219,17 +1205,17 @@ describe("TransferSteps can copy from an account other than the owner", () => {
       await screen.findByRole("checkbox", { name: /will be un-ticked/i }),
     );
     expect(
-      screen.getByRole("button", { name: /copy moohouse.s history across/i }),
+      screen.getByRole("button", { name: /copy guest.s history across/i }),
     ).toBeEnabled();
 
     getUsers.mockResolvedValue([
-      {
+      makeUser({
         id: 7,
         plex_account_id: 300,
         username: "steve-tv",
         user_type: "managed",
         enabled: false,
-      } as unknown as User,
+      }),
     ]);
     await act(async () => {
       await client.refetchQueries();
@@ -1244,13 +1230,13 @@ describe("TransferSteps can copy from an account other than the owner", () => {
   it("hides the picker when the owner is the only possible source", async () => {
     // A one-option control is noise on a fresh server.
     getUsers.mockResolvedValue([
-      {
+      makeUser({
         id: 7,
         plex_account_id: 300,
         username: "steve-tv",
         user_type: "managed",
         enabled: false,
-      } as unknown as User,
+      }),
     ]);
 
     renderSteps();
@@ -1292,10 +1278,7 @@ describe("TransferSteps explains a large removal count", () => {
     );
 
     renderSteps();
-    await userEvent.click(await screen.findByRole("radio", { name: /steve tv/i }));
-    await userEvent.click(screen.getByRole("button", { name: /^preview$/i }));
-
-    await screen.findByText(/nothing has been changed yet/i);
+    await previewOnto(/steve tv/i);
     expect(
       screen.queryAllByText(/count this large almost always means/i),
     ).toHaveLength(0);

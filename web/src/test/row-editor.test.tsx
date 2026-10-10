@@ -12,11 +12,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowEditor } from "@/components/rows/row-editor";
 import type * as ApiModule from "@/lib/api";
+import { overrideName } from "@/test/override-name";
 import { toInput } from "@/lib/collections";
 import type { Collection, User } from "@/lib/types";
+import { fullCollection } from "@/test/collection-builders";
 import { BUILTINS } from "@/test/season-fixtures";
+import { makeUser } from "@/test/user-fixtures";
 
-const { updateCollection, settingsData, startRun, scheduleData, privacyData, effectivenessData } = vi.hoisted(() => ({
+const { updateCollection, settingsData, settingsPending, startRun, scheduleData, privacyData, effectivenessData, librariesData } = vi.hoisted(() => ({
+  librariesData: { current: [] as unknown[] },
   // null = that endpoint fails, which is what every test that doesn't set one gets.
   scheduleData: { current: null as unknown },
   privacyData: { current: null as unknown },
@@ -27,6 +31,8 @@ const { updateCollection, settingsData, startRun, scheduleData, privacyData, eff
   startRun: vi.fn((_body: unknown) => Promise.resolve({ run_id: 42 })),
   // Mutable so a test can serve a real server's globals; empty = "settings haven't loaded".
   settingsData: { current: {} as Record<string, unknown> },
+  // A settings read that never answers, so "still loading" is a state the test holds rather than hopes for.
+  settingsPending: { current: false },
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -36,8 +42,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       updateCollection: (id: number, body: unknown) =>
         updateCollection(id, body),
-      getSettings: () => Promise.resolve(settingsData.current),
-      getLibraries: () => Promise.resolve([]),
+      getSettings: () => (settingsPending.current ? new Promise(() => {}) : Promise.resolve(settingsData.current)),
+      getLibraries: () => Promise.resolve(librariesData.current),
       getSeasons: () => Promise.resolve(BUILTINS),
       getSeasonPresets: () => Promise.resolve([]),
       getImageProvider: () =>
@@ -55,120 +61,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-function row(patch: Partial<Collection> = {}): Collection {
-  return {
-    id: 1,
-    slug: "hidden-gems",
-    name: "Hidden Gems",
-    last_run_id: null,
-    preview_titles: [],
-    build: "per_person",
-    audience: "everyone",
-    audience_user_ids: [],
-    enabled: true,
-    schedule: "30 3 * * *",
-    size: 15,
-    media: "both",
-    sort_order: 0,
-    name_template: "",
-    fallback_name: "",
-    description: "",
-    sort_title_prefix: "",
-    min_watchers: 2,
-    request_tag: "",
-    candidate_sources: [],
-    library_keys: [],
-    watched_pct: null,
-    rewatch: false,
-    rewatch_cooldown_days: 30,
-    requests_row: false,
-    requests_window_days: 90,
-    requests_tag_pattern: "",
-    unstarted_only: false,
-    refresh_days: null,
-    idle_hold_days: null,
-    recency: null,
-    recent_count: null,
-    max_seeds: null,
-    max_runtime: null,
-    min_year: null,
-    max_year: null,
-    min_rating: null,
-    cold_start: null,
-    req_min_rating: null,
-    req_min_votes: null,
-    req_min_demand: null,
-    req_min_year: null,
-    req_max_year: null,
-    req_auto_send: null,
-    req_auto_min_demand: null,
-    req_auto_min_rating: null,
-    req_max_per_row: null,
-    req_radarr_quality_profile_id: null,
-    req_radarr_root_folder: null,
-    req_sonarr_quality_profile_id: null,
-    req_sonarr_root_folder: null,
-    req_sonarr_monitor: null,
-    req_language_mode: null,
-    req_preferred_languages: null,
-    req_min_rating_other: null,
-    seed_window: 1,
-    pick_order: "best",
-    placement: "both",
-    placement_friends: "both",
-    show_days: [],
-    shown_today: true,
-    seasons: [],
-    season_lead_days: 30,
-    season_after_days: 0,
-    season_status: null,
-    pin_top: false,
-    hub_anchor: {},
-    poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
-    ai_instructions: { mode: "default", text: "" },
-    theme_id: null,
-    theme_name: null,
-    theme_emoji: null,
-    ai_paused: false,
-    ai_tokens: 0,
-    theme_mode: "fixed",
-    explore_brief: "",
-    theme_days: null,
-    refresh_share: null,
-    repeat_cooldown_days: null,
-    avoid_rows: null,
-    ...patch,
-  };
-}
+const row = fullCollection;
 
 function user(patch: Partial<User> = {}): User {
-  return {
-    manage_sharing: true,
-    id: 1,
-    username: "sarah",
-    slug: "sarah",
-    user_type: "shared",
-    restricted: false,
-    enabled: true,
-    cold_start: false,
-    history_depth: 10,
-    last_run_at: null,
-    request_tag: "",
-    requested_by_tag: "",
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    nickname: "",
-    friendly_name: "",
-    display_name: "",
-    avatar_url: "",
-    plex_account_id: 0,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    preview_titles: [],
-    prefs: {},
-    ...patch,
-  };
+  return makeUser({ history_depth: 10, ...patch });
 }
 
 function renderEditor(collection: Collection, users: User[] = [], expand = true) {
@@ -373,6 +269,72 @@ describe("RowEditor — Live on Plex and the save bar", () => {
     }
   });
 
+  it("says how many movies and shows a shared row's one copy holds", async () => {
+    effectivenessData.current = {
+      delivered: 0,
+      watched: 4,
+      finished: 1,
+      first_delivered_at: "2026-09-20T02:30:00Z",
+      last_delivered_at: "2026-09-28T02:30:00Z",
+      matured: null,
+      matured_days: 30,
+      shared_titles: { movie: 40, show: 40 },
+      per_library: [],
+      runs: 3,
+    };
+    try {
+      renderEditor(row({ build: "shared", placement: "both" }));
+      const live = screen.getByRole("region", { name: "Live on Plex" });
+      expect(await within(live).findByText(/40 movies · 40 shows — one shared copy for everyone/)).toBeInTheDocument();
+    } finally {
+      effectivenessData.current = null;
+    }
+  });
+
+  it("says how many titles a single-library shared row holds", async () => {
+    effectivenessData.current = {
+      delivered: 0,
+      watched: 4,
+      finished: 1,
+      first_delivered_at: "2026-09-20T02:30:00Z",
+      last_delivered_at: "2026-09-28T02:30:00Z",
+      matured: null,
+      matured_days: 30,
+      shared_titles: { movie: 40 },
+      per_library: [],
+      runs: 3,
+    };
+    try {
+      renderEditor(row({ build: "shared", placement: "both" }));
+      const live = screen.getByRole("region", { name: "Live on Plex" });
+      expect(await within(live).findByText(/40 titles — one shared copy for everyone/)).toBeInTheDocument();
+    } finally {
+      effectivenessData.current = null;
+    }
+  });
+
+  it("does not claim a shared row delivered zero titles", async () => {
+    effectivenessData.current = {
+      delivered: 0,
+      watched: 4,
+      finished: 1,
+      first_delivered_at: "2026-09-20T02:30:00Z",
+      last_delivered_at: "2026-09-28T02:30:00Z",
+      matured: null,
+      matured_days: 30,
+      per_library: [],
+      runs: 3,
+    };
+    try {
+      renderEditor(row({ build: "shared", placement: "both" }));
+      const live = screen.getByRole("region", { name: "Live on Plex" });
+      expect(await within(live).findByText(/One shared copy for everyone/)).toBeInTheDocument();
+      expect(live).not.toHaveTextContent("0 titles delivered");
+    } finally {
+      effectivenessData.current = null;
+    }
+  });
+
   it("says when it next runs, from the scheduler when the schedule on screen is the saved one", async () => {
     const next = new Date();
     next.setDate(next.getDate() + 1);
@@ -478,7 +440,10 @@ describe("RowEditor — a name that needs a watch", () => {
   it("stays out of the way for a row whose name never needs one", async () => {
     renderEditor(row({ name: "✨ {library_name} Picked for You" }));
 
-    await screen.findByLabelText(/^row name$/i).catch(() => null);
+    // The cold-start setting is rendered by the same field group as the new-person name, so once it
+    // is on screen the absence below is a real answer, not a render that has not happened yet.
+    await waitFor(() => expect(document.querySelector('[data-setting="cold_start"]')).not.toBeNull());
+    expect(document.querySelector('[data-setting="fallback_name"]')).toBeNull();
     expect(
       screen.queryByLabelText(/Name for someone who.s new/i),
     ).not.toBeInTheDocument();
@@ -517,9 +482,17 @@ describe("RowEditor — inherited globals", () => {
   });
 
   it("claims no global value while settings are still loading", () => {
-    renderEditor(row({ watched_pct: null }));
+    settingsPending.current = true;
+    try {
+      renderEditor(row({ watched_pct: null }));
 
-    expect(screen.queryByText(/^Currently/)).toBeNull();
+      // The field that would carry the caption is on screen with its settings read still pending,
+      // so the absence is a real answer.
+      expect(document.querySelector('[data-setting="watched_pct"]')).not.toBeNull();
+      expect(screen.queryByText(/^Currently/)).toBeNull();
+    } finally {
+      settingsPending.current = false;
+    }
   });
 
   it("says nothing about the global on a field that overrides it", async () => {
@@ -546,8 +519,8 @@ describe("RowEditor — already-watched titles", () => {
     expect(slider).toHaveValue("25");
     // The "use the global default" switch is OFF when the row sets its own cap.
     expect(
-      screen.getByRole("switch", { name: /global already-watched default/i }),
-    ).not.toBeChecked();
+      screen.getByRole("button", { name: overrideName(/already-watched/) }),
+    ).toHaveTextContent("Reset");
   });
 
   it("hides the slider and checks the switch when the row inherits the global cap", () => {
@@ -556,8 +529,8 @@ describe("RowEditor — already-watched titles", () => {
       screen.queryByRole("slider", { name: /already-watched/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: /global already-watched default/i }),
-    ).toBeChecked();
+      screen.getByRole("button", { name: overrideName(/already-watched/) }),
+    ).toHaveTextContent("Override");
   });
 
   it("round-trips a per-row watched cap into the PATCH body", async () => {
@@ -565,7 +538,7 @@ describe("RowEditor — already-watched titles", () => {
 
     // Turn off "use global default" to reveal the slider (starts at 0%).
     await userEvent.click(
-      screen.getByRole("switch", { name: /global already-watched default/i }),
+      screen.getByRole("button", { name: overrideName(/already-watched/) }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
@@ -868,14 +841,14 @@ describe("RowEditor — placement", () => {
 
   it("names the owner account behind 'Just me', and counts everyone else", () => {
     renderEditor(row({ placement: "both", placement_friends: "both" }), [
-      user({ id: 1, user_type: "owner", display_name: "stevezau" }),
+      user({ id: 1, user_type: "owner", display_name: "admin" }),
       user({ id: 2, slug: "sarah" }),
       user({ id: 3, slug: "mike" }),
     ]);
 
     expect(screen.getAllByText("Just me").length).toBeGreaterThan(0);
     // The whole point of the rename: "me" is a specific Plex account, so name it.
-    expect(screen.getByText("stevezau")).toBeInTheDocument();
+    expect(screen.getByText("admin")).toBeInTheDocument();
     expect(screen.getByText("2 other people")).toBeInTheDocument();
   });
 
@@ -1003,8 +976,8 @@ describe("RowEditor — rebuild cadence", () => {
       }),
     ).toHaveValue(11);
     expect(
-      screen.getByRole("switch", { name: /global refresh cadence/i }),
-    ).not.toBeChecked();
+      screen.getByRole("button", { name: overrideName(/refresh every/) }),
+    ).toHaveTextContent("Reset");
   });
 
   it("stops inheriting at the global's own value, not at zero", async () => {
@@ -1013,7 +986,7 @@ describe("RowEditor — rebuild cadence", () => {
     renderEditor(row({ refresh_days: null }));
 
     await userEvent.click(
-      screen.getByRole("switch", { name: /global refresh cadence/i }),
+      screen.getByRole("button", { name: overrideName(/refresh every/) }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
@@ -1039,8 +1012,8 @@ describe("RowEditor — idle hold", () => {
       }),
     ).toHaveValue(21);
     expect(
-      screen.getByRole("switch", { name: /global hold/i }),
-    ).not.toBeChecked();
+      screen.getByRole("button", { name: overrideName(/hold when/) }),
+    ).toHaveTextContent("Reset");
   });
 
   it("still offers the hold on a row that names its seed", async () => {
@@ -1051,11 +1024,11 @@ describe("RowEditor — idle hold", () => {
     // (issue #57). It is also the row the wizard creates, so hiding it guts the feature.
     renderEditor(row({ name_template: "Because you watched {top_seed}" }));
     expect(
-      screen.getByRole("switch", { name: /global hold/i }),
+      screen.getByRole("button", { name: overrideName(/hold when/) }),
     ).toBeInTheDocument();
     // ...while the CADENCE control stays hidden for it, which is a different question.
     expect(
-      screen.queryByRole("switch", { name: /global refresh cadence/i }),
+      screen.queryByRole("button", { name: overrideName(/refresh every/) }),
     ).not.toBeInTheDocument();
   });
 
@@ -1104,7 +1077,7 @@ describe("RowEditor — idle hold", () => {
     // overrides must not be on screen.
     renderEditor(row({ seed_window: 3 }));
     expect(
-      screen.queryByRole("switch", { name: /global hold/i }),
+      screen.queryByRole("button", { name: overrideName(/hold when/) }),
     ).not.toBeInTheDocument();
   });
 
@@ -1114,7 +1087,7 @@ describe("RowEditor — idle hold", () => {
     settingsData.current = { "recommendations.idle_hold_days": 30 };
     renderEditor(row({ idle_hold_days: null }));
 
-    await userEvent.click(screen.getByRole("switch", { name: /global hold/i }));
+    await userEvent.click(screen.getByRole("button", { name: overrideName(/hold when/) }));
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
     );
@@ -1135,22 +1108,20 @@ describe("RowEditor — recent watches to search", () => {
     settingsData.current = { "candidates.sources": ["llm_web"] };
     renderEditor(row({ recent_count: 5 }));
     expect(
-      await screen.findByLabelText(/Watches the AI web search looks up/i),
+      await screen.findByLabelText(/^Watches the AI web search looks up$/i),
     ).toHaveValue(5);
     expect(
-      screen.getByRole("switch", { name: /global recent-watches default/i }),
-    ).not.toBeChecked();
+      screen.getByRole("button", { name: overrideName(/watches the ai web search/) }),
+    ).toHaveTextContent("Reset");
   });
 
   it("round-trips a per-row recent_count into the PATCH body", async () => {
     settingsData.current = { "candidates.sources": ["llm_web"] };
     renderEditor(row({ recent_count: null }));
-    await screen.findByRole("switch", {
-      name: /global recent-watches default/i,
-    });
+    await screen.findByRole("button", { name: overrideName(/watches the ai web search/) });
 
     await userEvent.click(
-      screen.getByRole("switch", { name: /global recent-watches default/i }),
+      screen.getByRole("button", { name: overrideName(/watches the ai web search/) }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
@@ -1175,10 +1146,8 @@ describe("RowEditor — how many recent watches to match", () => {
       screen.getByLabelText(/^How many recent watches to match$/i),
     ).toHaveValue(3);
     expect(
-      screen.getByRole("switch", {
-        name: /global default for how many recent watches to match/i,
-      }),
-    ).not.toBeChecked();
+      screen.getByRole("button", { name: overrideName(/how many recent watches/) }),
+    ).toHaveTextContent("Reset");
   });
 
   it("round-trips a per-row max_seeds into the PATCH body", async () => {
@@ -1211,9 +1180,7 @@ describe("RowEditor — how many recent watches to match", () => {
     renderEditor(row({ max_seeds: null, media: "movie" }));
 
     await userEvent.click(
-      await screen.findByRole("switch", {
-        name: /global default for how many recent watches to match/i,
-      }),
+      await screen.findByRole("button", { name: overrideName(/how many recent watches/) }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
@@ -1229,9 +1196,7 @@ describe("RowEditor — how many recent watches to match", () => {
     renderEditor(row({ cold_start: null }));
 
     await userEvent.click(
-      screen.getByRole("switch", {
-        name: /global setting for people without enough watch history/i,
-      }),
+      screen.getByRole("button", { name: overrideName(/when someone hasn’t watched enough/) }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
@@ -1338,7 +1303,7 @@ describe("RowEditor — how many recent watches to match", () => {
 describe("RowEditor — how often it changes", () => {
   const cadenceBlock = () => screen.queryByText(/Titles refresh every/i);
   const cadenceToggle = () =>
-    screen.queryByRole("switch", { name: /global refresh cadence/i });
+    screen.queryByRole("button", { name: overrideName(/refresh every/) });
 
   it("drops the setting entirely on a row named after a watch", () => {
     // The engine runs these rows nightly whatever is stored, so there is no cadence to choose. It
@@ -1666,7 +1631,8 @@ describe("RowEditor — one page of sections, one way around it", () => {
     const nav = screen.getByRole("navigation", { name: "Row settings sections" });
     const links = within(nav).getAllByRole("link");
 
-    expect(links.map((link) => link.textContent)).toEqual(SECTIONS.map(([label]) => label));
+    // The first text node is the label; a hint such as "1 override" follows it in its own span.
+    expect(links.map((link) => link.firstChild?.textContent)).toEqual(SECTIONS.map(([label]) => label));
     expect(links.map((link) => link.getAttribute("href"))).toEqual(SECTIONS.map(([, id]) => `#${id}`));
     const regions = SECTIONS.map(([label, id]) => {
       const region = section(label);
@@ -1679,12 +1645,17 @@ describe("RowEditor — one page of sections, one way around it", () => {
     });
   });
 
-  it("folds nothing: no section chips, no accordions, every section's settings on the page", () => {
+  it("folds only placement: no section chips, every section on the page, Edit placement opens its controls", async () => {
     renderEditor(row(), [], false);
-    expect(document.querySelector("details[data-settings-group]")).toBeNull();
+    expect([...document.querySelectorAll("details[data-settings-group]")].map((group) => group.getAttribute("data-settings-group"))).toEqual(["Placement"]);
     expect(screen.queryByRole("button", { name: "Appearance" })).toBeNull();
     for (const [label] of SECTIONS) expect(section(label)).toBeVisible();
-    expect(within(section("Placement")).getByLabelText("Sort title prefix")).toBeVisible();
+    // Closed, the line says where the row shows; the controls wait behind Edit placement.
+    const placement = section("Placement");
+    expect(within(placement).getByText("Recommended shelf on · Home screen on · every day")).toBeVisible();
+    expect(within(placement).getByLabelText("Sort title prefix")).not.toBeVisible();
+    await userEvent.click(within(placement).getByText("Edit placement"));
+    expect(within(placement).getByLabelText("Sort title prefix")).toBeVisible();
   });
 
   it("has no Danger zone for a row being created, which has nothing on Plex yet", () => {
@@ -1720,7 +1691,7 @@ describe("RowEditor — one page of sections, one way around it", () => {
     expect(within(section("What goes in")).getByRole("button", { name: "Best match" })).toBeInTheDocument();
     expect(within(section("What goes in")).getByText("Row type: Picked for You")).toBeInTheDocument();
     expect(within(section("Schedule")).getByText("Runs on…", { selector: "label" })).toBeInTheDocument();
-    expect(within(section("Schedule")).getByText("Titles refresh every…")).toBeInTheDocument();
+    expect(within(section("What goes in")).getByText("Titles refresh every…")).toBeInTheDocument();
     expect(within(section("Placement")).getByLabelText("Sort title prefix")).toBeInTheDocument();
     expect(within(section("Placement")).getByRole("button", { name: "Every day" })).toBeInTheDocument();
   });
@@ -1870,7 +1841,7 @@ describe("RowEditor — settings that would do nothing are not offered", () => {
     renderEditor(row({ recent_count: 5, candidate_sources: ["llm_web"] }));
 
     expect(
-      await screen.findByLabelText(/Watches the AI web search looks up/i),
+      await screen.findByLabelText(/^Watches the AI web search looks up$/i),
     ).toBeInTheDocument();
   });
 });
@@ -1996,8 +1967,8 @@ describe("RowEditor — recent releases", () => {
       screen.getByRole("slider", { name: /release date counts/i }),
     ).toHaveValue("80");
     expect(
-      screen.getByRole("switch", { name: /global recent-releases default/i }),
-    ).not.toBeChecked();
+      screen.getByRole("button", { name: overrideName(/recent releases/) }),
+    ).toHaveTextContent("Reset");
   });
 
   it("hides the slider while the row is inheriting", () => {
@@ -2006,8 +1977,8 @@ describe("RowEditor — recent releases", () => {
       screen.queryByRole("slider", { name: /release date counts/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("switch", { name: /global recent-releases default/i }),
-    ).toBeChecked();
+      screen.getByRole("button", { name: overrideName(/recent releases/) }),
+    ).toHaveTextContent("Override");
   });
 
   it("stops inheriting at the global's own value, not at zero", async () => {
@@ -2018,7 +1989,7 @@ describe("RowEditor — recent releases", () => {
     renderEditor(row({ recency: null }));
 
     await userEvent.click(
-      screen.getByRole("switch", { name: /global recent-releases default/i }),
+      screen.getByRole("button", { name: overrideName(/recent releases/) }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
@@ -2038,7 +2009,7 @@ describe("RowEditor — recent releases", () => {
     );
 
     expect(
-      screen.queryByRole("switch", { name: /global refresh cadence/i }),
+      screen.queryByRole("button", { name: overrideName(/refresh every/) }),
     ).not.toBeInTheDocument();
     expect(
       screen.getByRole("slider", { name: /release date counts/i }),
@@ -2054,17 +2025,17 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
   // The "watch it again" switch that was on this list is a kind now, offered on every row by the
   // kind picker, so it is no longer a per-person dial to hide.
   const perPersonOnly = [
-    /global already-watched default/i,
-    /global refresh cadence/i,
-    /not started/i,
-    /global setting for people without enough watch history/i,
-  ];
+    ["button", overrideName(/already-watched/)],
+    ["button", overrideName(/refresh every/)],
+    ["switch", /not started/i],
+    ["button", overrideName(/when someone hasn’t watched enough/)],
+  ] as const;
 
   it("offers them on a per-person row", () => {
     // The control: without it, the shared-row assertions below could pass on a broken editor.
     renderEditor(row({ build: "per_person" }));
-    for (const name of perPersonOnly) {
-      expect(screen.getByRole("switch", { name })).toBeInTheDocument();
+    for (const [role, name] of perPersonOnly) {
+      expect(screen.getByRole(role, { name })).toBeInTheDocument();
     }
   });
 
@@ -2073,8 +2044,8 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     // cold-start is meaningless for a row built from aggregate history. Showing a control the
     // engine drops is worse than showing none — it states a behaviour.
     renderEditor(row({ build: "shared", min_watchers: 2 }));
-    for (const name of perPersonOnly) {
-      expect(screen.queryByRole("switch", { name })).not.toBeInTheDocument();
+    for (const [role, name] of perPersonOnly) {
+      expect(screen.queryByRole(role, { name })).not.toBeInTheDocument();
     }
   });
 
@@ -2130,7 +2101,7 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     // row leans modern now.
     renderEditor(row({ build: "shared", min_watchers: 2 }));
     expect(
-      screen.queryByRole("switch", { name: /global recent-releases default/i }),
+      screen.queryByRole("button", { name: overrideName(/recent releases/) }),
     ).not.toBeInTheDocument();
   });
 });
@@ -2301,4 +2272,61 @@ it("asks before a rename discards unsaved row settings", async () => {
   expect(rename).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
   expect(screen.getByLabelText("Description")).toHaveValue("a draft description");
+});
+
+describe("RowEditor — the overview a row opens with", () => {
+  beforeEach(() => {
+    settingsData.current = {};
+    librariesData.current = [
+      { key: "1", title: "Movies", type: "movie" },
+      { key: "2", title: "TV Shows", type: "show" },
+    ];
+  });
+
+  it("names the row as written and lists what it is called in each library", async () => {
+    renderEditor(row({ name: "✨ {library_name} Picked for You", name_template: "✨ {library_name} Picked for You" }));
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent("✨ Picked for You");
+    expect(heading).not.toHaveTextContent("library name");
+    expect(await screen.findByText("✨ Movies Picked for You")).toBeInTheDocument();
+    expect(screen.getByText("✨ TV Shows Picked for You")).toBeInTheDocument();
+  });
+
+  it("counts a row's overrides beside the section they sit in, and says when it follows the server", () => {
+    renderEditor(row({ min_rating: 6.5, refresh_days: 3 }));
+
+    const nav = screen.getByRole("navigation", { name: "Row settings sections" });
+    expect(within(nav).getByRole("link", { name: /What goes in/ })).toHaveTextContent("2 overrides");
+    expect(within(nav).getByRole("link", { name: /Schedule/ })).not.toHaveTextContent("override");
+    expect(within(nav).getByRole("link", { name: /Requests/ })).toHaveTextContent("server default");
+  });
+
+  it("shows an inherited setting as one line with its server value, and an override as such", async () => {
+    settingsData.current = { "recommendations.refresh_days": 8 };
+    renderEditor(row({ refresh_days: null }));
+
+    const field = document.querySelector("[data-setting='refresh_days']") as HTMLElement;
+    expect(within(field).getByText("server default")).toBeInTheDocument();
+    await userEvent.click(within(field).getByRole("button", { name: overrideName(/refresh every/) }));
+    expect(within(field).getByText("overridden here")).toBeInTheDocument();
+  });
+
+  it("offers the usual row sizes as one tap", async () => {
+    renderEditor(row({ size: 15 }));
+
+    await userEvent.click(screen.getByRole("button", { name: "30 titles" }));
+    expect(screen.getByRole("button", { name: "30 titles" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("reads placement back as what the people who get it see and what the owner sees", () => {
+    renderEditor(row({ placement: "library", placement_friends: "home" }), [
+      { id: 4, username: "sarah", display_name: "sarah", enabled: true, user_type: "shared", prefs: {} } as unknown as User,
+    ]);
+
+    const placement = screen.getByRole("region", { name: "Placement" });
+    expect(within(placement).getByText("What sarah sees")).toBeInTheDocument();
+    expect(within(placement).getByText(/Their own row on the Home screen\./)).toBeInTheDocument();
+    expect(within(placement).getByText(/Your own row on the Recommended shelf\./)).toBeInTheDocument();
+  });
 });

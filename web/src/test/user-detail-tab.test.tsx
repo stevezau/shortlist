@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UserDetailBody } from "@/pages/user-detail";
 import type { User, UserRow } from "@/lib/types";
@@ -65,6 +65,10 @@ function renderAt(url: string) {
     </QueryClientProvider>,
   );
 }
+
+beforeEach(() => {
+  userRows.current = [];
+});
 
 describe("UserDetailBody — which tab the URL selects", () => {
   it("identifies blocked titles as a settings section with its controls visible", () => {

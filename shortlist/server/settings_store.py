@@ -40,7 +40,7 @@ DEFAULTS: dict[str, Any] = {
     # WHERE a request is filed. "arr" posts to Radarr/Sonarr directly (the original route, and still
     # the default so no existing install changes behaviour). "overseerr" hands the title to
     # Overseerr/Jellyseerr and lets IT drive the download apps — its quality profile, its root
-    # folder, its approval. The two are exclusive; see `_build_requests`.
+    # folder, its approval. The two are exclusive; see `build_requests`.
     "requests.target": "arr",
     "requests.overseerr.url": "",
     # Which Overseerr account the request is filed as. 0 = the API key's own (admin) account, which
@@ -54,7 +54,7 @@ DEFAULTS: dict[str, Any] = {
     "requests.sonarr.quality_profile_id": 0,
     "requests.sonarr.root_folder": "",
     # How much of a show Sonarr monitors when Shortlist adds it — Sonarr's own Add Series "Monitor"
-    # choice, passed through. "all" is Sonarr's default and the only behaviour there used to be.
+    # choice, passed through. "all" is Sonarr's default.
     "requests.sonarr.monitor": "all",
     "requests.rating_source": "tmdb",  # tmdb (no setup) | imdb | trakt | tomatoes | metacritic (via MDBList)
     "requests.min_rating": 7.0,  # rating floor on the chosen source
@@ -73,6 +73,9 @@ DEFAULTS: dict[str, Any] = {
     "requests.max_per_run": 5,  # hard cap on titles auto-requested per run, total
     # Hybrid tier: titles clearing these higher bars auto-send; the rest queue for manual approval.
     "requests.auto_send": True,  # False = fully manual (every qualifying title waits for approval)
+    # TMDB movie genre ids / tag ids ({"id": name}) never requested automatically: they wait in the inbox.
+    "requests.hold_genres": [],
+    "requests.hold_tags": {},
     "requests.auto_min_demand": 3,  # auto-send only titles wanted by at least this many people
     "requests.auto_min_rating": 8.0,  # ...and rated at least this high on the chosen source
     "requests.tag": "shortlist",  # tag applied to every title Shortlist adds ("" = no tag)
@@ -131,9 +134,8 @@ DEFAULTS: dict[str, Any] = {
     #               or per-search bill, though it still FORWARDS each query to real engines
     #               (Google/Brave/DDG), so it is not an air-gapped path.
     # Either external works with every provider and is the only kind a local Ollama model can use.
-    # There was a fourth value, 'auto' (native UNIONED with whichever external was configured). It
-    # was the default and it was removed in 1.3 — the name described nothing, and owners could not
-    # tell what it was doing. Migration 0063 pins every existing install to what it was really using.
+    # Only native or one external provider: a union of both ('auto') was dropped because owners could
+    # not tell what it was doing. Migration 0063 pins existing installs to what they were really using.
     "llm_web.search_provider": "native",
     # Owner's own guidance for AI web search (#138). It REPLACES the built-in guidance on every row without
     # its own instructions, and rows set to "add" append theirs after it. "" = the built-in wording.
@@ -143,11 +145,11 @@ DEFAULTS: dict[str, Any] = {
     # a reverse proxy in front of it (SearXNG itself has no auth); the password is a SECRET_KEY.
     "searxng.url": "",
     "searxng.username": "",
-    # How hard Exa works on each search, and what it costs. Measured on two seeds (see
-    # `.claude/docs/llm-web-search-upgrade.md`): `deep-lite` found 47 and 36 TMDB-resolvable titles
-    # for $0.012 a search, where `auto` found 13 and 8 for $0.007 — and once returned nothing at all
-    # from 26k characters of page text. `deep-lite` is the default despite costing more because the
-    # cheap modes are erratic, and every search is cached 14 days and shared across the whole roster.
+    # How hard Exa works on each search, and what it costs. Measured on two seeds: `deep-lite` found 47
+    # and 36 TMDB-resolvable titles for $0.012 a search, where `auto` found 13 and 8 for $0.007 — and
+    # once returned nothing at all from 26k characters of page text. `deep-lite` is the default despite
+    # costing more because the cheap modes are erratic, and every search is cached 7 days and shared
+    # across the whole roster.
     "exa.search_type": "deep-lite",
     # Cap on already-finished titles in a row, as a fraction: 0.0 = all fresh (default), 1.0 = no
     # filtering, in between = at most that share of the row may be things already watched. Per-row.
@@ -229,8 +231,9 @@ DEFAULTS: dict[str, Any] = {
     # How long (seconds) to wait on a single PMS call before giving up and retrying. Reads are near-
     # instant on a LAN, but rebuilding a big library's collection (a TV row on a large server) legitimately
     # takes 15-20s+, so too low a value times those out and forces a wasteful retry. 20 proved too tight
-    # for large TV libraries (SFLIX 2026-07-20: legit writes at 19.9s, many ERR at 20.0s then retried); 45
-    # gives headroom while still failing a truly-stalled call. Raise it if big writes still time out. Advanced.
+    # for large TV libraries (a large production server, 2026-07-20: legit writes at 19.9s, many ERR at
+    # 20.0s then retried); 45 gives headroom while still failing a truly-stalled call. Raise it if big
+    # writes still time out. Advanced.
     "plex.timeout_s": 45,
     "plextv.throttle_s": 0.0,  # FLOOR between plex.tv writes; 0 = as fast as plex.tv accepts (adaptive 429 backoff)
     # How many users a run processes concurrently. Only their reads + AI curation overlap; every Plex
@@ -435,6 +438,12 @@ class SettingsStore:
         return self._session.get(Setting, key) is not None
 
     def set(self, key: str, value: Any) -> None:
+        """Write and commit one value, preserving the existing convenience API."""
+        self.set_in_transaction(key, value)
+        self._session.commit()
+
+    def set_in_transaction(self, key: str, value: Any) -> None:
+        """Write and flush a value; the caller owns the transaction and its consequences."""
         self._require_box(key)
         if key in SECRET_KEYS and value:
             value = self._secrets.encrypt(str(value))
@@ -443,21 +452,15 @@ class SettingsStore:
             self._session.add(Setting(key=key, value={"v": value}))
         else:
             row.value = {"v": value}
-        self._session.commit()
+        self._session.flush()
 
-    def unset(self, key: str) -> bool:
-        """Delete this key's row, putting it back to "never written". Returns whether a row went.
-
-        The counterpart to `has_row`, and the only way to express "use the built-in default" for a
-        cron the UI can switch off: writing "" there means OFF (`scheduler._OFF_ABLE`), so the
-        default is reachable ONLY by removing the row. Storing a blank and deleting the row are
-        different states — see `scheduler._resolve_cron`.
-        """
+    def unset_in_transaction(self, key: str) -> bool:
+        """Restore inheritance without committing other changes in the caller's session."""
         row = self._session.get(Setting, key)
         if row is None:
             return False
         self._session.delete(row)
-        self._session.commit()
+        self._session.flush()
         return True
 
     def all_public(self) -> dict[str, Any]:
@@ -504,7 +507,8 @@ class SettingsStore:
                 continue
             try:
                 self._secrets.decrypt(value)
-            except Exception:
+            except Exception as e:
+                logger.debug("stored secret {} does not decrypt ({})", key, type(e).__name__)
                 bad.append(key)
         return bad
 

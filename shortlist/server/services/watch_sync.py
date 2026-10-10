@@ -304,10 +304,10 @@ class WatchSync:
                 profile.username,
                 len(failed),
             )
-            # NOT complete, despite the name this fallback used to carry. `ShareTokenWatchSource.fetch`
+            # NOT complete. `ShareTokenWatchSource.fetch`
             # catches a per-section failure and moves on, so the very library that just failed here
             # contributes nothing and the result still comes back non-empty. Serving that as complete
-            # let credit withdrawal read "absent" as "un-watched" and permanently clear the credit on
+            # would let credit withdrawal read "absent" as "un-watched" and permanently clear the credit on
             # every pick in the unreadable library.
             profile.history_complete = False
             return ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
@@ -414,7 +414,8 @@ class WatchSync:
             from shortlist.engine.rows import builds_anything_for
 
             return builds_anything_for(profile, config)
-        except Exception:
+        except Exception as e:
+            logger.debug("run scope check failed ({}); treating the profile as in scope", type(e).__name__)
             return True
 
     async def sync_watched(
@@ -506,10 +507,10 @@ class WatchSync:
             # above, and withdrawal consults that per person. A single roster-wide claim cannot be
             # true — one person's library being unreadable makes only THEIR read fail soft.
             #
-            # Withdrawal used to be gated on the WEEKLY sweep, which is what made a pick keep its
-            # credit for up to seven days after the person un-marked it in Plex — reported on #108,
-            # where the dashboard went on calling a title "finished" that Plex no longer had as
-            # watched. That gate was protecting against incremental reads, which no longer exist.
+            # Withdrawal is not gated on the WEEKLY sweep: that would keep a pick's credit for up to
+            # seven days after the person un-marked it in Plex (#108), with the dashboard calling a
+            # title "finished" that Plex no longer has as watched. Reads are always full, so there is
+            # no incremental read to protect against.
             reconcile_watched(profiles)
             with self._sessions() as session:
                 store = SettingsStore(session)

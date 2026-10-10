@@ -11,12 +11,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Delivery,
     PickRow,
@@ -30,6 +27,7 @@ from shortlist.server.services.report_service import (
     resolve_outcomes,
 )
 from shortlist.server.services.run_persistence import reconcile_watched
+from tests.watch_fixtures import personal_delivery, shared_delivery
 
 # The real clock, deliberately not a pinned date. Every fixture here places its data RELATIVE to
 # this instant, and the code under test reads `datetime.now(UTC)` — so a pinned NOW is a second clock
@@ -38,13 +36,6 @@ from shortlist.server.services.run_persistence import reconcile_watched
 # bug in code nobody had touched. Nothing in this file needs a fixed calendar date; it needs the
 # same "now" the SUT sees.
 NOW = datetime.now(UTC)
-
-
-@pytest.fixture
-def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
 
 
 @pytest.fixture
@@ -67,6 +58,7 @@ def world(sessions):
                 audience=None,
             )
         )
+        shared_delivery(s, 1, slug="staff")
         s.commit()
     return sessions
 
@@ -108,6 +100,7 @@ def a_pick_so_the_rating_key_resolves(sessions, *, tmdb_id=550, rating_key=9001)
                 created_at=NOW - timedelta(days=1),
             )
         )
+        personal_delivery(s, 1, user_id=2, slug="other", library="1")
         s.commit()
 
 
@@ -155,6 +148,7 @@ class TestTheWithdrawalLogNamesWhatItTook:
                         watched_at=NOW - timedelta(days=1),
                     )
                 )
+                personal_delivery(session, 1, user_id=1, slug="staff", library="1")
             session.commit()
         with world() as session:
             user = session.query(User).filter_by(id=1).one()
@@ -193,6 +187,7 @@ class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
                     watched_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
 
     def sync(self, world, history, *, full):
@@ -277,6 +272,7 @@ class TestUnwatchingWithdrawsOnlyAFlagBackedCredit:
                     finished_at=NOW - timedelta(hours=12),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 
@@ -315,6 +311,7 @@ class TestSettledHistoryIsNeverErased:
                     watched_at=NOW - timedelta(days=days),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
 
     def test_a_settled_credit_survives_a_title_leaving_the_library(self, world):
@@ -372,6 +369,7 @@ class TestAWithdrawnCreditLeavesNothingBehind:
                     max_percent=42,
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 
@@ -388,7 +386,7 @@ class TestUnwatchingAndSharedRows:
     but it is only correct because of a property of `shared_credits` that nothing pinned."""
 
     def test_a_shared_credit_always_has_playback_behind_it(self, world):
-        """`shared_credits` has no snapshot path: it reads `_scan_plays` and nothing else. So every
+        """`shared_credits` has no snapshot path: it reads `scan_plays` and nothing else. So every
         shared credit is one we WATCHED HAPPEN, which is exactly the class `_withdraw_unwatched`
         refuses to take back. If a snapshot path were ever added here, shared credits would become
         withdrawable and this would need revisiting."""
@@ -448,6 +446,7 @@ class TestClearingHistoryLeavesNoOrphanedPercentage:
                     max_percent=3,
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
 
         with world() as s:
@@ -476,6 +475,7 @@ class TestClearingHistoryLeavesNoOrphanedPercentage:
                     max_percent=3,
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
 
         with world() as s:
@@ -511,6 +511,7 @@ class TestTheMonotonicPercentageGuard:
                     max_percent=62,
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         # A brief re-open today: 5%.
         watch_session(world, 99, started=NOW - timedelta(hours=1), offset=300_000)
@@ -576,6 +577,7 @@ class TestALiveCreditIsNotWithdrawnByAResyncThatMissedIt:
                     max_percent=42,
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 
@@ -608,6 +610,7 @@ class TestALiveCreditIsNotWithdrawnByAResyncThatMissedIt:
                     watched_at=NOW - timedelta(hours=1),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="mine", library="1")
             s.commit()
         other = [WatchedItem(title="Other", media_type=MediaType.MOVIE, watched_at=NOW, tmdb_id=999)]
 

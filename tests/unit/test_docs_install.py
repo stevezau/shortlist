@@ -29,8 +29,8 @@ INSTALL_TEXT = ("docker run", "image:")
 
 
 def _sources() -> list[Path]:
-    """Every published page and template. `superpowers/` holds internal plans the build excludes."""
-    pages = [p for p in DOCS.rglob("*.md") if "superpowers" not in p.relative_to(DOCS).parts]
+    """Every published page and template."""
+    pages = list(DOCS.rglob("*.md"))
     templates = [*DOCS.glob("_layouts/*.html"), *DOCS.glob("_includes/*.html")]
     return sorted(pages + templates)
 

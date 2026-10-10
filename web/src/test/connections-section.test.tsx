@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ConnectionsSection } from "@/components/settings/connections-section";
 import { findProvider } from "@/lib/providers";
+import { queryKeys } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
 const { putSettings, testConnection, getRuns } = vi.hoisted(() => ({
@@ -36,7 +37,7 @@ function renderSection(settings: Settings) {
   const { rerender } = render(ui(settings));
   // The settings page re-renders its children when the settings query refreshes after a save; a
   // test that never does that can't see anything a card derives from freshly-saved settings.
-  return { refresh: (next: Settings) => rerender(ui(next)) };
+  return { client, refresh: (next: Settings) => rerender(ui(next)) };
 }
 
 describe("ConnectionsSection", () => {
@@ -45,6 +46,16 @@ describe("ConnectionsSection", () => {
     testConnection.mockClear();
     getRuns.mockClear();
     getRuns.mockResolvedValue([]);
+  });
+
+  it("says Not set up for the AI card when the provider is None, never a green Connected", async () => {
+    renderSection({ "curator.provider": "none" });
+    const card = screen.getByTestId("connection-llm");
+    await act(async () => {});
+
+    expect(within(card).getByText("Not set up")).toBeInTheDocument();
+    expect(within(card).queryByText("Connected")).not.toBeInTheDocument();
+    expect(within(card).getByText(/built-in picker\. Nothing to test/i)).toBeInTheDocument();
   });
 
   describe("the Webhook card", () => {
@@ -459,6 +470,40 @@ describe("ConnectionsSection", () => {
     ).toHaveAttribute("href", "https://www.themoviedb.org/settings/api");
   });
 
+  it("points the Plex token field at Plex's token article", async () => {
+    renderSection({});
+    const card = screen.getByTestId("connection-plex");
+    await userEvent.click(
+      within(card).getByRole("button", { name: /set up/i }),
+    );
+
+    expect(
+      within(card).getByRole("link", { name: /find your token/i }),
+    ).toHaveAttribute(
+      "href",
+      "https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/",
+    );
+  });
+
+  it("adds up the searches of a night's chained runs, not just the last run's", async () => {
+    const night = (id: number, started: string, finished: string, searches: number) => ({
+      id,
+      status: "ok",
+      trigger: "schedule",
+      dry_run: false,
+      started_at: started,
+      finished_at: finished,
+      stats: { exa_searches: searches },
+    });
+    getRuns.mockResolvedValue([
+      night(13, "2026-07-20T04:30:00Z", "2026-07-20T04:32:00Z", 0),
+      night(12, "2026-07-20T03:30:00Z", "2026-07-20T04:31:00Z", 102),
+    ]);
+    renderSection({ "exa.apikey": "•••••" });
+    const card = screen.getByTestId("connection-llm");
+    expect(await within(card).findByText(/Last run: 102 web searches/)).toBeInTheDocument();
+  });
+
   it("shows the last run's web-search count, without claiming it was billed", async () => {
     // Exa has no live-quota endpoint, so the most recent finished run's search count stands in for
     // "usage" — and it's a count of searches, never tokens.
@@ -498,26 +543,21 @@ describe("ConnectionsSection", () => {
         stats: { exa_searches: 46 },
       },
     ]);
-    renderSection({});
+    const { client } = renderSection({});
     const card = screen.getByTestId("connection-llm");
     // Settle the runs query first. Asserting straight away passed whatever the component did,
     // because the note cannot be on screen before the data it renders has arrived.
-    await waitFor(() =>
-      expect(screen.getByTestId("connection-llm").textContent).toBeDefined(),
-    );
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await waitFor(() => expect(client.getQueryState(queryKeys.runs)?.status).toBe("success"));
     expect(within(card).queryByText(/Last run:/)).not.toBeInTheDocument();
   });
 
   it("omits the Exa usage note when a key is saved but no run has finished yet", async () => {
     // Fresh install: key configured, but nothing has run — no count to show, so no note.
     getRuns.mockResolvedValue([]);
-    renderSection({ "exa.apikey": "•••••" });
+    const { client } = renderSection({ "exa.apikey": "•••••" });
     const card = screen.getByTestId("connection-llm");
     // Let the runs query settle so a late-arriving footnote would have rendered.
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => expect(client.getQueryState(queryKeys.runs)?.status).toBe("success"));
     expect(within(card).queryByText(/Last run:/)).not.toBeInTheDocument();
   });
 });

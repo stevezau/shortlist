@@ -1,28 +1,11 @@
-import { useId } from "react";
 import { Link } from "react-router";
 
+import { AiModePicker, AiTextFields, PROMPT_CLASS } from "@/components/rows/ai-text-fields";
 import { QueryBoundary } from "@/components/query-boundary";
-import { Segmented } from "@/components/segmented";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { CONNECTIONS_SETTINGS } from "@/lib/row-kinds";
 import { buildPrompt, themeGuidance, useThemeCapabilities, useThemePrompts } from "@/lib/themes";
 import type { AiInstructions, CollectionInput, ThemePrompts } from "@/lib/types";
-
-type Mode = AiInstructions["mode"];
-
-/** The API's limit on a row's guidance text. */
-const MAX_CHARS = 2000;
-const PROMPT_CLASS =
-  "max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs";
-
-const MODES: { value: Mode; label: string }[] = [
-  { value: "default", label: "Use the default" },
-  { value: "add", label: "Add to the default" },
-  { value: "own", label: "Write your own" },
-];
 
 function LoadingPrompt() {
   return (
@@ -91,17 +74,7 @@ function Prompt({
   onChange: (next: AiInstructions) => void;
   prompts: ThemePrompts;
 }) {
-  const textId = useId();
-  const blankId = useId();
   const guidance = themeGuidance(value, prompts.guidance);
-  // The API refuses Add or Write your own with nothing written; say so here, before Save does.
-  const blank = value.mode !== "default" && !value.text.trim();
-  const setText = (text: string) => onChange({ mode: value.mode, text });
-  const blankMessage = blank && (
-    <p id={blankId} className="text-sm text-destructive-text">
-      Write your guidance, or choose Use the default.
-    </p>
-  );
 
   return (
     <div className="space-y-4">
@@ -109,7 +82,7 @@ function Prompt({
         This is what the AI is told when you press Write the list or Adjust the list. Changing it only affects lists
         written after you save.
       </p>
-      <Segmented value={value.mode} options={MODES} ariaLabel="AI guidance" onChange={(mode) => onChange({ mode, text: value.text })} />
+      <AiModePicker value={value} onChange={onChange} ariaLabel="AI guidance" />
 
       {value.mode === "default" && (
         <div className="space-y-1">
@@ -117,39 +90,13 @@ function Prompt({
           <pre className={PROMPT_CLASS}>{prompts.guidance}</pre>
         </div>
       )}
-      {value.mode === "add" && (
-        <div className="space-y-2">
-          <Label htmlFor={textId}>Also tell the AI</Label>
-          <Textarea
-            id={textId}
-            value={value.text}
-            maxLength={MAX_CHARS}
-            aria-invalid={blank || undefined}
-            aria-describedby={blank ? blankId : undefined}
-            onChange={(event) => setText(event.target.value)}
-          />
-          {blankMessage}
-          <p className="text-sm text-muted-foreground">Added after the default guidance, for this row only.</p>
-        </div>
-      )}
-      {value.mode === "own" && (
-        <div className="space-y-2">
-          <Label htmlFor={textId}>Your guidance</Label>
-          <Textarea
-            id={textId}
-            rows={6}
-            value={value.text}
-            maxLength={MAX_CHARS}
-            aria-invalid={blank || undefined}
-            aria-describedby={blank ? blankId : undefined}
-            onChange={(event) => setText(event.target.value)}
-          />
-          {blankMessage}
-          <Button type="button" variant="outline" size="sm" onClick={() => onChange({ mode: "default", text: value.text })}>
-            Reset to the default
-          </Button>
-        </div>
-      )}
+      <AiTextFields
+        value={value}
+        onChange={onChange}
+        blankText="Write your guidance, or choose Use the default."
+        addNote="Added after the default guidance, for this row only."
+        ownLabel="Your guidance"
+      />
 
       <div className="space-y-1 rounded-md border border-dashed p-3">
         <p className="text-sm font-medium">Shortlist always adds this</p>

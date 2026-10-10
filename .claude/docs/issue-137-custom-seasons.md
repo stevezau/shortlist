@@ -10,7 +10,7 @@ From mrain1p in #137: where do the seasonal lists come from, and could owners pi
 St Patrick's, Thanksgiving, 4th of July, New Year, Mother's Day and Father's Day? It is a question plus
 a feature request. Nothing is broken.
 
-## Measurements that shaped the design (SFLIX, 2 Oct 2026, read-only)
+## Measurements that shaped the design (a large production server, 2 Oct 2026, read-only)
 
 | Question | Answer |
 | --- | --- |
@@ -35,7 +35,7 @@ a feature request. Nothing is broken.
    films, but never to a film the owner picked by hand. This answers "what if TMDB has no tag" and
    "look within my library".
 4. **Plex labels are not a source.** A Plex smart collection filtered on a label does the same job and
-   takes seconds to make in Plex. One label on SFLIX matches 10,028 items, which takes 8.8s to read.
+   takes seconds to make in Plex. One label on a large production server matches 10,028 items, which takes 8.8s to read.
 5. **Collections are referenced by section and title, never by ratingKey.** Kometa deletes a seasonal
    collection out of season and recreates it with a new ratingKey, so a ratingKey would break every
    year. A collection missing on a given night adds nothing that night and is logged. The editor says
@@ -220,4 +220,4 @@ MDBList, IMDb lists), and AI-suggested tags.
     confirmation.
 - **e2e:** create a custom season from the Seasonal row editor against `fake_plex`. The fake gains
   title search on `/all`, and the fake TMDB gains `/search/keyword` and `/discover`.
-- **Live, read-only:** run the new preview code against SFLIX and match the measured totals above.
+- **Live, read-only:** run the new preview code against a large production server and match the measured totals above.

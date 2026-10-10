@@ -19,8 +19,6 @@ from pathlib import Path
 
 from loguru import logger
 
-from shortlist.server.net_guard import safe_backup_name
-
 DEFAULT_MAX_BACKUPS = 10
 BACKUP_SUBDIR = "backups"
 #: A backup is written under its final name plus this, and renamed only once complete. The listing and
@@ -30,6 +28,20 @@ PARTIAL_SUFFIX = ".partial"
 _PARTIAL_GLOB = f"shortlist_*.db{PARTIAL_SUFFIX}*"
 #: One backup at a time per process, so the sweep of stale partials can never take one still being written.
 _backup_lock = threading.Lock()
+
+
+def safe_backup_name(name: str) -> str:
+    """A backup filename, or raise — never a path.
+
+    ``config_dir / BACKUP_SUBDIR / name`` with an unvalidated ``name`` lets `../../etc/passwd` escape
+    the backups directory, and restore then copies whatever it finds over the database. Owner-only and
+    self-inflicted, but it costs one check to make the traversal impossible rather than merely
+    unattractive.
+    """
+    cleaned = (name or "").strip()
+    if not cleaned or cleaned != cleaned.strip("/\\") or "/" in cleaned or "\\" in cleaned or ".." in cleaned:
+        raise ValueError("backup name must be a plain filename")
+    return cleaned
 
 
 def _backup_dir(config_dir: Path) -> Path:
@@ -66,8 +78,8 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
     safe_label = re.sub(r"[^a-z0-9_-]", "-", (label or "backup").strip().lower())[:32] or "backup"
     backup_path = backup_dir / f"shortlist_{ts}_{safe_label}.db"
     # Copied under another name and renamed once complete. A process stopped mid-copy (a container
-    # stop during "Back up now" or the pre-migration backup) used to leave a half-written file under
-    # the real name: listed, kept by rotation, and restorable with no integrity check.
+    # stop during "Back up now" or the pre-migration backup) would leave a half-written file under
+    # the real name if copied in place: listed, kept by rotation, and restorable with no integrity check.
     partial = backup_path.with_name(backup_path.name + PARTIAL_SUFFIX)
 
     with _backup_lock:
@@ -79,9 +91,9 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
                 dst = sqlite3.connect(str(partial))
                 src.backup(dst)
             finally:
-                # Both handles, always, and before the rename or the unlink below. They used to be
-                # closed only on the success path, so a failure mid-`backup()` leaked two SQLite
-                # connections and then unlinked a file `dst` still held — and this runs on every boot.
+                # Both handles, always, and before the rename or the unlink below. Closing only on the
+                # success path would leak two SQLite connections on a failure mid-`backup()` and then
+                # unlink a file `dst` still held — and this runs on every boot.
                 for conn in (dst, src):
                     if conn is not None:
                         conn.close()

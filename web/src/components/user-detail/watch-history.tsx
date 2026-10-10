@@ -177,10 +177,15 @@ export function WatchHistory({
         {(page) => (
           <>
             <ul className="divide-y">
-              {page.items.map((item, i) => {
+              {page.items.map((item) => {
                 const depth = watchDepth(item);
                 return (
-                  <li key={i} className="flex items-center gap-3 py-2">
+                  <li
+                    // A watch has no id of its own; this tuple is unique per watch event, unlike
+                    // an array index, which reuses DOM across titles when the page reorders.
+                    key={`${item.watched_at}|${item.media_type}|${item.tmdb_id}|${item.title}|${item.season}|${item.episode}`}
+                    className="flex items-center gap-3 py-2"
+                  >
                     {/* The artwork is how you recognise a title you only half-remember watching,
                         which is the question this list exists to answer. Smaller than the 58x87 the
                         pick lists use: this page shows 25 rows at once, and a full-size tile turns

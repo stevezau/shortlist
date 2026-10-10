@@ -24,7 +24,7 @@ def _plex_ctx(*, dry_run: bool = False) -> MagicMock:
     ctx = MagicMock()
     ctx.config.dry_run = dry_run
     ctx.plex.token = "ADMIN-TOKEN"
-    ctx.plextv.canary_server_token.return_value = "TARGET-TOKEN"
+    ctx.plextv.home_user_server_token.return_value = "TARGET-TOKEN"
     return ctx
 
 
@@ -119,7 +119,7 @@ class TestTransfer:
         kwargs = service.call_args.kwargs
         assert kwargs["target_token"] == "TARGET-TOKEN"
         assert kwargs["source_token"] == "ADMIN-TOKEN"
-        ctx.plextv.canary_server_token.assert_called_once_with(555000300)
+        ctx.plextv.home_user_server_token.assert_called_once_with(555000300)
 
     def test_dry_run_reaches_the_service(self, client):
         _, target_id = _seed_owner_and_target(client)
@@ -469,7 +469,7 @@ class TestTheSourceCanBeAnAccountOtherThanTheOwner:
     silently wearing another's name.
     """
 
-    def _shared(self, client, username="moohouse"):
+    def _shared(self, client, username="guest"):
         with client.app.state.sessions() as session:
             user = User(plex_account_id=555000900, username=username, slug=username, user_type="shared")
             session.add(user)
@@ -514,7 +514,7 @@ class TestTheSourceCanBeAnAccountOtherThanTheOwner:
         _, target_id = _seed_owner_and_target(client)
         source_id = self._shared(client)
         ctx = _plex_ctx()
-        ctx.plextv.shared_server_tokens.return_value = {555000900: "MOOHOUSE-TOKEN"}
+        ctx.plextv.shared_server_tokens.return_value = {555000900: "GUEST-TOKEN"}
 
         with (
             patch.object(client.app.state.run_service, "build_context", return_value=ctx),
@@ -525,11 +525,11 @@ class TestTheSourceCanBeAnAccountOtherThanTheOwner:
                 json={"to_user_id": target_id, "from_user_id": source_id},
             )
 
-        assert service.call_args.kwargs["source_token"] == "MOOHOUSE-TOKEN"
+        assert service.call_args.kwargs["source_token"] == "GUEST-TOKEN"
         # And emphatically NOT the admin token, which is what a wrong `user_type` would select.
         assert service.call_args.kwargs["source_token"] != "ADMIN-TOKEN"
 
-    def test_a_managed_source_falls_back_to_a_canary_exchanged_token(self, client):
+    def test_a_managed_source_falls_back_to_a_switch_exchanged_token(self, client):
         """The third cell of the `user_type` matrix, and the one the feature was built for.
 
         `docs/reference/api.md` says to name a source when the history lives on "an account you already
@@ -544,8 +544,8 @@ class TestTheSourceCanBeAnAccountOtherThanTheOwner:
             session.commit()
             source_id = managed.id
         ctx = _plex_ctx()
-        ctx.plextv.shared_server_tokens.return_value = {}  # roster MISS, so the canary path runs
-        ctx.plextv.canary_server_token.side_effect = lambda account: f"canary-{account}"
+        ctx.plextv.shared_server_tokens.return_value = {}  # roster MISS, so the exchange path runs
+        ctx.plextv.home_user_server_token.side_effect = lambda account: f"canary-{account}"
 
         with (
             patch.object(client.app.state.run_service, "build_context", return_value=ctx),

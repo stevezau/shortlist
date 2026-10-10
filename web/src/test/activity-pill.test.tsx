@@ -39,7 +39,7 @@ describe("ActivityPill", () => {
       FakeEventSource.instances.at(-1)?.emit("run.user.stage", {
         seq: 1,
         run_id: 14,
-        user: "samantharobinson527",
+        user: "sam",
         stage: "delivering",
         counts: {
           row: "Because you watched Dune",
@@ -51,7 +51,7 @@ describe("ActivityPill", () => {
     });
 
     const text =
-      "samantharobinson527 — writing the row to Plex — Because you watched Dune · TV Shows · adding 3 titles · removing 2 titles";
+      "sam — writing the row to Plex — Because you watched Dune · TV Shows · adding 3 titles · removing 2 titles";
     const pill = screen.getByRole("link");
     expect(pill).toHaveTextContent(text);
     // The sidebar truncates it; the full sentence stays one hover away.

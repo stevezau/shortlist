@@ -110,11 +110,31 @@ class TestTheWebhookEndToEnd:
 
     def test_a_dry_run_sends_nothing(self, app: ShortlistApp, receiver):
         url, received = receiver
-        _configure(app, url, ["run.started", "run.finished", "run.partial", "run.failed"])
+        events = ["run.started", "run.finished", "run.partial", "run.failed"]
+        _configure(app, url, events)
+        # Positive control: this config does reach the receiver, so an empty receiver below is not a dead setup.
+        assert app.api("POST", "/api/settings/test/notify").json()["ok"]
+        _wait_for(received, {"test"})
+        received.clear()
+
         created = app.api("POST", "/api/runs", json={"dry_run": True}).json()
         app.wait_for_run(created["run_id"])
-        time.sleep(1)
+        # Nothing is even queued: a dry run never reaches `notify.send`, so the queue is the evidence
+        # rather than a pause to see whether something arrives. `run.started` is queued before the run
+        # begins and `run.finished` after it persists; neither exists for a dry run.
+        queued = app.api("GET", "/api/system/jobs", params={"kind": "notify.send", "limit": 200}).json()
+        assert queued == []
         assert received == []
+
+        # Same config, same app: a real run does queue `notify.send`, so the empty queue above has teeth.
+        real = app.api("POST", "/api/runs", json={"dry_run": False}).json()
+        app.wait_for_run(real["run_id"])
+        queued = app.api("GET", "/api/system/jobs", params={"kind": "notify.send", "limit": 200}).json()
+        assert queued, "a non-dry run with this config queues notify.send"
+        _wait_for(received, {"run.started"})
+        paths = {message["body"].get("path") for message in received}
+        assert f"/runs/{real['run_id']}" in paths
+        assert f"/runs/{created['run_id']}" not in paths
 
 
 def test_the_settings_card_lists_the_events_and_ticks_the_chosen_ones(page: Page, app: ShortlistApp):
@@ -132,16 +152,7 @@ def test_the_settings_card_lists_the_events_and_ticks_the_chosen_ones(page: Page
 
     page.get_by_role("checkbox", name="A run started").click()
     expect(page.get_by_role("checkbox", name="A run started")).to_be_checked()
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        if "run.started" in app.api("GET", "/api/settings").json()["notify.webhook.events"]:
-            break
-        time.sleep(0.2)
-    assert app.api("GET", "/api/settings").json()["notify.webhook.events"] == [
-        "run.started",
-        "run.failed",
-        "job.failed",
-    ]
+    app.wait_for_setting("notify.webhook.events", ["run.started", "run.failed", "job.failed"])
 
 
 def test_the_webhook_is_set_up_and_removed_from_its_connection_card(page: Page, app: ShortlistApp):

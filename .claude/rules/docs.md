@@ -1,5 +1,9 @@
 ---
-globs: "**/*.md"
+paths:
+  - "shortlist/**"
+  - "web/src/**"
+  - "Dockerfile"
+  - "pyproject.toml"
 ---
 
 # Documentation Updates
@@ -15,7 +19,8 @@ outdated.
 ## What to Update
 
 - **README.md**: Features list, installation steps, config examples
-- **docs/reference.md**: Endpoint signatures, request/response examples, env vars, config options, defaults
+- **docs/reference/**: `api.md` for endpoint signatures and request/response examples, `settings.md` and
+  `environment.md` for config options, env vars and defaults
 - **docs/guides.md**: Web interface, schedules, troubleshooting
 - **Code examples**: Verify snippets still work after signature changes; update imports
 

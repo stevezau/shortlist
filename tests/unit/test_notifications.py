@@ -12,15 +12,14 @@ from shortlist.server import notifications as notif
 from shortlist.server.db.models import Collection, Event, Job, Run, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def session(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    with make_session_factory(engine)() as db:
+    with disposing_engine(make_engine(tmp_path)) as engine, make_session_factory(engine)() as db:
         yield db
-    engine.dispose()
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +32,7 @@ class TestUpdateAvailable:
     def test_fires_when_a_newer_release_exists(self, session, monkeypatch):
         monkeypatch.setattr(notif, "check_for_update", lambda v: {"latest": "9.9.9", "url": "https://x/9.9.9"})
 
-        result = notif._update_available(SettingsStore(session), "1.0.0")
+        result = notif._update_available("1.0.0")
 
         assert result == {
             "id": "update-9.9.9",
@@ -46,7 +45,7 @@ class TestUpdateAvailable:
         }
 
     def test_does_not_fire_when_already_up_to_date(self, session):
-        assert notif._update_available(SettingsStore(session), "1.0.0") is None
+        assert notif._update_available("1.0.0") is None
 
 
 class TestRunsPaused:
@@ -834,7 +833,7 @@ class TestEveryNotificationIsRenderable:
 class TestShelfContention:
     """Another tool reordering the Recommended shelf — the case a single pass cannot see.
 
-    Each ordering pass on SFLIX moved its rows, re-read the shelf, confirmed the new order and
+    Each ordering pass on a large production server moved its rows, re-read the shelf, confirmed the new order and
     reported success. It was right every time; agregarr moved them back ten minutes later. So the
     signal is not "did our write land" (it did) but "did it STAY", and only repetition answers that.
     """
@@ -941,8 +940,8 @@ class TestShelfContention:
 
         This query reads a BOUNDED window of the most recent shelf events. One stale anchor writes a
         record on every pass, and `privacy.sync` fires on every who-sees-what change (31 in one day on
-        SFLIX), so sharing `shelf.order` would let a setting nobody has fixed push the repeated MOVES
-        out of the window — and contention would stop being detected on a genuinely contested shelf.
+        a large production server), so sharing `shelf.order` would let a setting nobody has fixed push the
+        repeated MOVES out of the window — and contention would stop being detected on a genuinely contested shelf.
         """
         old = datetime.now(UTC) - timedelta(hours=1)
         for _ in range(3):
@@ -986,7 +985,7 @@ class TestShelfContention:
         # otherwise would send someone to swap images expecting a settled shelf.
         assert "still reorders" in body
         # And it must not overstate the exposure: converge clears promotedToOwnHome on every run
-        # (pipeline.py `_converge_phase`), so this is a window between runs, not a permanent leak.
+        # (pipeline.py `converge_phase`), so this is a window between runs, not a permanent leak.
         assert "clears that on every run" in body
         # No hardcoded date about someone else's release cadence — it rots on every server running
         # the image the day they cut a release.

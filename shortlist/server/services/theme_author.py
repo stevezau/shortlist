@@ -19,8 +19,8 @@ from loguru import logger
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.curator.base import Curator, taste_summary
 from shortlist.engine.models import MediaType, RowLimits, UserProfile, slugify
-from shortlist.engine.seasons import _CollectionReader
-from shortlist.engine.themes import _MOVIE_GENRE_IDS, ThemePick, ThemeSpec, load_theme
+from shortlist.engine.seasons import CollectionReader
+from shortlist.engine.themes import GENRE_IDS_BY_NAME, ThemePick, ThemeSpec, load_theme
 
 __all__ = [
     "BUILD_SYSTEM_GUIDANCE",
@@ -138,7 +138,7 @@ def author_theme(
     media: MediaType | tuple[MediaType, ...],
     curator: Curator,
     tmdb: TmdbClient,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     library_index: dict[MediaType, dict[int, int]],
     profile: UserProfile | None = None,
     current: ThemeSpec | None = None,
@@ -189,7 +189,7 @@ def author_theme(
 
     picks, titles, named, asked_kinds = _resolve_titles(proposal, medias, tmdb)
     tags = _resolve_tags(proposal, tmdb)
-    genres = tuple(g for g in _strings(proposal.get("genres")) if g.strip().lower() in _MOVIE_GENRE_IDS)[:_MAX_GENRES]
+    genres = tuple(g for g in _strings(proposal.get("genres")) if g.strip().lower() in GENRE_IDS_BY_NAME)[:_MAX_GENRES]
     if current is not None:
         tags, genres = _carry_over(proposal, current, tags, genres, tag_names)
     name = _clean(str(proposal.get("name") or ""))[:_MAX_NAME].strip() or _clean(brief)[:40] or "Themed row"

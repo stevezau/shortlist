@@ -66,7 +66,7 @@ function previewKey(input: ThemePreviewInput, salt: string): string {
   ]);
 }
 
-export interface BuiltTheme {
+interface BuiltTheme {
   preview: ThemePreview;
   /** True when the owner asked the same question again, so no AI call was made and nothing was spent. */
   cached: boolean;
@@ -254,11 +254,6 @@ export function ruleChips(rules: Theme["rules"]): RuleChip[] {
     chips.push({ label: `At least ${rules.min_votes.toLocaleString()} votes`, keys: ["min_votes"] });
   }
   return chips;
-}
-
-/** A theme's hard limits in words, one short phrase each; none for a limit that is not set. */
-export function rulesSummary(rules: Theme["rules"]): string[] {
-  return ruleChips(rules).map((chip) => chip.label);
 }
 
 /** The rules with one chip's fields left out, so a saved theme has no such limit. */

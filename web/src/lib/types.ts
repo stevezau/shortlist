@@ -1,15 +1,13 @@
 /**
  * The seam between the generated OpenAPI types and the UI.
  *
- * `.claude/rules/frontend.md`: request/response types are GENERATED, never hand-written. The API now
- * declares a Pydantic model on 65 of its routes (130 schemas), so that rule finally holds for nearly
- * everything here — "Generated" below derives every request body AND every declared response from
- * `api-schema.d.ts` (built by `pnpm -C web gen:api` from `openapi.snapshot.json`, itself guarded
- * against drift by `tests/unit/test_openapi_snapshot.py`). That includes the SSE event payloads
- * (`RunFinishedEvent`, `RunProgressEvent`, `UninstallProgressEvent`, `SyncProgressEvent`,
- * `SyncFinishedEvent`) and the four `/api/setup` shapes that used to be the handlers' bare `dict`
- * returns (`ProbeResult`, `LibrarySection`, `ProbeCheck`, `PlexServer`) — both families now have
- * real response models, even though `text/event-stream` itself has no OpenAPI content type.
+ * `.claude/rules/frontend.md`: request/response types are GENERATED, never hand-written. "Generated"
+ * below derives every request body AND every declared response from `api-schema.d.ts` (built by
+ * `pnpm -C web gen:api` from `openapi.snapshot.json`, itself guarded against drift by
+ * `tests/unit/test_openapi_snapshot.py`). That includes the SSE event payloads (`RunFinishedEvent`,
+ * `RunProgressEvent`, `UninstallProgressEvent`, `SyncProgressEvent`, `SyncFinishedEvent`) and the
+ * `/api/setup` shapes (`ProbeResult`, `LibrarySection`, `ProbeCheck`, `PlexServer`), even though
+ * `text/event-stream` itself has no OpenAPI content type.
  *
  * What is left hand-written is down to one kind, under "Hand-written":
  *
@@ -94,10 +92,6 @@ export type Poster = Schemas["PosterOut"];
  */
 export type Placement = NonNullable<Schemas["CollectionIn"]["placement"]>;
 
-/** A poster mode. "" = Plex default, "upload" = your image, "text" = built-in renderer, "ai" = image
- *  model. "generate" is the legacy name for "ai", still returned for rows saved before the split. */
-export type PosterMode = NonNullable<Schemas["PosterIn"]["mode"]>;
-
 /**
  * The row editor's working state. `Required<>` because `blankInput()`/`toInput()` fill every field,
  * so the editor never has to reason about `undefined` — the API itself only requires `name`, which
@@ -156,6 +150,9 @@ export type SeasonCollection = Schemas["CollectionIO"];
 export type SeasonPick = Schemas["PickIO"];
 /** The editor's three searches: TMDB tags, Plex collections, and titles in the libraries. */
 export type TmdbTag = Schemas["TagOut"];
+/** Which waiting inbox movies draft "don't request automatically" picks would hold (POST /api/requests/hold-preview). */
+export type HoldPreviewInput = Schemas["HoldPreviewIn"];
+export type HoldPreview = Schemas["HoldPreviewOut"];
 export type PlexCollectionMatch = Schemas["PlexCollectionOut"];
 export type LibraryTitle = Schemas["LibraryTitleOut"];
 export type RowEffectiveness = Schemas["RowEffectivenessOut"];
@@ -166,7 +163,6 @@ export type ThemeCapabilities = Schemas["CapabilitiesOut"];
 export type ThemePrompts = Schemas["PromptsOut"];
 /** A theme as the API returns it, saved (`id` set) or an unsaved draft from a preview (`id` null). */
 export type Theme = Schemas["ThemeOut"];
-export type ThemePick = Schemas["ThemePickIO"];
 export type ThemeRules = Schemas["RulesIO"];
 /** POST /api/themes/preview body: only the brief is required. */
 export type ThemePreviewInput = Partial<Schemas["PreviewIn"]>;
@@ -299,9 +295,6 @@ export type Pick = Schemas["PickOut"] & {
 /** POST /api/runs body — every field is optional (`RunRequest` has no `required` list). */
 export type RunRequest = Partial<Schemas["RunRequest"]>;
 
-/** How a run started — schedule fired it, an operator clicked Run, or the wizard's first-run step. */
-export type RunTrigger = Schemas["RunSummaryOut"]["trigger"];
-
 /** GET /api/runs — one row per pipeline run. */
 export type Run = {
   stats: RunStats;
@@ -369,14 +362,29 @@ export type RunUserTraceResponse = {
 /** GET /api/requests — one wanted-but-missing title in the Sonarr/Radarr approval inbox. */
 export type RequestCandidate = Schemas["RequestCandidateOut"];
 
-/** One reason a missing title is in the inbox: a person, the row that wanted it, and what suggested it. */
-export type RequestWhy = Schemas["RequestWhyOut"];
-
-/** One title's result from POST /api/requests/send. */
-export type RequestSendOutcome = Schemas["SendOutcomeOut"];
-
 /** POST /api/requests/send response. */
 export type RequestSendResult = Schemas["SendOut"];
+
+/** A durable acquisition claim that needs owner review after an uncertain external send. */
+export interface AcquisitionClaim {
+  id: number;
+  candidate_id: number | null;
+  origin: string;
+  title: string;
+  tmdb_id: number;
+  media_type: "movie" | "show";
+  destination: string;
+  status: "reserved" | "external_started" | "outcome_unknown" | "succeeded";
+  created_at: string;
+  external_started_at: string | null;
+  finished_at: string | null;
+  review_token: string;
+}
+
+export interface AcquisitionClaimsPage {
+  items: AcquisitionClaim[];
+  next_offset: number | null;
+}
 
 /**
  * GET /api/requests/status — live Arr state for the inbox's badges.
@@ -387,9 +395,6 @@ export type RequestSendResult = Schemas["SendOut"];
  * "the app never replied", and the inbox drew the same nothing for both.
  */
 export type ArrStatus = Schemas["ArrStatusOut"];
-
-/** Whether one Arr answered the last status fetch. */
-export type ArrReach = ArrStatus["radarr"];
 
 // --- Setup wizard / auth ---
 
@@ -439,6 +444,86 @@ export type ApiTokenStatus = Schemas["ApiTokenStatusOut"];
 /** The response to generating a token. */
 export type ApiTokenCreated = Schemas["ApiTokenCreatedOut"];
 
+// --- Assistant access ---
+
+export type AssistantGrantPreset =
+  | "inspect"
+  | "manage_selected_rows"
+  | "owner_automation";
+
+export type AssistantGrantConstraints = Schemas["GrantConstraintsOut"];
+
+export type AssistantGrant = {
+  access_role?: "view" | "manage" | null;
+  capabilities: string[];
+  created_at?: string;
+  updated_at?: string;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+  local_credential_count?: number;
+  provider_call_quota?: Schemas["ProviderCallQuotaOut"];
+} & Schemas["GrantOut"];
+
+export type AssistantDestination = Schemas["ConfiguredDestination"];
+
+export interface AssistantStatus {
+  enabled: boolean;
+  resource: string | null;
+  issuer: string | null;
+  configuration_error: string | null;
+  configuration_hint: string;
+  presets: Record<AssistantGrantPreset, string[]>;
+  setting_groups: string[];
+}
+
+export interface AssistantGrantCreate {
+  client_id: string;
+  name: string;
+  preset: AssistantGrantPreset;
+  access_role?: "view" | "manage";
+  owner_managed?: boolean;
+  capabilities?: string[];
+  constraints?: Partial<AssistantGrantConstraints>;
+  selected_destinations?: Array<{ service_id: string; destination_id: string }>;
+  expires_in_days?: number | null;
+}
+
+/** PATCH /assistant/grants/{grant_id}: sparse owner-selected constraint changes. */
+export type AssistantGrantUpdate =
+  | { expected_revision: number; access_role: "view" | "manage" }
+  | { expected_revision: number; constraints?: Partial<AssistantGrantConstraints>; capabilities?: string[]; selected_destinations?: Array<{ service_id: string; destination_id: string }> }
+  | { expected_revision: number; approve_updated_access: true }
+  | { expected_revision: number; upgrade_owner_managed?: boolean; paid_enabled?: boolean; max_provider_calls?: number };
+
+export interface AssistantCredentialCreated {
+  credential: string;
+  expires_at: string;
+}
+
+export interface AssistantConsentFlow {
+  flow_id: string;
+  csrf_token: string;
+  client: { id: string; name: string };
+  requested_scopes: string[];
+  read_only_scopes: string[];
+  resource: string;
+  expires_at: string;
+}
+
+export interface AssistantChangeReview {
+  change_id: string;
+  grant_id: string;
+  client_id: string;
+  kind: string;
+  summary: Record<string, unknown>;
+  requirements: Record<string, unknown>;
+  effects: Array<Record<string, unknown>>;
+  content_hash: string;
+  expires_at: string;
+  approved: boolean;
+  operation_id: string | null;
+}
+
 // --- Dashboard / report ---
 
 /** One alert in the bell menu (GET /api/notifications). */
@@ -480,9 +565,6 @@ export type LogLine = Schemas["LogLineOut"];
 
 export type LogPage = Schemas["LogsOut"];
 
-/** Sync schedule info for the Tools page — when each sync last ran and next fires. */
-export type SyncsInfo = Schemas["SyncsOut"];
-
 export type Backup = Schemas["BackupOut"];
 /** The restore waiting for the next start, if any (it is applied at boot, see `backups.apply_pending_restore`). */
 export type PendingRestore = Schemas["PendingRestoreOut"];
@@ -511,11 +593,6 @@ export type JobCatalogEntry = {
  *  because deleting a departed user's collection is the one action that cannot be undone. */
 export type JobResult = Schemas["JobRunOut"];
 
-/** GET /api/schedule — one recurring thing, discriminated by `type`: a job, or the group of rows
- *  sharing one cron (ONE trigger builds all of them, not one entry each). */
-export type ScheduleEntry =
-  Schemas["ScheduleJobOut"] | Schemas["ScheduleRowsOut"];
-
 export type ScheduleResponse = Schemas["ScheduleOut"];
 
 /** POST /api/system/uninstall response (also returned for dry-run previews). `rows_disabled` counts
@@ -526,9 +603,6 @@ export type UninstallResult = Schemas["UninstallOut"];
 //
 // The stream itself has no OpenAPI content type, but each event's payload is still a modelled
 // schema (`RunUserStageEvent` aside — see the file header — it reuses RunLogEntry/RunLogLineOut).
-
-/** Which Tools-page sync a `sync.*` event belongs to. */
-export type SyncKind = Schemas["SyncProgressEvent"]["kind"];
 
 /** Event `run.finished` — a run reached a terminal state. `aborted` is a cancel that still completed
  *  its privacy merge and promotion, so it is an outcome, not a failure — a consumer that folds it
@@ -600,8 +674,11 @@ export interface RunStats {
   requests_examined?: number;
   /** Live rating-API calls that cost quota; cached ratings are free and not counted. */
   requests_lookups?: number;
-  /** Titles waiting in the inbox for the owner to approve. */
+  /** Titles the pass held back instead of auto-sending. Includes ones already requested or already
+   *  in the library, which wait nowhere; `requests_waiting` is the inbox count. */
   requests_queued?: number;
+  /** Of those, the titles this run filed in the Requests inbox. Absent on runs recorded before it existed. */
+  requests_waiting?: number;
   /** The same figures per row, which is what answers "why did THAT row send nothing". Absent when
    *  requests are off or the run never reached the request phase. */
   requests_by_row?: Record<
@@ -821,6 +898,8 @@ export interface TraceWeb {
   unresolved?: string[];
   /** Resolved proposals with their fate through selection — kept into the row, or why they dropped. */
   proposals?: TraceWebProposal[];
+  /** Titles whose search failed this gather (timeout, HTTP error). Absent when every search worked. */
+  failed_seeds?: string[];
 }
 
 /** One candidate pool a user's rows gathered (usually one, shared across rows). */

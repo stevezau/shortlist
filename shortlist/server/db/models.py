@@ -164,6 +164,8 @@ class Collection(Base):
     """
 
     __tablename__ = "collections"
+    # Permissions and durable history retain row IDs after deletion.
+    __table_args__: ClassVar[dict[str, bool]] = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
@@ -264,9 +266,6 @@ class Collection(Base):
     # {} -> the default for every library this row builds in, which is the top of the shelf. A
     # library absent here gets that default too; `{"enabled": false}` is how a row opts out.
     hub_anchor: Mapped[dict] = mapped_column(JSON, default=dict)
-    # Dead as of the curate removal (migration 0036 clears it): the LLM no longer ranks a candidate
-    # pool, so there is no per-row curation recipe. Column kept — dropping it would rebuild the whole
-    # table (inbound FKs); a future migration can remove it.
     # This row's own Sonarr/Radarr request settings. NULL -> inherit the global `requests.*` setting,
     # the same convention `watched_pct` / `recency` / `refresh_days` / `cold_start` already use, so an
     # upgrade changes nothing until the owner sets one.
@@ -315,8 +314,7 @@ class Collection(Base):
     # nobody in particular — there is no one person to name. The editor hides it there, exactly as it
     # already hides `request_tag`.
     req_auto_user_tag: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
-    # AI web search instructions for this row (#138): {} or {"mode": "add"|"own", "text": str}. Held the curate
-    # settings until migration 0036 cleared it.
+    # AI web search instructions for this row (#138): {} or {"mode": "add"|"own", "text": str}.
     prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     # Custom collection poster for this row. {} -> Plex's own artwork. Shape:
     # {"mode": "upload"|"generate", "title", "subtitle", "style"}. No image bytes live here — an
@@ -381,7 +379,8 @@ class Theme(Base):
     name: Mapped[str] = mapped_column(String(255))
     emoji: Mapped[str | None] = mapped_column(String(16), nullable=True)
     brief: Mapped[str] = mapped_column(Text, default="", server_default="")
-    origin: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")  # ai | manual
+    # ai | manual | assistant
+    origin: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     media: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
     # [{"id": int, "name": str}] — TMDB keywords.
     tags: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
@@ -481,8 +480,6 @@ class CollectionUserOverride(Base):
     # How many recent watches the AI web-search source searches for THIS person on THIS row (1..25).
     # None -> fall through to the row's own recent_count, then the global recommendations.recent_count.
     recent_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # Dead as of the curate removal (migration 0036 clears it) — see Collection.prompt. Column kept.
-    prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -490,7 +487,7 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | wizard | resume
+    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | wizard | resume | assistant
     #: When the run was QUEUED — this row is created the moment someone presses Run.
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     #: When the engine actually began, which is not the same moment: a run waits here behind whatever
@@ -612,9 +609,9 @@ class RunSharedRow(Base):
     #: write alone costs ~16.5s, times 47 people). Judging a play against the run's START means
     #: judging it against the row the run was BUILDING rather than the one Plex was still serving —
     #: which drops a credit for a title this run removed, and invents one for a title it added.
-    #: `_load_per_person` derives its equivalent from `min(picks.created_at)`; a shared row writes no
-    #: picks, so it has to be stamped here. NULL on rows written before this column existed, which
-    #: fall back to `Run.started_at`.
+    #: A person's row derives its equivalent from `min(picks.created_at)`; a shared row writes no
+    #: picks, so it has to be stamped here. NULL on rows written before this column existed has no
+    #: exact delivery clock; readers must not infer one from the parent run's start time.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run: Mapped[Run] = relationship(back_populates="shared_rows")
@@ -689,7 +686,7 @@ class PickRow(Base):
     # A movie has no middle state, so this is stamped with the same value as `watched_at`. A series
     # gets it only once every episode is watched — the wording the user page already uses. It is
     # deliberately NOT the engine's "already seen" bar: that one is `min(80%, max(3, 15%))` episodes
-    # (rows.py `_watched_titles`), which answers "engaged enough not to re-recommend?", a different
+    # (rows.py `watched_titles`), which answers "engaged enough not to re-recommend?", a different
     # question from "did they finish it?". Two thresholds, on purpose.
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     # The furthest they got, 0-100, from `watch_sessions`. Denormalised so the report does not join
@@ -750,6 +747,34 @@ class WatchStateSnapshot(Base):
     #: on one would un-mark every watch it never recorded. `undo_transfer` refuses instead.
     complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("1"))
     state: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class RowDeliverySnapshot(Base):
+    """Confirmed row contents and audience, independent of disposable run logs.
+
+    Intervals are half open: delivered_at <= play < ended_at. The current interval survives
+    retention indefinitely; removing a collection closes it without inventing new contents.
+    Personal pick IDs are references to the retained impact ledger, validated by readers.
+    """
+
+    __tablename__ = "row_delivery_snapshots"
+    __table_args__ = (
+        Index("ix_row_delivery_identity_time", "user_slug", "collection_slug", "library_key", "delivered_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_key: Mapped[str] = mapped_column(String(255), unique=True)
+    collection_slug: Mapped[str] = mapped_column(String(255))
+    user_slug: Mapped[str] = mapped_column(String(255))
+    library_key: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    rating_key: Mapped[int] = mapped_column(Integer)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    picks: Mapped[list] = mapped_column(JSON, default=list)
+    audience: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    muted: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class Delivery(Base):
@@ -1017,7 +1042,7 @@ class RequestCandidate(Base):
     # an old title from the Sent log bumps it and pulls a months-old request into a recent window,
     # while an edit after the send pushes it out. The dashboard's "watched since sent" needs a
     # timestamp that means what it says. NULL on rows sent before this column existed — the report
-    # falls back to `updated_at` for those, which is exactly as good as it used to be.
+    # falls back to `updated_at` for those, which is the best clock those rows have.
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -1037,12 +1062,16 @@ class Job(Base):
     """
 
     __tablename__ = "jobs"
+    __table_args__ = (Index("uq_jobs_operation_effect", "operation_id", "effect_key", unique=True),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     kind: Mapped[str] = mapped_column(String(48), index=True)
     # What the job needs to do its work — a user slug, a row slug, a set of account ids. Kept as
     # data, never as a closure, so a job is still runnable after the process that queued it is gone.
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    # An operation's owed work commits beside its configuration; null for existing job callers.
+    operation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    effect_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # queued -> running -> done | failed. `running` at boot means the process died mid-job; startup
     # recovery requeues those (every job kind is written to be idempotent, so a partial replay is safe).
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
@@ -1155,7 +1184,8 @@ class WatchSession(Base):
     max_offset_ms: Mapped[int] = mapped_column(Integer, default=0)
     #: NULL until the runtime is known. A percentage of an unknown runtime is worse than none.
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    #: stopped | timeout | replaced. `timeout` is recorded rather than dressed up as a stop: a client
+    #: stopped | timeout | replaced | orphaned (a restart left it open; closed at boot at its last
+    #: sighting, kept apart from a real timeout). `timeout` is recorded rather than dressed up as a stop: a client
     #: that crashes or drops off the network never sends one, which is why Tautulli schedules a
     #: force-stop instead of waiting for it, and why we do too.
     end_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -1171,3 +1201,9 @@ class WatchSession(Base):
         if not self.duration_ms:
             return None
         return min(100, round(100 * self.max_offset_ms / self.duration_ms))
+
+
+# Register extension tables on the shared metadata used by migrations and test schemas.
+from shortlist.server.assistant import budgets as _assistant_budget_models  # noqa: E402,F401
+from shortlist.server.assistant import operation_models as _assistant_operation_models  # noqa: E402,F401
+from shortlist.server.assistant_auth import models as _assistant_auth_models  # noqa: E402,F401

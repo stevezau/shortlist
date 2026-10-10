@@ -9,10 +9,11 @@ import {
   seasonStatusLine,
   seasonTiming,
   seasonWindowLabel,
+  seasonWindows,
   timingLabel,
 } from "@/lib/seasons";
 
-import { CHRISTMAS, HALLOWEEN, THANKSGIVING, VALENTINES } from "./season-fixtures";
+import { CHRISTMAS, FEBRUARY_SPOTLIGHT, HALLOWEEN, THANKSGIVING, VALENTINES } from "./season-fixtures";
 
 describe("seasonWindowLabel", () => {
   it("runs from its lead through its next day", () => {
@@ -37,6 +38,16 @@ describe("seasonWindowLabel", () => {
     expect(seasonWindowLabel(THANKSGIVING, 14, 0)).toBe(
       `${seasonDate("2026-11-12")} – ${seasonDate("2026-11-26")}`,
     );
+  });
+
+  it("uses the server's full-month span without adding the row's built-in timing", () => {
+    expect(seasonWindowLabel(FEBRUARY_SPOTLIGHT, 30, 2)).toBe(
+      `${seasonDate("2027-02-01")} – ${seasonDate("2027-02-28")}`,
+    );
+    expect(seasonWindows(FEBRUARY_SPOTLIGHT, 30, 2)).toEqual([
+      { start: "2027-02-01", end: "2027-02-28" },
+      { start: "2028-02-01", end: "2028-02-29" },
+    ]);
   });
 });
 
@@ -65,6 +76,7 @@ describe("timingLabel", () => {
 describe("ruleLabel", () => {
   it.each([
     [{ kind: "fixed", month: 3, day: 17, nth: 1, weekday: 0, offset: 0 }, "17 March"],
+    [{ kind: "month", month: 2, day: 1, nth: 1, weekday: 0, offset: 0 }, "All of February"],
     [{ kind: "nth", month: 11, day: 1, nth: 4, weekday: 3, offset: 0 }, "4th Thursday of November"],
     [{ kind: "nth", month: 5, day: 1, nth: -1, weekday: 0, offset: 0 }, "Last Monday of May"],
     [{ kind: "easter", month: 1, day: 1, nth: 1, weekday: 0, offset: 0 }, "Easter Sunday"],
@@ -101,6 +113,12 @@ describe("seasonOverlaps", () => {
 
   it("says nothing when no windows meet", () => {
     expect(seasonOverlaps([HALLOWEEN, CHRISTMAS], 30, 0)).toEqual([]);
+  });
+
+  it("compares a whole-month span with a holiday window inside that month", () => {
+    expect(seasonOverlaps([FEBRUARY_SPOTLIGHT, VALENTINES], 7, 0)).toEqual([
+      { first: FEBRUARY_SPOTLIGHT, second: VALENTINES, start: "2027-02-07", end: "2027-02-14" },
+    ]);
   });
 });
 

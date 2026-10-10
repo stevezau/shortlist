@@ -199,7 +199,7 @@ def read_sharing_status(
 
     # Which labels need hiding: the per-person rows that EXIST ON PLEX, read from the server.
     #
-    # NOT the enabled-user list, which is what this used to do. The engine only ever excludes labels
+    # NOT the enabled-user list. The engine only ever excludes labels
     # it found on the PMS (`desired_excludes` <- `stored_labels`), so an enabled user who has never
     # received a row — a cold start, zero picks, a delivery that failed — contributes a label that
     # can never appear in anybody's filter. Every account then read as "missing" it, and this
@@ -220,7 +220,7 @@ def read_sharing_status(
     status.rows_on_plex = sorted(all_labels)
     # plex.tv gives us a USERNAME; `person()` and every other tool key on a SLUG, and `slugify`
     # lowercases and replaces punctuation — so they differ for essentially every real account
-    # ("MooHouse" -> "moohouse", "Chris Smith" -> "chris_smith"). Passing a username on as if it were
+    # ("Guest" -> "guest", "Chris Smith" -> "chris_smith"). Passing a username on as if it were
     # a slug made the per-person section 404 for exactly the people with a privacy fault.
     slug_of = {u.plex_account_id: u.slug for u in all_users}
     name_of = {u.plex_account_id: u.display_name for u in all_users}

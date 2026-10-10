@@ -19,8 +19,8 @@
     555000200  "kid"  -> little_kid   (also `restricted="1"` in plextv_users.xml.txt)
     555000300  "teen" -> NO profile   (the #20 case: managed, unrestricted, needs its excludes)
 
-  `teen`'s `restrictionProfile` attribute is ABSENT rather than empty, which is how plex.tv actually
-  represents "none" — the parser must treat a missing attribute as "" and not as a profile.
+  `teen`'s `restrictionProfile` attribute is ABSENT here; live plex.tv has also been seen sending it
+  present and EMPTY. The parser must treat both as "" and not as a profile.
 -->
 <MediaContainer size="3" friendlyName="Example Home" identifier="com.plexapp.plugins.myplex">
   <User id="555000001" uuid="aaaaaaaaaaaaaaaa" admin="1" guest="0" restricted="0" protected="1" title="Owner" username="owner"/>

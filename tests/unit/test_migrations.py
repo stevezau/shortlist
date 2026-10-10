@@ -32,6 +32,7 @@ from shortlist.server.db.session import (
     make_engine,
     run_migrations,
 )
+from tests.db_helpers import disposing_engine
 
 
 def _alembic(config_dir: Path) -> AlembicConfig:
@@ -126,13 +127,13 @@ class TestAnInterruptedRebuildDoesNotBrickTheContainer:
         db = tmp_path / "shortlist.db"
 
         # Exactly what an interrupted rebuild leaves behind.
-        with sqlite3.connect(db) as conn:
+        with closing(sqlite3.connect(db)) as conn, conn:
             conn.execute("CREATE TABLE _alembic_tmp_picks (id INTEGER PRIMARY KEY, marker TEXT)")
             conn.execute("INSERT INTO _alembic_tmp_picks (marker) VALUES ('half-copied')")
 
         run_migrations(tmp_path)  # must not raise "table _alembic_tmp_picks already exists"
 
-        with sqlite3.connect(db) as conn:
+        with closing(sqlite3.connect(db)) as conn, conn:
             left = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '_alembic_tmp_%'"
             ).fetchall()
@@ -225,39 +226,41 @@ class TestMigration0053BackfillsBeforeItTightens:
     def _seed_at_0052(config_dir: Path) -> None:
         command.upgrade(_alembic(config_dir), "0052")
         con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
 
-        def insert(table: str, **values) -> None:
-            """INSERT satisfying every NOT NULL column, so the fixture doesn't pin today's schema."""
-            row = dict(values)
-            for _cid, name, type_, notnull, default, pk in con.execute(f"PRAGMA table_info({table})"):
-                if notnull and default is None and not pk and name not in row:
-                    row[name] = 0 if type_.upper().startswith(("INT", "BOOL", "FLOAT", "NUM")) else ""
-            columns = ", ".join(row)
-            con.execute(f"INSERT INTO {table} ({columns}) VALUES ({', '.join('?' * len(row))})", list(row.values()))
+            def insert(table: str, **values) -> None:
+                """INSERT satisfying every NOT NULL column, so the fixture doesn't pin today's schema."""
+                row = dict(values)
+                for _cid, name, type_, notnull, default, pk in con.execute(f"PRAGMA table_info({table})"):
+                    if notnull and default is None and not pk and name not in row:
+                        row[name] = 0 if type_.upper().startswith(("INT", "BOOL", "FLOAT", "NUM")) else ""
+                columns = ", ".join(row)
+                con.execute(f"INSERT INTO {table} ({columns}) VALUES ({', '.join('?' * len(row))})", list(row.values()))
 
-        insert("runs", id=7, trigger="schedule", started_at="2026-01-02 03:04:05", status="ok", stats="{}")
-        insert("users", id=3, plex_account_id=111, username="bob", slug="bob", prefs="{}")
-        # An all-NULL narration line, and a fully-populated one that must survive byte-identical.
-        con.execute("INSERT INTO run_log_lines (run_id, seq) VALUES (7, 1)")
-        con.execute(
-            "INSERT INTO run_log_lines (run_id, seq, ts, user_slug, stage, counts, reason, level) "
-            "VALUES (7, 2, '2026-01-02 03:05:06.000007', 'bob', 'deliver', '{\"added\": 3}', 'built', 'warning')"
-        )
-        # 100: nothing at all. 101: no viewed_at but a known updated_at. 102: the populated control.
-        for rating_key, title, count, viewed, updated in (
-            (100, None, None, None, None),
-            (101, "Dune", None, None, "2025-06-01 10:00:00"),
-            (102, "Arrival", 4, "2026-07-01 08:00:00", "2026-07-02 09:00:00"),
-        ):
+            insert("runs", id=7, trigger="schedule", started_at="2026-01-02 03:04:05", status="ok", stats="{}")
+            insert("users", id=3, plex_account_id=111, username="bob", slug="bob", prefs="{}")
+            # An all-NULL narration line, and a fully-populated one that must survive byte-identical.
+            con.execute("INSERT INTO run_log_lines (run_id, seq) VALUES (7, 1)")
             con.execute(
-                "INSERT INTO watched_titles (user_id, section_key, rating_key, media_type, title, watch_count,"
-                " viewed_at, updated_at) VALUES (3, '1', ?, 'movie', ?, ?, ?, ?)",
-                (rating_key, title, count, viewed, updated),
+                "INSERT INTO run_log_lines (run_id, seq, ts, user_slug, stage, counts, reason, level) "
+                "VALUES (7, 2, '2026-01-02 03:05:06.000007', 'bob', 'deliver', '{\"added\": 3}', 'built', 'warning')"
             )
-        con.execute("INSERT INTO watch_sync_state (user_id, section_key, item_count) VALUES (3, '1', NULL)")
-        con.execute("INSERT INTO watch_sync_state (user_id, section_key, item_count) VALUES (3, '2', 42)")
-        con.commit()
-        con.close()
+            # 100: nothing at all. 101: no viewed_at but a known updated_at. 102: the populated control.
+            for rating_key, title, count, viewed, updated in (
+                (100, None, None, None, None),
+                (101, "Dune", None, None, "2025-06-01 10:00:00"),
+                (102, "Arrival", 4, "2026-07-01 08:00:00", "2026-07-02 09:00:00"),
+            ):
+                con.execute(
+                    "INSERT INTO watched_titles (user_id, section_key, rating_key, media_type, title, watch_count,"
+                    " viewed_at, updated_at) VALUES (3, '1', ?, 'movie', ?, ?, ?, ?)",
+                    (rating_key, title, count, viewed, updated),
+                )
+            con.execute("INSERT INTO watch_sync_state (user_id, section_key, item_count) VALUES (3, '1', NULL)")
+            con.execute("INSERT INTO watch_sync_state (user_id, section_key, item_count) VALUES (3, '2', 42)")
+            con.commit()
+        finally:
+            con.close()
 
     def test_the_columns_really_were_nullable_before_0053_ran(self, tmp_path: Path):
         """Without this the tightening test could pass against a schema that was already correct —
@@ -273,24 +276,26 @@ class TestMigration0053BackfillsBeforeItTightens:
         run_migrations(tmp_path)
 
         con = sqlite3.connect(tmp_path / "shortlist.db")
-        log = dict(
-            zip(
-                ("ts", "user_slug", "stage", "counts", "reason", "level"),
-                con.execute(
-                    "SELECT ts, user_slug, stage, counts, reason, level FROM run_log_lines WHERE seq = 1"
-                ).fetchone(),
-                strict=True,
+        try:
+            log = dict(
+                zip(
+                    ("ts", "user_slug", "stage", "counts", "reason", "level"),
+                    con.execute(
+                        "SELECT ts, user_slug, stage, counts, reason, level FROM run_log_lines WHERE seq = 1"
+                    ).fetchone(),
+                    strict=True,
+                )
             )
-        )
-        kept = con.execute(
-            "SELECT ts, user_slug, stage, counts, reason, level FROM run_log_lines WHERE seq = 2"
-        ).fetchone()
-        titles = {
-            row[0]: row[1:]
-            for row in con.execute("SELECT rating_key, title, watch_count, viewed_at FROM watched_titles")
-        }
-        state = dict(con.execute("SELECT section_key, item_count FROM watch_sync_state"))
-        con.close()
+            kept = con.execute(
+                "SELECT ts, user_slug, stage, counts, reason, level FROM run_log_lines WHERE seq = 2"
+            ).fetchone()
+            titles = {
+                row[0]: row[1:]
+                for row in con.execute("SELECT rating_key, title, watch_count, viewed_at FROM watched_titles")
+            }
+            state = dict(con.execute("SELECT section_key, item_count FROM watch_sync_state"))
+        finally:
+            con.close()
 
         # A line's timestamp comes from its run, not from this boot: "now" would date a three-month-old
         # line to whenever the upgrade happened.
@@ -317,20 +322,22 @@ class TestMigration0053BackfillsBeforeItTightens:
         run_migrations(tmp_path)
 
         con = sqlite3.connect(tmp_path / "shortlist.db")
-        con.execute("PRAGMA foreign_keys=ON")
-        with pytest.raises(sqlite3.IntegrityError):
-            con.execute("INSERT INTO run_log_lines (run_id, seq, ts) VALUES (7, 99, NULL)")
-        con.rollback()
-        with pytest.raises(sqlite3.IntegrityError):
-            con.execute(
-                "INSERT INTO watched_titles (user_id, section_key, rating_key, media_type, title)"
-                " VALUES (3, '1', 999, 'movie', NULL)"
-            )
-        con.rollback()
+        try:
+            con.execute("PRAGMA foreign_keys=ON")
+            with pytest.raises(sqlite3.IntegrityError):
+                con.execute("INSERT INTO run_log_lines (run_id, seq, ts) VALUES (7, 99, NULL)")
+            con.rollback()
+            with pytest.raises(sqlite3.IntegrityError):
+                con.execute(
+                    "INSERT INTO watched_titles (user_id, section_key, rating_key, media_type, title)"
+                    " VALUES (3, '1', 999, 'movie', NULL)"
+                )
+            con.rollback()
 
-        indexes = sorted(row[1] for row in con.execute("PRAGMA index_list(watched_titles)"))
-        cascades = {row[2]: row[6] for row in con.execute("PRAGMA foreign_key_list(watched_titles)")}
-        con.close()
+            indexes = sorted(row[1] for row in con.execute("PRAGMA index_list(watched_titles)"))
+            cascades = {row[2]: row[6] for row in con.execute("PRAGMA foreign_key_list(watched_titles)")}
+        finally:
+            con.close()
 
         assert "ix_watched_titles_user_viewed" in indexes
         assert "sqlite_autoindex_watched_titles_1" in indexes  # uq_watched_title
@@ -368,38 +375,40 @@ class TestMigration0055RestrictsUserDeletes:
     def _seed_at_0054(cls, config_dir: Path) -> None:
         command.upgrade(_alembic(config_dir), "0054")
         con = sqlite3.connect(config_dir / "shortlist.db")
-        con.execute(
-            "INSERT INTO users (id, plex_account_id, username, slug, avatar_url, nickname, friendly_name,"
-            " user_type, restricted, restriction_profile, enabled, cold_start, label, request_tag, prefs)"
-            " VALUES (3, 555000100, 'sarah', 'sarah', '', '', '', 'shared', 0, '', 1, 0,"
-            " 'shortlist_sarah', '', '{}')"
-        )
-        con.execute(
-            "INSERT INTO runs (id, trigger, started_at, finished_at, status, dry_run, stats)"
-            " VALUES (7, 'schedule', '2026-01-02 03:04:05', '2026-01-02 03:09:00', 'ok', 0, '{\"users_ok\": 1}')"
-        )
-        con.execute(
-            "INSERT INTO run_users (run_id, user_id, status, error, reason, duration_ms, llm_tokens,"
-            " llm_tokens_by_step, exa_searches, diff, breakdown, trace)"
-            " VALUES (7, 3, 'ok', NULL, NULL, 4200, 1234, '{\"llm_web\": 1234}', 2,"
-            ' \'{"added": ["Dune"]}\', \'[{"row_slug": "picked"}]\', \'{"seeds": [1, 2]}\')'
-        )
-        for pick_id, tmdb_id in ((1, 438631), (2, 693134)):
+        try:
             con.execute(
-                "INSERT INTO picks (id, run_id, user_id, tmdb_id, media_type, rating_key, rank,"
-                " collection_slug, section_key, library, title, reason, sources, affinity, seed_tmdb_id,"
-                " seed_title, created_at, watched_at) VALUES (?, 7, 3, ?, 'movie', 9001, 1, 'picked', '1',"
-                " 'Movies', 'Dune', 'because', 'tmdb_similar', 0.87, 12345, 'Arrival',"
-                " '2026-01-02 03:08:00', NULL)",
-                (pick_id, tmdb_id),
+                "INSERT INTO users (id, plex_account_id, username, slug, avatar_url, nickname, friendly_name,"
+                " user_type, restricted, restriction_profile, enabled, cold_start, label, request_tag, prefs)"
+                " VALUES (3, 555000100, 'sarah', 'sarah', '', '', '', 'shared', 0, '', 1, 0,"
+                " 'shortlist_sarah', '', '{}')"
             )
-        con.execute(
-            "INSERT INTO restriction_snapshots (id, user_id, taken_at, reason, filters_before, filters_after)"
-            " VALUES (1, 3, '2026-01-02 03:04:10', 'initial', ?, ?)",
-            (cls.FILTERS_BEFORE, cls.FILTERS_AFTER),
-        )
-        con.commit()
-        con.close()
+            con.execute(
+                "INSERT INTO runs (id, trigger, started_at, finished_at, status, dry_run, stats)"
+                " VALUES (7, 'schedule', '2026-01-02 03:04:05', '2026-01-02 03:09:00', 'ok', 0, '{\"users_ok\": 1}')"
+            )
+            con.execute(
+                "INSERT INTO run_users (run_id, user_id, status, error, reason, duration_ms, llm_tokens,"
+                " llm_tokens_by_step, exa_searches, diff, breakdown, trace)"
+                " VALUES (7, 3, 'ok', NULL, NULL, 4200, 1234, '{\"llm_web\": 1234}', 2,"
+                ' \'{"added": ["Dune"]}\', \'[{"row_slug": "picked"}]\', \'{"seeds": [1, 2]}\')'
+            )
+            for pick_id, tmdb_id in ((1, 438631), (2, 693134)):
+                con.execute(
+                    "INSERT INTO picks (id, run_id, user_id, tmdb_id, media_type, rating_key, rank,"
+                    " collection_slug, section_key, library, title, reason, sources, affinity, seed_tmdb_id,"
+                    " seed_title, created_at, watched_at) VALUES (?, 7, 3, ?, 'movie', 9001, 1, 'picked', '1',"
+                    " 'Movies', 'Dune', 'because', 'tmdb_similar', 0.87, 12345, 'Arrival',"
+                    " '2026-01-02 03:08:00', NULL)",
+                    (pick_id, tmdb_id),
+                )
+            con.execute(
+                "INSERT INTO restriction_snapshots (id, user_id, taken_at, reason, filters_before, filters_after)"
+                " VALUES (1, 3, '2026-01-02 03:04:10', 'initial', ?, ?)",
+                (cls.FILTERS_BEFORE, cls.FILTERS_AFTER),
+            )
+            con.commit()
+        finally:
+            con.close()
 
     @staticmethod
     def _shape(config_dir: Path) -> dict[str, dict]:
@@ -456,10 +465,12 @@ class TestMigration0055RestrictsUserDeletes:
         # Named explicitly, not just covered by the dict compare above: this is the value uninstall
         # feeds back to plex.tv, and a foreign condition dropped from it is a permission change.
         con = sqlite3.connect(tmp_path / "shortlist.db")
-        snapshot = con.execute(
-            "SELECT user_id, reason, filters_before, filters_after FROM restriction_snapshots"
-        ).fetchone()
-        con.close()
+        try:
+            snapshot = con.execute(
+                "SELECT user_id, reason, filters_before, filters_after FROM restriction_snapshots"
+            ).fetchone()
+        finally:
+            con.close()
         assert snapshot == (3, "initial", self.FILTERS_BEFORE, self.FILTERS_AFTER)
 
     @pytest.mark.parametrize("table", TABLES)
@@ -705,10 +716,11 @@ class TestRecencyDefaultAppliesToEveryInstall:
         from shortlist.server.services.secrets import SecretBox
         from shortlist.server.settings_store import SettingsStore
 
-        sessions = make_session_factory(make_engine(config_dir))
-        with sessions() as session:
-            store = SettingsStore(session, SecretBox(config_dir))
-            return store.has_row("recommendations.recency"), store.get("recommendations.recency")
+        with disposing_engine(make_engine(config_dir)) as engine:
+            sessions = make_session_factory(engine)
+            with sessions() as session:
+                store = SettingsStore(session, SecretBox(config_dir))
+                return store.has_row("recommendations.recency"), store.get("recommendations.recency")
 
     def test_a_fresh_install_gets_it(self, tmp_path: Path):
         run_migrations(tmp_path)
@@ -751,9 +763,10 @@ class TestDroppingTheAutoWebSearchBackend:
         from shortlist.server.services.secrets import SecretBox
         from shortlist.server.settings_store import SettingsStore
 
-        sessions = make_session_factory(make_engine(config_dir))
-        with sessions() as session:
-            return SettingsStore(session, SecretBox(config_dir)).get("llm_web.search_provider")
+        with disposing_engine(make_engine(config_dir)) as engine:
+            sessions = make_session_factory(engine)
+            with sessions() as session:
+                return SettingsStore(session, SecretBox(config_dir)).get("llm_web.search_provider")
 
     def test_a_fresh_install_defaults_to_the_providers_own_search(self, tmp_path: Path):
         run_migrations(tmp_path)
@@ -875,9 +888,10 @@ class TestFreshnessBecomesADayCount:
         from shortlist.server.services.secrets import SecretBox
         from shortlist.server.settings_store import SettingsStore
 
-        sessions = make_session_factory(make_engine(config_dir))
-        with sessions() as session:
-            return SettingsStore(session, SecretBox(config_dir)).get("recommendations.refresh_days")
+        with disposing_engine(make_engine(config_dir)) as engine:
+            sessions = make_session_factory(engine)
+            with sessions() as session:
+                return SettingsStore(session, SecretBox(config_dir)).get("recommendations.refresh_days")
 
     @pytest.mark.parametrize(
         ("freshness", "days", "why"),
@@ -921,12 +935,12 @@ class TestFreshnessBecomesADayCount:
         """The column, not just the global. A row carrying its own fraction must come out carrying
         the day count that fraction meant."""
         command.upgrade(_alembic(tmp_path), "0064")
-        with make_engine(tmp_path).begin() as conn:
+        with disposing_engine(make_engine(tmp_path)) as engine, engine.begin() as conn:
             conn.execute(sa.text("UPDATE collections SET freshness = 0.25 WHERE slug = 'picked'"))
 
         run_migrations(tmp_path)
 
-        with make_engine(tmp_path).begin() as conn:
+        with disposing_engine(make_engine(tmp_path)) as engine, engine.begin() as conn:
             days = conn.execute(sa.text("SELECT refresh_days FROM collections WHERE slug = 'picked'")).scalar()
         assert days == 11
 
@@ -934,12 +948,12 @@ class TestFreshnessBecomesADayCount:
         """NULL means "use the global" and is NOT the same as 0 ("frozen"). Converting it to a number
         would silently pin every inheriting row to whatever the global happened to be that night."""
         command.upgrade(_alembic(tmp_path), "0064")
-        with make_engine(tmp_path).begin() as conn:
+        with disposing_engine(make_engine(tmp_path)) as engine, engine.begin() as conn:
             conn.execute(sa.text("UPDATE collections SET freshness = NULL WHERE slug = 'picked'"))
 
         run_migrations(tmp_path)
 
-        with make_engine(tmp_path).begin() as conn:
+        with disposing_engine(make_engine(tmp_path)) as engine, engine.begin() as conn:
             days = conn.execute(sa.text("SELECT refresh_days FROM collections WHERE slug = 'picked'")).scalar()
         assert days is None
 
@@ -1000,26 +1014,30 @@ class TestRunsBeganAt:
     def _seed_at_0067(config_dir: Path) -> None:
         command.upgrade(_alembic(config_dir), "0067")
         con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
 
-        def insert(table: str, **values) -> None:
-            row = dict(values)
-            for _cid, name, type_, notnull, default, pk in con.execute(f"PRAGMA table_info({table})"):
-                if notnull and default is None and not pk and name not in row:
-                    row[name] = 0 if type_.upper().startswith(("INT", "BOOL", "FLOAT", "NUM")) else ""
-            columns = ", ".join(row)
-            con.execute(f"INSERT INTO {table} ({columns}) VALUES ({', '.join('?' * len(row))})", list(row.values()))
+            def insert(table: str, **values) -> None:
+                row = dict(values)
+                for _cid, name, type_, notnull, default, pk in con.execute(f"PRAGMA table_info({table})"):
+                    if notnull and default is None and not pk and name not in row:
+                        row[name] = 0 if type_.upper().startswith(("INT", "BOOL", "FLOAT", "NUM")) else ""
+                columns = ", ".join(row)
+                con.execute(f"INSERT INTO {table} ({columns}) VALUES ({', '.join('?' * len(row))})", list(row.values()))
 
-        # One of each status a finished run can carry, all from before the column existed.
-        insert("runs", id=1, trigger="schedule", started_at="2026-01-02 03:04:05", status="ok", stats="{}")
-        insert("runs", id=2, trigger="manual", started_at="2026-01-02 04:04:05", status="error", stats="{}")
-        insert("runs", id=3, trigger="manual", started_at="2026-01-02 05:04:05", status="aborted", stats="{}")
-        con.commit()
-        con.close()
+            # One of each status a finished run can carry, all from before the column existed.
+            insert("runs", id=1, trigger="schedule", started_at="2026-01-02 03:04:05", status="ok", stats="{}")
+            insert("runs", id=2, trigger="manual", started_at="2026-01-02 04:04:05", status="error", stats="{}")
+            insert("runs", id=3, trigger="manual", started_at="2026-01-02 05:04:05", status="aborted", stats="{}")
+            con.commit()
+        finally:
+            con.close()
 
     def _began(self, config_dir: Path) -> dict[int, str | None]:
         con = sqlite3.connect(config_dir / "shortlist.db")
-        rows = dict(con.execute("SELECT id, began_at FROM runs").fetchall())
-        con.close()
+        try:
+            rows = dict(con.execute("SELECT id, began_at FROM runs").fetchall())
+        finally:
+            con.close()
         return rows
 
     def test_the_column_really_did_not_exist_before_0068(self, tmp_path: Path):
@@ -1028,8 +1046,10 @@ class TestRunsBeganAt:
         self._seed_at_0067(tmp_path)
 
         con = sqlite3.connect(tmp_path / "shortlist.db")
-        columns = {row[1] for row in con.execute("PRAGMA table_info(runs)")}
-        con.close()
+        try:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(runs)")}
+        finally:
+            con.close()
         assert "began_at" not in columns
 
     def test_runs_that_finished_keep_a_duration_and_aborted_ones_do_not(self, tmp_path: Path):
@@ -1051,9 +1071,11 @@ class TestRunsBeganAt:
         self._seed_at_0067(tmp_path)
         run_migrations(tmp_path)
         con = sqlite3.connect(tmp_path / "shortlist.db")
-        con.execute("UPDATE runs SET began_at = '2026-05-05 05:05:05' WHERE id = 1")
-        con.commit()
-        con.close()
+        try:
+            con.execute("UPDATE runs SET began_at = '2026-05-05 05:05:05' WHERE id = 1")
+            con.commit()
+        finally:
+            con.close()
 
         command.stamp(_alembic(tmp_path), "0067")
         run_migrations(tmp_path)
@@ -1083,9 +1105,11 @@ class TestRowFallbackName:
         command.downgrade(_alembic(tmp_path), "0069")
         _write_setting(tmp_path, "row.name_template", "Spécifiquement pour le grand {user}")
         con = sqlite3.connect(tmp_path / "shortlist.db")
-        con.execute("UPDATE collections SET name = 'Parce que vous avez regardé {top_seed}' WHERE slug = 'picked'")
-        con.commit()
-        con.close()
+        try:
+            con.execute("UPDATE collections SET name = 'Parce que vous avez regardé {top_seed}' WHERE slug = 'picked'")
+            con.commit()
+        finally:
+            con.close()
         command.upgrade(_alembic(tmp_path), "0070")
 
         flags = _not_null(tmp_path, "collections")
@@ -1121,7 +1145,12 @@ class TestPickFinishedAtBackfill:
     """
 
     def _seed_pick(self, config_dir: Path, *, pick_id: int, media_type: str, watched: str | None) -> None:
-        with sqlite3.connect(config_dir / "shortlist.db") as db:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as db, db:
+            db.execute(
+                "INSERT INTO users (id, plex_account_id, username, slug, avatar_url, nickname, friendly_name,"
+                " user_type, restricted, restriction_profile, enabled, cold_start, label, request_tag, prefs)"
+                " VALUES (1, 901, 'viewer', 'viewer', '', '', '', 'friend', 0, '', 1, 0, 'shortlist_viewer', '', '{}')"
+            )
             db.execute(
                 "INSERT INTO picks (id, user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
                 "section_key, library, title, reason, sources, affinity, created_at, watched_at) "
@@ -1131,7 +1160,7 @@ class TestPickFinishedAtBackfill:
             )
 
     def _finished(self, config_dir: Path, pick_id: int):
-        with sqlite3.connect(config_dir / "shortlist.db") as db:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as db, db:
             return db.execute("SELECT finished_at FROM picks WHERE id = ?", (pick_id,)).fetchone()[0]
 
     def test_a_watched_film_is_backfilled_with_its_own_watch_time(self, tmp_path: Path):
@@ -1173,7 +1202,7 @@ class TestManageSharingDefaultsToManaged:
     """
 
     def _seed_user(self, config_dir: Path) -> None:
-        with sqlite3.connect(config_dir / "shortlist.db") as db:
+        with closing(sqlite3.connect(config_dir / "shortlist.db")) as db, db:
             db.execute(
                 "INSERT INTO users (id, plex_account_id, username, slug, avatar_url, nickname, friendly_name,"
                 " user_type, restricted, restriction_profile, enabled, cold_start, label, request_tag, prefs)"
@@ -1186,13 +1215,13 @@ class TestManageSharingDefaultsToManaged:
 
         run_migrations(tmp_path)
 
-        with sqlite3.connect(tmp_path / "shortlist.db") as db:
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as db, db:
             assert db.execute("SELECT manage_sharing FROM users WHERE id = 7").fetchone()[0] == 1
 
     def test_the_column_is_not_nullable_so_no_account_is_ever_undecided(self, tmp_path: Path):
         run_migrations(tmp_path)
 
-        with sqlite3.connect(tmp_path / "shortlist.db") as db:
+        with closing(sqlite3.connect(tmp_path / "shortlist.db")) as db, db:
             column = next(c for c in db.execute("PRAGMA table_info(users)") if c[1] == "manage_sharing")
         assert column[3] == 1  # notnull
         assert column[4].strip("'") == "1"  # server default

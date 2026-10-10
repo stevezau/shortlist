@@ -5,10 +5,10 @@ import { UserAvatar } from "@/components/user-avatar";
 
 describe("UserAvatar initials", () => {
   it("takes initials from the name's words, not from bracketed notes or punctuation", () => {
-    // Plex display names carry notes: "Joe - Richard's Mate (P)" rendered "J(", and "Katey (Sarah/Eric
+    // Plex display names carry notes: "Joe - Dad's Mate (P)" rendered "J(", and "Katey (Sarah/Eric
     // Friend) (P)" rendered "K(" — a bracket where a letter belongs.
-    render(<UserAvatar name="Joe - Richard's Mate (P)" labelled />);
-    expect(screen.getByRole("img", { name: "Joe - Richard's Mate (P)" })).toHaveTextContent(/^JM$/);
+    render(<UserAvatar name="Joe - Dad's Mate (P)" labelled />);
+    expect(screen.getByRole("img", { name: "Joe - Dad's Mate (P)" })).toHaveTextContent(/^JM$/);
   });
 
   it("uses a name that is only a first name plus notes as one word", () => {
@@ -17,8 +17,8 @@ describe("UserAvatar initials", () => {
   });
 
   it("keeps a one-word name's first two letters", () => {
-    render(<UserAvatar name="moohouse" labelled />);
-    expect(screen.getByRole("img", { name: "moohouse" })).toHaveTextContent(/^MO$/);
+    render(<UserAvatar name="guest" labelled />);
+    expect(screen.getByRole("img", { name: "guest" })).toHaveTextContent(/^GU$/);
   });
 
   it("falls back to a question mark for a name with no letters at all", () => {

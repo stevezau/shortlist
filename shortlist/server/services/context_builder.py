@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import UTC, datetime
+from contextlib import nullcontext
+from datetime import datetime
 
 from loguru import logger
 from sqlalchemy import and_, case, func, or_
@@ -54,6 +55,8 @@ from shortlist.engine.models import (
     row_languages_or_inherit,
     row_monitor_or_inherit,
 )
+from shortlist.engine.provider_calls import ProviderCallControls
+from shortlist.engine.requests import AcquisitionGuard
 from shortlist.engine.rows import row_shown_today
 from shortlist.engine.themes import ThemeSpec
 from shortlist.engine.web_guidance import AiInstructions
@@ -76,21 +79,23 @@ from shortlist.server.db.models import (
     utcnow,
 )
 from shortlist.server.prefs import blocked_ids
+from shortlist.server.services.delivery_snapshots import utc
 from shortlist.server.services.pick_history import DbPickHistory
 from shortlist.server.services.plex_reachability import explained
 from shortlist.server.services.poster_service import load_upload, make_studio
+from shortlist.server.services.request_actions import AutomaticRequestGuard, durable_handled_requests
 from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.services.sse import EventBus
 from shortlist.server.services.theme_store import spec_from_row
 from shortlist.server.settings_store import SettingsStore
 
 #: The season editor's PMS reads (#137). A page waits on them, so a stalled server fails in seconds rather
-#: than holding the tab for a run's `plex.timeout_s` — `api/system._INTERACTIVE_TIMEOUT_S`'s reasoning.
+#: than holding the tab for a run's `plex.timeout_s` — `connection_choices.INTERACTIVE_TIMEOUT_S`'s reasoning.
 #: A library scan pages through the PMS, so no single read in it is long.
 EDITOR_PLEX_TIMEOUT_S = 8
 
 
-def curator_kwargs(get: Callable[[str], object]) -> dict:
+def curator_kwargs(get: Callable[[str], object], *, provider_controls: ProviderCallControls | None = None) -> dict:
     """Assemble ``make_curator`` kwargs from settings. A local/OpenAI-compatible server takes a
     base_url and an OPTIONAL key; every other provider takes an api_key; an optional model applies
     to all.
@@ -111,10 +116,24 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
         kwargs["api_key"] = get("curator.api_key")
     if get("curator.model"):
         kwargs["model"] = get("curator.model")
+    if provider_controls is not None:
+        kwargs.update(provider_controls=provider_controls, max_retries=0, follow_redirects=False)
+        endpoints = {
+            "openai": "https://api.openai.com/v1",
+            "anthropic": "https://api.anthropic.com",
+            "google": "https://generativelanguage.googleapis.com",
+        }
+        if provider in endpoints:
+            kwargs["base_url"] = endpoints[provider]
+        elif provider in ("openai_compatible", "ollama"):
+            # Bounded runs use the reviewed model, never a later model-list discovery.
+            kwargs["model"] = str(get("curator.model") or "")
     return kwargs
 
 
-def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None:
+def make_search_client(
+    get: Callable[[str], object], *, provider_controls: ProviderCallControls | None = None
+) -> WebSearchProvider | None:
     """The external web-search backend for the ``llm_web`` source, or None when there isn't one.
 
     Deciding WHICH provider belongs here rather than in the engine: the engine only knows "an
@@ -132,9 +151,14 @@ def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None
         A configured provider, or None when the backend is ``native`` or its own setup is missing.
     """
     mode = get("llm_web.search_provider") or "native"
+    kwargs = {"provider_controls": provider_controls} if provider_controls is not None else {}
     if mode == "exa":
         key = get("exa.apikey")
-        return ExaClient(key, search_type=str(get("exa.search_type") or DEFAULT_EXA_SEARCH_TYPE)) if key else None
+        return (
+            ExaClient(key, search_type=str(get("exa.search_type") or DEFAULT_EXA_SEARCH_TYPE), **kwargs)
+            if key
+            else None
+        )
     if mode == "searxng":
         url = (str(get("searxng.url") or "")).strip()
         if not url:
@@ -143,6 +167,7 @@ def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None
             url,
             username=str(get("searxng.username") or ""),
             password=str(get("searxng.password") or ""),
+            **kwargs,
         )
     return None  # native: the provider searches for itself, so there is no external client
 
@@ -241,16 +266,6 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
         min_rating_other=collection.req_min_rating_other,
     )
     return overrides if overrides != RequestOverrides() else None
-
-
-def _utc(value: datetime | None) -> datetime | None:
-    """SQLite hands a ``DateTime(timezone=True)`` column back naive; the engine compares it against
-    the run's own aware clock, and mixing the two raises. Normalised here, at the boundary, for the
-    same reason `watch_cache._aware` normalises the watched-title columns. The DB stores UTC.
-    """
-    if value is None:
-        return None
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 #: How the watched page identifies ONE TITLE across the library copies of it (issue #111).
@@ -374,6 +389,11 @@ def _merge_watched_copies(rows: list[WatchedTitle]) -> dict:
     }
 
 
+def _app_address(store: SettingsStore, prefix: str) -> tuple[str, str]:
+    """The ``(url, api key)`` stored under a ``requests.*`` app prefix; empty strings when unset."""
+    return (store.get(f"{prefix}.url") or "").strip(), store.get(f"{prefix}.apikey") or ""
+
+
 class ContextBuilder:
     """Builds an EngineContext and user profiles from DB settings — the engine's server adapter."""
 
@@ -390,18 +410,22 @@ class ContextBuilder:
         run_id: int | None = None,
         log_sink: Callable[[dict], None] | None = None,
         collection_ids: list[int] | None = None,
+        session: Session | None = None,
+        provider_controls: ProviderCallControls | None = None,
+        acquisition_guard: AcquisitionGuard | None = None,
     ) -> EngineContext:
-        with self._sessions() as session:
+        with self._sessions() if session is None else nullcontext(session) as session:
             store = SettingsStore(session, self._secrets)
             plex_url = store.get("plex.url")
             plex_token = store.get("plex.token")
             if not plex_url or not plex_token:
                 raise RuntimeError("Plex connection is not configured yet — finish setup first")
+            plex_timeout = int(store.get("plex.timeout_s") or 45)
             # A large TV library's collection rebuild legitimately takes 15-20s+; the configured
             # per-call timeout (default 45s) gives those headroom instead of timing out + retrying.
             # The run page is where this lands, so say where the address is changed.
             with explained(plex_url, fix_hint=" Change the address under Settings → Connections."):
-                plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
+                plex = PlexClient(plex_url, plex_token, timeout=plex_timeout)
             _refuse_a_different_server(session, plex.machine_id)
             plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
@@ -412,14 +436,15 @@ class ContextBuilder:
             )
             # External web-search backend for the llm_web source; None when none is configured (the
             # native provider tools still work without it — only Ollama depends on it).
-            search = make_search_client(store.get)
+            provider_kwargs = {"provider_controls": provider_controls} if provider_controls is not None else {}
+            search = make_search_client(store.get, **provider_kwargs)
             history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
 
             def _pms_for_user(profile, _history=history, _url=plex_url):
                 """The server as ONE user sees it, for the privacy check on accounts Plex refuses a
                 hide-list for.
 
-                Reuses `ShareTokenWatchSource._token_for` rather than reading the shared-server list
+                Reuses `ShareTokenWatchSource.server_token_for` rather than reading the shared-server list
                 directly, for two reasons. It has the CANARY fallback: a managed Home profile that was
                 never separately shared is absent from `shared_server_tokens()` — and that is exactly
                 the archetype this check exists for, so a bare lookup returned None and the account was
@@ -427,17 +452,17 @@ class ContextBuilder:
                 to stop. It also memoises the roster behind a lock, so this does not re-fetch plex.tv
                 once per profiled account per run (rule 6).
                 """
-                token = _history._token_for(profile)
-                return PlexClient(_url, token, timeout=int(store.get("plex.timeout_s") or 45)) if token else None
+                token = _history.server_token_for(profile)
+                return PlexClient(_url, token, timeout=plex_timeout) if token else None
 
             provider = store.get("curator.provider")
-            curator = make_curator(provider, **curator_kwargs(store.get))
+            curator = make_curator(provider, **curator_kwargs(store.get, **provider_kwargs))
             # Build the poster studio only if a row actually renders a poster from text (built-in or
             # AI) — a server that never uses posters never touches Pillow or the image SDK. The studio
             # always provides the text engine; its AI engine is None when the provider can't make images.
             render_modes = {"text", "ai", "generate"}
             wants_studio = any((c.poster or {}).get("mode") in render_modes for c in session.query(Collection).all())
-            poster_artist = make_studio(store, self._sessions) if wants_studio else None
+            poster_artist = make_studio(store, self._sessions, **provider_kwargs) if wants_studio else None
             config = self._engine_config(session, store, dry_run=dry_run, collection_ids=collection_ids)
             previous = self._previous_picks(session)
             previous_recipes = self._previous_recipes(previous)
@@ -520,9 +545,9 @@ class ContextBuilder:
                 delivered_details=delivered_details,
                 delivered_seasons=delivered_seasons,
                 pms_for_user=_pms_for_user,
-                # Same token `_pms_for_user` builds its client from — including the canary fallback
+                # Same token `_pms_for_user` builds its client from — including the switch-and-exchange fallback
                 # for a Home profile that was never separately shared.
-                token_for_user=lambda profile, _history=history: _history._token_for(profile),
+                token_for_user=lambda profile, _history=history: _history.server_token_for(profile),
                 disabled_account_ids=disabled_account_ids,
                 unmanaged_account_ids=unmanaged_account_ids,
                 known_slugs=known_slugs,
@@ -533,6 +558,9 @@ class ContextBuilder:
                 # complete picture converge needs before it may DELETE an unattributable collection.
                 may_delete_orphans=True,
                 handled_requests=self._handled_requests(session),
+                acquisition_guard=(
+                    acquisition_guard if acquisition_guard is not None else AutomaticRequestGuard(self._sessions)
+                ),
                 progress=progress,
                 # Everyone who could own a tag, not the run's scope and not only the enabled: the
                 # request ledger must see that a tag two people share is ambiguous even when one of
@@ -571,7 +599,7 @@ class ContextBuilder:
         wasn't a no.
         """
         rows = session.query(RequestCandidate).filter(RequestCandidate.status.in_(("sent", "rejected"))).all()
-        return {(row.tmdb_id, row.media_type) for row in rows}
+        return {(row.tmdb_id, row.media_type) for row in rows} | durable_handled_requests(session)
 
     def build_plex_only(self, *, dry_run: bool) -> EngineContext:
         """A context with the PMS, plex.tv and the watch-history source — and nothing else.
@@ -621,7 +649,7 @@ class ContextBuilder:
         with self._sessions() as session:
             store = SettingsStore(session, self._secrets)
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
-            return self._build_requests(store), tmdb
+            return self.build_requests(store), tmdb
 
     def build_tmdb_only(self) -> TmdbClient | None:
         """A TMDB client on the shared cache, or None when no API key is set. Touches no network."""
@@ -659,7 +687,7 @@ class ContextBuilder:
                 u.plex_account_id: u.id
                 for u in session.query(User).filter(User.departed_at.is_(None), User.removed_at.is_(None)).all()
             }
-            return self._build_request_sources(store), profiles, db_ids
+            return self.build_request_sources(store), profiles, db_ids
 
     def profile_with_history(self, session: Session, user_id: int) -> UserProfile:
         """One person's profile with their watch history read the way a run reads it — for authoring a theme.
@@ -907,40 +935,17 @@ class ContextBuilder:
         return {(row.user_slug, row.collection_slug, row.library_key): row.season for row in rows}
 
     def _previous_picks(self, session: Session) -> dict[tuple[str, str, str], list[Pick]]:
-        """Each row+library's picks from the run that last built it, keyed (user_slug, row_slug, section_key).
+        """Each row+library's delivered picks, keyed (user_slug, row_slug, section_key).
 
         Carried into the engine so a row is REUSED unchanged on non-refresh nights instead of being
         re-curated (and re-written to Plex) from scratch every night — the fix for the nightly full-row
-        churn. We take the picks from the MAX run_id per (user, row, library), i.e. the last time we
-        delivered that exact row+library, which is the best proxy for what's on Plex now. Legacy rows
-        with no row/library stamp (blank collection_slug/section_key) can't be mapped, so they're
-        skipped and simply bootstrap by curating fresh.
+        churn. Independent current delivery records preserve that state when run logs are cleared.
+        Rows without confirmed delivery evidence bootstrap by curating fresh.
         """
-        latest = (
-            session.query(
-                PickRow.user_id.label("user_id"),
-                PickRow.collection_slug.label("slug"),
-                PickRow.section_key.label("section_key"),
-                func.max(PickRow.run_id).label("mrun"),
-            )
-            .filter(PickRow.collection_slug != "", PickRow.section_key != "")
-            .group_by(PickRow.user_id, PickRow.collection_slug, PickRow.section_key)
-            .subquery()
-        )
-        rows = (
-            session.query(PickRow)
-            .join(
-                latest,
-                and_(
-                    PickRow.user_id == latest.c.user_id,
-                    PickRow.collection_slug == latest.c.slug,
-                    PickRow.section_key == latest.c.section_key,
-                    PickRow.run_id == latest.c.mrun,
-                ),
-            )
-            .order_by(PickRow.rank)
-            .all()
-        )
+        from shortlist.server.services.delivery_snapshots import current_pick_ids
+
+        ids = {pick_id for picks in current_pick_ids(session).values() for pick_id in picks}
+        rows = session.query(PickRow).filter(PickRow.id.in_(ids)).order_by(PickRow.rank).all() if ids else []
         slug_by_id = {u.id: u.slug for u in session.query(User).all()}
         out: dict[tuple[str, str, str], list[Pick]] = {}
         for r in rows:
@@ -974,7 +979,7 @@ class ContextBuilder:
                     # Dropped here and the engine sees every carried row as unstamped, which reads as
                     # "unknown" and silently falls back to the plain cadence: the feature goes inert
                     # on a live server with nothing failing.
-                    built_at=_utc(r.built_at),
+                    built_at=utc(r.built_at),
                     # The watch a `{top_seed}` row was built from. `_seed_moved` compares it with tonight's
                     # for a row whose picks carried no seed; dropped here, such a row never sees its watch
                     # move on and carries the old watch's picks forward under the new name (issue #133).
@@ -1088,7 +1093,7 @@ class ContextBuilder:
         return out
 
     @staticmethod
-    def _audience_maps(session: Session) -> tuple[dict[int, int], dict[int, set[int]]]:
+    def audience_maps(session: Session) -> tuple[dict[int, int], dict[int, set[int]]]:
         """(user_id → plex_account_id, collection_id → {user_id}) — the two lookups both the build and
         retire passes need to resolve a 'subset' row's audience to the plex account ids the engine matches on."""
         account_by_user = {u.id: u.plex_account_id for u in session.query(User).all()}
@@ -1098,7 +1103,7 @@ class ContextBuilder:
         return account_by_user, audience_by_collection
 
     @staticmethod
-    def _subset_audience(collection, account_by_user: dict, audience_by_collection: dict) -> set[int] | None:
+    def subset_audience(collection, account_by_user: dict, audience_by_collection: dict) -> set[int] | None:
         """The plex account ids a 'subset' row is limited to; None for any other audience (= everyone)."""
         if collection.audience != "subset":
             return None
@@ -1199,8 +1204,8 @@ class ContextBuilder:
             # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
             # delivery only — classification/sync/sweep/promotion above still see the full list.
             build_only=self._build_only_slugs(session, collection_ids, dry_run=dry_run),
-            requests=self._build_requests(store),
-            request_sources=self._build_request_sources(store),
+            requests=self.build_requests(store),
+            request_sources=self.build_request_sources(store),
             seasons=catalogue,
         )
 
@@ -1225,7 +1230,14 @@ class ContextBuilder:
         ``include_ids`` are switched-off rows built anyway, for a dry run that names them; a dry run writes
         nothing, so nothing reaches Plex for a row the owner has not switched on.
         """
-        account_by_user, audience_by_collection = self._audience_maps(session)
+        account_by_user, audience_by_collection = self.audience_maps(session)
+
+        muted_by_collection: dict[int, set[int]] = {}
+        for collection_id, user_id in session.query(
+            CollectionUserOverride.collection_id, CollectionUserOverride.user_id
+        ).filter(CollectionUserOverride.muted.is_(True)):
+            if user_id in account_by_user:
+                muted_by_collection.setdefault(collection_id, set()).add(account_by_user[user_id])
 
         specs: list[RowSpec] = []
         collections = (
@@ -1239,7 +1251,7 @@ class ContextBuilder:
         now = local_now()
         for collection in collections:
             shared = collection.build == "shared"
-            audience = self._subset_audience(collection, account_by_user, audience_by_collection)
+            audience = self.subset_audience(collection, account_by_user, audience_by_collection)
             is_default = collection.slug == DEFAULT_SLUG
             # "When it appears" (issue #102) resolved into the placement the engine already
             # understands. `off` is Shortlist's existing "show this row nowhere" state, so a
@@ -1280,6 +1292,7 @@ class ContextBuilder:
                     media=collection.media,
                     shared=shared,
                     audience=audience,
+                    muted_accounts=muted_by_collection.get(collection.id, set()),
                     min_watchers=collection.min_watchers,
                     request_tag=(collection.request_tag or "").strip(),
                     auto_user_tag=collection.req_auto_user_tag,  # None -> inherit the global switch
@@ -1306,8 +1319,6 @@ class ContextBuilder:
                     pick_order=collection.pick_order or "best",
                     placement=(collection.placement or "both") if shown else "off",
                     placement_friends=(collection.placement_friends or "both") if shown else "off",
-                    hidden_by_schedule=not shown,
-                    pin_top=bool(collection.pin_top),
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],
                     poster=self._build_poster(session, collection),
@@ -1317,13 +1328,13 @@ class ContextBuilder:
                     sort_title_prefix=collection.sort_title_prefix or "",
                     seasons=list(collection.seasons or []),
                     season=season,
-                    theme=self._theme_spec(session, collection),
+                    theme=self.theme_spec(session, collection),
                     over_time=OverTime(
                         refresh_share=collection.refresh_share,
                         repeat_cooldown_days=collection.repeat_cooldown_days,
                         avoid_rows=tuple(collection.avoid_rows or ()),
                     ),
-                    person_themes=self._person_themes(session, collection, audience_by_collection),
+                    person_themes=self.person_themes_for(session, collection, audience_by_collection),
                     requests_row=bool(collection.requests_row),
                     requests_window_days=int(
                         collection.requests_window_days if collection.requests_window_days is not None else 90
@@ -1334,7 +1345,7 @@ class ContextBuilder:
         return specs
 
     @staticmethod
-    def _person_themes(
+    def person_themes_for(
         session: Session, collection: Collection, audience_by_collection: dict[int, set[int]]
     ) -> tuple[tuple[str, ThemeSpec], ...]:
         """Each person's own current theme on an explore row (#138); empty for any other row.
@@ -1362,7 +1373,7 @@ class ContextBuilder:
         return tuple(themes.items())
 
     @staticmethod
-    def _theme_spec(session: Session, collection: Collection) -> ThemeSpec | None:
+    def theme_spec(session: Session, collection: Collection) -> ThemeSpec | None:
         """The theme an AI row (#138) is filled from, or None for an ordinary row."""
         theme = session.get(Theme, collection.theme_id) if collection.theme_id is not None else None
         return None if theme is None else spec_from_row(theme)
@@ -1382,8 +1393,7 @@ class ContextBuilder:
             return PosterSpec(mode="upload", image=stored[0]) if stored else None
         # "text" (built-in Pillow) and "ai" (image provider) both render from title/subtitle/style;
         # "generate" is the pre-rename name for "ai". apply_poster maps the mode to a render engine.
-        # (Bug 2026-07-21: only "generate" was handled here, so the renamed "text"/"ai" modes silently
-        # yielded None and no poster was ever applied.)
+        # All three must be handled: dropping one silently yields None and no poster is ever applied.
         if mode in ("text", "ai", "generate"):
             return PosterSpec(
                 mode=mode,
@@ -1398,9 +1408,9 @@ class ContextBuilder:
         """This row's per-library Recommended-shelf placement (`collection.hub_anchor`).
 
         A library with no entry here means "top of the shelf", which is the shipped default — not
-        "leave it alone", and no longer a global default read from Settings (`rows.hub_anchor` was
-        retired: it was a second place to set the same thing). Legacy `pin_top` is not read by the
-        engine at all any more; the editor migrates it into a per-library "Top" when the row is saved.
+        "leave it alone", and no longer a global default read from Settings (`rows.hub_anchor` is
+        not a setting). The editor migrates the legacy `pin_top` column into a per-library "Top" when
+        the row is saved; the engine never reads it.
         """
         return cls._parse_hub_anchors(collection.hub_anchor or {})
 
@@ -1423,10 +1433,10 @@ class ContextBuilder:
         audience THEN, not necessarily now. It skips the render gate on purpose, because a switched
         `{top_seed}` row is the case most likely to be missed: `remove_row` matches an unrenderable title by
         its ledger key ONLY and leaves a copy the ledger does not name alone. Not a DISABLED shared row:
-        retired specs are indexed where they live (`pipeline._build_indexes`), so one would keep a library
+        retired specs are indexed where they live (`pipeline.build_indexes`), so one would keep a library
         that nothing else targets in every run's index, and its watches seeding everyone's picks.
         """
-        account_by_user, audience_by_collection = self._audience_maps(session)
+        account_by_user, audience_by_collection = self.audience_maps(session)
 
         global_name = store.get("row.name_template") or ""
         # A stub whose only job is to let render_row_name resolve {user}; a non-empty username keeps a
@@ -1448,7 +1458,7 @@ class ContextBuilder:
             if not render_row_name(effective_template, probe, [], fallback_name=collection.fallback_name or ""):
                 logger.debug("retired row '{}' would render to the default title — left for a rebuild", collection.slug)
                 continue
-            audience = self._subset_audience(collection, account_by_user, audience_by_collection)
+            audience = self.subset_audience(collection, account_by_user, audience_by_collection)
             retired.append(_retired_spec(collection, audience))
         for collection in session.query(Collection).filter_by(enabled=True, build="shared").all():
             retired.append(_retired_spec(collection, None))
@@ -1489,25 +1499,23 @@ class ContextBuilder:
         return anchors
 
     @staticmethod
-    def _build_request_sources(store: SettingsStore) -> RequestSources | None:
+    def build_request_sources(store: SettingsStore) -> RequestSources | None:
         """Where a requests row reads from — every app with a URL and key, whatever `requests.*` says.
 
-        Independent of `_build_requests`: the owner may send nothing through Shortlist and still want
+        Independent of `build_requests`: the owner may send nothing through Shortlist and still want
         the row. Only the Overseerr account Shortlist FILES AS is excluded, and only while it actually
         files there — otherwise that account's requests are somebody's own.
         """
 
         def seerr() -> SeerrTarget | None:
-            url = (store.get("requests.overseerr.url") or "").strip()
-            key = store.get("requests.overseerr.apikey") or ""
+            url, key = _app_address(store, "requests.overseerr")
             if not (url and key):
                 return None
             request_as = int(store.get("requests.overseerr.request_as_user_id") or 0)
             return SeerrTarget(url=url, api_key=key, request_as_user_id=request_as)
 
         def arr(prefix: str) -> ArrTarget | None:
-            url = (store.get(f"{prefix}.url") or "").strip()
-            key = store.get(f"{prefix}.apikey") or ""
+            url, key = _app_address(store, prefix)
             if not (url and key):
                 return None
             # Reading needs no profile, folder or tag — those say where a NEW request is filed.
@@ -1526,7 +1534,7 @@ class ContextBuilder:
         )
 
     @staticmethod
-    def _build_requests(store: SettingsStore) -> RequestConfig | None:
+    def build_requests(store: SettingsStore) -> RequestConfig | None:
         """Build the Sonarr/Radarr request config, or None when the feature is off.
 
         A target (Radarr for movies, Sonarr for shows) is only built when BOTH its URL and its API
@@ -1544,8 +1552,7 @@ class ContextBuilder:
             Simpler than an Arr target because there is less to get right: a *seerr needs only a URL
             and a key, since the quality profile and root folder are its own business.
             """
-            url = (store.get("requests.overseerr.url") or "").strip()
-            api_key = store.get("requests.overseerr.apikey") or ""
+            url, api_key = _app_address(store, "requests.overseerr")
             if not url or not api_key:
                 msg = "Overseerr is the chosen request target but has no address or API key"
                 logger.warning("{} — nothing will be requested", msg)
@@ -1558,8 +1565,7 @@ class ContextBuilder:
             )
 
         def target(prefix: str) -> ArrTarget | None:
-            url = (store.get(f"{prefix}.url") or "").strip()
-            api_key = store.get(f"{prefix}.apikey") or ""
+            url, api_key = _app_address(store, prefix)
             if not url or not api_key:
                 return None
             quality_profile_id = int(store.get(f"{prefix}.quality_profile_id") or 0)
@@ -1612,6 +1618,8 @@ class ContextBuilder:
             auto_min_rating=float(store.get("requests.auto_min_rating")),
             auto_user_tag=bool(store.get("requests.auto_user_tag")),
             sonarr_monitor=store.get("requests.sonarr.monitor") or "all",
+            hold_genres=frozenset(int(g) for g in store.get("requests.hold_genres") or []),
+            hold_tags=frozenset(int(t) for t in store.get("requests.hold_tags") or {}),
             language_mode=store.get("requests.language_mode") or "any",
             preferred_languages=normalise_languages(store.get("requests.preferred_languages")),
             # Read WITHOUT `or`: None means "follow min_rating + the gap" and 0.0 is a real bar, so

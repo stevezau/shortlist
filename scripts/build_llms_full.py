@@ -32,6 +32,8 @@ OUT = DOCS / "llms-full.txt"
 FRONT_MATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 LIQUID_COMMENT = re.compile(r"\{%-?\s*comment\s*-?%\}.*?\{%-?\s*endcomment\s*-?%\}", re.DOTALL)
 JSON_LD = re.compile(r'<script type="application/ld\+json">.*?</script>', re.DOTALL)
+# The one include that is structured data alone; it has no prose to flatten.
+JSON_LD_INCLUDE = re.compile(r"\{%-?\s*include\s+faq-jsonld\.html\s*-?%\}\n?")
 INCLUDE = re.compile(r"\{%-?\s*include\s+([\w.-]+)((?:\s+\w+=(?:\"[^\"]*\"|'[^']*'|\w+))*)\s*-?%\}")
 INCLUDE_PARAM = re.compile(r"""(\w+)=(?:"([^"]*)"|'([^']*)'|(\w+))""")
 # The two conditionals the includes use on their own parameters. Resolved here rather than left for
@@ -126,7 +128,7 @@ def _expand_include(name: str, params: dict[str, str]) -> str:
 def _include_as_text(name: str, params: dict[str, str] | None = None, config: dict | None = None) -> str:
     """Flatten an HTML include to prose.
 
-    Done generically rather than per-include: `privacy-order.html`, the four-step write order on the
+    Done generically rather than per-include: `privacy-order.html`, the three-step write order on the
     FAQ, is a drawn figure whose every word is real text, so stripping the markup leaves exactly the
     sentences a reader sees. Hand-writing a plain-text copy here would be a second source of truth
     for the privacy ordering — the one claim in these docs that must never drift.
@@ -183,6 +185,7 @@ def _render(body: str, front: dict, config: dict, source: Path) -> str:
     """Resolve the handful of Liquid constructs these pages use, and drop what is markup-only."""
     body = LIQUID_COMMENT.sub("", body)
     body = JSON_LD.sub("", body)
+    body = JSON_LD_INCLUDE.sub("", body)
     body = ANCHOR_SPAN.sub("", body)
     body = HTML_COMMENT.sub("", body)
     body = DEV_OPEN.sub(lambda m: f"**{m.group(1)}: {m.group(2).strip()}**\n", body)
@@ -225,9 +228,7 @@ def build() -> str:
     config = _load_config()
     ordered = [DOCS / "index.md"] + [_url_to_source(u) for u in _nav_urls(config)]
 
-    every = sorted(
-        p for p in DOCS.rglob("*.md") if p.name != "README.md" and "superpowers" not in p.relative_to(DOCS).parts
-    )
+    every = sorted(p for p in DOCS.rglob("*.md") if p.name != "README.md")
     missing = [p for p in every if p not in ordered]
     if missing:
         names = ", ".join(str(p.relative_to(DOCS)) for p in missing)
@@ -252,4 +253,4 @@ if __name__ == "__main__":
     text = build()
     OUT.write_text(text)
     pages = text.count("\nSource: ")
-    print(f"wrote {OUT.relative_to(Path.cwd())}: {len(text):,} bytes, {pages} pages", file=sys.stderr)
+    print(f"wrote {OUT}: {len(text):,} bytes, {pages} pages", file=sys.stderr)

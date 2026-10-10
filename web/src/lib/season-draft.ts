@@ -71,7 +71,7 @@ export type SeasonDraft = {
 type Sources = Pick<SeasonDraft, "rule"> &
   Partial<Pick<SeasonDraft, "tags" | "genre" | "excluded_genres" | "collections" | "picks">>;
 
-export const DEFAULT_EMOJI = "🗓️";
+const DEFAULT_EMOJI = "🗓️";
 
 export function blankDraft(): SeasonDraft {
   return {
@@ -155,8 +155,8 @@ export function seasonBody(draft: SeasonDraft, preset: string | null): SeasonInp
     name: draft.name.trim(),
     emoji: draft.emoji.trim(),
     ...sourcesInput(draft),
-    lead_days: draft.lead_days,
-    after_days: draft.after_days,
+    lead_days: draft.rule.kind === "month" ? 0 : draft.lead_days,
+    after_days: draft.rule.kind === "month" ? 0 : draft.after_days,
     ...(preset ? { preset } : {}),
   };
 }

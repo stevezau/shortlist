@@ -22,6 +22,7 @@ import contextvars
 import functools
 import hashlib
 import json
+from calendar import monthrange
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
@@ -32,6 +33,7 @@ from loguru import logger
 
 from shortlist.engine.clients.tmdb import DISCOVER_MIN_VOTES
 from shortlist.engine.models import MediaType, RowSeason
+from shortlist.engine.season_preset_films import CURATED_DESCRIPTIONS, CURATED_FILMS
 
 if TYPE_CHECKING:
     from shortlist.engine.clients.plex_pms import LibraryTitle
@@ -73,10 +75,12 @@ def easter_sunday(year: int) -> date:
 
 @dataclass(frozen=True)
 class DateRule:
-    """When a season falls in a given year (issue #137): a fixed day, the nth (or last) weekday of a
-    month, or a number of days from Easter. ``weekday`` is Python's: Monday is 0."""
+    """A fixed day, nth/last weekday, Easter offset, or entire calendar month.
 
-    kind: Literal["fixed", "nth", "easter"]
+    A month anchors on its last day so upcoming day events can interrupt it. ``weekday`` is Monday=0.
+    """
+
+    kind: Literal["fixed", "nth", "easter", "month"]
     month: int = 1
     day: int = 1
     nth: int = 1  # 1-4, or -1 for the last one
@@ -85,6 +89,9 @@ class DateRule:
 
     def anchor(self, year: int) -> date:
         """The season's day in ``year``."""
+        if self.kind == "month":
+            # An upcoming day event can take over a month spotlight, which resumes afterwards.
+            return date(year, self.month, monthrange(year, self.month)[1])
         if self.kind == "fixed":
             return date(year, self.month, self.day)
         if self.kind == "nth":
@@ -105,10 +112,14 @@ class DateRule:
             return replace(self, day=1, offset=0)
         if self.kind == "easter":
             return replace(self, month=1, day=1, nth=1, weekday=0)
+        if self.kind == "month":
+            return replace(self, day=1, nth=1, weekday=0, offset=0)
         return self
 
     def label(self) -> str:
         """The rule in plain English: "17 March", "4th Thursday of November", "21 days before Easter"."""
+        if self.kind == "month":
+            return f"All of {_MONTHS[self.month - 1]}"
         if self.kind == "fixed":
             return f"{self.day} {_MONTHS[self.month - 1]}"
         if self.kind == "nth":
@@ -125,9 +136,9 @@ class DateRule:
         Raises:
             ValueError: worded for the owner, saying what to pick instead.
         """
-        if self.kind not in ("fixed", "nth", "easter"):
+        if self.kind not in ("fixed", "nth", "easter", "month"):
             raise ValueError("That's an unknown kind of date.")
-        if self.kind in ("fixed", "nth") and not 1 <= self.month <= 12:
+        if self.kind in ("fixed", "nth", "month") and not 1 <= self.month <= 12:
             raise ValueError("Pick a month.")
         if self.kind == "fixed":
             if (self.month, self.day) == (2, 29):
@@ -274,6 +285,7 @@ def _windows(
     ``lead_days`` and ``after_days`` are the row's, and apply to a season that has no timing of its own —
     every built-in. A custom season carries its own (#137 D8): short holidays sit close together, and a
     row's 30-day lead would show "St Patrick's picks" from mid-February.
+    A month rule always covers its calendar month, regardless of lead/after settings.
     """
     windows = []
     for slug in slugs:
@@ -288,8 +300,8 @@ def _windows(
                 SeasonWindow(
                     season=season,
                     anchor=anchor,
-                    starts=anchor - timedelta(days=lead),
-                    ends=anchor + timedelta(days=after),
+                    starts=anchor.replace(day=1) if season.rule.kind == "month" else anchor - timedelta(days=lead),
+                    ends=anchor if season.rule.kind == "month" else anchor + timedelta(days=after),
                 )
             )
     return windows
@@ -302,12 +314,13 @@ def shown_on(
 
     When windows overlap (a long lead meeting days after), a season whose day is still to come — or is
     today — beats one already past, and among those the nearest wins: Halloween lingering into November
-    gives way to the Christmas that has started early, but holds its own day.
+    gives way to the Christmas that has started early, but holds its own day. A day event tied with a
+    month-end anchor wins, so Halloween is not displaced by an October spotlight.
     """
     open_windows = [w for w in _windows(slugs, lead_days, after_days, day, catalogue) if w.starts <= day <= w.ends]
     if not open_windows:
         return None
-    return min(open_windows, key=lambda w: (w.anchor < day, abs((w.anchor - day).days)))
+    return min(open_windows, key=lambda w: (w.anchor < day, abs((w.anchor - day).days), w.season.rule.kind == "month"))
 
 
 def build_on(
@@ -389,7 +402,7 @@ class _ListReader(Protocol):
     def list_item(self, tmdb_id: int, media_type: MediaType) -> dict | None: ...
 
 
-class _CollectionReader(Protocol):
+class CollectionReader(Protocol):
     def collection_members(self, section_key: str, title: str) -> list[LibraryTitle] | None: ...
 
 
@@ -491,7 +504,7 @@ class _SourceReads:
 
 def _read_sources(
     tmdb: _ListReader,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     season: Season,
     discover: Callable[[MediaType, dict], list[dict]],
     *,
@@ -542,7 +555,7 @@ def _read_sources(
 
 def load_titles(
     tmdb: _ListReader,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     season: Season,
     library_index: dict[MediaType, dict[int, int]],
 ) -> SeasonTitles:
@@ -625,7 +638,7 @@ class SeasonPreview:
 
 def preview(
     tmdb: _PagedListReader,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     season: Season,
     library_index: dict[MediaType, dict[int, int]],
     *,
@@ -715,8 +728,10 @@ def preview(
 
 @dataclass(frozen=True)
 class Preset:
-    """A ready-made season the editor offers (#137 D9). Adding one opens the editor filled in from it; nothing
-    is saved until the owner saves. ``season.slug`` is the preset's key: a saved season gets its own slug."""
+    """A ready-made season to add unchanged or use as an editable starting point.
+
+    ``season.slug`` is the preset's key: a saved season gets its own slug.
+    """
 
     key: str
     #: What the editor calls the preset, region included: "Mother's Day (US, CA, AU, NZ)". The season's own
@@ -725,6 +740,19 @@ class Preset:
     season: Season
     #: What the editor says beside it — what to add when TMDB's tags fall short. Empty when they don't.
     note: str
+    category: Literal["holidays", "film_days", "spotlights"] = "holidays"
+    description: str = ""
+    #: Display metadata travels with the same ids the engine uses, without a TMDB lookup on opening.
+    picks: tuple[PresetPick, ...] = ()
+
+
+@dataclass(frozen=True)
+class PresetPick:
+    """A curated film's verified identity and the name shown before a season is saved."""
+
+    tmdb_id: int
+    title: str
+    year: int
 
 
 #: The TMDB name of every tag a preset uses, as `/search/keyword` gave it on 2 Oct 2026. The editor shows a
@@ -766,19 +794,53 @@ def _preset(
     keywords: tuple[int, ...] = (),
     keyword_excluded_genres: tuple[int, ...] = (),
     note: str = "",
+    description: str = "",
 ) -> Preset:
     season = Season(
         slug=key,
         name=name,
         emoji=emoji,
         rule=rule,
-        description="",
+        description=description,
         keywords=keywords,
         keyword_excluded_genres=keyword_excluded_genres,
         lead_days=lead,
         after_days=after,
     )
-    return Preset(key=key, label=label, season=season, note=note)
+    return Preset(key=key, label=label, season=season, note=note, description=description)
+
+
+def _curated_preset(
+    key: str,
+    label: str,
+    name: str,
+    emoji: str,
+    rule: DateRule,
+    *,
+    category: Literal["film_days", "spotlights"] = "spotlights",
+) -> Preset:
+    """Keep the editor's starter films and the engine's membership ids on one verified list."""
+    picks = tuple(PresetPick(*film) for film in CURATED_FILMS[key])
+    description = CURATED_DESCRIPTIONS[key]
+    season = Season(
+        slug=key,
+        name=name,
+        emoji=emoji,
+        rule=rule,
+        description=description,
+        picks=tuple((pick.tmdb_id, MediaType.MOVIE) for pick in picks),
+        lead_days=0 if rule.kind == "month" else 7,
+        after_days=0,
+    )
+    return Preset(
+        key=key,
+        label=label,
+        season=season,
+        note="Uses films you already own. Add favourites or a Plex collection to expand this starter selection.",
+        category=category,
+        description=description,
+        picks=picks,
+    )
 
 
 # The spec's table (`.claude/docs/issue-137-custom-seasons.md`, "Presets"): tag ids verified against TMDB on
@@ -793,6 +855,7 @@ PRESETS: tuple[Preset, ...] = (
         lead=7,
         after=1,
         keywords=(613, 252123),  # new year's eve, new year
+        description="New Year's parties, countdowns and fresh starts, matched by holiday tags.",
     ),
     _preset(
         "fourth_of_july",
@@ -803,6 +866,7 @@ PRESETS: tuple[Preset, ...] = (
         lead=7,
         # independence day, fourth of july, 4th of july, american revolution, fireworks
         keywords=(235503, 159743, 282190, 190024, 2407),
+        description="Independence Day, American Revolution and fireworks films for the US holiday.",
     ),
     _preset(
         "thanksgiving_us",
@@ -812,6 +876,7 @@ PRESETS: tuple[Preset, ...] = (
         DateRule("nth", month=11, nth=4, weekday=3),
         lead=14,
         keywords=(4543,),  # thanksgiving
+        description="Thanksgiving gatherings and holiday journeys, on the US date.",
     ),
     _preset(
         "thanksgiving_ca",
@@ -821,6 +886,7 @@ PRESETS: tuple[Preset, ...] = (
         DateRule("nth", month=10, nth=2, weekday=0),
         lead=7,
         keywords=(4543,),  # thanksgiving
+        description="Thanksgiving films on the Canadian date; shares the US preset's film tags.",
     ),
     _preset(
         "st_patricks_day",
@@ -833,6 +899,7 @@ PRESETS: tuple[Preset, ...] = (
         keywords=(209352, 10310, 14985, 299594, 4729),
         keyword_excluded_genres=(27,),  # Horror
         note="Leaves out Horror, which would otherwise bring in the Leprechaun slashers.",
+        description="Irish stories and films set in Ireland, with horror left out.",
     ),
     _preset(
         "easter",
@@ -842,6 +909,7 @@ PRESETS: tuple[Preset, ...] = (
         DateRule("easter"),
         lead=14,
         keywords=(9921, 9923),  # easter, easter bunny
+        description="Films tagged Easter or Easter Bunny, following Western Easter Sunday.",
     ),
     _preset(
         "mothers_day",
@@ -852,6 +920,7 @@ PRESETS: tuple[Preset, ...] = (
         lead=7,
         keywords=(173983,),  # mother's day
         note=_FEW_TAGGED,
+        description="Films tagged Mother's Day, using the May date. Add favourites to widen a small selection.",
     ),
     _preset(
         "mothering_sunday",
@@ -862,6 +931,7 @@ PRESETS: tuple[Preset, ...] = (
         lead=7,
         keywords=(173983,),  # mother's day
         note=_FEW_TAGGED,
+        description="Mother's Day films on the UK and Irish date, three weeks before Western Easter.",
     ),
     _preset(
         "fathers_day",
@@ -872,6 +942,7 @@ PRESETS: tuple[Preset, ...] = (
         lead=7,
         keywords=(195439,),  # father's day
         note=_FEW_FATHERS_DAY,
+        description="Films tagged Father's Day, using the June date. Add favourites or a Plex collection.",
     ),
     _preset(
         "fathers_day_au_nz",
@@ -882,5 +953,55 @@ PRESETS: tuple[Preset, ...] = (
         lead=7,
         keywords=(195439,),  # father's day
         note=_FEW_FATHERS_DAY,
+        description="Films tagged Father's Day, using the Australian and New Zealand September date.",
     ),
+    _curated_preset(
+        "star_wars_day",
+        "Star Wars Day",
+        "Star Wars Day",
+        "🌌",
+        DateRule("fixed", month=5, day=4),
+        category="film_days",
+    ),
+    _curated_preset(
+        "star_trek_day",
+        "Star Trek Day",
+        "Star Trek Day",
+        "🖖",
+        DateRule("fixed", month=9, day=8),
+        category="film_days",
+    ),
+    _curated_preset(
+        "james_bond_day",
+        "James Bond Day",
+        "James Bond Day",
+        "🍸",
+        DateRule("fixed", month=10, day=5),
+        category="film_days",
+    ),
+    _curated_preset("earth_day", "Earth Day", "Earth Day", "🌍", DateRule("fixed", month=4, day=22)),
+    _curated_preset("pride_month", "Pride Month", "Pride Month", "🏳️‍🌈", DateRule("month", month=6)),
+    _curated_preset(
+        "women_filmmakers",
+        "Women Filmmakers · 8 March",
+        "Women Filmmakers",
+        "🎬",
+        DateRule("fixed", month=3, day=8),
+    ),
+    _curated_preset(
+        "black_history_us",
+        "Black History Month (US)",
+        "Black Cinema (US)",
+        "🎥",
+        DateRule("month", month=2),
+    ),
+    _curated_preset(
+        "black_history_uk",
+        "Black History Month (UK)",
+        "Black Cinema (UK)",
+        "🎥",
+        DateRule("month", month=10),
+    ),
+    _curated_preset("anzac_day", "Anzac Day", "Anzac Day", "🌺", DateRule("fixed", month=4, day=25)),
+    _curated_preset("remembrance_day", "Remembrance Day", "Remembrance Day", "🕊️", DateRule("fixed", month=11, day=11)),
 )

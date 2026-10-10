@@ -6,6 +6,7 @@ import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
 import { CleanupAuditCard } from "@/components/settings/cleanup-audit-card";
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
+import { PauseAllRow } from "@/components/settings/pause-all-row";
 import { SettingBlock, SettingsPanel, SettingsSection } from "@/components/settings/section-layout";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -30,8 +31,8 @@ const TIMEOUTS = [20, 30, 45, 60, 90].map((n) => ({
  * System knobs: history kept, console log detail, run concurrency and the Plex timeout. Each change
  * saves on its own and applies live — no restart.
  *
- * "Disabled users see nothing" used to sit at the bottom of this card. It decides who can see which
- * rows, so it lives on the Privacy page now (same setting, same save).
+ * "Disabled users see nothing" is not here: it decides who can see which rows, so it lives on the
+ * Privacy page.
  */
 export function AdvancedSection({ settings }: { settings: Settings }) {
   const saveSettings = useSaveSettings();
@@ -210,6 +211,7 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
               />
             </div>
           </SettingBlock>
+          <PauseAllRow settings={settings} />
         </SettingsPanel>
       </SettingsSection>
 

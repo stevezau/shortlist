@@ -1,6 +1,6 @@
 # Shortlist — Architecture & Execution Plan
 
-**Status:** ready to execute (gated on Phase 0 privacy test) · **Date:** 2026-07-12 ·
+**Status:** shipped (1.x, in production); the layout in section 2 is a map, not a contract, so read the tree when it matters · **Date:** 2026-07-12 ·
 **Companions:** [`shortlist-design.md`](shortlist-design.md) (product/UX design) · media_preview_generator
 (MPG, `stevezau/media_preview_generator`) — the donor repo for release infrastructure.
 
@@ -20,17 +20,16 @@ framework-agnostic; the app layer (Flask+SocketIO+Jinja in MPG) is NOT what Shor
 | `.claude/rules/{python,testing,commenting,docker,docs,shell}.md`                                                                                                                     | Port near-verbatim; add `frontend.md` (React/TS) + `plex-safety.md` (Shortlist-specific, §8)                                                             |
 | `.claude/CLAUDE.md`                                                                                                                                                                  | Rewrite content, keep the proven section structure (Commands / Architecture / Code Style / Conventions / Security / Test Fixtures)                       |
 | `.claude/agents/architecture-review.md`                                                                                                                                              | Port — pre-commit arch-review agent, blocking on HIGH findings (this caught 8 production-bug shapes in MPG; keep the discipline from day 1)              |
-| `.claude/skills/release`                                                                                                                                                             | Port release skill                                                                                                                                       |
 | `.claude/settings.json`                                                                                                                                                              | Port permission-allowlist pattern (+ pnpm/vitest/playwright allows, same `.env` denies)                                                                  |
 | `.github/workflows/ci.yml`                                                                                                                                                           | Adapt: ruff + pytest/codecov jobs stay; add `web` job (pnpm lint/typecheck/vitest/build); docker buildx multi-arch publish                               |
 | `.github/workflows/docker-pr.yml` + `docker-pr-cleanup.yml`                                                                                                                          | **Not ported.** PR preview images were dropped — `ci.yml` publishes on `dev` pushes and `v*` tags only. Revisit if per-PR pullable tags are wanted again |
 | `.github/workflows/architecture-review.yml`                                                                                                                                          | **Not ported.** The Architecture Review runs as an on-demand agent, not a workflow — see the dispatch criteria in CLAUDE.md                              |
 | `.github/ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`                                                                                                                                | Port                                                                                                                                                     |
-| `.pre-commit-config.yaml`, `.codecov.yml`, `.gitattributes`, `.dockerignore`                                                                                                         | Port                                                                                                                                                     |
+| `.pre-commit-config.yaml`, `.codecov.yml`, `.dockerignore`                                                                                                         | Port                                                                                                                                                     |
 | `README.md` structure                                                                                                                                                                | Port the shape: shields (+ AI-Assisted badge), logo, About/Problem/Solution, screenshots table, Quick Start, docs-hub table                              |
 | `docs/` hub (`README/getting-started/guides/reference/faq`)                                                                                                                          | Port structure                                                                                                                                           |
 | `docker-compose.example.yml`, `unraid-templates/`                                                                                                                                    | Port patterns (Unraid = big homelab reach)                                                                                                               |
-| `llms.txt`                                                                                                                                                                           | Port (AI-readable repo summary)                                                                                                                          |
+| `docs/llms.txt`                                                                                                                                                                         | Port (AI-readable repo summary)                                                                                                                          |
 | `CONTRIBUTING.md`                                                                                                                                                                    | Port + adapt                                                                                                                                             |
 | Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                                           |
 
@@ -52,42 +51,39 @@ shortlist/
 ├── .claude/                      # ported chassis (see manifest)
 │   ├── CLAUDE.md · settings.json
 │   ├── rules/ (python, testing, commenting, docker, docs, shell, frontend, plex-safety)
-│   ├── agents/architecture-review.md
-│   └── skills/release/
-├── .github/                      # ported: ci.yml, docker-pr(+cleanup).yml, architecture-review.yml, templates
+│   └── agents/architecture-review.md
+├── .github/                      # ci.yml, dockerhub.yml, dependabot.yml, FUNDING.yml, issue/PR templates, dockerhub-overview.md
 ├── shortlist/                       # Python package (backend + engine)
 │   ├── engine/                   # PURE library — zero FastAPI/DB imports; talks to clients only
-│   │   ├── pipeline.py           # per-user stage orchestration (history→candidates→filter→rank→curate→deliver→privacy)
-│   │   ├── models.py             # dataclasses: Seed, Candidate, Pick, UserProfile, RunReport
-│   │   ├── history.py            # HistorySource protocol; ShareTokenWatchSource (reads PMS per-user watched set), seed derivation
-│   │   ├── candidates.py         # TMDB similar/recommended pooling + seed tagging
-│   │   ├── ranking.py            # heuristic pre-rank (seed_freq × rating × recency)
-│   │   ├── curator/              # LLM providers behind Curator protocol
-│   │   │   ├── base.py           # curate(profile, candidates, k) -> [Pick]; strict JSON schema; validates output ⊆ input
-│   │   │   ├── anthropic.py · openai.py · google.py · ollama.py · null.py (heuristic+template reasons)
+│   │   ├── pipeline.py           # per-user stage orchestration (history→candidates→filter→rank→deliver→privacy)
+│   │   ├── models.py · context.py # dataclasses (Seed, Candidate, Pick, RunReport…) and the run context
+│   │   ├── history.py            # per-user watched set read from the PMS with each share's token; seed derivation
+│   │   ├── candidates.py         # TMDB similar/discover, Trakt and AI web-search pooling + seed tagging
+│   │   ├── ranking.py · picker.py # scoring, and the picks with the plain-English reason written in code
+│   │   ├── rows.py · limits.py   # row kinds, per-row settings, library limits
+│   │   ├── seasons.py · themes.py · over_time.py  # seasonal rows, AI-row themes, refresh share and repeat cooldown
+│   │   ├── requests.py · requests_row.py · request_*.py  # Radarr/Sonarr/Seerr requests and the "Your requests" row
+│   │   ├── curator/              # LLM providers behind a protocol: anthropic, openai, openai_compatible, google, null
 │   │   ├── delivery.py           # collection upsert, custom sort, label, poster, visibility promote
-│   │   ├── placeholders.py       # row-name placeholders ({user}, {top_seed}, {season}…) and what each call site asks of them
-│   │   ├── seasons.py            # seasonal rows: the season catalogue, show/build windows, TMDB season lists
+│   │   ├── placeholders.py       # row-name placeholders ({user}, {top_seed}, {season}…)
 │   │   ├── privacy.py            # filter parse/merge/serialize, snapshot, diff, throttled apply
-│   │   ├── acquire.py            # Radarr/Sonarr/Seerr, capped
-│   │   ├── posters.py            # PIL branded collection posters (3 templates)
-│   │   └── clients/              # plex.py (plexapi + raw plex.tv: pins, users, filters, home-switch), tautulli.py, tmdb.py, arr.py
+│   │   └── clients/              # plex_pms.py, plextv.py, tmdb.py, tautulli.py, arr.py, seerr.py, trakt.py, mdblist.py, search.py, poster.py
 │   ├── server/                   # FastAPI app
 │   │   ├── main.py               # app factory; serves web/dist; /api mount; healthz
 │   │   ├── auth.py               # PIN flow, owner-only session, signed httpOnly cookie
 │   │   ├── db/                   # SQLAlchemy models, session, alembic/
-│   │   ├── api/                  # routers: auth, setup, users, runs, settings, system, events (SSE)
+│   │   ├── api/                  # routers: setup, users, runs, collections (rows), settings, system, privacy, events (SSE)…
+│   │   ├── assistant/ · assistant_auth/  # optional MCP assistant access (#141): tools, owner-approved connections, OAuth, budgets
 │   │   ├── scheduler.py          # APScheduler; run rows are the durable queue (resume on restart)
-│   │   ├── services/             # run_service (engine adapter + SSE emit), snapshot_service, hit_rate, secrets (Fernet @ /config/secret.key)
-│   │   └── settings_store.py     # typed settings table access; env-var seeding on first boot (MPG pattern)
+│   │   ├── services/             # run_service (engine adapter + SSE emit), jobs, watch_* (live watch tracking), secrets (Fernet @ /config/secret.key)
+│   │   └── settings_store.py     # typed settings table access; env-var seeding on first boot
 │   └── logging_config.py         # loguru + Rich (ported)
 ├── web/                          # React 19 + Vite + TypeScript + Tailwind + shadcn/ui
 │   └── src/
-│       ├── features/wizard/      # steps 0–7 (see design doc §3), state machine, resumable
-│       ├── features/dashboard/ · users/ · runs/ · settings/
-│       ├── api/                  # typed client generated from OpenAPI (openapi-typescript)
-│       ├── components/           # shadcn + PlexRowPreview, PosterGrid, LiveLog (SSE), CapabilityChecklist
-│       └── lib/                  # sse.ts, theme, format
+│       ├── pages/                # one file per screen; setup/ is the 7-step wizard (steps 0–6, see design doc §3)
+│       ├── components/           # shadcn + shared and per-screen components
+│       ├── lib/                  # api.ts, api-schema.d.ts (generated from OpenAPI), sse.ts, format, row-kinds
+│       └── test/                 # vitest + testing-library
 ├── tests/
 │   ├── conftest.py               # mock_plex, mock_plextv, mock_tmdb, mock_curator fixtures (MPG discipline: ALL external I/O mocked)
 │   ├── unit/ · integration/
@@ -98,8 +94,12 @@ shortlist/
 ├── Dockerfile                    # multi-stage: node:22 build web → python:3.12-slim runtime; PUID/PGID init; HEALTHCHECK
 ├── docker-compose.example.yml
 ├── pyproject.toml                # ruff config, pytest config (cov target 80%), hatchling
-└── README.md · CONTRIBUTING.md · LICENSE(MIT) · llms.txt
+└── README.md · CONTRIBUTING.md · LICENSE(MIT)
 ```
+
+A row is one shape: one `collections` table and one `RowPolicy`, not a class hierarchy of row types. What
+a row "is" (seasonal, watch-it-again, requests…) is worked out from its fields (`web/src/lib/row-kinds.ts`
+on the UI side), so there is no stored kind to drift from the settings.
 
 **The contract that keeps this honest:** `shortlist/engine/` imports nothing from `shortlist/server/`.
 Engine functions take plain config dataclasses + client instances and return report objects. The
@@ -111,27 +111,28 @@ so the scheduled build and a manual "Run now" run byte-identical logic.
 ## 3. Data model (SQLAlchemy, SQLite at `/config/shortlist.db`)
 
 ```
+Columns live in `shortlist/server/db/models.py` (the assistant tables in `shortlist/server/assistant*/`);
+this block is the purpose of each table, with the few columns whose meaning is not obvious.
+
 settings              key TEXT PK · value JSON · updated_at            (typed access via settings_store)
 server                id · machine_id · name · url · token_enc · version · owner_account_id · plex_pass BOOL · capabilities JSON
-users                 id · plex_account_id · username · slug · avatar_url · user_type(shared|managed|owner)
-                      · enabled BOOL · cold_start BOOL · label ("shortlist_<slug>") · prefs JSON
-                      (row_name_tpl, row_size, excluded_genres, max_rating, paused)
-collections           id · slug · name · build(per_person|shared) · audience(everyone|subset) · enabled BOOL
-                      · schedule (this row's OWN 5-field cron; "" = manual only — there is no global one)
-                      · size · media(movie|show|both) · library_keys JSON · name_template · min_watchers
-                      · placement / placement_friends (both|home|library|off) · pin_top BOOL · hub_anchor JSON
-                      · poster JSON · candidate_sources JSON · watched_pct · refresh_days · recency · recent_count · max_seeds · pick_order
-                      · description · sort_title_prefix  ("" = leave that Plex field alone; issue #120)
-                      · theme_id · ai_paused · ai_tokens   (AI rows, #138)
-                      · theme_mode(fixed|explore) · explore_brief · theme_days · refresh_share
-                        · repeat_cooldown_days · avoid_rows JSON   (Explore and over-time controls; AI rows only)
+users                 one row per Plex account: identity (plex_account_id, username, nickname, slug, user_type
+                      shared|managed|owner), state (enabled, paused, departed_at, removed_at, manage_sharing),
+                      restriction_profile, the row `label` ("shortlist_<slug>"), request tags, and `prefs` JSON
+                      (row_name_tpl, excluded_genres, paused, history_depth, blocked_seeds)
+collections           one row per Shortlist ROW (the table keeps its old name): slug, name, build(per_person|shared),
+                      audience, enabled, its OWN cron `schedule` ("" = manual only; there is no global one),
+                      size, media, library_keys, name_template, placement, poster, candidate sources, seed and
+                      refresh settings, season settings, request settings (`req_*`), AI-row settings
+                      (theme_id, ai_paused, ai_tokens, explore/over-time controls). See `Collection` in models.py.
 theme_history         id · collection_id FK · user_id FK · theme_id FK(SET NULL) · theme_name · state(current|next|past)
                       · started_at · due_at   ← which theme a row showed a person and which is queued; drives
                         Up next, Recent themes and the no-repeat window. Written by the `themes.rotate` job.
+themes · seasons      AI-row themes and seasonal-row definitions (presets and custom rules)
 collection_audience   collection_id FK · user_id FK          (a `subset` row's members)
-collection_user_overrides  collection_id FK · user_id FK · muted BOOL · row_size · history_depth
-poster_assets         id · collection_id FK · kind(upload|preview) · bytes · created_at
-deliveries            collection_slug · user_slug · library_key  (composite PK) · rating_key · title · updated_at
+collection_user_overrides  collection_id FK · user_id FK · muted BOOL · row_size · recent_count (1..25)
+poster_assets         key PK ("upload:<collection_id>" | "gen:<prompt_hash>") · image BLOB · content_type · updated_at
+deliveries            collection_slug · user_slug · library_key  (composite PK) · rating_key · title · season · updated_at
                       · summary_written · title_sort_written  (what Shortlist last wrote; NULL = nothing — a cleared
                         field hands back only a value Plex still holds exactly as written)
                       ← the DELIVERY LEDGER: which Plex collection is which row, for whom, in which
@@ -139,49 +140,59 @@ deliveries            collection_slug · user_slug · library_key  (composite PK
                         not FK on purpose — the row it describes is usually the one being deleted.
                         It exists because a title cannot answer that question: a `{top_seed}` row
                         renders differently every run. See jobs-and-runs-design.md §13.
-jobs                  id · kind · payload JSON · status(queued|running|done|failed) · attempts · max_attempts
-                      · detail · error · result JSON · created_at · started_at · finished_at
+row_delivery_snapshots  confirmed row contents and audience as half-open intervals, independent of run retention
+jobs                  id · kind · payload JSON · operation_id · effect_key · status(queued|running|done|failed)
+                      · attempts · max_attempts · detail · error · result JSON · created_at · started_at · finished_at
                       ← the durable queue for maintenance that must not be lost. APScheduler is only
                         the trigger; this table is what survives a restart. See §5 of that doc.
-                      Job kinds include `themes.rotate` (schedule setting `themes.rotate_cron`, daily by default;
-                        moves each Explore person to their next theme and writes the following one a day early;
-                        changes nothing on Plex).
-runs                  id · trigger(schedule|manual|wizard) · started_at(QUEUED at) · began_at(engine start; NULL = never ran) · finished_at · status · dry_run BOOL · stats JSON
-run_users             run_id FK · user_id FK · status · error · reason · duration_ms · llm_tokens · exa_searches
-#                                                    ^ counts EVERY external web search (Exa or SearXNG);
+                      The registered kinds are the `@handler` functions in `services/jobs.py`; `themes.rotate`
+                        (schedule setting `themes.rotate_cron`, daily by default) moves each Explore person to
+                        their next theme and writes the following one a day early; it changes nothing on Plex.
+runs                  id · trigger(schedule|manual|wizard|resume|assistant) · started_at(QUEUED at) · began_at(engine
+                      start; NULL = never ran) · finished_at · status(queued|running|ok|error|aborted) · dry_run BOOL · stats JSON
+run_users             run_id FK · user_id FK · status · error · reason · duration_ms · llm_tokens · llm_tokens_by_step
+                      · exa_searches · rows_considered · cost JSON
+#                                                    ^ exa_searches counts EVERY external web search (Exa or SearXNG);
 #                                                      the column keeps its original name so historic runs read back
                       · diff JSON (added/removed/kept) · breakdown JSON (per row+library: titles, ratingKey, picks)
                       · trace JSON (per-user pipeline trace: seeds, per-source queries/returns, web-search+RAG prompts; {} when none)
-picks                 id · run_id FK · user_id FK · tmdb_id · rating_key · rank · reason · seed_tmdb_id · seed_title
-                      · collection_slug · section_key · library · sources · affinity
-                      · created_at · watched_at NULL          ← watched_at backfilled nightly = hit-rate
+run_shared_rows       the same per-row result for a SHARED row (one set delivered to N people)
+run_log_lines         a run's activity feed, kept (narration; `events` stays the audit trail)
+picks                 id · run_id FK · user_id FK · tmdb_id · media_type · title · year · rating_key · rank · reason · recipe
+                      · seed_tmdb_id · seed_title · lead_seed_tmdb_id · lead_seed_title · collection_slug · section_key
+                      · library · sources · affinity · built_at · created_at · watched_at NULL ← watched_at backfilled nightly = hit-rate
                       · finished_at NULL · max_percent NULL   ← finished = the stricter count; percent is FILMS ONLY
-watch_events          id · plex_account_id · rating_key · show_rating_key · media_type · viewed_at
+watch_events          id · plex_account_id · rating_key · show_rating_key · media_type · viewed_at · source · history_key · created_at
                       ← the PMS play log (`/status/sessions/history/all`), completions only; 6-month ceiling
 watch_sessions        id · plex_account_id · session_key · rating_key · show_rating_key · media_type
                       · started_at · last_seen_at · ended_at · max_offset_ms · duration_ms · end_reason
                       ← live playback off the PMS notification socket; the ONLY source that sees a partial watch
+watched_titles · watch_sync_state · watch_state_snapshots
+                      each person's watched set cached per library, the incremental sync cursor, and the
+                      pre-transfer snapshots that make a watching-account transfer undoable
 shared_row_watches    user_id FK · collection_slug · tmdb_id · media_type (composite PK) · title
                       · watched_at NULL · finished_at NULL · max_percent NULL
                       ← shared rows write no `picks`, so their credits land here; folded into the same
                         person-title outcome by `resolve_outcomes`. Survives retention, like `picks`.
-request_candidates    id · tmdb_id · media_type · title · year · imdb_id · poster_path · rating · demand
-                      · status(waiting|sent|rejected) · why JSON · first_seen_run_id
+request_candidates    the Radarr/Sonarr/Seerr approval inbox: one row per wanted title with demand, `wanters`,
+                      `why` JSON and status(pending|sent|rejected); the rest is in models.py
 restriction_snapshots id · user_id FK · taken_at · reason(initial|sync|uninstall_restore) · filters_before JSON · filters_after JSON
-caches                kind(tmdb|trakt|library_index) · key · value JSON · expires_at
+caches                kind(tmdb|trakt|library_index|assistant_connection) · key · value JSON · expires_at
 events                id · ts · level · scope · message JSON   ← audit trail surfaced in UI
+assistant_*           the optional MCP assistant (#141): grants, local credentials, OAuth clients/codes/tokens,
+                      consent flows, budgets, operations and their dispatch/call ledgers
 ```
 
-Alembic from migration 0001 — never ship schema changes without one (MPG's `upgrade.py` lesson,
-done relationally).
+Alembic from migration 0001 — never ship schema changes without one.
 
 ---
 
 ## 4. API surface (FastAPI, all under `/api`, OpenAPI auto-docs)
 
-**[docs/reference.md](../../docs/reference.md) is the authoritative list** — it ships with the app and
-is updated in the same PR as any endpoint change (`.claude/rules/docs.md`). This section is the
-architectural shape only; a second copy of ~60 endpoints in a design doc drifts, and did.
+**[docs/reference/api.md](../../docs/reference/api.md) is the authoritative list** — it ships with the app and
+is updated in the same PR as any endpoint change (`.claude/rules/docs.md`); `web/openapi.snapshot.json` is
+the machine-readable one. This section is the architectural shape only; a second copy of ~150 endpoints in a
+design doc drifts, and did.
 
 ```
 /auth/*        PIN → token exchange, session, logout   (owner-only: account.id == server.owner_account_id)
@@ -192,8 +203,12 @@ architectural shape only; a second copy of ~60 endpoints in a design doc drifts,
 /requests/*    the approval inbox — send to Radarr/Sonarr, reject, restore
 /settings/*    typed settings + per-service connection tests
 /system/*      health · version · logs · libraries · backups · api-token · uninstall
-               · jobs  ← the durable maintenance queue (GET history, POST to trigger the two safe kinds)
-/events        SSE: run.progress, run.user.stage, sync.progress, version.update
+               · jobs  ← the durable maintenance queue (GET history, POST to trigger the allow-listed kinds)
+/events        SSE: run.progress, run.finished, run.user.stage, sync.progress, sync.finished, uninstall.progress
+/picks, /report, /schedule, /seasons, /themes, /notifications, /privacy, /watching-account, /catalogs, /ai
+               the read models and settings behind the other screens
+/support/*     the issue helper (diagnostic bundle, redacted)
+/assistant/*   optional MCP assistant access: grants, OAuth, consent (off unless SHORTLIST_MCP_URL is set)
 ```
 
 Two rules that are not obvious from the routes:
@@ -219,10 +234,9 @@ API), same as the *arr convention.
 - **Volumes/env:** `/config` (db, secret key, logs, posters). Env: `PORT`, `TZ`, `PUID/PGID`,
   `APP_BASE_PATH` (subpath support), optional seed vars (`PLEX_URL`, `TAUTULLI_URL`, …) migrated
   into settings on first boot then ignored (MPG's proven pattern).
-- **Images:** GHCR primary + Docker Hub mirror; tags `latest`, `X.Y.Z`, `dev` (master),
-  `pr-<n>` (PR previews, auto-cleaned). Multi-arch amd64/arm64. HEALTHCHECK → `/api/system/health`.
-- **Steve's deployment:** the `dev` tag on the plex host (exactly how MPG runs there today as
-  `stevezau/media_preview_generator:dev`).
+- **Images:** GHCR primary + Docker Hub mirror; `latest` and `X.Y.Z` on a `v*` tag, `dev` on every `dev`
+  push, no PR previews. Multi-arch amd64/arm64. HEALTHCHECK → `/api/system/health`.
+- **The maintainer's deployment:** the `dev` tag, recreated by an image-update watcher.
 
 ---
 
@@ -234,10 +248,10 @@ API), same as the *arr convention.
 | Privacy logic | dedicated suite                                                                              | filter parse/merge round-trips property-tested (hypothesis); snapshot/restore invariants; **the merge code is the highest-consequence code in the repo — test it like money**                                                                                                  |
 | Server        | pytest + httpx AsyncClient                                                                   | API contract tests against the OpenAPI schema                                                                                                                                                                                                                                  |
 | Frontend      | vitest + testing-library                                                                     | wizard state machine fully unit-tested                                                                                                                                                                                                                                         |
-| E2E           | Playwright vs the app in-process (uvicorn + built SPA) + `tests/fakes/fake_plex.py`          | full wizard → first run → dashboard, no real Plex needed; the built Docker image itself is untested — the `docker` CI job builds and pushes it but never runs it, so the PUID/PGID drop, the `HEALTHCHECK`, and `web/dist` landing where the app expects it are all unverified |
-| Live smoke    | A dry-run **Run now**, then a manual view-check from a non-owner account (rows stay private) | run against Steve's real server pre-release                                                                                                                                                                                                                                    |
+| E2E           | Playwright vs the app in-process (uvicorn + built SPA) + `tests/fakes/fake_plex.py`          | full wizard → first run → dashboard, no real Plex needed; the built Docker image is exercised by `docker-smoke` (§7), not here |
+| Live smoke    | A dry-run **Run now**, then a manual view-check from a non-owner account (rows stay private) | run against the maintainer's real server pre-release                                                                                                                                                                                                                                    |
 
-`fake_plex.py` is a deliberate investment (~300 lines): stubs `/identity`, `/library/sections`,
+`fake_plex.py` is a deliberate investment (~1,700 lines): stubs `/identity`, `/library/sections`,
 `/status/sessions/history/all`, `/hubs`, collection CRUD, plus plex.tv `/api/v2/pins`, `/api/users`,
 `/api/v2/home/users/switch`. It makes onboarding + privacy sync fully testable in CI — the thing no
 competitor tests.
@@ -246,10 +260,11 @@ competitor tests.
 
 ## 7. CI/CD
 
-One workflow, `.github/workflows/ci.yml`. Six jobs:
-
-`lint (ruff)`, `test-python (pytest + codecov)`, `test-web (pnpm lint/vitest/build)` and `e2e`
-(playwright) all run in parallel — `e2e` deliberately does NOT wait on `test-web`'s `web-dist`
+`.github/workflows/ci.yml` is the pipeline; `.github/workflows/dockerhub.yml` only syncs the Docker Hub
+overview. The test jobs are `lint` (ruff, the migration-freeze check and the lockfile check), `docs` (the website
+Jekyll build and link check), `test-python-shard` (a matrix) behind the `test-python` gate, `coverage`,
+`test-web` (pnpm lint/vitest/build), and `e2e-shard` (a matrix, Playwright) behind the `e2e` gate. They all
+run in parallel — `e2e` deliberately does NOT wait on `test-web`'s `web-dist`
 artifact; it builds its own copy of the SPA so it can start at t=0 instead of queuing behind
 `test-web`, trading one extra `vite build` for keeping that wait off the critical path.
 
@@ -262,7 +277,9 @@ matter because `/api/system/health` is answered by Python and passes with no SPA
 all, and because the providers are imported lazily — the container is healthy right up until
 someone picks one, which is how `549631f` shipped.
 
-`docker` (buildx, linux/amd64 + linux/arm64) waits on all five and is the publish gate.
+`docker` (buildx, linux/amd64 + linux/arm64) waits on `lint`, `test-python`, `coverage`, `test-web`, `e2e` and
+`docker-smoke`, and is the publish gate. On a `v*` tag the `release` job then creates the GitHub Release from
+the matching `CHANGELOG.md` section, and fails the tag build when that section is missing.
 
 The two image builds use **separate** `type=gha` cache scopes (`scope=smoke` / `scope=publish`), and
 that is load-bearing rather than tidiness. Sharing the default key made the amd64-only smoke build
@@ -272,12 +289,13 @@ cold run before the saving shows up.
 
 What runs, by event:
 
-| Event         | Jobs                | Publishes                         |
-| ------------- | ------------------- | --------------------------------- |
-| push `dev`    | all six             | `:dev`                            |
-| push `master` | the five test jobs  | nothing                           |
-| pull request  | the five test jobs  | nothing                           |
-| push tag `v*` | all six             | `:latest` + `:<version>` + `:dev` |
+| Event         | Jobs                                     | Publishes                         |
+| ------------- | ---------------------------------------- | --------------------------------- |
+| push `dev`    | every test job, `docker-smoke`, `docker` | `:dev`                            |
+| pull request  | every test job, `docker-smoke`           | nothing                           |
+| push tag `v*` | all of the above, then `release`         | `:latest` + `:<version>` + `:dev` |
+
+A push to `master` runs nothing: `master` only advances by a PR that already ran this workflow.
 
 `docker` is gated on `github.event_name == 'push' && (ref == refs/heads/dev || ref starts with
 refs/tags/v)`. The ref half is load-bearing, not defensive: `master` is a push trigger so the stable
@@ -305,21 +323,21 @@ Releases are cut by hand: promote `dev` → `master` via PR, then tag `vX.Y.Z` o
    (c) support `--dry-run`, (d) log a structured diff to `events`.
 2. Share-filter writes are READ-MODIFY-WRITE merges. Never construct a filter string from scratch.
    Never touch conditions Shortlist didn't add.
-3. plex.tv writes: ≤1 req/s, exponential backoff on 429, resume-safe.
+3. plex.tv writes: adaptive throttle with 429 backoff, resume-safe (see `.claude/rules/plex-safety.md` rule 6).
 4. The owner account is never restricted; managed-user restriction profiles are never modified.
 5. Tokens: encrypted at rest, never logged, never in exceptions.
 6. Every schema or filter-format assumption gets a recorded-fixture test from a real server response.
 
 ---
 
-## 9. Execution phases (updated with chassis port)
+## 9. Execution phases (historical)
 
 | Phase                                 | Scope                                                                                                                                                                       | Exit criteria                                                   |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **0 — Gate + scaffold** (~1–2 d)      | Manual privacy test on Steve's server. `gh repo create stevezau/shortlist` + port MPG chassis (.claude, .github, pre-commit, docs skeleton, Dockerfile skeleton, pyproject) | Privacy test passes; CI green on empty skeleton                 |
-| **1 — Engine + pilot** (~1 wk + soak) | `engine/` + `clients/` + unit suite. Runs nightly on plex host (`error_checker.sh`). Rollout 5→15→40 users                                                                  | 1–2 wks nightly runs, zero privacy incidents, hit-rate baseline |
-| **2 — Server + UI core** (~2 wks)     | FastAPI + DB + scheduler + SSE; dashboard/users/runs/settings                                                                                                               | Steve manages his instance via UI, cron retired                 |
-| **3 — Onboarding** (~1 wk)            | PIN auth, wizard 0–7, uninstall/restore, fake_plex e2e                                                                                                                      | Clean-server `docker run` → rows with zero docs                 |
+| **0 — Gate + scaffold** (~1–2 d)      | Manual privacy test on the maintainer's server. `gh repo create stevezau/shortlist` + port MPG chassis (.claude, .github, pre-commit, docs skeleton, Dockerfile skeleton, pyproject) | Privacy test passes; CI green on empty skeleton                 |
+| **1 — Engine + pilot** (~1 wk + soak) | `engine/` + `clients/` + unit suite. Runs nightly from a script on the maintainer's server. Rollout 5→15→40 users                                                                  | 1–2 wks nightly runs, zero privacy incidents, hit-rate baseline |
+| **2 — Server + UI core** (~2 wks)     | FastAPI + DB + scheduler + SSE; dashboard/users/runs/settings                                                                                                               | The maintainer manages their instance via the UI, cron retired                 |
+| **3 — Onboarding** (~1 wk)            | PIN auth, wizard (steps 0–6), uninstall/restore, fake_plex e2e                                                                                                                      | Clean-server `docker run` → rows with zero docs                 |
 | **4 — Ship-ready** (~1 wk)            | README/docs/screenshots/GIF, Unraid template, issue templates, 3–5 external beta testers                                                                                    | Beta onboards unassisted                                        |
 | **5 — Launch**                        | r/selfhosted + r/PleX posts, Awesome-Selfhosted PR                                                                                                                          | v1.0 public                                                     |
 

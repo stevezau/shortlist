@@ -2,6 +2,7 @@ import { Film, Inbox, Tv } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 
+import { RequestHoldsField } from "@/components/request-holds-field";
 import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import {
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
+import { readHoldGenres, readHoldTags, writeHoldTags } from "@/lib/request-holds";
 import { useArrOptions, useSeerrOptions } from "@/lib/queries";
 import {
   autoSendBarsMatchGuardrails,
@@ -40,7 +42,7 @@ import {
   SONARR_MONITOR_MODES,
 } from "@/lib/sonarr-monitor";
 import { hasMdblist } from "@/lib/sources";
-import type { Settings } from "@/lib/types";
+import type { SeasonTag, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const MAX_PER_RUN = [3, 5, 10];
@@ -79,6 +81,8 @@ interface RequestsForm {
   maxYear: number;
   maxPerRun: number;
   autoSend: boolean;
+  holdGenres: number[];
+  holdTags: SeasonTag[];
   autoMinDemand: number;
   autoMinRating: number;
   tag: string;
@@ -151,6 +155,8 @@ function readForm(settings: Settings): RequestsForm {
     maxYear: settingNumber(settings, "requests.max_year", 0),
     maxPerRun: settingNumber(settings, "requests.max_per_run", 5),
     autoSend: settingBool(settings, "requests.auto_send", true),
+    holdGenres: readHoldGenres(settings["requests.hold_genres"]),
+    holdTags: readHoldTags(settings["requests.hold_tags"]),
     autoMinDemand: settingNumber(settings, "requests.auto_min_demand", 3),
     autoMinRating: settingNumber(settings, "requests.auto_min_rating", 8),
     tag: settingString(settings, "requests.tag", "shortlist"),
@@ -632,6 +638,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.max_year": form.maxYear,
       "requests.max_per_run": form.maxPerRun,
       "requests.auto_send": form.autoSend,
+      "requests.hold_genres": form.holdGenres,
+      "requests.hold_tags": writeHoldTags(form.holdTags),
       "requests.auto_min_demand": form.autoMinDemand,
       "requests.auto_min_rating": form.autoMinRating,
       "requests.tag": form.tag.trim(),
@@ -647,7 +655,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   return (
     <Card>
       <CardContent className="space-y-5 pt-6">
-        {!inSaveBar && (
+        {!inSaveBar && (save.isPending || save.isError || save.saved) && (
           <div className="sticky top-36 z-10 bg-card/95 py-1 md:top-20"><SaveStatus
             isPending={save.isPending}
             isError={save.isError}
@@ -948,6 +956,17 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 </>
               )}
             </fieldset>
+
+            {/* Only while something can go out on its own: with auto-send off every title already
+                waits in the inbox, so there is nothing for these picks to hold. */}
+            {form.autoSend && (
+              <RequestHoldsField
+                genres={form.holdGenres}
+                tags={form.holdTags}
+                onGenres={(holdGenres) => set({ holdGenres })}
+                onTags={(holdTags) => set({ holdTags })}
+              />
+            )}
 
             <fieldset className="space-y-4">
               <legend className="w-full border-t pt-5 font-medium">Guardrails</legend>

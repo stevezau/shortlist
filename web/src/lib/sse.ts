@@ -35,8 +35,8 @@ function parseData<T>(raw: string): T | null {
  * out via the handlers — never once per widget (rules/frontend.md).
  * Reconnects automatically with exponential backoff after connection loss.
  *
- * Returns nothing on purpose. It used to hand back a `connected` flag that no call site read: the
- * state existed only to re-render the whole page on every open/error/close, for no consumer. A page
+ * Returns nothing on purpose: a `connected` flag would re-render the whole page on every
+ * open/error/close for no consumer. A page
  * that needs to know its data may be stale asks about the DATA instead — `runRefetchIntervalMs`
  * (lib/run-format.ts) polls while a run has no `finished_at` — which also covers a stream that is
  * connected but missed a publish, where a socket-level flag reports everything is fine.

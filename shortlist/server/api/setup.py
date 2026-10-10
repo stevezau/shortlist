@@ -22,10 +22,10 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.plextv import PLEXTV
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import owned_machine_ids, require_setup_access
 from shortlist.server.db.models import Server
-from shortlist.server.net_guard import BlockedUrl
+from shortlist.server.net_guard import BlockedUrl, check_url
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services.plex_reachability import (
     address_kind,
     describe_address,
@@ -33,6 +33,7 @@ from shortlist.server.services.plex_reachability import (
     failure_reason,
 )
 from shortlist.server.services.setup_probe import run_capability_probe
+from shortlist.server.services.setup_workflow import complete_setup_in_session
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/setup", tags=["setup"])
@@ -274,6 +275,11 @@ async def link_server(body: LinkRequest, request: Request) -> dict:
         raise HTTPException(status_code=401, detail="sign in with Plex to claim this instance")
     if session_data["account_id"] != body.owner_account_id:
         raise HTTPException(status_code=403, detail="you can only link a server your account owns")
+    try:
+        # check_url resolves the host; off the event loop so a slow resolver stalls only this request.
+        await asyncio.to_thread(check_url, body.plex_url, what="The Plex URL")
+    except BlockedUrl as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     state = request.app.state
     token = _plex_token(request, session_data)
 
@@ -362,9 +368,21 @@ async def put_state(body: WizardState, request: Request) -> dict:
         # anonymous caller from scribbling wizard progress — or flipping setup.completed — on an
         # empty instance. GET /state stays open so the wizard still renders pre-sign-in.
         raise HTTPException(status_code=401, detail="sign in with Plex first")
-    with request.app.state.sessions() as db:
-        store = SettingsStore(db, request.app.state.secrets)
-        store.set("setup.step", body.step)
-        store.set("setup.state", body.state)
-        store.set("setup.completed", body.completed)
-        return {"step": body.step, "completed": body.completed}
+    state = request.app.state
+
+    def save() -> None:
+        with state.sessions() as db:
+            store = SettingsStore(db, state.secrets)
+            if body.completed:
+                complete_setup_in_session(db, state.secrets)
+            else:
+                store.set_in_transaction("setup.completed", False)
+            store.set_in_transaction("setup.step", body.step)
+            store.set_in_transaction("setup.state", body.state)
+            db.commit()
+
+    try:
+        await asyncio.to_thread(save)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"step": body.step, "completed": body.completed}

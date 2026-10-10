@@ -1,6 +1,6 @@
 # Discussion #124 — Seasonal rows
 
-Status: **built 2026-09-15**, proven live on SFLIX (see "Live proof"). Every number below was measured on the maintainer's
+Status: **built 2026-09-15**, proven live on a large production server (see "Live proof"). Every number below was measured on the maintainer's
 server (read-only probes: 46 people, 9,984 films, 4,901 shows), not estimated.
 
 ## The ask
@@ -58,7 +58,7 @@ row to a theme, and "When it appears" (#102) only knows weekdays.
 8. **One lead time and one "stays after" per row**, not per season. A different lead for one season is
    a second seasonal row.
 9. **The Seasonal template ignores release date** (`recency: 0`). Seasonal favourites are old: Christmas
-   films watched on SFLIX have a median release year of 2008 (61% pre-2015). At the server's 0.95, a
+   films watched on a large production server have a median release year of 2008 (61% pre-2015). At the server's 0.95, a
    Christmas row's tail was obscure 2025 TV movies shared by everyone; at 0 it was Christmas Vacation,
    Trading Places, Klaus. Halloween improved too (Casper, The Lost Boys). It is a template value, not a
    forced one: the row's "Recent releases" control still overrides it.
@@ -198,7 +198,7 @@ Owner-defined seasons/keywords, moving-date holidays (Easter, Thanksgiving, Hanu
 Year, Diwali), weather seasons, per-season lead times, AI web search on seasonal rows, a count of
 each season's films in the editor.
 
-## Live proof (SFLIX, 2026-09-15)
+## Live proof (a large production server, 2026-09-15)
 
 The branch's engine was copied into the running container at a scratch path and driven against the
 real PMS, TMDB and watch cache — nothing persisted to the app database, scratch removed afterwards.
@@ -206,7 +206,7 @@ real PMS, TMDB and watch cache — nothing persisted to the app database, scratc
 - **Dry, 8–10 people per season:** Halloween resolved to 2,817 TMDB films (641 on the server), Christmas
   to 3,671 (340). Mean pairwise row overlap 6.3% (Halloween) and 9.7% (Christmas), 71–98 distinct films
   across the people; today's ordinary rows overlap 3%.
-- **Live, on the MooHouse canary only, owner-authorised:** run 1 created `🎃 Halloween picks` (marker,
+- **Live, on the Guest canary only, owner-authorised:** run 1 created `🎃 Halloween picks` (marker,
   `Shortlist` + `Shortlist_moohouse` labels, 10 items, Friends' Home + Recommended); run 2 renamed the
   SAME ratingKey to `🎄 Christmas picks` and refilled it 10/10; run 3 (out of season) built nothing and
   took it off every surface; the collection was then deleted.
@@ -222,7 +222,7 @@ real PMS, TMDB and watch cache — nothing persisted to the app database, scratc
   the deploy, and identical again after the live test below. Migration 0092 ran with its pre-migration
   backup; existing rows came up with no seasons. Every page endpoint answered 200 and every page rendered
   at 1280 and 390 with no console errors; the log since the deploy holds no error.
-- **Live, on the MooHouse canary only, through the real API:**
+- **Live, on the Guest canary only, through the real API:**
   - refusals: an unknown field, and a season name on a row with no seasons (422, nothing created);
     a new row keeps its request settings;
   - a Halloween row (90 days' lead) reported `showing Halloween until 31 Oct` on the server's clock;

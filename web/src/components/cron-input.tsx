@@ -9,7 +9,7 @@ import { describeCron, parseNaturalSchedule } from "@/lib/cron";
  * One field takes either form: plain English ("every 4 hours", "mondays at 9pm") or a raw cron
  * expression. Whatever is typed, the line underneath says what it will actually do and what gets
  * saved, so a schedule is never committed on trust. Nothing is saved until the input parses — a
- * typo used to save fine and then be silently replaced by the scheduler's built-in default.
+ * typo is never saved only to be silently replaced by the scheduler's built-in default.
  */
 export function CronInput({
   value,

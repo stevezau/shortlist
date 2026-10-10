@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 from shortlist.server.db.models import Event
 
 # The SAME three words the notification severities use, because both reach the UI and a reader
-# cannot tell which vocabulary a given string came from. Writers used to say "warn" here while every
-# reader matched "warning", so a level filter silently dropped the warnings it was asked for.
+# cannot tell which vocabulary a given string came from. A writer saying "warn" while every
+# reader matches "warning" would make a level filter silently drop the warnings it was asked for.
 Level = Literal["info", "warning", "error"]
 LEVELS: frozenset[str] = frozenset(("info", "warning", "error"))
 

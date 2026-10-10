@@ -38,6 +38,7 @@ from shortlist.server.db.session import make_engine, make_session_factory, run_m
 from shortlist.server.services import jobs, notify
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
+from tests.db_helpers import disposing_engine
 
 pytestmark = pytest.mark.integration
 
@@ -49,7 +50,8 @@ WEBHOOK = "https://discord.com/api/webhooks/123456789012345678/AbCdEf-GhIjKl_MnO
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    return make_session_factory(make_engine(tmp_path))
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 @pytest.fixture
@@ -183,14 +185,15 @@ class TestWebhookBody:
         The Settings card offers a Discord address as its example, so without these every test send and
         every 3am alert to the most common receiver would be refused with a 400.
         """
-        for item in (notify.test_item(), notifications.run_failed_alert(SimpleNamespace(id=12))):
+        for item in (notify.sample_item(), notifications.run_failed_alert(SimpleNamespace(id=12))):
             line = notify.webhook_body(item)[field]
             assert line == f"{item['title']}\n{item['body']}"
             assert len(line) <= 2000, "Discord refuses content over 2000 characters"
 
     def test_the_body_is_json_serialisable_as_sent(self):
         # httpx would raise at send time otherwise, on a code path that only runs at 3am.
-        json.dumps(notify.webhook_body(notify.test_item()))
+        body = notify.webhook_body(notify.sample_item())
+        assert json.loads(json.dumps(body)) == body
 
     def test_the_body_names_no_account(self):
         """v1's privacy floor, asserted rather than assumed.
@@ -225,7 +228,7 @@ class TestDeliver:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(204))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert route.called
         sent = json.loads(route.calls.last.request.content)
         assert sent["source"] == "shortlist" and sent["version"] == 1
@@ -235,12 +238,12 @@ class TestDeliver:
     def test_it_refuses_when_the_webhook_is_switched_off(self, sessions, secrets):
         configure(sessions, secrets, enabled=False)
         with sessions() as session, pytest.raises(notify.NotifyNotConfigured):
-            notify.deliver(SettingsStore(session, secrets), notify.test_item())
+            notify.deliver(SettingsStore(session, secrets), notify.sample_item())
 
     def test_it_refuses_when_the_url_is_blank(self, sessions, secrets):
         configure(sessions, secrets, url="")
         with sessions() as session, pytest.raises(notify.NotifyNotConfigured) as caught:
-            notify.deliver(SettingsStore(session, secrets), notify.test_item())
+            notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         # The error says what to DO, per the house voice — an operator reads this on the test button.
         assert "address" in str(caught.value).lower()
 
@@ -254,7 +257,7 @@ class TestDeliver:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(500))
             with sessions() as session, pytest.raises(notify.NotifyFailed):
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert route.call_count == 1
 
 
@@ -399,7 +402,7 @@ class TestTestButtonSharesTheRealPath:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(204))
             with sessions() as session:
                 store = SettingsStore(session, secrets)
-                notify.deliver(store, notify.test_item())
+                notify.deliver(store, notify.sample_item())
                 notify.deliver(store, run_item)
         assert route.call_count == 2
         test_body, run_body = (json.loads(call.request.content) for call in route.calls)
@@ -410,7 +413,7 @@ class TestTestButtonSharesTheRealPath:
         assert test_body["version"] == run_body["version"] == 1
 
     def test_the_test_item_says_it_is_a_test(self, sessions, secrets):
-        item = notify.test_item()
+        item = notify.sample_item()
         assert item["id"] == "notify-test"
         assert "test" in item["title"].lower()
         # Severity `info`: a receiver routing errors to a pager must not be paged by a button press.

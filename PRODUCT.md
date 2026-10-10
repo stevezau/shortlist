@@ -45,8 +45,8 @@ label-restriction behaviour in PMS 1.43.2 (May 2026).
   Radarr/Sonarr/Seerr.
 - Coexists with Kometa, Agregarr and other tools that manage collections on the same server; it must touch
   only collections it created.
-- Admin checks results in the UI: Dashboard, Runs (per-user timeline, diffs, warnings), Logs (live SSE),
-  Sharing (share filters and snapshots), Requests queue.
+- Admin checks results in the UI: Dashboard, Runs (per-user timeline, diffs, warnings), Activity (live log and jobs),
+  Privacy (share filters, snapshots and enforcement check), Requests queue.
 - Writes to Plex are the risky part; everything supports dry-run and uninstall restores snapshots.
 
 ## Capabilities and Constraints
@@ -90,7 +90,7 @@ pre-Shortlist filter state, restored on uninstall) · **dry run** (a run that lo
 
 ## Evidence on Hand
 
-- In production on the maintainer's own server (40+ users, PMS 1.43.x); v1.9.3 released 2026-09-27.
+- In production on the maintainer's own server (40+ users, PMS 1.43.x); v1.11.0 released 2026-10-10.
 - Public docs site (docs/ in repo, 15+ pages) and MIT GitHub repo with CI (ruff, pytest, Playwright e2e).
 - A real Plex Home screenshot in README.md.
 - `tests/fakes/fake_plex.py` lets the whole app run with no real Plex server, so any screen can be

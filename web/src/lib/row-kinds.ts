@@ -1,3 +1,4 @@
+import { joinList } from "@/lib/format";
 import { SEASON_TOKENS, TOP_SEED, usesSeason } from "@/lib/placeholders";
 import {
   FILL_META,
@@ -67,7 +68,7 @@ export function namedRowSeeds(media: string): number {
  * else — for the default row only — the global `row.name_template`. A new row has no template yet,
  * so its typed name stands in.
  */
-export function effectiveRowName(
+function effectiveRowName(
   input: CollectionInput,
   ctx: Pick<RowKindContext, "isDefault" | "defaultRowName">,
 ): string {
@@ -200,12 +201,10 @@ export const KIND_FIELDS = [
   "seasons",
 ] as const satisfies readonly (keyof CollectionInput)[];
 
-export type KindField = (typeof KIND_FIELDS)[number];
-
 /** The fields a switch starts from: the kind fields, and the name a switch may have replaced. */
 export const BASELINE_FIELDS = [...KIND_FIELDS, "name", "name_template"] as const;
 
-export type KindBaseline = Pick<CollectionInput, (typeof BASELINE_FIELDS)[number]>;
+type KindBaseline = Pick<CollectionInput, (typeof BASELINE_FIELDS)[number]>;
 
 /** The row's baseline as loaded (a saved row) or prefilled (a new row, from its template). */
 export function kindBaseline(input: CollectionInput): KindBaseline {
@@ -414,16 +413,6 @@ export const SETTING_LABELS: Readonly<Record<RowSettingKey, string>> = {
   sort_title_prefix: "Sort prefix",
   requests: "Requests",
   enabled: "On or off",
-};
-
-/**
- * The settings with no line in "What this row will do" (design §8), each with why. Every other
- * setting the editor shows has exactly one line there.
- */
-export const NO_FACT_LINE: Readonly<Partial<Record<RowSettingKey, string>>> = {
-  name: "The Plex card beside the name field shows it, filled in for a sample person.",
-  description: "The Plex card shows it under the name, filled in the same way.",
-  poster: "The Plex card shows it: the uploaded image, the text poster's words, or Plex's own artwork.",
 };
 
 /**
@@ -689,7 +678,7 @@ export interface KindChangeRename {
   because: string[];
 }
 
-export interface KindChangeOptions {
+interface KindChangeOptions {
   /** What every switch starts from (`kindSwitchBase`); none: the switch is applied to the row as given. */
   baseline?: Partial<CollectionInput>;
   /** The row as saved, for what saving does on Plex; the row the switch starts from when omitted. */
@@ -743,7 +732,7 @@ function waitsOnARun(note: string, ctx: Pick<RowKindContext, "pausedAll">): stri
  *   row's next delivery retitles the collection by its ledger key either way.
  * - `rename_screen`: the rename screen renames the collections from the old title.
  */
-export type RenameAt = "rebuild" | "turned_on" | "next_run" | "rename_screen";
+type RenameAt = "rebuild" | "turned_on" | "next_run" | "rename_screen";
 
 export function renameAt(saved: CollectionInput, after: Pick<CollectionInput, "build">, newName: string): RenameAt {
   if (!saved.enabled) return "turned_on";
@@ -806,15 +795,10 @@ function templateName(fill: RowFill): string {
   return name;
 }
 
-function kindTitle(choice: RowKindChoice): string {
+export function kindTitle(choice: RowKindChoice): string {
   return choice.kind === "seasonal"
     ? `${KIND_META.seasonal.title} (${FILL_META[choice.fill].title})`
     : KIND_META[choice.kind].title;
-}
-
-function listOf(items: string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 function watches(count: number): string {
@@ -1042,7 +1026,7 @@ function settingLines(
   );
 
   const lines: string[] = [];
-  const labels = (keys: RowSettingKey[]) => listOf(keys.map((key) => SETTING_LABELS[key]));
+  const labels = (keys: RowSettingKey[]) => joinList(keys.map((key) => SETTING_LABELS[key]));
   if (added.length > 0) {
     lines.push(`Adds ${added.length === 1 ? "a setting" : "settings"} this kind uses: ${labels(added)}.`);
   }

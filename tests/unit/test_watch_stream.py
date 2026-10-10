@@ -13,24 +13,16 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import shortlist.server.services.watch_stream as watch_stream
-from shortlist.server.db.models import Base, Job, WatchSession
+from shortlist.server.db.models import Job, WatchSession
 from shortlist.server.services.watch_stream import MIN_START_SECONDS, WatchStream
 
 
 @pytest.fixture
-def sessions():
-    # StaticPool, because the persistence path runs in a worker thread (`asyncio.to_thread`) and
-    # SQLite's default pooling hands a new thread its OWN connection — which for `sqlite://` means its
-    # own empty in-memory database. Without this the writes land somewhere nothing can read.
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+def sessions(threaded_sessions):
+    return threaded_sessions
 
 
 @pytest.fixture
@@ -245,7 +237,7 @@ class TestOrphanedSessions:
 
         with sessions() as s:
             row = s.query(WatchSession).one()
-        assert row.end_reason == "timeout"
+        assert row.end_reason == "orphaned"
         # Compared naive: SQLite stores no offset, so everything read back is naive UTC. That is the
         # whole codebase's convention, not a quirk of this test.
         assert row.ended_at == last_seen.replace(tzinfo=None), "ended when we last SAW it, not when we noticed"
@@ -410,7 +402,7 @@ class TestConnectionLifecycle:
 
         async def scenario():
             task = asyncio.ensure_future(stream.run())
-            await asyncio.sleep(0.2)
+            await until(lambda: connect.calls["n"] >= 2)
             stream.stop()
             await asyncio.wait_for(task, timeout=3)
 
@@ -612,12 +604,16 @@ class TestTheOwnerIsToldWhenTrackingIsOffline:
         """It runs inside the reconnect loop. A failure here must never be what stops the retries."""
         from shortlist.server.services.watch_stream import WatchStream
 
+        attempts: list[bool] = []
+
         def boom():
+            attempts.append(True)
             raise RuntimeError("db is gone")
 
         stream = WatchStream(boom, lambda **_: None)
         stream._write_health(connected=False)  # must not raise
         asyncio.run(stream._mark_connected())  # must not raise
+        assert len(attempts) >= 2, "the health write never reached the database"
 
 
 class TestAnUnreachablePlexIsAnOutageToo:
@@ -895,7 +891,7 @@ class TestTheDiagnosticBreadcrumb:
     def test_it_is_not_writable_through_the_settings_api(self, sessions):
         """It raises a NON-dismissable alert, so a settings write that could clear it would be a way
         to silence exactly the warning that must not be silenceable."""
-        from shortlist.server.api.settings import KNOWN_KEYS
+        from shortlist.server.services.settings_validation import KNOWN_KEYS
 
         assert "watch.stream_down_since" not in KNOWN_KEYS
         assert "watch.stream_connected_at" not in KNOWN_KEYS
@@ -1008,11 +1004,15 @@ class TestStoppingPlaybackAsksForTheCreditNow:
 
         stream = WatchStream(sessions, lambda **_: None)
 
+        attempts: list[bool] = []
+
         def boom():
+            attempts.append(True)
             raise RuntimeError("db gone")
 
         stream._sessions = boom
         stream._queue_reconcile()  # must not raise
+        assert attempts, "the queue insert was never attempted, so the failure was never injected"
 
     def test_a_session_too_short_to_persist_queues_nothing(self, sessions):
         """A mis-click is not a watch, and it does not deserve a pass over the whole event log."""
@@ -1312,7 +1312,7 @@ class TestACreditIsAskedForWhileStillWatching:
     """`_queue_reconcile` was reachable only from `_close`, so a credit was computed when a session
     ENDED and at no other time.
 
-    Reported live 2026-08-24: MooHouse started Moxie and the dashboard showed nothing. It appeared
+    Reported live 2026-08-24: Guest started Moxie and the dashboard showed nothing. It appeared
     about seventy seconds later — but only because an unrelated viewer stopped something else, and
     that pass swept this still-playing session up on the way past. On a server with one person
     watching, nothing would have appeared until they stopped, which for a two-hour film is two hours

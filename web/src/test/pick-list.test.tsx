@@ -19,19 +19,19 @@ function pick(rank: number, title: string): Pick {
 }
 
 describe("PickList", () => {
-  it("accents only the top pick's rank, so the colour says which one is the headline", () => {
-    // Amber on every rank is chrome: #1 and #15 read identically, and the engine's own ordering —
-    // the one fact this list exists to show — is carried by nothing but the digits.
+  it("renders every rank neutral and tabular, because amber is reserved for the one action", () => {
     render(
       <PickList
         picks={[pick(1, "Heat"), pick(2, "Sicario"), pick(3, "Fargo")]}
       />,
     );
 
-    expect(screen.getByText("#1").className).toMatch(/text-primary/);
-    expect(screen.getByText("#2").className).not.toMatch(/text-primary/);
-    expect(screen.getByText("#2").className).toMatch(/text-muted-foreground/);
-    expect(screen.getByText("#3").className).not.toMatch(/text-primary/);
+    for (const rank of ["#1", "#2", "#3"]) {
+      const cls = screen.getByText(rank).className;
+      expect(cls).not.toMatch(/text-primary/);
+      expect(cls).toMatch(/text-muted-foreground/);
+      expect(cls).toMatch(/tabular-nums/);
+    }
   });
 
   it("never says a rewatch was inspired by itself", () => {
@@ -53,12 +53,19 @@ describe("PickList", () => {
     expect(screen.queryByText(/inspired by/)).not.toBeInTheDocument();
   });
 
-  it("accents #1 even when the picks arrive out of rank order", () => {
-    // The component sorts before it renders. If the accent were keyed on position rather than on
-    // `rank`, an unsorted caller would highlight whatever happened to be first.
+  it("still orders by rank when picks arrive out of order", () => {
     render(<PickList picks={[pick(3, "Fargo"), pick(1, "Heat")]} />);
 
-    expect(screen.getByText("#1").className).toMatch(/text-primary/);
-    expect(screen.getByText("#3").className).not.toMatch(/text-primary/);
+    const ranks = screen.getAllByText(/^#\d$/).map((el) => el.textContent);
+    expect(ranks).toEqual(["#1", "#3"]);
+  });
+
+  it("gives the Show all text button a tap target beyond its 19px of text, on touch screens only", () => {
+    const picks = Array.from({ length: 12 }, (_, n) => pick(n + 1, `Title ${n + 1}`));
+    render(<PickList picks={picks} collapseAfter={5} />);
+
+    const classes = screen.getByRole("button", { name: /Show all/ }).className.split(" ");
+    expect(classes).toContain("[@media(pointer:coarse)]:before:h-11");
+    expect(classes).not.toContain("relative");
   });
 });

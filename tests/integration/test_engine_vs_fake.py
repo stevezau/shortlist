@@ -14,13 +14,10 @@ phase, which reports the rows they can see but nothing can hide (#76).
 from __future__ import annotations
 
 import re
-import threading
-import time
 from dataclasses import replace
 
 import httpx
 import pytest
-import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 
@@ -58,6 +55,7 @@ from tests.fakes.fake_plex import (
     tag_name,
 )
 from tests.fakes.file_stores import FileSnapshotStore
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.integration
 
@@ -124,39 +122,15 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
     return app
 
 
-class _UvicornThread:
-    """Run a FastAPI app on an ephemeral loopback port in a daemon thread."""
-
-    def __init__(self, app: FastAPI):
-        self._server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
-        self._thread = threading.Thread(target=self._server.run, daemon=True)
-        self.url = ""
-
-    def start(self) -> _UvicornThread:
-        self._thread.start()
-        deadline = time.monotonic() + 10
-        while not self._server.started:
-            if time.monotonic() > deadline:
-                raise RuntimeError("uvicorn did not start within 10s")
-            time.sleep(0.01)
-        port = self._server.servers[0].sockets[0].getsockname()[1]
-        self.url = f"http://127.0.0.1:{port}"
-        return self
-
-    def stop(self) -> None:
-        self._server.should_exit = True
-        self._thread.join(timeout=10)
-
-
 @pytest.fixture
 def fakes(monkeypatch):
     """Seeded state + three live fake servers, with the engine's absolute URLs pointed at them."""
     state = seed_state()
     tmdb_app = _make_fake_tmdb(state)
     servers = [
-        _UvicornThread(make_fake_plex(state)).start(),
-        _UvicornThread(make_fake_plextv(state)).start(),
-        _UvicornThread(tmdb_app).start(),
+        UvicornThread(make_fake_plex(state)).start(),
+        UvicornThread(make_fake_plextv(state)).start(),
+        UvicornThread(tmdb_app).start(),
     ]
     pms, plextv, tmdb = servers
     monkeypatch.setattr("shortlist.engine.clients.plextv.PLEXTV", plextv.url)
@@ -312,7 +286,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
 
     # Jess /hubs (switch -> resources -> server token) shows its own row and NONE of the others'
     # — including sarah's TV row, which lives in a different library than her movie row.
-    jess_token = plextv.canary_server_token(203)
+    jess_token = plextv.home_user_server_token(203)
     assert jess_token == "server-203"
     jess_hub_ids = {collection_id_from_hub(h) for h in plex.user_hubs(jess_token)}
     assert set(owned["jess"].rating_keys) <= jess_hub_ids
@@ -914,7 +888,7 @@ def test_a_per_person_row_only_builds_for_its_audience(fakes, tmp_path):
 
 
 def test_a_run_heals_the_leaking_rows_a_previous_version_left_behind(fakes, tmp_path):
-    """The upgrade path, reproduced from the live failure (SFLIX, 2026-07-12).
+    """The upgrade path, reproduced from the live failure (a large production server, 2026-07-12).
 
     The shipped version delivered every pick into the movie library regardless of type, so a TV
     watcher's row was a movie-library collection full of shows. Plex fixes a collection's subtype
@@ -1599,7 +1573,7 @@ def test_each_users_row_contains_only_their_own_picks(fakes, tmp_path):
     A Plex collection is a TAG on items, keyed by TITLE within a library — not an independent bag.
     So two rows with the same title in one library are ONE membership, and every user's row shows
     the union of everyone's picks. On a live server this made every row identical: a film picked
-    for one user alone turned up in another user's row, carrying a single collection tag (SFLIX,
+    for one user alone turned up in another user's row, carrying a single collection tag (a large production server,
     2026-07-13). The privacy still held — each collection object is hidden by its own label — but
     the recommendations were not personal at all.
 
@@ -1838,7 +1812,7 @@ def _assert_breakdown_names_what_plex_holds(report: RunReport, state, account_id
 
 def test_a_row_renamed_onto_a_deleted_collections_name_keeps_its_collection_and_gets_the_name(fakes, tmp_path):
     """A real PMS keeps a deleted collection's name as a tag and refuses every rename onto it
-    (pms_collection_title_tags.json). On SFLIX that froze four `{top_seed}` rows on their old seed's
+    (pms_collection_title_tags.json). On a large production server that froze four `{top_seed}` rows on their old seed's
     name night after night, while the run reported the new one. The row must come out renamed, as the
     same collection, with nothing left behind."""
     state, pms_url, _tmdb_app = fakes
@@ -3417,7 +3391,7 @@ def test_a_row_renamed_in_place_does_not_make_the_next_pass_rebuild_the_shelf(fa
     Plex's manage listing keeps the title a collection had when it was promoted, and the fake now does
     too (`pms_managed_hub_renamed_collection.json`). While hubs were matched to rows by title, every
     row renamed in place read as a foreign hub, so the pass rebuilt the whole shelf and reported each
-    row as put back. On SFLIX that happened on most nights, because `{top_seed}` rows are renamed
+    row as put back. On a large production server that happened on most nights, because `{top_seed}` rows are renamed
     whenever their seed changes, and it is what kept the "something else is reordering" bell ringing.
     """
     state, pms_url, _tmdb_app = fakes
@@ -3432,7 +3406,7 @@ def test_a_row_renamed_in_place_does_not_make_the_next_pass_rebuild_the_shelf(fa
                     size=8,
                     hub_anchors={str(s.key): HubAnchor(anchor_row="picked") for s in p.sections()},
                 ),
-                # A row BELOW the renamed one, as SFLIX's shared row sits below "Because you watched".
+                # A row BELOW the renamed one, as that server's shared row sits below "Because you watched".
                 # Without it a misread renamed row is simply the next foreign hub after `picked`, the
                 # arrangement comes out the same, and this test passes with the bug in place.
                 RowSpec(

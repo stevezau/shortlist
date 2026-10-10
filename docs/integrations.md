@@ -1,8 +1,8 @@
 ---
-title: What Shortlist works with
+title: "What Shortlist works with: Plex, Radarr, Sonarr and more"
 description: Every service Shortlist can talk to — Plex, TMDB, Sonarr, Radarr, Overseerr, Jellyseerr, Trakt, MDBList, Exa, SearXNG, Tautulli and the AI providers — what each one adds, and which are actually required.
 heading: What it works with
-updated: 2026-10-03
+updated: 2026-10-10
 ---
 
 **Two things are required: Plex, and a free TMDB key.** Everything below that is optional, and
@@ -25,9 +25,9 @@ Plex Pass servers, so without it Shortlist cannot keep one person's row off ever
 | **Trakt**    | Titles TMDB misses, from its own lists                    | An API key, which now needs Trakt's paid VIP plan |
 | **MDBList**  | Ratings from IMDb, Rotten Tomatoes, Metacritic and Trakt  | A free API key                                    |
 
-## Who writes the reason next to a pick
+## AI providers
 
-Any one of these, or none — with none, Shortlist still writes a plain-English reason itself.
+Any one of these, or none. A model is used for web search and AI rows only. The reason next to each pick is always written by Shortlist itself, so no provider changes it.
 
 | Service                                              | What you need                        |
 | ---------------------------------------------------- | ------------------------------------ |
@@ -70,8 +70,8 @@ until they've watched them. [How the row works →](/guides/requests/#your-reque
 
 The webhook is a JSON POST that works with Discord, Slack, Home Assistant, n8n or anything that
 accepts one. Add its address on the **Webhook** card in Settings → Connections, then turn it on and
-tick what to send in Settings → Connections → Webhook: runs starting, finishing or failing, jobs starting,
-finishing or failing, someone able to see a row that isn't theirs, titles waiting for your approval,
+tick what to send in Settings → Connections → Webhook: runs starting, finishing, finishing with some people failed, failing or stopping early, jobs starting,
+finishing, failing or being skipped, someone able to see a row that isn't theirs, titles waiting for your approval,
 and new versions. A failed run and a privacy problem are ticked to begin with. No message names
 anybody.
 

@@ -90,13 +90,32 @@ describe("LogsPage", () => {
     renderPage();
     await screen.findByText("shortlist server up");
 
-    await userEvent.click(screen.getByRole("button", { name: "ERROR" }));
+    await userEvent.click(screen.getByRole("button", { name: "Errors" }));
 
     await waitFor(() =>
       expect(getLogs).toHaveBeenLastCalledWith(
         expect.objectContaining({ level: "ERROR" }),
       ),
     );
+  });
+
+  it("Warnings keeps each warning with the lines around it, and tints it", async () => {
+    const lines = ["a", "b", "c", "d", "e", "f", "g"].map((message) => line({ message }));
+    lines[3] = line({ level: "WARNING", message: "plex.tv rejected a filter" });
+    getLogs.mockResolvedValue(page(lines));
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Warnings" }));
+
+    const log = screen.getByRole("log", { name: /Application logs/i });
+    // Two lines each side of the warning stay; the far ends go.
+    expect(within(log).queryByText("a")).toBeNull();
+    expect(within(log).getByText("b")).toBeInTheDocument();
+    expect(within(log).getByText("f")).toBeInTheDocument();
+    expect(within(log).queryByText("g")).toBeNull();
+    expect(within(log).getByText("WARNING").closest("div")).toHaveClass("bg-warning/10");
+    // It reads at INFO so the context exists.
+    expect(getLogs).toHaveBeenLastCalledWith(expect.objectContaining({ level: "INFO" }));
   });
 
   it("passes the search text to the server too", async () => {
@@ -158,13 +177,23 @@ describe("LogsPage", () => {
     );
   });
 
+  it("lists the views from the usual one to the most specific, Debug last", async () => {
+    getLogs.mockResolvedValue(page([]));
+    renderPage();
+    await screen.findByRole("button", { name: "Debug" });
+    const labels = ["All", "Warnings", "Errors", "Debug"].map((name) => screen.getByRole("button", { name }));
+    for (let i = 1; i < labels.length; i++) {
+      expect(labels[i - 1]!.compareDocumentPosition(labels[i]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
   it("offers nothing to click, and no orphaned advice, at the quietest level with no filter", async () => {
     // DEBUG is the floor (`configure_logging` opens the sink there), so there is no quieter level to
     // offer and nothing on this page can start a run. The hint must not keep promising either.
     getLogs.mockResolvedValue(page([]));
     renderPage();
 
-    await userEvent.click(await screen.findByRole("button", { name: "DEBUG" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Debug" }));
 
     expect(
       await screen.findByText(

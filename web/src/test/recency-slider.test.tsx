@@ -57,9 +57,7 @@ describe("RecencySlider", () => {
   it("labels the era bars with years counted back from today, not hardcoded ones", () => {
     render(<RecencySlider value={60} onChange={() => {}} />);
     for (const age of [0, 10, 20, 30, 40]) {
-      expect(screen.getByText(String(THIS_YEAR - age)).textContent).toBe(
-        String(THIS_YEAR - age),
-      );
+      expect(screen.getByText(String(THIS_YEAR - age))).toBeInTheDocument();
     }
   });
 

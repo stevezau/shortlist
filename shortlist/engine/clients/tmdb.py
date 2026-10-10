@@ -165,8 +165,7 @@ class TmdbClient:
         results = self.search_all(query, media_type)
         if not results:
             return None
-        # `max` keeps the first of equal scores, so a tie falls back to TMDB's own popularity order —
-        # which is what this function used to return outright.
+        # `max` keeps the first of equal scores, so a tie falls back to TMDB's own popularity order.
         return max(results, key=lambda r: _match_score(r, query, year))
 
     def search_all(self, title: str, media_type: MediaType) -> list[dict]:
@@ -214,6 +213,20 @@ class TmdbClient:
         item = {field: data[field] for field in _ITEM_FIELDS if field in data}
         item["genre_ids"] = [g["id"] for g in data.get("genres") or [] if isinstance(g, dict) and "id" in g]
         return item
+
+    def movie_keywords(self, tmdb_id: int) -> dict[int, str]:
+        """A movie's TMDB tags, ``{id: name}``, from one cached call.
+
+        Raises:
+            ValueError: the payload has no keyword list. A 404 reads as ``{}`` here, and "TMDB didn't
+                answer" must not pass for "this movie has no tags".
+        """
+        keywords = self._get(f"/movie/{tmdb_id}/keywords").get("keywords")
+        if not isinstance(keywords, list) or not all(
+            isinstance(k, dict) and isinstance(k.get("id"), int) for k in keywords
+        ):
+            raise ValueError("TMDB returned no keyword list")
+        return {k["id"]: str(k.get("name") or k["id"]) for k in keywords}
 
     def search_keywords(self, query: str, limit: int = 10) -> list[dict]:
         """TMDB tags whose name matches ``query``, each with how many films carry it — the season editor's

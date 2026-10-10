@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 from tests.e2e.conftest import FAKE_TMDB_TAGS, THANKSGIVING_DINNER_TAG, THANKSGIVING_TAG, ShortlistApp
 from tests.fakes.fake_plex import FakePlexState
@@ -48,8 +48,10 @@ def test_a_ready_made_season_with_a_film_picked_by_hand_is_saved_and_ticked_in_a
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
     page.get_by_role("button", name="Add a row").click()
-    page.get_by_role("group", name="Templates", exact=True).get_by_role("button", name=re.compile(r"^Seasonal")).click()
-    page.get_by_role("button", name="Use template").click()
+    page.get_by_role("group", name="Kinds of row", exact=True).get_by_role(
+        "button", name=re.compile(r"^Seasonal")
+    ).click()
+    page.get_by_role("link", name="Set every option yourself").click()
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible(timeout=LOAD)
 
     seasons = page.locator("li[data-season]")
@@ -62,11 +64,12 @@ def test_a_ready_made_season_with_a_film_picked_by_hand_is_saved_and_ticked_in_a
     # 2. "Add more seasons" is open on a row that ticks only built-ins. Each card counts its own films.
     more = page.locator("summary", has_text="Add more seasons").locator("..")
     expect(more).to_have_attribute("open", "")
+    page.get_by_role("searchbox", name="Find a season").fill("Thanksgiving (US)")
     card = (
         page.get_by_role("list", name="Ready-made seasons").get_by_role("listitem").filter(has_text="Thanksgiving (US)")
     )
     expect(card).to_contain_text(_films_counted(tagged_here), timeout=COUNT)
-    card.get_by_role("button", name="Add Thanksgiving (US)").click()
+    card.get_by_role("button", name="Customise Thanksgiving (US)").click()
 
     dialog = page.get_by_role("dialog", name="Add Thanksgiving (US)")
     expect(dialog).to_be_visible()
@@ -128,3 +131,62 @@ def test_a_ready_made_season_with_a_film_picked_by_hand_is_saved_and_ticked_in_a
     )
     assert season["tags"] == [{"id": THANKSGIVING_TAG, "name": "thanksgiving"}]
     assert season["picks"] == [{"tmdb_id": pick.tmdb_id, "media_type": "movie", "title": pick.title, "year": pick.year}]
+
+
+def test_add_saves_a_ready_made_season_unchanged_and_the_row_is_saved_separately(page: Page, app: ShortlistApp) -> None:
+    preset = next(p for p in app.api("GET", "/api/seasons/presets").json() if p["key"] == "thanksgiving_us")
+    rows_before = app.api("GET", "/api/collections").json()
+    page.goto("/rows")
+    page.get_by_role("button", name="Add a row").click()
+    page.get_by_role("group", name="Kinds of row", exact=True).get_by_role(
+        "button", name=re.compile(r"^Seasonal")
+    ).click()
+    page.get_by_role("link", name="Set every option yourself").click()
+    page.get_by_role("searchbox", name="Find a season").fill("Thanksgiving (US)")
+    card = page.get_by_role("list", name="Ready-made seasons").get_by_role("listitem")
+    expect(card).to_contain_text(preset["description"])
+    pending_creates: list[Route] = []
+
+    def hold_create(route: Route) -> None:
+        if route.request.method == "POST":
+            pending_creates.append(route)
+        else:
+            route.continue_()
+
+    page.route(re.compile(r"/api/seasons$"), hold_create)
+    with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/seasons")):
+        card.get_by_role("button", name="Add Thanksgiving (US)").click()
+
+    expect(page.get_by_role("button", name="Add row", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Cancel", exact=True)).to_be_disabled()
+    assert all(season["slug"] != "thanksgiving" for season in app.api("GET", "/api/seasons").json())
+    assert app.api("GET", "/api/collections").json() == rows_before
+    assert len(pending_creates) == 1
+    pending_creates[0].continue_()
+
+    expect(page.get_by_role("dialog")).to_have_count(0)
+    mine = page.locator('li[data-season="thanksgiving"]')
+    expect(mine.get_by_role("checkbox")).to_be_checked(timeout=LOAD)
+    expect(mine.get_by_role("checkbox")).to_be_focused()
+    expect(page.get_by_role("status").filter(has_text=re.compile(r"save (?:this |the )?row", re.I))).to_be_visible()
+    assert app.api("GET", "/api/collections").json() == rows_before
+    season = next(s for s in app.api("GET", "/api/seasons").json() if s["slug"] == "thanksgiving")
+    for field in (
+        "name",
+        "emoji",
+        "preset",
+        "rule",
+        "lead_days",
+        "after_days",
+        "tags",
+        "genre",
+        "excluded_genres",
+        "collections",
+        "picks",
+    ):
+        assert season[field] == preset[field], field
+
+    page.get_by_role("button", name="Add row").click()
+    expect(page).to_have_url(re.compile(r"/rows$"), timeout=LOAD)
+    row = next(c for c in app.api("GET", "/api/collections").json() if "thanksgiving" in c["seasons"])
+    assert set(row["seasons"]) == {*BUILT_INS, "thanksgiving"}

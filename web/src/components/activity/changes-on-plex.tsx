@@ -44,6 +44,8 @@ import {
 } from "@/lib/queries";
 import { rowDisplayName } from "@/lib/run-rows";
 import type { AuditEvent, Run } from "@/lib/types";
+import { personName } from "@/lib/user-names";
+import { clockTime, longDateTime } from "@/lib/when";
 
 type ModeFilter = "all" | "real" | "dry";
 
@@ -69,24 +71,6 @@ function localDay(iso: string): string {
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
 }
 
-function longDate(iso: string, withTime = true): string {
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    ...(withTime ? { hour: "2-digit", minute: "2-digit" } : {}),
-  });
-}
-
-function clockTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 function peopleIn(run: Run): number {
   return run.stats.users_ok + run.stats.users_error + (run.stats.users_skipped ?? 0);
 }
@@ -105,14 +89,14 @@ function groupHeading(first: AuditEvent, events: AuditEvent[], runs: Map<number,
     const run = runs.get(runId);
     const dry = run ? run.dry_run : events.every((e) => e.message.dry_run === true);
     const facts = run
-      ? [longDate(run.started_at), triggerLabel(run.trigger), `${peopleIn(run)} ${peopleIn(run) === 1 ? "person" : "people"}`]
-      : [longDate(first.ts)];
+      ? [longDateTime(run.started_at), triggerLabel(run.trigger), `${peopleIn(run)} ${peopleIn(run) === 1 ? "person" : "people"}`]
+      : [longDateTime(first.ts)];
     if (dry) facts.push("dry run · nothing written");
     return { label: `Run #${runId}`, facts };
   }
   const job = typeof first.message.job === "string" ? first.message.job : "";
-  if (job) return { label: `Job: ${jobLabel(job)}`, facts: [longDate(first.ts, false)] };
-  return { label: "Outside a run", facts: [longDate(first.ts, false)] };
+  if (job) return { label: `Job: ${jobLabel(job)}`, facts: [longDateTime(first.ts, false)] };
+  return { label: "Outside a run", facts: [longDateTime(first.ts, false)] };
 }
 
 function groupChanges(events: AuditEvent[], runs: Map<number, Run>, names: NameLookup): ChangeGroup[] {
@@ -164,7 +148,8 @@ function ChangeText({ text }: { text: string }) {
 }
 
 function ModePill({ mode }: { mode: ChangeMode }) {
-  if (mode === "real") return <Badge>Real</Badge>;
+  // Real is the normal case, so only the exceptions get a badge; the word stays for screen readers.
+  if (mode === "real") return <span className="sr-only">Real</span>;
   if (mode === "dry") {
     return (
       <Badge variant="outline" className="border-dashed text-muted-foreground">
@@ -220,7 +205,7 @@ export function ChangesOnPlex() {
 
   const names = useMemo<NameLookup>(() => {
     const rows = new Map((collections.data ?? []).map((c) => [c.slug, rowDisplayName(c.name || c.fallback_name)]));
-    const people = new Map((users.data ?? []).map((u) => [u.slug, u.display_name || u.username]));
+    const people = new Map((users.data ?? []).map((u) => [u.slug, personName(u)]));
     return { row: (slug) => rows.get(slug) || undefined, person: (slug) => people.get(slug) || undefined };
   }, [collections.data, users.data]);
   const runs = useMemo(() => new Map((runsQuery.data ?? []).map((run) => [run.id, run])), [runsQuery.data]);
@@ -400,7 +385,7 @@ export function ChangesOnPlex() {
           <DialogHeader>
             <DialogTitle>Change #{opened?.event.id}</DialogTitle>
             <DialogDescription>
-              {opened ? `${opened.event.scope} · ${longDate(opened.event.ts)} · exactly as it was recorded` : ""}
+              {opened ? `${opened.event.scope} · ${longDateTime(opened.event.ts)} · exactly as it was recorded` : ""}
             </DialogDescription>
           </DialogHeader>
           <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded-md border bg-muted/30 p-3 font-mono text-xs [font-variant-ligatures:none]">

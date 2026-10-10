@@ -8,6 +8,7 @@ import { UserRowsSection } from "@/components/user-detail/user-row-card";
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type { RowOverridePatch, User, UserRow } from "@/lib/types";
+import { makeUser } from "@/test/user-fixtures";
 
 const { getUserRows, setUserRowOverride } = vi.hoisted(() => ({
   getUserRows: vi.fn(),
@@ -29,32 +30,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-const USER: User = {
-  manage_sharing: true,
-  id: 7,
-  username: "sarah",
-  slug: "sarah",
-  user_type: "shared",
-  restricted: false,
-  enabled: true,
-  cold_start: false,
-  history_depth: 40,
-  last_run_at: null,
-  request_tag: "",
-  requested_by_tag: "",
-  picks_watched_30d: null,
-  last_pick_watched_at: null,
-  nickname: "",
-  friendly_name: "",
-  display_name: "",
-  avatar_url: "",
-  plex_account_id: 0,
-  restriction_profile: "",
-  unhidden_rows: 0,
-  departed: false,
-  preview_titles: [],
-  prefs: {},
-};
+const USER: User = makeUser({ id: 7, history_depth: 40 });
 
 function row(patch: Partial<UserRow> = {}): UserRow {
   return {

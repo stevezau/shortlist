@@ -96,8 +96,7 @@ class _WebPrompt(NamedTuple):
 # Note what this prompt does NOT ask for: tmdb_id or imdb_id. Measured 2026-09-02 against the live
 # curator, only 4 of 10 proposed tmdb_ids and 6 of 10 imdb_ids were correct — and a wrong id resolves
 # to a REAL but unrelated title ("Black Mirror" → "Wild China"), which reaches someone's row. A wrong
-# *title* simply fails to resolve and vanishes, so title+year is the safer contract. See
-# `.claude/docs/llm-web-search-upgrade.md` §3.
+# *title* simply fails to resolve and vanishes, so title+year is the safer contract.
 #
 # The year is demanded rather than requested, and the prompt says why: the resolver disambiguates on
 # it. At Anthropic's old `max_uses=3` only 4 of 12 proposals carried one.
@@ -110,7 +109,7 @@ class _WebPrompt(NamedTuple):
 #
 # Neither is a guess. Asked "best-reviewed TV shows that premiered in 2026" — a question that names
 # the year and cannot be answered from memory — both models fired real searches and returned 2026
-# titles with citations. The tool works; the old prompt simply never asked it to look forward.
+# titles with citations. The tool works; a prompt has to ask it to look forward.
 #
 # Gemini is the exception and no prompt fixes it: it declines to search for this task under every
 # phrasing tried, including `tool_config mode="ANY"`. See GoogleCurator.recommend_web.
@@ -231,7 +230,6 @@ _WEB_RAG = _WebPrompt(
     ),
     count="Pick up to {k} of the titles mentioned in these articles. ",
 )
-_WEB_RAG_SYSTEM = _WEB_RAG.head + _WEB_RAG.guide + _WEB_RAG.tail
 
 _WEB_PICK = _WebPrompt(
     head=(
@@ -247,7 +245,6 @@ _WEB_PICK = _WebPrompt(
     ),
     count="Pick up to {k} of them. ",
 )
-_WEB_PICK_SYSTEM = _WEB_PICK.head + _WEB_PICK.guide + _WEB_PICK.tail
 
 _PROMPT_FOR_BACKEND = {"native": _WEB, "exa": _WEB_PICK, "searxng": _WEB_RAG}
 
@@ -419,7 +416,7 @@ def try_parse_web_titles(text: str, limit: int) -> list[dict] | None:
         # SHOW THE REPLY. Without it this line says only that something went wrong, and the seed's
         # candidates are gone with no way to tell a refusal ("I can't help with that") from a
         # truncated response from a provider wrapping the array in a key we do not unwrap — three
-        # different fixes. Observed twice on SFLIX 2026-09-06 with nothing recorded but this
+        # different fixes. Observed twice on a large production server 2026-09-06 with nothing recorded but this
         # sentence. Truncated because a reply can be thousands of tokens, and repr'd so that a
         # response which is empty or pure whitespace is visibly so rather than looking like a
         # missing log line.

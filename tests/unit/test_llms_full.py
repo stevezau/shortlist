@@ -76,7 +76,7 @@ def test_every_published_page_is_included(built: str) -> None:
 
     `build()` raises on that, so this asserts the positive: every page that ships has a section.
     """
-    pages = {p for p in DOCS.rglob("*.md") if p.name != "README.md" and "superpowers" not in p.relative_to(DOCS).parts}
+    pages = {p for p in DOCS.rglob("*.md") if p.name != "README.md"}
     assert len(re.findall(r"^Source: ", built, re.MULTILINE)) == len(pages)
 
 

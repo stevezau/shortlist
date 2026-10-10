@@ -1,9 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, ChevronRight, Loader2, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import {
   OWNER_SHELF_ALERT_ID,
   OWNER_SHELF_NOTE_ID,
@@ -26,6 +25,7 @@ import {
   useWatchSnapshots,
 } from "@/lib/queries";
 import type { Collection, TransferResult } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 /** Rows that put ONE COLLECTION PER PERSON on a library's Recommended shelf — the only kind that
  *  stacks up on the owner's shelf. A shared row is a single collection everybody is meant to see. */
@@ -38,33 +38,11 @@ export function rowsOnTheSharedShelf(collections: Collection[]): Collection[] {
   );
 }
 
-function Step({
-  n,
-  title,
-  children,
-}: {
-  /** Omitted when this section is mounted on its own — a lone "3" with no 1 or 2 above it reads as
-   *  a missing step rather than a numbered one. The setup wizard embeds only the third section. */
-  n?: number;
-  title: string;
-  children: React.ReactNode;
-}) {
+function Step({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-3">
-      <h2 className="flex items-center gap-3 text-lg font-semibold">
-        {n !== undefined && (
-          <span
-            aria-hidden="true"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium text-muted-foreground"
-          >
-            {n}
-          </span>
-        )}
-        {title}
-      </h2>
-      <div className={n === undefined ? "space-y-3" : "space-y-3 sm:pl-10"}>
-        {children}
-      </div>
+      <h2 className="text-lg font-semibold">{title}</h2>
+      <div className="space-y-3">{children}</div>
     </section>
   );
 }
@@ -130,12 +108,12 @@ export function WatchingAccountPage() {
   );
   const affected = rowsOnTheSharedShelf(collections);
 
-  /** Take every per-person row off the friends' Recommended shelf, leaving its Home placement alone.
-   *  One PATCH per row — the endpoint is partial, so only `placement_friends` moves and every other
-   *  column on the row keeps its value. */
   // How many rows were actually written before a failure. The PATCHes are sequential, so "it
   // failed" and "nothing changed" are different claims — row 3 of 5 failing leaves 1 and 2 saved.
   const [changed, setChanged] = useState(0);
+  /** Take every per-person row off the friends' Recommended shelf, leaving its Home placement alone.
+   *  One PATCH per row — the endpoint is partial, so only `placement_friends` moves and every other
+   *  column on the row keeps its value. */
   const shelfOff = useMutation({
     mutationFn: async () => {
       setChanged(0);
@@ -155,35 +133,51 @@ export function WatchingAccountPage() {
 
   return (
     <div className="space-y-5">
-      <BackLink to="/users" label="Users" />
       <PageHeader
-        title="You see everyone's rows"
+        title={
+          <>
+            <Link to="/users" className="font-normal text-muted-foreground hover:text-foreground">
+              Users
+            </Link>
+            <span className="font-normal text-faint-foreground">{" / "}</span>
+            You see everyone's rows
+          </>
+        }
         subtitle="Why the Recommended shelf in your libraries shows every person's row to you, and the three ways to deal with it."
       />
 
-      <details className="group rounded-lg border bg-card p-4"><summary className="flex cursor-pointer items-center gap-1.5 text-sm font-medium list-none [&::-webkit-details-marker]:hidden"><ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none" />Why the owner sees everyone’s rows</summary><div className="pt-3"><Step title="What's happening">
-        <p className="text-sm text-muted-foreground">
-          Shortlist gives each person their own row and keeps them apart with a
-          Plex label, hidden from everyone else through the{" "}
-          <strong className="text-foreground">share</strong> you gave them. You
-          own this server, so you have no share with yourself &mdash; and there
-          is nothing for Plex to hide behind.
-        </p>
-        <p className="text-sm text-muted-foreground">
-          The result: your own Home screen is fine and only ever shows your row,
-          but the <strong className="text-foreground">Recommended shelf</strong>{" "}
-          inside Movies and TV Shows shows you{" "}
-          <strong className="text-foreground">everyone&rsquo;s row</strong>
-          {others.length > 0 &&
-            ` — there are ${others.length} other ${others.length === 1 ? "person" : "people"} on this server`}
-          . Everyone else still sees only their own. This is a Plex limitation,
-          not something Shortlist can switch off.
-        </p>
-      </Step>
+      <details className="group rounded-lg border bg-card p-4">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-sm font-medium [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            aria-hidden="true"
+            className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+          />
+          Why the owner sees everyone’s rows
+        </summary>
+        <div className="pt-3">
+          <Step title="What's happening">
+            <p className="text-sm text-muted-foreground">
+              Shortlist gives each person their own row and keeps them apart with a
+              Plex label, hidden from everyone else through the{" "}
+              <strong className="text-foreground">share</strong> you gave them. You
+              own this server, so you have no share with yourself &mdash; and there
+              is nothing for Plex to hide behind.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              The result: your own Home screen is fine and only ever shows your row,
+              but the <strong className="text-foreground">Recommended shelf</strong>{" "}
+              inside Movies and TV Shows shows you{" "}
+              <strong className="text-foreground">everyone&rsquo;s row</strong>
+              {others.length > 0 &&
+                ` — there are ${others.length} other ${others.length === 1 ? "person" : "people"} on this server`}
+              . Everyone else still sees only their own. This is a Plex limitation,
+              not something Shortlist can switch off.
+            </p>
+          </Step>
+        </div>
+      </details>
 
-      </div></details>
-
-      <Step n={1} title="Choose how you want to watch">
+      <Step title="Choose how you want to watch">
         <OptionCard
           title="Take the rows off the library shelf"
           // `collectionsQuery.data ?? []` cannot tell "no row is on the shelf" from "nobody has
@@ -223,7 +217,9 @@ export function WatchingAccountPage() {
                     aria-hidden="true"
                   />
                 )}
-                Do this for me
+                {affected.length > 1
+                  ? `Take ${affected.length} rows off the library shelf`
+                  : "Take the row off the library shelf"}
               </Button>
             )
           }
@@ -303,7 +299,7 @@ export function WatchingAccountPage() {
  *  a second copy would drift from it the first time any of that changed. The wizard cannot link here
  *  instead — until setup completes, every route redirects to /setup — so the component travels to the
  *  wizard rather than the owner travelling to the page. */
-export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
+export function TransferSteps() {
   // "Set it up" mounts this section below the fold, so without moving the viewport the button reads
   // as having done nothing. Scrolled on mount rather than in the click handler: the section does not
   // exist yet at click time. `prefers-reduced-motion` gets a jump instead of a glide.
@@ -416,7 +412,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
       .map((u) => ({
         id: u.id,
         isOwner: false,
-        label: u.display_name || u.username,
+        label: personName(u),
       })),
   ];
 
@@ -435,10 +431,9 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
 
   /** What to CALL the source in the page's copy.
    *
-   *  Every sentence here used to be second person — "it ends up matching yours", "your own account is
-   *  never written to", "that account now matches yours" — which was true while the owner was the
-   *  only possible source. The picker falsifies all of them: with another account chosen, the target
-   *  matches THAT account and it is THAT account we never write to. The last of those three is
+   *  No sentence here may be second person — "it ends up matching yours", "your own account is
+   *  never written to", "that account now matches yours" — because the picker lets another account
+   *  be the source: the target then matches THAT account and it is THAT account we never write to. The last of those three is
    *  printed after a real Plex write, as a verified claim, and the verify read compares the target
    *  against the source rather than against the owner.
    */
@@ -536,7 +531,7 @@ export function TransferSteps({ numbered = true }: { numbered?: boolean }) {
 
   return (
     <div ref={ref} className="min-w-0 scroll-mt-6 [overflow-wrap:anywhere]">
-      <Step n={numbered ? 3 : undefined} title="Set up the watching account">
+      <Step title="Set up the watching account">
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">
             Create the account in Plex &mdash;{" "}

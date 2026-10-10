@@ -2,7 +2,7 @@
   "_why": [
     "Rows that update in place (issue #119) were refused renames on a real server night after night:",
     "'Plex refused to rename ... (409 — a collection there already has that title)', while NO collection",
-    "anywhere held that title. Measured on SFLIX (PMS 1.43.3.10793) on 2026-09-14 with throwaway",
+    "anywhere held that title. Measured on a large production server (PMS 1.43.3.10793) on 2026-09-14 with throwaway",
     "collections (a title marker like a row's, no shortlist_* label, deleted in a finally), and read from",
     "Plex's own database, read-only.",
     "",
@@ -24,7 +24,7 @@
     "   collection in another library: the helper would share that collection's tag row, and renaming the",
     "   helper would move the tag away from that collection's title.",
     "",
-    "On SFLIX at the time: 4 of 5 refused renames targeted an orphan left by the pre-#119 rebuild, 1 the",
+    "On a large production server at the time: 4 of 5 refused renames targeted an orphan left by the pre-#119 rebuild, 1 the",
     "same person's live row in another library. 41 orphaned Shortlist tags in total."
   ],
   "server": {

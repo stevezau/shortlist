@@ -18,14 +18,15 @@ from shortlist.engine.seasons import BUILTIN_SEASONS, DateRule, Season
 from shortlist.server.db.adapters import DbCache
 from shortlist.server.db.models import CacheRow
 from shortlist.server.services import library_index as library_index_mod
+from shortlist.server.services import season_rules
 
 
 @pytest.fixture(autouse=True)
 def _forget_scanned_libraries():
     """The API's library scans are memoised in the process; one test's library must not answer another's."""
-    library_index_mod.forget()
+    library_index_mod._memo.clear()
     yield
-    library_index_mod.forget()
+    library_index_mod._memo.clear()
 
 
 def _body(**overrides) -> dict:
@@ -62,7 +63,18 @@ def _jobs(monkeypatch) -> tuple[list[tuple[str, dict]], list[str]]:
     async def waited_on(state, reason: str) -> None:
         raise AssertionError(f"the response waited on the queue ({reason})")
 
-    monkeypatch.setattr(jobs_mod, "enqueue", lambda sessions, kind, payload=None, **kw: queued.append((kind, payload)))
+    enqueue = jobs_mod.enqueue_in_session
+
+    def record(session, kind, payload=None, **kwargs):
+        job = enqueue(session, kind, payload, **kwargs)
+        assert job.id is not None, "owed work is saved in the caller's transaction"
+        if kind == "assistant.converge":
+            queued.extend((step["kind"], step["payload"]) for step in payload["steps"])
+        else:
+            queued.append((kind, payload))
+        return job
+
+    monkeypatch.setattr(jobs_mod, "enqueue_in_session", record)
     monkeypatch.setattr(jobs_mod, "drain_in_background", lambda state, reason: drains.append(reason))
     monkeypatch.setattr(jobs_mod, "drain_now", waited_on)
     return queued, drains
@@ -221,7 +233,7 @@ class TestValidation:
             ),
             ({"name": "christmas"}, "There's already a season called “Christmas”."),
             ({"name": "CHRISTMAS"}, "There's already a season called “Christmas”."),
-            ({"tags": []}, "Add at least one tag, collection or film."),
+            ({"tags": []}, "Add at least one tag, genre, collection or film."),
         ],
     )
     def test_post_refuses_with_the_message_the_editor_shows(self, client: TestClient, overrides, message):
@@ -299,7 +311,7 @@ class TestUpdate:
         assert (queued, drains) == ([], []), "a rename changes no day the row is shown on"
 
         assert client.put("/api/seasons/thanksgiving", json=_body(lead_days=3)).status_code == 200
-        assert queued == [("rows.visibility", {"row": row["slug"]})]
+        assert queued == [("rows.visibility", {"row": row["slug"], "dry_run": False})]
         assert drains == ["season 'thanksgiving' moved"]
 
     def test_a_move_that_changes_nothing_today_queues_no_pass(self, client: TestClient, monkeypatch):
@@ -326,7 +338,7 @@ class TestUpdate:
         r = client.put("/api/seasons/thanksgiving", json=_body(rule={"kind": "fixed", "month": 11, "day": 27}))
 
         assert r.status_code == 200, r.text
-        assert queued == [("rows.visibility", {"row": row["slug"]})]
+        assert queued == [("rows.visibility", {"row": row["slug"], "dry_run": False})]
         assert drains == ["season 'thanksgiving' moved"]
 
     def test_a_move_that_hands_the_row_to_another_season_queues_a_pass(self, client: TestClient, monkeypatch):
@@ -339,7 +351,7 @@ class TestUpdate:
 
         client.put("/api/seasons/thanksgiving", json=_body(rule={"kind": "fixed", "month": 12, "day": 12}, lead_days=7))
 
-        assert queued == [("rows.visibility", {"row": row["slug"]})]
+        assert queued == [("rows.visibility", {"row": row["slug"], "dry_run": False})]
 
     def test_a_disabled_row_is_not_given_a_pass(self, client: TestClient, monkeypatch):
         # The day after Thanksgiving: two days after brings it back.
@@ -351,7 +363,7 @@ class TestUpdate:
 
         client.put("/api/seasons/thanksgiving", json=_body(after_days=2))
 
-        assert queued == [("rows.visibility", {"row": on["slug"]})]
+        assert queued == [("rows.visibility", {"row": on["slug"], "dry_run": False})]
 
     def test_a_rule_is_stored_without_the_fields_its_kind_ignores(self, client: TestClient, monkeypatch):
         """So editing one of them is no edit: nothing stored changes and no row is re-applied."""
@@ -391,10 +403,11 @@ class TestWhetherASeasonEditOwesAPass:
         return {**BUILTIN_SEASONS, "moved": moved}
 
     def _owed(self, now: datetime, before: tuple, after: tuple, seasons: tuple[str, ...] = ("moved",)) -> bool:
-        from shortlist.server.api import seasons as seasons_api
 
-        answers = [seasons_api._today(self.ROW, list(seasons), now, self._catalogue(*rule)) for rule in (before, after)]
-        return seasons_api._pass_owed(*answers)
+        answers = [
+            season_rules.shown_today(self.ROW, list(seasons), now, self._catalogue(*rule)) for rule in (before, after)
+        ]
+        return season_rules.pass_owed(*answers)
 
     @pytest.mark.parametrize(
         ("now", "before", "after"),
@@ -645,7 +658,7 @@ class TestPresets:
     def test_a_preset_posts_back_as_a_season(self, client: TestClient):
         """What the editor does with one: open it pre-filled, then save it."""
         preset = next(p for p in client.get("/api/seasons/presets").json() if p["key"] == "st_patricks_day")
-        body = {k: v for k, v in preset.items() if k not in ("key", "label", "note")}
+        body = {k: v for k, v in preset.items() if k not in ("key", "label", "note", "category", "description")}
         r = client.post("/api/seasons", json=body)
         assert r.status_code == 201, r.text
         assert r.json()["excluded_genres"] == [27]
@@ -654,7 +667,7 @@ class TestPresets:
         """Names are unique (D13): the second asks the owner for another name rather than titling two rows alike."""
         offered = {p["key"]: p for p in client.get("/api/seasons/presets").json()}
         bodies = [
-            {k: v for k, v in offered[key].items() if k not in ("key", "label", "note")}
+            {k: v for k, v in offered[key].items() if k not in ("key", "label", "note", "category", "description")}
             for key in ("fathers_day", "fathers_day_au_nz")
         ]
         bodies = [{**body, "picks": [{"tmdb_id": 1, "media_type": "movie", "title": "Big Fish"}]} for body in bodies]
@@ -831,18 +844,19 @@ class TestNextDate:
         _connect(monkeypatch, client, None, None)
         _on(monkeypatch, datetime(2026, 10, 3, 12, 0))
         r = client.post("/api/seasons/next-date", json={"kind": "nth", "month": 11, "nth": 4, "weekday": 3})
-        assert (r.status_code, r.json()) == (200, {"next_date": "2026-11-26", "rule_error": None})
+        assert (r.status_code, r.json()) == (200, {"next_date": "2026-11-26", "rule_error": None, "next_windows": []})
 
     def test_a_day_already_past_this_year_falls_next_year(self, client: TestClient, monkeypatch):
         _on(monkeypatch, datetime(2026, 10, 3, 12, 0))
         r = client.post("/api/seasons/next-date", json={"kind": "fixed", "month": 3, "day": 17})
-        assert r.json() == {"next_date": "2027-03-17", "rule_error": None}
+        assert r.json() == {"next_date": "2027-03-17", "rule_error": None, "next_windows": []}
 
     def test_a_rule_that_cant_be_used_says_why(self, client: TestClient):
         r = client.post("/api/seasons/next-date", json={"kind": "fixed", "month": 2, "day": 29})
         assert r.json() == {
             "next_date": None,
             "rule_error": "29 February isn't every year — pick 28 February or 1 March.",
+            "next_windows": [],
         }
 
 

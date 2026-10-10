@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlexServer, ProbeResult } from "@/lib/types";
 import { StepConnect } from "@/pages/setup/step-connect";
 
-const UNREACHABLE = "https://172-16-10-240.hash.plex.direct:32400";
+const UNREACHABLE = "https://192-168-1-10.hash.plex.direct:32400";
 
 const { getSession, getServers, setupProbe, setupLink } = vi.hoisted(() => ({
   getSession: vi.fn(() =>
@@ -46,7 +46,7 @@ vi.mock("@/lib/api", () => {
 
 function serverWith(connections: PlexServer["connections"]): PlexServer {
   return {
-    name: "SFlix",
+    name: "Home Server",
     machine_id: "m1",
     owned: true,
     version: "1.43.3",
@@ -85,7 +85,7 @@ describe("StepConnect", () => {
     renderStep();
 
     const addressButton = await screen.findByRole("button", {
-      name: /172-16-10-240/i,
+      name: /192-168-1-10/i,
     });
     await userEvent.click(addressButton);
 
@@ -104,7 +104,7 @@ describe("StepConnect", () => {
       serverWith([{ uri: UNREACHABLE, local: true, relay: false, ok: false }]),
     ]);
     renderStep();
-    await screen.findByRole("button", { name: /172-16-10-240/i });
+    await screen.findByRole("button", { name: /192-168-1-10/i });
 
     await userEvent.type(
       screen.getByLabelText(/Plex server URL/i),
@@ -129,7 +129,7 @@ describe("StepConnect", () => {
         libraries: { ok: true, message: "2 libraries found" },
       },
       machine_id: "m1",
-      server_name: "SFlix",
+      server_name: "Home Server",
       owner_account_id: 42,
       libraries: [
         { key: 1, title: "Movies", type: "movie", count: 120 },
@@ -157,10 +157,31 @@ describe("StepConnect", () => {
     expect(setupLink).toHaveBeenCalledWith({
       plex_url: UNREACHABLE,
       machine_id: "m1",
-      server_name: "SFlix",
+      server_name: "Home Server",
       version: "1.43.3",
       owner_account_id: 42,
       plex_pass: true,
     });
+  });
+
+  it("keeps the URL field and Run checks behind Advanced, and Link as the only action", async () => {
+    getServers.mockResolvedValue([
+      serverWith([{ uri: UNREACHABLE, local: true, relay: false, ok: true }]),
+    ]);
+    renderStep();
+    await waitFor(() => expect(setupProbe).toHaveBeenCalledTimes(1));
+
+    const advanced = screen.getByText("Advanced").closest("details");
+    expect(advanced).not.toHaveAttribute("open");
+    expect(advanced).toContainElement(screen.getByLabelText(/Plex server URL/i));
+  });
+
+  it("opens Advanced by itself when no discovered address answered", async () => {
+    getServers.mockResolvedValue([
+      serverWith([{ uri: UNREACHABLE, local: true, relay: false, ok: false }]),
+    ]);
+    renderStep();
+    await screen.findByRole("button", { name: /192-168-1-10/i });
+    expect(screen.getByText("Advanced").closest("details")).toHaveAttribute("open");
   });
 });

@@ -28,7 +28,7 @@ from shortlist.server.api.setup import LinkRequest, link_server
 from shortlist.server.auth import PLEXTV, owned_machine_ids, poll_pin
 
 OWNED = {
-    "name": "SFLIX",
+    "name": "Home Server",
     "clientIdentifier": "machine-owned",
     "provides": "server",
     "owned": True,

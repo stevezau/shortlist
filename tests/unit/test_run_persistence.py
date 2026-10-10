@@ -2,19 +2,10 @@ from datetime import UTC, datetime
 from typing import ClassVar
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import UserRunReport
-from shortlist.server.db.models import Base
 from shortlist.server.services.run_persistence import _cost_blob, reconcile_watched
-
-
-@pytest.fixture
-def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+from tests.db_helpers import disposing_engine
 
 
 class TestCostBlob:
@@ -115,7 +106,7 @@ class TestTheShelfEventsANightlyRunEmits:
         assert [(a[0], a[1]) for a in seen] == [("run.hub_order", "info")]
 
     def test_an_unverified_move_is_a_warning(self):
-        """A shelf we asked for and did not get — the SFLIX case the whole audit was rebuilt around."""
+        """A shelf we asked for and did not get — the a big server case the whole audit was rebuilt around."""
         seen = self._emit([{"library": "Movies", "moved": ["Picked for You"], "verified": False}])
 
         assert [(a[0], a[1]) for a in seen] == [("run.hub_order", "warning")]
@@ -383,7 +374,7 @@ class TestTheRequestsEventIsWrittenWheneverThePassDidAnything:
     sends — so a night that queued 51 titles for the owner's approval left no audit event at all."""
 
     @staticmethod
-    def _emit(requests) -> list[tuple[str, dict]]:
+    def _emit(requests, **kwargs) -> list[tuple[str, dict]]:
         from types import SimpleNamespace
         from unittest.mock import patch
 
@@ -392,7 +383,7 @@ class TestTheRequestsEventIsWrittenWheneverThePassDidAnything:
         seen: list[tuple] = []
         report = SimpleNamespace(requests=requests, dry_run=False, users=[])
         with patch.object(rp, "add_audit", lambda session, scope, level, **f: seen.append((scope, level, f))):
-            rp._emit_request_events(None, 7, report)
+            rp._emit_request_events(None, 7, report, **kwargs)
         return [(level, fields) for scope, level, fields in seen if scope == "run.requests"]
 
     @staticmethod
@@ -416,6 +407,15 @@ class TestTheRequestsEventIsWrittenWheneverThePassDidAnything:
         assert (fields["considered"], fields["queued"], fields["sent"]) == (5, 3, 0)
         assert fields["outcomes"] == []
         assert fields["run_id"] == 7
+
+    def test_the_event_records_how_many_queued_titles_really_wait_in_the_inbox(self):
+        from shortlist.engine.models import RequestReport
+
+        requests = RequestReport(considered=5, queued=[self._title(i) for i in range(3)])
+
+        ((_, fields),) = self._emit(requests, waiting=1)
+
+        assert (fields["queued"], fields["waiting"]) == (3, 1)
 
     def test_a_pass_that_sent_carries_the_sent_count_beside_its_outcomes(self):
         from shortlist.engine.models import MediaType, RequestOutcome, RequestReport
@@ -631,17 +631,16 @@ class TestReconcileCommitsPerPerson:
         from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 
         run_migrations(tmp_path)
-        engine = make_engine(tmp_path)
-        factory = make_session_factory(engine)
-        with factory() as session:
-            for n in range(3):
-                session.add(User(plex_account_id=700 + n, username=f"u{n}", slug=f"u{n}", enabled=True))
-            session.commit()
-        commits: list[int] = []
-        event.listen(engine, "commit", lambda conn: commits.append(1))
-        profiles = [type("P", (), {"slug": f"u{n}", "history": [], "history_complete": False})() for n in range(3)]
+        with disposing_engine(make_engine(tmp_path)) as engine:
+            factory = make_session_factory(engine)
+            with factory() as session:
+                for n in range(3):
+                    session.add(User(plex_account_id=700 + n, username=f"u{n}", slug=f"u{n}", enabled=True))
+                session.commit()
+            commits: list[int] = []
+            event.listen(engine, "commit", lambda conn: commits.append(1))
+            profiles = [type("P", (), {"slug": f"u{n}", "history": [], "history_complete": False})() for n in range(3)]
 
-        reconcile_watched(factory, profiles, {})
+            reconcile_watched(factory, profiles, {})
 
-        assert len(commits) >= 3
-        engine.dispose()
+            assert len(commits) >= 3

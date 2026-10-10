@@ -6,12 +6,13 @@ import {
   Loader2,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { UserAvatar } from "@/components/user-avatar";
 import { formatDuration } from "@/lib/format";
+import { personName } from "@/lib/user-names";
 import { cn } from "@/lib/utils";
 import type { RunRowCost, RunUserResult } from "@/lib/types";
 
@@ -21,6 +22,65 @@ function GroupLabel({ children }: { children: ReactNode }) {
     <p className="sticky top-0 z-10 bg-muted/90 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground backdrop-blur-sm">
       {children}
     </p>
+  );
+}
+
+const STATUS_CLASS = "inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground";
+
+/** The right-hand status of a person's list row: failed, pending, skipped, not built, or done (with its time). */
+function UserStatus({
+  result,
+  cost,
+  built,
+}: {
+  result: RunUserResult;
+  cost?: RunRowCost | null;
+  built?: boolean | null;
+}) {
+  if (result.error !== null) {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive-text">
+        <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+        Failed
+      </span>
+    );
+  }
+  if (result.status === "pending") {
+    return (
+      <span className={STATUS_CLASS}>
+        Pending
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+      </span>
+    );
+  }
+  if (result.status === "skipped") {
+    return (
+      <span className={STATUS_CLASS}>
+        Skipped
+        <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
+      </span>
+    );
+  }
+  if (built === false) {
+    // Nothing was written for them on THIS row — the run was cancelled before it got here, the
+    // row was muted for them, or it produced no picks. A cost exists anyway: the row timer
+    // starts before the cancel check, so a green tick beside "0s" would say "built instantly" about a
+    // row that was never built at all.
+    return (
+      <span className={STATUS_CLASS}>
+        Not built
+        <CircleDashed className="h-3.5 w-3.5" aria-hidden="true" />
+      </span>
+    );
+  }
+  // This list is row-scoped — it lives inside ONE row's card — so the duration shown here is
+  // THIS row's own time, not the person's whole-run total (`result.duration_ms`), which used
+  // to repeat the same number beside every name regardless of which row was open.
+  return (
+    <span className={STATUS_CLASS}>
+      {cost ? formatDuration(cost.duration_ms - cost.blocked_ms) : "Done"}
+      <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+    </span>
   );
 }
 
@@ -66,7 +126,7 @@ function UserRow({
       <UserAvatar name={result.username} size="sm" />
       <span className="min-w-0 flex-1">
         <span className="block break-words font-medium">
-          {result.display_name || result.username}
+          {personName(result)}
         </span>
         {added !== undefined && added > 0 && (
           <span className="block text-xs text-muted-foreground tabular-nums">
@@ -79,39 +139,7 @@ function UserRow({
           not private
         </Badge>
       )}
-      {failed ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive-text">
-          <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-          Failed
-        </span>
-      ) : result.status === "pending" ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Pending
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        </span>
-      ) : result.status === "skipped" ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Skipped
-          <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
-        </span>
-      ) : built === false ? (
-        // Nothing was written for them on THIS row — the run was cancelled before it got here, the
-        // row was muted for them, or it produced no picks. A cost exists anyway: the row timer
-        // starts before the cancel check, so this used to render a green tick beside "0s", which
-        // says "built instantly" about a row that was never built at all.
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Not built
-          <CircleDashed className="h-3.5 w-3.5" aria-hidden="true" />
-        </span>
-      ) : (
-        // This list is row-scoped — it lives inside ONE row's card — so the duration shown here is
-        // THIS row's own time, not the person's whole-run total (`result.duration_ms`), which used
-        // to repeat the same number beside every name regardless of which row was open.
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          {cost ? formatDuration(cost.duration_ms - cost.blocked_ms) : "Done"}
-          <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
-        </span>
-      )}
+      <UserStatus result={result} cost={cost} built={built} />
     </button>
   );
 }
@@ -181,6 +209,13 @@ export function UserTabs({
   const bothGroups =
     [failed.length, ok.length, skipped.length, pending.length].filter(Boolean)
       .length > 1;
+  // Pending always carries its label; the others only when more than one group is showing.
+  const groups = [
+    { label: "Failed", results: failed, labelled: bothGroups },
+    { label: "Succeeded", results: ok, labelled: bothGroups },
+    { label: "Skipped", results: skipped, labelled: bothGroups },
+    { label: "Pending", results: pending, labelled: true },
+  ];
 
   return (
     <div className="space-y-3" role="tablist" aria-label="Users in this run" aria-orientation="vertical"
@@ -247,65 +282,26 @@ export function UserTabs({
           came for. A vertical list reads far better than a wrapped grid of 48 near-identical pills. */}
       <div>
         <div className="max-h-96 divide-y divide-border/50 overflow-y-auto">
-          {bothGroups && failed.length > 0 && (
-            <GroupLabel>Failed · {failed.length}</GroupLabel>
-          )}
-          {failed.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-              cost={costBySlug?.get(result.slug)}
-              built={builtBySlug?.get(result.slug)}
-              added={newBySlug?.get(result.slug)}
-              notPrivate={notPrivate?.has(result.username.toLowerCase())}
-            />
-          ))}
-          {bothGroups && ok.length > 0 && (
-            <GroupLabel>Succeeded · {ok.length}</GroupLabel>
-          )}
-          {ok.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-              cost={costBySlug?.get(result.slug)}
-              built={builtBySlug?.get(result.slug)}
-              added={newBySlug?.get(result.slug)}
-              notPrivate={notPrivate?.has(result.username.toLowerCase())}
-            />
-          ))}
-          {bothGroups && skipped.length > 0 && (
-            <GroupLabel>Skipped · {skipped.length}</GroupLabel>
-          )}
-          {skipped.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-              cost={costBySlug?.get(result.slug)}
-              built={builtBySlug?.get(result.slug)}
-              added={newBySlug?.get(result.slug)}
-              notPrivate={notPrivate?.has(result.username.toLowerCase())}
-            />
-          ))}
-          {pending.length > 0 && (
-            <GroupLabel>Pending · {pending.length}</GroupLabel>
-          )}
-          {pending.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-              cost={costBySlug?.get(result.slug)}
-              built={builtBySlug?.get(result.slug)}
-              added={newBySlug?.get(result.slug)}
-              notPrivate={notPrivate?.has(result.username.toLowerCase())}
-            />
+          {groups.map(({ label, results: group, labelled }) => (
+            <Fragment key={label}>
+              {labelled && group.length > 0 && (
+                <GroupLabel>
+                  {label} · {group.length}
+                </GroupLabel>
+              )}
+              {group.map((result) => (
+                <UserRow
+                  key={result.slug}
+                  result={result}
+                  selected={selected}
+                  onSelect={onSelect}
+                  cost={costBySlug?.get(result.slug)}
+                  built={builtBySlug?.get(result.slug)}
+                  added={newBySlug?.get(result.slug)}
+                  notPrivate={notPrivate?.has(result.username.toLowerCase())}
+                />
+              ))}
+            </Fragment>
           ))}
           {shown.length === 0 && (
             <p className="px-3 py-8 text-center text-sm text-muted-foreground">

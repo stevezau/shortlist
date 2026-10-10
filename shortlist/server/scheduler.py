@@ -211,15 +211,23 @@ def _make_job(app, cron: str, collection_ids: list[int]):
 
 def _register(scheduler: AsyncIOScheduler, app, groups: dict[str, list[int]]) -> None:
     for cron, ids in groups.items():
+        job_id = _job_id(cron)
+        # Re-adding recomputes the next fire time from now. A rebuild that lands while the loop is stalled
+        # would drop a job that is due but not yet dispatched, so carry a past-due time over (the id is the
+        # cron, so the trigger is unchanged and only the row membership is new).
+        existing = scheduler.get_job(job_id)
+        carried = getattr(existing, "next_run_time", None)  # a pending job (scheduler not started) has none
+        extra = {"next_run_time": carried} if carried is not None and carried <= datetime.now(carried.tzinfo) else {}
         # Owner decision 2026-10-02: a late row run still runs (`None` = no grace). A restart replays nothing
         # (in-memory job store, rebuilt at boot), but a paused host/VM or a forward clock jump wakes the live
         # process past due and starts one full run (coalesced) then. Accepted: leak-safe ordering still holds.
         scheduler.add_job(
             _make_job(app, cron, ids),
             crontab_trigger(cron),
-            id=_job_id(cron),
+            id=job_id,
             misfire_grace_time=None,
             replace_existing=True,
+            **extra,
         )
 
 
@@ -260,8 +268,8 @@ def _resolve_cron(app, key: str, fallback: str, *, blank_means_off: bool = False
     with app.state.sessions() as session:
         row = session.get(Setting, key)
     # `.get`, not `["v"]`: a settings row whose JSON is not shaped {"v": ...} would raise here, and
-    # this runs inside `build_scheduler` at BOOT — the one place the docstring below promises a bad
-    # value can never crash-loop the container.
+    # this runs inside `build_scheduler` at BOOT — the one place a bad value must never
+    # crash-loop the container (see the docstring above).
     custom = (row.value or {}).get("v") if row is not None else None
     if custom and isinstance(custom, str) and custom.strip():
         try:
@@ -278,14 +286,9 @@ def _resolve_cron(app, key: str, fallback: str, *, blank_means_off: bool = False
     return fallback
 
 
-def _resolve_watch_cron(app) -> str:
-    """The watch sync cron, from the DB setting or the built-in default."""
-    return _resolve_cron(app, "sync.watch_cron", DEFAULT_CRONS["sync.watch_cron"])
-
-
 def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
     """The daily watch-status reconcile — one fixed job, unaffected by row schedules."""
-    cron = _resolve_watch_cron(app)
+    cron = _resolve_cron(app, "sync.watch_cron", DEFAULT_CRONS["sync.watch_cron"])
 
     async def fire() -> None:
         # Queued, not called: watch history drives every recommendation, so a silent failure here
@@ -295,19 +298,14 @@ def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, crontab_trigger(cron), id=WATCH_SYNC_JOB_ID, replace_existing=True)
 
 
-def _resolve_users_cron(app) -> str:
-    """The user sync cron, from the DB setting or the built-in default."""
-    return _resolve_cron(app, "sync.users_cron", DEFAULT_CRONS["sync.users_cron"])
-
-
 def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
     """Daily user-list reconcile — pull shared/Home users from plex.tv + Tautulli."""
-    cron = _resolve_users_cron(app)
+    cron = _resolve_cron(app, "sync.users_cron", DEFAULT_CRONS["sync.users_cron"])
 
     async def fire() -> None:
         # Queued, not called. This is the sync that notices a NEW account (and writes the filters that
-        # stop them seeing everyone's rows) and notices someone leaving the share — and its only
-        # failure path used to be a log line nobody reads. As a job it retries with backoff, shows up
+        # stop them seeing everyone's rows) and notices someone leaving the share — and a bare
+        # log line on failure is one nobody reads. As a job it retries with backoff, shows up
         # on the Jobs page, and raises a notification if it gives up.
         await _queue_and_drain(app, "sync.users")
 
@@ -500,6 +498,15 @@ def _record_missed_runs(app):
         except Exception:
             logger.exception("could not record that scheduled job {} was skipped", job_id)
 
+        try:
+            from shortlist.server.services.notify import enqueue_job_skipped
+
+            enqueue_job_skipped(
+                app.state.sessions, job_id, str(fields.get("name") or job_id), str(fields["scheduled_for"])
+            )
+        except Exception:
+            logger.exception("could not queue the webhook alert for skipped scheduled job {}", job_id)
+
     def listener(event: JobExecutionEvent) -> None:
         if event.job_id in _UNRECORDED_MISSES:
             return
@@ -529,14 +536,11 @@ def _record_missed_runs(app):
     return listener
 
 
-def build_scheduler(app) -> AsyncIOScheduler:
-    # The one-second default skips nightly runs after even a brief event-loop delay.
-    scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 30})
-    # Here and never in `rebuild_schedule`: a rebuild re-adds jobs to this same scheduler, whose listeners
-    # persist, so registering there would record every miss once per rebuild.
-    scheduler.add_listener(_record_missed_runs(app), EVENT_JOB_MISSED)
-    groups = schedule_groups(app)
-    _register(scheduler, app, groups)
+def _register_settings_driven_jobs(scheduler: AsyncIOScheduler, app) -> None:
+    """Every fixed job whose cron comes from a setting — what a rebuild must re-derive.
+
+    The jobs worker is not here: its cadence is not a setting, and a rebuild must not re-add it.
+    """
     _register_watch_sync(scheduler, app)
     _register_user_sync(scheduler, app)
     _register_backup(scheduler, app)
@@ -545,6 +549,17 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register_sync_check(scheduler, app)
     _register_maintenance_prune(scheduler, app)
     _register_theme_rotation(scheduler, app)
+
+
+def build_scheduler(app) -> AsyncIOScheduler:
+    # The one-second default skips nightly runs after even a brief event-loop delay.
+    scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 30})
+    # Here and never in `rebuild_schedule`: a rebuild re-adds jobs to this same scheduler, whose listeners
+    # persist, so registering there would record every miss once per rebuild.
+    scheduler.add_listener(_record_missed_runs(app), EVENT_JOB_MISSED)
+    groups = schedule_groups(app)
+    _register(scheduler, app, groups)
+    _register_settings_driven_jobs(scheduler, app)
     _register_jobs_worker(scheduler, app)
     logger.info(
         "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + row-visibility "
@@ -565,14 +580,7 @@ def rebuild_schedule(app) -> None:
         if job.id.startswith(_JOB_PREFIX) and job.id not in wanted:
             job.remove()  # a cron that no longer has any row
     _register(scheduler, app, groups)
-    _register_watch_sync(scheduler, app)
-    _register_user_sync(scheduler, app)
-    _register_backup(scheduler, app)
-    _register_privacy_sync(scheduler, app)
-    _register_row_visibility(scheduler, app)
-    _register_sync_check(scheduler, app)
-    _register_maintenance_prune(scheduler, app)
-    _register_theme_rotation(scheduler, app)
+    _register_settings_driven_jobs(scheduler, app)
     logger.info(
         "rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync "
         "+ row-visibility + prune{}",

@@ -1,28 +1,20 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router";
 
-import { Segmented } from "@/components/segmented";
+import { AiModePicker, AiTextFields, PROMPT_CLASS } from "@/components/rows/ai-text-fields";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
-import { settingString } from "@/lib/format";
+import { joinList, settingString } from "@/lib/format";
 import { useSettings } from "@/lib/queries";
 import type { AiInstructionsInert } from "@/lib/sources";
 import type { AiInstructions } from "@/lib/types";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 
-type Mode = AiInstructions["mode"];
-
-/** The API's `maxLength` on the row's text and on the server-wide default. */
-const MAX_CHARS = 2000;
 const PREVIEW_DEBOUNCE_MS = 400;
 const DEFAULTS_HREF = "/settings/defaults#sources";
 const LINK_CLASS = "underline underline-offset-2 hover:text-foreground";
-const PROMPT_CLASS =
-  "max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-mono text-xs";
 
 const PLACEHOLDERS_HINT = "You can use {count}, {year} and {last_year}.";
 
@@ -36,17 +28,10 @@ const PREVIEW_FOOTNOTES: Record<string, string> = {
 /** Native search also ends its user message by asking for recent releases, unless guidance replaces the default. */
 const RECENCY_LINE = " It ends by asking for titles released in the last two years.";
 
-const MODES: { value: Mode; label: string }[] = [
-  { value: "default", label: "Use the default" },
-  { value: "add", label: "Add to the default" },
-  { value: "own", label: "Write your own" },
-];
-
-/** "A", "A and B", "A, B and C". */
-function listOf(items: string[]): string {
-  if (items.length <= 1) return items.join("");
-  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
-}
+/** Source names the owner may not recognise, with what they do in plain words. */
+const SOURCE_GLOSS: Record<string, string> = {
+  "TMDB discover": "TMDB discover (popular titles in their favourite genres)",
+};
 
 /** What the search backend lets the instructions steer; null when there is nothing to add (native). */
 function backendNote(backend: string, inert: AiInstructionsInert): string | null {
@@ -61,10 +46,10 @@ function backendNote(backend: string, inert: AiInstructionsInert): string | null
     return "Your AI provider can't search the web itself, so these instructions have no effect. Choose Exa or SearXNG in Settings → Connections.";
   }
   if (backend === "exa") {
-    return "You search with Exa. Exa's searches start from each person's recent watches and are shared between people, so these instructions decide which of Exa's titles the AI keeps, not what Exa looks for.";
+    return "You search with Exa, a web-search service. Exa's searches start from each person's recent watches and are shared between people, so these instructions decide which of Exa's titles the AI keeps, not what Exa looks for.";
   }
   if (backend === "searxng") {
-    return "You search with SearXNG. Its results start from each person's recent watches; these instructions decide which titles the AI picks from them.";
+    return "You search with SearXNG, a self-hosted search engine. Its results start from each person's recent watches; these instructions decide which titles the AI picks from them.";
   }
   return null;
 }
@@ -89,18 +74,8 @@ export function RowAiInstructionsField({
   /** Why nothing reads the instructions under the current settings, or null when the AI does. */
   inert: AiInstructionsInert;
 }) {
-  const textId = useId();
-  const blankId = useId();
   const [previewOpen, setPreviewOpen] = useState(false);
   const note = backendNote(backend, inert);
-  const setText = (text: string) => onChange({ mode: value.mode, text });
-  // The API refuses Add or Write your own with nothing written; say so here, before Save does.
-  const blank = value.mode !== "default" && !value.text.trim();
-  const blankMessage = blank && (
-    <p id={blankId} className="text-sm text-destructive-text">
-      Write the instructions, or choose Use the default.
-    </p>
-  );
 
   return (
     <div className="space-y-3 border-t pt-4">
@@ -108,56 +83,18 @@ export function RowAiInstructionsField({
       <p className="text-sm text-muted-foreground">
         What AI web search should look for in this row.
       </p>
-      <Segmented
-        value={value.mode}
-        options={MODES}
-        ariaLabel="AI instructions"
-        onChange={(mode) => onChange({ mode, text: value.text })}
-      />
+      <AiModePicker value={value} onChange={onChange} ariaLabel="AI instructions" />
 
       {value.mode === "default" && <DefaultInstructions backend={backend} />}
 
-      {value.mode === "add" && (
-        <div className="space-y-2">
-          <Label htmlFor={textId}>Also tell the AI</Label>
-          <Textarea
-            id={textId}
-            value={value.text}
-            maxLength={MAX_CHARS}
-            aria-invalid={blank || undefined}
-            aria-describedby={blank ? blankId : undefined}
-            onChange={(event) => setText(event.target.value)}
-          />
-          {blankMessage}
-          <p className="text-sm text-muted-foreground">
-            Added after the default instructions, for this row only.
-          </p>
-          <p className="text-sm text-muted-foreground">{PLACEHOLDERS_HINT}</p>
-        </div>
-      )}
-
-      {value.mode === "own" && (
-        <div className="space-y-2">
-          <Label htmlFor={textId}>Your instructions</Label>
-          <Textarea
-            id={textId}
-            rows={6}
-            value={value.text}
-            maxLength={MAX_CHARS}
-            aria-invalid={blank || undefined}
-            aria-describedby={blank ? blankId : undefined}
-            onChange={(event) => setText(event.target.value)}
-          />
-          {blankMessage}
-          <p className="text-sm text-muted-foreground">{PLACEHOLDERS_HINT}</p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onChange({ mode: "default", text: value.text })}
-          >
-            Reset to the default
-          </Button>
+      <AiTextFields
+        value={value}
+        onChange={onChange}
+        blankText="Write the instructions, or choose Use the default."
+        addNote="Added after the default instructions, for this row only."
+        ownLabel="Your instructions"
+        hint={PLACEHOLDERS_HINT}
+        afterOwn={
           <div className="space-y-1 rounded-md border border-dashed p-3">
             <p className="text-sm font-medium">Shortlist always adds these</p>
             <p className="text-sm text-muted-foreground">
@@ -166,12 +103,12 @@ export function RowAiInstructionsField({
               already out. The reply format.
             </p>
           </div>
-        </div>
-      )}
+        }
+      />
 
       {otherSources.length > 0 && (
         <p className="text-sm text-warning">
-          {listOf(otherSources)} {otherSources.length === 1 ? "doesn't" : "don't"} read these
+          {joinList(otherSources.map((name) => SOURCE_GLOSS[name] ?? name))} {otherSources.length === 1 ? "doesn't" : "don't"} read these
           instructions, so this row will be a mix.
         </p>
       )}

@@ -10,6 +10,7 @@ import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
 import { RowName } from "@/components/rows/row-name";
+import { LIBRARY_NAME } from "@/lib/placeholders";
 import { Segmented } from "@/components/segmented";
 import { UserPanel } from "@/components/runs/user-panel";
 import { UserTabs } from "@/components/runs/user-tabs";
@@ -20,6 +21,7 @@ import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
 import {
   groupRunByRow,
   libraryLabel,
+  rowCounts,
   rowSummary,
   rowTimeMs,
   type RunRowGroup,
@@ -41,6 +43,37 @@ const DECISION_LABEL: Record<string, string> = {
   not_due: "not due",
   out_of_season: "out of season",
 };
+
+/**
+ * The row's name in its card header. The header spans every library the row built, so the
+ * `{library_name}` token is resolved once per library ("✨ Movies Picked for You · ✨ TV Shows Picked
+ * for You") rather than drawn as a chip. A row that delivered nothing has no library to name, so its
+ * token is dropped (`group.title`) instead; any other placeholder reads as italic words ("each person's
+ * top title"), because this page lists a per-person row once for everyone and a chip read as unfilled.
+ */
+function RowHeaderName({ group, libraries }: { group: RunRowGroup; libraries: string }) {
+  if (!group.template.includes(LIBRARY_NAME)) {
+    return (
+      <>
+        <RowName name={group.template} plain />
+        {libraries && (
+          <span className="text-xs tracking-wide text-muted-foreground uppercase">{libraries}</span>
+        )}
+      </>
+    );
+  }
+  if (group.libraries.length === 0) return <span className="font-medium">{group.title}</span>;
+  return (
+    <>
+      {group.libraries.map((library, i) => (
+        <span key={library}>
+          {i > 0 && <span className="mr-2 text-muted-foreground">·</span>}
+          <RowName name={group.template} libraryName={library} plain />
+        </span>
+      ))}
+    </>
+  );
+}
 
 /** "+7 −7 · kept 8" for one library's delivery. */
 function diffLabel(entry: RunLibraryBreakdown): string {
@@ -137,8 +170,8 @@ function SharedRowPanel({
 /**
  * "N people failed with the same problem" — one banner instead of the same error read off N rows.
  *
- * Lifted from the People tab when that went: it is about the RUN, not about any one row, so it sits
- * above them all. Losing it would have made a server-wide outage look like N unrelated failures.
+ * It is about the RUN, not about any one row, so it sits above them all. Without it a server-wide
+ * outage would look like N unrelated failures.
  */
 function CommonFailure({ run }: { run: RunDetail }) {
   const buckets = new Map<string, { count: number; msg: string }>();
@@ -226,6 +259,15 @@ function RowCard({
     if (person.result.slug === chosen?.slug) chosenPerson = person;
   }
   const decision = chosenPerson?.decision;
+  // A per-person row has no single trace (each person has their own, behind "How we picked"), so its
+  // header carries the status alone: failed if anyone failed, OK once everyone has reported.
+  const { failed } = rowCounts(group);
+  const personStatus =
+    group.kind === "shared" || group.people.length === 0 || group.pending > 0
+      ? null
+      : failed > 0
+        ? { variant: "destructive" as const, label: `${failed} failed` }
+        : { variant: "success" as const, label: "OK" };
 
   return (
     <div className="rounded-lg border">
@@ -234,7 +276,7 @@ function RowCard({
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          className="flex min-w-0 flex-1 basis-full items-center gap-2.5 text-left sm:basis-0"
         >
           <ChevronRight
             aria-hidden="true"
@@ -244,14 +286,7 @@ function RowCard({
           />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              {/* The header spans every library the row built, so no one library can fill
-                  `{library_name}`; the chip says what it is instead of dropping it. */}
-              <RowName name={group.template} />
-              {libraries && (
-                <span className="text-xs tracking-wide text-muted-foreground uppercase">
-                  {libraries}
-                </span>
-              )}
+              <RowHeaderName group={group} libraries={libraries} />
             </span>
             <span className="text-xs text-muted-foreground">
               {group.kind === "shared" ? "Shared" : "Per-person"} ·{" "}
@@ -278,16 +313,21 @@ function RowCard({
             {runStatusLabel(shared.status)}
           </Badge>
         ) : (
-          notStarted && (
-            <Badge variant="outline" className="shrink-0">
-              Pending
-            </Badge>
-          )
+          <>
+            {notStarted && (
+              <Badge variant="outline" className="shrink-0">
+                Pending
+              </Badge>
+            )}
+            {personStatus && (
+              <Badge variant={personStatus.variant} className="shrink-0">
+                {personStatus.label}
+              </Badge>
+            )}
+          </>
         )}
         {/* Trace sits on the thing it traces: the row when the row is SHARED (one build for the whole
-            server), and the PERSON otherwise — `UserPanel` renders their own "How we picked" button.
-            This comment used to claim the latter while nothing rendered it: the per-person button had
-            gone with the People tab, so a per-person trace was unreachable from the whole app. */}
+            server), and the PERSON otherwise — `UserPanel` renders their own "How we picked" button. */}
         {shared?.has_trace && (
           <Button asChild variant="ghost" size="sm" className="shrink-0">
             <Link to={`/runs/${run.id}/trace/row/${group.slug}`}>
@@ -315,9 +355,8 @@ function RowCard({
             <SharedRowPanel group={group} running={!run.finished_at} />
           </div>
         ) : (
-          // The People tab's own two components, scoped to this row: the searchable, status-grouped
-          // person list, and the formatted panel with its libraries, diff legend and "How we picked".
-          // Reusing them is what keeps the two tabs one design rather than two.
+          // The searchable, status-grouped person list, scoped to this row, and the formatted panel
+          // with its libraries, diff legend and "How we picked".
           <div className="grid gap-4 border-t p-4 lg:grid-cols-[minmax(0,20rem)_1fr]">
             <UserTabs
               results={results}

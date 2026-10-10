@@ -9,20 +9,15 @@ import {
 } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Link } from "react-router";
 
 import { StatusCell, StatusRow, StatusStrip } from "@/components/status-strip";
 import { Badge } from "@/components/ui/badge";
 import { formatDuration, runElapsedMs, runStatusLabel } from "@/lib/format";
-import {
-  hasPrivacyWarning,
-  nameList,
-  privacyFindings,
-  runPrivacyVerdict,
-  type RunPrivacy,
-} from "@/lib/run-privacy";
+import { nameList, runPrivacyVerdict } from "@/lib/run-privacy";
 import { tokenSteps } from "@/lib/run-format";
+import { runHealth } from "@/lib/run-status";
 import type { RunDetail } from "@/lib/types";
+import { clockTime } from "@/lib/when";
 
 /** A finished run's summary: one strip of facts read at a glance, rather than one dense text line. */
 
@@ -48,7 +43,7 @@ function HintParts({ parts }: { parts: string[] }) {
  *
  * A bare zero reads identically whether nothing was wanted, the floors emptied the pool, or the
  * rating gate ran out of lookups before reaching anything good — and only the last is something the
- * owner can act on. It took reading the container log by hand to tell them apart (2026-08-18).
+ * owner can act on.
  */
 function requestHint(s: RunDetail["stats"]): string {
   const requested = s.titles_requested ?? 0;
@@ -57,14 +52,22 @@ function requestHint(s: RunDetail["stats"]): string {
   if (requested > 0) return "sent to be downloaded";
   // Queued FIRST, and before any talk of the floors: a run that put five titles in the inbox worked
   // exactly as configured, and "none good enough" would send the owner hunting a rating problem that
-  // does not exist. Caught on a real run whose auto_min_demand had just been raised (2026-08-18).
+  // does not exist (a run whose auto_min_demand was just raised is the case).
   const queued = s.requests_queued;
-  if (queued) return `${queued} waiting for you to approve in Requests`;
+  // `waiting`, not `queued`: queued also holds titles already requested or already in the library,
+  // which wait nowhere (the live server queued 32 a night with an empty inbox).
+  const waiting = s.requests_waiting;
+  if (waiting) return `${waiting} waiting for you to approve in Requests`;
   // ABSENT is not zero. A run recorded before this key existed cannot tell us whether titles are
   // waiting, so claiming "none were good enough" asserts something the data does not support — and
   // sends the reader at the rating floor when the auto-send bar may be what held them. Same trap as
   // `wanted` in the notification builder.
   if (queued === undefined) return "see Requests for anything waiting";
+  if (queued > 0) {
+    if (waiting === undefined) return "see Requests for anything waiting";
+    // Queued, none of it waiting: those titles cleared the bars, so the floors are not the story.
+    return "none are waiting: the rest were already requested or in your library";
+  }
   const wanted = s.requests_wanted;
   // A healthy run on a complete library also lands on pool === 0, so blaming the floors there would
   // report a fault where there is none. `wanted` is what tells the two apart.
@@ -77,7 +80,7 @@ function requestHint(s: RunDetail["stats"]): string {
   // Neither number is a count of TITLES once a run has several rows: both are sums of per-row
   // checks, so a title two rows want is counted twice — while `requests_wanted` above is distinct.
   // Printing "of 3000 wanted" beside "1000 wanted" made the two disagree on the same card, so the
-  // word does not appear here at all (release review 2026-08-18).
+  // word does not appear here at all.
   if (examined < pool) return `rated ${examined} of ${pool} — none good enough`;
   return `rated all ${pool} — none cleared the rating limit`;
 }
@@ -86,7 +89,7 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
   const s = run.stats;
   const elapsed = runElapsedMs(run.began_at, run.finished_at);
   const failed = s.users_error ?? 0;
-  // Skipped is neither a success nor a failure — a run where everyone was skipped used to read
+  // Skipped is neither a success nor a failure — a run where everyone was skipped must not read
   // "3 · all succeeded" above three rows badged "Skipped".
   const skipped = s.users_skipped ?? 0;
   const requested = s.titles_requested ?? 0;
@@ -144,8 +147,8 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
     );
   const showTokens = tokens > 0;
   const showExa = exa > 0 || exaCacheHits > 0;
-  // Only a warning or a failure earns a dot in place of the icon: these used to colour the icon, and a
-  // green dot on every healthy run is a light nobody reads.
+  // Only a warning or a failure earns a dot in place of the icon: a green dot on every healthy
+  // run is a light nobody reads.
   const peopleTone =
     failed > 0
       ? "error"
@@ -298,24 +301,15 @@ function MetaFact({
   );
 }
 
-/** "02:30:04" — a run is often seconds long, so the start → finish line carries seconds. */
-function clockTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
 /**
- * Did the run work. "OK with warnings" is not a status of its own — the server has none (five queries
+ * Did the run work. "OK · N warnings" is not a status of its own — the server has none (five queries
  * filter on `ok`/`error`) — it is an OK run whose privacy measurement flagged somebody.
  */
 function ResultCell({ run }: { run: RunDetail }) {
   const failed = run.stats.users_error ?? 0;
   if (run.status === "ok") {
-    const warnings = privacyFindings(run.privacy).length;
-    const warned = hasPrivacyWarning(run);
+    const health = runHealth(run);
+    const warned = health.warnings > 0;
     return (
       <StatusCell
         label="Result"
@@ -323,7 +317,7 @@ function ResultCell({ run }: { run: RunDetail }) {
         value={
           warned ? (
             <Badge variant="warning" className="border-warning/40">
-              OK with warnings
+              {health.label}
             </Badge>
           ) : (
             "OK"
@@ -331,7 +325,6 @@ function ResultCell({ run }: { run: RunDetail }) {
         }
         sub={[
           failed > 0 ? `${failed} ${failed === 1 ? "person" : "people"} failed` : "No errors",
-          ...(warned ? [`${warnings} ${warnings === 1 ? "warning" : "warnings"}`] : []),
         ].join(" · ")}
       />
     );
@@ -355,15 +348,6 @@ function ResultCell({ run }: { run: RunDetail }) {
   return <StatusCell label="Result" tone="neutral" value={runStatusLabel(run.status)} />;
 }
 
-/** The run's own words for one flagged account, for the link under the privacy count. */
-function findingPhrase(name: string, username: string, privacy: RunPrivacy): string {
-  const key = username.toLowerCase();
-  const listed = (names: string[] | null) => (names ?? []).some((n) => n.toLowerCase() === key);
-  if (listed(privacy.can_see_others)) return `${name} can see others’ rows`;
-  if (listed(privacy.unreadable_filters)) return `Plex can’t read ${name}’s restrictions`;
-  return `Plex isn’t applying ${name}’s hide rules`;
-}
-
 /**
  * How many accounts hide every row that is not theirs, as far as THIS run can vouch for.
  *
@@ -380,18 +364,9 @@ function PrivacyCell({ run }: { run: RunDetail }) {
   const displayName = (username: string) =>
     run.users.find((user) => user.username.toLowerCase() === username.toLowerCase())?.display_name ||
     username;
-  const flaggedLink = (flagged: string[]) => {
-    const first = flagged[0];
-    if (!first || !run.privacy) return null;
-    return (
-      <Link
-        to="/privacy"
-        className="rounded-sm text-accent-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {findingPhrase(displayName(first), first, run.privacy)} →
-      </Link>
-    );
-  };
+  // The callout under the strip names the account and carries the fix link, so the tile only points
+  // at it: the same warning said three times (tile, link, callout) read as three problems.
+  const flaggedLink = (flagged: string[]) => (flagged.length > 0 && run.privacy ? "Details below" : null);
 
   switch (verdict.kind) {
     case "not_measured":
@@ -413,12 +388,14 @@ function PrivacyCell({ run }: { run: RunDetail }) {
           label="Privacy"
           tone={verdict.flagged.length > 0 ? "warn" : "neutral"}
           value="Not fully measured"
-          sub={
-            flaggedLink(verdict.flagged) ??
-            (run.privacy?.unreadable_filters === null
+          sub={[
+            flaggedLink(verdict.flagged),
+            run.privacy?.unreadable_filters === null
               ? "Plex’s share filters weren’t read on this run"
-              : "From an older version that didn’t check every account")
-          }
+              : "From an older version that didn’t check every account",
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         />
       );
     case "no_accounts":

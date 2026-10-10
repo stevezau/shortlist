@@ -1,7 +1,8 @@
-import { RefreshCw } from "lucide-react";
+import { ExternalLink, RefreshCw } from "lucide-react";
 import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
+import { PLEX_USERS_URL } from "@/components/user-detail/off-banner";
 import { UserAvatar } from "@/components/user-avatar";
 import { UserBadges } from "@/components/user-badges";
 import { Badge } from "@/components/ui/badge";
@@ -10,15 +11,23 @@ import { Switch } from "@/components/ui/switch";
 import { timeAgo } from "@/lib/format";
 import { usePatchUser, useStartRun } from "@/lib/queries";
 import type { User } from "@/lib/types";
+import { profileBlocksRows, userState } from "@/lib/user-state";
+import { personName } from "@/lib/user-names";
 
 /** The user page's identity header: avatar, status badges, stats, pause toggle, and Run now. */
 export function UserDetailHeader({ user }: { user: User }) {
   const patchUser = usePatchUser();
   const startRun = useStartRun();
-  const paused = user.prefs?.paused ?? false;
-  // Two distinct states, kept from contradicting each other: `enabled` (does this person get a
-  // Shortlist row at all — the Users-list On/Off) vs `paused` (temporarily skipped on runs, row kept).
-  // When they're OFF, "paused" is moot, so we show the off state instead of an "Active" that lies.
+  // The same state the Users list shows. `enabled` (does this person get a Shortlist row at all) and
+  // `paused` (temporarily skipped on runs) are different switches; Off makes Paused moot, so an Off
+  // person never shows an "Active" control that lies.
+  const state = userState(user);
+  const off = state === "off";
+  const paused = state === "paused";
+  const name = personName(user);
+  const profileBlocked = profileBlocksRows(user);
+  // A plainly switched-off person needs no reason here: the banner says so and "Turn on" sits beside Run now.
+  const offReason = profileBlocked ? `Clear ${name}’s Restriction Profile in Plex first` : null;
 
   return (
     <div className="space-y-4">
@@ -28,13 +37,16 @@ export function UserDetailHeader({ user }: { user: User }) {
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight">
-                {user.display_name || user.username}
+                {/* The breadcrumb shares the title line, so this page's title sits at the same height as
+                    every other page's. */}
+                <Link to="/users" className="font-normal text-muted-foreground hover:text-foreground">
+                  Users
+                </Link>
+                <span className="font-normal text-faint-foreground">{" / "}</span>
+                {name}
               </h1>
               <UserBadges user={user} />
-              {!user.enabled && <Badge variant="secondary">off</Badge>}
-              {user.enabled && paused && (
-                <Badge variant="secondary">paused</Badge>
-              )}
+              {paused && <Badge variant="secondary">paused</Badge>}
             </div>
             <p className="break-words text-sm text-muted-foreground">
               {user.display_name && user.display_name !== user.username && (
@@ -55,22 +67,13 @@ export function UserDetailHeader({ user }: { user: User }) {
             </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {!user.enabled ? (
-            // Off entirely — pausing is moot. Point at the one switch that turns them back on.
-            <p className="text-sm text-muted-foreground">
-              Turned off — no Shortlist row.{" "}
-              <Link to="/users" className="font-medium underline">
-                Turn on from Users
-              </Link>
-              .
-            </p>
-          ) : (
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+          {!off && (
             <label
-              className="flex items-center gap-2 text-sm text-muted-foreground"
-              title="Pausing skips this person on runs but keeps their row — unlike turning them off on the Users list."
+              className="flex items-center gap-3 text-sm"
+              title="Pausing takes this person off Home and skips them on runs. Nothing is deleted; resuming puts their rows back."
             >
-              {paused ? "Rebuilding paused" : "Rebuild their rows"}
+              <span className="font-medium">Active</span>
               <Switch
                 checked={!paused}
                 onCheckedChange={(active) =>
@@ -81,28 +84,54 @@ export function UserDetailHeader({ user }: { user: User }) {
                 }
                 aria-label={`Pause or resume ${user.username}`}
               />
+              <span className="text-muted-foreground">
+                {paused
+                  ? "Paused: their rows are off Home"
+                  : "Pausing takes their rows off Home; nothing is deleted"}
+              </span>
             </label>
           )}
-          <Button
-            variant="secondary"
-            onClick={() => startRun.mutate({ user_ids: [user.id] })}
-            loading={startRun.isPending}
-            aria-label={`Run for ${user.display_name || user.username}`}
-            title={`Rebuilds only ${user.display_name || user.username}'s rows, just for them — no one else is touched.`}
-          >
-            {!startRun.isPending && <RefreshCw aria-hidden="true" />}
-            Run now
-          </Button>
+          <div className="text-right">
+            <Button
+              variant="secondary"
+              onClick={() => startRun.mutate({ user_ids: [user.id] })}
+              loading={startRun.isPending}
+              disabled={off}
+              aria-label={`Run for ${name}`}
+              title={`Rebuilds only ${name}'s rows, just for them — no one else is touched.`}
+            >
+              {!startRun.isPending && <RefreshCw aria-hidden="true" />}
+              Run now
+            </Button>
+            {offReason && <p className="mt-1 text-xs text-muted-foreground">{offReason}</p>}
+          </div>
+          {/* "Turn on" only where it changes something. A Restriction Profile keeps the person Off
+              whatever `enabled` says (`userState`), so a Turn on there would save and still read Off:
+              the honest action is the fix in Plex. */}
+          {off && !profileBlocked && (
+            <Button
+              onClick={() => patchUser.mutate({ id: user.id, patch: { enabled: true } })}
+              loading={patchUser.isPending}
+            >
+              Turn on
+            </Button>
+          )}
+          {off && profileBlocked && (
+            <Button asChild>
+              <a href={PLEX_USERS_URL} target="_blank" rel="noreferrer">
+                Fix in Plex
+                <ExternalLink aria-hidden="true" />
+              </a>
+            </Button>
+          )}
         </div>
       </header>
-
-      {user.enabled && <p className="text-xs text-muted-foreground">Pausing skips this person on runs and keeps their current rows on Plex. Turning them off in Users removes their rows.</p>}
 
       {/* Runs are watched on the Runs page — the Dashboard is the watch-tracking report and shows
           nothing live, so pointing there sent people somewhere the run never appears. */}
       {startRun.isSuccess && (
         <p className="text-sm text-muted-foreground">
-          Run started for {user.display_name || user.username} only &mdash;
+          Run started for {name} only &mdash;
           follow it on{" "}
           <Link to="/runs" className="font-medium underline">
             Runs
@@ -111,8 +140,7 @@ export function UserDetailHeader({ user }: { user: User }) {
         </p>
       )}
 
-      {/* A run that fails to start says exactly why; it used to be dropped, leaving the button
-          simply stopping. */}
+      {/* A run that fails to start says exactly why, rather than the button simply stopping. */}
       {startRun.isError && (
         <MutationAlert
           error={startRun.error}
@@ -123,7 +151,7 @@ export function UserDetailHeader({ user }: { user: User }) {
       {patchUser.isError && (
         <MutationAlert
           error={patchUser.error}
-          lead={paused ? "They are still paused." : "They are still active."}
+          lead={off ? "They are still off." : paused ? "They are still paused." : "They are still active."}
           fallback="Couldn’t save that change. Try again."
           onRetry={() => {
             const last = patchUser.variables;

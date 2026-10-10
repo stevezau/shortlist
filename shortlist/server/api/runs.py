@@ -137,10 +137,14 @@ async def runs_summary(request: Request) -> dict:
 @router.delete("", response_model=RunsDeletedOut)
 async def clear_runs(request: Request) -> dict:
     """Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the
-    dashboard's lifetime metrics survive — only the browsable history is cleared. Changes nothing
-    on Plex. Note: the next run will re-curate from scratch (no carry-forward) since picks lose
-    their run association."""
+    dashboard's lifetime metrics survive. Delivered membership is independent, so watch tracking
+    and carry-forward keep working. Changes nothing on Plex."""
     with request.app.state.sessions() as session:
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        if session.query(Run.id).filter(Run.status.in_(("queued", "running"))).first():
+            raise HTTPException(
+                status_code=409, detail="Wait for queued or running runs to finish before clearing history."
+            )
         deleted = session.query(func.count(Run.id)).scalar() or 0
         # Detach picks from their runs (null run_id) so the dashboard metrics survive, then delete
         # the run history itself (per-user traces are the storage hog at ~100 KB per user per run).

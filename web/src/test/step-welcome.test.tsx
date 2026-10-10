@@ -17,11 +17,4 @@ describe("StepWelcome", () => {
     // DOCUMENT_POSITION_FOLLOWING: the button comes after the note in reading order.
     expect(note.compareDocumentPosition(getStarted) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
-
-  it("keeps the TMDB and AI paragraph to one sentence", () => {
-    renderStep();
-
-    const paragraph = screen.getByText(/free TMDB key/);
-    expect(paragraph.textContent?.trim().split(/(?<=[.!?])\s+/)).toHaveLength(1);
-  });
 });

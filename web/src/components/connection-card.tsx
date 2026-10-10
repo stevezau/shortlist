@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { TestResult } from "@/components/test-result";
+import { plainTestMessage } from "@/lib/plain-test-error";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -66,6 +67,8 @@ export type ConnectionField =
           values so a provider-specific URL can be chosen (e.g. the AI curator's key link). */
       helpUrl?:
         string | ((values: Record<string, string>) => string | undefined);
+      /** The link's text when the field holds something other than an API key. */
+      helpLabel?: string;
     }
   | {
       key: string;
@@ -94,8 +97,8 @@ export type ConnectionField =
     };
 
 /**
- * A connection to an external service: shows its status at a glance, tests it in place, and — the
- * part the wizard used to own exclusively — lets the owner edit, add, or clear it right here.
+ * A connection to an external service: shows its status at a glance, tests it in place, and lets
+ * the owner edit, add, or clear it right here as well as in the wizard.
  */
 export function ConnectionCard({
   service,
@@ -113,6 +116,8 @@ export function ConnectionCard({
   footnote,
   testLabel = "Test",
   unsetLabel,
+  builtInOnly = false,
+  headerExtra,
 }: {
   service: TestableService;
   /** False for a service whose probe is too expensive to run unasked. The dot then stays amber
@@ -149,6 +154,12 @@ export function ConnectionCard({
   /** What the pill says while an optional service is not set up. "Optional" by default; a service
    *  that another feature waits on (a request app, the webhook) says "Not set up" instead. */
   unsetLabel?: "Optional" | "Not set up";
+  /** True when the saved choice is "no AI": rows use the built-in picker, which has nothing to
+   *  connect. Said as "Not set up" rather than a green "Connected" beside a provider of "None". */
+  builtInOnly?: boolean;
+  /** A control that belongs to this service but is not part of connecting it (the webhook's alerts
+   *  switch), shown on the header row beside the buttons. */
+  headerExtra?: ReactNode;
 }) {
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
   const save = useSaveSettings();
@@ -161,7 +172,8 @@ export function ConnectionCard({
     initialValues(settings, fields),
   );
   const fieldId = useId();
-  const configured = Boolean(summary);
+  // "No AI" is a choice, not something on file: it gets "Set up", never Edit / Test / Remove.
+  const configured = Boolean(summary) && !builtInOnly;
 
   // A "model" field shows the AI provider's available models in a real dropdown (plus a "Custom…"
   // escape hatch). The list is fetched for the provider + key CURRENTLY in the form (a redacted key
@@ -210,8 +222,9 @@ export function ConnectionCard({
 
   // One pill says the state in words: whether it works when it is set up, and whether Shortlist
   // needs it when it isn't. "Connected" only ever comes from a test that passed.
-  const pill: { label: string; tone: PillTone } =
-    test.isSuccess && test.data.ok
+  const pill: { label: string; tone: PillTone } = builtInOnly
+    ? { label: "Not set up", tone: "neutral" }
+    : test.isSuccess && test.data.ok
       ? { label: "Connected", tone: "ok" }
       : test.isSuccess || test.isError
         ? { label: "Connection failed", tone: "bad" }
@@ -290,16 +303,21 @@ export function ConnectionCard({
                 {title}
                 <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
                 {/* "Optional" says whether it is needed, not whether it is set up — say that too. */}
-                {!configured && need !== "required" && <span className="sr-only">Not set up</span>}
+                {!configured && need !== "required" && pill.label !== "Not set up" && <span className="sr-only">Not set up</span>}
               </h3>
               <p className="max-w-prose text-sm text-muted-foreground">{purpose}</p>
               {next && <p className="max-w-prose text-sm text-muted-foreground">{next}</p>}
               {configured && !editing && <p className="break-words text-sm text-foreground/80">{summary}</p>}
-              {test.isSuccess && test.data.ok && !testRequested && !editing && (
+              {builtInOnly && !editing && (
+                <p className="text-sm text-foreground/80">Rows use the built-in picker. Nothing to test.</p>
+              )}
+              {test.isSuccess && test.data.ok && !testRequested && !editing && !builtInOnly && (
                 <TestResult result={test.data} className="text-sm [&>svg]:h-3.5 [&>svg]:w-3.5" />
               )}
             </div>
           </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
+          {!editing && headerExtra}
           {!editing &&
             (confirmRemove ? (
               // Inline confirm on the idle row — the destructive tap and its "keep it" escape sit
@@ -361,6 +379,7 @@ export function ConnectionCard({
                 Set up
               </Button>
             ))}
+          </div>
         </div>
       </CardHeader>
       {(editing || testRequested || test.isError || (test.isSuccess && !test.data.ok) || footnote) && <CardContent className="px-4 pb-4 pt-0 sm:pl-16 sm:pr-5">
@@ -394,7 +413,7 @@ export function ConnectionCard({
                         rel="noreferrer"
                         className="inline-flex items-center gap-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
                       >
-                        Get a key
+                        {("helpLabel" in field && field.helpLabel) || "Get a key"}
                         <ExternalLink className="h-3 w-3" aria-hidden="true" />
                       </a>
                     )}
@@ -503,7 +522,11 @@ export function ConnectionCard({
         ) : test.isSuccess ? (
           // A passing background check is already shown, small, under the summary above; only the
           // footnote opened this section, so don't say it twice.
-          test.data.ok && !testRequested ? null : <TestResult result={test.data} />
+          test.data.ok && !testRequested ? null : (
+            <TestResult
+              result={{ ...test.data, message: plainTestMessage(test.data, title, /^https?:\/\//.test(summary) ? summary : undefined) }}
+            />
+          )
         ) : test.isError ? (
           <TestResult error={test.error} />
         ) : null}

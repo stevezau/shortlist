@@ -5,6 +5,10 @@ import type { SetupState } from "./types";
 
 export const TOTAL_STEPS = 7;
 
+/** Zero-based positions in {@link WIZARD_STEPS} that the shell treats specially. */
+export const TMDB_STEP = 2;
+export const CUSTOMIZE_STEP = 5;
+
 export type CuratorProvider =
   | "anthropic"
   | "openai"
@@ -16,7 +20,7 @@ export type CuratorProvider =
   | "none";
 
 /** The wizard's persisted blob — round-tripped through /api/setup/state. */
-export interface WizardData {
+interface WizardData {
   plex_url?: string;
   server_name?: string;
   /** Step 1 gate: the server was probed and linked. */
@@ -37,7 +41,7 @@ export interface WizardData {
   first_run_id?: number;
 }
 
-export interface WizardStepMeta {
+interface WizardStepMeta {
   title: string;
   /** The one-line "what & why" shown under every step title (design doc §3). */
   why: string;
@@ -53,12 +57,8 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
     why: "Shortlist reads watch history and writes rows on your server.",
   },
   {
-    title: "Recommendations & history",
-    // One line, because both halves of the old one were restated verbatim by the fields directly
-    // beneath it — "TMDB is a free film and TV catalogue…" and "Tautulli is only used for the
-    // friendlier names it knows people by". A step header should say what the step is for; the
-    // field that needs explaining is right there to explain itself.
-    why: "One required key, and one optional connection.",
+    title: "Add a free TMDB key",
+    why: "TMDB (The Movie Database) is where Shortlist finds titles similar to what each person watches. The key is free and takes about 2 minutes.",
   },
   {
     title: "Add an AI provider (optional)",

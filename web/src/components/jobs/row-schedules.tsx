@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { describeCron } from "@/lib/cron";
 import { timeUntil } from "@/lib/format";
 import { useSchedule } from "@/lib/queries";
-import { RowName } from "@/components/rows/row-name";
+import { resolveRowName } from "@/lib/run-rows";
 
 /**
  * The rows that build on a timer, listed alongside the jobs that do.
@@ -16,11 +16,9 @@ import { RowName } from "@/components/rows/row-name";
  * groups them: one trigger builds all of them, so listing them per row would imply N timers where
  * there is one.
  *
- * The SCHEDULE leads, because the schedule is what a group is. This block used to lead with the row
- * names, comma-joined into one truncating line — three rows on the same nightly cron rendered as
- * "✨ Picked for You, 🎯 Because you watched {top_seed}, 👥 Popular {library_name} on SFLIX" with
- * the cron as its subtitle. That put the group's identity in the small print and made the rows
- * themselves unreadable and unclickable. Each row is now its own link into its own editor.
+ * The SCHEDULE leads, because the schedule is what a group is. Row names comma-joined into one
+ * truncating line would put the group's identity in the small print and make the rows themselves
+ * unreadable and unclickable, so each row is its own link into its own editor.
  *
  * Read-only on purpose. A row's schedule is edited in the row editor, so the cron has exactly one
  * owner and can never be validated two different ways.
@@ -115,7 +113,7 @@ export function RowSchedules() {
                         title={`Edit ${label}`}
                         className="inline-flex max-w-full items-center rounded-full border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       >
-                        <RowName name={label} className="min-w-0 break-words font-normal" />
+                        <span className="min-w-0 break-words">{resolveRowName(label, { user: "each person" }) || row.slug}</span>
                       </Link>
                     );
                   })}

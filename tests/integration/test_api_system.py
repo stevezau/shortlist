@@ -8,10 +8,10 @@ from typing import ClassVar
 import pytest
 from fastapi.testclient import TestClient
 
-from shortlist.server.api.settings import REDACTED_PLACEHOLDER
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.db.models import Setting
 from shortlist.server.main import create_app
+from shortlist.server.services.settings_validation import REDACTED_PLACEHOLDER
 from shortlist.server.settings_store import SettingsStore
 from tests.conftest import plextv_user
 
@@ -421,16 +421,6 @@ class TestSystemResponseShapes:
         }
         assert body["latest_version"] is None and body["update_available"] is False
 
-    def test_syncs_reports_each_schedule_with_its_nested_shape(self, client: TestClient):
-        body = client.get("/api/system/syncs").json()
-
-        assert set(body) == {"watched", "users", "backup"}
-        assert set(body["watched"]) == {"last", "next", "cron"}
-        assert set(body["users"]) == {"last", "next", "cron"}
-        # Backups carry no "last": the backup list itself is that answer, so the nested shape differs.
-        assert set(body["backup"]) == {"next", "cron", "max_keep"}
-        assert isinstance(body["backup"]["max_keep"], int)
-
     def test_image_provider_explains_itself_when_it_cannot_generate(self, client: TestClient):
         body = client.get("/api/system/image-provider").json()
 
@@ -619,7 +609,7 @@ class TestSystemResponseShapes:
     def test_the_library_list_is_read_from_plex_once_not_once_per_page_load(self, client: TestClient, monkeypatch):
         """`/libraries` backs every row card, the library picker and the placement settings, and each
         read is a PlexServer handshake plus a sections read. Plex serialises against its own database,
-        so on a busy server (one DELETE took 15.8s during a collection sweep, SFLIX 2026-08-04) every
+        so on a busy server (one DELETE took 15.8s during a collection sweep, a big server 2026-08-04) every
         page wanting a library list queued behind it. The list changes when someone adds a library."""
         from types import SimpleNamespace
 
@@ -646,7 +636,7 @@ class TestSystemResponseShapes:
         assert reads["n"] == 1, "the second page load must not go back to Plex"
         # The timeout is what bounds how long the single-flight lock is held. At the 20s default,
         # one page load could hold it for four retries plus backoff while everyone else waits.
-        assert built[0]["timeout"] == system_api._INTERACTIVE_TIMEOUT_S
+        assert built[0]["timeout"] == system_api.INTERACTIVE_TIMEOUT_S
 
     def test_a_plex_that_fails_after_a_good_read_serves_the_cached_copy(self, client: TestClient, monkeypatch):
         """A library list two minutes old is a far better answer than a broken page, and it is used
@@ -676,7 +666,7 @@ class TestSystemResponseShapes:
         state["fail"] = True
 
         assert client.get("/api/system/libraries").json() == good
-        assert system_api._PLEX_READ_TTL_S > 0  # the knob this behaviour hangs off still exists
+        assert system_api.PLEX_READ_TTL_S > 0  # the knob this behaviour hangs off still exists
 
     def test_an_unknown_library_leaves_no_lock_behind(self, client: TestClient, monkeypatch):
         """`key` is a caller-supplied path segment, so a lock kept per value ever asked for would
@@ -763,7 +753,7 @@ class TestSystemResponseShapes:
         """
         from types import SimpleNamespace
 
-        import shortlist.server.api.system as system_module
+        import shortlist.server.services.connection_choices as choices_module
 
         self._connect_plex(client)
 
@@ -779,7 +769,7 @@ class TestSystemResponseShapes:
         monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
 
         seen: dict[str, object] = {}
-        real = system_module.invalidate_plex_reads
+        real = choices_module.invalidate_plex_reads
 
         def spy(state):
             # What a concurrent reader would find in the DB at the instant the cache is dropped.
@@ -787,8 +777,8 @@ class TestSystemResponseShapes:
                 seen["url"] = SettingsStore(session, client.app.state.secrets).get("plex.url")
             return real(state)
 
-        # `put_settings` imports this inside the function, so patching the source module is what lands.
-        monkeypatch.setattr(system_module, "invalidate_plex_reads", spy)
+        # `put_settings` imports this inside the function, so patching the shared source module is what lands.
+        monkeypatch.setattr(choices_module, "invalidate_plex_reads", spy)
 
         saved = client.put("/api/settings", json={"values": {"plex.url": "http://pms-new:32400"}})
         assert saved.status_code == 200, saved.text

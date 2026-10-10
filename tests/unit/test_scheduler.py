@@ -14,19 +14,19 @@ import pytest
 from shortlist.server.db.models import Collection, Event
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.scheduler import schedule_groups
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def app(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    factory = make_session_factory(engine)
-    # The migration seeds the default 'picked' row with a cron; clear it so each test owns the set.
-    with factory() as session:
-        session.query(Collection).delete()
-        session.commit()
-    yield SimpleNamespace(state=SimpleNamespace(sessions=factory))
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        factory = make_session_factory(engine)
+        # The migration seeds the default 'picked' row with a cron; clear it so each test owns the set.
+        with factory() as session:
+            session.query(Collection).delete()
+            session.commit()
+        yield SimpleNamespace(state=SimpleNamespace(sessions=factory))
 
 
 def _add(factory, slug: str, schedule: str, *, enabled: bool = True) -> None:
@@ -340,6 +340,30 @@ class TestSchedulerLateness:
         assert len(schedule_groups(app)[cron]) == 2
         assert self._missed_events(app) == []
 
+    def test_a_due_row_job_still_fires_after_a_schedule_rebuild(self, app: SimpleNamespace) -> None:
+        """A rebuild that lands while the loop is stalled used to recompute the fire time from now, which
+        dropped a job that was due but not yet dispatched."""
+        from shortlist.server.scheduler import build_scheduler, rebuild_schedule
+
+        cron = "0 2 * * *"
+        _add(app.state.sessions, "a", cron)
+        due = datetime.now(UTC) - timedelta(minutes=10)
+
+        async def execute() -> datetime | None:
+            scheduler = build_scheduler(app)
+            app.state.scheduler = scheduler
+            scheduler.start(paused=True)
+            try:
+                scheduler.get_job(f"row-schedule::{cron}").modify(next_run_time=due)
+                _add(app.state.sessions, "b", cron)
+                rebuild_schedule(app)
+                return scheduler.get_job(f"row-schedule::{cron}").next_run_time
+            finally:
+                scheduler.shutdown(wait=False)
+                await asyncio.sleep(0)
+
+        assert asyncio.run(execute()) == due
+
     def test_a_missed_timer_job_is_named_from_the_jobs_catalogue(self, app: SimpleNamespace) -> None:
         from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
 
@@ -354,6 +378,27 @@ class TestSchedulerLateness:
         assert event.message["job"] == "watch-sync"
         assert event.message["name"] == "Sync watch history"
         assert event.message["scheduled_for"] == "2026-01-01T04:17:00+00:00"
+
+    def test_a_missed_job_is_queued_for_the_webhook_when_the_owner_chose_it(self, app: SimpleNamespace) -> None:
+        from apscheduler.events import EVENT_JOB_MISSED, JobExecutionEvent
+
+        from shortlist.server.db.models import Job
+        from shortlist.server.scheduler import build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            store = SettingsStore(session)
+            store.set("notify.webhook.enabled", True)
+            store.set("notify.webhook.events", ["job.skipped"])
+        scheduler = build_scheduler(app)
+        due = datetime(2026, 1, 1, 4, 17, tzinfo=UTC)
+
+        scheduler._dispatch_event(JobExecutionEvent(EVENT_JOB_MISSED, "watch-sync", "default", due))
+
+        with app.state.sessions() as session:
+            [job] = session.query(Job).filter(Job.kind == "notify.send").all()
+        assert job.payload["item"]["event"] == "job.skipped"
+        assert "Sync watch history" in job.payload["item"]["title"]
 
     @pytest.mark.parametrize("job_id", ["jobs.drain", "jobs.sweep"])
     def test_a_drain_tick_missed_or_skipped_writes_nothing(self, app: SimpleNamespace, job_id: str) -> None:
@@ -462,9 +507,9 @@ class TestScheduledWorkIsDurable:
         """A real `app.state` — sessions, run_service, config_dir — so the handlers run for real."""
         from starlette.testclient import TestClient
 
-        from shortlist.server.main import create_app
+        from tests.shared_app import app_for
 
-        application = create_app(config_dir=tmp_path / "live")
+        application = app_for(tmp_path / "live")
         with TestClient(application):
             self._state = application.state
             yield
@@ -612,9 +657,16 @@ class TestScheduledWorkIsDurable:
         still come round."""
         from shortlist.server.services import jobs
 
-        monkeypatch.setattr(jobs, "enqueue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db locked")))
+        attempts: list[bool] = []
+
+        def locked(*a, **k):
+            attempts.append(True)
+            raise RuntimeError("db locked")
+
+        monkeypatch.setattr(jobs, "enqueue", locked)
 
         self._fire(app, "user-sync")  # must not raise
+        assert attempts, "the scheduler never tried to queue, so the failure was never injected"
 
 
 class TestSyncUsersOnAnUnlinkedServer:
@@ -632,10 +684,10 @@ class TestSyncUsersOnAnUnlinkedServer:
         from starlette.testclient import TestClient
 
         from shortlist.server.db.models import Job
-        from shortlist.server.main import create_app
         from shortlist.server.services import jobs
+        from tests.shared_app import app_for
 
-        application = create_app(config_dir=tmp_path / "unlinked")
+        application = app_for(tmp_path / "unlinked")
         with TestClient(application):
             state = application.state
             job_id = jobs.enqueue(state.sessions, "sync.users", {})
@@ -811,8 +863,8 @@ class TestThereIsOneSourceOfTruthForEveryCronDefault:
     def test_every_schedulable_key_is_writable_through_the_settings_api(self):
         """`PUT /api/settings` builds its allowlist from `DEFAULTS`, so a cron the scheduler honours
         but the settings dict has never heard of is a schedule the owner cannot change."""
-        from shortlist.server.api.settings import KNOWN_KEYS
         from shortlist.server.scheduler import DEFAULT_CRONS
+        from shortlist.server.services.settings_validation import KNOWN_KEYS
 
         assert set(DEFAULT_CRONS) <= KNOWN_KEYS
 

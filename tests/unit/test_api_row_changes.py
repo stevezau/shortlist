@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from shortlist.server.api.row_changes import (
+from shortlist.server.services.row_changes import (
     POSTER_RESET,
     PRIVACY_SYNC,
     RECONCILE,

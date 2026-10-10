@@ -24,7 +24,7 @@ function slugify(label: string): string {
 
 /** Collapsed by default — the grid should read on its own, and this is here for the "wait, who sees
  *  what?" moment. Native <details> so it is keyboard- and screen-reader-accessible with no library. */
-export function PlacementHelp({ isShared }: { isShared: boolean }) {
+function PlacementHelp({ isShared }: { isShared: boolean }) {
   return (
     <details className="group">
       <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-sm text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
@@ -52,7 +52,7 @@ export function PlacementHelp({ isShared }: { isShared: boolean }) {
           <p>
             This decides <strong className="text-foreground">where</strong> the
             row appears, not who gets one &mdash; that&rsquo;s{" "}
-            <em>Who gets it?</em> above.
+            <em>Audience</em> above.
           </p>
           <p>
             <strong className="text-foreground">Just me</strong> &mdash; the

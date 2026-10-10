@@ -55,6 +55,6 @@
   ],
   "exclude_only_accounts_observed": {
     "_note": "All 48 accounts on the recording server, written only ever by Shortlist, came back plain and single-clause — no '&', no '|', no percent-encoding, and no sign of double-encoding.",
-    "example": "label!=Shortlist_alexmastroianni,Shortlist_amic75,Shortlist_amyme76"
+    "example": "label!=Shortlist_alice,Shortlist_bob,Shortlist_carol"
   }
 }

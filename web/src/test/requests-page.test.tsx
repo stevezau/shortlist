@@ -10,8 +10,9 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RequestCandidate, User } from "@/lib/types";
+import type { AcquisitionClaim, RequestCandidate, User } from "@/lib/types";
 import { RequestsPage } from "@/pages/requests";
+import { makeUser } from "@/test/user-fixtures";
 
 const {
   listRequests,
@@ -23,6 +24,8 @@ const {
   getSettings,
   getUsers,
   getArrStatus,
+  listAcquisitionClaims,
+  releaseAcquisitionClaim,
 } = vi.hoisted(() => ({
   listRequests: vi.fn(),
   getUsers: vi.fn((): Promise<unknown[]> => Promise.resolve([])),
@@ -43,6 +46,8 @@ const {
   getArrStatus: vi.fn((): Promise<unknown> =>
     Promise.resolve({ statuses: {}, radarr: "off", sonarr: "off" }),
   ),
+  listAcquisitionClaims: vi.fn(() => Promise.resolve({ items: [] as AcquisitionClaim[], next_offset: null })),
+  releaseAcquisitionClaim: vi.fn((_id: number, _token: string, _status: string) => Promise.resolve({ id: 1, status: "released" })),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -60,37 +65,14 @@ vi.mock("@/lib/api", () => ({
     getSettings: () => getSettings(),
     getUsers: () => getUsers(),
     getArrStatus: () => getArrStatus(),
+    listAcquisitionClaims: () => listAcquisitionClaims(),
+    releaseAcquisitionClaim: (id: number, token: string, status: string) => releaseAcquisitionClaim(id, token, status),
   },
 }));
 
 /** A users-list row, for the username → display-name resolution the inbox does client-side. */
 function person(username: string, displayName: string): User {
-  return {
-    manage_sharing: true,
-    id: username.length,
-    plex_account_id: 0,
-    username,
-    slug: username,
-    nickname: "",
-    friendly_name: "",
-    display_name: displayName,
-    avatar_url: "",
-    user_type: "shared",
-    restricted: false,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    enabled: true,
-    cold_start: false,
-    request_tag: "",
-    requested_by_tag: "",
-    prefs: {},
-    history_depth: 0,
-    last_run_at: null,
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    preview_titles: [],
-  };
+  return makeUser({ id: username.length, username, slug: username, display_name: displayName });
 }
 
 function candidate(
@@ -186,12 +168,45 @@ describe("RequestsPage", () => {
       radarr: "off",
       sonarr: "off",
     });
+    listAcquisitionClaims.mockReset();
+    listAcquisitionClaims.mockResolvedValue({ items: [], next_offset: null });
+    releaseAcquisitionClaim.mockReset();
+    releaseAcquisitionClaim.mockResolvedValue({ id: 1, status: "released" });
+  });
+
+  it("shows recovery only for terminal claims and releases after destination review", async () => {
+    listRequests.mockResolvedValue([]);
+    listAcquisitionClaims.mockResolvedValue({
+      items: [
+        { id: 1, candidate_id: 10, origin: "manual", title: "Unknown send", tmdb_id: 10, media_type: "movie", destination: "Radarr", status: "outcome_unknown", created_at: "2026-10-05T00:00:00+00:00", external_started_at: null, finished_at: null, review_token: "a".repeat(64) },
+        { id: 2, candidate_id: 11, origin: "automatic", title: "Still sending", tmdb_id: 11, media_type: "show", destination: "Sonarr", status: "external_started", created_at: "2026-10-05T00:00:00+00:00", external_started_at: null, finished_at: null, review_token: "b".repeat(64) },
+      ],
+      next_offset: null,
+    });
+    renderPage();
+    expect(await screen.findByText("Acquisition checks needing review")).toBeTruthy();
+    expect(screen.getByText(/Inspect the actual destination before allowing a title to be requested again/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Allow retry" })).toBeTruthy();
+    expect(screen.getByText("Active claims cannot be released.")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Allow retry" }));
+    await waitFor(() => expect(releaseAcquisitionClaim).toHaveBeenCalledWith(1, "a".repeat(64), "outcome_unknown"));
   });
 
   it("shows an empty state when nothing has ever been queued", async () => {
     listRequests.mockResolvedValue([]);
     renderPage();
     expect(await screen.findByText(/Nothing waiting/i)).toBeTruthy();
+  });
+
+  it("says a waiting movie was held by the owner's request filter, and how to send it anyway", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "BTS: Permission to Dance on Stage", detail: "held by your request filter — tag “concert film”" }),
+      candidate({ id: 2, title: "A drama", detail: "demand below auto_min_demand (4)" }),
+    ]);
+    renderPage();
+    expect(await screen.findByText("BTS: Permission to Dance on Stage")).toBeTruthy();
+    expect(screen.getAllByText(/Held by your request filter \(tag “concert film”\)/)).toHaveLength(1);
+    expect(screen.getByText(/Send it yourself if you want it/i)).toBeTruthy();
   });
 
   it("warns when a waiting title is on the arr's exclusion list, naming the right app", async () => {
@@ -270,7 +285,7 @@ describe("RequestsPage", () => {
     // Sonarr has no id-based URL, so the direct link needs the titleSlug captured at send time.
     getSettings.mockResolvedValueOnce({
       "requests.enabled": true,
-      "requests.sonarr.url": "https://tv.stevez0.com",
+      "requests.sonarr.url": "https://sonarr.example.com",
     });
     listRequests.mockResolvedValue([
       candidate({
@@ -288,14 +303,14 @@ describe("RequestsPage", () => {
     );
     const open = screen.getByRole("link", { name: /Open in Sonarr/i });
     expect((open as HTMLAnchorElement).href).toBe(
-      "https://tv.stevez0.com/series/shogun",
+      "https://sonarr.example.com/series/shogun",
     );
   });
 
   it("falls back to the Sonarr home for a legacy sent show with no captured slug", async () => {
     getSettings.mockResolvedValueOnce({
       "requests.enabled": true,
-      "requests.sonarr.url": "https://tv.stevez0.com",
+      "requests.sonarr.url": "https://sonarr.example.com",
     });
     listRequests.mockResolvedValue([
       candidate({
@@ -312,13 +327,13 @@ describe("RequestsPage", () => {
       await screen.findByRole("tab", { name: "Sent (1)" }),
     );
     const open = screen.getByRole("link", { name: /Open in Sonarr/i });
-    expect((open as HTMLAnchorElement).href).toBe("https://tv.stevez0.com/");
+    expect((open as HTMLAnchorElement).href).toBe("https://sonarr.example.com/");
   });
 
   it("deep-links a sent movie to its Radarr page (slug when captured, else TMDB id)", async () => {
     getSettings.mockResolvedValueOnce({
       "requests.enabled": true,
-      "requests.radarr.url": "https://movies.stevez0.com",
+      "requests.radarr.url": "https://radarr.example.com",
     });
     listRequests.mockResolvedValue([
       candidate({
@@ -336,7 +351,7 @@ describe("RequestsPage", () => {
     );
     const open = screen.getByRole("link", { name: /Open in Radarr/i });
     expect((open as HTMLAnchorElement).href).toBe(
-      "https://movies.stevez0.com/movie/the-matrix-603",
+      "https://radarr.example.com/movie/the-matrix-603",
     );
   });
 
@@ -808,7 +823,7 @@ describe("RequestsPage", () => {
     await userEvent.click(
       screen.getByRole("checkbox", { name: /Sarah Pick/i }),
     );
-    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Dismiss/i }));
     await waitFor(() => expect(screen.getByText("Mike Pick")).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Stop filtering by Sarah" })).toBeNull();
   });
@@ -1146,7 +1161,7 @@ describe("RequestsPage", () => {
     renderPage();
     await screen.findByText("Andor");
     await userEvent.click(screen.getByRole("checkbox", { name: /Andor/i }));
-    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Dismiss/i }));
     await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([11]));
     // Delete is not a rejection — it leaves no tombstone.
     expect(rejectRequests).not.toHaveBeenCalled();
@@ -1201,9 +1216,7 @@ describe("RequestsPage", () => {
 
     expect(await screen.findByText(/Requests are off/i)).toBeTruthy();
     expect(screen.getByText("Fallout")).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: /to Radarr\/Sonarr/i }),
-    ).toBeDisabled();
+    expect(toolbar().getByRole("button", { name: /^Send/ })).toBeDisabled();
     expect(toolbar().getByRole("button", { name: /Reject/i })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /Fallout/i })).toBeDisabled();
   });
@@ -1236,15 +1249,15 @@ describe("RequestsPage", () => {
       expect(within(details).getByRole("link", { name: /Trakt/ })).toHaveAttribute("href", expect.stringContaining("trakt.tv/search/tmdb/"));
     });
 
-    it("keeps all three labelled title actions visible without opening a menu", async () => {
+    it("gives each title one visible action, with Reject and Dismiss explained in a menu", async () => {
       listRequests.mockResolvedValue([candidate({ id: 1, title: "Sinners" })]);
       renderPage();
       await screen.findByText("Sinners");
       const group = screen.getByRole("group", { name: "Actions for Sinners" });
-      expect(group.querySelector("details")).toBeNull();
-      for (const name of ["Send", "Delete", "Reject"]) {
-        expect(within(group).getByRole("button", { name })).toBeVisible();
-      }
+      expect(within(group).getByRole("button", { name: /^Send to / })).toBeVisible();
+      expect(within(group).getByLabelText("More actions for Sinners")).toBeTruthy();
+      expect(within(group).getByRole("button", { name: /^Reject — never suggest it again/ })).toBeTruthy();
+      expect(within(group).getByRole("button", { name: /^Dismiss — remove it for now, may come back/ })).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Select Sinners" })).not.toBeChecked();
     });
 
@@ -1309,7 +1322,7 @@ describe("RequestsPage", () => {
       expect(deleteRequests).not.toHaveBeenCalled();
 
       await userEvent.click(
-        rowActions("Fallout").getByRole("button", { name: /^Delete/i }),
+        rowActions("Fallout").getByRole("button", { name: /^Dismiss/i }),
       );
       await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([7]));
     });
@@ -1326,7 +1339,7 @@ describe("RequestsPage", () => {
       await userEvent.click(screen.getByRole("checkbox", { name: /Andor/i }));
 
       await userEvent.click(
-        rowActions("Fallout").getByRole("button", { name: /^Delete/i }),
+        rowActions("Fallout").getByRole("button", { name: /^Dismiss/i }),
       );
       await waitFor(() => expect(deleteRequests).toHaveBeenCalledWith([7]));
       expect(screen.getByRole("checkbox", { name: /Andor/i })).toBeChecked();
@@ -1439,7 +1452,7 @@ describe("RequestsPage", () => {
       await screen.findByText("Fallout");
       const row = rowActions("Fallout");
       expect(row.getByRole("button", { name: /Send/i })).toBeDisabled();
-      expect(row.getByRole("button", { name: /^Delete/i })).toBeDisabled();
+      expect(row.getByRole("button", { name: /^Dismiss/i })).toBeDisabled();
       expect(row.getByRole("button", { name: /Reject/i })).toBeDisabled();
     });
   });
@@ -1531,22 +1544,19 @@ describe("RequestsPage — the header", () => {
 
     listRequests.mockResolvedValue([candidate({ id: 2, tmdb_id: 200, title: "Arrival" })]);
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Dune" }));
-    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Dismiss/i }));
 
     await waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
     await userEvent.click(screen.getByRole("button", { name: "Clear the search" }));
     expect(await screen.findByText("Arrival")).toBeTruthy();
   });
 
-  it("keeps the Delete and Reject difference on screen while titles are selected", async () => {
-    // That is exactly when the bulk buttons act — the difference must not be hover-only then.
+  it("says what Reject and Dismiss do in the menu where each title is decided", async () => {
     twoWaitingOneSent();
     renderPage();
     await screen.findByText("Middling");
-    await userEvent.click(screen.getByRole("checkbox", { name: "Select Acclaimed" }));
-
-    expect(screen.getByRole("button", { name: "Clear selection" })).toBeTruthy();
-    expect(screen.getByText(/blocks it for good/)).toBeTruthy();
+    expect(rowActions("Acclaimed").getByText(/never suggest it again/)).toBeTruthy();
+    expect(rowActions("Acclaimed").getByText(/may come back/)).toBeTruthy();
   });
 
   it("moves between tabs with the arrow keys, and labels the panel by its tab", async () => {
@@ -1756,7 +1766,7 @@ describe("RequestsPage — the language filter", () => {
       candidate({ id: 4, tmdb_id: 400, title: "Legacy Title", language: "", rating: 7.0 }),
     ]);
     await userEvent.click(screen.getByRole("checkbox", { name: "Select Parasite" }));
-    await userEvent.click(toolbar().getByRole("button", { name: /^Delete/i }));
+    await userEvent.click(toolbar().getByRole("button", { name: /^Dismiss/i }));
 
     await waitFor(() => expect(screen.getByText("Dune")).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Remove the Korean language filter" })).toBeNull();
@@ -2051,9 +2061,7 @@ describe("RequestsPage — what Sonarr/Radarr has", () => {
     const before = getArrStatus.mock.calls.length;
 
     await userEvent.click(screen.getByRole("checkbox", { name: /Dune/i }));
-    await userEvent.click(
-      screen.getByRole("button", { name: /to Radarr\/Sonarr/i }),
-    );
+    await userEvent.click(toolbar().getByRole("button", { name: /^Send 1$/ }));
 
     await waitFor(() =>
       expect(getArrStatus.mock.calls.length).toBeGreaterThan(before),

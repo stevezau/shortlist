@@ -131,6 +131,23 @@ describe("ActivityIndicator toasts", () => {
     toastError.mockClear();
   });
 
+  it("shows no button while nothing is running or queued, and keeps observing the queue", async () => {
+    // The Activity nav item goes to the same place, so an idle icon was a duplicate. The component
+    // stays mounted, so the toasts still fire for work that starts and ends between polls.
+    const { poll } = await renderIndicator([job({ id: 1, status: "done" })]);
+
+    expect(screen.queryByRole("button", { name: /Background work/ })).toBeNull();
+
+    await poll([job({ id: 2, status: "done", detail: "Removed 2 rows" })]);
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  it("shows the button, with a count, while a job is in flight", async () => {
+    await renderIndicator([job({ id: 3, status: "running" })]);
+
+    expect(await screen.findByRole("button", { name: "Background work: 1 in progress" })).toBeInTheDocument();
+  });
+
   it("asks the server to leave the routine job kinds out of the feed", async () => {
     // `watch.reconcile` is queued once per playback stop — 165 of the 197 jobs a day on a 46-user
     // server, which is more than this poll's page holds. Dropping them server-side is what keeps
@@ -197,6 +214,19 @@ describe("ActivityIndicator toasts", () => {
     // Same toast id, so the spinner is REPLACED rather than stacking a second card.
     expect(toastSuccess.mock.calls[0]?.[1]).toMatchObject({ id: "job-9" });
     expect(toastLoading).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not pop a spinner toast for a job the timer started, only for work someone asked for", async () => {
+    // A privacy sync fires every 30 minutes on its own cron; its spinner toast landed on whatever
+    // page was open and covered it. The header badge still shows it running.
+    const { poll } = await renderIndicator();
+
+    await poll([job({ id: 10, kind: "privacy.sync", status: "running", payload: { scheduled: true } })]);
+    await act(async () => {});
+    expect(toastLoading).not.toHaveBeenCalled();
+
+    await poll([job({ id: 11, kind: "privacy.sync", status: "running", payload: {} })]);
+    await waitFor(() => expect(toastLoading).toHaveBeenCalledTimes(1));
   });
 });
 

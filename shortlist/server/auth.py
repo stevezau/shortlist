@@ -235,6 +235,15 @@ def _cookie_path(request: Request) -> str:
     return getattr(request.app.state, "base_path", "") or "/"
 
 
+def _plextv_unreachable(what: str, error: httpx.HTTPError) -> HTTPException:
+    """A plex.tv outage or error status as a 502 with a plain message, not an unhandled 500.
+
+    Only the exception type is logged: an httpx error's text can carry the request URL.
+    """
+    logger.warning("plex.tv could not {} ({})", what, type(error).__name__)
+    return HTTPException(status_code=502, detail="plex.tv could not be reached — try again in a moment")
+
+
 def _plextv_json(response: httpx.Response, what: str):
     """Parse a plex.tv body, turning "2xx but not JSON" into a clean 502 instead of a 500.
 
@@ -252,7 +261,7 @@ def _plextv_json(response: httpx.Response, what: str):
         ) from e
 
 
-def _check_csrf(request: Request) -> None:
+def check_csrf(request: Request) -> None:
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
         raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
 
@@ -310,7 +319,7 @@ def require_owner(request: Request) -> dict:
         logger.warning("rejected an invalid or revoked API token")
         _rate_limit_token_failures()
         raise HTTPException(status_code=401, detail="invalid or revoked API token")
-    _check_csrf(request)
+    check_csrf(request)
     session = read_session(request)
     if session is None:
         raise HTTPException(status_code=401, detail="not signed in — use Login with Plex")
@@ -336,7 +345,7 @@ def require_setup_access(request: Request) -> dict:
     CSRF is required for mutations in every state — otherwise any page you visited could drive a
     stranger's wizard.
     """
-    _check_csrf(request)
+    check_csrf(request)
     session = read_session(request)
     owner_id = request.app.state.owner_account_id()
     if owner_id is not None:
@@ -369,14 +378,17 @@ class PinOut(BaseModel):
 @router.post("/pin", response_model=PinOut)
 async def create_pin(request: Request) -> dict:
     _rate_limit_pin(request)
-    async with httpx.AsyncClient() as client:
-        r = await client.post(
-            f"{PLEXTV}/api/v2/pins",
-            params={"strong": "true"},
-            headers=_client_headers(request.app.state.client_id),
-            timeout=15,
-        )
-    r.raise_for_status()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{PLEXTV}/api/v2/pins",
+                params={"strong": "true"},
+                headers=_client_headers(request.app.state.client_id),
+                timeout=15,
+            )
+        r.raise_for_status()
+    except httpx.HTTPError as e:
+        raise _plextv_unreachable("create a sign-in PIN", e) from e
     # Same failure `owned_machine_ids` documents: a captive portal or proxy answering `200 text/html`
     # made `.json()`/`data["id"]` raise, which surfaced as a 500 with nothing actionable in it. A 2xx
     # from plex.tv is not a promise about the body.
@@ -403,19 +415,24 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
     """Poll the PIN; once linked, verify the account is the server owner and set the session."""
     _rate_limit_poll()
     state = request.app.state
-    async with httpx.AsyncClient() as client:
-        r = await client.get(f"{PLEXTV}/api/v2/pins/{pin_id}", headers=_client_headers(state.client_id), timeout=15)
-        if r.status_code == 404:
-            raise HTTPException(status_code=404, detail="PIN expired — start over")
-        r.raise_for_status()
-        pin = _plextv_json(r, "PIN status")
-        token = pin.get("authToken") if isinstance(pin, dict) else None
-        if not token:
-            return {"linked": False}
-        account = await client.get(
-            f"{PLEXTV}/api/v2/user", headers={**_client_headers(state.client_id), "X-Plex-Token": token}, timeout=15
-        )
-    account.raise_for_status()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(f"{PLEXTV}/api/v2/pins/{pin_id}", headers=_client_headers(state.client_id), timeout=15)
+            if r.status_code == 404:
+                raise HTTPException(status_code=404, detail="PIN expired — start over")
+            r.raise_for_status()
+            pin = _plextv_json(r, "PIN status")
+            token = pin.get("authToken") if isinstance(pin, dict) else None
+            if not token:
+                return {"linked": False}
+            account = await client.get(
+                f"{PLEXTV}/api/v2/user",
+                headers={**_client_headers(state.client_id), "X-Plex-Token": token},
+                timeout=15,
+            )
+        account.raise_for_status()
+    except httpx.HTTPError as e:
+        raise _plextv_unreachable("check the sign-in PIN", e) from e
     info = _plextv_json(account, "account")
     # This one runs AFTER plex.tv has already issued a token, so an opaque failure here strands a
     # login that actually succeeded — the owner sees a 500 having just approved the PIN.
@@ -532,8 +549,8 @@ async def logout(request: Request, response: Response) -> dict:
     # Logout changes state from a cookie, so it needs the same guard every other mutation here has:
     # without it any other site could sign the owner out with a cross-origin form post. It is only a
     # nuisance rather than data loss, which is presumably why it was missed — but this was the one
-    # state-changing auth route not going through `_check_csrf`.
-    _check_csrf(request)
+    # state-changing auth route not going through `check_csrf`.
+    check_csrf(request)
     # Same path as the one it was set with, or the browser keeps the cookie and logout does nothing.
     response.delete_cookie(SESSION_COOKIE, path=_cookie_path(request))
     return {"ok": True}

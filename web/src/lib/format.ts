@@ -83,13 +83,17 @@ export function formatSize(bytes: number): string {
 }
 
 /** A duration in ms, or "—" when there isn't one yet — a run user who hasn't started has
- *  `duration_ms: null`, which used to render as the literal "nullms". */
+ *  `duration_ms: null`, which must not render as the literal "nullms". */
 export function formatDuration(ms: number | null): string {
   if (ms === null) return "—";
   if (ms < 1000) return `${ms}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
   const minutes = Math.floor(seconds / 60);
+  if (minutes >= 60) {
+    const total = Math.round(seconds / 60);
+    return `${Math.floor(total / 60)}h ${total % 60}m`;
+  }
   return `${minutes}m ${Math.round(seconds % 60)}s`;
 }
 
@@ -131,6 +135,7 @@ const RUN_STATUS_LABELS: Record<string, string> = {
 const TRIGGER_LABELS: Record<string, string> = {
   schedule: "Scheduled",
   manual: "Manual",
+  assistant: "Assistant",
   wizard: "Setup",
   // A scheduled run a restart cut short, finished for the people it never reached.
   resume: "Resumed after a restart",
@@ -176,74 +181,20 @@ export function settingBool(
   return typeof value === "boolean" ? value : fallback;
 }
 
-/** "03:30" (+ optional weekly day) → the `schedule.cron` string. */
-export function cronFromTime(time: string, weekly = false): string {
-  const [hoursRaw, minutesRaw] = time.split(":");
-  const hours = Number(hoursRaw);
-  const minutes = Number(minutesRaw);
-  const safeHours =
-    Number.isInteger(hours) && hours >= 0 && hours <= 23 ? hours : 3;
-  const safeMinutes =
-    Number.isInteger(minutes) && minutes >= 0 && minutes <= 59 ? minutes : 30;
-  return `${safeMinutes} ${safeHours} * * ${weekly ? "0" : "*"}`;
-}
-
-/**
- * Whether a cron string is one the simple Run at + Nightly/Weekly presets can round-trip losslessly.
- * The presets ONLY ever emit nightly (`* * *` dow `*`) or Sunday-weekly (dow `0`) — cronFromTime
- * writes `0` for weekly and timeFromCron collapses any non-`*` dow to "weekly", so `0` is the sole
- * weekday they can represent. Every other cron (a non-Sunday weekday, steps, ranges, lists, specific
- * months) would be silently flattened, so it must open as-is in Custom mode instead.
- */
-export function isPresetCron(cron: string): boolean {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [minuteField, hourField, domField, monthField, dowField] = parts as [
-    string,
-    string,
-    string,
-    string,
-    string,
-  ];
-  const minutes = Number(minuteField);
-  const hours = Number(hourField);
-  const clockOk =
-    Number.isInteger(minutes) &&
-    minutes >= 0 &&
-    minutes <= 59 &&
-    Number.isInteger(hours) &&
-    hours >= 0 &&
-    hours <= 23;
-  const dailyFields = domField === "*" && monthField === "*";
-  const dowOk = dowField === "*" || dowField === "0"; // only nightly or Sunday-weekly round-trip
-  return clockOk && dailyFields && dowOk;
-}
-
-/** Best-effort inverse of cronFromTime; falls back to 03:30 nightly. */
-export function timeFromCron(cron: string): { time: string; weekly: boolean } {
-  const parts = cron.trim().split(/\s+/);
-  const minutes = Number(parts[0]);
-  const hours = Number(parts[1]);
-  if (
-    parts.length === 5 &&
-    Number.isInteger(minutes) &&
-    minutes >= 0 &&
-    minutes <= 59 &&
-    Number.isInteger(hours) &&
-    hours >= 0 &&
-    hours <= 23
-  ) {
-    return {
-      time: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`,
-      weekly: parts[4] !== "*",
-    };
-  }
-  return { time: "03:30", weekly: false };
-}
-
 /** "1 request", "3 requests": a count with its noun, for nouns that pluralise with an s. */
-export function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+export function plural(count: number, noun: string, irregularPlural = `${noun}s`): string {
+  return `${count} ${count === 1 ? noun : irregularPlural}`;
+}
+
+/** "rows" → "Rows". */
+export function capitalise(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** "a", "a and b", "a, b and c". */
+export function joinList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }
 
 /** Row-name templates render {top_seed} from each user's history and {library_name} per library nightly. */
@@ -272,22 +223,6 @@ export function renderRowName(
  */
 export function sampleLibraryName(media: string): string {
   return media === "show" ? "TV Shows" : "Movies";
-}
-
-/**
- * How a background job's state reads to a person.
- *
- * A job back in `queued` AFTER an attempt is the queue retrying it, not work that has yet to start
- * — rendering that as "Queued" would say "nothing has happened yet", the opposite of the truth.
- */
-export function jobStatusLabel(job: {
-  status: string;
-  attempts: number;
-}): string {
-  if (job.status === "done") return "Done";
-  if (job.status === "failed") return `Failed after ${job.attempts} attempts`;
-  if (job.status === "running") return "Running…";
-  return job.attempts > 0 ? `Retrying (attempt ${job.attempts})` : "Queued";
 }
 
 /**

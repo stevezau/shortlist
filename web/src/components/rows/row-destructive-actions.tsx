@@ -22,8 +22,8 @@ import type { Collection } from "@/lib/types";
  * collections off the server but keeps the row here, so the next run rebuilds it; "Delete" destroys
  * the row itself. Both reach into someone else's Plex server, so both confirm first, and the
  * removal previews what it WOULD take away (a dry run) before it takes anything. Each sits on its
- * own line with the sentence that says what it does, because a hover title is the only place the
- * difference used to be written down.
+ * own line with the sentence that says what it does, because a hover title is too easy to miss for
+ * a difference this large.
  */
 export function RowDestructiveActions({
   collection,

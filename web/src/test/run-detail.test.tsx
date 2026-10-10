@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -74,11 +74,11 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
     privacy: null,
     users: [
       {
-        username: "MooHouse",
-        slug: "moohouse",
+        username: "Guest",
+        slug: "guest",
         status: "ok",
         rows_considered: { picked: "due" },
-        display_name: "MooHouse",
+        display_name: "Guest",
         error: null,
         reason: null,
         exa_searches: 0,
@@ -130,18 +130,21 @@ function renderDetail(query = "") {
   );
 }
 
+/** The mocks every grouped-by-library describe starts from: no people, no log, two configured rows. */
+function resetWithTwoRows() {
+  getRun.mockReset();
+  getUsers.mockReset();
+  getRunLog.mockReset();
+  getUsers.mockResolvedValue([]);
+  listCollections.mockResolvedValue([
+    { slug: "picked", name: "✨ {library_name} Picked for You" },
+    { slug: "gems", name: "💎 Hidden Gems" },
+  ]);
+  getRunLog.mockResolvedValue([]);
+}
+
 describe("RunDetailPage — grouped by library", () => {
-  beforeEach(() => {
-    getRun.mockReset();
-    getUsers.mockReset();
-    getRunLog.mockReset();
-    getUsers.mockResolvedValue([]);
-    listCollections.mockResolvedValue([
-      { slug: "picked", name: "✨ {library_name} Picked for You" },
-      { slug: "gems", name: "💎 Hidden Gems" },
-    ]);
-    getRunLog.mockResolvedValue([]);
-  });
+  beforeEach(resetWithTwoRows);
 
   it("says why a person's rows are identical to last night's, above their picks", async () => {
     // The second run of a night redelivers most people unchanged. Without this the panel shows the
@@ -307,7 +310,7 @@ describe("RunDetailPage — grouped by library", () => {
   });
 
   it("shows cache hits so a fully-cached run doesn't look like the source did nothing", async () => {
-    // The bug that misread SFLIX run 1: a warm shared cache means almost nothing is billed, so the
+    // The bug that misread a large production server run: a warm shared cache means almost nothing is billed, so the
     // tile read a bare "1" and looked broken. It must show what the cache served, not just the bill.
     const r = run([]);
     r.stats = {
@@ -547,7 +550,7 @@ describe("RunDetailPage — grouped by library", () => {
       {
         ts: "2026-07-15T04:18:05Z",
         run_id: 2,
-        user: "moohouse",
+        user: "guest",
         stage: "curating",
         counts: { candidates: 120 },
       },
@@ -567,7 +570,7 @@ describe("RunDetailPage — grouped by library", () => {
         seq: 0,
         ts: "2026-07-15T04:18:05Z",
         run_id: 2,
-        user: "moohouse",
+        user: "guest",
         stage: "curating",
         counts: {},
       },
@@ -670,7 +673,7 @@ describe("RunDetailPage — grouped by library", () => {
       stats: {
         ...base.stats,
         expected_users: [
-          { slug: "moohouse" },
+          { slug: "guest" },
           { slug: "sarah" },
           { slug: "mike" },
         ],
@@ -678,7 +681,7 @@ describe("RunDetailPage — grouped by library", () => {
     });
     getRunLog.mockResolvedValue(
       [
-        { user: "moohouse", stage: "queued" },
+        { user: "guest", stage: "queued" },
         { user: "sarah", stage: "queued" },
         { user: "mike", stage: "queued" },
         { user: "Shortlist", stage: "preparing" },
@@ -686,7 +689,7 @@ describe("RunDetailPage — grouped by library", () => {
         // under `shared_<row>`. Counting log subjects made them two extra people.
         { user: "Movies", stage: "indexed" },
         { user: "shared_popular", stage: "delivering" },
-        { user: "moohouse", stage: "done" },
+        { user: "guest", stage: "done" },
         { user: "sarah", stage: "curating" },
       ].map((line, seq) => ({
         seq,
@@ -763,7 +766,7 @@ describe("RunDetailPage — grouped by library", () => {
   });
 
   it("says what the run is doing for each person still in progress", async () => {
-    // "43 of 46 people done" with "samantharobinson527 — writing the row to Plex" in the sidebar for
+    // "43 of 46 people done" with "sam — writing the row to Plex" in the sidebar for
     // minutes: neither said which row, which library, or whether it was waiting on someone else.
     const base = run([]);
     const pending = (slug: string, display_name: string) => ({
@@ -779,7 +782,7 @@ describe("RunDetailPage — grouped by library", () => {
       status: "running",
       stats: {
         ...base.stats,
-        expected_users: [{ slug: "moohouse" }, { slug: "sam" }, { slug: "mike" }],
+        expected_users: [{ slug: "guest" }, { slug: "sam" }, { slug: "mike" }],
       },
       users: [base.users[0]!, pending("sam", "Samantha"), pending("mike", "")],
     });
@@ -787,7 +790,7 @@ describe("RunDetailPage — grouped by library", () => {
       [
         { user: "sam", stage: "queued" },
         { user: "mike", stage: "queued" },
-        { user: "moohouse", stage: "done" },
+        { user: "guest", stage: "done" },
         { user: "mike", stage: "delivering", counts: { row: "Picked", picks: 20 } },
         { user: "sam", stage: "delivering", counts: { row: "Picked", picks: 20 } },
         {
@@ -821,9 +824,9 @@ describe("RunDetailPage — grouped by library", () => {
       ...run([]),
       users: [
         {
-          username: "MooHouse",
-          display_name: "MooHouse",
-          slug: "moohouse",
+          username: "Guest",
+          display_name: "Guest",
+          slug: "guest",
           rows_considered: { picked: "due" },
           status: "ok",
           error: null,
@@ -1059,10 +1062,10 @@ describe("RunDetail — shows the display name, not the bare username", () => {
     r.stats = { users_ok: 1, users_error: 0, titles_requested: 0 };
     r.users = [
       {
-        ...skippedUser("moohouse", 1),
+        ...skippedUser("guest", 1),
         status: "ok",
         reason: null,
-        display_name: "Joe - Richard's Mate",
+        display_name: "Joe - Dad's Mate",
       },
     ] as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
@@ -1073,11 +1076,11 @@ describe("RunDetail — shows the display name, not the bare username", () => {
 
     // The name now appears in both the user sidebar row and the panel header (the sidebar shows
     // even for a single user), so assert it's present rather than unique — the point is the bare
-    // Plex login "moohouse" never renders as text (it's kept only for the avatar + search).
+    // Plex login "guest" never renders as text (it's kept only for the avatar + search).
     expect(
-      (await screen.findAllByText("Joe - Richard's Mate")).length,
+      (await screen.findAllByText("Joe - Dad's Mate")).length,
     ).toBeGreaterThan(0);
-    expect(screen.queryByText("moohouse")).toBeNull();
+    expect(screen.queryByText("guest")).toBeNull();
   });
 });
 
@@ -1087,9 +1090,9 @@ describe("RunDetail — a failed run says why", () => {
     // beta user with this exact failure had to read container logs to find out (issue #1).
     const r = run([]);
     r.status = "error";
-    r.error = "privacy sync for LisaPlex1234: RuntimeError: plex.tv rejected…";
+    r.error = "privacy sync for alex: RuntimeError: plex.tv rejected…";
     r.promotion_blockers = [
-      "LisaPlex1234 (plex account 12345): plex.tv rejected the share-filter update for account 12345: HTTP 400",
+      "alex (plex account 12345): plex.tv rejected the share-filter update for account 12345: HTTP 400",
     ];
     getRun.mockResolvedValue(r);
 
@@ -1137,17 +1140,7 @@ function failedUser(username: string, error: string) {
 }
 
 describe("RunDetail — 'N people failed with the same problem' (issue 7.1)", () => {
-  beforeEach(() => {
-    getRun.mockReset();
-    getUsers.mockReset();
-    getRunLog.mockReset();
-    getUsers.mockResolvedValue([]);
-    listCollections.mockResolvedValue([
-      { slug: "picked", name: "✨ {library_name} Picked for You" },
-      { slug: "gems", name: "💎 Hidden Gems" },
-    ]);
-    getRunLog.mockResolvedValue([]);
-  });
+  beforeEach(resetWithTwoRows);
 
   it("claims commonality for two people who hit the SAME recognised error class", async () => {
     const r = run([]);
@@ -1305,15 +1298,16 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
 
     const callsBefore = getRun.mock.calls.length;
     const source = FakeEventSource.instances.at(-1);
-    source?.emit("run.user.stage", {
-      user: "someoneelse",
-      stage: "curating",
-      counts: {},
-      run_id: 999, // this page is showing run #2
+    // act() flushes the invalidation a wrong handler would queue, so the absence below is checked
+    // after the refetch would already have started rather than after an arbitrary sleep.
+    await act(async () => {
+      source?.emit("run.user.stage", {
+        user: "someoneelse",
+        stage: "curating",
+        counts: {},
+        run_id: 999, // this page is showing run #2
+      });
     });
-
-    // Give any (wrongly) queued refetch a chance to fire, then assert it didn't.
-    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(getRun.mock.calls.length).toBe(callsBefore);
   });
 
@@ -1326,7 +1320,7 @@ describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () 
     const callsBefore = getRun.mock.calls.length;
     const source = FakeEventSource.instances.at(-1);
     source?.emit("run.user.stage", {
-      user: "moohouse",
+      user: "guest",
       stage: "curating",
       counts: {},
       run_id: 2, // this page is showing run #2
@@ -1521,7 +1515,7 @@ describe("RunDetailPage — a run that failed for PEOPLE, not for itself", () =>
     getRun.mockResolvedValue(run([]));
     renderDetail();
 
-    await screen.findAllByText(/MooHouse/);
+    await screen.findAllByText(/Guest/);
     expect(screen.queryByTestId("run-failure")).toBeNull();
   });
 });
@@ -1548,12 +1542,12 @@ describe("RunDetailPage — header actions", () => {
     expect(download).toHaveAttribute("download");
   });
 
-  it("starts a new run from Run now and opens it", async () => {
+  it("starts a new run from Run again and opens it", async () => {
     getRun.mockResolvedValue(run([]));
     renderDetail();
 
     const header = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
-    await userEvent.click(within(header).getByRole("button", { name: /Run now/ }));
+    await userEvent.click(within(header).getByRole("button", { name: /Run again/ }));
 
     expect(startRun).toHaveBeenCalledWith({});
     await waitFor(() => expect(getRun).toHaveBeenCalledWith(42));
@@ -1564,7 +1558,7 @@ describe("RunDetailPage — header actions", () => {
     renderDetail();
 
     const header = (await screen.findByRole("heading", { level: 1 })).closest("header")!;
-    expect(within(header).queryByRole("button", { name: /Run now/ })).toBeNull();
+    expect(within(header).queryByRole("button", { name: /Run again/ })).toBeNull();
     expect(within(header).getByRole("button", { name: /Cancel run/ })).toBeInTheDocument();
   });
 });

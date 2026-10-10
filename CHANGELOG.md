@@ -6,6 +6,88 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-10-10
+
+Back up `/config` before upgrading: this release adds database migrations 0102 to 0111. No settings need
+changing, and assistant access stays off until you opt in.
+
+### Added
+
+- **Assistant access (MCP, #141).** Optional, and off until `SHORTLIST_MCP_URL` is set. Connect a local or
+  hosted AI assistant that can view Shortlist or manage its supported settings, rows and saved
+  configuration. You approve each named connection yourself, and the assistant never sees the owner API
+  token. Migrations 0103 to 0108 add the tables for its connections, approvals, budgets and request
+  history. See [Connect an assistant](https://shortlistapp.dev/guides/assistant-access/).
+- **Hold requests by genre or TMDB tag.** **Settings, Requests** has a new "Don't request these
+  automatically" filter: movies with a chosen genre or TMDB tag wait in the inbox for you to approve instead of being
+  sent on their own.
+- **More seasonal presets**, and a simpler way to add a season to a row.
+- **Requests has its own Settings tab.** Settings now has four tabs. Changed settings are marked with their
+  default and a reset.
+- **Warnings view in Activity.** The log can be filtered to warnings, with context, and warning lines are
+  tinted.
+- **A per-user Kometa guide** on the docs site.
+- **A webhook event for a skipped scheduled job** (`job.skipped`). Webhook events can now be chosen before an
+  address is saved; only the on switch waits for one.
+- **Pick reasons name what the picks share.** "Because you watched Dune — more sci-fi and action", and the
+  person page groups a person's picks by reason.
+- **Dashboard.** "Last run" sums the night's scheduled runs, Finished says how many are still going, and both
+  bar charts say which shade is finished and which is still going. Durations of an hour or more read as hours
+  and minutes.
+- **First-run wizard** has a TMDB key walkthrough, and its last step shows the rows it built.
+
+### Changed
+
+- **Pause all users moved** from the Danger zone to **Settings, System, Run speed**. Only the full uninstall
+  stays in the Danger zone.
+- **Assistant consent** names the read-only scopes it asks for, and access is a simple choice of view or
+  manage.
+- **Numbers agree across pages.** People watching counts enabled people only, a person's header counts
+  shared-row watches like the dashboard does, and shared rows say they are one copy for everyone. The Requests
+  figures count only the titles that really reached the inbox.
+- **Redesigned screens.** The dashboard, rows list, row editor, **Add a row** (now its own page), Users and
+  person page, Privacy, Runs and run detail, Activity, Settings and the first-run wizard were reworked.
+  Runs show one verdict ("OK · N warnings") everywhere, and the Privacy page leads with its enforcement
+  check and a who-sees-what grid. Breadcrumb headers, plain-word row names and a 12px text floor apply
+  throughout.
+- **Requests page.** Each waiting request has one Send action, with Reject and Dismiss in its menu. Waiting
+  requests sit in one divided card, and the bulk bar shows how many are selected.
+- **Jobs page** shows each job's details in plain English.
+- **The Plex card** in **Settings, Connections** has a "Find your token" link.
+- **Linking a Plex server checks the address.** A Plex URL that is not http or https, or that points at a
+  cloud-metadata address, is refused.
+- **The uninstall preview** is grouped by library, person and row, and names a shared row "Shared row".
+- **Confirmed row membership is kept separately from run logs** (migration 0102), so clearing run history
+  no longer loses what a row delivered or where a watch is credited.
+- **Deleted row ids are never reused** (migration 0109). It seeds the counter above every id that grants and
+  history still refer to, so a new row can never inherit an old one's access.
+
+### Fixed
+
+- A watch is credited to the verified Plex owner, for both live watches and completed history.
+- Shared rows render their configured poster, and retried rows keep their delivery evidence.
+- Row names fill `{user}` instead of stripping it.
+- The requests-row check redacts credentials in a source failure before logging or returning it.
+- Privacy never shows a green all-clear above an exposure: the Off banner, the exposed-rows badge, the
+  first-run finish and the person page all follow the engine's reading, including during a plex.tv outage.
+- A run that could not save or check someone's hide rules reads as a warning.
+- The Most watched shelf stays inside its scroll area on a phone.
+- A schedule rebuild no longer drops that night's past-due row run.
+- A scheduled job that is skipped is reported (webhook and bell) instead of vanishing.
+- Watch sessions left open by a restart close as `orphaned` instead of `timeout`.
+- Web search no longer caches a SearXNG answer that was not JSON. An unusable Exa answer is cached for an
+  hour, and the run's trace lists the seeds that failed.
+- Retention pruning also drops the cached dashboard report, so the dashboard cannot show pruned data.
+- The log view widens its window once when a stretch of debug lines pushed every info line out.
+- Tab strips keep the active tab in view, small controls have larger touch targets, and the rows, Users and
+  Privacy pages read cleanly from 320px wide up.
+
+### Removed
+
+- **`GET /api/report/engagement` no longer returns `losing`, `stop_points` or `observed`.** Nothing in the
+  app read them; `people` is unchanged.
+- **`GET /api/system/syncs` is gone.** Nothing in the app used it.
+
 ## [1.10.0] - 2026-10-05
 
 ### Added
@@ -1810,7 +1892,7 @@ First public beta. Everything below ships in this release.
 
   _Later removed: per-row curation styles and prompts, the AI curator and "AI suggests from your
   library" were withdrawn before 0.1.0-beta.9, when ranking and reasons moved into code. Per-row AI
-  instructions for AI web search returned in [Unreleased]._
+  instructions for AI web search returned in 1.10.0._
 - **Freshness as a cadence** — rows stay stable and refresh every N days (nightly → fortnightly),
   so a person's row isn't reshuffled every night; unchanged rows skip the Plex write entirely.
 - **Row placement** — choose the Plex shelf (Home / library Recommended / both) and position, per

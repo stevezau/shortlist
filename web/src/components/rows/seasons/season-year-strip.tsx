@@ -85,7 +85,7 @@ export function SeasonYearStrip({
       <div data-year-strip role="img" aria-label={described} className="space-y-1.5">
         <div className={LANE}>
           <span className="hidden sm:block" />
-          <div className="relative h-4 text-[10px] font-medium">
+          <div className="relative h-4 text-xs font-medium">
             <span className={`absolute ${captionShift}`} style={{ left: `${todayAt}%` }}>
               Today
             </span>
@@ -123,7 +123,7 @@ export function SeasonYearStrip({
         ))}
         <div className={LANE}>
           <span className="hidden sm:block" />
-          <div className="relative h-4 text-[10px] text-muted-foreground">
+          <div className="relative h-4 text-xs text-muted-foreground">
             {MONTH_NAMES.map((month, index) => (
               <span key={month} className="absolute pl-0.5" style={{ left: `${monthStart(year, index + 1)}%` }}>
                 <span className="sm:hidden">{month.slice(0, 1)}</span>
@@ -141,6 +141,8 @@ export function SeasonYearStrip({
                 {`${first.name} and ${second.name} overlap on ${spanLabel(span)}: the nearer date wins.`}{" "}
               </span>
             ))}
+        {overlaps.length > 0 && seasons.some((season) => season.rule.kind === "month") &&
+          "When dates tie, a dated occasion takes priority over a full-month season. "}
         Between seasons the row is hidden and keeps its place. Seasons change at midnight on the server.
       </p>
     </div>

@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -73,7 +74,7 @@ def seed_outcomes(app: ShortlistApp) -> None:
         (905, 302, "show", faves_slug, "TV Shows", 20, 15, None),
         (906, 303, "show", faves_slug, "TV Shows", 20, 14, 3),  # series seen out
     ]
-    with sqlite3.connect(db) as con:
+    with closing(sqlite3.connect(db)) as con, con:
         uid = con.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()[0]
         for tmdb, rating_key, media, slug, library, d_ago, w_ago, f_ago in rows:
             con.execute(
@@ -126,6 +127,8 @@ class TestTheDashboardShowsBothNumbers:
         page.goto("/")
         expect(watched_count(page)).to_be_visible(timeout=20_000)
 
+        # "Who's watching" opens on people; the per-row lines are one switch away.
+        page.get_by_role("button", name="By row").click()
         body = page.locator("body")
         expect(body).to_contain_text(re.compile(r"2 watched · 2 finished"))
         expect(body).to_contain_text(re.compile(r"3 watched · 1 finished"))
@@ -157,7 +160,7 @@ class TestTheRealSyncStampsTheRightColumn:
         # Polled from the jobs table rather than an endpoint: there is no `/api/jobs/{id}` route
         # (only the `/api/system/jobs` list), and the status column is what the worker writes anyway.
         for _ in range(300):
-            with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+            with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
                 row = con.execute("SELECT status, error FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row and row[0] in ("done", "error"):
                 assert row[0] == "done", row
@@ -165,56 +168,67 @@ class TestTheRealSyncStampsTheRightColumn:
             time.sleep(0.2)
         raise AssertionError("the sync job never finished")
 
-    def _pick(self, app: ShortlistApp, uid: int, tmdb_id: int, media_type: str, title: str) -> None:
-        """One pick delivered by a real run, two days ago.
+    def _pick(self, app: ShortlistApp, uid: int, tmdb_id: int, media_type: str, title: str, *, rating_key: int) -> None:
+        """Declare one title in the same confirmed delivery from two days ago.
 
-        The `run_id` is not decoration: the reconcile only credits a title that is in a LIVE row, and
-        a row's live contents are the picks from the newest run that delivered it. A pick with no run
-        belongs to no delivery, so it reads as a title the row has already dropped.
+        The independent delivery record establishes membership; the run is only diagnostic history.
+        Reusing one run and collection key per library keeps every seeded title in that delivery.
         """
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
-            delivered = (datetime.now(UTC) - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
-            # The newest run is REUSED across calls, not one run per pick: a later run delivering the
-            # same row is precisely what makes an earlier pick stale, so a run each would leave every
-            # pick but the last one out of the live row.
-            row = con.execute("SELECT id FROM runs ORDER BY id DESC LIMIT 1").fetchone()
-            run_id = (
-                row[0]
-                if row
-                else con.execute(
-                    "INSERT INTO runs (trigger, started_at, finished_at, status, dry_run, stats) "
-                    "VALUES ('schedule', ?, ?, 'ok', 0, '{}')",
-                    (delivered, delivered),
-                ).lastrowid
-            )
-            # The delivery-ledger entry a real run writes alongside the picks. Liveness means the
-            # collection is still ON PLEX, and this is the only record of that — without it the row
-            # reads as one Plex no longer has and nothing is creditable.
-            con.execute(
-                "INSERT OR REPLACE INTO deliveries (collection_slug, user_slug, library_key, rating_key, title, "
-                "updated_at) VALUES ('picked', 'sarah', ?, ?, 'Picked for You', ?)",
-                ("2" if media_type == "show" else "1", 900 + tmdb_id % 100, delivered),
-            )
-            con.execute(
-                "INSERT INTO picks (run_id, user_id, tmdb_id, media_type, rating_key, rank, collection_slug, "
-                "section_key, library, title, reason, sources, affinity, created_at, watched_at, finished_at) "
-                "VALUES (?,?,?,?,?,1,'picked',?,?,?,'','tmdb',1.0,?,NULL,NULL)",
-                (
-                    run_id,
-                    uid,
-                    tmdb_id,
-                    media_type,
-                    tmdb_id,
-                    "2" if media_type == "show" else "1",
-                    "TV Shows" if media_type == "show" else "Movies",
-                    title,
-                    delivered,
-                ),
-            )
-            con.commit()
+        from sqlalchemy.orm import Session
+
+        from shortlist.server.db.models import Delivery, PickRow, Run, User
+        from shortlist.server.db.session import make_engine
+        from shortlist.server.services.watch_events import RowMembership
+        from tests.watch_fixtures import personal_delivery
+
+        delivered = datetime.now(UTC) - timedelta(days=2)
+        library = "2" if media_type == "show" else "1"
+        engine = make_engine(app.config_dir)
+        try:
+            with Session(engine) as session:
+                user = session.get(User, uid)
+                run = session.query(Run).order_by(Run.id.desc()).first()
+                if run is None:
+                    run = Run(trigger="schedule", started_at=delivered, finished_at=delivered, status="ok")
+                    session.add(run)
+                    session.flush()
+                if session.get(Delivery, ("picked", user.slug, library)) is None:
+                    session.add(
+                        Delivery(
+                            collection_slug="picked",
+                            user_slug=user.slug,
+                            library_key=library,
+                            rating_key=900 + int(library),
+                            title="Picked for You",
+                            updated_at=delivered,
+                        )
+                    )
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=tmdb_id,
+                        media_type=media_type,
+                        rating_key=rating_key,
+                        rank=1,
+                        collection_slug="picked",
+                        section_key=library,
+                        library="TV Shows" if media_type == "show" else "Movies",
+                        title=title,
+                        sources="tmdb",
+                        created_at=delivered,
+                    )
+                )
+                personal_delivery(session, run.id, user_id=uid, library=library)
+                assert RowMembership(session).visible_rows(user, {(tmdb_id, media_type)}, datetime.now(UTC)) == [
+                    "picked"
+                ]
+                session.commit()
+        finally:
+            engine.dispose()
 
     def _stamps(self, app: ShortlistApp, title: str) -> tuple:
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+        with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
             return con.execute("SELECT watched_at, finished_at FROM picks WHERE title = ?", (title,)).fetchone()
 
     def test_a_finished_series_and_a_part_watched_one_land_in_different_columns(
@@ -230,10 +244,10 @@ class TestTheRealSyncStampsTheRightColumn:
         state.history.append(FakeHistoryEntry(account_id=sarah.id, rating_key=302, viewed_at=int(time.time())))
         state.watch_episodes(sarah.id, 302, 2)  # two episodes in, 8 to go
 
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+        with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
             uid = con.execute("SELECT id FROM users WHERE username = 'sarah'").fetchone()[0]
-        self._pick(app, uid, 7001, "show", "Seen out")
-        self._pick(app, uid, 7002, "show", "Two episodes in")
+        self._pick(app, uid, 7001, "show", "Seen out", rating_key=301)
+        self._pick(app, uid, 7002, "show", "Two episodes in", rating_key=302)
 
         self._sync(app)
 
@@ -250,9 +264,9 @@ class TestTheRealSyncStampsTheRightColumn:
         sarah = state.users[201]
         state.history.append(FakeHistoryEntry(account_id=sarah.id, rating_key=101, viewed_at=int(time.time())))
 
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+        with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
             uid = con.execute("SELECT id FROM users WHERE username = 'sarah'").fetchone()[0]
-        self._pick(app, uid, 9001, "movie", "A film")
+        self._pick(app, uid, 9001, "movie", "A film", rating_key=101)
 
         self._sync(app)
 
@@ -270,15 +284,14 @@ class TestTheSplitBarsAreHonest:
         expect(watched_count(page)).to_be_visible(timeout=20_000)
 
         # Every split track on the page: children must fit inside their parent. The count is
-        # asserted first because these tracks are `hidden xl:flex` — at any viewport below 1280 they
-        # have zero width, get filtered out below, and the overflow check passes measuring nothing.
-        assert page.evaluate("() => document.querySelectorAll('div.rounded-full.bg-muted').length") > 0, (
+        # asserted first so the overflow check below can never pass by measuring nothing.
+        assert page.evaluate("() => document.querySelectorAll('[data-testid=split-bar]').length") > 0, (
             "no split track rendered at this viewport — the assertion below would be vacuous"
         )
         overflows = page.evaluate(
             """() => {
                 const bad = [];
-                for (const track of document.querySelectorAll('div.rounded-full.bg-muted')) {
+                for (const track of document.querySelectorAll('[data-testid=split-bar]')) {
                     const inner = [...track.children].reduce((s, c) => s + c.getBoundingClientRect().width, 0);
                     const outer = track.getBoundingClientRect().width;
                     if (outer > 0 && inner > outer + 1) bad.push({inner, outer, html: track.outerHTML.slice(0, 120)});
@@ -294,7 +307,7 @@ class TestTheSplitBarsAreHonest:
         fail. Spread the watches across four weeks, then refuse to pass if nothing rendered."""
         seed_outcomes(app)
         now = datetime.now(UTC)
-        with sqlite3.connect(app.config_dir / "shortlist.db") as con:
+        with closing(sqlite3.connect(app.config_dir / "shortlist.db")) as con, con:
             uid = con.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()[0]
             for n, weeks_back in enumerate((2, 3, 4, 5)):
                 when = now - timedelta(weeks=weeks_back)

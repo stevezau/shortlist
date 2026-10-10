@@ -2,13 +2,13 @@ import { Clock } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { OwnerNote } from "@/components/owner-note";
-import { RestrictedNote } from "@/components/restricted-note";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Tabs, TabPanel } from "@/components/ui/tabs";
 import { BlockedSeedsList } from "@/components/user-detail/blocked-seeds";
 import { RecentRuns } from "@/components/user-detail/recent-runs";
+import { OffBanner } from "@/components/user-detail/off-banner";
+import { ProfileExposureBanner } from "@/components/user-detail/profile-exposure-banner";
 import { UserDetailHeader } from "@/components/user-detail/user-detail-header";
 import { UserNickname } from "@/components/user-detail/user-nickname";
 import { UserRequestTag } from "@/components/user-detail/user-request-tag";
@@ -22,6 +22,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUsers } from "@/lib/queries";
 import type { User } from "@/lib/types";
+import { userState } from "@/lib/user-state";
+import { personName } from "@/lib/user-names";
 
 function SectionHeading({ children }: { children: ReactNode }) {
   return <h2 className="text-lg font-semibold">{children}</h2>;
@@ -31,10 +33,8 @@ type UserTab = "rows" | "runs" | "settings" | "watched";
 
 const TABS: UserTab[] = ["rows", "runs", "settings", "watched"];
 
-/** The tab was renamed on screen ("Watch History" → "Watched") and the URL kept the old word, so
- *  `?tab=history` addressed a tab labelled "Watched". Links in the wild — the dashboard's, and any
- *  bookmark — still say `history`, and a URL that silently lands on the wrong tab is worse than the
- *  mismatch was. */
+/** `?tab=history` is an alias for the "Watched" tab. Links in the wild — the dashboard's, and any
+ *  bookmark — say `history`, and a URL that silently lands on the wrong tab is worse than an alias. */
 const LEGACY_TAB_ALIASES: Record<string, UserTab> = { history: "watched" };
 
 export function UserDetailBody({ user }: { user: User }) {
@@ -56,7 +56,7 @@ export function UserDetailBody({ user }: { user: User }) {
       <UserDetailHeader user={user} />
 
       {user.user_type === "owner" && <OwnerNote />}
-      <RestrictedNote user={user} />
+      {userState(user) === "off" ? <OffBanner user={user} /> : <ProfileExposureBanner user={user} />}
 
       <Tabs
         id="user-detail"
@@ -65,10 +65,9 @@ export function UserDetailBody({ user }: { user: User }) {
           { value: "rows", label: "Rows" },
           { value: "runs", label: "Runs" },
           { value: "settings", label: "Settings" },
-          // "Watched" rather than "Watch History": the tab now holds two different things — what
-          // they did with SHORTLIST'S picks, and everything they have ever watched on Plex. The old
-          // label described only the second. The VALUE follows the label (it used to stay
-          // "history", so the URL and the tab disagreed about what the tab was called).
+          // "Watched" rather than "Watch History": the tab holds two different things — what
+          // they did with SHORTLIST'S picks, and everything they have ever watched on Plex — and
+          // "Watch History" describes only the second. The VALUE follows the label.
           { value: "watched", label: "Watched" },
         ]}
         value={tab}
@@ -100,7 +99,7 @@ export function UserDetailBody({ user }: { user: User }) {
           </div>
           <p className="text-sm text-muted-foreground">
             A run builds rows for everyone at once, so this is the subset that
-            covered {user.display_name || user.username} — each showing what
+            covered {personName(user)} — each showing what
             happened to <em>their</em> row, not whether the run as a whole
             succeeded.
           </p>
@@ -114,7 +113,8 @@ export function UserDetailBody({ user }: { user: User }) {
             <section className="space-y-3">
               <UserNickname user={user} />
             </section>
-            <section className="space-y-3">
+            <section aria-labelledby="user-tags-heading" className="space-y-3">
+              <h2 id="user-tags-heading" className="text-lg font-semibold">Sonarr and Radarr tags</h2>
               <UserRequestTag user={user} />
               <UserRequestedByTag user={user} />
             </section>
@@ -185,7 +185,6 @@ export function UserDetailPage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to="/users" label="Users" />
       <QueryBoundary
         query={usersQuery}
         skeleton={<Skeleton className="h-64 w-full" />}

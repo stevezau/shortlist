@@ -11,19 +11,19 @@ export type RunPrivacy = NonNullable<Run["privacy"]>;
  */
 export function privacyFindings(privacy: RunPrivacy | null | undefined): string[] {
   if (!privacy) return [];
-  const seen = new Set<string>();
-  const names: string[] = [];
-  for (const name of [
-    ...privacy.can_see_others,
-    ...(privacy.unreadable_filters ?? []),
-    ...(privacy.filters_not_enforced ?? []),
-  ]) {
-    const key = name.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    names.push(name);
-  }
-  return names;
+  return unseen(
+    [...privacy.can_see_others, ...(privacy.unreadable_filters ?? []), ...(privacy.filters_not_enforced ?? [])],
+    new Set(),
+  );
+}
+
+/**
+ * Everything that makes a run a warning: the flagged accounts plus those whose hide rules could not be
+ * saved or that nobody could look through. A left-alone account is the owner's choice, not a warning.
+ */
+export function privacyWarnings(privacy: RunPrivacy | null | undefined): string[] {
+  if (!privacy) return [];
+  return unseen([...privacyFindings(privacy), ...(privacy.write_failed ?? []), ...(privacy.unchecked ?? [])], new Set());
 }
 
 /**
@@ -34,10 +34,10 @@ export function privacyFindings(privacy: RunPrivacy | null | undefined): string[
  * failed run keeps saying "Failed" — the warning never upgrades or replaces it.
  */
 export function hasPrivacyWarning(run: { status: string; privacy?: RunPrivacy | null }): boolean {
-  return run.status === "ok" && privacyFindings(run.privacy).length > 0;
+  return run.status === "ok" && privacyWarnings(run.privacy).length > 0;
 }
 
-export type RunPrivacyVerdict =
+type RunPrivacyVerdict =
   /** The run never measured (older runs, dry runs, runs that died before the merge). */
   | { kind: "not_measured" }
   /** Plex's own filter read did not run, or the run did not record which accounts it could not vouch

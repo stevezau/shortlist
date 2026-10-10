@@ -3,6 +3,8 @@ import { useId, useState } from "react";
 
 import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
+import { countModified, useModifiedMarks, useReportModifiedCount } from "@/components/settings/modified-marks";
+import { ModifiedBadge, ModifiedDefault } from "@/components/settings/modified";
 import { useSaveBarReport } from "@/components/settings/save-bar-context";
 import { SettingsPanel, SettingsSection } from "@/components/settings/section-layout";
 import { Input } from "@/components/ui/input";
@@ -35,9 +37,19 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
 
   const inSaveBar = useSaveBarReport("row-defaults", save);
 
+  const mark = useModifiedMarks();
+  const mName = mark("row.name_template", rowNameTpl, { label: (template) => template, reset: setRowNameTpl });
+  const mSize = mark("row.size", rowSize, {
+    fromDefault: Number,
+    label: (count) => `${count} titles`,
+    reset: setRowSize,
+  });
+  useReportModifiedCount("row-defaults", countModified([mName, mSize]));
+
   return (
     <SettingsSection
       id="row-defaults"
+      modifiedCount={countModified([mName, mSize])}
       title="Row defaults"
       description="What a new row is called and how many titles it holds. Existing rows keep their own."
     >
@@ -52,8 +64,13 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
       )}
       <SettingsPanel>
         <div className="space-y-3 px-4 py-4 sm:px-5">
-          <Label htmlFor={rowNameId}>Row name template</Label>
+          <Label htmlFor={rowNameId}>
+            Row name template
+            <ModifiedBadge modified={mName} />
+          </Label>
+          <ModifiedDefault modified={mName} name="Row name template" />
           <Input
+            className="max-w-xl"
             id={rowNameId}
             value={rowNameTpl}
             onChange={(event) => setRowNameTpl(event.target.value)}
@@ -85,6 +102,7 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
         </div>
         <div className="px-4 py-4 sm:px-5">
           <RowSizeField value={rowSize} onChange={setRowSize} />
+          <ModifiedDefault modified={mSize} name="How many titles" />
         </div>
       </SettingsPanel>
     </SettingsSection>

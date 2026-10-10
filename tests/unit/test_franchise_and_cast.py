@@ -210,7 +210,7 @@ class TestReasonFor:
         c = candidate(10, title="Arrival")
         c.genres = ["Sci-Fi"]
 
-        assert reason_for(c) == "Because you watched sci-fi like Dune"
+        assert reason_for(c) == "Because you watched Dune — more sci-fi"
 
     def test_a_franchise_match_adds_a_clause(self):
         c = candidate(10)

@@ -22,7 +22,7 @@ const RETENTION_OPTIONS = ["5", "10", "20", "30"];
 const DEFAULT_BACKUP_CRON = "0 3 * * *";
 
 /** "every day at 3:00 AM" / "every 12 hours, at 17 minutes past" — whatever `backupCron` actually
- *  is, not a hardcoded "tonight at 3 AM" that used to say the default even after it was changed via
+ *  is, not a hardcoded "tonight at 3 AM" that would keep saying the default after it was changed via
  *  the picker above. */
 function describeBackupSchedule(cron: string): string {
   const description = describeCron(cron || DEFAULT_BACKUP_CRON);
@@ -106,13 +106,7 @@ export function BackupPanel() {
           value={backupCron}
           blankLabel={blankLabel}
           onChange={(cron) =>
-            saveSettings.mutate(
-              { "backup.cron": cron },
-              {
-                onSuccess: () =>
-                  queryClient.invalidateQueries({ queryKey: queryKeys.syncs }),
-              },
-            )
+            saveSettings.mutate({ "backup.cron": cron })
           }
         />
         <div className="flex items-center gap-2">
@@ -124,9 +118,6 @@ export function BackupPanel() {
                 { "backup.max_keep": Number(v) },
                 {
                   onSuccess: () => {
-                    queryClient.invalidateQueries({
-                      queryKey: queryKeys.syncs,
-                    });
                     queryClient.invalidateQueries({
                       queryKey: queryKeys.settings,
                     });

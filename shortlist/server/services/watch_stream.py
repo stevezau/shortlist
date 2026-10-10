@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.server.db.models import Job, Setting, WatchSession
 from shortlist.server.services import jobs
+from shortlist.server.services.watch_identity import verified_owner_account_id
 from shortlist.server.settings_store import SettingsStore
 
 #: How long a session may go unheard-from before we call it over. Comfortably above the ~10s cadence
@@ -59,8 +60,8 @@ SESSION_CACHE_TTL = timedelta(seconds=5)
 #: probing the file. Tautulli calls the same idea its "ignore interval".
 MIN_START_SECONDS = 60
 #: Live references to in-flight wake futures. `run_coroutine_threadsafe` hands back a future nothing
-#: else holds, and a bare one can be garbage-collected mid-flight — the same reason
-#: `jobs._BACKGROUND_DRAINS` exists.
+#: else holds, and a bare one can be garbage-collected mid-flight. Jobs likewise retain their
+#: drain tasks in each app's lifecycle.
 _WAKES: set = set()
 
 #: How far past an item's stated runtime an offset may sit and still be believed. Genuine end-of-file
@@ -202,6 +203,7 @@ class WatchStream:
         # the message loop parks behind them. One worker also serialises our own writes, so two
         # flushes for the same session can never race.
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="watch-stream")
+        self._pool_shutdown: asyncio.Future[None] | None = None
 
     # -- health --------------------------------------------------------------------------
     #
@@ -293,8 +295,9 @@ class WatchStream:
                     .all()
                 }
                 return all(bool((values.get(k) or {}).get("v")) for k in ("plex.url", "plex.token"))
-        except Exception:
+        except Exception as e:
             # Cannot tell. Stay quiet rather than alert on a database blip.
+            logger.debug("plex credentials check failed ({}); not alerting", type(e).__name__)
             return False
 
     def _write_health(self, *, connected: bool, resume: bool = False) -> None:
@@ -338,7 +341,7 @@ class WatchStream:
             rows = session.query(WatchSession).filter(WatchSession.ended_at.is_(None)).all()
             for row in rows:
                 row.ended_at = row.last_seen_at
-                row.end_reason = "timeout"
+                row.end_reason = "orphaned"
             if rows:
                 session.commit()
                 logger.info("watch-stream: closed {} session(s) left open by a restart", len(rows))
@@ -391,7 +394,7 @@ class WatchStream:
             try:
                 # `_mark_connected` is handed in so the backoff clears the moment the socket CONNECTS,
                 # not when `_listen` returns — which only happens on shutdown. Every real drop goes
-                # through the `except` below, so the delay used to double monotonically for the life
+                # through the `except` below, so the delay would double monotonically for the life
                 # of the process and settle at two minutes of unobserved playback per blip.
                 await self._listen(ctx, on_connected=self._mark_connected)
             except asyncio.CancelledError:
@@ -410,8 +413,32 @@ class WatchStream:
         self._stopping = True
         self._stop.set()
 
+    async def shutdown(self) -> None:
+        """Join the private worker after the listener coroutine has stopped.
+
+        Cancelling the listener's executor await cannot stop its database write. Keep the pool
+        alive until that write closes its connection, even if shutdown itself is cancelled.
+        """
+        self.stop()
+        if self._pool_shutdown is None:
+            self._pool_shutdown = asyncio.get_running_loop().run_in_executor(
+                None, lambda: self._pool.shutdown(wait=True)
+            )
+        pending = self._pool_shutdown
+        cancelled = False
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                cancelled = True
+        pending.result()
+        if cancelled:
+            raise asyncio.CancelledError
+
     async def _in_pool(self, fn, *args):
         """Run a blocking call on OUR thread, never the shared default executor."""
+        if self._pool_shutdown is not None:
+            raise RuntimeError("Watch stream is shutting down; its worker no longer accepts work")
         return await asyncio.get_running_loop().run_in_executor(self._pool, lambda: fn(*args))
 
     async def _sleep(self, seconds: float) -> None:
@@ -490,10 +517,10 @@ class WatchStream:
             return
         for event in container.get("PlaySessionStateNotification", []) or []:
             # PER EVENT, so one odd frame cannot end tracking for everybody. `viewOffset` and
-            # `ratingKey` are parsed with `int()`, and a non-numeric value there used to raise all the
-            # way out to `run()` — which treated it as a dropped socket, reconnected, and closed every
-            # live session as `replaced`. One client sending one strange frame fragmented every watch
-            # in progress. These payload shapes are not fixture-backed, so they are assumptions.
+            # `ratingKey` are parsed with `int()`, and a non-numeric value there would raise all the
+            # way out to `run()` — which treats it as a dropped socket, reconnects, and closes every
+            # live session as `replaced`, so one client sending one strange frame would fragment every
+            # watch in progress. These payload shapes are not fixture-backed, so they are assumptions.
             try:
                 await self._on_playing(ctx, event)
             except Exception as e:
@@ -582,11 +609,17 @@ class WatchStream:
         if self._snapshot_at is not None and now - self._snapshot_at < SESSION_CACHE_TTL:
             return self._snapshot
         try:
-            self._snapshot = await self._in_pool(ctx.plex.active_sessions)
+            self._snapshot = await self._in_pool(self._read_active_sessions, ctx)
             self._snapshot_at = now
         except Exception as e:
             logger.debug("watch-stream: could not read active sessions ({})", type(e).__name__)
         return self._snapshot
+
+    def _read_active_sessions(self, ctx) -> dict[str, dict]:
+        """Resolve the PMS-local owner only against the linked, authenticated server identity."""
+        with self._sessions() as session:
+            owner_account_id = verified_owner_account_id(session, ctx.plex)
+        return ctx.plex.active_sessions(owner_account_id=owner_account_id)
 
     async def _housekeep(self, ctx) -> None:
         """Close sessions that stopped talking to us.
@@ -721,8 +754,8 @@ class WatchStream:
           lifespan has deliberately stopped the scheduler. That let pressing play begin a
           share-filter merge during shutdown, with the drain never resuming to close the job out.
           `drain_kind` runs the read-only pass this asked for and nothing else.
-        * It does not drop the future. A bare task can be garbage-collected mid-flight, which is why
-          `jobs._BACKGROUND_DRAINS` exists; this keeps its own reference on the same pattern.
+        * It does not drop the future. A bare task can be garbage-collected mid-flight; this keeps
+          its own reference, while jobs retain the actual drain task in the app's lifecycle.
         """
         if self._drain is None or self._loop is None or self._stopping:
             return

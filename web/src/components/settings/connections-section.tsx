@@ -7,12 +7,14 @@ import {
   TmdbGlyph,
 } from "@/components/brand-glyphs";
 import { ConnectionCard } from "@/components/connection-card";
-import { NotificationsSection } from "@/components/settings/notifications-section";
+import { NotificationsSection, WebhookAlertsSwitch } from "@/components/settings/notifications-section";
+import { useWebhookAlerts } from "@/components/settings/webhook-alerts";
 import { settingBool, settingString } from "@/lib/format";
 import { CURATOR_PROVIDERS, findProvider } from "@/lib/providers";
+import { latestRunChain } from "@/lib/dashboard-status";
 import { useRuns } from "@/lib/queries";
 import { hasExa, hasExternalSearch, hasSearxng } from "@/lib/sources";
-import type { Settings, TestableService } from "@/lib/types";
+import type { Run, Settings, TestableService } from "@/lib/types";
 
 /** The one "Search with" choice, matching the picker on the AI web search card so the two can never
  *  disagree — they are the same setting, shown where each is useful. */
@@ -88,7 +90,7 @@ function providerHint(values: Record<string, string>): string | undefined {
 /** How hard Exa works per search, cheapest first.
  *
  *  The buttons carry the name only; the trade-off goes in `hint`, shown one line at a time for
- *  whichever depth is selected. Labels used to carry price and caveat inline, which made a row of
+ *  whichever depth is selected. Price and caveat inline in the labels would make a row of
  *  six buttons unreadable.
  *
  *  The cheap modes are called erratic because they measurably are: on the same two searches
@@ -125,7 +127,7 @@ const EXA_SEARCH_TYPES = [
  *  - searxng — returns raw snippets, so something must read them: an AI is required.
  *
  *  Worth stating plainly because the failure was silent and expensive: Exa with the provider set to
- *  None used to pay for every search and discard the titles. */
+ *  None would pay for every search and discard the titles. */
 function backendHint(chosen: string | undefined): string | undefined {
   const backend = chosen || "native";
   if (backend === "exa")
@@ -223,6 +225,14 @@ function searchFootnote(
   return `Last run: ${lastSearches.toLocaleString()} web search${lastSearches === 1 ? "" : "es"} · results are shared by everyone and reused for ${WEB_SEARCH_CACHE_DAYS} days`;
 }
 
+/** Searches in the latest finished run plus the scheduled runs chained with it. Two cron groups run
+ *  back to back and the second often searches nothing, so its 0 must not stand in for the night. */
+function lastNightsSearches(runs: Run[] | undefined): number | undefined {
+  const chain = latestRunChain(runs)?.runs ?? [runs?.find((r) => r.finished_at)];
+  const counts = chain.map((run) => run?.stats?.exa_searches);
+  return counts.some((n) => n != null) ? counts.reduce<number>((sum, n) => sum + (n ?? 0), 0) : undefined;
+}
+
 /** "2 of 4 set up": how many of a group's services have something on file. Set up, not "connected" —
  *  whether each one actually answers is its own pill, from a real test. */
 function setUpCount(summaries: string[]): string {
@@ -267,7 +277,10 @@ function ConnectionGroup({
 /** Connections: every service Shortlist talks to, one row each, editable and testable in place. */
 export function ConnectionsSection({ settings }: { settings: Settings }) {
   const runs = useRuns();
-  const lastFinishedRun = runs.data?.find((r) => r.finished_at);
+  const lastSearches = lastNightsSearches(runs.data);
+  // "No AI" is a choice, not a connection: rows use the built-in picker and there is nothing to test.
+  const searchBuiltInOnly = settingString(settings, "curator.provider") === "none" && !hasExternalSearch(settings);
+  const alerts = useWebhookAlerts(settings);
   const summaries = {
     plex: settingString(settings, "plex.url"),
     tmdb: settingString(settings, "tmdb.apikey") ? "API key saved" : "",
@@ -309,7 +322,14 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               kind: "text",
               placeholder: "http://your-host:32400",
             },
-            { key: "plex.token", label: "Plex token", kind: "password" },
+            {
+              key: "plex.token",
+              label: "Plex token",
+              kind: "password",
+              helpUrl:
+                "https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/",
+              helpLabel: "Find your token",
+            },
           ]}
         />
 <ConnectionCard
@@ -334,7 +354,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           id="connections-discovery"
           title="Discovery & watch history"
           description="Each one widens where picks come from, or how people are named. Rows build fine without them."
-          count={setUpCount([summaries.search, summaries.tautulli, summaries.trakt, summaries.mdblist])}
+          count={setUpCount([searchBuiltInOnly ? "" : summaries.search, summaries.tautulli, summaries.trakt, summaries.mdblist])}
         >
 <ConnectionCard
           service={testableSearchService(settings)}
@@ -344,10 +364,11 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           purpose="Finds what critics and “what to watch next” articles are recommending right now, and keeps only the titles you already own. Optional — without it, rows are built from your library alone."
           settings={settings}
           summary={summaries.search}
+          builtInOnly={searchBuiltInOnly}
           glyph={<Globe aria-hidden className="text-primary" />}
           footnote={searchFootnote(
             settings,
-            lastFinishedRun?.stats?.exa_searches,
+            lastSearches,
           )}
           fields={[
             {
@@ -504,7 +525,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionGroup
           id="connections-requests"
           title="Requests"
-          description="Where picks that aren’t in your library get sent, once requests are turned on under Defaults."
+          description="Where picks that aren’t in your library get sent, once requests are turned on in the Requests tab."
           count={setUpCount([summaries.overseerr, summaries.radarr, summaries.sonarr])}
         >
 <ConnectionCard
@@ -584,7 +605,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           title="Webhook"
           purpose="Where Shortlist sends its alerts: a Discord or Slack channel, ntfy, Gotify, Home Assistant, n8n, or anything else that accepts a webhook."
           settings={settings}
-          footnote={<WebhookNextStep settings={settings} />}
+          footnote={settingString(settings, "notify.webhook.url") ? <WebhookNextStep settings={settings} /> : undefined}
+          headerExtra={<WebhookAlertsSwitch alerts={alerts} />}
           summary={summaries.webhook}
           unsetLabel="Not set up"
           glyph={<Webhook aria-hidden className="text-primary" />}
@@ -616,7 +638,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           ]}
         />
           {/* The switch and the events sit with the webhook they send to: one Webhook, one place. */}
-          <NotificationsSection settings={settings} />
+          <NotificationsSection settings={settings} alerts={alerts} />
         </ConnectionGroup>
       {/* Required by the TMDB API terms of use whenever their data is displayed. */}
       <p className="text-xs text-muted-foreground">

@@ -3,7 +3,6 @@ import { AlertTriangle, Check, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
 import { Link } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { PageHeader } from "@/components/page-header";
 import { MutationAlert } from "@/components/mutation-alert";
 import { Button } from "@/components/ui/button";
@@ -12,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, apiErrorMessage } from "@/lib/api";
-import { groupTitles } from "@/lib/group-titles";
+import { plural } from "@/lib/format";
+import { groupCollections, groupTitles } from "@/lib/group-titles";
 import { useSSE } from "@/lib/sse";
 import type { UninstallResult } from "@/lib/types";
 
@@ -39,8 +39,6 @@ function LogBox({ lines }: { lines: string[] }) {
   );
 }
 
-const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-
 /**
  * What the uninstall will do, as counts. Labels have no count of their own: the only labels
  * Shortlist adds are on its collections, and they go with them.
@@ -52,9 +50,37 @@ function PlanSummary({ result }: { result: UninstallResult }) {
       : `${result.filters_restored} share filters from their snapshots`;
   return (
     <p className="font-medium">
-      Restores {filters}, deletes {plural(result.collections_deleted.length, "collection", "collections")} and
-      switches off {plural(result.rows_disabled, "row", "rows")}.
+      Restores {filters}, deletes {plural(result.collections_deleted.length, "collection")} and
+      switches off {plural(result.rows_disabled, "row")}.
     </p>
+  );
+}
+
+/** The collections the preview will delete, by library and person. A server that does not send the
+ *  per-collection detail still gets its titles. */
+function CollectionsToDelete({ result }: { result: UninstallResult }) {
+  const detail = result.collections_detail ?? [];
+  if (detail.length === 0) {
+    return result.collections_deleted.length > 0 ? (
+      <p className="text-muted-foreground">{groupTitles(result.collections_deleted).join(", ")}</p>
+    ) : null;
+  }
+  return (
+    <div className="space-y-3 py-2">
+      {groupCollections(detail).map(({ library, people }) => (
+        <section key={library} className="space-y-1">
+          <h3 className="text-sm font-medium">{library}</h3>
+          <ul className="space-y-0.5 text-muted-foreground">
+            {people.map(({ person, titles }) => (
+              <li key={person} className="flex flex-wrap gap-x-2">
+                <span className="text-foreground">{person}</span>
+                <span>{titles.join(", ")}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -143,9 +169,16 @@ export function UninstallPage() {
 
   return (
     <div className="max-w-2xl space-y-6">
-      <BackLink to="/settings" label="Settings" />
       <PageHeader
-        title="Uninstall Shortlist"
+        title={
+          <>
+            <Link to="/settings" className="font-normal text-muted-foreground hover:text-foreground">
+              Settings
+            </Link>
+            <span className="font-normal text-faint-foreground">{" / "}</span>
+            Uninstall Shortlist
+          </>
+        }
         subtitle="Remove Shortlist from this server and put Plex back exactly as it was."
       />
 
@@ -214,10 +247,15 @@ export function UninstallPage() {
             {preview.data && (
               <div className="space-y-1 border-y py-3 text-sm">
                 <PlanSummary result={preview.data} />
+                {/* Layout only: 188 collections inline put the confirm box ~3000px down. The list is
+                    the same component, just folded away until asked for. */}
                 {preview.data.collections_deleted.length > 0 && (
-                  <p className="text-muted-foreground">
-                    {groupTitles(preview.data.collections_deleted).join(" · ")}
-                  </p>
+                  <details className="py-1">
+                    <summary className="cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      Show the {plural(preview.data.collections_deleted.length, "collection")} it will delete
+                    </summary>
+                    <CollectionsToDelete result={preview.data} />
+                  </details>
                 )}
                 <p className="text-muted-foreground">{preview.data.message}</p>
                 <div className="pt-1">
@@ -270,7 +308,7 @@ export function UninstallPage() {
               <p role="alert" className="text-sm text-destructive-text">
                 {apiErrorMessage(
                   uninstall.error,
-                  "Uninstall failed — nothing was left half-done. See the server log, then try again.",
+                  "Uninstall failed. Some accounts may not have been restored. See the server log, then run the uninstall again to retry.",
                 )}
               </p>
             )}

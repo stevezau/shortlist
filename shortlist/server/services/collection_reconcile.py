@@ -127,13 +127,13 @@ def _other_rows(session, secrets, slug: str) -> _OtherRows:
     Only enabled rows: a switched-off row builds nothing, and its own collections are on their way out
     by the same removal this guards.
     """
-    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    account_by_user, audience_by_collection = ContextBuilder.audience_maps(session)
     specs = [
         RowSpec(
             slug=other.slug,
             # Who it builds for, resolved exactly as a run resolves it: a row that builds nothing for a
             # person claims no title of theirs.
-            audience=ContextBuilder._subset_audience(other, account_by_user, audience_by_collection),
+            audience=ContextBuilder.subset_audience(other, account_by_user, audience_by_collection),
             # The default row's title is the global template (or that user's own override), which
             # `resolve_row_template` supplies from the profile and config when this is left empty.
             name_template="" if other.slug == DEFAULT_SLUG else (other.name_template or other.name),
@@ -144,8 +144,8 @@ def _other_rows(session, secrets, slug: str) -> _OtherRows:
             # An AI row's title is filled from its theme, and on an explore row from each person's OWN current
             # theme (#138): claimed from the row's base theme alone, the title a person's collection really
             # wears is unclaimed and a removal elsewhere can take it (#121).
-            theme=ContextBuilder._theme_spec(session, other),
-            person_themes=ContextBuilder._person_themes(session, other, audience_by_collection),
+            theme=ContextBuilder.theme_spec(session, other),
+            person_themes=ContextBuilder.person_themes_for(session, other, audience_by_collection),
         )
         for other in session.query(Collection).filter_by(enabled=True, build="per_person")
         if other.slug != slug
@@ -212,7 +212,7 @@ def title_key(template: str) -> str:
       such rows — or one of them and a row literally named "✨ Picked for You" — are one collection
       for everyone who has too little history to seed them;
     * a blank or whitespace-only template does the same, and nothing refused a blank
-      ``row.name_template`` (now `_validate_values` does);
+      ``row.name_template`` (now `validate_values` does);
     * whitespace is collapsed for a ``{library_name}`` template, so "{library_name}  Picks" and
       "{library_name} Picks" render identically.
 
@@ -278,13 +278,13 @@ def season_title(template: str, season: Season) -> str:
     return season_renderings(template or "", {season.slug: season})[0]
 
 
-def _theme_of(session, collection: Collection) -> ThemeSpec | None:
+def theme_of(session, collection: Collection) -> ThemeSpec | None:
     """The theme an AI row follows, as the engine reads it, or None."""
     row = session.get(Theme, collection.theme_id) if collection.theme_id is not None else None
     return None if row is None else spec_from_row(row)
 
 
-def _title_keys(session, collection: Collection, secrets, *, catalogue: Catalogue) -> set[str]:
+def row_title_keys(session, collection: Collection, secrets, *, catalogue: Catalogue) -> set[str]:
     """Every title this row can end up with: from its own template, and from its fallback name.
 
     Both, because a row now has two ways to be named (issue #84) and either can collide. Empties are
@@ -292,7 +292,7 @@ def _title_keys(session, collection: Collection, secrets, *, catalogue: Catalogu
     "no title" cannot clash with "no title": neither row is built for them.
     """
     template = row_template(session, collection.slug, secrets)
-    keys = title_keys(template, catalogue=catalogue, theme=_theme_of(session, collection)) | {
+    keys = title_keys(template, catalogue=catalogue, theme=theme_of(session, collection)) | {
         title_key(collection.fallback_name or "")
     }
     # An explore row wears each person's OWN theme (#138), so the title a person's collection really has is
@@ -333,7 +333,7 @@ class RowView:
     row_id: int | None
 
 
-def _row_view(session, collection: Collection, secrets, account_by_user, audience_by_collection) -> RowView:
+def row_view(session, collection: Collection, secrets, account_by_user, audience_by_collection) -> RowView:
     return RowView(
         slug=collection.slug,
         name=collection.name,
@@ -341,16 +341,14 @@ def _row_view(session, collection: Collection, secrets, account_by_user, audienc
         fallback_name=collection.fallback_name or "",
         media=collection.media or "both",
         library_keys=tuple(str(k) for k in collection.library_keys or []),
-        audience=_frozenset_or_none(
-            ContextBuilder._subset_audience(collection, account_by_user, audience_by_collection)
-        ),
-        base_theme=_theme_of(session, collection),
+        audience=frozenset_or_none(ContextBuilder.subset_audience(collection, account_by_user, audience_by_collection)),
+        base_theme=theme_of(session, collection),
         explore=collection.theme_mode == "explore",
         row_id=collection.id,
     )
 
 
-def _frozenset_or_none(accounts) -> frozenset[int] | None:
+def frozenset_or_none(accounts) -> frozenset[int] | None:
     return None if accounts is None else frozenset(accounts)
 
 
@@ -383,9 +381,9 @@ def person_clashes(session, secrets, edited: RowView) -> dict[tuple[str, int], s
     """{(other row slug, user id) -> the title} where ``edited`` and that other row would wear one title for
     that person in a library both build in. The edit is judged by comparing this before and after, so only
     a clash the edit ADDS is refused and a row that already clashes stays editable."""
-    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    account_by_user, audience_by_collection = ContextBuilder.audience_maps(session)
     others = [
-        _row_view(session, c, secrets, account_by_user, audience_by_collection)
+        row_view(session, c, secrets, account_by_user, audience_by_collection)
         for c in session.query(Collection).filter_by(enabled=True, build="per_person")
         if c.slug != edited.slug
     ]
@@ -411,8 +409,8 @@ def person_clashes(session, secrets, edited: RowView) -> dict[tuple[str, int], s
 
 def new_person_clash(session, secrets, collection: Collection, after: RowView) -> tuple[Collection, User, str] | None:
     """The first clash for one person that saving ``collection`` as ``after`` would add, or None."""
-    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
-    before = _row_view(session, collection, secrets, account_by_user, audience_by_collection)
+    account_by_user, audience_by_collection = ContextBuilder.audience_maps(session)
+    before = row_view(session, collection, secrets, account_by_user, audience_by_collection)
     existing = person_clashes(session, secrets, before)
     for (slug, user_id), title in person_clashes(session, secrets, after).items():
         if (slug, user_id) not in existing:
@@ -438,12 +436,12 @@ def person_title_clash(session, secrets, collection: Collection, user: User, the
     wanted = title_keys(template, catalogue=catalogue, theme=theme)
     if not wanted:
         return None
-    account_by_user, audience_by_collection = ContextBuilder._audience_maps(session)
+    account_by_user, audience_by_collection = ContextBuilder.audience_maps(session)
     held = _held_themes(session)
     for other in session.query(Collection).filter_by(enabled=True, build="per_person"):
         if other.slug == collection.slug:
             continue
-        view = _row_view(session, other, secrets, account_by_user, audience_by_collection)
+        view = row_view(session, other, secrets, account_by_user, audience_by_collection)
         if view.audience is not None and user.plex_account_id not in view.audience:
             continue
         if not rows_can_share_a_library(
@@ -453,33 +451,6 @@ def person_title_clash(session, secrets, collection: Collection, user: User, the
         if clashing_keys(wanted, _titles_for(view, user, held, catalogue).keys()):
             return other
     return None
-
-
-def row_titled_from(
-    session,
-    template: str,
-    *,
-    secrets=None,
-    exclude_slug: str = "",
-    build: str = "",
-    fallback_name: str = "",
-    media: str = "both",
-    library_keys=(),
-    theme: ThemeSpec | None = None,
-) -> Collection | None:
-    """The first of `rows_titled_from`, or None."""
-    clashes = rows_titled_from(
-        session,
-        template,
-        secrets=secrets,
-        exclude_slug=exclude_slug,
-        build=build,
-        fallback_name=fallback_name,
-        media=media,
-        library_keys=library_keys,
-        theme=theme,
-    )
-    return clashes[0] if clashes else None
 
 
 def rows_titled_from(
@@ -534,14 +505,13 @@ def rows_titled_from(
     the one user who set it, so a clash through that door is per-user and invisible to a server-wide
     check.
     """
-    # Both of the incoming row's possible titles, for the same reason `_title_keys` collects both.
+    # Both of the incoming row's possible titles, for the same reason `row_title_keys` collects both.
     catalogue = load_catalogue(session)
     wanted_keys = title_keys(template, catalogue=catalogue, theme=theme) | {k for k in (title_key(fallback_name),) if k}
-    # An unrenderable template has no title to collide on. Since issue #84 that includes every
-    # `{top_seed}` template, which renders to "" without picks — an improvement: they all used to
-    # render the same substitute name and so were refused against each other and against any row
-    # genuinely titled that. A `{top_seed}` row's real collision is between two PEOPLE-less renders
-    # at delivery time, which `_run_user` logs when it happens.
+    # An unrenderable template has no title to collide on. That includes every
+    # `{top_seed}` template, which renders to "" without picks: rendering the same substitute name
+    # would refuse them against each other and against any row genuinely titled that. A `{top_seed}` row's real
+    # collision is between two PEOPLE-less renders at delivery time, which `_run_user` logs when it happens.
     if not wanted_keys:
         return []
     clashes: list[Collection] = []
@@ -552,7 +522,7 @@ def rows_titled_from(
             continue
         if not rows_can_share_a_library(media, library_keys, other.media or "both", other.library_keys or []):
             continue
-        if clashing_keys(wanted_keys, _title_keys(session, other, secrets, catalogue=catalogue)):
+        if clashing_keys(wanted_keys, row_title_keys(session, other, secrets, catalogue=catalogue)):
             clashes.append(other)
     return clashes
 
@@ -614,6 +584,9 @@ def forget_user_deliveries(session, user_slug: str) -> None:
     one of OUR labels first, so a stale key cannot reach anything) but it grows for ever and makes the
     audit lie about what is on the server. Found by testing a disable against a real PMS.
     """
+    from shortlist.server.services.delivery_snapshots import close_snapshots
+
+    close_snapshots(session, user_slug=user_slug)
     session.query(Delivery).filter_by(user_slug=user_slug).delete(synchronize_session=False)
 
 
@@ -634,6 +607,9 @@ def _forget_deliveries(
     a share filter, and `_refuse_a_different_server` rules out a ledger from another machine — but
     "harmless" is too strong, which is why forgetting is scoped as tightly as it is.
     """
+    from shortlist.server.services.delivery_snapshots import close_snapshots
+
+    close_snapshots(session, collection_slug=slug, user_slugs=user_slugs, libraries=in_sections)
     query = session.query(Delivery).filter_by(collection_slug=slug)
     if user_slugs is not None:
         query = query.filter(Delivery.user_slug.in_(user_slugs))
@@ -737,7 +713,7 @@ def _walk_row_collections(
         action(user, displays)
 
 
-def _reconcile_row_removal(
+def reconcile_row_removal(
     state,
     *,
     slug: str,
@@ -868,7 +844,7 @@ def _reconcile_poster_reset(state, *, slug: str, build: str, reset: list[str]) -
     """Revert a row's Plex collections to their default artwork after it switches to 'Plex default'.
 
     Shared rows go by their own label (one membership, any title); per-person rows are found by the
-    same union `_reconcile_row_removal` uses — the titles this row's template renders to, plus whatever
+    same union `reconcile_row_removal` uses — the titles this row's template renders to, plus whatever
     the latest run recorded — scoped to that user's own label, so it only ever touches OUR collections.
     Cosmetic + privacy-neutral, so gate-exempt. Runs in an executor.
 
@@ -933,7 +909,7 @@ async def run_poster_reset(state, *, slug: str, build: str, scope: str) -> tuple
 async def run_reconcile(
     state, *, slug: str, build: str, dry_run: bool, scope: str, only_user_ids: set[int] | None = None
 ) -> tuple[list[str], str | None]:
-    """Run ``_reconcile_row_removal`` in an executor and audit it (rule 10) — even a mid-loop failure
+    """Run ``reconcile_row_removal`` in an executor and audit it (rule 10) — even a mid-loop failure
     records what was already removed. Returns ``(removed, error)``."""
     removed: list[str] = []
     error: str | None = None
@@ -944,7 +920,7 @@ async def run_reconcile(
 
     def _work() -> None:
         nonlocal effective_dry_run
-        effective_dry_run = _reconcile_row_removal(
+        effective_dry_run = reconcile_row_removal(
             state, slug=slug, build=build, dry_run=dry_run, removed=removed, only_user_ids=only_user_ids
         )
 
@@ -973,14 +949,14 @@ async def preview_row_removal(
     still targets — nor ``template``, which the delete preview needs because the row it names is
     about to stop existing.
 
-    ``dry_run=True`` is passed, never computed. `_reconcile_row_removal`'s chokepoint may only
+    ``dry_run=True`` is passed, never computed. `reconcile_row_removal`'s chokepoint may only
     STRENGTHEN it (``ctx.config.dry_run or dry_run``), so nothing — safe mode, a setting, a future
     caller — can turn this into a deletion. Nothing is audited either: plex-safety rule 10 records
     writes, and this makes none.
 
     Runs the walk in an executor because it is blocking Plex I/O across every library. It takes no
     lock, and needs none: ``jobs.plex_writer_lock`` serialises Plex WRITES and is held AROUND
-    `_reconcile_row_removal` by its writers (the job worker, the cleanup endpoint) rather than inside it, so a
+    `reconcile_row_removal` by its writers (the job worker, the cleanup endpoint) rather than inside it, so a
     preview can neither
     deadlock against a live run nor perform the writes that lock exists to order.
 
@@ -999,7 +975,7 @@ async def preview_row_removal(
     removed: list[str] = []
 
     def _work() -> None:
-        _reconcile_row_removal(
+        reconcile_row_removal(
             state,
             slug=slug,
             build=build,
@@ -1052,7 +1028,8 @@ def reconcile_row_rename_iter(
     — with ``"next_run": True`` when nothing was renamed now and the next run gives it the name, in which
     case ``new`` may be the raw template (a ``{top_seed}`` name has no title until a run picks the seed) —
     and {"user", "library", "error"} for a per-collection PMS failure.
-    At the end yields {"done": True, "total": n}.
+    At the end yields {"done": True, "total": n, "dry_run": effective}, where the flag is the one the
+    renames actually ran under (the chokepoint may have forced a preview).
     """
     may_free_name = None if holds_writer_lock else (lambda: not jobs.plex_writer_busy(state))
     with state.sessions() as session:
@@ -1066,95 +1043,136 @@ def reconcile_row_rename_iter(
         ledger_keys = _ledger_keys(session, slug) if seeded_old else {}
     ctx = state.run_service.build_context(dry_run=dry_run, plex_only=True)
     dry_run = ctx.config.dry_run or dry_run  # the chokepoint may force a preview ON, never off
-    total = 0
 
     if build == "shared":
-        # A shared row is ONE collection carrying `shortlist__shared_<row>`, not one per person under
-        # `shortlist_<slug>`. Walking the per-user labels found nothing and reported "renamed 0" —
-        # a success message for work that never happened, while the collection on Plex kept its old
-        # title and the database said otherwise.
-        label = f"{SHARED_LABEL_PREFIX}{slug}"
-        seasonal = uses_season(new_template) or uses_season(old_template or "")
-        for section in ctx.plex.sections():
-            lib_name = getattr(section, "title", "") or ""
-            # The label alone identifies a shared row's collection, so a plain name needs no old title. A
-            # seasonal one does: it is the only way to know which season the collection wears.
-            renamed = (
-                _renamed_titles(
-                    old_template or "",
-                    new_template,
-                    _shared_profile(),
-                    _shared_profile(),
-                    lib_name,
-                    catalogue=other_rows.catalogue,
-                )
-                if seasonal
-                else None
+        total = yield from _rename_shared_row(
+            ctx, slug, new_template, old_template, other_rows, may_free_name=may_free_name, dry_run=dry_run
+        )
+    else:
+        total = yield from _rename_per_person_rows(
+            ctx,
+            slug,
+            new_template,
+            old_template,
+            old_display_names,
+            users_data,
+            other_rows,
+            ledger_titles,
+            ledger_keys,
+            may_free_name=may_free_name,
+            dry_run=dry_run,
+        )
+    yield {"done": True, "total": total, "dry_run": dry_run}
+
+
+def _rename_shared_row(
+    ctx,
+    slug: str,
+    new_template: str,
+    old_template: str | None,
+    other_rows,
+    *,
+    may_free_name,
+    dry_run: bool,
+):
+    """Rename a shared row's one collection in each library; yields the events, returns the count renamed."""
+    total = 0
+    label = f"{SHARED_LABEL_PREFIX}{slug}"
+    seasonal = uses_season(new_template) or uses_season(old_template or "")
+    for section in ctx.plex.sections():
+        lib_name = getattr(section, "title", "") or ""
+        # The label alone identifies a shared row's collection, so a plain name needs no old title. A
+        # seasonal one does: it is the only way to know which season the collection wears.
+        renamed = (
+            _renamed_titles(
+                old_template or "",
+                new_template,
+                _shared_profile(),
+                _shared_profile(),
+                lib_name,
+                catalogue=other_rows.catalogue,
             )
-            new_display = (
-                "" if seasonal else render_row_name(new_template, _shared_profile(), [], library_name=lib_name)
-            )
-            if not seasonal and not new_display:  # unnameable — see render_row_name
-                continue
-            owned = [c for c in ctx.plex.find_owned_collections(section, label) if not is_name_freeing_helper(c.title)]
-            # A shared row wears `row_marker(0)`, as delivery writes it (`deliver_rows`), and delivery finds it
-            # again only by that marked title or by the marker. When a marked one is here, it is the row, and an
-            # unmarked collection under the same label is a copy an older rename left: renamed first, it would
-            # take the name and the next run would adopt it. A lone unmarked one IS the row, and gets its marker back.
-            if any(c.title.endswith(row_marker(0)) for c in owned):
-                owned = [c for c in owned if c.title.endswith(row_marker(0))]
-            for collection in owned:
-                old_title = strip_marker(collection.title)
-                if renamed is not None:
-                    if old_title not in renamed:
-                        continue
-                    new_display = renamed[old_title]
-                    if new_display is None:  # a `{top_seed}` name: a shared row has no seed to be named after
-                        continue
-                if collection.title == new_display + row_marker(0):
+            if seasonal
+            else None
+        )
+        new_display = "" if seasonal else render_row_name(new_template, _shared_profile(), [], library_name=lib_name)
+        if not seasonal and not new_display:  # unnameable — see render_row_name
+            continue
+        owned = [c for c in ctx.plex.find_owned_collections(section, label) if not is_name_freeing_helper(c.title)]
+        # A shared row wears `row_marker(0)`, as delivery writes it (`deliver_rows`), and delivery finds it
+        # again only by that marked title or by the marker. When a marked one is here, it is the row, and an
+        # unmarked collection under the same label is a copy an older rename left: renamed first, it would
+        # take the name and the next run would adopt it. A lone unmarked one IS the row, and gets its marker back.
+        if any(c.title.endswith(row_marker(0)) for c in owned):
+            owned = [c for c in owned if c.title.endswith(row_marker(0))]
+        for collection in owned:
+            old_title = strip_marker(collection.title)
+            if renamed is not None:
+                if old_title not in renamed:
                     continue
-                try:
-                    outcome = (
-                        rename_or_keep(
-                            ctx.plex,
-                            collection,
-                            new_display + row_marker(0),
-                            _shared_profile(),
-                            section,
-                            label=label,
-                            # Names a helper only: ours by marker even if its label write fails.
-                            marker=row_marker(0),
-                            read_spare_item=lambda c=collection: next(iter(c.items()), None),
-                            may_free_name=may_free_name,
-                        )
-                        if not dry_run
-                        else None
+                new_display = renamed[old_title]
+                if new_display is None:  # a `{top_seed}` name: a shared row has no seed to be named after
+                    continue
+            if collection.title == new_display + row_marker(0):
+                continue
+            try:
+                outcome = (
+                    rename_or_keep(
+                        ctx.plex,
+                        collection,
+                        new_display + row_marker(0),
+                        _shared_profile(),
+                        section,
+                        label=label,
+                        # Names a helper only: ours by marker even if its label write fails.
+                        marker=row_marker(0),
+                        read_spare_item=lambda c=collection: next(iter(c.items()), None),
+                        may_free_name=may_free_name,
                     )
-                    if outcome in (KEPT, HELD):
-                        yield {
-                            "user": slug,
-                            "display_name": "Everyone",
-                            "library": lib_name,
-                            "error": _refusal(outcome, new_display, lib_name),
-                        }
-                        continue
-                    event = {
+                    if not dry_run
+                    else None
+                )
+                if outcome in (KEPT, HELD):
+                    yield {
                         "user": slug,
                         "display_name": "Everyone",
-                        "old": old_title,
-                        "new": new_display,
-                        "libraries": [lib_name],
+                        "library": lib_name,
+                        "error": _refusal(outcome, new_display, lib_name),
                     }
-                    if outcome in (REBUILD, DEFERRED):
-                        event["next_run"] = True
-                    else:
-                        total += 1
-                    yield event
-                except Exception as e:  # pragma: no cover - PMS failure shape
-                    yield {"user": slug, "library": lib_name, "error": redact(str(e))}
-        yield {"done": True, "total": total}
-        return
+                    continue
+                event = {
+                    "user": slug,
+                    "display_name": "Everyone",
+                    "old": old_title,
+                    "new": new_display,
+                    "libraries": [lib_name],
+                }
+                if outcome in (REBUILD, DEFERRED):
+                    event["next_run"] = True
+                else:
+                    total += 1
+                yield event
+            except Exception as e:  # pragma: no cover - PMS failure shape
+                yield {"user": slug, "library": lib_name, "error": redact(str(e))}
+    return total
 
+
+def _rename_per_person_rows(
+    ctx,
+    slug: str,
+    new_template: str,
+    old_template: str | None,
+    old_display_names: dict[str, str] | None,
+    users_data: list[dict],
+    other_rows,
+    ledger_titles: dict,
+    ledger_keys: dict,
+    *,
+    may_free_name,
+    dry_run: bool,
+):
+    """Rename this row's collection for each person in each library; yields the events, returns the count renamed."""
+    total = 0
     for udata in users_data:
         override = udata["prefs"].get("row_name_tpl") if slug == DEFAULT_SLUG else None
         effective_template = override or new_template
@@ -1279,7 +1297,7 @@ def reconcile_row_rename_iter(
                     message = redact(f"{type(e).__name__}: {e}")
                     logger.warning("{}: rename failed in {} ({})", udata["slug"], lib_name, message)
                     yield {"user": udata["slug"], "library": lib_name, "error": message}
-    yield {"done": True, "total": total}
+    return total
 
 
 def _renamed_titles(
@@ -1359,8 +1377,11 @@ async def run_row_rename_from_plex(
     entries: list[dict] = []
     failures: list[str] = []
     error: str | None = None
+    # Floor of safe mode: if the iterator never reached its done event, assume the preview was forced.
+    effective_dry_run = force_dry_run()
 
     def _collect() -> None:
+        nonlocal effective_dry_run
         for event in reconcile_row_rename_iter(
             state,
             slug=slug,
@@ -1371,7 +1392,9 @@ async def run_row_rename_from_plex(
         ):
             if event.get("error"):
                 failures.append(f"{event.get('user', '?')}: {event['error']}")
-            elif not event.get("done"):
+            elif event.get("done"):
+                effective_dry_run = bool(event.get("dry_run", effective_dry_run))
+            else:
                 entries.append(event)
 
     try:
@@ -1382,7 +1405,16 @@ async def run_row_rename_from_plex(
     # audit distinguishes "nothing needed doing" from "some of it could not be done".
     if failures and error is None:
         error = "; ".join(failures)
-    write_audit(state, scope, "info", slug=slug, renames=entries, new_template=new_template, error=error)
+    write_audit(
+        state,
+        scope,
+        "info",
+        slug=slug,
+        renames=entries,
+        new_template=new_template,
+        dry_run=effective_dry_run,
+        error=error,
+    )
     logger.info(
         "{} '{}': renamed {} collection(s){}",
         scope,

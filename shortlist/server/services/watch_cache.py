@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserProfile, WatchedItem
 from shortlist.server.db.models import WatchedTitle, WatchSyncState, utcnow
+from shortlist.server.services.delivery_snapshots import utc
 
 #: What the reader dates a row it can find no watch date for — a show marked watched rather than
 #: played carries no `lastViewedAt`, and when its episodes cannot date it either this is the honest
@@ -103,7 +104,7 @@ class WatchCache:
         state = _state(session, user_id, section_key)
         if state is None or state.cursor_viewed_at is None or state.last_full_at is None:
             return True
-        return _aware(state.last_full_at) <= now - self._full_every
+        return utc(state.last_full_at) <= now - self._full_every
 
     def force_full_next_time(self, session: Session, user_id: int, section_key: str) -> None:
         """Make the next read of this (person, library) a COMPLETE one.
@@ -159,7 +160,7 @@ class WatchCache:
         now = now or utcnow()
         full = force_full or self.needs_full(session, user_id, section_key, now=now)
         state = _state(session, user_id, section_key)
-        since = None if full else _aware(state.cursor_viewed_at) if state else None
+        since = None if full else utc(state.cursor_viewed_at) if state else None
 
         items, covers_window = _read_items(read(since))
         if repair_dates is not None:
@@ -268,11 +269,11 @@ class WatchCache:
             state.last_full_at = now
             # A full read that returned nothing still establishes a cursor — otherwise a person with
             # an empty library would be read in full for ever.
-            state.cursor_viewed_at = (_aware(newest) if newest else now) - CURSOR_OVERLAP
+            state.cursor_viewed_at = (utc(newest) if newest else now) - CURSOR_OVERLAP
         else:
             state.last_incremental_at = now
             if newest is not None:
-                state.cursor_viewed_at = _aware(newest) - CURSOR_OVERLAP
+                state.cursor_viewed_at = utc(newest) - CURSOR_OVERLAP
         state.item_count = total
         session.flush()
 
@@ -433,7 +434,7 @@ def _drop_vanished_since(
     Args:
         since: The cutoff handed to the reader. Must be UTC — SQLite strips tzinfo on bind rather
             than converting, so a non-UTC aware value would compare against UTC rows as if it were
-            UTC. Every caller gets this from `_aware`, which assumes UTC for the naive values SQLite
+            UTC. Every caller gets this from `utc`, which assumes UTC for the naive values SQLite
             hands back.
 
     Returns:
@@ -480,13 +481,6 @@ def _state(session: Session, user_id: int, section_key: str) -> WatchSyncState |
         .filter(WatchSyncState.user_id == user_id, WatchSyncState.section_key == section_key)
         .one_or_none()
     )
-
-
-def _aware(value: datetime | None) -> datetime | None:
-    """SQLite hands timezone-aware columns back naive; comparing one to an aware datetime raises."""
-    if value is None:
-        return None
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _shows_plex_recounted_but_did_not_redate(
@@ -537,7 +531,7 @@ def _shows_plex_recounted_but_did_not_redate(
         # true every pass and a transferred account's marked-watched shows were silently never
         # repaired. `_to_item` still prefers `source_viewed_at`, so the transfer's true date keeps
         # winning everywhere it should.
-        cached_date = _aware(row.viewed_at)
+        cached_date = utc(row.viewed_at)
         if cached_date is None or item.watched_at > cached_date:
             continue  # Plex moved the date too, so they PLAYED it and Plex is already right
         stale.add(row.rating_key)
@@ -673,7 +667,7 @@ def _upsert(
     # A FALLING count still writes through: that is an un-mark, and the date should follow it back.
     # A first insert still records whatever it has, epoch included — it is all that is known.
     incoming = item.watched_at or utcnow()
-    cached = _aware(row.viewed_at)
+    cached = utc(row.viewed_at)
     keep_cached = (
         cached is not None
         and incoming < cached
@@ -696,7 +690,7 @@ def _to_item(row: WatchedTitle) -> WatchedItem:
         media_type=MediaType(row.media_type),
         # The true date, not the scrobble date — same reason `watched_set` orders on it. Everything
         # downstream (recency windows, "because you recently watched X") reads this field.
-        watched_at=_aware(row.source_viewed_at) or _aware(row.viewed_at) or _EPOCH,
+        watched_at=utc(row.source_viewed_at) or utc(row.viewed_at) or _EPOCH,
         tmdb_id=row.tmdb_id,
         year=row.year,
         # The negative fallback key is ours, not Plex's — hand back None rather than a rating key

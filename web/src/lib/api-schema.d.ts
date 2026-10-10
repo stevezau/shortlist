@@ -24,6 +24,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/assistant/changes/{change_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review Change */
+        get: operations["review_change_api_assistant_changes__change_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/changes/{change_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve Change */
+        post: operations["approve_change_api_assistant_changes__change_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assistant/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Status */
+        get: operations["status_api_assistant_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/logout": {
         parameters: {
             query?: never;
@@ -95,6 +146,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/catalogs/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Settings Catalog */
+        get: operations["settings_catalog_api_catalogs_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/catalogs/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Template Catalog */
+        get: operations["template_catalog_api_catalogs_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/collections": {
         parameters: {
             query?: never;
@@ -144,7 +229,7 @@ export interface paths {
          * Update Collection
          * @description Edit a row: validate → apply → plan the Plex work → enqueue it → drain.
          *
-         *     The decision table for "what does this edit owe Plex" lives in `api/row_changes.py`, not here.
+         *     The decision table for "what does this edit owe Plex" lives in `shortlist/server/services/row_changes.py`, not here.
          *     It used to be eleven mutable flags accumulated down this handler and eight conditional
          *     dispatches at the bottom — untestable without a Plex context, and the place a missed branch
          *     silently left someone's row on the wrong Home screen.
@@ -742,6 +827,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/requests/acquisition-claims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Acquisition Claims
+         * @description Show durable acquisition reservations and uncertain outcomes to their owner.
+         */
+        get: operations["acquisition_claims_api_requests_acquisition_claims_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/requests/acquisition-claims/{claim_id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Release Acquisition Claim
+         * @description Release an exact terminal claim after the owner has checked the remote destination.
+         */
+        post: operations["release_acquisition_claim_api_requests_acquisition_claims__claim_id__release_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/requests/clear": {
         parameters: {
             query?: never;
@@ -789,6 +914,28 @@ export interface paths {
          *     Dropping it would resurrect that bug, so a ``sent`` id in the request is skipped, not deleted.
          */
         post: operations["delete_requests_api_requests_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/requests/hold-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hold Preview
+         * @description Which movies waiting in the inbox these genres/tags would hold — the settings page's live check.
+         *
+         *     Reads TMDB through the shared cache, so a title a run already looked at costs nothing. Nothing is saved.
+         */
+        post: operations["hold_preview_api_requests_hold_preview_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -882,8 +1029,8 @@ export interface paths {
          * @description Ask Sonarr/Radarr for the chosen pending titles.
          *
          *     A dry run previews the outcomes without asking and leaves every row pending. A real send marks a
-         *     row ``sent`` only when the app accepted it; a skip/error leaves it pending with the reason recorded,
-         *     so the owner can see why it didn't go and try again.
+         *     row ``sent`` only when the app accepted it. Known skips leave it available for another attempt;
+         *     uncertain outcomes keep a durable claim until the owner checks the destination and releases it.
          */
         post: operations["send_requests_api_requests_send_post"];
         delete?: never;
@@ -944,9 +1091,8 @@ export interface paths {
         /**
          * Clear Runs
          * @description Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the
-         *     dashboard's lifetime metrics survive — only the browsable history is cleared. Changes nothing
-         *     on Plex. Note: the next run will re-curate from scratch (no carry-forward) since picks lose
-         *     their run association.
+         *     dashboard's lifetime metrics survive. Delivered membership is independent, so watch tracking
+         *     and carry-forward keep working. Changes nothing on Plex.
          */
         delete: operations["clear_runs_api_runs_delete"];
         options?: never;
@@ -1277,18 +1423,13 @@ export interface paths {
         get?: never;
         /**
          * Update Season
-         * @description Replace a custom season, keeping its slug.
-         *
-         *     A change of date or timing changes which days its rows are shown on, so it is applied to Plex now, as a
-         *     change to a row's own seasons is. A source change rebuilds its rows on their next build (D11).
+         * @description Replace a custom season and atomically record owed visibility work.
          */
         put: operations["update_season_api_seasons__slug__put"];
         post?: never;
         /**
          * Delete Season
-         * @description Delete a custom season and untick it in every row, in one transaction (D12).
-         *
-         *     Refused, naming the rows, while it is any row's only season: that row would be left following nothing.
+         * @description Untick a custom season and save its required visibility work in one transaction.
          */
         delete: operations["delete_season_api_seasons__slug__delete"];
         options?: never;
@@ -1356,6 +1497,29 @@ export interface paths {
          *     endpoint returns an empty list, and the UI falls back to the free-text override.
          */
         post: operations["curator_models_api_settings_curator_models_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Setting Defaults
+         * @description Every setting's built-in default, so the page can mark one the owner has changed.
+         *
+         *     Secrets and private keys are left out: a default carries no credential, and what is stored under
+         *     those keys is never this endpoint's to say.
+         */
+        get: operations["get_setting_defaults_api_settings_defaults_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2307,8 +2471,8 @@ export interface paths {
         /**
          * Health
          * @description Liveness only — this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its
-         *     consumer. The version used to be here too; an unauthenticated caller does not need to know which
-         *     build to look up advisories for. The UI reads it from `/system/version`, which is owner-gated.
+         *     consumer. It carries no version: an unauthenticated caller does not need to know which build to
+         *     look up advisories for. The UI reads it from `/system/version`, which is owner-gated.
          */
         get: operations["health_api_system_health_get"];
         put?: never;
@@ -2527,26 +2691,6 @@ export interface paths {
          *     cleanup/uninstall finds and removes, so the owner can eyeball nothing has drifted (rule 10).
          */
         get: operations["owned_collections_audit_api_system_owned_collections_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/system/syncs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Syncs
-         * @description When each sync last ran and when it next fires — for the Tools page "last synced" lines.
-         */
-        get: operations["syncs_api_system_syncs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3142,6 +3286,191 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/assistant/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Configured Destinations */
+        get: operations["list_configured_destinations_assistant_destinations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Grants */
+        get: operations["list_grants_assistant_grants_get"];
+        put?: never;
+        /** Create Grant */
+        post: operations["create_grant_assistant_grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/grants/{grant_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Revoked Grant
+         * @description Forget an inactive connection record without deleting its audit history.
+         */
+        delete: operations["remove_revoked_grant_assistant_grants__grant_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Patch Grant Constraints
+         * @description Apply explicit constraint changes without expanding grant administration.
+         */
+        patch: operations["patch_grant_constraints_assistant_grants__grant_id__patch"];
+        trace?: never;
+    };
+    "/assistant/grants/{grant_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Issue Credential */
+        post: operations["issue_credential_assistant_grants__grant_id__credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/grants/{grant_id}/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke Grant */
+        post: operations["revoke_grant_assistant_grants__grant_id__revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/oauth/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Open Consent
+         * @description Hand the browser to the SPA; it initializes state after owner login.
+         */
+        get: operations["open_consent_assistant_oauth_authorize_get"];
+        put?: never;
+        /** Begin Consent */
+        post: operations["begin_consent_assistant_oauth_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/oauth/consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decide Consent */
+        post: operations["decide_consent_assistant_oauth_consent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/oauth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register
+         * @description Register a bounded public PKCE client; this grants no Shortlist access.
+         */
+        post: operations["register_assistant_oauth_register_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/oauth/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke */
+        post: operations["revoke_assistant_oauth_revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/assistant/oauth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Token */
+        post: operations["token_assistant_oauth_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3179,6 +3508,24 @@ export interface components {
             user_type: string;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * AcquisitionReleaseIn
+         * @description One owner-confirmed decision on an exact terminal acquisition record.
+         */
+        AcquisitionReleaseIn: {
+            /**
+             * Checked Destination
+             * @constant
+             */
+            checked_destination: true;
+            /**
+             * Expected Status
+             * @enum {string}
+             */
+            expected_status: "outcome_unknown" | "succeeded";
+            /** Review Token */
+            review_token: string;
         };
         /**
          * AiInstructionsIn
@@ -3327,20 +3674,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /**
-         * BackupScheduleOut
-         * @description Backups have no "last ran" line on the Tools page — the backup list itself is that answer.
-         */
-        BackupScheduleOut: {
-            /** Cron */
-            cron: string;
-            /** Max Keep */
-            max_keep: number;
-            /** Next */
-            next: string | null;
-        } & {
-            [key: string]: unknown;
-        };
         /** BlockSeedBody */
         BlockSeedBody: {
             /**
@@ -3416,6 +3749,12 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * Capability
+         * @description One independently enforceable assistant permission.
+         * @enum {string}
+         */
+        Capability: "instance.read" | "config.read" | "catalog.read" | "people.read" | "activity.read" | "changes.prepare" | "history.use" | "history.providers" | "history.export" | "rows.create" | "rows.update" | "rows.activate" | "rows.delete" | "audiences.write" | "themes.write" | "seasons.write" | "config.write" | "people.write" | "schedules.write" | "connections.manage" | "runs.preview" | "runs.execute" | "jobs.cancel" | "ai.generate" | "requests.read" | "requests.manage" | "requests.send" | "maintenance.execute" | "secrets.read" | "grants.manage";
         /**
          * CleanupOut
          * @description What `POST /collections/{id}/cleanup` removed (or would remove, on a dry run).
@@ -3774,7 +4113,7 @@ export interface components {
         };
         /**
          * CollectionOut
-         * @description A curated-row definition — the response shape of :func:`_serialize`.
+         * @description A curated-row definition — the response shape of :func:`serialize_row` (``services/row_editing.py``).
          */
         CollectionOut: {
             ai_instructions: components["schemas"]["AiInstructionsOut"];
@@ -4043,6 +4382,24 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * ConfiguredDestination
+         * @description A credential-free, currently configured service endpoint.
+         */
+        ConfiguredDestination: {
+            /** Destination Id */
+            destination_id: string;
+            /** Host */
+            host: string;
+            /** Label */
+            label: string;
+            /** Purposes */
+            purposes: string[];
+            /** Service Id */
+            service_id: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * ConnectionTestOut
          * @description `message` is plain English either way — the success line, or a redacted failure (rule 9).
          */
@@ -4053,6 +4410,89 @@ export interface components {
             ok: boolean;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * ConsentDecisionIn
+         * @description One exact browser consent decision protected by an independent CSRF token.
+         */
+        ConsentDecisionIn: {
+            /** Approved */
+            approved: boolean;
+            /** Csrf Token */
+            csrf_token: string;
+            /** Flow Id */
+            flow_id: string;
+            /** Grant Id */
+            grant_id?: string | null;
+        };
+        /**
+         * ConstraintsIn
+         * @description Strict owner-selected resource bounds for a grant.
+         */
+        ConstraintsIn: {
+            /** Destination Ids */
+            destination_ids?: string[];
+            /**
+             * Include Future Libraries
+             * @default true
+             */
+            include_future_libraries: boolean;
+            /**
+             * Include Future Rows
+             * @default true
+             */
+            include_future_rows: boolean;
+            /** Library Keys */
+            library_keys?: string[];
+            /**
+             * Max Batch Size
+             * @default 25
+             */
+            max_batch_size: number | null;
+            /**
+             * Max Provider Calls
+             * @default 0
+             */
+            max_provider_calls: number;
+            /** Max Work Per Operation */
+            max_work_per_operation?: number | null;
+            /** Row Ids */
+            row_ids?: number[];
+            /** Setting Groups */
+            setting_groups?: string[];
+        };
+        /**
+         * ConstraintsPatchIn
+         * @description Sparse owner-selected changes to a grant's resource bounds.
+         */
+        ConstraintsPatchIn: {
+            /** Destination Ids */
+            destination_ids?: string[];
+            /**
+             * Include Future Libraries
+             * @default false
+             */
+            include_future_libraries: boolean;
+            /**
+             * Include Future Rows
+             * @default false
+             */
+            include_future_rows: boolean;
+            /** Library Keys */
+            library_keys?: string[];
+            /** Max Batch Size */
+            max_batch_size?: number | null;
+            /**
+             * Max Provider Calls
+             * @default 0
+             */
+            max_provider_calls: number;
+            /** Max Work Per Operation */
+            max_work_per_operation?: number | null;
+            /** Row Ids */
+            row_ids?: number[];
+            /** Setting Groups */
+            setting_groups?: string[];
         };
         /**
          * CoverageOut
@@ -4119,7 +4559,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "fixed" | "nth" | "easter";
+            kind: "fixed" | "nth" | "easter" | "month";
             /**
              * Month
              * @default 1
@@ -4166,6 +4606,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * DestinationSelection
+         * @description The exact catalog choice the owner saw before saving.
+         */
+        DestinationSelection: {
+            /** Destination Id */
+            destination_id: string;
+            /** Service Id */
+            service_id: string;
+        };
         /** Dismiss */
         Dismiss: {
             /** Id */
@@ -4178,6 +4628,49 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * DynamicClientRegistrationIn
+         * @description RFC 7591 subset for public authorization-code clients.
+         */
+        DynamicClientRegistrationIn: {
+            /** Client Name */
+            client_name: string;
+            /** Grant Types */
+            grant_types?: string[];
+            /** Redirect Uris */
+            redirect_uris: string[];
+            /** Response Types */
+            response_types?: string[];
+            /**
+             * Token Endpoint Auth Method
+             * @default none
+             */
+            token_endpoint_auth_method: string;
+        };
+        /**
+         * Effect
+         * @description Observable consequence classes used by planning and authorization.
+         * @enum {string}
+         */
+        Effect: "local_config" | "local_state" | "scheduler_change" | "external_read" | "provider_spend" | "plex_read" | "plex_write" | "plex_privacy_write" | "acquisition_write" | "notification_send" | "credential_change" | "personal_data_disclosure";
+        /**
+         * EffectReferenceOut
+         * @description Public consequence description.
+         */
+        EffectReferenceOut: {
+            /** Description */
+            description: string;
+            kind: components["schemas"]["Effect"];
+            timing: components["schemas"]["EffectTiming"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EffectTiming
+         * @description When an effect can occur after a catalog-backed change.
+         * @enum {string}
+         */
+        EffectTiming: "immediate" | "queued" | "future_run" | "recurring";
         /**
          * EffectivenessReportOut
          * @description The dashboard tracking report for one window.
@@ -4245,14 +4738,8 @@ export interface components {
         };
         /** EngagementOut */
         EngagementOut: {
-            /** Losing */
-            losing: components["schemas"]["LosingTitleOut"][];
-            /** Observed */
-            observed: boolean;
             /** People */
             people: components["schemas"]["EngagementPersonOut"][];
-            /** Stop Points */
-            stop_points: components["schemas"]["StopPointOut"][];
             /** Window */
             window: string;
         } & {
@@ -4319,6 +4806,174 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * GrantConstraintsOut
+         * @description Publicly effective resource and work bounds.
+         */
+        GrantConstraintsOut: {
+            /** Destination Ids */
+            destination_ids: string[];
+            /** Include Future Libraries */
+            include_future_libraries: boolean;
+            /** Include Future Rows */
+            include_future_rows: boolean;
+            /** Library Keys */
+            library_keys: string[];
+            /** Max Batch Size */
+            max_batch_size: number | null;
+            /** Max Provider Calls */
+            max_provider_calls: number;
+            /** Max Work Per Operation */
+            max_work_per_operation: number | null;
+            /** Owner Managed */
+            owner_managed: boolean;
+            /** Row Ids */
+            row_ids: number[];
+            /** Setting Groups */
+            setting_groups: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * GrantConstraintsPatchIn
+         * @description Revision-guarded owner change to one grant's authority.
+         */
+        GrantConstraintsPatchIn: {
+            /** Access Role */
+            access_role?: ("view" | "manage") | null;
+            /**
+             * Approve Updated Access
+             * @default false
+             */
+            approve_updated_access: boolean;
+            /** Capabilities */
+            capabilities?: components["schemas"]["Capability"][] | null;
+            constraints?: components["schemas"]["ConstraintsPatchIn"] | null;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Max Provider Calls */
+            max_provider_calls?: number | null;
+            /** Paid Enabled */
+            paid_enabled?: boolean | null;
+            /** Selected Destinations */
+            selected_destinations?: components["schemas"]["DestinationSelection"][];
+            /**
+             * Upgrade Owner Managed
+             * @default false
+             */
+            upgrade_owner_managed: boolean;
+        };
+        /**
+         * GrantCreateIn
+         * @description Owner-approved named assistant grant.
+         */
+        GrantCreateIn: {
+            /** Access Role */
+            access_role?: ("view" | "manage") | null;
+            /** Capabilities */
+            capabilities?: components["schemas"]["Capability"][] | null;
+            /** Client Id */
+            client_id: string;
+            constraints?: components["schemas"]["ConstraintsIn"];
+            /**
+             * Expires In Days
+             * @default 90
+             */
+            expires_in_days: number | null;
+            /** Name */
+            name: string;
+            /**
+             * Owner Managed
+             * @default false
+             */
+            owner_managed: boolean;
+            preset: components["schemas"]["GrantPreset"];
+            /** Selected Destinations */
+            selected_destinations?: components["schemas"]["DestinationSelection"][];
+        };
+        /**
+         * GrantOut
+         * @description Safe browser-facing named grant authority.
+         */
+        GrantOut: {
+            /** Access Role */
+            access_role: ("view" | "manage") | null;
+            /** Capabilities */
+            capabilities: components["schemas"]["Capability"][];
+            /** Client Id */
+            client_id: string;
+            constraints: components["schemas"]["GrantConstraintsOut"];
+            /** Expires At */
+            expires_at: string | null;
+            /** Full Management */
+            full_management: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Owner Account Id */
+            owner_account_id: number;
+            preset: components["schemas"]["GrantPreset"];
+            /** Requires Access Approval */
+            requires_access_approval: boolean;
+            /** Revision */
+            revision: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * GrantPreset
+         * @description Owner-facing starting points for a named assistant connection.
+         * @enum {string}
+         */
+        GrantPreset: "inspect" | "manage_selected_rows" | "owner_automation";
+        /**
+         * GrantSummaryOut
+         * @description Grant authority plus owner-visible activity and call accounting.
+         */
+        GrantSummaryOut: {
+            /** Access Role */
+            access_role: ("view" | "manage") | null;
+            /** Capabilities */
+            capabilities: components["schemas"]["Capability"][];
+            /** Client Id */
+            client_id: string;
+            constraints: components["schemas"]["GrantConstraintsOut"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /** Full Management */
+            full_management: boolean;
+            /** Id */
+            id: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Local Credential Count */
+            local_credential_count: number;
+            /** Name */
+            name: string;
+            /** Owner Account Id */
+            owner_account_id: number;
+            preset: components["schemas"]["GrantPreset"];
+            provider_call_quota: components["schemas"]["ProviderCallQuotaOut"];
+            /** Requires Access Approval */
+            requires_access_approval: boolean;
+            /** Revision */
+            revision: number;
+            /** Revoked At */
+            revoked_at: string | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -4328,6 +4983,42 @@ export interface components {
         HealthOut: {
             /** Status */
             status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** HeldTitleOut */
+        HeldTitleOut: {
+            /** Reason */
+            reason: string;
+            /** Story */
+            story: boolean;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HoldPreviewIn
+         * @description Genres and tags the owner is considering, before they are saved.
+         */
+        HoldPreviewIn: {
+            /** Genres */
+            genres?: number[];
+            /** Tags */
+            tags?: number[];
+        };
+        /** HoldPreviewOut */
+        HoldPreviewOut: {
+            /** Checked */
+            checked: number;
+            /** Held */
+            held: components["schemas"]["HeldTitleOut"][];
+            /** Unread */
+            unread: number;
         } & {
             [key: string]: unknown;
         };
@@ -4525,6 +5216,7 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        JsonValue: unknown;
         /**
          * LandingOut
          * @description The landing rate over a matured cohort — picks old enough to have had their chance.
@@ -4645,6 +5337,17 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * LocalCredentialIn
+         * @description Lifetime for a one-time local credential handoff.
+         */
+        LocalCredentialIn: {
+            /**
+             * Expires In Days
+             * @default 90
+             */
+            expires_in_days: number;
+        };
+        /**
          * LogLineOut
          * @description One parsed log entry. `ts` is None for a line the parser could not date (a raw traceback).
          */
@@ -4677,25 +5380,6 @@ export interface components {
             total_matched: number;
             /** Truncated */
             truncated: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * LosingTitleOut
-         * @description A pick several people started and few finished. One person abandoning something is a night;
-         *     the pattern across people is what makes it a bad recommendation.
-         */
-        LosingTitleOut: {
-            /** Finished */
-            finished: number;
-            /** Media Type */
-            media_type: string;
-            /** Started */
-            started: number;
-            /** Stops At */
-            stops_at: number | null;
-            /** Title */
-            title: string;
         } & {
             [key: string]: unknown;
         };
@@ -4736,6 +5420,51 @@ export interface components {
             notifications: components["schemas"]["NotificationOut"][];
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * NumericRangeOut
+         * @description Public numeric bounds.
+         */
+        NumericRangeOut: {
+            /** Maximum */
+            maximum: number;
+            /** Minimum */
+            minimum: number;
+            /** Unit */
+            unit?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * OAuthAuthorizeIn
+         * @description Bounded authorization request copied from the browser URL by the SPA.
+         */
+        OAuthAuthorizeIn: {
+            /** Client Id */
+            client_id: string;
+            /** Code Challenge */
+            code_challenge: string;
+            /**
+             * Code Challenge Method
+             * @default S256
+             */
+            code_challenge_method: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+            /** Resource */
+            resource: string;
+            /**
+             * Response Type
+             * @default code
+             */
+            response_type: string;
+            /**
+             * Scope
+             * @default instance.read
+             */
+            scope: string;
+            /** State */
+            state: string;
         };
         /**
          * OverallOut
@@ -4846,6 +5575,8 @@ export interface components {
             delivered: number;
             /** Display Name */
             display_name: string;
+            /** Enabled */
+            enabled: boolean;
             /** Finished */
             finished: number;
             /** Id */
@@ -5085,7 +5816,7 @@ export interface components {
         };
         /**
          * PresetOut
-         * @description A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``.
+         * @description A ready-made season's save fields plus catalogue metadata. ``preset`` is ``key``.
          */
         PresetOut: {
             /**
@@ -5093,8 +5824,19 @@ export interface components {
              * @default 0
              */
             after_days: number;
+            /**
+             * Category
+             * @default holidays
+             * @enum {string}
+             */
+            category: "holidays" | "film_days" | "spotlights";
             /** Collections */
             collections?: components["schemas"]["CollectionIO"][];
+            /**
+             * Description
+             * @default
+             */
+            description: string;
             /** Emoji */
             emoji: string;
             /** Excluded Genres */
@@ -5267,6 +6009,20 @@ export interface components {
             guidance: string;
             /** Mechanics */
             mechanics: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ProviderCallQuotaOut
+         * @description Current conservative lifetime call accounting.
+         */
+        ProviderCallQuotaOut: {
+            /** Lifetime Limit */
+            lifetime_limit: number;
+            /** Remaining */
+            remaining: number;
+            /** Reserved */
+            reserved: number;
         } & {
             [key: string]: unknown;
         };
@@ -5488,6 +6244,12 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * ResetBehavior
+         * @description How a caller expresses the absence of a stored setting value.
+         * @enum {string}
+         */
+        ResetBehavior: "restore_default" | "literal_null" | "unavailable";
         /** RestoreRequest */
         RestoreRequest: {
             /** Name */
@@ -5578,6 +6340,10 @@ export interface components {
             per_library: components["schemas"]["RowLibraryEffectiveness"][];
             /** Runs */
             runs: number;
+            /** Shared Titles */
+            shared_titles: {
+                [key: string]: number;
+            } | null;
             /** Watched */
             watched: number;
         } & {
@@ -5633,7 +6399,10 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** RowOverridePatch */
+        /**
+         * RowOverridePatch
+         * @description PATCH-shaped stored preference values shared by REST and assistant planning.
+         */
         RowOverridePatch: {
             /** Muted */
             muted?: boolean | null;
@@ -5718,6 +6487,66 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * RowTemplateDefinitionOut
+         * @description Public row template metadata and creation defaults.
+         */
+        RowTemplateDefinitionOut: {
+            /** Audience Behavior */
+            audience_behavior: string;
+            /** Changed Fields */
+            changed_fields: string[];
+            /** Description */
+            description: string;
+            /** Editable Fields */
+            editable_fields: string[];
+            /** Effective Values */
+            effective_values: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Effects
+             * @default [
+             *       "local_config"
+             *     ]
+             */
+            effects: components["schemas"]["Effect"][];
+            /** Emoji */
+            emoji: string;
+            /** Highlights */
+            highlights: string[];
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Prerequisites
+             * @default []
+             */
+            prerequisites: string[];
+            /**
+             * Required Capabilities
+             * @default [
+             *       "rows.create"
+             *     ]
+             */
+            required_capabilities: components["schemas"]["Capability"][];
+            /**
+             * Required Services
+             * @default []
+             */
+            required_services: string[];
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+            /** Values */
+            values: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * RulesIO
          * @description A theme's hard limits. A missing or null one is no limit.
          */
@@ -5781,7 +6610,7 @@ export interface components {
              * Trigger
              * @enum {string}
              */
-            trigger: "schedule" | "manual" | "wizard" | "resume";
+            trigger: "schedule" | "manual" | "wizard" | "resume" | "assistant";
             /** Users */
             users: components["schemas"]["RunUserOut"][];
         } & {
@@ -5982,7 +6811,7 @@ export interface components {
              * Trigger
              * @enum {string}
              */
-            trigger: "schedule" | "manual" | "wizard" | "resume";
+            trigger: "schedule" | "manual" | "wizard" | "resume" | "assistant";
         } & {
             [key: string]: unknown;
         };
@@ -6173,6 +7002,8 @@ export interface components {
         SeasonDateOut: {
             /** Next Date */
             next_date: string | null;
+            /** Next Windows */
+            next_windows?: components["schemas"]["shortlist__server__api__seasons__SeasonWindowOut"][];
             /** Rule Error */
             rule_error: string | null;
         } & {
@@ -6236,6 +7067,8 @@ export interface components {
             name: string;
             /** Next Dates */
             next_dates: string[];
+            /** Next Windows */
+            next_windows?: components["schemas"]["shortlist__server__api__seasons__SeasonWindowOut"][];
             /** Picks */
             picks?: components["schemas"]["PickIO"][];
             /** Preset */
@@ -6320,26 +7153,8 @@ export interface components {
          * @description Where a seasonal row is in its calendar today, judged on the SERVER's clock.
          */
         SeasonStatusOut: {
-            next: components["schemas"]["SeasonWindowOut"] | null;
-            showing: components["schemas"]["SeasonWindowOut"] | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * SeasonWindowOut
-         * @description One season's run for a row: which season, and the first and last days the row shows it.
-         */
-        SeasonWindowOut: {
-            /** Emoji */
-            emoji: string;
-            /** Ends */
-            ends: string;
-            /** Name */
-            name: string;
-            /** Slug */
-            slug: string;
-            /** Starts */
-            starts: string;
+            next: components["schemas"]["shortlist__server__api__collections__SeasonWindowOut"] | null;
+            showing: components["schemas"]["shortlist__server__api__collections__SeasonWindowOut"] | null;
         } & {
             [key: string]: unknown;
         };
@@ -6446,6 +7261,90 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * SettingDefinitionOut
+         * @description Document every current setting field while preserving nested additions.
+         */
+        SettingDefinitionOut: {
+            /**
+             * Assistant Writable
+             * @default true
+             */
+            assistant_writable: boolean;
+            default?: components["schemas"]["JsonValue"];
+            /** Description */
+            description: string;
+            /** Effects */
+            effects: components["schemas"]["EffectReferenceOut"][];
+            group: components["schemas"]["SettingGroup"];
+            /** Has Default */
+            has_default: boolean;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Nullable
+             * @default false
+             */
+            nullable: boolean;
+            /**
+             * Options
+             * @default []
+             */
+            options: components["schemas"]["SettingOptionOut"][];
+            /**
+             * Prerequisites
+             * @default []
+             */
+            prerequisites: components["schemas"]["SettingPrerequisiteOut"][];
+            range?: components["schemas"]["NumericRangeOut"] | null;
+            /** Required Capabilities */
+            required_capabilities: components["schemas"]["Capability"][];
+            /** @default restore_default */
+            reset_behavior: components["schemas"]["ResetBehavior"];
+            /**
+             * Secret
+             * @default false
+             */
+            secret: boolean;
+            value_type: components["schemas"]["ValueType"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SettingGroup
+         * @description Stable groups used by settings discovery and grant constraints.
+         * @enum {string}
+         */
+        SettingGroup: "plex" | "metadata" | "recommendations" | "row_defaults" | "requests" | "notifications" | "schedules" | "system" | "setup";
+        /**
+         * SettingOptionOut
+         * @description Public named option.
+         */
+        SettingOptionOut: {
+            /** Description */
+            description?: string | null;
+            /** Label */
+            label: string;
+            value: components["schemas"]["JsonValue"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SettingPrerequisiteOut
+         * @description Public applicability condition.
+         */
+        SettingPrerequisiteOut: {
+            /** Description */
+            description: string;
+            /** Key */
+            key: string;
+            /** Values */
+            values: components["schemas"]["JsonValue"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * SettingsOut
          * @description The whole settings store, flat: `{"row.size": 15, "plex.url": "…", …}`.
          *
@@ -6494,15 +7393,6 @@ export interface components {
             expires_at: string | null;
             /** Seconds Remaining */
             seconds_remaining: number;
-        } & {
-            [key: string]: unknown;
-        };
-        /** StopPointOut */
-        StopPointOut: {
-            /** Count */
-            count: number;
-            /** Label */
-            label: string;
         } & {
             [key: string]: unknown;
         };
@@ -6563,28 +7453,6 @@ export interface components {
             job_id: number;
             /** Started */
             started: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * SyncStateOut
-         * @description One sync's schedule summary: when it last ran, when it fires next, and on what cron.
-         */
-        SyncStateOut: {
-            /** Cron */
-            cron: string;
-            /** Last */
-            last: string | null;
-            /** Next */
-            next: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** SyncsOut */
-        SyncsOut: {
-            backup: components["schemas"]["BackupScheduleOut"];
-            users: components["schemas"]["SyncStateOut"];
-            watched: components["schemas"]["SyncStateOut"];
         } & {
             [key: string]: unknown;
         };
@@ -6996,6 +7864,20 @@ export interface components {
             snapshot_id: number;
         };
         /**
+         * UninstallCollectionOut
+         * @description One Shortlist collection the uninstall deletes, by where it lives and whose it is.
+         */
+        UninstallCollectionOut: {
+            /** Library */
+            library: string;
+            /** Person */
+            person: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * UninstallFailedOut
          * @description An account plex.tv refused. The rest of the uninstall still ran (issue #96).
          */
@@ -7011,6 +7893,8 @@ export interface components {
         UninstallOut: {
             /** Collections Deleted */
             collections_deleted: string[];
+            /** Collections Detail */
+            collections_detail?: components["schemas"]["UninstallCollectionOut"][];
             /** Dry Run */
             dry_run: boolean;
             /** Filters Failed */
@@ -7355,6 +8239,12 @@ export interface components {
             type: string;
         };
         /**
+         * ValueType
+         * @description JSON value shapes accepted for settings.
+         * @enum {string}
+         */
+        ValueType: "boolean" | "integer" | "number" | "string" | "string_list" | "integer_list" | "object";
+        /**
          * VersionOut
          * @description `GET /version`.
          *
@@ -7600,6 +8490,36 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * SeasonWindowOut
+         * @description One season's run for a row: which season, and the first and last days the row shows it.
+         */
+        shortlist__server__api__collections__SeasonWindowOut: {
+            /** Emoji */
+            emoji: string;
+            /** Ends */
+            ends: string;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            /** Starts */
+            starts: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SeasonWindowOut
+         * @description Inclusive calendar dates for a month-long season.
+         */
+        shortlist__server__api__seasons__SeasonWindowOut: {
+            /** End */
+            end: string;
+            /** Start */
+            start: string;
+        } & {
+            [key: string]: unknown;
+        };
     };
     responses: never;
     parameters: never;
@@ -7638,6 +8558,94 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_change_api_assistant_changes__change_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_change_api_assistant_changes__change_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    status_api_assistant_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -7729,6 +8737,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+        };
+    };
+    settings_catalog_api_catalogs_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingDefinitionOut"][];
+                };
+            };
+        };
+    };
+    template_catalog_api_catalogs_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RowTemplateDefinitionOut"][];
                 };
             };
         };
@@ -8609,6 +9657,77 @@ export interface operations {
             };
         };
     };
+    acquisition_claims_api_requests_acquisition_claims_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    release_acquisition_claim_api_requests_acquisition_claims__claim_id__release_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                claim_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcquisitionReleaseIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     clear_requests_api_requests_clear_post: {
         parameters: {
             query?: never;
@@ -8662,6 +9781,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeletedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    hold_preview_api_requests_hold_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HoldPreviewIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HoldPreviewOut"];
                 };
             };
             /** @description Validation Error */
@@ -9523,6 +10675,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_setting_defaults_api_settings_defaults_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsOut"];
                 };
             };
         };
@@ -10882,26 +12054,6 @@ export interface operations {
             };
         };
     };
-    syncs_api_system_syncs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncsOut"];
-                };
-            };
-        };
-    };
     uninstall_api_system_uninstall_post: {
         parameters: {
             query?: never;
@@ -11701,6 +12853,378 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_configured_destinations_assistant_destinations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfiguredDestination"][];
+                };
+            };
+        };
+    };
+    list_grants_assistant_grants_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantSummaryOut"][];
+                };
+            };
+        };
+    };
+    create_grant_assistant_grants_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrantCreateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_revoked_grant_assistant_grants__grant_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_grant_constraints_assistant_grants__grant_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GrantConstraintsPatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GrantOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    issue_credential_assistant_grants__grant_id__credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocalCredentialIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_grant_assistant_grants__grant_id__revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                grant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    open_consent_assistant_oauth_authorize_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    begin_consent_assistant_oauth_authorize_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthAuthorizeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_consent_assistant_oauth_consent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsentDecisionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_assistant_oauth_register_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DynamicClientRegistrationIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_assistant_oauth_revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    token_assistant_oauth_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { SeasonYearStrip } from "@/components/rows/seasons/season-year-strip";
 import { seasonDate } from "@/lib/seasons";
 
-import { CHRISTMAS, HALLOWEEN, THANKSGIVING } from "./season-fixtures";
+import { CHRISTMAS, FEBRUARY_SPOTLIGHT, HALLOWEEN, THANKSGIVING } from "./season-fixtures";
 
 describe("SeasonYearStrip", () => {
   it("says which seasons overlap, on which days, and which one wins", () => {
@@ -21,6 +21,25 @@ describe("SeasonYearStrip", () => {
   it("says so when nothing overlaps", () => {
     render(<SeasonYearStrip seasons={[HALLOWEEN, CHRISTMAS]} leadDays={30} afterDays={0} today="2026-10-02" />);
     expect(screen.getByText(/No seasons overlap\./)).toBeInTheDocument();
+  });
+
+  it("shows a full month's server boundaries and explains a dated occasion winning a tie", () => {
+    const october = {
+      ...FEBRUARY_SPOTLIGHT,
+      name: "October spotlight",
+      rule: { ...FEBRUARY_SPOTLIGHT.rule, month: 10 },
+      next_dates: ["2026-10-31", "2027-10-31"],
+      next_windows: [
+        { start: "2026-10-01", end: "2026-10-31" },
+        { start: "2027-10-01", end: "2027-10-31" },
+      ],
+    };
+    render(<SeasonYearStrip seasons={[october, HALLOWEEN]} leadDays={7} afterDays={0} today="2026-10-02" />);
+    expect(screen.getByRole("img")).toHaveAccessibleName(
+      `When this row shows each season: October spotlight, ${seasonDate("2026-10-01")} – ${seasonDate("2026-10-31")}; ` +
+        `Halloween, ${seasonDate("2026-10-24")} – ${seasonDate("2026-10-31")}. Today is ${seasonDate("2026-10-02")}.`,
+    );
+    expect(screen.getByText(/When dates tie, a dated occasion takes priority over a full-month season\./)).toBeInTheDocument();
   });
 
   it("is one labelled image to a screen reader: each season's window, and today", () => {

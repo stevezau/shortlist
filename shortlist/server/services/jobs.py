@@ -27,11 +27,12 @@ import asyncio
 import functools
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import FREED_NAME_HELPER_KEY, row_marker
@@ -283,8 +284,8 @@ CATALOG: tuple[JobKind, ...] = (
         ),
         manual=True,
         writes_plex=False,  # local database only
-        # Queued by the run service the moment a run's results are safely persisted. It used to run
-        # INSIDE that persist's transaction, so a bulk delete that failed took the whole persist with
+        # Queued by the run service the moment a run's results are safely persisted. Running it
+        # INSIDE that persist's transaction would let a failed bulk delete take the whole persist with
         # it — discarding the record of a run that had already written to Plex.
         schedule_job_id="maintenance-prune",
         schedule_setting="maintenance.prune_cron",
@@ -418,6 +419,44 @@ CATALOG: tuple[JobKind, ...] = (
         ),
     ),
     JobKind(
+        kind="assistant.generate_theme",
+        label="Generate an approved assistant theme",
+        description="Uses one reserved provider call for an approved theme; uncertain outcomes are not replayed.",
+        manual=False,
+        writes_plex=False,
+        trigger="Queued with explicit generation permission and a reserved provider call.",
+    ),
+    JobKind(
+        kind="assistant.run",
+        label="Dispatch an approved assistant run",
+        description="Hands one authorized, bounded run to the run service without replaying uncertain work.",
+        manual=False,
+        writes_plex=False,
+        trigger="Queued atomically with an approved assistant run.",
+    ),
+    JobKind(
+        kind="assistant.request_send",
+        label="Send approved acquisition requests",
+        description=(
+            "Sends explicitly approved titles to the configured request destination once. "
+            "Each title crosses a durable external-started boundary and uncertain outcomes are never replayed."
+        ),
+        manual=False,
+        writes_plex=False,
+        trigger="Queued atomically with an approved assistant request-send operation.",
+    ),
+    JobKind(
+        kind="assistant.converge",
+        label="Finish an approved assistant change",
+        description=(
+            "Applies the fixed, ordered follow-up steps owed by an approved assistant change. "
+            "Each completed step is checkpointed, so a retry resumes with the first unfinished step."
+        ),
+        manual=False,
+        writes_plex=True,
+        trigger="Queued atomically with an approved assistant change that has follow-up work.",
+    ),
+    JobKind(
         kind="notify.send",
         label="Send an alert to your webhook",
         description=(
@@ -452,13 +491,53 @@ def handler(kind: str) -> Callable[[Handler], Handler]:
     return register
 
 
-def enqueue(sessions, kind: str, payload: dict | None = None, *, max_attempts: int = 3) -> int:
-    """Queue a job and return its id. Cheap and synchronous — safe to call from a request handler."""
+async def run_handler_inline(state, kind: str, payload: dict) -> dict:
+    """Run a registered primitive inside an already locked convergence job.
+
+    This deliberately does not enqueue or acquire the writer lock again.  Only
+    trusted server code can construct convergence steps, and the convergence
+    schema rejects ``assistant.converge`` itself.
+    """
+    if kind == "assistant.converge":
+        raise ValueError("a convergence job cannot contain another convergence job")
+    fn = _HANDLERS.get(kind)
+    if fn is None:
+        raise ValueError(f"unknown job kind {kind!r}")
+    if inspect.iscoroutinefunction(fn):
+        return await fn(state, payload)
+    return await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, state, payload))
+
+
+def enqueue_in_session(
+    session: Session,
+    kind: str,
+    payload: dict | None = None,
+    *,
+    max_attempts: int = 3,
+    operation_id: str | None = None,
+    effect_key: str | None = None,
+) -> Job:
+    """Add owed work to the caller's transaction, without committing or starting execution."""
     if kind not in _HANDLERS:
         raise ValueError(f"unknown job kind {kind!r}; known: {sorted(_HANDLERS)}")
+    if (operation_id is None) != (effect_key is None):
+        raise ValueError("operation_id and effect_key must be supplied together")
+    job = Job(
+        kind=kind,
+        payload=payload or {},
+        max_attempts=max_attempts,
+        operation_id=operation_id,
+        effect_key=effect_key,
+    )
+    session.add(job)
+    session.flush()
+    return job
+
+
+def enqueue(sessions, kind: str, payload: dict | None = None, *, max_attempts: int = 3) -> int:
+    """Queue a job and return its id. Cheap and synchronous — safe to call from a request handler."""
     with sessions() as session:
-        job = Job(kind=kind, payload=payload or {}, max_attempts=max_attempts)
-        session.add(job)
+        job = enqueue_in_session(session, kind, payload, max_attempts=max_attempts)
         session.commit()
         logger.debug("queued job {} ({})", job.id, kind)
         return job.id
@@ -480,9 +559,59 @@ async def drain_now(state, reason: str) -> None:
         )
 
 
-#: Strong refs to in-flight background drains. A bare `create_task` can be garbage-collected
-#: mid-flight; the JOBS survive that (they are committed rows) but the attempt would not.
-_BACKGROUND_DRAINS: set[asyncio.Task] = set()
+@dataclass
+class _DrainLifecycle:
+    tasks: set[asyncio.Task] = field(default_factory=set)
+    closing: bool = False
+
+
+def _drain_lifecycle(state) -> _DrainLifecycle:
+    lifecycle = getattr(state, "_job_drain_lifecycle", None)
+    if not isinstance(lifecycle, _DrainLifecycle):
+        lifecycle = _DrainLifecycle()
+        state._job_drain_lifecycle = lifecycle
+    return lifecycle
+
+
+def _track_drain(lifecycle: _DrainLifecycle, task: asyncio.Task) -> None:
+    lifecycle.tasks.add(task)
+
+    def finished(task: asyncio.Task) -> None:
+        lifecycle.tasks.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.warning("job drain failed ({}: {})", type(error).__name__, redact(str(error)))
+
+    task.add_done_callback(finished)
+
+
+def start_background(state) -> None:
+    """Open job admission for a new application lifespan."""
+    lifecycle = _drain_lifecycle(state)
+    if lifecycle.tasks:
+        raise RuntimeError("Cannot restart job drains while the previous lifespan still has active jobs")
+    lifecycle.closing = False
+
+
+async def shutdown_background(state) -> None:
+    """Finish this app's started jobs before its database pool is closed.
+
+    Stop admitting drains; work still queued remains durable for the next startup. Cancelling an
+    executor's await does not stop its thread, so in-flight drains must finish, not be cancelled.
+    """
+    lifecycle = _drain_lifecycle(state)
+    lifecycle.closing = True
+    cancelled = False
+    while lifecycle.tasks:
+        pending = asyncio.gather(*tuple(lifecycle.tasks), return_exceptions=True)
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                # Even a cancelled shutdown must keep the pool and writer locks alive until the
+                # executor work ends. Propagate cancellation only once cleanup is safe.
+                cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 def drain_in_background(state, reason: str) -> None:
@@ -496,9 +625,10 @@ def drain_in_background(state, reason: str) -> None:
     Nothing is lost by not waiting: the jobs are committed rows, the worker retries them with
     backoff, and they are visible in the header's activity popover while they run.
     """
-    task = asyncio.create_task(drain_now(state, reason))
-    _BACKGROUND_DRAINS.add(task)
-    task.add_done_callback(_BACKGROUND_DRAINS.discard)
+    lifecycle = _drain_lifecycle(state)
+    if lifecycle.closing:
+        return
+    _track_drain(lifecycle, asyncio.create_task(drain_now(state, reason)))
 
 
 async def queue_privacy_sync(state, reason: str) -> None:
@@ -772,7 +902,8 @@ def _max_parallel_readonly(state) -> int:
     try:
         with state.sessions() as session:
             value = SettingsStore(session).get("jobs.max_parallel_readonly")
-    except Exception:
+    except Exception as e:
+        logger.debug("jobs.max_parallel_readonly unreadable ({}); using the default", type(e).__name__)
         return DEFAULT_MAX_PARALLEL_READONLY
     if isinstance(value, int) and value >= 1:
         return value
@@ -800,11 +931,7 @@ async def drain_kind(state, kind: str) -> int:
     # happen regardless; not skipping costs five seconds of the whole app.
     if _plex_busy(state):
         return 0
-    sessions = state.sessions
-    if _DRAIN_LOCK.locked():
-        return 0
-    async with _DRAIN_LOCK:
-        return await _drain(state, sessions, only_kind=kind)
+    return await _run_tracked_drain(state, only_kind=kind)
 
 
 async def run_pending(state) -> int:
@@ -813,7 +940,7 @@ async def run_pending(state) -> int:
     Three callers reach this: the scheduler tick, `POST /api/system/jobs`, and the disable path.
     The drain LOOP is serialized (claiming is fast, and two loops racing would just interleave for
     no gain); what runs inside it is not. Read-only kinds go out concurrently up to
-    `jobs.max_parallel_readonly`; anything that writes to Plex takes `_PLEX_WRITER_LOCK`.
+    `jobs.max_parallel_readonly`; anything that writes to Plex takes `plex_writer_lock`.
 
     A caller that finds the loop already running returns immediately rather than queueing behind it
     in a request path.
@@ -822,11 +949,25 @@ async def run_pending(state) -> int:
     the database or re-reading the roster while a run is on is harmless, and refusing to was why a
     server that ran for an hour did no maintenance at all in that time.
     """
-    sessions = state.sessions
-    if _DRAIN_LOCK.locked():
+    return await _run_tracked_drain(state)
+
+
+async def _run_tracked_drain(state, only_kind: str | None = None) -> int:
+    lifecycle = _drain_lifecycle(state)
+    if lifecycle.closing:
         return 0
-    async with _DRAIN_LOCK:
-        return await _drain(state, sessions)
+
+    async def run() -> int:
+        if lifecycle.closing or _DRAIN_LOCK.locked():
+            return 0
+        async with _DRAIN_LOCK:
+            return await _drain(state, state.sessions, only_kind=only_kind)
+
+    task = asyncio.create_task(run())
+    _track_drain(lifecycle, task)
+    # A scheduler/request cancellation must not release the Plex writer lock while its executor
+    # thread is still writing. The app owns this task until shutdown_background has awaited it.
+    return await asyncio.shield(task)
 
 
 async def _execute(state, sessions, job_id: int, kind: str) -> None:
@@ -844,7 +985,7 @@ async def _execute(state, sessions, job_id: int, kind: str) -> None:
         notify.enqueue_job_event(sessions, job_id, "job.started")
     fn = _HANDLERS.get(kind)
     if fn is None:
-        # The kind was removed in an upgrade while a job was queued. Nothing can run it.
+        # The kind no longer exists (an upgrade dropped it while a job was queued). Nothing can run it.
         _finish(sessions, job_id, error=f"no handler registered for {kind!r}")
         return
     # A handler that declares `job_id` gets its own row id. Only the watching-account transfer wants
@@ -995,7 +1136,7 @@ def _sync_check(state, payload: dict) -> dict:
     own-home is monotonically private, so this needs no privacy gate.
     """
     from shortlist.engine.models import RunReport
-    from shortlist.engine.pipeline import _build_indexes, _converge_phase, _order_phase
+    from shortlist.engine.pipeline import build_indexes, converge_phase, order_phase
 
     report = RunReport(started_at=datetime.now(UTC))
     requested = payload.get("dry_run", False)
@@ -1013,17 +1154,17 @@ def _sync_check(state, payload: dict) -> dict:
     # callout could never render and Fix deleted unannounced. Granting it here cannot delete
     # anything: `dry_run` is True only when `ctx.config.dry_run` is (it is one of the two terms it is
     # OR'd from), and converge checks that flag before every delete, logging the would-be removal.
-    _converge_phase(ctx, set(), report, may_delete=confirmed or dry_run)
+    converge_phase(ctx, set(), report, may_delete=confirmed or dry_run)
     # Before the shelf pass, whose library read can raise: an orphan deleted here is gone from Plex, and the
     # retry's converge finds nothing left to record.
     _audit_runless_pass(state, report, dry_run, "sync.check")
     # A row stranded at the bottom of the Recommended shelf IS a row "in the wrong place", which is
     # what this button says it fixes — so put the shelf right here too, not only on a full run. It is
     # cosmetic and privacy-neutral (positions only, on hubs already promoted and browse-hidden), so it
-    # needs no privacy gate and `_apply_placement` swallows its own failures. `_build_indexes` with no
+    # needs no privacy gate and `_apply_placement` swallows its own failures. `build_indexes` with no
     # users names the libraries rows live in without reading a single item inside them.
-    _build_indexes(ctx, [], ctx.plex.sections())
-    _order_phase(ctx, report)
+    build_indexes(ctx, [], ctx.plex.sections())
+    order_phase(ctx, report)
     _audit_hub_orderings(state, report, dry_run)
     # Deletions are reported SEPARATELY and named first. Folding them into `fixed` would hide the one
     # irreversible thing this does behind a number, in the very preview an operator reads to decide
@@ -1162,7 +1303,7 @@ def _privacy_sync(state, payload: dict) -> dict:
     Recommended shelf — added 2026-08-12 so a shelf left in pieces could be repaired by a job rather
     than only by a run — and that was removed on 2026-09-10. On a server whose owner had set
     `privacy.sync_cron` to `*/30 * * * *` it ran the whole placement phase 49 times a day (measured on
-    SFLIX: 200 hub-order writes in 24h against the nightly run's 5) for a position that only changes
+    a large production server: 200 hub-order writes in 24h against the nightly run's 5) for a position that only changes
     when a row is built. `sync.check` still repairs a broken shelf on demand, which is the job that
     advertises it.
     """
@@ -1174,8 +1315,8 @@ def _privacy_sync(state, payload: dict) -> dict:
     # The shelf ORDER is not this job's business — the nightly run owns it, exactly as
     # `rows.visibility` already says of itself. This job has BOTH a cron and a mutation trigger, so an
     # owner who sets `privacy.sync_cron` to `*/30 * * * *` gets the whole placement phase 49 times a
-    # day on top of the run — measured on SFLIX 2026-09-10: 200 hub-order records in 24 hours against
-    # the nightly run's 5, each pass re-issuing every move three times. Who can SEE a row is this
+    # day on top of the run — measured on a large production server 2026-09-10: 200 hub-order records in 24 hours
+    # against the nightly run's 5, each pass re-issuing every move three times. Who can SEE a row is this
     # job's business and still runs; where it sits on the shelf is not.
     ctx.config.manage_shelf_order = False
     report = engine_run(ctx, [])
@@ -1395,8 +1536,8 @@ def _themes_rotate(state, payload: dict) -> dict:
     person who needed one keeps theirs and gets an event saying why, and the next pass tries again.
     """
     from shortlist.server.services.theme_rotation import (
-        _once,
         authoring_tools,
+        call_once,
         rotate_themes,
         rotation_targets,
         top_up_rows,
@@ -1409,7 +1550,7 @@ def _themes_rotate(state, payload: dict) -> dict:
     if not targets and not top_up_rows(state.sessions):
         return {"targets": 0}
     now = datetime.now(UTC)
-    tools = _once(lambda: authoring_tools(state))
+    tools = call_once(lambda: authoring_tools(state))
     outcomes = rotate_themes(
         state.sessions,
         now=now,
@@ -1443,6 +1584,8 @@ def _maintenance_prune(state, payload: dict) -> dict:
     Idempotent by construction: it deletes whatever is currently older than the limit, so replaying
     it after a crash simply finds nothing left to delete.
     """
+    from shortlist.server.assistant.retention import prune_assistant_state
+    from shortlist.server.services.report_cache import invalidate_report_cache
     from shortlist.server.services.run_persistence import prune_events, prune_expired_cache, prune_runs
 
     with state.sessions() as session:
@@ -1456,12 +1599,21 @@ def _maintenance_prune(state, payload: dict) -> dict:
         runs = prune_runs(session, months if 0 < months <= 24 else 0)
         events = prune_events(session, event_months if 0 < event_months <= 24 else 0)
         cached = prune_expired_cache(session)
+        # Fixed windows, not owner settings: these rows are working state (codes, tokens, unapplied plans).
+        assistant = prune_assistant_state(session, now=datetime.now(UTC))
         session.commit()
+    # Pruning can delete runs, events and watch history without counting the last; the report reads all
+    # three, so drop it rather than wait out the 120s TTL.
+    invalidate_report_cache()
     return {
         "runs": runs,
         "events": events,
         "cache_rows": cached,
-        "detail": f"Pruned {runs} run(s), {events} audit event(s) and {cached} expired cache row(s)",
+        "assistant": assistant,
+        "detail": (
+            f"Pruned {runs} run(s), {events} audit event(s), {cached} expired cache row(s) "
+            f"and {sum(assistant.values())} assistant row(s)"
+        ),
     }
 
 
@@ -1474,8 +1626,8 @@ def _user_cleanup(state, payload: dict) -> dict:
     from shortlist.server.services.collection_reconcile import forget_user_deliveries
 
     slug = payload["slug"]
-    # Through the chokepoint, not `force_dry_run()` here: this used to call the safe-mode helper
-    # itself, which is the one idiom `build_context` exists to make unnecessary — and the only way the
+    # Through the chokepoint, not `force_dry_run()` here: calling the safe-mode helper
+    # here is the one idiom `build_context` exists to make unnecessary — and the only way the
     # value the handler logs can drift from the value the writes actually used.
     requested = payload.get("dry_run", False)
     ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
@@ -1661,10 +1813,10 @@ def _row_reconcile(state, payload: dict) -> dict:
 
     Durable for the same reason `user.cleanup` is: the previous fire-and-forget call had no retry, so
     a Plex outage at the moment of the edit left the collections on the server with nothing to ever
-    revisit them. `_reconcile_row_removal` is removal-only and re-reads the server each time, so
+    revisit them. `reconcile_row_removal` is removal-only and re-reads the server each time, so
     replaying it after a crash is safe.
     """
-    from shortlist.server.services.collection_reconcile import _reconcile_row_removal
+    from shortlist.server.services.collection_reconcile import reconcile_row_removal
 
     slug = payload["slug"]
     build = payload.get("build", "per_person")
@@ -1673,7 +1825,7 @@ def _row_reconcile(state, payload: dict) -> dict:
     # The EFFECTIVE value, back off the context the removal actually used. This audited a hardcoded
     # `False` while `build_context` had OR'd SHORTLIST_DRY_RUN in below it — so under safe mode the
     # audit trail recorded a preview as a real deletion of somebody's row.
-    dry_run = _reconcile_row_removal(
+    dry_run = reconcile_row_removal(
         state,
         slug=slug,
         build=build,
@@ -1757,7 +1909,7 @@ def _watching_account_transfer(state, payload: dict, job_id: int | None = None) 
     if not source_token:
         raise LookupError(f"no server token could be obtained for {source.username!r} — cannot read its watching")
 
-    token = ctx.plextv.canary_server_token(account_id)
+    token = ctx.plextv.home_user_server_token(account_id)
     with state.sessions() as session:
         report = transfer_watch_history(
             session,
@@ -1816,7 +1968,7 @@ def _watching_account_undo(state, payload: dict, job_id: int | None = None) -> d
 
     ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
     dry_run = bool(ctx.config.dry_run) or requested
-    token = ctx.plextv.canary_server_token(account_id)
+    token = ctx.plextv.home_user_server_token(account_id)
 
     with state.sessions() as session:
         report = undo_transfer(
@@ -1947,8 +2099,8 @@ def _rows_visibility(state, payload: dict) -> dict:
             "detail": f"{len(scheduled)} row(s) are waiting for today's schedule — everything is paused",
         }
 
-    # A pass the row editor queued for ONE row applies that row only. Saving one row's seasons used to
-    # re-promote every row on the server (seen live 2026-09-27); the midnight tick, with no row, is the
+    # A pass the row editor queued for ONE row applies that row only. Saving one row's seasons must not
+    # re-promote every row on the server; the midnight tick, with no row, is the
     # server-wide pass.
     row = payload.get("row") or None
     changed = [row] if row else sorted(scheduled)
@@ -1983,7 +2135,7 @@ def _rows_visibility(state, payload: dict) -> dict:
     # account's filter and creates/promotes nothing; it reports failure by RETURN VALUE, so it is
     # checked rather than assumed.
     # The shelf ORDER is not this job's business — the 03:30 run owns it. Left on, `engine_run` would
-    # run `_order_phase` here every night, writing the `shelf.order` events that
+    # run `order_phase` here every night, writing the `shelf.order` events that
     # `notifications._shelf_contention` counts (3 in 24h reads as another tool fighting us, issue
     # #106). It would also order BEFORE promoting, the inverse of a run, so a row being shown today is
     # not yet on the shelf when the ordering happens and moves again at 03:30 — a second recorded move
@@ -2078,3 +2230,29 @@ def _notify_send(state, payload: dict) -> dict:
             # saved — so naming one here produced two contradictory sentences on the Jobs page.
             return {"sent": False, "detail": f"Not sent: {e}"}
     return {"sent": True, "detail": detail}
+
+
+# Import after every primitive handler is registered.  The convergence handler
+# delegates to this closed registry and must therefore be the final registration.
+from shortlist.server.assistant import row_effects as _assistant_row_effects  # noqa: E402,F401
+
+
+@handler("assistant.run")
+async def _assistant_run(state, payload: dict) -> dict:
+    from shortlist.server.assistant.run_adapter import dispatch_assistant_run
+
+    return await dispatch_assistant_run(state, payload)
+
+
+@handler("assistant.generate_theme")
+def _assistant_generate_theme(state, payload: dict, *, job_id: int) -> dict:
+    from shortlist.server.assistant.generation import dispatch_generation
+
+    return dispatch_generation(state, payload, job_id=job_id)
+
+
+@handler("assistant.request_send")
+async def _assistant_request_send(state, payload: dict, *, job_id: int) -> dict:
+    from shortlist.server.assistant.request_adapter import dispatch_assistant_requests
+
+    return await dispatch_assistant_requests(state, payload, job_id=job_id)

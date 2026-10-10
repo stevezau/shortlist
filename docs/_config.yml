@@ -14,16 +14,7 @@ description: >-
 #
 # which should only ever match this file and docs/README.md — the latter is excluded
 # from the build, is the github.com folder view, and runs no Liquid.
-#
-# ---------------------------------------------------------------------------
-# Moved to shortlistapp.dev on 5 Sep 2026. DNS (Route 53) first, then docs/CNAME + the Pages
-# setting, then the two lines below, then the hand-written links in README.md and
-# docs/README.md and .github/dockerhub-overview.md.
-# Enforce HTTPS is on (verified 2026-09-11: http://shortlistapp.dev 301s to https).
-# Still outstanding for the owner: add the apex as a NEW Search Console property and re-submit
-# the sitemap — it is a different property from the old /shortlist/ subpath. The
-# google_site_verification tag below is already served on every page of the new domain, so the
-# property verifies on the spot; nothing here needs changing for it.
+
 
 url: https://shortlistapp.dev
 baseurl: ""
@@ -31,9 +22,9 @@ baseurl: ""
 repo: https://github.com/stevezau/shortlist
 
 # Update both when a stable release is published; previews remain explicitly marked. The landing
-# page's status line renders them as "v1.9.3 · released 27 Sep 2026".
-stable_version: 1.9.3
-stable_released: 2026-09-27
+# page's status line renders them as "v1.11.0 · released 10 Oct 2026".
+stable_version: 1.11.0
+stable_released: 2026-10-10
 
 # GoatCounter site code (the part before .goatcounter.com). Empty means no analytics tag at all:
 # head.html emits the script only when this is set. The install include's Copy button also counts
@@ -115,6 +106,8 @@ nav:
         url: /guides/troubleshooting/
       - title: On the internet
         url: /guides/security/
+      - title: Connect an assistant
+        url: /guides/assistant-access/
   - title: What it works with
     url: /integrations/
   - title: Reference
@@ -127,6 +120,8 @@ nav:
         url: /reference/environment/
       - title: The API
         url: /reference/api/
+      - title: MCP assistant reference
+        url: /reference/assistant/
       - title: How Shortlist decides things
         url: /reference/concepts/
   - title: FAQ
@@ -146,6 +141,8 @@ nav:
         url: /plex-ai-recommendations/
       - title: Tools compared
         url: /plex-recommendation-tools/
+      - title: Kometa and per-user rows
+        url: /kometa-per-user-recommendations/
 
 # jekyll-redirect-from keeps the URLs of merged pages working: a page's `redirect_from:` front matter
 # publishes a small redirect page at each old address. It is on the GitHub Pages allow-list.
@@ -169,8 +166,3 @@ exclude:
   - Gemfile
   - Gemfile.lock
   - vendor
-  # Implementation plans written by the planning skill land in docs/ because that is where
-  # the skill puts them, not because they belong on the site. Left in, Jekyll publishes each
-  # one as a page and jekyll-sitemap hands it to Google — a 69KB internal spec competing with
-  # the pages written for readers.
-  - superpowers/

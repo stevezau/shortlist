@@ -18,7 +18,6 @@ from datetime import UTC, datetime, timedelta
 from functools import cached_property
 
 from loguru import logger
-from sqlalchemy import and_, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -33,6 +32,7 @@ from shortlist.server.db.models import (
     Event,
     PickRow,
     RequestCandidate,
+    RowDeliverySnapshot,
     Run,
     RunLogLine,
     RunSharedRow,
@@ -44,23 +44,30 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import RESTRICTION_RESTORED_SCOPE, add_audit
+from shortlist.server.services.delivery_snapshots import (
+    close_snapshots,
+    current_pick_ids,
+    record_delivery_boundaries,
+    record_snapshots,
+)
+from shortlist.server.services.delivery_snapshots import utc as _as_utc
 from shortlist.server.services.watch_events import (
     RowMembership,
-    _attribution_floor,
-    _scan_plays,
+    attribution_floor,
     event_credits,
+    scan_plays,
     session_progress,
     shared_credits,
     tmdb_by_rating_key,
 )
 
-# Bounds the effectiveness report's MATURED cohort (a pick delivered more recently than this has not
-# had a fair chance to be watched yet). It no longer gates whether a pick is credited: that is
-# `reconcile_watched`'s "was it in their row at the time" test, which needs no clock.
 #: Watch history never outlives this, whatever `runs.retention` says. It is the one table here that
 #: grows with the whole server's viewing rather than with Shortlist's own activity.
 WATCH_RETENTION_MONTHS = 6
 
+# Bounds the effectiveness report's MATURED cohort (a pick delivered more recently than this has not
+# had a fair chance to be watched yet). It no longer gates whether a pick is credited: that is
+# `reconcile_watched`'s "was it in their row at the time" test, which needs no clock.
 HIT_WINDOW_DAYS = 30
 
 #: How far through a FILM counts as having finished it, when all we have is live playback.
@@ -75,10 +82,6 @@ HIT_WINDOW_DAYS = 30
 #: Films only, and that needs no guard: `session_progress` returns None for a series, because one
 #: episode's progress is not the show's (migration 0077).
 FINISHED_PERCENT = 90
-
-
-def _as_utc(value: datetime) -> datetime:
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _record_deliveries(session: Session, user_slug: str, breakdown: list[dict]) -> None:
@@ -131,6 +134,7 @@ def _forget_removed_deliveries(session: Session, user_slug: str, removed: list[d
             continue
         row = session.get(Delivery, (slug, user_slug, library_key))
         if row is not None:
+            close_snapshots(session, user_slug=user_slug, collection_slug=slug, libraries={library_key})
             session.delete(row)
 
 
@@ -230,76 +234,8 @@ def _row_slug(m) -> str | None:
 
 
 def live_pick_ids(session: Session, *, user_id: int | None = None) -> dict[int, set[int]]:
-    """The picks that are on Plex RIGHT NOW, as ``{user_id: {pick_id}}``.
-
-    A row+library's live contents are the picks from the MAX ``run_id`` that delivered it — the same
-    definition `context_builder._previous_picks` carries into the engine for carry-forward, so "what
-    is in their row" means one thing in this codebase rather than two. Grouping per (user, row,
-    library) is what makes it correct: rows carry their own crons, so the newest run is routinely
-    scoped to ONE row, and taking the newest run overall would read every other row as empty.
-
-    Existing is not the same as ON PLEX, so both are required. The row must still exist and be
-    enabled, AND the delivery ledger must still carry its `(row, user, library)` entry — the ledger is
-    the record of what is actually on the server, and `_forget_removed_deliveries` drops the entry
-    whenever a run REMOVES a collection (a muted or retired row, a cold-start skip, a user leaving the
-    audience). Testing `collections` alone would leave those picks creditable for ever: the Plex
-    collection is gone, the row definition stays so the owner can switch it back on, and no later run
-    re-delivers that group to move its MAX ``run_id``. Measured on the maintainer's server: 184 ledger
-    entries against 185 pick groups, the one difference being a row whose collection Plex no longer
-    has. The ledger join also drops the blank-`section_key` picks predating multi-row, which no
-    `library_key` can match.
-
-    Picks whose run was detached (`DELETE /api/runs`, or the retention prune) have no ``run_id`` and
-    so read as not-live until that row next delivers, which re-stamps them. Carry-forward already
-    behaves exactly this way — the clear-runs endpoint says so in as many words — and the cost here
-    is the same shape: a watch in that window is not credited.
-
-    Args:
-        session: An open DB session.
-        user_id: When given, read only that one user's picks and ledger entries; the result is then
-            ``{user_id: ...}`` or empty. ``None`` (the default) covers every user.
-    """
-    live_slugs = [slug for (slug,) in session.query(Collection.slug).filter(Collection.enabled.is_(True)).all()]
-    if not live_slugs:
-        return {}
-    # Matched in Python, not as a third SQL join: the ledger is keyed by user SLUG where picks carry
-    # user_id, and it is small (one row per row/user/library actually on the server).
-    users = session.query(User.id, User.slug)
-    if user_id is not None:
-        users = users.filter(User.id == user_id)
-    slug_by_user = {uid: slug for uid, slug in users.all()}
-    deliveries = session.query(Delivery).filter(Delivery.collection_slug.in_(live_slugs))
-    if user_id is not None:
-        deliveries = deliveries.filter(Delivery.user_slug == slug_by_user.get(user_id))
-    on_plex = {(row.user_slug, row.collection_slug, row.library_key) for row in deliveries}
-    newest = session.query(
-        PickRow.user_id.label("user_id"),
-        PickRow.collection_slug.label("slug"),
-        PickRow.section_key.label("section_key"),
-        func.max(PickRow.run_id).label("mrun"),
-    ).filter(PickRow.collection_slug.in_(live_slugs))
-    if user_id is not None:
-        newest = newest.filter(PickRow.user_id == user_id)
-    latest = newest.group_by(PickRow.user_id, PickRow.collection_slug, PickRow.section_key).subquery()
-    rows = (
-        session.query(PickRow.id, PickRow.user_id, PickRow.collection_slug, PickRow.section_key)
-        .join(
-            latest,
-            and_(
-                PickRow.user_id == latest.c.user_id,
-                PickRow.collection_slug == latest.c.slug,
-                PickRow.section_key == latest.c.section_key,
-                PickRow.run_id == latest.c.mrun,
-            ),
-        )
-        .all()
-    )
-    out: dict[int, set[int]] = {}
-    for pick_id, user_id, slug, section_key in rows:
-        if (slug_by_user.get(user_id), slug, section_key) not in on_plex:
-            continue
-        out.setdefault(user_id, set()).add(pick_id)
-    return out
+    """Current delivered personal picks, retained independently of diagnostic run history."""
+    return current_pick_ids(session, user_id=user_id)
 
 
 @dataclass
@@ -334,6 +270,7 @@ def _decide_outcomes(
     latest_watch: dict[tuple[int, str], datetime],
     finished_keys: set[tuple[int, str]],
     live_pick_ids_for_user: set[int],
+    membership: RowMembership | None = None,
 ) -> dict[tuple[int, str], _Outcome]:
     """Work out what is true for this person, from every source, without writing anything.
 
@@ -360,15 +297,7 @@ def _decide_outcomes(
     #    per row, because a `rewatch` row leading with titles they have already seen would otherwise
     #    inherit another row's older delivery and credit a watch from before it existed.
     if live_pick_ids_for_user and latest_watch:
-        first_delivered: dict[tuple[str, int, str], datetime] = {
-            (slug, tid, mt): _as_utc(when)
-            for slug, tid, mt, when in session.query(
-                PickRow.collection_slug, PickRow.tmdb_id, PickRow.media_type, func.min(PickRow.created_at)
-            )
-            .filter(PickRow.user_id == user.id)
-            .group_by(PickRow.collection_slug, PickRow.tmdb_id, PickRow.media_type)
-            .all()
-        }
+        membership = membership or RowMembership(session)
         for pick in (
             session.query(PickRow).filter(PickRow.user_id == user.id, PickRow.id.in_(live_pick_ids_for_user)).all()
         ):
@@ -383,9 +312,8 @@ def _decide_outcomes(
             # credit; a bare lookup must never be what decides it exists.
             if watched is None or (key in desired and desired[key].watched_at is not None):
                 continue
-            since = first_delivered.get((pick.collection_slug, *key))
-            if since is None or watched < since:
-                continue  # recommending something they had already seen is not a hit
+            if pick.collection_slug not in membership.visible_rows(user, {key}, watched):
+                continue
             out = desired[key]
             out.watched_at = watched
             out.slugs |= {pick.collection_slug}
@@ -561,9 +489,9 @@ def _apply_shared(
             # event log — so whenever anyone stops a video mid-run, both produce the same new row and
             # the second one violates the four-column primary key.
             #
-            # Read-then-insert cannot fix that: `existing` was read at the top of the pass. The loser
-            # used to raise all the way out — and when the loser was the run, it landed in the run's
-            # own `except`, marking a run that had built and delivered every row on Plex as ERROR.
+            # Read-then-insert cannot fix that: `existing` was read at the top of the pass. The loser must
+            # not raise out: when the loser is the run, it would land in the run's own `except` and
+            # mark a run that had built and delivered every row on Plex as ERROR.
             row = SharedRowWatch(
                 user_id=user.id,
                 collection_slug=slug,
@@ -699,7 +627,7 @@ class _CreditInputs:
         """How far each title actually got, keyed the same way the events are. Stamped onto the pick
         so the report can separate "opened and closed" from "gave it a real go" without joining
         sessions on every read."""
-        return session_progress(self._session, _attribution_floor(self._session), self._tmdb_of)
+        return session_progress(self._session, attribution_floor(self._session), self._tmdb_of)
 
     @cached_property
     def observed(self) -> dict[int, set[tuple[int, str]]]:
@@ -718,14 +646,14 @@ def _credit_inputs(session: Session) -> _CreditInputs:
     answered from the play log's exact timestamps against the delivery history in `picks` + `runs`.
 
     `tmdb_by_rating_key` is a DISTINCT over the largest table in the schema (158,737 pick rows on a
-    real server) and `_scan_plays` walks the whole event log; between them the credit path was
+    real server) and `scan_plays` walks the whole event log; between them the credit path was
     rebuilding both up to five times per pass, seven passes a day, for byte-identical results. They
     stay private to this object: they are how the credits are derived, not something a caller should
     re-derive its own answer from.
     """
     membership = RowMembership(session)
     tmdb_of = tmdb_by_rating_key(session)
-    scan = _scan_plays(session, tmdb_of)
+    scan = scan_plays(session, tmdb_of)
     return _CreditInputs(
         membership=membership,
         credits=event_credits(session, membership, scan),
@@ -795,6 +723,7 @@ def reconcile_from_events(sessions: sessionmaker[Session]) -> int:
                 # run here. Passing the live set would credit a title Plex flagged watched, from a
                 # function that never asked Plex anything.
                 live_pick_ids_for_user=set(),
+                membership=membership,
             )
             existing = shared_rows[user.id]
             shared_desired = _decide_shared(
@@ -820,8 +749,8 @@ def reconcile_watched(
     `picks.watched_at` was declared, migrated and read by the hit-rate query, but never WRITTEN:
     every user's hit rate was structurally 0%, while the docs promised "expect 20-40%".
 
-    **A pick is credited only if the title was in one of their LIVE rows at the time.** It used to be
-    credited on a 30-day clock from delivery with no membership test at all, which credited a title
+    **A pick is credited only if the title was in one of their LIVE rows at the time.** Crediting on a 30-day
+    clock from delivery with no membership test would credit a title
     the row had dropped weeks earlier — they could not have watched it from a shelf that no longer
     showed it, so ~27 of those 30 days were only ever measuring "they found it some other way". This
     cannot be done by asking "is it in the row now" at the far end of a run: the engine drops titles
@@ -914,6 +843,7 @@ def reconcile_watched(
                 latest_watch=latest_watch,
                 finished_keys=finished_keys,
                 live_pick_ids_for_user=live.get(user.id, set()),
+                membership=membership,
             )
             _apply_outcomes(session, user, desired)
 
@@ -1043,18 +973,19 @@ def persist_report(
         audit_demotions(session, report, dry_run=report.dry_run, run_id=run_id)
         audit_orphan_deletes(session, report, dry_run=report.dry_run, run_id=run_id)
         _emit_hub_ordering_events(session, run_id, report)
-        _emit_request_events(session, run_id, report)
-        persist_request_queue(session, run_id, report)
+        # Filed first: the audit event and the run stats both say how many titles truly wait.
+        requests_waiting = persist_request_queue(session, run_id, report)
+        _emit_request_events(session, run_id, report, waiting=requests_waiting)
         if report.error:
             _add_event(session, "run", "error", run_id, error=report.error)
-        _finalize_run(run, report, status, error, ok, errors, skipped)
+        _finalize_run(run, report, status, error, ok, errors, skipped, requests_waiting)
         for account_id, username in report.restrictions_restored.items():
             add_audit(session, RESTRICTION_RESTORED_SCOPE, "info", account_id=account_id, username=username)
         session.commit()
     # Retention is applied AFTER this transaction commits, as its own `maintenance.prune` job.
-    # It used to share this transaction: a bulk delete across runs/run_users/run_log_lines/picks
-    # that failed took the persist down with it, discarding the results of a run that had already
-    # written to Plex. Housekeeping must never be able to cost a run its record.
+    # Sharing this transaction would let a failed bulk delete across runs/run_users/run_log_lines/picks
+    # take the persist down with it, discarding the results of a run that had already written to Plex.
+    # Housekeeping must never be able to cost a run its record.
     _queue_retention_prune(sessions)
 
 
@@ -1148,6 +1079,9 @@ def prune_runs(session: Session, retention_months: int) -> int:
         .delete(synchronize_session=False)
     )
     session.query(WatchSession).filter(WatchSession.started_at < watch_cutoff).delete(synchronize_session=False)
+    session.query(RowDeliverySnapshot).filter(
+        RowDeliverySnapshot.ended_at.isnot(None), RowDeliverySnapshot.ended_at < watch_cutoff
+    ).delete(synchronize_session=False)
 
     if retention_months <= 0:
         return 0
@@ -1226,7 +1160,7 @@ def _pick_dicts(user_report) -> list[dict]:
             # TMDB ids are namespaced PER TYPE — movie 1399 is not show 1399 — so the id alone does
             # not identify a title. Omitting this made every shared-row credit a silent no-op on the
             # real server: the pool keyed `(tmdb_id, "")` and never intersected the `(tmdb_id,
-            # "movie")` the play log resolves to. Found on SFLIX 2026-08-24, not by any test.
+            # "movie")` the play log resolves to. Found on a large production server 2026-08-24, not by any test.
             "media_type": p.media_type.value,
             "rating_key": p.rating_key,
             "rank": p.rank,
@@ -1283,7 +1217,7 @@ def _shared_audience(session: Session, slug: str) -> list[int] | None:
     # The allow-list ONLY. Mutes are a separate deny-list (`_shared_muted` / `RunSharedRow.muted`),
     # and the two columns must not encode the same fact: subtract the mute here and `audience` stops
     # meaning "who was allowed to see this" and starts meaning "who was allowed AND had not muted it",
-    # which no reader can tell apart from the first. `_shared_visible_to` then answers correctly only
+    # which no reader can tell apart from the first. `RowMembership.visible_shared_rows` then answers correctly only
     # because it applies the deny-list a second time, so the column is wrong and the answer is right
     # by luck. Any future reader of `audience` alone — a UI, an export, an audit of who a row went to
     # — inherits the corruption.
@@ -1340,6 +1274,7 @@ def _persist_shared_row_report(session: Session, run_id: int, user_report, dry_r
     if not dry_run:
         _forget_removed_deliveries(session, user_report.slug, user_report.removed_deliveries)
         _record_deliveries(session, user_report.slug, breakdown)
+        record_snapshots(session, run_id, user_report.slug, breakdown, user_id=None)
 
 
 def _cost_blob(user_report) -> dict | None:
@@ -1407,6 +1342,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
     if not dry_run:
         # Forget BEFORE recording: a row removed and then re-delivered in the same run (a repair that
         # recreates it) must end up with the entry the delivery just wrote, not without one.
+        record_delivery_boundaries(session, user, user_report.delivery_boundaries)
         _forget_removed_deliveries(session, user.slug, user_report.removed_deliveries)
         _record_deliveries(session, user.slug, user_report.breakdown)
         for pick in user_report.picks:
@@ -1435,6 +1371,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
                     lead_seed_title=pick.lead_seed_title or None,
                 )
             )
+        record_snapshots(session, run_id, user.slug, user_report.breakdown, user_id=user.id)
     _add_event(
         session,
         "run.user",
@@ -1610,8 +1547,8 @@ def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
         # `verified` is the whole point of the record. "We asked" and "it happened" are different
         # facts — a co-managing tool (agregarr, Kometa) reorders the same shelf on its own clock — and an
         # audit that only ever said the first is how a shelf owned by another tool was reported as a
-        # successful reorder for weeks (SFLIX 2026-08-12). A dry run asked for nothing, so it is neither
-        # verified nor a warning.
+        # successful reorder for weeks (a large production server, 2026-08-12). A dry run asked for nothing, so it
+        # is neither verified nor a warning.
         #
         # An unplaceable entry asked Plex for nothing either, so it carries NO `verified` and gets its
         # own scope — `_shelf_contention` counts repeated moves within a bounded event budget, and a
@@ -1639,7 +1576,7 @@ def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
         )
 
 
-def _emit_request_events(session: Session, run_id: int, report) -> None:
+def _emit_request_events(session: Session, run_id: int, report, waiting: int = 0) -> None:
     # Sonarr/Radarr requests. Adding a title to a download app is a real outward-facing
     # write (it consumes disk and bandwidth), so every request — and every skip — is audited
     # with the app's own outcome message, dry-run included (plex-safety rule 10 spirit).
@@ -1650,8 +1587,8 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
             _add_event(session, "requests.incomplete_config", "warning", run_id, dry_run=report.dry_run, detail=msg)
     if report.requests is not None and report.requests.ratings_rate_limited:
         _add_event(session, "requests.rate_limited", "warning", run_id, dry_run=report.dry_run)
-    # A run that asked for nothing used to emit nothing at all, so "Shortlist has sent Radarr nothing
-    # for five days" left no trace in the app — the only record was a single INFO line in the
+    # A run that asked for nothing still emits an event: otherwise "Shortlist has sent Radarr nothing
+    # for five days" leaves no trace in the app beyond one INFO line in the
     # container log. Record the shape of the zero: how many titles cleared the base floors, how many
     # the rating gate got to rate, and what that cost. A gate that stopped short of the pool is the
     # actionable case (raise max_per_run / lower the floor); one that rated everything and still
@@ -1696,6 +1633,9 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
         dry_run=report.dry_run,
         considered=report.requests.considered,  # qualifying: cleared the rating/vote thresholds
         queued=len(report.requests.queued),
+        # `queued` includes titles already requested or already in the library, which wait nowhere;
+        # `waiting` is the part that actually reached the Requests inbox.
+        waiting=waiting,
         sent=len(report.requests.sent),
         outcomes=[
             {
@@ -1710,7 +1650,7 @@ def _emit_request_events(session: Session, run_id: int, report) -> None:
     )
 
 
-def persist_request_queue(session: Session, run_id: int, report) -> None:
+def persist_request_queue(session: Session, run_id: int, report) -> int:
     """Save the titles a run wanted but did not auto-send, for the owner to approve by hand.
 
     Real runs only — a dry run is a preview and must not mutate the inbox. One row per
@@ -1722,9 +1662,14 @@ def persist_request_queue(session: Session, run_id: int, report) -> None:
     inbox never lingers on titles the owner already has. Same for one an ARR now tracks (added
     by hand, by another tool, or before the sent-ledger existed): while it downloads — or
     forever, if unaired — it's absent from Plex, so only the arr-presence prune can catch it.
+
+    Returns:
+        How many queued titles are now WAITING in the inbox because of this run (newly filed or
+        refreshed pending rows). Queued titles already sent or already present wait nowhere.
     """
     if report.requests is None or report.dry_run:
-        return
+        return 0
+    waiting: set[tuple[int, str]] = set()
     existing = {(r.tmdb_id, r.media_type): r for r in session.query(RequestCandidate).all()}
     # Drop pending candidates the library now holds; leave sent/rejected alone (owner-actioned).
     present = {(tid, mt.value) for tid, mt in report.library_present}
@@ -1753,8 +1698,10 @@ def persist_request_queue(session: Session, run_id: int, report) -> None:
             # this point, but the barrier belongs on both sides of that contract (issue #104).
             existing[key] = _candidate_row(m, run_id, status="pending")
             session.add(existing[key])
+            waiting.add(key)
         elif row.status == "pending":
             _refresh_pending(row, m)
+            waiting.add(key)
 
     # The titles this run AUTO-SENT are filed as `sent` too. Without this the ledger only knew
     # about titles the owner sent by hand, so an auto-sent title still downloading was "missing"
@@ -1784,10 +1731,19 @@ def persist_request_queue(session: Session, run_id: int, report) -> None:
                 row.detail = outcome.detail
             if m.arr_slug:  # keep an existing slug if this pass somehow didn't resolve one
                 row.arr_slug = m.arr_slug
+            waiting.discard(key)
+    return len(waiting)
 
 
 def _finalize_run(
-    run: Run, report, status: str | None, error: str | None, ok: int, errors: int, skipped: int = 0
+    run: Run,
+    report,
+    status: str | None,
+    error: str | None,
+    ok: int,
+    errors: int,
+    skipped: int = 0,
+    requests_waiting: int = 0,
 ) -> None:
     # `report.ok` — not `errors == 0`. A run-level failure (the sweep could not run, so we
     # refused to write) has no per-user error to count, and must never report success.
@@ -1823,6 +1779,9 @@ def _finalize_run(
         # How many are WAITING for the owner. Without it "0 requested" reads as a failure even when
         # the run worked perfectly and simply put five titles in the inbox for approval.
         "requests_queued": len(report.requests.queued) if report.requests else 0,
+        # The part of `requests_queued` that really sits in the Requests inbox. The rest was already
+        # requested or already in the library, so "N waiting for approval" would be false for it.
+        "requests_waiting": requests_waiting,
         "requests_wanted": report.requests.wanted if report.requests else 0,
         # Per row, because the aggregates cannot answer the question the feature exists to make
         # answerable: WHICH row was starved. Written only when there is something to say — a run with
@@ -1879,8 +1838,6 @@ def _finalize_run(
         stats["privacy_unchecked"] = list(report.privacy_unchecked)
         stats["privacy_write_failed"] = list(report.privacy_write_failed)
         stats["privacy_left_alone"] = list(report.privacy_left_alone)
-    # Accounts the owner left alone whose excludes could not be taken back off. Written only when
-    # non-empty: an empty key would read as a measurement on every run that never got this far.
     # Accounts whose filter Shortlist wrote and Plex is not applying. Written on every run that
     # actually MEASURED, empty included — that empty dict is what lets a fixed server clear the
     # alert. Keyed on the measured flag rather than on emptiness, because the notification reads the
@@ -1888,8 +1845,10 @@ def _finalize_run(
     # through every clean run that followed one bad night.
     if report.filters_enforcement_measured:
         stats["filters_not_enforced"] = {name: list(keys) for name, keys in report.filters_not_enforced.items()}
+    # Accounts the owner left alone whose excludes could not be taken back off. Written only when
+    # non-empty: an empty key would read as a measurement on every run that never got this far.
     if report.left_alone_failures:
         stats["left_alone_failures"] = {str(account): why for account, why in report.left_alone_failures.items()}
     # Assigned whole rather than mutated in place: `stats` is a JSON column, and an in-place edit
     # after assignment would not reliably mark it dirty.
-    run.stats = stats
+    run.stats = {**{key: value for key, value in (run.stats or {}).items() if key.startswith("assistant_")}, **stats}

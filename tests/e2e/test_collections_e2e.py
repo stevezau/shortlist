@@ -22,15 +22,19 @@ LOAD = 20_000
 
 
 def _add_a_row(page: Page) -> None:
-    """Open the row editor via the template gallery.
+    """Open the full row editor from the add-a-row screen.
 
-    "Add a row" now opens a gallery first — a blank 17-field form only ever helped someone who
-    already knew what they wanted to build. These tests are about the editor, so they take the
-    "Start from scratch" tile, which is the same blank form as before.
+    "Add a row" opens /rows/new (kind tiles); "Set every option yourself" there is the same
+    blank form as before. These tests are about the editor, so they take that link.
     """
     page.get_by_role("button", name="Add a row").click()
-    page.get_by_role("button", name="Start from scratch").click()
+    page.get_by_role("link", name="Set every option yourself").click()
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible()
+
+
+def _open_placement(page: Page) -> None:
+    """Open the editor's Placement controls, which sit closed behind "Edit placement"."""
+    page.get_by_text("Edit placement", exact=True).click()
 
 
 def _saved_row(page: Page, name: str):
@@ -105,8 +109,10 @@ def test_a_seasonal_template_keeps_its_seasons_when_choosing_shared_or_per_perso
     page.set_viewport_size({"width": width, "height": 900})
     _open_rows(page)
     page.get_by_role("button", name="Add a row").click()
-    page.get_by_role("group", name="Templates", exact=True).get_by_role("button", name=re.compile(r"^Seasonal")).click()
-    page.get_by_role("button", name="Use template").click()
+    page.get_by_role("group", name="Kinds of row", exact=True).get_by_role(
+        "button", name=re.compile(r"^Seasonal")
+    ).click()
+    page.get_by_role("link", name="Set every option yourself").click()
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible(timeout=LOAD)
     expect(page.get_by_role("radio", name="Shared", exact=True)).to_be_checked()
     expect(page.get_by_role("button", name="Everyone", exact=True)).to_have_attribute("aria-pressed", "true")
@@ -297,6 +303,7 @@ def test_a_row_can_be_given_a_description_and_sort_title_prefix(page: Page, app:
     # heading is what says this is the row just added.
     expect(page.get_by_role("heading", name="Sorted Row", level=1)).to_be_visible(timeout=LOAD)
     page.get_by_label("Description", exact=True).fill("Picked for {user}")
+    _open_placement(page)
     page.get_by_label("Sort title prefix").fill("!010_")
     expect(page.get_by_text("!010_Sorted Row")).to_be_visible()
     page.get_by_role("button", name="Save changes").click()
@@ -330,7 +337,8 @@ def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(pag
     # screen starts on arrival rather than asking a second time.
     name.fill("✨ {library_name} Handpicked")
     page.get_by_role("dialog").get_by_role("button", name="Rename on Plex", exact=True).click()
-    expect(page.get_by_role("heading", name=re.compile("^Renaming "))).to_be_visible(timeout=LOAD)
+    # The title carries its breadcrumb, and a screen reader hears it as "Rows / Renaming …".
+    expect(page.get_by_role("heading", name=re.compile(r"^Rows \x2F Renaming "))).to_be_visible(timeout=LOAD)
     expect(page.get_by_role("button", name="Rename on Plex")).to_have_count(0)
 
     # The rename triggers an SSE stream page — wait for it to finish, then check the DB.
@@ -355,7 +363,7 @@ def test_the_default_row_can_be_deleted_like_any_other(page: Page, app: Shortlis
     # carries one honest "Remove or delete…" that opens the editor's danger section, where that
     # difference is already written out (audit finding, Sep 2026). The 204 and the row actually
     # disappearing are covered in
-    # tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
+    # tests/integration/test_api_collections.py::TestCollectionsApi::test_the_default_row_can_be_deleted_like_any_other.
     assert picked, "the seeded default row must exist for this to mean anything"
     rows = app.api("GET", "/api/collections").json()
     menus = page.get_by_role("button", name=re.compile(r"^More actions for "))
@@ -388,6 +396,7 @@ def test_every_surface_can_be_turned_off_and_reaches_the_api(page: Page, app: Sh
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Quiet Row")
 
+    _open_placement(page)
     for name in PLACEMENT_SWITCHES:
         page.get_by_role("switch", name=name).click()
     for name in PLACEMENT_SWITCHES:
@@ -408,6 +417,7 @@ def test_the_two_placement_columns_are_saved_independently(page: Page, app: Shor
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Split Row")
 
+    _open_placement(page)
     page.get_by_role("switch", name="Friends Library Recommended").click()
     page.get_by_role("button", name="Add row").click()
     expect(_saved_row(page, "Split Row")).to_be_visible(timeout=LOAD)

@@ -6,14 +6,12 @@ import itertools
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 from shortlist.engine.models import MediaType, RowLimits, UserProfile
 from shortlist.engine.themes import ThemeSpec
 from shortlist.engine.web_guidance import AiInstructions
-from shortlist.server.db.models import Base, Collection, CollectionAudience, Event, Theme, ThemeHistory, User
+from shortlist.server.db.models import Collection, CollectionAudience, Event, Theme, ThemeHistory, User
 from shortlist.server.services import theme_rotation
 from shortlist.server.services.theme_author import ThemeAuthorError, ThemeDraft, ThemeStats
 from shortlist.server.services.theme_rotation import (
@@ -21,6 +19,7 @@ from shortlist.server.services.theme_rotation import (
     RotationOutcome,
     recent_theme_names,
     rotate_themes,
+    target_lock,
     theme_guidance,
 )
 from tests.conftest import make_profile
@@ -72,11 +71,8 @@ def _library_index(monkeypatch):
 
 
 @pytest.fixture
-def sessions():
-    # One shared connection: the overlap test runs a second pass on another thread against the same database.
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+def sessions(threaded_sessions):
+    return threaded_sessions
 
 
 def seed(sessions, *, people: int = 1, **row) -> tuple[int, list[int]]:
@@ -138,9 +134,7 @@ def rotate(sessions, author, now: datetime = NOW):
         now=now,
         secrets=object(),
         author=author,
-        curator="curator",
-        tmdb=_Tmdb(),
-        plex="plex",
+        tools=lambda: theme_rotation.AuthoringTools(curator="curator", tmdb=_Tmdb(), plex="plex"),
         profile_for=profile_for,
     )
 
@@ -415,11 +409,10 @@ class TestUnavailable:
             sessions,
             now=NOW,
             secrets=object(),
-            unavailable="Choosing new themes needs an AI provider. Add one in Settings.",
             author=author,
-            curator=None,
-            tmdb=None,
-            plex=None,
+            tools=lambda: theme_rotation.AuthoringTools(
+                unavailable="Choosing new themes needs an AI provider. Add one in Settings."
+            ),
             profile_for=profile_for,
         )
 
@@ -477,18 +470,25 @@ class TestHelpers:
 class TestConcurrentPasses:
     def test_two_overlapping_passes_leave_one_current_and_one_ai_call(self, sessions):
         import threading
-        import time
 
         row_id, (uid,) = seed(sessions)
         author = FakeAuthor()
         second: list = []
         inner = author.__call__
+        second_pass_running = threading.Event()
+
+        def run_second_pass() -> None:
+            second_pass_running.set()
+            second.append(rotate(sessions, author))
 
         def overlapping(**kwargs):
-            # The second pass starts after this AI call began and before the first commits.
-            t = threading.Thread(target=lambda: second.append(rotate(sessions, author)))
+            # The second pass starts after this AI call began and before the first commits. The first pass
+            # holds the (row, person) lock for the whole call, so wherever the second one is when this
+            # returns, it can only get the lock after the commit: no sleep needed to order them.
+            assert target_lock(row_id, uid).locked()
+            t = threading.Thread(target=run_second_pass)
             t.start()
-            time.sleep(0.3)
+            assert second_pass_running.wait(10)
             overlapping.thread = t
             return inner(**kwargs)
 

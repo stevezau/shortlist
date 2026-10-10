@@ -13,38 +13,37 @@ from starlette.testclient import TestClient
 
 from shortlist.server.db.models import Setting, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
-from shortlist.server.main import create_app
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus, close_on_stop_signals
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
+from tests.shared_app import app_for
 
 
 @pytest.fixture
 def db_sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    yield make_session_factory(engine)
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 class TestMigrations:
     def test_migrations_create_all_v1_tables(self, tmp_path: Path, db_sessions):
         from sqlalchemy import inspect
 
-        engine = make_engine(tmp_path)
-        tables = set(inspect(engine).get_table_names())
-        assert {
-            "settings",
-            "server",
-            "users",
-            "runs",
-            "run_users",
-            "picks",
-            "restriction_snapshots",
-            "caches",
-            "events",
-        } <= tables
-        engine.dispose()
+        with disposing_engine(make_engine(tmp_path)) as engine:
+            tables = set(inspect(engine).get_table_names())
+            assert {
+                "settings",
+                "server",
+                "users",
+                "runs",
+                "run_users",
+                "picks",
+                "restriction_snapshots",
+                "caches",
+                "events",
+            } <= tables
 
     def test_models_round_trip(self, db_sessions):
         with db_sessions() as session:
@@ -304,7 +303,7 @@ class TestCloseOnStopSignals:
 @pytest.mark.integration
 def test_the_lifespan_shutdown_closes_the_event_bus_when_no_signal_was_sent(tmp_path: Path):
     """Tests and in-process servers shut down with no signal; the streams must end there too."""
-    with TestClient(create_app(config_dir=tmp_path)) as client:
+    with TestClient(app_for(tmp_path)) as client:
         bus = client.app.state.bus
 
     async def scenario():
@@ -321,9 +320,9 @@ class TestSecurityHeaders:
     def _client(self, tmp_path):
         from starlette.testclient import TestClient
 
-        from shortlist.server.main import create_app
+        from tests.shared_app import app_for
 
-        return TestClient(create_app(config_dir=tmp_path))
+        return TestClient(app_for(tmp_path))
 
     def test_the_baseline_headers_are_present(self, tmp_path):
         with self._client(tmp_path) as client:

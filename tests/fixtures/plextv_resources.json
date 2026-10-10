@@ -1,5 +1,5 @@
 {
-  "_source": "Live capture from plex.tv GET /api/v2/resources?includeHttps=1 with the SFLIX owner's token, 2026-07-29. Structure and field names verbatim; every identifying value (tokens, machine ids, names, addresses, hostnames) sanitized.",
+  "_source": "Live capture from plex.tv GET /api/v2/resources?includeHttps=1 with the a large production server owner's token, 2026-07-29. Structure and field names verbatim; every identifying value (tokens, machine ids, names, addresses, hostnames) sanitized.",
   "_why": [
     "plex-safety rule 11: any assumption about a plex.tv response shape gets a recorded fixture.",
     "The assumption this pins is `auth.owned_machine_ids()`, which decides who may sign in to an",

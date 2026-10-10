@@ -411,7 +411,7 @@ class TestASeasonalRowInARun:
         """The season's shows are not a films row's to offer. Counted, they kept its gather from failing when
         the similar search was down: the pool held only shows, the media filter emptied it, and the row went
         on as if it had had a working source."""
-        from shortlist.engine.rows import _candidate_pool
+        from shortlist.engine.rows import _gather_pool
         from shortlist.engine.seasons import SeasonTitles
 
         ctx.tmdb.suggestions.side_effect = RuntimeError("TMDB 503")
@@ -422,7 +422,7 @@ class TestASeasonalRowInARun:
         )
 
         with pytest.raises(RuntimeError, match="every candidate source failed"):
-            _candidate_pool(
+            _gather_pool(
                 ctx,
                 [_seed()],
                 {MediaType.MOVIE: {900: 999}, MediaType.SHOW: {10: 1010}},

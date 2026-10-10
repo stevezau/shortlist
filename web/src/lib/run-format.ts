@@ -20,9 +20,8 @@ type Settleable = { finished_at: string | null };
  * (`run-detail.tsx` and `runs.tsx` both wire `run.finished` to `invalidateQueries`) — and
  * `EventSource` replays nothing it missed while it was disconnected. Its `onerror` retries with
  * backoff up to 30s forever, and until it reconnects `run.finished` is never delivered, so a run
- * that has ended still reads "Running" with a ticking timer. That is the SFLIX 2026-08-13 symptom
- * (`runs.tsx`) reached through a dropped connection rather than an idle one, and it is also what
- * leaves a cancelled run stuck on "Stopping…": cancelling records `cancel_requested`, and only the
+ * that has ended still reads "Running" with a ticking timer. That is how a dropped connection (rather than an idle one) leaves a finished run on "Running",
+ * and it is also what leaves a cancelled run stuck on "Stopping…": cancelling records `cancel_requested`, and only the
  * stream ever reports that the run then actually stopped.
  *
  * `false` once `finished_at` is set, so a settled run is never re-fetched for nothing.
@@ -85,9 +84,9 @@ export function errorBucket(raw: string): ErrorClass {
   return classifyError(raw);
 }
 
-/** Rank badge colour by tier — the top picks stand out, lower ones recede. */
+/** Rank colour by tier — neutral, because amber marks the one primary action on a screen. The first
+ *  ten read at full strength and lower ones recede. */
 export function rankClass(rank: number): string {
-  if (rank <= 3) return "text-amber-400";
   if (rank <= 10) return "text-foreground";
   return "text-muted-foreground";
 }
@@ -129,7 +128,7 @@ export function webSearchSummary(count?: number): string {
 /**
  * The breakdown behind a row's total time, as one sentence for a `title`.
  *
- * The line used to read "25ms · 8ms waiting · shared setup 159ms", which is three numbers and two
+ * Not "25ms · 8ms waiting · shared setup 159ms", which is three numbers and two
  * engineer concepts: "waiting" is blocked on the Plex write lock, and "shared setup" is work
  * amortised across everyone in the run. Neither is something the owner acts on, and neither is
  * guessable. The total is what belongs on screen; this is what belongs behind it.
@@ -164,7 +163,7 @@ export function rowTimingTitle(
 }
 
 /** What the run is doing right now, and whether that is the server-wide tail. */
-export type RunPhase = {
+type RunPhase = {
   /** The phrase itself — "merging share filters 12/46". */
   label: string;
   /** True once every person is terminal and only server-wide work is left, which is the only time
@@ -232,7 +231,7 @@ export function peopleProgress(
 }
 
 /** One person the run is working on right now, and what it is doing for them. */
-export type InFlightPerson = { slug: string; name: string; text: string };
+type InFlightPerson = { slug: string; name: string; text: string };
 
 /** Everyone started but not finished, each with their latest line as a sentence — sorted by name.
  *
@@ -260,8 +259,8 @@ export function inFlight(run: RunDetail, entries: RunLogEntry[]): InFlightPerson
 
 /** The stage the run is in RIGHT NOW, phrased for the header.
  *
- *  Everything after the last person finishes is server-wide, and used to be silent — so a run in its
- *  tail looked identical to a wedged one. Naming the phase is the whole fix.
+ *  Everything after the last person finishes is server-wide and would otherwise be silent — a run in its
+ *  tail would look identical to a wedged one. Naming the phase is the whole point.
  *
  *  But "server-wide" is not the same as "the tail". Reading back to the newest `Shortlist` line and
  *  calling it the current phase meant that for the whole per-user stretch — the long part — the

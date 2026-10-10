@@ -26,8 +26,8 @@ HOST = "<host>"
 MACHINE_ID = "<machine-id>"
 
 #: Hosts and machine ids, in the forms an exception or a log line actually carries them:
-#:   https://172.16.10.240:32400/x            a bare URL
-#:   host='172.16.10.240', port=32400         httpx/urllib3's connection-pool errors
+#:   https://192.168.1.10:32400/x            a bare URL
+#:   host='192.168.1.10', port=32400         httpx/urllib3's connection-pool errors
 #:   https://192-168-1-5.<32hex>.plex.direct  a plex.direct name, which EMBEDS the machine id
 #:   https://plex.tv/api/servers/<32hex>/…    the machine id in a path
 _HOST_IN_URL = re.compile(r"\b([a-z][a-z0-9+.-]*)://([^/\s'\"]+)", re.IGNORECASE)
@@ -44,7 +44,7 @@ _MACHINE_ID = re.compile(
 )
 
 #: A BARE address, no scheme and no `host=`. This is how `http_retry` logs every single PMS call
-#: ("GET 172.16.10.240 -> 200"), which on a real server is tens of thousands of lines — found at
+#: ("GET 192.168.1.10 -> 200"), which on a real server is tens of thousands of lines — found at
 #: 17,234 occurrences in a report that the other two patterns had passed clean. Bounded so a PMS
 #: version string ("1.43.3.10861") cannot match: its last part is not 1-3 digits.
 _BARE_IPV4 = re.compile(r"(?<![\w.-])(?:\d{1,3}\.){3}\d{1,3}(?![\w.-])")
@@ -55,7 +55,7 @@ def shape_hosts(s: str) -> str:
 
     `config` shapes the settings it prints, but that was only ever half of it: the same address
     arrives in every QUOTED EXCEPTION and every log line — "my Plex is unreachable" is the single most
-    likely thing in a support report, and it prints `host='172.16.10.240', port=32400` verbatim. A
+    likely thing in a support report, and it prints `host='192.168.1.10', port=32400` verbatim. A
     `plex.direct` hostname is worse: it embeds the server's machine id, which is the identifier the
     whole privacy system keys on.
 
@@ -143,8 +143,8 @@ def known_identifiers(session: Session) -> dict[str, str]:
                 host = urlsplit(row.url).hostname or ""
             except ValueError:
                 host = ""
-            # Hosts are boundary-matched, so a short one is safe to carry — unlike the old length
-            # floor, which dropped `pms` while admitting the far more destructive `plex`.
+            # Hosts are boundary-matched, so a short one is safe to carry — a length
+            # floor would drop `pms` while admitting the far more destructive `plex`.
             if host:
                 values.setdefault(host, HOST)
     return dict(sorted(values.items(), key=lambda kv: -len(kv[0])))

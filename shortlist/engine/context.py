@@ -32,6 +32,7 @@ from shortlist.engine.seasons import SeasonTitles
 from shortlist.engine.themes import ThemeTitles
 
 if TYPE_CHECKING:
+    from shortlist.engine.requests import AcquisitionGuard
     from shortlist.engine.requests_row import RequestLedger
 
 
@@ -56,8 +57,8 @@ class EngineContext:
     poster_artist: PosterArtist | None = None
     # (owner_slug, row_slug, section_key) -> last run's delivered picks for that row+library, newest
     # first. Carried forward so a row is REUSED unchanged on non-refresh nights (`refresh_days` is the
-    # refresh CADENCE) instead of re-curated from scratch every night — the fix for the nightly
-    # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
+    # refresh CADENCE) instead of re-curated from scratch every night — which avoids the nightly
+    # full-row churn a fixed staleness limit forces. Empty -> every row
     # bootstraps by curating fresh, exactly like a first run.
     previous_picks: dict[tuple[str, str, str], list[Pick]] = field(default_factory=dict)
     # What earlier real runs showed, for an AI row's no-repeat and keep-out controls (#138); None on direct
@@ -109,10 +110,10 @@ class EngineContext:
     # The two combine freely: an account can have a row and untouched sharing.
     unmanaged_account_ids: set[int] = field(default_factory=set)
     # section key -> {tmdb_id: ratingKey}: per-library index so a row delivered into a specific
-    # library uses that library's ratingKeys. Built by _build_indexes each run.
+    # library uses that library's ratingKeys. Built by build_indexes each run.
     section_index: dict[str, dict[int, int]] = field(default_factory=dict)
     # Every library rows may be delivered to (all movie + show sections), for resolving a row's
-    # library_keys to real sections. Built by _build_indexes each run.
+    # library_keys to real sections. Built by build_indexes each run.
     delivery_sections: list = field(default_factory=list)
     # How many titles in the libraries THIS run can deliver to carry each genre — the population a
     # person's own genre mix is compared against (`candidates.genre_avoidance_profile`). Tallied
@@ -152,6 +153,7 @@ class EngineContext:
     # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
     # by a later auto-send. Empty for direct engine runs, which have no inbox.
     handled_requests: set[tuple[int, str]] = field(default_factory=set)
+    acquisition_guard: AcquisitionGuard | None = None
     # MDBList client (cache-backed) for the chosen non-TMDB rating source; None when neither the
     # request gate nor row ordering asks for one, or no MDBList key is set. Built by the server
     # adapter so it shares the persistent cache.

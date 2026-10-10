@@ -10,16 +10,16 @@ user and replicate the owner's watch state onto it, so the new account's picks a
 first run and Plex shows the same checkmarks, the same half-finished shows and the same Continue
 Watching shelf.
 
-**What this used to get wrong.** It copied the `watched_titles` cache and scrobbled each row's rating
-key. For a show that key is the SHOW's, and a show-key scrobble marks every episode — so someone 400
+**Why it works per episode.** A naive transfer would copy the `watched_titles` cache and scrobble each
+row's rating key. For a show that key is the SHOW's, and a show-key scrobble marks every episode — so someone 400
 episodes into One Piece arrived with all 1,100 finished. On the maintainer's own account 342 of 535
-watched shows are partial, so that was the common case, not an edge. The cache could not have done
+watched shows are partial, so that is the common case, not an edge. The cache cannot do
 better: it is built from `?unwatched=0`, which is show-level and completions-only, and knows how MANY
-episodes were watched but never which. So the source of truth moved to a live per-EPISODE read of the
+episodes were watched but never which. So the source of truth is a live per-EPISODE read of the
 source account, and `shortlist.engine.watch_replica` turns two states into an ordered write plan.
 
 **It mirrors.** State the source lacks is removed, which is what makes the result a replica and what
-repairs an account the old version spoiled. That makes this the one path in Shortlist that can delete
+repairs an account a show-level scrobble spoiled. That makes this the one path in Shortlist that can delete
 watch history, so it snapshots first (rule 2) and `undo_transfer` restores from that snapshot.
 
 **The date problem, and why `source_viewed_at` still exists.** Plex has no way to backdate a watch —
@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserType
 from shortlist.engine.watch_replica import (
+    ItemState,
     OpKind,
     WatchState,
     build_plan,
@@ -127,7 +128,7 @@ def candidate_home_users(plextv, session: Session) -> list[dict]:
 
     Excludes the owner themselves and anyone already registered in Shortlist with a row — moving to
     an account that already has its own Picked-for-You would merge two people's taste into one.
-    PIN-protected accounts are listed but flagged: `canary_server_token` cannot switch to them, so a
+    PIN-protected accounts are listed but flagged: `home_user_server_token` cannot switch to them, so a
     transfer to one cannot mint the token it needs.
     """
     known = {u.plex_account_id for u in session.query(User).filter(User.enabled.is_(True))}
@@ -259,7 +260,7 @@ def transfer_watch_history(
         source_token: Server token to read the SOURCE as. The admin token for an OWNER source, and
             that account's OWN server token for any other — never the admin token for a non-owner, or
             the owner's history is copied while the audit row names somebody else.
-        target_token: The target's own server token, from `canary_server_token`. Every write uses it.
+        target_token: The target's own server token, from `home_user_server_token`. Every write uses it.
         dry_run: Read and plan, write nothing — including no snapshot, since there is nothing to
             protect (rule 8).
         job_id: The job this runs under, so an undo can find this transfer's snapshot rather than the
@@ -581,8 +582,7 @@ def stamp_true_dates(session: Session, user_id: int) -> int:
         return 0
 
     stamped = 0
-    rows = rows_to_stamp
-    for row in rows:
+    for row in rows_to_stamp:
         when = newest.get(row.rating_key)
         if when is None:
             continue
@@ -645,8 +645,6 @@ def undo_transfer(
             "from it could remove watches it never recorded"
         )
         return report
-
-    from shortlist.engine.watch_replica import ItemState
 
     # Rows written before the show key was added carry four elements; unpacked leniently so an older
     # snapshot still restores. It must NOT try to clear show rows in that case — see `knows_shows`.

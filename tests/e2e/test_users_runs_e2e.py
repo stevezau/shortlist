@@ -246,7 +246,7 @@ class TestRuns:
         state = reset_fake_plex
 
         page.goto("/runs")
-        expect(page.get_by_text("No runs yet")).to_be_visible(timeout=LOAD)
+        expect(page.get_by_text("No run history")).to_be_visible(timeout=LOAD)
         page.get_by_role("button", name="Run all rows now").click()
 
         # The row appears the moment the run is queued — the owner is never left guessing.
@@ -256,9 +256,9 @@ class TestRuns:
 
         app.wait_for_run(1)
         page.reload()
-        # The status badge renders the title-cased label ("OK") — scoped to the table, since the
-        # page's stats bar also shows "OK" as the last-run status. The users cell keeps the "3 ok" count.
-        expect(page.get_by_role("table").get_by_text("OK", exact=True)).to_be_visible(timeout=LOAD)
+        # The result cell leads with the title-cased status ("OK · 1 warning") — scoped to the table,
+        # since the page's stats bar also shows "OK" as the last-run status. The users cell keeps "3 ok".
+        expect(page.get_by_role("table").get_by_role("cell", name=re.compile(r"^OK\b"))).to_be_visible(timeout=LOAD)
         expect(page.get_by_role("cell", name="3 ok")).to_be_visible()
         # 5 rows for 3 users: sarah and the cold-start jess each get one per library; mike watches only TV.
         assert len(state.collections) == 5
@@ -333,24 +333,20 @@ class TestRuns:
         page.goto(f"/users/{sarah_id}")
         expect(page.get_by_role("heading", name="sarah")).to_be_visible(timeout=LOAD)
 
-        picks = page.get_by_role("listitem").filter(has_text="#1")
-        expect(picks.first).to_be_visible(timeout=LOAD)
-        # Rows collapse to the first 5 picks (PickList collapseAfter=5), so expand every row before
-        # counting — this test asserts EVERY pick carries its reason, not just the first few.
+        # Every poster carries its own reason under the title, so the first such caption is what
+        # shows the page has loaded.
+        reason_re = re.compile(r"Because you watched .+|Worth another watch|They asked for these")
+        expect(page.get_by_text(re.compile(r"^Because you watched .+")).first).to_be_visible(timeout=LOAD)
+        # Rows collapse to the first 5 picks (collapseAfter=5), so expand every row before counting:
+        # this test asserts EVERY pick carries a reason, not just the first few.
         # Re-query each iteration: clicking one toggle re-renders the DOM and stales the locator list.
         while (toggle := page.get_by_role("button", name=re.compile(r"Show all \d+")).first).is_visible():
             toggle.click()
-        # Each pick renders its "because you…" reason inside its list item (the PickList now combines
-        # title + reason + seed in one line). The reason names the seeding title from their own
-        # library — as "Because you watched <genres> like <seed>" when the candidate carries genres,
-        # or the bare "Because you watched <seed>" otherwise. sarah watches movies AND TV, so both
-        # appear.
-        reason_re = re.compile(r"Because you watched (?:.+ like )?.+")
-        reasons = page.get_by_role("listitem").filter(has_text=reason_re)
-        expect(reasons).to_have_count(len(sarah_picks))
-        # Checked against the demo library rather than by reading the title: those are real film and
-        # show names now, so "does it start with Movie or Show" is no longer a question the data can
-        # answer, and this list carries no media_type of its own (only the breakdown does).
+        # Every pick is a list item, and every one of them names why it is there. sarah watches movies
+        # AND TV, so both libraries' rows show a reason.
+        picks = page.get_by_role("listitem").filter(has_text=re.compile(r"suggested by"))
+        expect(picks).to_have_count(len(sarah_picks))
+        expect(picks.filter(has_text=reason_re)).to_have_count(len(sarah_picks))
         titles = {p["title"] for p in sarah_picks}
         assert titles & {t for t, _ in DEMO_MOVIES} and titles & {t for t, _ in DEMO_SHOWS}, (
             "sarah's row should mix both libraries — otherwise this test proves nothing about them"

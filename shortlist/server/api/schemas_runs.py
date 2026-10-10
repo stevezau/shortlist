@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.schema_base import PassthroughModel
 
 
 class PassthroughModel(PassthroughModel):
@@ -139,11 +139,9 @@ class RunSummaryOut(PassthroughModel):
     """One run, as the Runs list shows it."""
 
     id: int
-    #: What started it. Only `schedule` (the APScheduler tick) and `manual` (POST /runs, which the
-    #: wizard's first run also goes through) are ever written; `wizard` is carried because the column
-    #: has always documented it, and a Literal that is a strict SUPERSET of what the code emits can
-    #: only over-describe the schema, while one that is too narrow 500s the whole Runs page.
-    trigger: Literal["schedule", "manual", "wizard", "resume"]
+    #: What started it. `assistant` is the durable MCP queue trigger; `schedule` is the APScheduler
+    #: tick and `manual` is POST /runs. `wizard` and `resume` remain for documented legacy rows.
+    trigger: Literal["schedule", "manual", "wizard", "resume", "assistant"]
     #: Not optional: `runs.started_at` is NOT NULL (migration 0001) and carries an ORM-side `utcnow`
     #: default, so every run row has one. It read `str | None` only because `iso_utc` is typed that
     #: way — the serializer's signature, not this column's.
@@ -359,6 +357,8 @@ class PerUserOut(PassthroughModel):
     username: str
     display_name: str
     slug: str
+    #: False for someone the owner has since disabled; their window history is still listed.
+    enabled: bool
     delivered: int
     watched: int
     finished: int
@@ -493,30 +493,6 @@ class EngagementPersonOut(PassthroughModel):
     total: int
 
 
-class LosingTitleOut(PassthroughModel):
-    """A pick several people started and few finished. One person abandoning something is a night;
-    the pattern across people is what makes it a bad recommendation."""
-
-    title: str
-    media_type: str
-    started: int
-    finished: int
-    #: The median point people stop at, as a percentage. An early number is a pick problem; a late one
-    #: is usually the title rather than the recommendation.
-    stops_at: int | None
-
-
-class StopPointOut(PassthroughModel):
-    label: str
-    count: int
-
-
 class EngagementOut(PassthroughModel):
     window: str
     people: list[EngagementPersonOut]
-    losing: list[LosingTitleOut]
-    stop_points: list[StopPointOut]
-    #: Whether any live playback has been observed at all. False on every server until the listener
-    #: has run — which is not the same as "nobody watches anything", and the page says so instead of
-    #: rendering zeroes.
-    observed: bool

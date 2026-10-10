@@ -40,7 +40,6 @@ import shortlist
 from shortlist.engine.models import SHARED_LABEL_PREFIX, EngineConfig, RowSpec
 from shortlist.engine.placeholders import names_a_seed
 from shortlist.engine.rows import effective_idle_hold_days
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -55,6 +54,7 @@ from shortlist.server.db.models import (
     WatchedTitle,
     WatchSyncState,
 )
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services import plex_reachability, privacy_status
 from shortlist.server.services.redaction import known_identifiers, redact_all, scrub_secrets
 from shortlist.server.settings_store import SettingsStore
@@ -214,7 +214,7 @@ def _scrub(s: str) -> str:
 
 
 #: Setting keys whose VALUE is a network location. Reported as a shape, never verbatim: a report is
-#: destined for a public issue tracker, and a bare `http://172.16.10.240:32400` hands over someone's
+#: destined for a public issue tracker, and a bare `http://192.168.1.10:32400` hands over someone's
 #: LAN topology — while a `plex.direct` hostname embeds their server's machine id. The scheme and port
 #: are the only parts with diagnostic value ("is it https", "is it the standard port").
 _LOCATION_KEYS = {
@@ -232,7 +232,7 @@ _LOCATION_KEYS = {
 
 
 def _location_shape(value: str) -> str:
-    """`http://172.16.10.240:32400` -> `http://<host>:32400`. Empty stays empty."""
+    """`http://192.168.1.10:32400` -> `http://<host>:32400`. Empty stays empty."""
     from urllib.parse import urlsplit
 
     if not value:
@@ -353,7 +353,7 @@ def _counts_as_watched(
     RIGHT one, and since 1.2 there are two, split by the cap:
 
     * cap 0 (and not a rewatch row) — `zero_pct_exclusions`: anything TOUCHED, started included;
-    * cap above 0 — `_watched_titles`: only FINISHED, because a percentage of the row needs a
+    * cap above 0 — `watched_titles`: only FINISHED, because a percentage of the row needs a
       definite line to mean anything.
 
     Answering with the finished rule at cap 0 was the pre-1.2 answer, and got the diagnosis exactly
@@ -363,14 +363,14 @@ def _counts_as_watched(
     change took effect for a person, so it reporting the old rule made it useless for that too.
     """
     from shortlist.engine.models import MediaType
-    from shortlist.engine.rows import _started_shows, _watched_titles
+    from shortlist.engine.rows import started_shows, watched_titles
 
     if media_type == "movie":
         return True  # a watched movie is finished by definition — there is no fraction to apply
     shows = {1: (viewed or 0, total)}
-    finished = _watched_titles(set(), shows, show_pct)
+    finished = watched_titles(set(), shows, show_pct)
     if cap == 0 and not rewatch:
-        finished = finished | _started_shows(shows)
+        finished = finished | started_shows(shows)
     return (1, MediaType.SHOW) in finished
 
 
@@ -2090,7 +2090,7 @@ async def sharing(request: Request) -> dict:
         # Slugs — what `_people_worth_including` feeds to `person()`.
         "missing_excludes_slugs": short_slugs if not error else [],
         # What the verdict was measured AGAINST, so a caller can tell "everyone is covered" from
-        # "there was nothing to cover" — the two used to be the same empty answer.
+        # "there was nothing to cover" — they are different answers.
         "rows_on_plex": sorted(all_labels),
         "rows_error": rows_error,
         "error": error,
@@ -2473,10 +2473,9 @@ async def report_zip(request: Request) -> Response:
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("shortlist-report.txt", text)
             # Nested rather than merged: `build_zip` owns ALL of the redaction — credentials,
-            # addresses and known literals — and the vanished-under-rotation handling. This function
-            # used to shape hosts itself on top, which is how the machine id survived: the copy here
-            # lacked the literal pass that `_scrub` had, and the pattern could not match a
-            # URL-encoded id. Nothing is rewritten here now, so there is nothing left to drift.
+            # addresses and known literals — and the vanished-under-rotation handling. Nothing is
+            # rewritten here: a second copy of the shaping would lack the literal pass `_scrub` has
+            # and could not match a URL-encoded machine id, so it would drift.
             try:
                 with zipfile.ZipFile(io.BytesIO(log_reader.build_zip(config_dir, literals))) as logs:
                     for name in logs.namelist():

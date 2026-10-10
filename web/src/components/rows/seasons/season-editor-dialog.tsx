@@ -66,8 +66,8 @@ const NAME_CLASH = /already a season called/;
  * Create, add (from a ready-made season) or edit a season, from the Seasonal row editor (#137 D1).
  *
  * Saved for the whole server, and ticked in the row it was opened from. Beside the form, the server's
- * count of the films it finds, against that row's size and mode (D10). Nothing is saved until Save:
- * even a ready-made season opens here first (D9).
+ * count of the films it finds, against that row's size and mode (D10). Ready-made seasons open here
+ * only for optional customisation; nothing in the dialog is saved until Save.
  *
  * Mounted only while open, so each opening starts from its target, not a stale draft.
  */
@@ -169,8 +169,11 @@ export function SeasonEditorDialog({
         : null;
 
   const nextDate = dateAnswer?.next_date ?? null;
+  const monthWindow = draft.rule.kind === "month" ? dateAnswer?.next_windows?.[0] : null;
   const nextLine = ruleError
     ? null
+    : monthWindow
+      ? `Shows from ${longDate(monthWindow.start)}, hidden again from ${longDate(addDays(monthWindow.end, 1))}`
     : nextDate
       ? `Next: ${longDate(nextDate)} — shows from ${weekdayDate(addDays(nextDate, -draft.lead_days))}, hidden again from ${weekdayDate(addDays(nextDate, draft.after_days + 1))}`
       : ruleSettled && dates.isError
@@ -216,7 +219,10 @@ export function SeasonEditorDialog({
       >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>Saved for the whole server — any Seasonal row can tick it.</DialogDescription>
+          <DialogDescription>
+            {target.kind === "preset" && "The dates and films are already set. Change anything you like. "}
+            Saved for the whole server — any Seasonal row can tick it.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiErrorMessage } from "./api";
 import type { PinStatus } from "./types";
 
-export type AppArea = "login" | "setup" | "app";
+type AppArea = "login" | "setup" | "app";
 
 /**
  * Where a visitor belongs, given auth + setup state. Pure — unit-tested.
@@ -40,9 +40,9 @@ export function plexAuthUrl(clientId: string, code: string): string {
 const POLL_INTERVAL_MS = 2_000;
 const PIN_TIMEOUT_MS = 5 * 60 * 1000;
 
-export type PinPhase = "idle" | "waiting" | "linked" | "error";
+type PinPhase = "idle" | "waiting" | "linked" | "error";
 
-export interface PlexPinState {
+interface PlexPinState {
   phase: PinPhase;
   /** 4-char code for the plex.tv/link fallback, shown while waiting. */
   code: string | null;

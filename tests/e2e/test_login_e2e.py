@@ -75,7 +75,11 @@ def test_the_login_screen_does_not_hammer_the_api_with_retries(anonymous_page: P
 
     page.goto("/")
     expect(page.get_by_role("button", name="Sign in with Plex")).to_be_visible(timeout=LOAD)
-    page.wait_for_timeout(3000)
+    page.wait_for_load_state("networkidle")
+    # An absence has no event to wait for. react-query's first retry would fire ~1s after the 401, so this
+    # window is the one deliberate pause: long enough for that retry, and the only way to see a request
+    # that never happens.
+    page.wait_for_timeout(1500)
 
     assert not calls, f"owner-only setup state was fetched while signed out: {calls}"
 
@@ -97,9 +101,11 @@ def test_the_plex_token_never_reaches_the_browser(anonymous_page: Page, app: Sho
                 bodies.append(response.text())
 
     page.on("response", capture)
-    page.goto("/")
+    with page.expect_response(lambda r: "/api/auth/" in r.url):
+        page.goto("/")
     expect(page.get_by_role("button", name="Sign in with Plex")).to_be_visible(timeout=LOAD)
-    page.wait_for_timeout(1000)
+    page.wait_for_load_state("networkidle")
 
+    assert bodies, "no auth response was captured, so the token check below would pass vacuously"
     for body in bodies:
         assert '"token"' not in body, f"an auth response carried a Plex token to the browser: {body[:200]}"

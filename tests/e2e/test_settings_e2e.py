@@ -63,9 +63,11 @@ class TestConnectionCards:
         tmdb.get_by_role("button", name="Test").click()
         expect(tmdb).to_contain_text("TMDB key works", timeout=LOAD)
 
+        # "No AI" is a choice, not a connection: the card offers one "Set up" and no Test, because
+        # there is nothing to test until a provider is chosen.
         llm = page.get_by_test_id("connection-llm")
-        llm.get_by_role("button", name="Test").click()
-        expect(llm).to_contain_text("Built-in picker — no AI, nothing to test, always works", timeout=LOAD)
+        expect(llm.get_by_role("button", name="Set up")).to_be_visible(timeout=LOAD)
+        expect(llm.get_by_role("button", name="Test")).to_have_count(0)
 
         # An unconfigured connection says so plainly and never claims a connection it doesn't have —
         # and its Test is disabled until a key is on file (you can't test what isn't set up), rather
@@ -113,11 +115,7 @@ class TestDefaults:
         url.fill("http://llama.local:8080")
         page.get_by_role("button", name="Save").first.click()
 
-        for _ in range(20):
-            settings = app.api("GET", "/api/settings").json()
-            if settings.get("curator.provider") == "openai_compatible":
-                break
-            page.wait_for_timeout(250)
+        app.wait_for_setting("curator.provider", "openai_compatible", timeout_s=5)
         settings = app.api("GET", "/api/settings").json()
         assert settings["curator.provider"] == "openai_compatible"
         assert settings["curator.openai_base_url"] == "http://llama.local:8080"
@@ -125,29 +123,25 @@ class TestDefaults:
     def test_row_name_and_size_survive_a_reload(self, page: Page, app: ShortlistApp):
         _open_settings(page, "defaults")
 
-        row_name = page.get_by_label("Row name template")
+        row_name = page.get_by_role("textbox", name="Row name template")
         row_name.fill("🍿 Tonight's picks for {top_seed}")
         # The preview must show what Plex will show, not the raw template.
         expect(page.get_by_text("🍿 Tonight's picks for Fargo")).to_be_visible()
 
         # How many titles is a free number field now; blur commits the typed value.
-        row_size = page.get_by_label("How many titles")
+        row_size = page.get_by_role("spinbutton", name="How many titles")
         row_size.fill("22")
         row_size.blur()
         # No Save button — the section auto-saves (debounced). Poll until it reaches the database.
-        for _ in range(24):
-            stored = app.api("GET", "/api/settings").json()
-            if stored.get("row.name_template") == "🍿 Tonight's picks for {top_seed}" and stored.get("row.size") == 22:
-                break
-            page.wait_for_timeout(250)
-        stored = app.api("GET", "/api/settings").json()
-        assert stored["row.name_template"] == "🍿 Tonight's picks for {top_seed}"
-        assert stored["row.size"] == 22
+        app.wait_for_setting("row.name_template", "🍿 Tonight's picks for {top_seed}", timeout_s=6)
+        app.wait_for_setting("row.size", 22, timeout_s=6)
 
         # Reload: only a value that reached the database can come back.
         page.reload()
-        expect(page.get_by_label("Row name template")).to_have_value("🍿 Tonight's picks for {top_seed}", timeout=LOAD)
-        expect(page.get_by_label("How many titles")).to_have_value("22", timeout=LOAD)
+        expect(page.get_by_role("textbox", name="Row name template")).to_have_value(
+            "🍿 Tonight's picks for {top_seed}", timeout=LOAD
+        )
+        expect(page.get_by_role("spinbutton", name="How many titles")).to_have_value("22", timeout=LOAD)
 
     def test_pause_all_stops_runs_without_disabling_anyone(self, page: Page, app: ShortlistApp):
         """The Danger Zone switch must actually pause runs — it used to 422 as an unknown key."""
@@ -156,11 +150,7 @@ class TestDefaults:
 
         # It persisted...
         expect(page.get_by_role("alert")).to_have_count(0, timeout=LOAD)
-        for _ in range(20):
-            if app.api("GET", "/api/settings").json().get("paused_all") is True:
-                break
-            page.wait_for_timeout(250)
-        assert app.api("GET", "/api/settings").json()["paused_all"] is True
+        app.wait_for_setting("paused_all", True, timeout_s=5)
 
         # ...and a run now processes nobody, while every user stays enabled.
         run_id = app.api("POST", "/api/runs", json={"dry_run": True}).json()["run_id"]
@@ -213,3 +203,37 @@ class TestDangerZone:
         assert {user.id: dict(user.filters) for user in state.users.values()} == before_filters
         # (The committed uninstall lives in test_privacy_uninstall_e2e.py — this test is only
         # about the promise that a PREVIEW costs nothing.)
+
+
+def test_held_tags_preview_the_inbox_and_survive_a_reload(page: Page, app: ShortlistApp):
+    """Pick a TMDB tag, see which waiting movies it would hold, and find it still picked after a reload."""
+    from pathlib import Path
+
+    from shortlist.server.db.models import RequestCandidate
+    from shortlist.server.db.session import make_engine, make_session_factory
+    from tests.db_helpers import disposing_engine
+    from tests.e2e.conftest import THANKSGIVING_TAG
+
+    app.api("PUT", "/api/settings", json={"values": {"requests.enabled": True, "requests.auto_send": True}})
+    with disposing_engine(make_engine(Path(app.config_dir))) as engine, make_session_factory(engine)() as session:
+        # 9011 carries the fake's thanksgiving tag; 9999 carries none.
+        session.add(RequestCandidate(tmdb_id=9011, media_type="movie", title="Tagged film", status="pending", demand=3))
+        session.add(
+            RequestCandidate(tmdb_id=9999, media_type="movie", title="Untagged film", status="pending", demand=2)
+        )
+        session.commit()
+
+    _open_settings(page, "requests")
+    expect(page.get_by_text("Nothing picked, so any movie can be requested automatically")).to_be_visible(timeout=LOAD)
+    page.get_by_label("Search TMDB tags").fill("thanks")
+    page.get_by_role("button", name="Add tag thanksgiving", exact=True).click()
+
+    held = page.get_by_role("list", name="Movies these picks would hold")
+    expect(page.get_by_text("Would hold 1 of the 2 movies waiting in your inbox:")).to_be_visible(timeout=LOAD)
+    expect(held).to_contain_text("Tagged film")
+    expect(held).to_contain_text("tag “thanksgiving”")
+    expect(held).not_to_contain_text("Untagged film")
+
+    app.wait_for_setting("requests.hold_tags", {str(THANKSGIVING_TAG): "thanksgiving"}, timeout_s=6)
+    page.reload()
+    expect(page.get_by_role("button", name="Remove tag thanksgiving")).to_be_visible(timeout=LOAD)

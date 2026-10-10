@@ -269,16 +269,15 @@ describe("the dashboard with no run yet", () => {
 });
 
 describe("the dashboard's Last run", () => {
-  it("reads 'OK with warnings', the run page's words, when the latest run flagged an account", async () => {
-    // "OK · 1 warning" here and "OK with warnings" on the run it links to were two names for one state.
+  it("reads 'OK · 1 warning', never a plain OK, when the latest run flagged an account", async () => {
     getRuns.mockResolvedValue([
       finishedRun({ privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [], unchecked: [], write_failed: [], left_alone: [] } }),
     ]);
     renderDashboard();
 
     const cell = await within(await strip()).findByTestId("status-last-run");
-    expect(await within(cell).findByText("OK with warnings")).toBeInTheDocument();
-    expect(within(cell).queryByText(/\d+ warnings?/)).toBeNull();
+    expect(await within(cell).findByText("OK · 1 warning")).toBeInTheDocument();
+    expect(within(cell).queryByText("OK")).toBeNull();
   });
 
   // Moved here from the Impact report's footer, which repeated this cell: the three tiers the bell
@@ -338,22 +337,62 @@ describe("the dashboard's Last run", () => {
     renderDashboard();
 
     const cell = await within(await strip()).findByTestId("status-last-run");
-    expect(await within(cell).findByText("OK with warnings")).toBeInTheDocument();
+    expect(await within(cell).findByText("OK · 1 warning")).toBeInTheDocument();
     expect(within(cell).getByRole("link")).toHaveAttribute("href", "/runs/8");
   });
 });
 
+describe("the dashboard's Last run, when two scheduled runs queued behind each other", () => {
+  it("sums the night and links the run that did the work, not the near-empty one behind it", async () => {
+    getRuns.mockResolvedValue([
+      finishedRun({
+        id: 13,
+        started_at: "2026-10-09T03:30:00Z",
+        began_at: "2026-10-09T05:10:00Z",
+        finished_at: "2026-10-09T05:12:00Z",
+        privacy: null,
+        stats: { users_ok: 0, users_skipped: 46, users_error: 0 },
+      }),
+      finishedRun({
+        id: 12,
+        started_at: "2026-10-09T02:30:00Z",
+        began_at: "2026-10-09T02:30:00Z",
+        finished_at: "2026-10-09T05:10:00Z",
+        privacy: null,
+        stats: { users_ok: 46, users_error: 0 },
+      }),
+    ]);
+    renderDashboard();
+
+    const cell = await within(await strip()).findByTestId("status-last-run");
+    expect(await within(cell).findByText(/46 people/)).toBeInTheDocument();
+    expect(within(cell).getByRole("link")).toHaveAttribute("href", "/runs/12");
+  });
+});
+
 describe("the dashboard's Privacy", () => {
-  it("counts the accounts that hide every row and links to Privacy naming one that does not", async () => {
+  it("counts the private accounts and names the exposed one in rows, with the link left to the callout", async () => {
     getPrivacyStatus.mockResolvedValue(KID_EXPOSED);
     renderDashboard();
 
     const cell = await within(await strip()).findByTestId("status-privacy");
-    expect(await within(cell).findByText("3 of 4 hide every row")).toBeInTheDocument();
-    expect(within(cell).getByRole("link", { name: /kid can see 3 rows that aren’t theirs/ })).toHaveAttribute(
-      "href",
-      "/privacy",
+    expect(await within(cell).findByText("3 of 4 accounts private")).toBeInTheDocument();
+    expect(within(cell).getByText(/kid can see 3 rows that aren’t theirs/)).toBeInTheDocument();
+    expect(within(cell).queryByRole("link")).toBeNull();
+  });
+
+  it("links the cell to Privacy when no callout carries the fix", async () => {
+    getPrivacyStatus.mockResolvedValue(
+      privacy({
+        rows_on_plex: ["shortlist_sarah"],
+        accounts: [account("sarah", "hiding"), account("mike", "missing", { missing: ["shortlist_sarah"] })],
+      }),
     );
+    renderDashboard();
+
+    const cell = await within(await strip()).findByTestId("status-privacy");
+    expect(await within(cell).findByRole("link", { name: /mike can see/ })).toHaveAttribute("href", "/privacy");
+    expect(screen.queryByTestId("privacy-callout")).toBeNull();
   });
 
   it("calls out an account Plex will not hide rows from, naming its restriction profile", async () => {
@@ -361,9 +400,11 @@ describe("the dashboard's Privacy", () => {
     renderDashboard();
 
     const callout = await screen.findByTestId("privacy-callout");
-    expect(callout).toHaveTextContent("Plex won’t hide other people’s rows from kid.");
-    expect(callout).toHaveTextContent("older_kid");
-    expect(within(callout).getByRole("link", { name: /What to do/ })).toHaveAttribute("href", "/privacy");
+    expect(callout).toHaveTextContent("kid’s Plex Restriction Profile (older_kid) blocks hide rules");
+    expect(callout).toHaveTextContent("kid can see 3 rows that aren’t theirs");
+    expect(within(callout).getByRole("link", { name: /How to fix in Plex/ })).toHaveAttribute("href", "/privacy");
+    // Said once: the strip's cell carries the figure but not a second link to the same place.
+    expect(screen.getAllByRole("link", { name: /fix in Plex/ })).toHaveLength(1);
   });
 
   // Before any row exists there is nothing to hide — but an account Plex refuses hide rules for is
@@ -386,7 +427,7 @@ describe("the dashboard's Privacy", () => {
 
     const cell = await within(await strip()).findByTestId("status-privacy");
     expect(await within(cell).findByText("Nothing to hide yet")).toBeInTheDocument();
-    expect(within(cell).getByRole("link", { name: /1 account can’t be hidden/ })).toHaveAttribute("href", "/privacy");
+    expect(within(cell).getByText(/1 account can’t be hidden/)).toBeInTheDocument();
     expect(within(cell).queryByText(/Every row is hidden/)).toBeNull();
   });
 
@@ -395,7 +436,7 @@ describe("the dashboard's Privacy", () => {
     renderDashboard();
 
     const cell = await within(await strip()).findByTestId("status-privacy");
-    expect(await within(cell).findByRole("link", { name: /1 account can’t be hidden/ })).toBeInTheDocument();
+    expect(await within(cell).findByText(/1 account can’t be hidden/)).toBeInTheDocument();
     expect(within(cell).queryByText(/Every row is hidden/)).toBeNull();
   });
 
@@ -415,7 +456,7 @@ describe("the dashboard's Privacy", () => {
     );
     renderDashboard();
 
-    expect(await within(await strip()).findByText("2 of 2 hide every row")).toBeInTheDocument();
+    expect(await within(await strip()).findByText("2 of 2 accounts private")).toBeInTheDocument();
     expect(screen.queryByTestId("privacy-callout")).toBeNull();
   });
 });

@@ -15,9 +15,9 @@ license = "MIT"
 requires-python = ">=3.12"
 dynamic = ["version"]
 authors = [{ name = "Steven Adams" }]
-keywords = ["plex", "recommendations", "self-hosted", "llm"]
+keywords = ["plex", "plex-recommendations", "per-user", "recommendations", "recommendation-engine", "self-hosted", "selfhosted", "docker", "media-server", "plex-collections", "watch-history", "llm", "tmdb"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
 ]
@@ -33,7 +33,17 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "itsdangerous>=2.1",
     "cryptography>=42.0",
+    # Never imported by name: FastAPI requires it at request time to parse Form and UploadFile bodies
+    # (poster upload), so dependency checkers report it as unused. Removing it breaks those endpoints.
     "python-multipart>=0.0.9",
+    # Imported directly (requests/urllib3 in plex_pms and plex_reachability, starlette across the server,
+    # anyio in the assistant stdio bridge) but otherwise only present because plexapi, fastapi and mcp pull them in.
+    "requests>=2.31",
+    "urllib3>=2.0",
+    "starlette>=0.37",
+    "anyio>=4.0",
+    "mcp==2.3.0",
+    "Authlib==1.8.0",
     # The PMS notification socket (`watch_stream`). Already in the lock transitively via uvicorn's
     # standard extras, but declared here because we import it directly — a transitive dependency that
     # disappears when uvicorn changes its extras would break the only source of partial-watch data.
@@ -60,16 +70,22 @@ dev = [
     "respx>=0.21",
     "playwright>=1.45",
     "pytest-rerunfailures>=14.0",
+    "pytest-timeout>=2.3",
     "pillow>=10.0",  # so the poster text-renderer + upload-normalization tests run in CI
 
     # Local commit guard: runs the same ruff check + ruff format CI enforces, so a format slip is
     # caught at `git commit`, not in GitHub. Activate once per clone with `pre-commit install`.
     "pre-commit>=3.7",
+    # scripts/build_llms_full.py and build_feed.py read the docs' YAML data files.
+    "pyyaml>=6.0",
 ]
 
 [project.urls]
 Homepage = "https://github.com/stevezau/shortlist"
 Issues = "https://github.com/stevezau/shortlist/issues"
+
+[project.scripts]
+shortlist-mcp-stdio = "shortlist.server.assistant.stdio_bridge:main"
 
 [tool.hatch.version]
 path = "shortlist/__init__.py"
@@ -89,8 +105,17 @@ known-first-party = ["shortlist"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests.scratch enforces disk-backed storage and these bounds, including CLI overrides.
+tmp_path_retention_count = 2
+tmp_path_retention_policy = "failed"
 # e2e needs a built SPA + a browser; it runs in its own CI job via `pytest -m e2e`.
-addopts = "-n auto -m 'not e2e' --cov=shortlist --cov-report=term-missing"
+# Keep ordinary runs bounded on shared hosts, regardless of the host's CPU count.
+addopts = "-n 2 -m 'not e2e' --cov=shortlist --cov-report=term-missing"
+# A hung test once spun a worker at 100% CPU for 40 minutes and left the run on one worker, never to
+# finish. `thread` dumps every thread's stack and ends that worker, so a hang fails one test and shows
+# where it was stuck; xdist starts a replacement worker.
+timeout = 300
+timeout_method = "thread"
 markers = [
     "integration: crosses module boundaries",
     "plex: requires a real Plex server (skipped in CI)",

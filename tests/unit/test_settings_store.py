@@ -15,14 +15,14 @@ from shortlist.server.db.models import Setting
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import DEFAULTS, SECRET_KEYS, SettingsStore
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    yield make_session_factory(engine)
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 class TestAnUnreadableRowFallsBackInsteadOfRaising:
@@ -119,7 +119,7 @@ class TestASecretNeedsASecretBox:
 
 
 class TestUnsetIsNotTheSameAsStoringABlank:
-    """`unset` removes the row; `set(key, "")` writes one. For the crons the UI can switch off, those
+    """`unset_in_transaction` removes the row; `set(key, "")` writes one. For the crons the UI can switch off, those
     two states mean opposite things — off vs. run at the built-in default (`scheduler._OFF_ABLE`)."""
 
     def test_unset_removes_the_row_so_has_row_goes_back_to_false(self, sessions):
@@ -128,7 +128,7 @@ class TestUnsetIsNotTheSameAsStoringABlank:
             store.set("sync.check_cron", "")
             assert store.has_row("sync.check_cron") is True
 
-            assert store.unset("sync.check_cron") is True
+            assert store.unset_in_transaction("sync.check_cron") is True
 
             assert store.has_row("sync.check_cron") is False
             # Back to the declared default, exactly as a key that was never written reads.
@@ -138,8 +138,41 @@ class TestUnsetIsNotTheSameAsStoringABlank:
         with sessions() as session:
             store = SettingsStore(session)
 
-            assert store.unset("sync.check_cron") is False
+            assert store.unset_in_transaction("sync.check_cron") is False
             assert store.has_row("sync.check_cron") is False
+
+
+class TestTransactionOwnedSettings:
+    def test_flush_only_write_rolls_back_with_its_caller(self, sessions):
+        with sessions() as session:
+            store = SettingsStore(session)
+            store.set_in_transaction("row.size", 37)
+            assert store.get("row.size") == 37
+            session.rollback()
+        with sessions() as session:
+            assert SettingsStore(session).get("row.size") == DEFAULTS["row.size"]
+
+    def test_unset_rolls_back_with_other_mutations(self, sessions):
+        with sessions() as session:
+            store = SettingsStore(session)
+            store.set("sync.check_cron", "")
+            assert store.unset_in_transaction("sync.check_cron") is True
+            store.set_in_transaction("row.size", 37)
+            session.rollback()
+        with sessions() as session:
+            store = SettingsStore(session)
+            assert store.has_row("sync.check_cron") is True
+            assert store.get("sync.check_cron") == ""
+            assert store.get("row.size") == DEFAULTS["row.size"]
+
+    def test_transactional_secret_remains_encrypted(self, sessions, tmp_path):
+        with sessions() as session:
+            store = SettingsStore(session, SecretBox(tmp_path))
+            store.set_in_transaction("tmdb.apikey", "transaction-secret")
+            assert "transaction-secret" not in str(session.get(Setting, "tmdb.apikey").value)
+            session.commit()
+        with sessions() as session:
+            assert SettingsStore(session, SecretBox(tmp_path)).get("tmdb.apikey") == "transaction-secret"
 
 
 class TestADroppedSecretStaysInLegacyKeys:

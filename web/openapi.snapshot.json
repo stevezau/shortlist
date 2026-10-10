@@ -95,6 +95,39 @@
         "title": "AccountPrivacyOut",
         "type": "object"
       },
+      "AcquisitionReleaseIn": {
+        "additionalProperties": false,
+        "description": "One owner-confirmed decision on an exact terminal acquisition record.",
+        "properties": {
+          "checked_destination": {
+            "const": true,
+            "title": "Checked Destination",
+            "type": "boolean"
+          },
+          "expected_status": {
+            "enum": [
+              "outcome_unknown",
+              "succeeded"
+            ],
+            "title": "Expected Status",
+            "type": "string"
+          },
+          "review_token": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Review Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_token",
+          "expected_status",
+          "checked_destination"
+        ],
+        "title": "AcquisitionReleaseIn",
+        "type": "object"
+      },
       "AiInstructionsIn": {
         "additionalProperties": false,
         "description": "What AI web search should look for on this row (#138). ``default`` uses the built-in wording\nplus the server-wide instructions; ``add`` appends ``text`` to them; ``own`` replaces them.",
@@ -380,38 +413,6 @@
         "title": "BackupRestoredOut",
         "type": "object"
       },
-      "BackupScheduleOut": {
-        "additionalProperties": true,
-        "description": "Backups have no \"last ran\" line on the Tools page \u2014 the backup list itself is that answer.",
-        "properties": {
-          "cron": {
-            "title": "Cron",
-            "type": "string"
-          },
-          "max_keep": {
-            "title": "Max Keep",
-            "type": "integer"
-          },
-          "next": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next"
-          }
-        },
-        "required": [
-          "next",
-          "cron",
-          "max_keep"
-        ],
-        "title": "BackupScheduleOut",
-        "type": "object"
-      },
       "BlockSeedBody": {
         "properties": {
           "media_type": {
@@ -565,6 +566,43 @@
         ],
         "title": "CapabilitiesOut",
         "type": "object"
+      },
+      "Capability": {
+        "description": "One independently enforceable assistant permission.",
+        "enum": [
+          "instance.read",
+          "config.read",
+          "catalog.read",
+          "people.read",
+          "activity.read",
+          "changes.prepare",
+          "history.use",
+          "history.providers",
+          "history.export",
+          "rows.create",
+          "rows.update",
+          "rows.activate",
+          "rows.delete",
+          "audiences.write",
+          "themes.write",
+          "seasons.write",
+          "config.write",
+          "people.write",
+          "schedules.write",
+          "connections.manage",
+          "runs.preview",
+          "runs.execute",
+          "jobs.cancel",
+          "ai.generate",
+          "requests.read",
+          "requests.manage",
+          "requests.send",
+          "maintenance.execute",
+          "secrets.read",
+          "grants.manage"
+        ],
+        "title": "Capability",
+        "type": "string"
       },
       "CleanupOut": {
         "additionalProperties": true,
@@ -1440,7 +1478,7 @@
       },
       "CollectionOut": {
         "additionalProperties": true,
-        "description": "A curated-row definition \u2014 the response shape of :func:`_serialize`.",
+        "description": "A curated-row definition \u2014 the response shape of :func:`serialize_row` (``services/row_editing.py``).",
         "properties": {
           "ai_instructions": {
             "$ref": "#/components/schemas/AiInstructionsOut"
@@ -2263,6 +2301,44 @@
         "title": "CollectionOut",
         "type": "object"
       },
+      "ConfiguredDestination": {
+        "additionalProperties": true,
+        "description": "A credential-free, currently configured service endpoint.",
+        "properties": {
+          "destination_id": {
+            "title": "Destination Id",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "purposes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Purposes",
+            "type": "array"
+          },
+          "service_id": {
+            "title": "Service Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "label",
+          "purposes",
+          "destination_id",
+          "host"
+        ],
+        "title": "ConfiguredDestination",
+        "type": "object"
+      },
       "ConnectionTestOut": {
         "additionalProperties": true,
         "description": "`message` is plain English either way \u2014 the success line, or a redacted failure (rule 9).",
@@ -2281,6 +2357,209 @@
           "message"
         ],
         "title": "ConnectionTestOut",
+        "type": "object"
+      },
+      "ConsentDecisionIn": {
+        "additionalProperties": false,
+        "description": "One exact browser consent decision protected by an independent CSRF token.",
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "csrf_token": {
+            "title": "Csrf Token",
+            "type": "string"
+          },
+          "flow_id": {
+            "title": "Flow Id",
+            "type": "string"
+          },
+          "grant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Id"
+          }
+        },
+        "required": [
+          "flow_id",
+          "csrf_token",
+          "approved"
+        ],
+        "title": "ConsentDecisionIn",
+        "type": "object"
+      },
+      "ConstraintsIn": {
+        "additionalProperties": false,
+        "description": "Strict owner-selected resource bounds for a grant.",
+        "properties": {
+          "destination_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Destination Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "include_future_libraries": {
+            "default": true,
+            "title": "Include Future Libraries",
+            "type": "boolean"
+          },
+          "include_future_rows": {
+            "default": true,
+            "title": "Include Future Rows",
+            "type": "boolean"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "max_batch_size": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 25,
+            "title": "Max Batch Size"
+          },
+          "max_provider_calls": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Max Provider Calls",
+            "type": "integer"
+          },
+          "max_work_per_operation": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Work Per Operation"
+          },
+          "row_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Row Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "setting_groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Setting Groups",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "title": "ConstraintsIn",
+        "type": "object"
+      },
+      "ConstraintsPatchIn": {
+        "additionalProperties": false,
+        "description": "Sparse owner-selected changes to a grant's resource bounds.",
+        "properties": {
+          "destination_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Destination Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "include_future_libraries": {
+            "default": false,
+            "title": "Include Future Libraries",
+            "type": "boolean"
+          },
+          "include_future_rows": {
+            "default": false,
+            "title": "Include Future Rows",
+            "type": "boolean"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "max_batch_size": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Batch Size"
+          },
+          "max_provider_calls": {
+            "default": 0,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Max Provider Calls",
+            "type": "integer"
+          },
+          "max_work_per_operation": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Work Per Operation"
+          },
+          "row_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Row Ids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "setting_groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Setting Groups",
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "title": "ConstraintsPatchIn",
         "type": "object"
       },
       "CoverageOut": {
@@ -2414,7 +2693,8 @@
             "enum": [
               "fixed",
               "nth",
-              "easter"
+              "easter",
+              "month"
             ],
             "title": "Kind",
             "type": "string"
@@ -2504,6 +2784,26 @@
         "title": "DeletedRowOut",
         "type": "object"
       },
+      "DestinationSelection": {
+        "additionalProperties": false,
+        "description": "The exact catalog choice the owner saw before saving.",
+        "properties": {
+          "destination_id": {
+            "title": "Destination Id",
+            "type": "string"
+          },
+          "service_id": {
+            "title": "Service Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service_id",
+          "destination_id"
+        ],
+        "title": "DestinationSelection",
+        "type": "object"
+      },
       "Dismiss": {
         "properties": {
           "id": {
@@ -2530,6 +2830,106 @@
         ],
         "title": "DismissedOut",
         "type": "object"
+      },
+      "DynamicClientRegistrationIn": {
+        "description": "RFC 7591 subset for public authorization-code clients.",
+        "properties": {
+          "client_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Client Name",
+            "type": "string"
+          },
+          "grant_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grant Types",
+            "type": "array"
+          },
+          "redirect_uris": {
+            "items": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "title": "Redirect Uris",
+            "type": "array"
+          },
+          "response_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Response Types",
+            "type": "array"
+          },
+          "token_endpoint_auth_method": {
+            "default": "none",
+            "title": "Token Endpoint Auth Method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_name",
+          "redirect_uris"
+        ],
+        "title": "DynamicClientRegistrationIn",
+        "type": "object"
+      },
+      "Effect": {
+        "description": "Observable consequence classes used by planning and authorization.",
+        "enum": [
+          "local_config",
+          "local_state",
+          "scheduler_change",
+          "external_read",
+          "provider_spend",
+          "plex_read",
+          "plex_write",
+          "plex_privacy_write",
+          "acquisition_write",
+          "notification_send",
+          "credential_change",
+          "personal_data_disclosure"
+        ],
+        "title": "Effect",
+        "type": "string"
+      },
+      "EffectReferenceOut": {
+        "additionalProperties": true,
+        "description": "Public consequence description.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Effect"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/EffectTiming"
+          }
+        },
+        "required": [
+          "kind",
+          "timing",
+          "description"
+        ],
+        "title": "EffectReferenceOut",
+        "type": "object"
+      },
+      "EffectTiming": {
+        "description": "When an effect can occur after a catalog-backed change.",
+        "enum": [
+          "immediate",
+          "queued",
+          "future_run",
+          "recurring"
+        ],
+        "title": "EffectTiming",
+        "type": "string"
       },
       "EffectivenessReportOut": {
         "additionalProperties": true,
@@ -2741,29 +3141,11 @@
       "EngagementOut": {
         "additionalProperties": true,
         "properties": {
-          "losing": {
-            "items": {
-              "$ref": "#/components/schemas/LosingTitleOut"
-            },
-            "title": "Losing",
-            "type": "array"
-          },
-          "observed": {
-            "title": "Observed",
-            "type": "boolean"
-          },
           "people": {
             "items": {
               "$ref": "#/components/schemas/EngagementPersonOut"
             },
             "title": "People",
-            "type": "array"
-          },
-          "stop_points": {
-            "items": {
-              "$ref": "#/components/schemas/StopPointOut"
-            },
-            "title": "Stop Points",
             "type": "array"
           },
           "window": {
@@ -2773,10 +3155,7 @@
         },
         "required": [
           "window",
-          "people",
-          "losing",
-          "stop_points",
-          "observed"
+          "people"
         ],
         "title": "EngagementOut",
         "type": "object"
@@ -2934,6 +3313,513 @@
         "title": "EventOut",
         "type": "object"
       },
+      "GrantConstraintsOut": {
+        "additionalProperties": true,
+        "description": "Publicly effective resource and work bounds.",
+        "properties": {
+          "destination_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Destination Ids",
+            "type": "array"
+          },
+          "include_future_libraries": {
+            "title": "Include Future Libraries",
+            "type": "boolean"
+          },
+          "include_future_rows": {
+            "title": "Include Future Rows",
+            "type": "boolean"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array"
+          },
+          "max_batch_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Batch Size"
+          },
+          "max_provider_calls": {
+            "title": "Max Provider Calls",
+            "type": "integer"
+          },
+          "max_work_per_operation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Work Per Operation"
+          },
+          "owner_managed": {
+            "title": "Owner Managed",
+            "type": "boolean"
+          },
+          "row_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Row Ids",
+            "type": "array"
+          },
+          "setting_groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Setting Groups",
+            "type": "array"
+          }
+        },
+        "required": [
+          "row_ids",
+          "library_keys",
+          "setting_groups",
+          "destination_ids",
+          "include_future_rows",
+          "include_future_libraries",
+          "max_batch_size",
+          "max_work_per_operation",
+          "max_provider_calls",
+          "owner_managed"
+        ],
+        "title": "GrantConstraintsOut",
+        "type": "object"
+      },
+      "GrantConstraintsPatchIn": {
+        "additionalProperties": false,
+        "description": "Revision-guarded owner change to one grant's authority.",
+        "properties": {
+          "access_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "view",
+                  "manage"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Role"
+          },
+          "approve_updated_access": {
+            "default": false,
+            "title": "Approve Updated Access",
+            "type": "boolean"
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Capability"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "constraints": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConstraintsPatchIn"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_revision": {
+            "exclusiveMinimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "max_provider_calls": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Provider Calls"
+          },
+          "paid_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid Enabled"
+          },
+          "selected_destinations": {
+            "items": {
+              "$ref": "#/components/schemas/DestinationSelection"
+            },
+            "title": "Selected Destinations",
+            "type": "array"
+          },
+          "upgrade_owner_managed": {
+            "default": false,
+            "title": "Upgrade Owner Managed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "GrantConstraintsPatchIn",
+        "type": "object"
+      },
+      "GrantCreateIn": {
+        "additionalProperties": false,
+        "description": "Owner-approved named assistant grant.",
+        "properties": {
+          "access_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "view",
+                  "manage"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Role"
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Capability"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "client_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Client Id",
+            "type": "string"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/ConstraintsIn"
+          },
+          "expires_in_days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 90,
+            "title": "Expires In Days"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_managed": {
+            "default": false,
+            "title": "Owner Managed",
+            "type": "boolean"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/GrantPreset"
+          },
+          "selected_destinations": {
+            "items": {
+              "$ref": "#/components/schemas/DestinationSelection"
+            },
+            "title": "Selected Destinations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "client_id",
+          "name",
+          "preset"
+        ],
+        "title": "GrantCreateIn",
+        "type": "object"
+      },
+      "GrantOut": {
+        "additionalProperties": true,
+        "description": "Safe browser-facing named grant authority.",
+        "properties": {
+          "access_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "view",
+                  "manage"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Role"
+          },
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/GrantConstraintsOut"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "full_management": {
+            "title": "Full Management",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_account_id": {
+            "title": "Owner Account Id",
+            "type": "integer"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/GrantPreset"
+          },
+          "requires_access_approval": {
+            "title": "Requires Access Approval",
+            "type": "boolean"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "owner_account_id",
+          "client_id",
+          "name",
+          "preset",
+          "capabilities",
+          "constraints",
+          "requires_access_approval",
+          "full_management",
+          "access_role",
+          "revision",
+          "expires_at"
+        ],
+        "title": "GrantOut",
+        "type": "object"
+      },
+      "GrantPreset": {
+        "description": "Owner-facing starting points for a named assistant connection.",
+        "enum": [
+          "inspect",
+          "manage_selected_rows",
+          "owner_automation"
+        ],
+        "title": "GrantPreset",
+        "type": "string"
+      },
+      "GrantSummaryOut": {
+        "additionalProperties": true,
+        "description": "Grant authority plus owner-visible activity and call accounting.",
+        "properties": {
+          "access_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "view",
+                  "manage"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access Role"
+          },
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "constraints": {
+            "$ref": "#/components/schemas/GrantConstraintsOut"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "full_management": {
+            "title": "Full Management",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "local_credential_count": {
+            "title": "Local Credential Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner_account_id": {
+            "title": "Owner Account Id",
+            "type": "integer"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/GrantPreset"
+          },
+          "provider_call_quota": {
+            "$ref": "#/components/schemas/ProviderCallQuotaOut"
+          },
+          "requires_access_approval": {
+            "title": "Requires Access Approval",
+            "type": "boolean"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_account_id",
+          "client_id",
+          "name",
+          "preset",
+          "capabilities",
+          "constraints",
+          "requires_access_approval",
+          "full_management",
+          "access_role",
+          "revision",
+          "expires_at",
+          "created_at",
+          "updated_at",
+          "revoked_at",
+          "last_used_at",
+          "local_credential_count",
+          "provider_call_quota"
+        ],
+        "title": "GrantSummaryOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2959,6 +3845,97 @@
           "status"
         ],
         "title": "HealthOut",
+        "type": "object"
+      },
+      "HeldTitleOut": {
+        "additionalProperties": true,
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "story": {
+            "title": "Story",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "title",
+          "year",
+          "reason",
+          "story"
+        ],
+        "title": "HeldTitleOut",
+        "type": "object"
+      },
+      "HoldPreviewIn": {
+        "description": "Genres and tags the owner is considering, before they are saved.",
+        "properties": {
+          "genres": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 30,
+            "title": "Genres",
+            "type": "array"
+          },
+          "tags": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 60,
+            "title": "Tags",
+            "type": "array"
+          }
+        },
+        "title": "HoldPreviewIn",
+        "type": "object"
+      },
+      "HoldPreviewOut": {
+        "additionalProperties": true,
+        "properties": {
+          "checked": {
+            "title": "Checked",
+            "type": "integer"
+          },
+          "held": {
+            "items": {
+              "$ref": "#/components/schemas/HeldTitleOut"
+            },
+            "title": "Held",
+            "type": "array"
+          },
+          "unread": {
+            "title": "Unread",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "checked",
+          "held",
+          "unread"
+        ],
+        "title": "HoldPreviewOut",
         "type": "object"
       },
       "HomeUserOut": {
@@ -3333,6 +4310,7 @@
         "title": "JobRunOut",
         "type": "object"
       },
+      "JsonValue": {},
       "LandingOut": {
         "additionalProperties": true,
         "description": "The landing rate over a matured cohort \u2014 picks old enough to have had their chance.",
@@ -3590,6 +4568,21 @@
         "title": "LinkedOut",
         "type": "object"
       },
+      "LocalCredentialIn": {
+        "additionalProperties": false,
+        "description": "Lifetime for a one-time local credential handoff.",
+        "properties": {
+          "expires_in_days": {
+            "default": 90,
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "title": "Expires In Days",
+            "type": "integer"
+          }
+        },
+        "title": "LocalCredentialIn",
+        "type": "object"
+      },
       "LogLineOut": {
         "additionalProperties": true,
         "description": "One parsed log entry. `ts` is None for a line the parser could not date (a raw traceback).",
@@ -3680,48 +4673,6 @@
         "title": "LogsOut",
         "type": "object"
       },
-      "LosingTitleOut": {
-        "additionalProperties": true,
-        "description": "A pick several people started and few finished. One person abandoning something is a night;\nthe pattern across people is what makes it a bad recommendation.",
-        "properties": {
-          "finished": {
-            "title": "Finished",
-            "type": "integer"
-          },
-          "media_type": {
-            "title": "Media Type",
-            "type": "string"
-          },
-          "started": {
-            "title": "Started",
-            "type": "integer"
-          },
-          "stops_at": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Stops At"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "title",
-          "media_type",
-          "started",
-          "finished",
-          "stops_at"
-        ],
-        "title": "LosingTitleOut",
-        "type": "object"
-      },
       "NotificationOut": {
         "additionalProperties": true,
         "description": "One alert as the React bell renders it \u2014 plain text throughout, no HTML.\n\n``extra=\"allow\"`` (here and on the wrapper) is not optional: a strict Pydantic response model\nsilently DROPS any key it does not declare, so a field missed here would vanish from the payload\ninstead of failing loudly.",
@@ -3795,6 +4746,112 @@
           "dismissed"
         ],
         "title": "NotificationsOut",
+        "type": "object"
+      },
+      "NumericRangeOut": {
+        "additionalProperties": true,
+        "description": "Public numeric bounds.",
+        "properties": {
+          "maximum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Maximum"
+          },
+          "minimum": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "title": "Minimum"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "minimum",
+          "maximum"
+        ],
+        "title": "NumericRangeOut",
+        "type": "object"
+      },
+      "OAuthAuthorizeIn": {
+        "additionalProperties": false,
+        "description": "Bounded authorization request copied from the browser URL by the SPA.",
+        "properties": {
+          "client_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Client Id",
+            "type": "string"
+          },
+          "code_challenge": {
+            "maxLength": 128,
+            "minLength": 43,
+            "title": "Code Challenge",
+            "type": "string"
+          },
+          "code_challenge_method": {
+            "default": "S256",
+            "title": "Code Challenge Method",
+            "type": "string"
+          },
+          "redirect_uri": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Redirect Uri",
+            "type": "string"
+          },
+          "resource": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Resource",
+            "type": "string"
+          },
+          "response_type": {
+            "default": "code",
+            "title": "Response Type",
+            "type": "string"
+          },
+          "scope": {
+            "default": "instance.read",
+            "maxLength": 2048,
+            "title": "Scope",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "redirect_uri",
+          "resource",
+          "state",
+          "code_challenge"
+        ],
+        "title": "OAuthAuthorizeIn",
         "type": "object"
       },
       "OverallOut": {
@@ -4070,6 +5127,10 @@
             "title": "Display Name",
             "type": "string"
           },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
           "finished": {
             "title": "Finished",
             "type": "integer"
@@ -4096,6 +5157,7 @@
           "username",
           "display_name",
           "slug",
+          "enabled",
           "delivered",
           "watched",
           "finished"
@@ -4593,7 +5655,7 @@
       },
       "PresetOut": {
         "additionalProperties": true,
-        "description": "A ready-made season: a `SeasonIn` the editor opens pre-filled. ``preset`` is ``key``.",
+        "description": "A ready-made season's save fields plus catalogue metadata. ``preset`` is ``key``.",
         "properties": {
           "after_days": {
             "default": 0,
@@ -4602,6 +5664,16 @@
             "title": "After Days",
             "type": "integer"
           },
+          "category": {
+            "default": "holidays",
+            "enum": [
+              "holidays",
+              "film_days",
+              "spotlights"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
           "collections": {
             "items": {
               "$ref": "#/components/schemas/CollectionIO"
@@ -4609,6 +5681,11 @@
             "maxItems": 10,
             "title": "Collections",
             "type": "array"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
           },
           "emoji": {
             "maxLength": 8,
@@ -5042,6 +6119,31 @@
           "mechanics"
         ],
         "title": "PromptsOut",
+        "type": "object"
+      },
+      "ProviderCallQuotaOut": {
+        "additionalProperties": true,
+        "description": "Current conservative lifetime call accounting.",
+        "properties": {
+          "lifetime_limit": {
+            "title": "Lifetime Limit",
+            "type": "integer"
+          },
+          "remaining": {
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "reserved": {
+            "title": "Reserved",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lifetime_limit",
+          "reserved",
+          "remaining"
+        ],
+        "title": "ProviderCallQuotaOut",
         "type": "object"
       },
       "QualityProfileOut": {
@@ -5556,6 +6658,16 @@
         "title": "RequestWhyOut",
         "type": "object"
       },
+      "ResetBehavior": {
+        "description": "How a caller expresses the absence of a stored setting value.",
+        "enum": [
+          "restore_default",
+          "literal_null",
+          "unavailable"
+        ],
+        "title": "ResetBehavior",
+        "type": "string"
+      },
       "RestoreRequest": {
         "properties": {
           "name": {
@@ -5796,6 +6908,20 @@
             "title": "Runs",
             "type": "integer"
           },
+          "shared_titles": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared Titles"
+          },
           "watched": {
             "title": "Watched",
             "type": "integer"
@@ -5809,6 +6935,7 @@
           "first_delivered_at",
           "last_delivered_at",
           "matured_days",
+          "shared_titles",
           "matured",
           "per_library"
         ],
@@ -5934,6 +7061,8 @@
         "type": "object"
       },
       "RowOverridePatch": {
+        "additionalProperties": false,
+        "description": "PATCH-shaped stored preference values shared by REST and assistant planning.",
         "properties": {
           "muted": {
             "anyOf": [
@@ -6152,6 +7281,127 @@
         "title": "RowSourcesOut",
         "type": "object"
       },
+      "RowTemplateDefinitionOut": {
+        "additionalProperties": true,
+        "description": "Public row template metadata and creation defaults.",
+        "properties": {
+          "audience_behavior": {
+            "title": "Audience Behavior",
+            "type": "string"
+          },
+          "changed_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Fields",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "editable_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Editable Fields",
+            "type": "array"
+          },
+          "effective_values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Effective Values",
+            "type": "object"
+          },
+          "effects": {
+            "default": [
+              "local_config"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Effect"
+            },
+            "title": "Effects",
+            "type": "array"
+          },
+          "emoji": {
+            "title": "Emoji",
+            "type": "string"
+          },
+          "highlights": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Highlights",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "prerequisites": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Prerequisites",
+            "type": "array"
+          },
+          "required_capabilities": {
+            "default": [
+              "rows.create"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "required_services": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Services",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "emoji",
+          "title",
+          "summary",
+          "description",
+          "highlights",
+          "values",
+          "effective_values",
+          "changed_fields",
+          "editable_fields",
+          "audience_behavior"
+        ],
+        "title": "RowTemplateDefinitionOut",
+        "type": "object"
+      },
       "RulesIO": {
         "additionalProperties": true,
         "description": "A theme's hard limits. A missing or null one is no limit.",
@@ -6338,7 +7588,8 @@
               "schedule",
               "manual",
               "wizard",
-              "resume"
+              "resume",
+              "assistant"
             ],
             "title": "Trigger",
             "type": "string"
@@ -6839,7 +8090,8 @@
               "schedule",
               "manual",
               "wizard",
-              "resume"
+              "resume",
+              "assistant"
             ],
             "title": "Trigger",
             "type": "string"
@@ -7305,6 +8557,13 @@
             ],
             "title": "Next Date"
           },
+          "next_windows": {
+            "items": {
+              "$ref": "#/components/schemas/shortlist__server__api__seasons__SeasonWindowOut"
+            },
+            "title": "Next Windows",
+            "type": "array"
+          },
           "rule_error": {
             "anyOf": [
               {
@@ -7494,6 +8753,13 @@
               "type": "string"
             },
             "title": "Next Dates",
+            "type": "array"
+          },
+          "next_windows": {
+            "items": {
+              "$ref": "#/components/schemas/shortlist__server__api__seasons__SeasonWindowOut"
+            },
+            "title": "Next Windows",
             "type": "array"
           },
           "picks": {
@@ -7747,7 +9013,7 @@
           "next": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SeasonWindowOut"
+                "$ref": "#/components/schemas/shortlist__server__api__collections__SeasonWindowOut"
               },
               {
                 "type": "null"
@@ -7757,7 +9023,7 @@
           "showing": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/SeasonWindowOut"
+                "$ref": "#/components/schemas/shortlist__server__api__collections__SeasonWindowOut"
               },
               {
                 "type": "null"
@@ -7770,41 +9036,6 @@
           "next"
         ],
         "title": "SeasonStatusOut",
-        "type": "object"
-      },
-      "SeasonWindowOut": {
-        "additionalProperties": true,
-        "description": "One season's run for a row: which season, and the first and last days the row shows it.",
-        "properties": {
-          "emoji": {
-            "title": "Emoji",
-            "type": "string"
-          },
-          "ends": {
-            "title": "Ends",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "slug": {
-            "title": "Slug",
-            "type": "string"
-          },
-          "starts": {
-            "title": "Starts",
-            "type": "string"
-          }
-        },
-        "required": [
-          "slug",
-          "name",
-          "emoji",
-          "starts",
-          "ends"
-        ],
-        "title": "SeasonWindowOut",
         "type": "object"
       },
       "SeenRelease": {
@@ -8011,6 +9242,182 @@
         "title": "SessionOut",
         "type": "object"
       },
+      "SettingDefinitionOut": {
+        "additionalProperties": true,
+        "description": "Document every current setting field while preserving nested additions.",
+        "properties": {
+          "assistant_writable": {
+            "default": true,
+            "title": "Assistant Writable",
+            "type": "boolean"
+          },
+          "default": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/components/schemas/EffectReferenceOut"
+            },
+            "title": "Effects",
+            "type": "array"
+          },
+          "group": {
+            "$ref": "#/components/schemas/SettingGroup"
+          },
+          "has_default": {
+            "title": "Has Default",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "nullable": {
+            "default": false,
+            "title": "Nullable",
+            "type": "boolean"
+          },
+          "options": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SettingOptionOut"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "prerequisites": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SettingPrerequisiteOut"
+            },
+            "title": "Prerequisites",
+            "type": "array"
+          },
+          "range": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NumericRangeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "required_capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Required Capabilities",
+            "type": "array"
+          },
+          "reset_behavior": {
+            "$ref": "#/components/schemas/ResetBehavior",
+            "default": "restore_default"
+          },
+          "secret": {
+            "default": false,
+            "title": "Secret",
+            "type": "boolean"
+          },
+          "value_type": {
+            "$ref": "#/components/schemas/ValueType"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "description",
+          "value_type",
+          "group",
+          "has_default",
+          "effects",
+          "required_capabilities"
+        ],
+        "title": "SettingDefinitionOut",
+        "type": "object"
+      },
+      "SettingGroup": {
+        "description": "Stable groups used by settings discovery and grant constraints.",
+        "enum": [
+          "plex",
+          "metadata",
+          "recommendations",
+          "row_defaults",
+          "requests",
+          "notifications",
+          "schedules",
+          "system",
+          "setup"
+        ],
+        "title": "SettingGroup",
+        "type": "string"
+      },
+      "SettingOptionOut": {
+        "additionalProperties": true,
+        "description": "Public named option.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "value",
+          "label"
+        ],
+        "title": "SettingOptionOut",
+        "type": "object"
+      },
+      "SettingPrerequisiteOut": {
+        "additionalProperties": true,
+        "description": "Public applicability condition.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "values",
+          "description"
+        ],
+        "title": "SettingPrerequisiteOut",
+        "type": "object"
+      },
       "SettingsOut": {
         "additionalProperties": true,
         "description": "The whole settings store, flat: `{\"row.size\": 15, \"plex.url\": \"\u2026\", \u2026}`.\n\nDeliberately declares NO fields. The key set is genuinely dynamic \u2014 `settings_store.DEFAULTS`\nplus whatever rows the database holds, minus `PRIVATE_KEYS` \u2014 so enumerating it here would be a\nsecond copy of `DEFAULTS` that silently goes stale, and a strict model would DROP every key it\nhad not caught up with. ``extra=\"allow\"`` passes all of them through untouched, which is the\nhonest description of this endpoint: an open map, with secrets already redacted to \"\u2022\u2022\u2022\u2022\u2022\" by\n`all_public()`.",
@@ -8108,25 +9515,6 @@
           "seconds_remaining"
         ],
         "title": "StatusOut",
-        "type": "object"
-      },
-      "StopPointOut": {
-        "additionalProperties": true,
-        "properties": {
-          "count": {
-            "title": "Count",
-            "type": "integer"
-          },
-          "label": {
-            "title": "Label",
-            "type": "string"
-          }
-        },
-        "required": [
-          "label",
-          "count"
-        ],
-        "title": "StopPointOut",
         "type": "object"
       },
       "SyncFinishedEvent": {
@@ -8283,66 +9671,6 @@
           "job_id"
         ],
         "title": "SyncStartedOut",
-        "type": "object"
-      },
-      "SyncStateOut": {
-        "additionalProperties": true,
-        "description": "One sync's schedule summary: when it last ran, when it fires next, and on what cron.",
-        "properties": {
-          "cron": {
-            "title": "Cron",
-            "type": "string"
-          },
-          "last": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last"
-          },
-          "next": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next"
-          }
-        },
-        "required": [
-          "last",
-          "next",
-          "cron"
-        ],
-        "title": "SyncStateOut",
-        "type": "object"
-      },
-      "SyncsOut": {
-        "additionalProperties": true,
-        "properties": {
-          "backup": {
-            "$ref": "#/components/schemas/BackupScheduleOut"
-          },
-          "users": {
-            "$ref": "#/components/schemas/SyncStateOut"
-          },
-          "watched": {
-            "$ref": "#/components/schemas/SyncStateOut"
-          }
-        },
-        "required": [
-          "watched",
-          "users",
-          "backup"
-        ],
-        "title": "SyncsOut",
         "type": "object"
       },
       "TagIO": {
@@ -9346,6 +10674,31 @@
         "title": "UndoIn",
         "type": "object"
       },
+      "UninstallCollectionOut": {
+        "additionalProperties": true,
+        "description": "One Shortlist collection the uninstall deletes, by where it lives and whose it is.",
+        "properties": {
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "person": {
+            "title": "Person",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "person",
+          "title"
+        ],
+        "title": "UninstallCollectionOut",
+        "type": "object"
+      },
       "UninstallFailedOut": {
         "additionalProperties": true,
         "description": "An account plex.tv refused. The rest of the uninstall still ran (issue #96).",
@@ -9374,6 +10727,13 @@
               "type": "string"
             },
             "title": "Collections Deleted",
+            "type": "array"
+          },
+          "collections_detail": {
+            "items": {
+              "$ref": "#/components/schemas/UninstallCollectionOut"
+            },
+            "title": "Collections Detail",
             "type": "array"
           },
           "dry_run": {
@@ -10291,6 +11651,20 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "ValueType": {
+        "description": "JSON value shapes accepted for settings.",
+        "enum": [
+          "boolean",
+          "integer",
+          "number",
+          "string",
+          "string_list",
+          "integer_list",
+          "object"
+        ],
+        "title": "ValueType",
+        "type": "string"
+      },
       "VersionOut": {
         "additionalProperties": true,
         "description": "`GET /version`.\n\n``extra=\"allow\"`` is on EVERY response model in this file, nested ones included, and is not\noptional: a strict Pydantic response model silently DROPS any key the handler returned but the\nmodel does not declare. With it, an undeclared key passes through untouched \u2014 the model\ndocuments the shape without filtering it, so a field missed here cannot vanish from the payload\nand blank out a page.",
@@ -10880,12 +12254,67 @@
         ],
         "title": "WizardStateSavedOut",
         "type": "object"
+      },
+      "shortlist__server__api__collections__SeasonWindowOut": {
+        "additionalProperties": true,
+        "description": "One season's run for a row: which season, and the first and last days the row shows it.",
+        "properties": {
+          "emoji": {
+            "title": "Emoji",
+            "type": "string"
+          },
+          "ends": {
+            "title": "Ends",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "starts": {
+            "title": "Starts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "emoji",
+          "starts",
+          "ends"
+        ],
+        "title": "SeasonWindowOut",
+        "type": "object"
+      },
+      "shortlist__server__api__seasons__SeasonWindowOut": {
+        "additionalProperties": true,
+        "description": "Inclusive calendar dates for a month-long season.",
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "SeasonWindowOut",
+        "type": "object"
       }
     }
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.10.0"
+    "version": "1.11.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -10928,6 +12357,117 @@
         "summary": "Web Prompt Preview",
         "tags": [
           "ai"
+        ]
+      }
+    },
+    "/api/assistant/changes/{change_id}": {
+      "get": {
+        "operationId": "review_change_api_assistant_changes__change_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "title": "Change Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Change Api Assistant Changes  Change Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Review Change",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
+    "/api/assistant/changes/{change_id}/approve": {
+      "post": {
+        "operationId": "approve_change_api_assistant_changes__change_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_id",
+            "required": true,
+            "schema": {
+              "title": "Change Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Approve Change Api Assistant Changes  Change Id  Approve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Approve Change",
+        "tags": [
+          "assistant"
+        ]
+      }
+    },
+    "/api/assistant/status": {
+      "get": {
+        "operationId": "status_api_assistant_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Status Api Assistant Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Status",
+        "tags": [
+          "assistant"
         ]
       }
     },
@@ -11034,6 +12574,56 @@
         "summary": "Get Session",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/api/catalogs/settings": {
+      "get": {
+        "operationId": "settings_catalog_api_catalogs_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SettingDefinitionOut"
+                  },
+                  "title": "Response Settings Catalog Api Catalogs Settings Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Settings Catalog",
+        "tags": [
+          "catalogs"
+        ]
+      }
+    },
+    "/api/catalogs/templates": {
+      "get": {
+        "operationId": "template_catalog_api_catalogs_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RowTemplateDefinitionOut"
+                  },
+                  "title": "Response Template Catalog Api Catalogs Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Template Catalog",
+        "tags": [
+          "catalogs"
         ]
       }
     },
@@ -11157,7 +12747,7 @@
         ]
       },
       "patch": {
-        "description": "Edit a row: validate \u2192 apply \u2192 plan the Plex work \u2192 enqueue it \u2192 drain.\n\nThe decision table for \"what does this edit owe Plex\" lives in `api/row_changes.py`, not here.\nIt used to be eleven mutable flags accumulated down this handler and eight conditional\ndispatches at the bottom \u2014 untestable without a Plex context, and the place a missed branch\nsilently left someone's row on the wrong Home screen.",
+        "description": "Edit a row: validate \u2192 apply \u2192 plan the Plex work \u2192 enqueue it \u2192 drain.\n\nThe decision table for \"what does this edit owe Plex\" lives in `shortlist/server/services/row_changes.py`, not here.\nIt used to be eleven mutable flags accumulated down this handler and eight conditional\ndispatches at the bottom \u2014 untestable without a Plex context, and the place a missed branch\nsilently left someone's row on the wrong Home screen.",
         "operationId": "update_collection_api_collections__collection_id__patch",
         "parameters": [
           {
@@ -12328,6 +13918,121 @@
         ]
       }
     },
+    "/api/requests/acquisition-claims": {
+      "get": {
+        "description": "Show durable acquisition reservations and uncertain outcomes to their owner.",
+        "operationId": "acquisition_claims_api_requests_acquisition_claims_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Acquisition Claims Api Requests Acquisition Claims Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Acquisition Claims",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/acquisition-claims/{claim_id}/release": {
+      "post": {
+        "description": "Release an exact terminal claim after the owner has checked the remote destination.",
+        "operationId": "release_acquisition_claim_api_requests_acquisition_claims__claim_id__release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "claim_id",
+            "required": true,
+            "schema": {
+              "title": "Claim Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcquisitionReleaseIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Release Acquisition Claim Api Requests Acquisition Claims  Claim Id  Release Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Release Acquisition Claim",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
     "/api/requests/clear": {
       "post": {
         "description": "Clear the given SENT titles from the send log \u2014 hide them, don't delete them.\n\nA sent row is a load-bearing tombstone: dropping it lets a still-downloading title look \"missing\"\nand get re-requested every night (see ``delete_requests``). So \"clear\" sets ``hidden`` instead \u2014\nthe row stays ``sent`` and keeps protecting against re-request, but never shows in the inbox again.\nOnly ``sent`` rows are cleared; a pending/rejected id is ignored (those have Delete / Reject).",
@@ -12407,6 +14112,48 @@
           }
         },
         "summary": "Delete Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/hold-preview": {
+      "post": {
+        "description": "Which movies waiting in the inbox these genres/tags would hold \u2014 the settings page's live check.\n\nReads TMDB through the shared cache, so a title a run already looked at costs nothing. Nothing is saved.",
+        "operationId": "hold_preview_api_requests_hold_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HoldPreviewIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HoldPreviewOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hold Preview",
         "tags": [
           "requests"
         ]
@@ -12563,7 +14310,7 @@
     },
     "/api/requests/send": {
       "post": {
-        "description": "Ask Sonarr/Radarr for the chosen pending titles.\n\nA dry run previews the outcomes without asking and leaves every row pending. A real send marks a\nrow ``sent`` only when the app accepted it; a skip/error leaves it pending with the reason recorded,\nso the owner can see why it didn't go and try again.",
+        "description": "Ask Sonarr/Radarr for the chosen pending titles.\n\nA dry run previews the outcomes without asking and leaves every row pending. A real send marks a\nrow ``sent`` only when the app accepted it. Known skips leave it available for another attempt;\nuncertain outcomes keep a durable claim until the owner checks the destination and releases it.",
         "operationId": "send_requests_api_requests_send_post",
         "requestBody": {
           "content": {
@@ -12627,7 +14374,7 @@
     },
     "/api/runs": {
       "delete": {
-        "description": "Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the\ndashboard's lifetime metrics survive \u2014 only the browsable history is cleared. Changes nothing\non Plex. Note: the next run will re-curate from scratch (no carry-forward) since picks lose\ntheir run association.",
+        "description": "Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the\ndashboard's lifetime metrics survive. Delivered membership is independent, so watch tracking\nand carry-forward keep working. Changes nothing on Plex.",
         "operationId": "clear_runs_api_runs_delete",
         "responses": {
           "200": {
@@ -13394,7 +15141,7 @@
     },
     "/api/seasons/{slug}": {
       "delete": {
-        "description": "Delete a custom season and untick it in every row, in one transaction (D12).\n\nRefused, naming the rows, while it is any row's only season: that row would be left following nothing.",
+        "description": "Untick a custom season and save its required visibility work in one transaction.",
         "operationId": "delete_season_api_seasons__slug__delete",
         "parameters": [
           {
@@ -13428,7 +15175,7 @@
         ]
       },
       "put": {
-        "description": "Replace a custom season, keeping its slug.\n\nA change of date or timing changes which days its rows are shown on, so it is applied to Plex now, as a\nchange to a row's own seasons is. A source change rebuilds its rows on their next build (D11).",
+        "description": "Replace a custom season and atomically record owed visibility work.",
         "operationId": "update_season_api_seasons__slug__put",
         "parameters": [
           {
@@ -13626,6 +15373,28 @@
           }
         },
         "summary": "Curator Models",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/defaults": {
+      "get": {
+        "description": "Every setting's built-in default, so the page can mark one the owner has changed.\n\nSecrets and private keys are left out: a default carries no credential, and what is stored under\nthose keys is never this endpoint's to say.",
+        "operationId": "get_setting_defaults_api_settings_defaults_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Setting Defaults",
         "tags": [
           "settings"
         ]
@@ -14980,7 +16749,7 @@
     },
     "/api/system/health": {
       "get": {
-        "description": "Liveness only \u2014 this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its\nconsumer. The version used to be here too; an unauthenticated caller does not need to know which\nbuild to look up advisories for. The UI reads it from `/system/version`, which is owner-gated.",
+        "description": "Liveness only \u2014 this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its\nconsumer. It carries no version: an unauthenticated caller does not need to know which build to\nlook up advisories for. The UI reads it from `/system/version`, which is owner-gated.",
         "operationId": "health_api_system_health_get",
         "responses": {
           "200": {
@@ -15376,28 +17145,6 @@
           }
         },
         "summary": "Owned Collections Audit",
-        "tags": [
-          "system"
-        ]
-      }
-    },
-    "/api/system/syncs": {
-      "get": {
-        "description": "When each sync last ran and when it next fires \u2014 for the Tools page \"last synced\" lines.",
-        "operationId": "syncs_api_system_syncs_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncsOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Syncs",
         "tags": [
           "system"
         ]
@@ -16586,6 +18333,470 @@
         "summary": "Undo",
         "tags": [
           "watching-account"
+        ]
+      }
+    },
+    "/assistant/destinations": {
+      "get": {
+        "operationId": "list_configured_destinations_assistant_destinations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConfiguredDestination"
+                  },
+                  "title": "Response List Configured Destinations Assistant Destinations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Configured Destinations",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/grants": {
+      "get": {
+        "operationId": "list_grants_assistant_grants_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GrantSummaryOut"
+                  },
+                  "title": "Response List Grants Assistant Grants Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Grants",
+        "tags": [
+          "assistant-access"
+        ]
+      },
+      "post": {
+        "operationId": "create_grant_assistant_grants_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantCreateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Grant",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/grants/{grant_id}": {
+      "delete": {
+        "description": "Forget an inactive connection record without deleting its audit history.",
+        "operationId": "remove_revoked_grant_assistant_grants__grant_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Revoked Grant",
+        "tags": [
+          "assistant-access"
+        ]
+      },
+      "patch": {
+        "description": "Apply explicit constraint changes without expanding grant administration.",
+        "operationId": "patch_grant_constraints_assistant_grants__grant_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrantConstraintsPatchIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Grant Constraints",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/grants/{grant_id}/credentials": {
+      "post": {
+        "operationId": "issue_credential_assistant_grants__grant_id__credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalCredentialIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Issue Credential Assistant Grants  Grant Id  Credentials Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Issue Credential",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/grants/{grant_id}/revoke": {
+      "post": {
+        "operationId": "revoke_grant_assistant_grants__grant_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "grant_id",
+            "required": true,
+            "schema": {
+              "title": "Grant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Revoke Grant Assistant Grants  Grant Id  Revoke Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Grant",
+        "tags": [
+          "assistant-access"
+        ]
+      }
+    },
+    "/assistant/oauth/authorize": {
+      "get": {
+        "description": "Hand the browser to the SPA; it initializes state after owner login.",
+        "operationId": "open_consent_assistant_oauth_authorize_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Open Consent",
+        "tags": [
+          "assistant-oauth"
+        ]
+      },
+      "post": {
+        "operationId": "begin_consent_assistant_oauth_authorize_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthAuthorizeIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Begin Consent Assistant Oauth Authorize Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Begin Consent",
+        "tags": [
+          "assistant-oauth"
+        ]
+      }
+    },
+    "/assistant/oauth/consent": {
+      "post": {
+        "operationId": "decide_consent_assistant_oauth_consent_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentDecisionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Decide Consent Assistant Oauth Consent Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Consent",
+        "tags": [
+          "assistant-oauth"
+        ]
+      }
+    },
+    "/assistant/oauth/register": {
+      "post": {
+        "description": "Register a bounded public PKCE client; this grants no Shortlist access.",
+        "operationId": "register_assistant_oauth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DynamicClientRegistrationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Register Assistant Oauth Register Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register",
+        "tags": [
+          "assistant-oauth"
+        ]
+      }
+    },
+    "/assistant/oauth/revoke": {
+      "post": {
+        "operationId": "revoke_assistant_oauth_revoke_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Revoke",
+        "tags": [
+          "assistant-oauth"
+        ]
+      }
+    },
+    "/assistant/oauth/token": {
+      "post": {
+        "operationId": "token_assistant_oauth_token_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Token",
+        "tags": [
+          "assistant-oauth"
         ]
       }
     }

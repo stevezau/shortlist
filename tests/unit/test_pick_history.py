@@ -9,8 +9,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType
-from shortlist.server.db.models import Base, PickRow, Run, User
+from shortlist.server.db.models import PickRow, Run, User
 from shortlist.server.services.pick_history import DbPickHistory
+from tests.db_helpers import create_schema, disposing_engine
+from tests.watch_fixtures import live_row, personal_delivery
 
 NOW = datetime(2026, 10, 4, 12, tzinfo=UTC)
 TODAY = NOW.date()
@@ -18,10 +20,10 @@ TODAY = NOW.date()
 
 @pytest.fixture
 def session():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    with sessionmaker(engine)() as s:
-        yield s
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        create_schema(engine)
+        with sessionmaker(engine)() as s:
+            yield s
 
 
 def factory_of(session):
@@ -62,9 +64,13 @@ def add_pick(
             rating_key=tmdb_id,
             rank=1,
             collection_slug=row,
+            section_key="1",
             created_at=NOW - timedelta(days=days_ago) if run is None else run.started_at,
         )
     )
+    if run is not None and not run.dry_run:
+        live_row(session, user.id, row, "1")
+        personal_delivery(session, run.id, user_id=user.id, slug=row)
     session.commit()
 
 

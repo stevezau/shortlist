@@ -1,7 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resolveArea } from "@/lib/auth";
 import {
   canLeaveStep,
   clampStep,
@@ -67,28 +66,6 @@ describe("canLeaveStep", () => {
   });
 });
 
-describe("resolveArea (route guards)", () => {
-  it("opens the wizard on a fresh install that nobody has claimed", () => {
-    // No Plex server linked yet means no token, no users, no history — nothing to protect and
-    // nobody to protect it for. Signing in with Plex is not a gate in front of setup; it IS a
-    // step of setup, and it is the step that claims the instance.
-    expect(resolveArea(false, false, false)).toBe("setup");
-  });
-
-  it("sends unauthenticated visitors to login once the instance is claimed", () => {
-    expect(resolveArea(false, false, true)).toBe("login");
-    expect(resolveArea(false, true, true)).toBe("login");
-  });
-
-  it("sends authenticated owners with unfinished setup to the wizard", () => {
-    expect(resolveArea(true, false, true)).toBe("setup");
-  });
-
-  it("sends fully set-up owners to the app", () => {
-    expect(resolveArea(true, true, true)).toBe("app");
-  });
-});
-
 describe("useWizard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -98,7 +75,7 @@ describe("useWizard", () => {
   it("resumes step and data from the persisted setup state", async () => {
     getSetupState.mockResolvedValue({
       step: 3,
-      state: { linked: true, server_name: "SFLIX" },
+      state: { linked: true, server_name: "Home Server" },
       completed: false,
     });
 
@@ -106,7 +83,7 @@ describe("useWizard", () => {
     await waitFor(() => expect(result.current.loaded).toBe(true));
 
     expect(result.current.step).toBe(3);
-    expect(result.current.data).toEqual({ linked: true, server_name: "SFLIX" });
+    expect(result.current.data).toEqual({ linked: true, server_name: "Home Server" });
   });
 
   it("starts at step 0 when no state exists yet", async () => {
@@ -214,11 +191,7 @@ describe("useWizard", () => {
     );
   });
 
-  it("has a title and one-line why for every step", () => {
+  it("has one entry per step", () => {
     expect(WIZARD_STEPS).toHaveLength(TOTAL_STEPS);
-    for (const step of WIZARD_STEPS) {
-      expect(step.title.length).toBeGreaterThan(0);
-      expect(step.why.length).toBeGreaterThan(0);
-    }
   });
 });

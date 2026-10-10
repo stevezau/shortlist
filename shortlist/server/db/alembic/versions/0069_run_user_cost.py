@@ -1,7 +1,7 @@
 """Record what each ROW cost a person, not just what the whole person cost.
 
 `run_users` carries one `duration_ms` and one `llm_tokens` per person per run, so the rows-first run
-view printed that same pair under every row the person was in — on run #7 (SFLIX, 2026-08-13) Alex
+view printed that same pair under every row the person was in — on run #7 (a large production server, 2026-08-13) Alex
 Mastroianni read "7m 22s · 15,917 AI tokens" identically under both his rows, which looks like two
 rows each independently costing 7m 22s. Neither was true.
 

@@ -5,16 +5,33 @@ import { Link } from "react-router";
 import { builtAt } from "@/components/rows/row-facts";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { RowRunAction } from "@/components/rows/row-run-action";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Collection, RowEffectiveness } from "@/lib/types";
+
+const MEDIA_PLURAL: Record<string, string> = { movie: "movies", show: "shows" };
+
+/** "40 movies · 40 shows", or "40 titles" when the copy is one kind; null when nothing is on record. */
+function sharedTitlesLabel(counts: Record<string, number> | null | undefined): string | null {
+  const entries = Object.entries(counts ?? {}).filter(([, count]) => count > 0);
+  if (entries.length === 0) return null;
+  if (entries.length === 1) return `${entries[0]?.[1].toLocaleString()} titles`;
+  return entries
+    .sort(([a], [b]) => Object.keys(MEDIA_PLURAL).indexOf(a) - Object.keys(MEDIA_PLURAL).indexOf(b))
+    .map(([type, count]) => `${count.toLocaleString()} ${MEDIA_PLURAL[type] ?? "titles"}`)
+    .join(" · ");
+}
 
 /** The row's record in one line: when it last built, what it delivered, and whether anyone watched. */
 function HistoryLine({
   data,
   state,
+  shared,
   onRetry,
 }: {
   data: RowEffectiveness | undefined;
+  /** A shared row is one collection for everyone, so it has no per-person delivery count. */
+  shared: boolean;
   state: "loading" | "error" | "ready";
   onRetry: () => void;
 }) {
@@ -40,9 +57,20 @@ function HistoryLine({
     <>
       Last built <b className="font-semibold text-foreground">{builtAt(data.last_delivered_at)}</b>
     </>,
-    <>
-      <b className="font-semibold text-foreground tabular-nums">{data.delivered}</b> titles delivered
-    </>,
+    // A shared row writes no per-person picks, so `delivered` is 0 for it by construction; printing
+    // "0 titles delivered" read as "this row put nothing on Plex".
+    shared ? (
+      <>
+        {sharedTitlesLabel(data.shared_titles)
+          ? `${sharedTitlesLabel(data.shared_titles)} — one shared copy for everyone`
+          : "One shared copy for everyone"}
+      </>
+    ) : (
+      <>
+        <b className="font-semibold text-foreground tabular-nums">{data.delivered.toLocaleString()}</b> titles
+        delivered
+      </>
+    ),
   ];
   // The rate is only shown for picks old enough to judge: a row delivered last night lands 0% for no
   // reason but time, and reading that as failure sends someone to change settings that were fine.
@@ -110,10 +138,13 @@ export function RowLiveStrip({
     <section aria-labelledby="row-live-heading" className="rounded-xl border bg-card shadow-elevated">
       <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0 space-y-0.5">
-          <h2 id="row-live-heading" className="flex items-center gap-2 text-base font-semibold">
-            <Zap aria-hidden="true" className="size-4 text-primary" />
-            Live on Plex
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 id="row-live-heading" className="flex items-center gap-2 text-base font-semibold">
+              <Zap aria-hidden="true" className="size-4 text-primary" />
+              Live on Plex
+            </h2>
+            <Badge variant="success">Applies immediately</Badge>
+          </div>
           <p className="text-sm text-muted-foreground">Changes here apply to Plex immediately.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -142,7 +173,12 @@ export function RowLiveStrip({
           </p>
         )}
         <p>
-          <HistoryLine data={history} state={historyState} onRetry={onRetryHistory} />
+          <HistoryLine
+            data={history}
+            state={historyState}
+            shared={collection.build === "shared"}
+            onRetry={onRetryHistory}
+          />
           {" · "}
           <Link
             to={`/runs?row=${encodeURIComponent(collection.slug)}`}

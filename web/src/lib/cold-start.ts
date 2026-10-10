@@ -12,9 +12,6 @@ export const COLD_STARTS = ["popular", "skip"] as const;
 
 export type ColdStart = (typeof COLD_STARTS)[number];
 
-/** A row stores `null` to mean "inherit the global". */
-export type RowColdStart = ColdStart | null;
-
 export const COLD_START_LABELS: Record<ColdStart, string> = {
   popular: "Show the server’s highest-rated titles",
   skip: "Don’t build their row",

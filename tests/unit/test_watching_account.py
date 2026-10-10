@@ -29,6 +29,7 @@ from shortlist.server.services.watching_account import (
     transfer_watch_history,
     undo_transfer,
 )
+from tests.db_helpers import disposing_engine
 
 OLD = datetime(2024, 3, 1, tzinfo=UTC)
 NEWER = datetime(2026, 1, 1, tzinfo=UTC)
@@ -37,10 +38,9 @@ NEWER = datetime(2026, 1, 1, tzinfo=UTC)
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    factory = make_session_factory(engine)
-    yield factory
-    engine.dispose()
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        factory = make_session_factory(engine)
+        yield factory
 
 
 @pytest.fixture
@@ -269,7 +269,7 @@ class TestCandidateHomeUsers:
 
         # The admin account is the thing being escaped FROM, so it is never a candidate.
         assert [c["plex_account_id"] for c in out] == [20, 30]
-        # PIN-protected: `canary_server_token` cannot switch to it, so a scrobbling transfer can't
+        # PIN-protected: `home_user_server_token` cannot switch to it, so a scrobbling transfer can't
         # mint the token it needs. Listed with the reason rather than silently dropped.
         assert [c["protected"] for c in out] == [False, True]
 
@@ -601,7 +601,7 @@ class TestCopiedPlayEvents:
 
         Marking a row is not the same as acting on the mark. This asserts the outcome.
         """
-        from shortlist.server.services.watch_events import _scan_plays
+        from shortlist.server.services.watch_events import scan_plays
 
         plex = FakePlex(
             {"ADMIN": {100: leaf(100, count=1)}},
@@ -615,12 +615,12 @@ class TestCopiedPlayEvents:
         # `tmdb_of` is supplied so the key RESOLVES. Without it the scan drops the event for want of a
         # tmdb id and the test passes with the filter deleted — which is how the first version of this
         # assertion was itself bug-blind.
-        assert _scan_plays(session, tmdb_of={100: (555, "movie")}) == []
+        assert scan_plays(session, tmdb_of={100: (555, "movie")}) == []
 
     def test_a_genuine_play_on_the_same_account_is_still_scanned(self, session):
         """The filter must not blind us to the account's own real watching afterwards — which is the
         entire point of moving them onto it."""
-        from shortlist.server.services.watch_events import _scan_plays
+        from shortlist.server.services.watch_events import scan_plays
 
         plex = FakePlex({"ADMIN": {100: leaf(100, count=1)}}, history=[])
         replicate(session, plex)
@@ -636,7 +636,7 @@ class TestCopiedPlayEvents:
         )
         session.commit()
 
-        scanned = _scan_plays(session, tmdb_of={100: (555, "movie")})
+        scanned = scan_plays(session, tmdb_of={100: (555, "movie")})
 
         assert [acct for acct, _when, _keys in scanned] == [20]
 

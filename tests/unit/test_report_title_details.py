@@ -14,26 +14,29 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from shortlist.server.db.models import Base, Collection, PickRow, SharedRowWatch, User, WatchedTitle
+from shortlist.server.db.models import Collection, PickRow, SharedRowWatch, User, WatchedTitle
 from shortlist.server.services.report_service import effectiveness
+from tests.db_helpers import create_schema, disposing_engine
 
 NOW = datetime.now(UTC)
 
 
 @pytest.fixture
 def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    factory = sessionmaker(engine)
-    with factory() as session:
-        for uid, name in ((1, "alex"), (2, "sam"), (3, "kim"), (4, "lee")):
-            session.add(
-                User(id=uid, plex_account_id=uid + 100, username=name, slug=name, enabled=True, nickname=name.title())
-            )
-        session.add(Collection(slug="picked", name="Picked for You", enabled=True))
-        session.add(Collection(slug="popular", name="Popular", enabled=True, build="shared"))
-        session.commit()
-    return factory
+    with disposing_engine(create_engine("sqlite://")) as engine:
+        create_schema(engine)
+        factory = sessionmaker(engine)
+        with factory() as session:
+            for uid, name in ((1, "alex"), (2, "sam"), (3, "kim"), (4, "lee")):
+                session.add(
+                    User(
+                        id=uid, plex_account_id=uid + 100, username=name, slug=name, enabled=True, nickname=name.title()
+                    )
+                )
+            session.add(Collection(slug="picked", name="Picked for You", enabled=True))
+            session.add(Collection(slug="popular", name="Popular", enabled=True, build="shared"))
+            session.commit()
+        yield factory
 
 
 def pick(sessions, *, user_id: int, tmdb_id: int, watched_hours_ago: float, rating_key: int = 0, year=2021):

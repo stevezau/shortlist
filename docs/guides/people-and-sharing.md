@@ -1,12 +1,12 @@
 ---
-title: People and sharing
+title: "People and sharing: who gets Plex recommendation rows"
 description: The Users page in Shortlist, turning people on, off and paused, per-person settings, leaving one account's Plex sharing alone, people who leave the server, and accounts Plex restricts.
 heading: People and sharing
 updated: 2026-10-03
 ---
 
 <figure class="shot">
-  <img src="{{ '/images/user-detail.webp' | relative_url }}" width="1440" height="1000" loading="lazy"
+  <img src="{{ '/images/user-detail.webp' | relative_url }}" width="1440" height="1400" loading="lazy"
        alt="A person's page in Shortlist: sarah, 12 titles watched, with tabs for Rows, Runs, Settings and Watched, and her Picked for You row listing the reason for each pick">
   <figcaption>Open a person on the <strong>Users</strong> page for their history, their picks and their settings.</figcaption>
 </figure>
@@ -57,7 +57,7 @@ depth just for them. Opening a person shows their recent watch history (distinct
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
 
-A person's Settings tab groups **Nickname**, **Request tags**, **Plex sharing** and **Blocked titles**
+A person's Settings tab groups **Nickname**, **Sonarr and Radarr tags**, **Plex sharing** and **Blocked titles**
 into labelled sections. Nickname and tag fields save when you leave them. Saving a nickname also
 renames existing Plex rows; it does not change privacy. Blocking a title keeps it in watch history
 but stops it shaping recommendations, and you can unblock it from the same section.

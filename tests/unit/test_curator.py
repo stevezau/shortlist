@@ -4,7 +4,7 @@ Backlog 6.1: no test ever constructed a provider curator (`AnthropicCurator`, `O
 `GoogleCurator`, `OpenAICompatibleCurator`) and no test called `make_curator` — every call site
 elsewhere in the suite mocks it instead, leaving ~400 lines of adapter code unexecuted, including the
 `openai_compatible` / `openai-compatible` / `local` / `ollama` back-compat alias that migration
-0034 and `api/settings.py` both depend on. `make_curator` is never mocked below: the dispatch-table
+0034 and the settings API both depend on. `make_curator` is never mocked below: the dispatch-table
 tests call the real function, and the per-adapter tests build curators through it too.
 
 Fixture note (testing.md rule 11): the provider SDKs are metered, keyed services with no test
@@ -71,7 +71,7 @@ class TestMakeCuratorDispatch:
             ("openai-compatible", {"base_url": "http://localhost:11434/v1"}, OpenAICompatibleCurator),
             ("local", {"base_url": "http://localhost:11434/v1"}, OpenAICompatibleCurator),
             # Pre-merge name for the same provider — 0034_merge_ollama_provider_for_real.py and
-            # api/settings.py:143 both depend on this alias still resolving.
+            # the `ai.provider` setting both depend on this alias still resolving.
             ("ollama", {"base_url": "http://localhost:11434/v1"}, OpenAICompatibleCurator),
             ("google", {"api_key": "AIzaTest"}, GoogleCurator),
             ("none", {}, NullCurator),

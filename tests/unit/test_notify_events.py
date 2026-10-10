@@ -25,6 +25,7 @@ from shortlist.server.db.session import make_engine, make_session_factory, run_m
 from shortlist.server.services import jobs, notify
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import PRIVATE_KEYS, SECRET_KEYS, SettingsStore
+from tests.db_helpers import disposing_engine
 
 pytestmark = pytest.mark.integration
 
@@ -35,7 +36,8 @@ ALL_EVENTS = list(notify.EVENTS)
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    return make_session_factory(make_engine(tmp_path))
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 @pytest.fixture
@@ -122,7 +124,7 @@ class TestChoosingEvents:
     def test_every_event_is_in_the_body_that_leaves_the_server(self):
         item = {"id": "x", "severity": "info", "title": "t", "body": "b", "action_url": "/", "event": "run.started"}
         assert notify.webhook_body(item)["event"] == "run.started"
-        assert notify.webhook_body(notify.test_item())["event"] == "test"
+        assert notify.webhook_body(notify.sample_item())["event"] == "test"
 
 
 class TestRunEvents:
@@ -192,6 +194,19 @@ class TestJobEvents:
         items = queued(sessions)
         assert [i["event"] for i in items] == ["job.started", "job.finished"]
         assert all(jobs.BY_KIND["backup.take"].label in i["title"] for i in items)
+
+    def test_a_skipped_scheduled_job_is_announced_by_its_label(self, sessions, secrets):
+        configure(sessions, secrets, events=["job.skipped"])
+        notify.enqueue_job_skipped(sessions, "watch.sync", "Watch history sync", "2026-10-02T03:30:00+00:00")
+        [item] = queued(sessions)
+        assert item["event"] == "job.skipped"
+        assert "Watch history sync" in item["title"]
+        assert "skipped" in item["title"].lower()
+
+    def test_a_skipped_scheduled_job_queues_nothing_unless_chosen(self, sessions, secrets):
+        configure(sessions, secrets)  # defaults
+        assert notify.enqueue_job_skipped(sessions, "watch.sync", "Watch history sync", "2026-10-02") is None
+        assert queued(sessions) == []
 
     def test_routine_jobs_do_not_announce_starting_or_finishing_but_do_announce_failing(self, sessions, secrets):
         """The privacy sync runs every 30 minutes and a playback credit runs per play."""
@@ -377,8 +392,15 @@ class TestAfterRun:
 
     def test_it_never_raises_into_the_run(self, sessions, secrets, monkeypatch):
         configure(sessions, secrets, events=ALL_EVENTS)
-        monkeypatch.setattr(notify, "check_for_update", _raise)
+        reached: list[bool] = []
+
+        def failing_check(*_args, **_kwargs):
+            reached.append(True)
+            raise RuntimeError("unavailable")
+
+        monkeypatch.setattr(notify, "check_for_update", failing_check)
         notify.after_run(sessions, make_run(sessions), "1.9.0")
+        assert reached, "the update check was never reached, so nothing was proven"
 
 
 class TestAuthHeader:
@@ -391,7 +413,7 @@ class TestAuthHeader:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(200))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert route.calls.last.request.headers["X-Gotify-Key"] == "s3cr3t-v4lue"
 
     def test_the_default_header_name_is_authorization(self, sessions, secrets):
@@ -399,7 +421,7 @@ class TestAuthHeader:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(200))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert route.calls.last.request.headers["Authorization"] == "Bearer abc123def456"
 
     def test_a_blank_name_sends_no_header(self, sessions, secrets):
@@ -412,7 +434,7 @@ class TestAuthHeader:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(200))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert "authorization" not in route.calls.last.request.headers
         assert "bearer abc123def456" not in {v.lower() for v in route.calls.last.request.headers.values()}
 
@@ -421,7 +443,7 @@ class TestAuthHeader:
         with respx.mock:
             route = respx.post(WEBHOOK).mock(return_value=httpx.Response(200))
             with sessions() as session:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert "authorization" not in route.calls.last.request.headers
 
     def test_the_value_never_reaches_an_error_message(self, sessions, secrets):
@@ -430,7 +452,7 @@ class TestAuthHeader:
         with respx.mock:
             respx.post(WEBHOOK).mock(side_effect=httpx.ConnectError(f"refused while sending {value}"))
             with sessions() as session, pytest.raises(notify.NotifyFailed) as caught:
-                notify.deliver(SettingsStore(session, secrets), notify.test_item())
+                notify.deliver(SettingsStore(session, secrets), notify.sample_item())
         assert value not in str(caught.value)
 
     def test_the_escaped_form_of_the_value_is_scrubbed_too(self):

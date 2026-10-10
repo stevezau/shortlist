@@ -11,14 +11,14 @@ from fastapi.testclient import TestClient
 
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Event, RestrictionSnapshotRow, Server, User
-from shortlist.server.main import create_app
+from tests.shared_app import app_for
 
 OWNER_ID = 555000001
 
 
 @pytest.fixture
 def client(tmp_path: Path):
-    app = create_app(config_dir=tmp_path)
+    app = app_for(tmp_path)
     with TestClient(app) as test_client:
         with app.state.sessions() as session:
             session.add(
@@ -77,6 +77,7 @@ def fake_context(monkeypatch, client: TestClient) -> tuple[MagicMock, MagicMock]
     kometa.title = "Kometa Trending"
     kometa.labels = [SimpleNamespace(tag="Overlay")]
     section = MagicMock()
+    section.title = "Movies"
     section.collections.return_value = [ours, kometa]
     plex.sections.return_value = [section]
 
@@ -104,6 +105,28 @@ class TestUninstall:
         assert "Preview only" in body["message"]
         plex.delete_owned_collection.assert_not_called()
         plextv.update_user_filters.assert_not_called()  # engine restore honored dry_run
+
+    def test_preview_names_each_collection_by_library_and_person(self, client: TestClient, monkeypatch):
+        """The person is the user's display name (not their slug), a shared row says so rather than
+        leaking its `_shared_<slug>` label tail, and a slug nobody owns any more comes back as-is."""
+        plex, _ = fake_context(monkeypatch, client)
+        with client.app.state.sessions() as session:
+            session.query(User).filter_by(slug="sarah").one().username = "Sarah Q"
+            session.commit()
+        shared = MagicMock(ratingKey=3, labels=[SimpleNamespace(tag="Shortlist__shared_popular")])
+        shared.title = "👥 Popular on this server"
+        ghost = MagicMock(ratingKey=4, labels=[SimpleNamespace(tag="Shortlist_ghost")])
+        ghost.title = "✨ Picked for You (ghost)"
+        section = plex.sections.return_value[0]
+        section.collections.return_value = [*section.collections.return_value, shared, ghost]
+
+        body = client.post("/api/system/uninstall", json={"dry_run": True}).json()
+
+        assert body["collections_detail"] == [
+            {"library": "Movies", "person": "Sarah Q", "title": "✨ Picked for You"},
+            {"library": "Movies", "person": "Shared row", "title": "👥 Popular on this server"},
+            {"library": "Movies", "person": "ghost", "title": "✨ Picked for You (ghost)"},
+        ]
 
     def test_real_uninstall_restores_filters_and_deletes_only_ours(self, client: TestClient, monkeypatch):
         plex, plextv = fake_context(monkeypatch, client)

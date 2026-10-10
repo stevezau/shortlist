@@ -23,12 +23,13 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { BackLink } from "@/components/back-link";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { RowName } from "@/components/rows/row-name";
+import { rowDisplayName } from "@/lib/run-rows";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -81,7 +82,9 @@ import type {
   TraceWeb,
   TraceSelection,
 } from "@/lib/types";
+import { coarseHitArea } from "@/lib/hit-area";
 import { cn } from "@/lib/utils";
+import { personName } from "@/lib/user-names";
 
 /** What the request subsystem did with each wanted-but-missing title, keyed "<tmdb_id>:<media>".
  *  Page-scoped (one run, one user) so a deep return row can overlay "→ requested from Radarr" onto a
@@ -98,7 +101,7 @@ function useRequestOutcome(
 export function RunUserTracePage() {
   // Serves BOTH traces. A shared row runs the same pipeline minus the per-person history stage and
   // returns the same shape, with the row's title standing in for the person — so forking this view
-  // would mean maintaining 1,600 lines twice to render identical stages.
+  // would mean maintaining the whole trace twice to render identical stages.
   const { id, userId, rowSlug } = useParams();
   const runId = Number(id);
   const uid = Number(userId);
@@ -146,11 +149,11 @@ export function RunUserTracePage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to={`/runs/${runId}`} label={`Run #${runId}`} />
       {!valid ? (
         <EmptyState
           title="That trace doesn’t exist"
           hint="The link may be wrong, or the run was removed."
+          action={<BackLink to="/runs" label="Back to all runs" />}
         />
       ) : rowNotInRun ? (
         <EmptyState
@@ -182,6 +185,7 @@ export function RunUserTracePage() {
               rowNames={rowNames}
               rowWindows={rowWindows}
               sharedRow={isRow}
+              runId={runId}
             />
           )}
         </QueryBoundary>
@@ -217,11 +221,12 @@ export function TraceView({
   rowNames = {},
   rowWindows = {},
   sharedRow = false,
+  runId,
 }: {
   data: RunUserTraceResponse;
   userId?: number;
   /** For a SHARED row: its name as the run page shows it, so the two never disagree about what the
-   *  row is called. `display_name` carries a per-LIBRARY rendered title ("Popular Movies on SFLIX"),
+   *  row is called. `display_name` carries a per-LIBRARY rendered title ("Popular Movies on Home Server"),
    *  which would name the whole row after one of its libraries. */
   rowName?: string;
   /** Every row's name by SLUG, for the shortlist and delivery lines — the trace records slugs.
@@ -232,8 +237,10 @@ export function TraceView({
   rowWindows?: Record<string, number>;
   /** A shared row belongs to nobody, so the person-framed copy in this view is wrong for it. */
   sharedRow?: boolean;
+  /** The run this trace belongs to; when known, the title line leads with a "Run #N /" breadcrumb. */
+  runId?: number;
 }) {
-  const name = rowName || data.display_name || data.username;
+  const name = rowName || personName(data);
   const libraries = useMemo(() => buildLibraries(data), [data]);
   const [active, setActive] = useState(libraries[0]?.key ?? "");
   const current = libraries.find((l) => l.key === active) ?? libraries[0];
@@ -243,7 +250,15 @@ export function TraceView({
       <div className="space-y-6">
         <header className="space-y-1">
           <h1 className="break-words text-2xl font-semibold tracking-tight">
-            How we picked for {sharedRow ? <RowName name={name} /> : name}
+            {runId !== undefined && (
+              <>
+                <Link to={`/runs/${runId}`} className="font-normal text-muted-foreground hover:text-foreground">
+                  Run #{runId}
+                </Link>
+                <span className="font-normal text-faint-foreground">{" / "}</span>
+              </>
+            )}
+            How we picked for {sharedRow ? rowDisplayName(name) || name : name}
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
             {sharedRow
@@ -253,11 +268,10 @@ export function TraceView({
         </header>
 
         {data.error && <ErrorBanner error={data.error} />}
-        {/* Gated on the STATUS, not on `reason` alone. `reason` used to mean "nothing was built for
-            this person", and this page read it that way — but the engine now also sets it on an
-            `ok` person to say why their rows hold what they held last night, so on the second run
-            of any night this banner called a full, correct delivery trace a skip. `cold_start`
-            keeps the banner: that person really did get no row. */}
+        {/* Gated on the STATUS, not on `reason` alone: the engine also sets `reason` on an `ok`
+            person to say why their rows hold what they held last night, and a full, correct
+            delivery trace must not be called a skip. `cold_start` keeps the banner: that person
+            really did get no row. */}
         {data.status !== "ok" && data.reason && !data.error && (
           <SkipBanner reason={data.reason} />
         )}
@@ -389,7 +403,7 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
                     {/* The release-date multiplier actually applied — the answer to "why did a 2003
                         title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
                     {t.age_weight != null && t.age_weight !== 1 && (
-                      <span className="font-mono text-muted-foreground">
+                      <span className="tabular-nums text-muted-foreground">
                         release date &times;{t.age_weight.toFixed(2)}
                       </span>
                     )}
@@ -613,6 +627,8 @@ function LibraryTabs({
               buttons?.[next]?.focus();
             }}
             onClick={() => onSelect(lib.key)}
+            // The run page lists one row at a time ("30"); this adds up every row built in the library.
+            title={`Titles delivered in ${lib.label}, across every row`}
             className={cn(
               "-mb-px flex items-center gap-2 rounded-t-md border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               selected
@@ -744,10 +760,10 @@ function LibraryFlow({
       ),
     }),
   );
-  // Seeds are now pure-recency: the distinct titles someone watched most recently, newest first —
-  // which is exactly what the old "what they watched" panel showed. So the two panels were identical
-  // and are merged into one. Seeds are the richer object (they carry recency + drive the search), so
-  // they lead; we fall back to the raw recent-watch sample only when nothing resolved to a seed.
+  // Seeds are pure recency: the distinct titles someone watched most recently, newest first, which
+  // is also what a separate "what they watched" panel would show, so there is one panel. Seeds are
+  // the richer object (they carry recency + drive the search), so they lead; we fall back to the raw
+  // recent-watch sample only when nothing resolved to a seed.
   const recentBody = (
     <>
       {lib.seeds.length > 0 ? (
@@ -853,7 +869,7 @@ function LibraryFlow({
             ),
           },
         ]),
-    // How the shortlist was ORDERED — the step that used to be missing entirely. Not shown for cold
+    // How the shortlist was ORDERED. Not shown for cold
     // start (no taste ranking runs; the picks are just the top-rated titles, in rating order).
     ...(isCold
       ? []
@@ -1095,8 +1111,8 @@ function RequestsTable({
 // ── Stage 1: recent watches, newest first (the seeds we search from) ───────────
 
 /** The recent watches we search from — newest first, each tagged with how long ago. Seed weight is
- *  now pure recency (frequency no longer scores), so there's no "influence" to rank: this is just the
- *  list, in recency order. A play-count bar or "watched N×" here would imply a weighting we no longer
+ *  pure recency (frequency does not score), so there's no "influence" to rank: this is just the
+ *  list, in recency order. A play-count bar or "watched N×" here would imply a weighting we don't
  *  apply. Seeds arrive already sorted newest-first, so their order IS the recency order. */
 /** The per-seed block action.
  *
@@ -1148,8 +1164,22 @@ function seedGroups(seeds: TraceSeed[]): { label: string; seeds: TraceSeed[] }[]
 }
 
 function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
+  // One toggle reveals the per-seed block buttons: eight identical "Don’t seed" buttons made the
+  // list read as a wall of actions when most visits only read it.
+  const [editing, setEditing] = useState(false);
   return (
     <div className="space-y-3">
+      {userId !== undefined && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs text-muted-foreground"
+          aria-pressed={editing}
+          onClick={() => setEditing((on) => !on)}
+        >
+          {editing ? "Done" : "Edit seeds"}
+        </Button>
+      )}
       {seedGroups(seeds).map((group, i) => (
         <div key={`${group.label}-${i}`} className="space-y-1.5">
           {group.label && (
@@ -1165,7 +1195,7 @@ function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
                 {/* This is where a bad seed is actually noticed — the page that says "these are the
                     watches your picks came from". Blocking anywhere else means remembering a title and
                     going to find it. */}
-                {userId !== undefined && (
+                {userId !== undefined && editing && (
                   <BlockSeedButton seed={s} userId={userId} />
                 )}
               </li>
@@ -1189,7 +1219,7 @@ function stars(rating: number): string {
  *  the outcome and only one of them means the feature is working. The distrusted case is the one this
  *  exists for: it is a silent no-op that otherwise reads exactly like a healthy run.
  */
-export function ratingsSummary(ratings: TraceRatings): string {
+function ratingsSummary(ratings: TraceRatings): string {
   if (!ratings.enabled)
     return "Plex ratings are off for this run, so nothing they rated changed these picks.";
   if (!ratings.trusted)
@@ -1288,7 +1318,7 @@ function WatchList({ watched }: { watched: TraceWatch[] }) {
 }
 
 /** "3 days ago" from the recency ingredient — or "" on legacy runs that lack it. Frequency
- *  ("watched N×") is deliberately gone: watch count no longer scores a seed (recency alone does), so
+ *  ("watched N×") is deliberately absent: watch count does not score a seed (recency alone does), so
  *  surfacing it here would imply a weighting we don't apply. */
 function seedWhy(s: TraceSeed): string {
   if (s.recency_days === undefined) return "";
@@ -1358,12 +1388,10 @@ function BranchConnector() {
 /**
  * "The genres they watch most — movies: Drama, Thriller." — as an English sentence.
  *
- * This used to join the raw map: `${mediaLabel(m)} — ${gs.join(", ") || "none"}`, which on a
- * library with no genre lean printed "The genres they watch most: Movie — none." — a media-type
- * TOKEN mid-sentence, a dash standing in for a verb, and "none" answering a question the sentence
- * had just promised an answer to. Media types with nothing to report are dropped rather than
- * printed as "none", and when none of them has anything the sentence says that instead of
- * pretending to list something.
+ * Joining the raw map would put a media-type TOKEN mid-sentence and a "none" answering a question
+ * the sentence had just promised an answer to ("The genres they watch most: Movie — none."). Media
+ * types with nothing to report are dropped rather than printed as "none", and when none of them has
+ * anything the sentence says that instead of pretending to list something.
  */
 function discoverGenreSentence(genres: Record<string, string[]>): string {
   const listed = Object.entries(genres).filter(([, gs]) => gs.length > 0);
@@ -1415,12 +1443,10 @@ function SourceCard({
               </p>
               {(kept > 0 || droppedCount > 0) && (
                 <>
-                  {/* The two numbers count DIFFERENT things and nothing said so — the comment
-                      that used to sit here recorded a real person being confused by it, and then
-                      left the confusion in place. `contributed` is net-new after dedup;
+                  {/* The two numbers count DIFFERENT things, so the second line names its own
+                      denominator. `contributed` is net-new after dedup;
                       kept/dropped covers everything this source returned, including titles another
-                      source had already added. Both right, different denominators, so the second
-                      line names its own. */}
+                      source had already added. */}
                   <p className="text-xs text-muted-foreground">
                     Counting everything it returned, including titles another
                     source found first:
@@ -1546,7 +1572,7 @@ function ReturnList({
       {rest.length > 0 && (
         <li>
           <details className="group">
-            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <summary className={cn("flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden", coarseHitArea)}>
               <ChevronRight
                 className="h-3 w-3 transition-transform group-open:rotate-90"
                 aria-hidden="true"
@@ -1687,6 +1713,7 @@ function WebSourceCard({
   const resolved = new Set(web?.resolved ?? []);
   const unresolved = new Set(web?.unresolved ?? []);
   const searches = web?.searches ?? [];
+  const failedSeeds = web?.failed_seeds ?? [];
   const failed = source?.status === "failed";
   // Each resolved proposal's fate (kept into the row, or why it fell out), keyed by the same label the
   // `proposed` list uses. Absent on legacy runs — then we fall back to the plain resolved/dropped read.
@@ -1784,6 +1811,16 @@ function WebSourceCard({
           </div>
         )}
 
+        {failedSeeds.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {failedSeeds.length === 1
+              ? "1 search failed and was skipped"
+              : `${failedSeeds.length} searches failed and were skipped`}
+            , so the web had less to go on: {failedSeeds.join(", ")}. They are
+            tried again on the next run.
+          </p>
+        )}
+
         {proposed.length > 0 && (
           <div className="space-y-1.5">
             <p className="text-xs font-medium">
@@ -1869,7 +1906,7 @@ function WebSourceCard({
 
 // ── Stage 3.5: how the shortlist was ordered ──────────────────────────────────
 
-/** Plain-English explanation of the ranking — the step that used to be missing. There is no AI in the
+/** Plain-English explanation of the ranking — the step that explains the order. There is no AI in the
  *  ordering (the model is used only to FIND titles); it's `ranking.score` + two fair-share passes, so
  *  this says exactly that and grounds it in THIS library's picks: how many sources and how many
  *  different watched titles fed the row, which is what the fair-share passes actually produce. */
@@ -1988,7 +2025,7 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
             </span>
             <span>{pick.title}</span>
             {pick.affinity != null && (
-              <span className="font-mono text-muted-foreground">
+              <span className="tabular-nums text-muted-foreground">
                 match {pick.affinity.toFixed(2)}
               </span>
             )}

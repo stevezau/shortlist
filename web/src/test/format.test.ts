@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { cronFromTime, isPresetCron, timeFromCron } from "@/lib/cron";
 import {
   buildLabel,
-  cronFromTime,
   formatDuration,
-  isPresetCron,
   renderRowName,
   runElapsedMs,
   settingBool,
@@ -12,7 +11,6 @@ import {
   settingString,
   formatDate,
   timeAgo,
-  timeFromCron,
   triggerLabel,
   weekStarting,
 } from "@/lib/format";
@@ -178,6 +176,9 @@ describe("small formatters", () => {
     expect(formatDuration(450)).toBe("450ms");
     expect(formatDuration(2500)).toBe("2.5s");
     expect(formatDuration(22.5 * 60 * 1000)).toBe("22m 30s");
+    // A night's run is hours long; "162m 36s" makes the reader do the division.
+    expect(formatDuration((2 * 3600 + 42 * 60 + 36) * 1000)).toBe("2h 43m");
+    expect(formatDuration(3600 * 1000)).toBe("1h 0m");
   });
 
   it("renderRowName fills the season placeholders with a sample season", () => {
@@ -315,6 +316,7 @@ describe("triggerLabel", () => {
   it.each([
     ["schedule", "Scheduled"],
     ["manual", "Manual"],
+    ["assistant", "Assistant"],
     ["wizard", "Setup"],
     ["resume", "Resumed after a restart"],
   ])("says %s as %s", (trigger, label) => {

@@ -4,14 +4,14 @@ The plan of record for making "move my watching to a second account" produce an 
 state **matches the original**, rather than one that claims everything is finished.
 
 Companion to [watch-signals-design.md](watch-signals-design.md) (what each Plex read returns) and
-[watch-tracking-build.md](watch-tracking-build.md) (how plays are captured). This document is about
+the watch-tracking code under `shortlist/server/` (how plays are captured). This document is about
 the **write** direction, which neither of those covers.
 
 Status: **built, tested, and proven on a live account.** `shortlist/engine/watch_replica.py` (the plan), `PlexClient.read_watch_state`/`apply_watch_op` (the PMS half), `services/watching_account.py` (snapshot, apply, verify, undo), migration 0082, and the `/transfer` + `/undo` endpoints. Everything below is implemented, including the durable job in §3.5. See §9 for what is and is not covered, and §10/§11 for what live running and review actually caught.
 
-Every number and every API claim below was probed against SFLIX
+Every number and every API claim below was probed against a large production server
 (PMS 1.43.3.10896) on 2026-08-25 — read probes with the admin token, write probes on a purpose-made
-Home user (`Tester`, account 841506001) with every write undone afterwards.
+Home user (`Tester`, account 1000001) with every write undone afterwards.
 
 ---
 
@@ -60,7 +60,7 @@ side can recover information the read never had. The source of truth has to chan
 
 ## 2. What the server actually does
 
-Probed 2026-08-25 against SFLIX 1.43.3.10896. Each of these gets a recorded fixture (rule 11).
+Probed 2026-08-25 against a large production server 1.43.3.10896. Each of these gets a recorded fixture (rule 11).
 
 ### Writes
 
@@ -73,7 +73,7 @@ Probed 2026-08-25 against SFLIX 1.43.3.10896. Each of these gets a recorded fixt
 | any of the above                                       | `lastViewedAt` is stamped **now**. No API accepts a date.                                                                |
 
 Every cell of the write plan in §3.2 was exercised against `Tester` with `Tester`'s own server token,
-minted through the same plex.tv switch-then-exchange path `canary_server_token` uses
+minted through the same plex.tv switch-then-exchange path `home_user_server_token` uses
 (`plextv.py:330`). Specifically: show key → **35/35** (which is the One Piece bug, reproduced
 deliberately); episode key → **1/35**; `/:/progress` on a movie key and on an episode key → exact
 `viewOffset`; three back-to-back scrobbles in 28 ms → **`viewCount` 3**, so the rewatch loop needs no
@@ -372,7 +372,7 @@ answerable afterwards, which it currently is not.
 
 ## 8. What was verified, and what was not
 
-Everything in §2 and §3.2 was exercised against `Tester` (841506001) on SFLIX with `Tester`'s own
+Everything in §2 and §3.2 was exercised against `Tester` (1000001) on a large production server with `Tester`'s own
 server token, on 2026-08-25, and undone afterwards with the account re-read to confirm it was clean.
 The read-shape claims in §1 and §3.1 come from the live server with the admin token.
 
@@ -432,8 +432,8 @@ source could authorise a real run that reads another.
 
 ## 10. The live run — what it proved, and the two bugs it caught
 
-Run against SFLIX on 2026-08-25, owner (account 5245144, 10,948 watched leaves) → `Tester`
-(841506001), through the real HTTP API with the owner's API token. Verified by reading Plex
+Run against a large production server on 2026-08-25, owner (account 1000000, 10,948 watched leaves) → `Tester`
+(1000001), through the real HTTP API with the owner's API token. Verified by reading Plex
 DIRECTLY afterwards, never by trusting the report the feature produced.
 
 Final result, second run:

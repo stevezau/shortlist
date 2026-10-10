@@ -79,14 +79,14 @@ def _plex_writes(state: FakePlexState) -> tuple:
 def test_an_ai_row_is_added_from_the_gallery_and_tried_for_one_person_with_nothing_written_to_plex(
     page: Page, app: ShortlistApp, curator: _FakeCurator, reset_fake_plex: FakePlexState
 ):
-    # 1. The AI template, from the gallery, opens an editor that wants a list before it can be added.
+    # 1. The AI kind tile, on the add-a-row screen, opens an editor that wants a list before it can be added.
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
     page.get_by_role("button", name="Add a row").click()
-    page.get_by_role("group", name="Templates", exact=True).get_by_role(
-        "button", name=re.compile(r"^.*Describe a row")
+    page.get_by_role("group", name="Kinds of row", exact=True).get_by_role(
+        "button", name=re.compile(r"^AI row")
     ).click()
-    page.get_by_role("button", name="Use template").click()
+    page.get_by_role("button", name="Continue").click()
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible(timeout=LOAD)
     expect(page.get_by_role("button", name="Add row")).to_be_disabled()
 

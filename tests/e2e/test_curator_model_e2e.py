@@ -52,7 +52,7 @@ def test_curator_model_field_is_a_real_dropdown(page: Page, app: ShortlistApp, m
 
 
 def test_switching_provider_relists_models_from_the_entered_key(page: Page, app: ShortlistApp, monkeypatch) -> None:
-    # Steve's report: switching provider left the old provider's model in the dropdown. Switching must
+    # Reported by the maintainer: switching provider left the old provider's model in the dropdown. Switching must
     # clear the stale model and, once the new provider's key is entered, list THAT provider's models.
     app.api("PUT", "/api/settings", json={"values": {"curator.provider": "anthropic", "curator.api_key": "sk-fake"}})
     _stub_models(monkeypatch)

@@ -33,7 +33,7 @@ from shortlist.engine.pipeline import run as engine_run
 from tests.conftest import NOW
 from tests.fakes.fake_plex import make_fake_plex, make_fake_plextv, seed_state
 from tests.fakes.file_stores import FileSnapshotStore
-from tests.integration.test_engine_vs_fake import _UvicornThread
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.integration
 
@@ -112,9 +112,9 @@ class Harness:
     def __init__(self, monkeypatch, tmp_path, similar: dict[tuple[str, int], list[int]]):
         self.state = seed_state()
         self.servers = [
-            _UvicornThread(make_fake_plex(self.state)).start(),
-            _UvicornThread(make_fake_plextv(self.state)).start(),
-            _UvicornThread(_tmdb(similar)).start(),
+            UvicornThread(make_fake_plex(self.state)).start(),
+            UvicornThread(make_fake_plextv(self.state)).start(),
+            UvicornThread(_tmdb(similar)).start(),
         ]
         pms, plextv, tmdb = self.servers
         monkeypatch.setattr("shortlist.engine.clients.plextv.PLEXTV", plextv.url)

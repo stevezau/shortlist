@@ -123,6 +123,9 @@ export function ActivityIndicator({
     if (previous === null) return; // first poll: seed only
     const { started, finished, failed } = jobTransitions(previous, query.data);
     for (const job of started) {
+      // The timer started this one, not the person looking at the page; the header count still
+      // shows it. Its outcome is announced only when it changed something (the server drops a quiet one).
+      if (job.payload?.scheduled === true) continue;
       // No "Running in the background" — the spinner already says that, and repeating it on every
       // toast stacked identical second lines that carried no information. The TARGET does: a
       // cleanup for one person reads very differently from one for forty.
@@ -158,6 +161,10 @@ export function ActivityIndicator({
   const recent = jobs.filter((job) => !isInFlight(job)).slice(0, 5);
   const failing = jobs.filter((job) => job.status === "failed").length;
   const runActive = useRunActive(queued.length > 0);
+
+  // Idle: no button, because the Activity nav item already goes to the same place. Returning here,
+  // after every hook, keeps this component mounted as the job queue's single observer (the toasts).
+  if (inFlight.length === 0) return null;
 
   return (
     <HeaderPopover open={open} onOpenChange={setOpen} align={align} label="Background work" className="p-3" trigger={

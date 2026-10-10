@@ -1,8 +1,7 @@
 ---
-title: Troubleshooting and backups
+title: "Troubleshooting and backups for Plex recommendation rows"
 description: The common failures and what causes them, plus what Shortlist backs up and what it can't restore.
 heading: Troubleshooting and backups
-nav_order: 7
 ---
 
 ## Start here: "Have an issue?"
@@ -143,7 +142,7 @@ faster than a list of questions: _"open /issue, switch the checks on, type the t
 - **Everything broke, get me out** — Settings → System → Danger zone → **Uninstall** restores every
   user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled
   collection. Kometa and other tools' collections are never touched.
-- **Did anything drift out of sync?** — Settings → System → Danger zone → **What Shortlist has on your
+- **Did anything drift out of sync?** — Settings → System → **What Shortlist has on your
   Plex** ("Check Plex") lists every shortlist-labeled collection read straight from the server (not
   the database), flagging any whose user/row no longer exists in the app. Every collection is
   labeled at creation, in one step, so a collection that can't be labeled is deleted rather than left

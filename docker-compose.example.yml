@@ -18,4 +18,7 @@ services:
       # - TAUTULLI_URL=http://tautulli:8181
       # - TAUTULLI_APIKEY=...
       # - TMDB_APIKEY=...
+      # Optional: turns on assistant (MCP) access. Set to the public https address your assistant
+      # will use. Off while unset. Guide: https://shortlistapp.dev/guides/assistant-access/
+      # - SHORTLIST_MCP_URL=https://media.example.com/mcp
     restart: unless-stopped

@@ -16,6 +16,21 @@ Shortlist answers the question "can I give each of my Plex users recommendations
 watched?" — which Plex itself does not do. Plex's built-in recommendation shelves are identical for
 every account on the server.
 
+## Install
+
+```
+docker run -d --name shortlist -p 5959:5959 \
+  -e TZ=Etc/UTC -e PUID=1000 -e PGID=1000 \
+  -v /path/to/shortlist/config:/config \
+  --restart unless-stopped \
+  ghcr.io/stevezau/shortlist:latest
+```
+
+Change `/path/to/shortlist/config` to a folder on the host, then open http://your-host:5959 and follow
+the setup wizard. Requirements: Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin
+account, a free TMDB API key. Add `-e SHORTLIST_DRY_RUN=1` to see what it would do while writing
+nothing to Plex. Install guide: https://shortlistapp.dev/getting-started/
+
 ## How it differs from the tools usually suggested first
 
 People asking for this are commonly pointed at Kometa, SuggestArr or Recommendarr first. None of
@@ -59,11 +74,11 @@ them as restored.
   llama.cpp, LM Studio, vLLM, LocalAI).
 - Every pick is verified to exist in the user's library before delivery — titles are never invented.
 - Every pick carries a reason: "Because you watched X".
-- Six row kinds and ten templates to start from: Picked for You, Because you watched, Watch it again,
+- Six row kinds and eleven templates to start from: Picked for You, Because you watched, Watch it again,
   Popular on this server (shared), Seasonal and Your requests. Each person can have as many rows as
   you add; shared rows are seen by everyone.
 - A seasonal row follows the calendar: three built-in seasons (Valentine's Day, Halloween,
-  Christmas), ten ready-made holidays such as Thanksgiving and Easter, or custom dates. It is ranked
+  Christmas), twenty ready-made holidays, film days and spotlights such as Thanksgiving and Easter, or custom dates. It is ranked
   for each person and hidden between seasons.
 - A "Your requests" row: the titles a person asked for in Overseerr/Jellyseerr, or that carry their
   requester tag in Radarr/Sonarr, once they are on Plex and until they have watched them. No AI, no
@@ -72,12 +87,12 @@ them as restored.
   approval inbox. Dry run shows what would change without writing to Plex; uninstall restores share
   filters.
 - Web interface: dashboard, Users, Privacy, Runs (with a per-person "How we picked"), Activity
-  (including "Changes on Plex") and three-tab Settings.
+  (including "Changes on Plex") and four-tab Settings.
 - Optional integrations: Tautulli, Radarr, Sonarr, Overseerr/Jellyseerr, Trakt, MDBList, Exa.
 - Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
 - Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
   label-based share filters.
-- Status: 1.0, running in production.
+- Status: 1.x, running in production.
 
 ## Docs
 
@@ -88,25 +103,28 @@ Every page below, concatenated into one file, is at [llms-full.txt]({{ '/llms-fu
 - [Guides]({{ '/guides' | absolute_url }}): index of the guide pages
 - [A tour of the web interface]({{ '/guides/interface' | absolute_url }}): every page and every dashboard number
 - [People and sharing]({{ '/guides/people-and-sharing' | absolute_url }}): the Users page, turning people on, off and paused, per-person settings, leaving one account's sharing alone, people who leave, accounts Plex restricts
-- [Rows and templates]({{ '/guides/rows' | absolute_url }}): ten templates, six row kinds, editing a row, naming
+- [Rows and templates]({{ '/guides/rows' | absolute_url }}): eleven templates, six row kinds, editing a row, naming
 - [How a row is filled]({{ '/guides/rows/what-goes-in' | absolute_url }}): Because you watched and Watch it again rows, people with too little history, the order titles appear in
-- [Seasonal rows]({{ '/guides/rows/seasonal' | absolute_url }}): three built-in seasons, ten ready-made holidays and custom dates, hidden between seasons
+- [Seasonal rows]({{ '/guides/rows/seasonal' | absolute_url }}): three built-in seasons, twenty ready-made holidays, film days and spotlights, and custom dates, hidden between seasons
 - [Where a row shows]({{ '/guides/rows/placement' | absolute_url }}): Home and the Recommended shelf, placement next to other collections, posters, descriptions and sort titles
 - [Choosing what goes in a row]({{ '/guides/picks' | absolute_url }}): candidate sources, refresh cadence, per-row and per-person overrides
 - [Schedules]({{ '/guides/schedules' | absolute_url }}): per-row schedules, custom cron, the background jobs
 - [Requests: Radarr and Sonarr]({{ '/guides/requests' | absolute_url }}): asking Radarr, Sonarr or Overseerr for titles the library lacks, and the approval inbox; the Your requests row and per-row request settings
 - [AI and cost]({{ '/guides/ai' | absolute_url }}): what AI adds, which search backend to pick, keeping the bill small
 - [Exposing Shortlist to the internet]({{ '/guides/security' | absolute_url }}): TLS, proxies, the API token
+- [Connect an assistant]({{ '/guides/assistant-access' | absolute_url }}): named MCP grants, local credentials, OAuth, stdio, hosted-client network requirements, approvals and revocation
 - [Troubleshooting and backups]({{ '/guides/troubleshooting' | absolute_url }}): common failures, what is backed up
 - [Integrations]({{ '/integrations' | absolute_url }}): Plex, TMDB, the AI providers, Radarr/Sonarr, Overseerr/Jellyseerr, Tautulli, webhooks
 - [Reference]({{ '/reference' | absolute_url }}): index of the reference pages
 - [Settings reference]({{ '/reference/settings' | absolute_url }}): every settings key and its default, grouped by area, and per-row request overrides
 - [Environment and files]({{ '/reference/environment' | absolute_url }}): container environment variables, serving from a subpath, the files under /config
-- [API reference]({{ '/reference/api' | absolute_url }}): every REST endpoint and its request and response shape
+- [API reference]({{ '/reference/api' | absolute_url }}): the main REST endpoints and their request and response shapes
+- [MCP assistant reference]({{ '/reference/assistant' | absolute_url }}): assistant tools, scoped permissions, reviewed changes, operation receipts and external-call limits
 - [How Shortlist decides things]({{ '/reference/concepts' | absolute_url }}): what "already watched" means, watched vs finished, why the owner sees every row, how a pick is chosen, how rows stay private
 - [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling
 - [Plex how-to]({{ '/plex-how-to' | absolute_url }}): what Plex itself can and cannot do about recommendations and per-user rows
 - [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks; what managed users, pinned sources and published collections change; what it costs at your server's size
+- [Can Kometa give each Plex user their own recommendations?]({{ '/kometa-per-user-recommendations' | absolute_url }}): Kometa's collections are library-wide; what it can't do per user and how to run it alongside Shortlist
 - [How to improve Plex recommendations]({{ '/improve-plex-recommendations' | absolute_url }}): what the Manage Recommendations menu really changes, which settings help, and where the built-in tools stop
 - [Plex recommendations based on each user's watch history]({{ '/plex-recommendations-watch-history' | absolute_url }}): what Plex does with watch history, why smart collections are not personal, how to build rows that are, and Netflix-style rows
 - [AI recommendations for Plex]({{ '/plex-ai-recommendations' | absolute_url }}): why asking a model for titles hallucinates, the candidates-from-library-then-rank shape that works, local models, cost

@@ -6,6 +6,7 @@ import { UserAvatar } from "@/components/user-avatar";
 import { nameList } from "@/lib/run-privacy";
 import type { User } from "@/lib/types";
 import { dayTime } from "@/lib/when";
+import { personName } from "@/lib/user-names";
 
 /** Faces shown before the rest are summed up in words. */
 const FACES = 6;
@@ -31,7 +32,7 @@ export function FirstRunPanel({
   pending: "run" | "dry" | null;
   onRun: (dryRun: boolean) => void;
 }) {
-  const names = people.map((person) => person.display_name || person.username);
+  const names = people.map((person) => personName(person));
   return (
     <section
       aria-labelledby="first-run-heading"

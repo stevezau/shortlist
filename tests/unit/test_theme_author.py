@@ -743,7 +743,7 @@ class TestTheAisLimitsAreBounded:
 
         draft, _ = _run(_answer(rules={"min_rating": 80, "min_year": 2020, "max_year": 1990, "max_runtime": 90}))
 
-        view = themes_api._spec_view(draft.spec, brief="x", origin="ai", titles=draft.titles, tag_names={})
+        view = themes_api.spec_view(draft.spec, brief="x", origin="ai", titles=draft.titles, tag_names={})
         themes_api.ThemeOut(**view)
 
     def test_the_prompt_states_the_rating_scale(self):

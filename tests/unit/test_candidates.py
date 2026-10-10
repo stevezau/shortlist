@@ -808,6 +808,134 @@ class TestWebSearchWithoutAnLlm:
 
         assert stats.trace["web"]["failed_seeds"] == ["Dune"]
 
+    def test_a_search_that_answers_with_an_unusable_body_is_cached_not_retried(self):
+        """A 200 whose body is not JSON says nothing about the title that a retry would change."""
+
+        class _GarbageBody(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                self.queries.append(query)
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        cache = _DictCache()
+        stats = GatherStats()
+        args = (NullCurator(), _GarbageBody([], []), "exa", web_profile(), [seed(1, "Dune"), seed(2, "Arrival")], 5)
+
+        with pytest.raises(RuntimeError, match="every web search failed"):
+            web_recommendations(*args, stats, cache=cache, recent_count=2)
+        again = GatherStats()
+        again_search = _GarbageBody([], [])
+        with pytest.raises(RuntimeError, match="every web search failed"):  # a cached failure is still a failure
+            web_recommendations(
+                NullCurator(),
+                again_search,
+                "exa",
+                web_profile(),
+                [seed(1, "Dune")],
+                5,
+                again,
+                cache=cache,
+                recent_count=2,
+            )
+
+        assert again_search.queries == [], "the unusable answer was searched for again"
+        assert again.exa_cache_hits == 1
+
+    def test_a_transport_failure_is_never_cached(self):
+        class _Down(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                raise TimeoutError("Exa took too long")
+
+        cache = _DictCache()
+
+        with pytest.raises(RuntimeError, match="every web search failed"):
+            web_recommendations(
+                NullCurator(), _Down([], []), "exa", web_profile(), [seed(1, "Dune")], 5, GatherStats(), cache=cache
+            )
+
+        assert cache.store == {}
+        retry = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        web_recommendations(
+            NullCurator(), retry, "exa", web_profile(), [seed(1, "Dune")], 5, GatherStats(), cache=cache
+        )
+        assert len(retry.queries) == 1, "an outage poisoned the cache"
+
+    def test_exa_searches_counts_every_request_that_got_an_http_answer(self):
+        """Billing semantics. This test used to pin "only the searches that worked", which undercounted:
+        an unparseable 200 is billed too. A timeout got no answer, so it is the one that is not counted."""
+
+        class _Mixed(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                if "Dune" in query:
+                    raise TimeoutError("Exa took too long")
+                if "Arrival" in query:
+                    raise ValueError("Expecting value: line 1 column 1 (char 0)")
+                return super().search_detailed(query, num_results=num_results)
+
+        stats = GatherStats()
+
+        web_recommendations(
+            NullCurator(),
+            _Mixed([make_result("a", "b")], self._titles("Andor")),
+            "exa",
+            web_profile(),
+            [seed(1, "Dune"), seed(2, "Arrival"), seed(3, "Heat")],
+            5,
+            stats,
+            cache=_DictCache(),
+            recent_count=3,
+        )
+
+        assert stats.exa_searches == 2
+
+    def test_searxng_non_json_answer_is_never_cached(self):
+        """A wrong address or an expired login page is a config fault; caching it would outlast the fix."""
+
+        class _NotJson(_FakeSearch):
+            def search(self, query, *, num_results=8):
+                self.queries.append(query)
+                try:
+                    raise ValueError("Expecting value")
+                except ValueError as e:
+                    raise RuntimeError("That address answered with something other than SearXNG JSON") from e
+
+        cache = _DictCache()
+
+        with pytest.raises(RuntimeError, match="every web search failed"):
+            web_recommendations(
+                _NonNativeCurator("[]"),
+                _NotJson([], name="searxng"),
+                "searxng",
+                web_profile(),
+                [seed(1, "Dune")],
+                5,
+                GatherStats(),
+                cache=cache,
+            )
+
+        assert cache.store == {}
+
+    def test_an_exa_unusable_answer_is_cached_only_briefly_and_still_reported_as_failed(self):
+        class _GarbageBody(_FakeExtractingSearch):
+            def search_detailed(self, query, *, num_results=8):
+                raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        cache = _DictCache()
+        profile = web_profile()
+        seeds = [seed(1, "Dune"), seed(2, "Arrival")]
+        with pytest.raises(RuntimeError, match="every web search failed"):
+            web_recommendations(
+                NullCurator(), _GarbageBody([], []), "exa", profile, seeds, 5, GatherStats(), cache=cache
+            )
+        assert sorted(cache.ttls.values()) == [3600, 3600]
+
+        good = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
+        again = GatherStats()
+        # Dune is served from the cached failure; Arrival is a miss only because we evict it.
+        cache.store.pop(next(k for k in cache.store if k.endswith(":2")))
+        web_recommendations(NullCurator(), good, "exa", profile, seeds, 5, again, cache=cache, recent_count=2)
+
+        assert again.trace["web"]["failed_seeds"] == ["Dune"]
+
     def test_no_failed_seeds_key_when_every_search_worked(self):
         """The key's PRESENCE is the signal, so a clean run must not carry an empty one."""
         search = _FakeExtractingSearch([make_result("a", "b")], self._titles("Andor"))
@@ -1761,7 +1889,7 @@ class TestStructuredExtractionPath:
         Asserted against the constants, not against literals: the full TTL is a freshness/cost dial
         that gets retuned (14 days -> 7 on 2026-09-05), and this test is about the RELATIONSHIP
         between the two TTLs, which must hold at every setting. The value itself is pinned where it
-        makes a promise to the owner — `test_cache_prune.py::test_cache_ttl_matches_the_ui`.
+        makes a promise to the owner — `test_cache_prune.py::TestCacheTtlIsVisibleToTheOwner`.
         """
         self._tmdb(mock_tmdb)
         cache = _DictCache()
@@ -1912,7 +2040,7 @@ class TestStructuredExtractionPath:
 
 
 class TestAnUnparseableReplyIsDiagnosable:
-    """Two replies on SFLIX 2026-09-06 could not be parsed, and the log recorded only that fact.
+    """Two replies on a large production server 2026-09-06 could not be parsed, and the log recorded only that fact.
 
     The seed's candidates are gone either way; what matters is being able to tell WHICH failure it
     was, because they have different fixes: a refusal ("I can't help with that"), a truncated

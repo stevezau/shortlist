@@ -1,8 +1,7 @@
 ---
-title: AI and cost
+title: "AI and cost: AI-powered Plex recommendations"
 description: Shortlist works with no AI at all. What AI adds when you turn it on, which search backend to pick, and how to control what it costs.
 heading: AI and cost
-nav_order: 5
 ---
 
 ## What AI does, and what it costs
@@ -27,7 +26,7 @@ That includes gathering candidates, ranking them, and writing the "why" under ea
 3. **Balance and rank.** Shortlist takes a fair share from each source, so one chatty source can't
    crowd out the rest, and scores them. **No AI here**. It's a simple ranking.
 4. **Deliver and explain.** The top-ranked titles fill the row, each with a one-line "why" written
-   from the seed behind it, like "Because you watched sci-fi like Dune" or "Because you watched Fargo".
+   from the seed behind it, like "Because you watched Dune — more sci-fi" or "Because you watched Fargo".
    **No AI here either.** The reasons are generated in code, so they cost nothing and read the same
    whether or not you use AI.
 

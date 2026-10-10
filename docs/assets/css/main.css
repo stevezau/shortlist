@@ -589,16 +589,6 @@ hr {
   border-block: 1px solid var(--border);
 }
 
-.section__head {
-  max-width: 42rem;
-  margin-bottom: clamp(2rem, 1rem + 3vw, 3.25rem);
-}
-
-.section__head--center {
-  margin-inline: auto;
-  text-align: center;
-}
-
 .section h2 {
   font-size: clamp(1.6rem, 1.2rem + 1.8vw, 2.35rem);
   margin-bottom: 0.85rem;
@@ -1178,10 +1168,6 @@ hr {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
 }
 
-.grid--2 {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
-}
-
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1203,22 +1189,6 @@ hr {
   transform: translateY(-2px);
 }
 
-.card__icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 9px;
-  background: var(--accent-quiet);
-  color: var(--accent-text);
-  margin-bottom: 0.95rem;
-}
-
-.card__icon svg {
-  width: 19px;
-  height: 19px;
-}
-
 .card h3,
 .section .card h2 {
   font-size: 1.02rem;
@@ -1234,16 +1204,6 @@ hr {
 
 .card p + p {
   margin-top: 0.6rem;
-}
-
-.card__more {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-top: 0.85rem;
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: var(--accent-text);
 }
 
 /* ------------------------------------------------------------------- tag -- */
@@ -1263,7 +1223,7 @@ hr {
 }
 
 /* ------------------------------------------------- privacy-order flow -- */
-/* The four-step diagram used by /faq/ and by the landing page's privacy
+/* The three-step diagram used by /faq/ and by the landing page's privacy
    section, from one file, so the site can never end up describing the write
    order two different ways. Each step also states who can see the row at that
    moment, which is the part the prose could never show at a glance. */
@@ -1901,9 +1861,6 @@ hr {
     max-height: none;
     padding-block: 1rem 0;
     border-bottom: 1px solid var(--border);
-  }
-  .sidebar.is-open {
-    display: block;
   }
 }
 
@@ -2836,10 +2793,6 @@ hr {
 
 /* ---------------------------------------------------------------- utils -- */
 
-.stack-lg > * + * {
-  margin-top: clamp(1.75rem, 1rem + 2.5vw, 2.75rem);
-}
-
 .center {
   text-align: center;
 }
@@ -2883,15 +2836,6 @@ hr {
     transform 0.5s var(--ease);
 }
 
-.release-note {
-  padding: 1rem 1.25rem;
-  margin: 1.5rem 0;
-  border: 1px solid var(--accent-line);
-  border-radius: 0.75rem;
-  background: var(--accent-quiet);
-  color: var(--text-soft);
-  font-size: 0.95rem;
-}
 .preview-gallery {
   display: grid;
   gap: 1.5rem;

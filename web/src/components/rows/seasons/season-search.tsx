@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiErrorMessage } from "@/lib/api";
 
 /** The editor's searches answer nothing under this many characters (`api/seasons.py` `_MIN_QUERY`). */
-export const MIN_QUERY = 2;
+const MIN_QUERY = 2;
 
 /** One of the season editor's three searches: a labelled box, then what it found in all four states. */
 export function SeasonSearch<T>({

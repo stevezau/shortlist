@@ -71,12 +71,12 @@ const EXAMPLES: {
         kept: [],
         deleted: [],
         duplicates_removed: [],
-        collection_title: "Trending on SFLIX",
+        collection_title: "Trending on Home Server",
         created: false,
         rating_key: 777,
       },
     }),
-    who: "Trending on SFLIX",
+    who: "Trending on Home Server",
     what: "Shared row",
     change: "+2 titles, −1 title",
   },
@@ -205,6 +205,24 @@ const EXAMPLES: {
     change: "Not placed on the shelf: anchor not found (Continue Watching)",
   },
   {
+    // Queued titles that were already requested or already in the library wait nowhere, and an event
+    // from before `waiting` existed cannot say either way: neither may claim anything is waiting.
+    scope: "run.requests",
+    source: "run_persistence.py (nothing waiting, and an older event with no `waiting`)",
+    event: event("run.requests", { run_id: 12, dry_run: false, considered: 12, queued: 32, waiting: 0, sent: 0, outcomes: [] }),
+    who: "Requests",
+    what: "12 titles considered",
+    change: "Nothing requested",
+  },
+  {
+    scope: "run.requests",
+    source: "run_persistence.py (an event recorded before `waiting` existed)",
+    event: event("run.requests", { run_id: 12, dry_run: false, considered: 12, queued: 32, sent: 0, outcomes: [] }),
+    who: "Requests",
+    what: "12 titles considered",
+    change: "Nothing requested",
+  },
+  {
     scope: "run.requests",
     source: "run_persistence.py:1644",
     event: event("run.requests", {
@@ -212,6 +230,7 @@ const EXAMPLES: {
       dry_run: false,
       considered: 12,
       queued: 3,
+      waiting: 2,
       sent: 2,
       outcomes: [
         { tmdb_id: 1, title: "Dune: Part Two", media_type: "movie", status: "requested", detail: "Added to Radarr" },
@@ -221,7 +240,7 @@ const EXAMPLES: {
     }),
     who: "Requests",
     what: "12 titles considered",
-    change: "Requested Dune: Part Two and Shogun; 3 titles waiting for your approval",
+    change: "Requested Dune: Part Two and Shogun; 2 titles waiting in Requests",
   },
   {
     scope: "collection.poster",

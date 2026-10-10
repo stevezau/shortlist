@@ -5,12 +5,14 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SeasonEditorDialog, type SeasonEditorTarget } from "@/components/rows/seasons/season-editor-dialog";
+import { MISSING_COLLECTION } from "@/components/rows/seasons/season-collection-picker";
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import type { SeasonRow } from "@/lib/season-verdict";
+import { longDate } from "@/lib/seasons";
 import type { SeasonInput, SeasonPreviewInput } from "@/lib/types";
 
-import { BUILTINS, THANKSGIVING, THANKSGIVING_US, preview } from "./season-fixtures";
+import { ANIMATION_MONTH, BUILTINS, FEBRUARY_SPOTLIGHT, THANKSGIVING, THANKSGIVING_US, preview } from "./season-fixtures";
 
 const mocks = vi.hoisted(() => ({
   getSeasons: vi.fn(),
@@ -32,8 +34,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const NO_TAG =
   "TMDB has no tag matching “father's day”. Try a broader word, or add a collection or your own picks below.";
-const MISSING_COLLECTION =
-  "Not in your library right now. Kometa only creates its seasonal collections in season; on nights it's missing, this season uses its other sources.";
 
 function renderEditor(
   target: SeasonEditorTarget,
@@ -202,6 +202,43 @@ describe("SeasonEditorDialog", () => {
     expect(within(confirm).queryByText(/keeps its other seasons/)).toBeNull();
   });
 
+  it("uses a full calendar month with server-provided boundaries and no lead or after controls", async () => {
+    mocks.getSeasonNextDate.mockResolvedValue({
+      next_date: "2027-02-28",
+      next_windows: FEBRUARY_SPOTLIGHT.next_windows,
+      rule_error: null,
+    });
+    mocks.createSeason.mockResolvedValue(FEBRUARY_SPOTLIGHT);
+    renderEditor({ kind: "preset", preset: { ...ANIMATION_MONTH, lead_days: 14, after_days: 2 } });
+    expect(screen.getByRole("button", { name: "Full month" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Month")).toHaveValue("2");
+    expect(screen.queryByLabelText("Day")).toBeNull();
+    expect(screen.queryByLabelText(/Shows from/)).toBeNull();
+    expect(screen.queryByLabelText(/and stays/)).toBeNull();
+    expect(await screen.findByText(
+      `Shows from ${longDate("2027-02-01")}, hidden again from ${longDate("2027-03-01")}`,
+    )).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save and add to this row" }));
+    await waitFor(() => expect(mocks.createSeason).toHaveBeenCalledWith(expect.objectContaining({
+      rule: expect.objectContaining({ kind: "month", month: 2 }),
+      lead_days: 0,
+      after_days: 0,
+    })));
+  });
+
+  it("lets a day-based season switch to a full month and choose that month", async () => {
+    mocks.createSeason.mockResolvedValue(FEBRUARY_SPOTLIGHT);
+    renderEditor({ kind: "preset", preset: THANKSGIVING_US });
+    await userEvent.click(screen.getByRole("button", { name: "Full month" }));
+    await userEvent.selectOptions(screen.getByLabelText("Month"), "2");
+    await userEvent.click(screen.getByRole("button", { name: "Save and add to this row" }));
+    await waitFor(() => expect(mocks.createSeason).toHaveBeenCalledWith(expect.objectContaining({
+      rule: expect.objectContaining({ kind: "month", month: 2 }),
+      lead_days: 0,
+      after_days: 0,
+    })));
+  });
+
   it("says one row keeps its other seasons, and two rows keep theirs", async () => {
     renderEditor({ kind: "edit", season: { ...THANKSGIVING, used_by: [{ id: 7, name: "🦃 Thanksgiving picks" }] } });
     await userEvent.click(screen.getByRole("button", { name: "Delete season" }));
@@ -263,7 +300,7 @@ describe("SeasonEditorDialog", () => {
 
     mocks.previewSeason.mockResolvedValue(preview({ total: 150, from_tags: 150 }));
     await userEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByText("Enough films for this row")).toBeInTheDocument();
+    expect(await screen.findByText("Enough matches before row filters")).toBeInTheDocument();
   });
 
   it("counts for the row it was opened from: its media and libraries, in that row's word", async () => {
@@ -276,7 +313,7 @@ describe("SeasonEditorDialog", () => {
     );
 
     expect(await screen.findByText("titles in your libraries")).toBeInTheDocument();
-    expect(screen.getByText("Enough titles for this row")).toBeInTheDocument();
+    expect(screen.getByText("Enough matches before row filters")).toBeInTheDocument();
     const body = mocks.previewSeason.mock.calls[0]?.[0] as SeasonPreviewInput;
     expect([body.media, body.library_keys]).toEqual(["both", ["1", "2"]]);
   });

@@ -7,10 +7,12 @@ tests pin BOTH halves: what is refused, and what must keep working.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 import pytest
 
-from shortlist.server.api.settings import _FETCHED_URL_KEYS
-from shortlist.server.net_guard import BlockedUrl, check_url, safe_backup_name
+from shortlist.server.net_guard import BlockedUrl, check_url
+from shortlist.server.services.settings_validation import FETCHED_URL_KEYS
 
 
 class TestUrlsSelfHostersNeed:
@@ -40,6 +42,7 @@ class TestWhatIsRefused:
             "http://169.254.169.254/latest/meta-data/",  # AWS/GCP/Azure/DO instance credentials
             "http://169.254.169.254",
             "http://100.100.100.200/",  # Alibaba
+            "http://[::ffff:169.254.169.254]/",  # the same address written as IPv4-mapped IPv6
         ],
     )
     def test_cloud_metadata_addresses(self, url):
@@ -72,22 +75,6 @@ class TestWhatIsRefused:
         check_url("http://not-up-yet.local:32400")
 
 
-class TestBackupNames:
-    """`config_dir / "backups" / name` with an unvalidated name escapes the directory, and restore
-    then copies whatever it finds over the database."""
-
-    @pytest.mark.parametrize(
-        "name",
-        ["../../etc/passwd", "../shortlist.db", "sub/dir.db", "..\\..\\windows", "/etc/passwd", "..", ""],
-    )
-    def test_traversal_is_refused(self, name):
-        with pytest.raises(ValueError):
-            safe_backup_name(name)
-
-    def test_a_real_backup_name_passes(self):
-        assert safe_backup_name("shortlist_20260729_002652_pre-migration.db").endswith(".db")
-
-
 class TestTheGuardsAreWired:
     """A guard nothing calls is a guard that does not exist. These pin the call sites."""
 
@@ -112,55 +99,53 @@ class TestTheGuardsAreWired:
         with pytest.raises(BlockedUrl, match="metadata"):
             run_capability_probe("http://169.254.169.254", "tok", "cid")
 
+    @contextmanager
     def _client(self, tmp_path):
-        """Through the real endpoint — calling `_reject_blocked_urls` directly proves the function
+        """Through the real endpoint — calling `reject_blocked_urls` directly proves the function
         works and nothing about whether the PUT handler calls it, which is the half that regresses."""
         from starlette.testclient import TestClient
 
         from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
         from shortlist.server.db.models import Server
-        from shortlist.server.main import create_app
+        from tests.shared_app import app_for
 
-        app = create_app(config_dir=tmp_path)
-        client = TestClient(app)
-        client.__enter__()
-        with app.state.sessions() as session:
-            session.add(
-                Server(machine_id="m1", url="http://pms:32400", token_enc="x", owner_account_id=7, capabilities={})
-            )
-            session.commit()
-        client.cookies.set(SESSION_COOKIE, session_serializer(app.state.session_secret).dumps({"account_id": 7}))
-        client.headers[CSRF_HEADER] = "1"
-        return client
+        app = app_for(tmp_path)
+        with TestClient(app) as client:
+            with app.state.sessions() as session:
+                session.add(
+                    Server(machine_id="m1", url="http://pms:32400", token_enc="x", owner_account_id=7, capabilities={})
+                )
+                session.commit()
+            client.cookies.set(SESSION_COOKIE, session_serializer(app.state.session_secret).dumps({"account_id": 7}))
+            client.headers[CSRF_HEADER] = "1"
+            yield client
 
-    @pytest.mark.parametrize("key", _FETCHED_URL_KEYS)
+    @pytest.mark.parametrize("key", FETCHED_URL_KEYS)
     def test_saving_a_metadata_url_through_the_api_is_refused(self, tmp_path, key):
         """Parameterised over the tuple itself, not over one hand-picked key.
 
-        `_FETCHED_URL_KEYS` is the whole list of settings the SERVER later fetches, and it grows —
+        `FETCHED_URL_KEYS` is the whole list of settings the SERVER later fetches, and it grows —
         it just gained `requests.overseerr.url`. Testing one member proves the guard runs for that
         member; testing the tuple proves a new door cannot be added without one.
         """
-        client = self._client(tmp_path)
+        with self._client(tmp_path) as client:
+            r = client.put("/api/settings", json={"values": {key: "http://169.254.169.254"}})
 
-        r = client.put("/api/settings", json={"values": {key: "http://169.254.169.254"}})
-
-        assert r.status_code == 422
-        assert client.get("/api/settings").json().get(key) != "http://169.254.169.254"
+            assert r.status_code == 422
+            assert client.get("/api/settings").json().get(key) != "http://169.254.169.254"
 
     def test_saving_normal_self_hosted_urls_through_the_api_works(self, tmp_path):
         """The half that matters more: this app is useless if a LAN address is refused."""
-        client = self._client(tmp_path)
+        with self._client(tmp_path) as client:
+            r = client.put(
+                "/api/settings",
+                json={
+                    "values": {
+                        "requests.radarr.url": "http://192.168.1.50:7878",
+                        "curator.ollama_url": "http://ollama:11434",
+                    }
+                },
+            )
 
-        r = client.put(
-            "/api/settings",
-            json={
-                "values": {
-                    "requests.radarr.url": "http://192.168.1.50:7878",
-                    "curator.ollama_url": "http://ollama:11434",
-                }
-            },
-        )
-
-        assert r.status_code == 200
-        assert client.get("/api/settings").json()["requests.radarr.url"] == "http://192.168.1.50:7878"
+            assert r.status_code == 200
+            assert client.get("/api/settings").json()["requests.radarr.url"] == "http://192.168.1.50:7878"

@@ -9,6 +9,7 @@ import { AiTryIt } from "@/components/rows/ai-try-it";
 import { ApiError } from "@/lib/api";
 import type * as ApiModule from "@/lib/api";
 import type { Collection, User } from "@/lib/types";
+import { makeUser } from "@/test/user-fixtures";
 
 const api = vi.hoisted(() => ({ startRun: vi.fn(), getRun: vi.fn() }));
 
@@ -25,8 +26,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 const row = { id: 9, slug: "twist-endings", theme_id: 5 } as unknown as Collection;
-const sarah = { id: 3, slug: "sarah", username: "sarah", display_name: "Sarah", enabled: true } as unknown as User;
-const mike = { id: 4, slug: "mike", username: "mike", display_name: "Mike", enabled: true } as unknown as User;
+const sarah = makeUser({ id: 3, slug: "sarah", username: "sarah", display_name: "Sarah" });
+const mike = makeUser({ id: 4, slug: "mike", username: "mike", display_name: "Mike" });
 
 function runResult(patch: Record<string, unknown> = {}) {
   return {

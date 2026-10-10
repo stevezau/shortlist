@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import { selectedClass } from "@/lib/selected";
+import { scrollStrip, useScrollStrip } from "@/lib/use-scroll-strip";
 import { cn } from "@/lib/utils";
 
-export type RowSection = { id: string; label: string };
+export type RowSection = {
+  id: string;
+  label: string;
+  /** A few words beside the label: how many settings the row overrides, or that it follows the server. */
+  hint?: string;
+};
 
 /**
  * The row editor's one way around the page: a sticky list of links to sections that are all on the
@@ -19,6 +25,7 @@ export type RowSection = { id: string; label: string };
  */
 export function RowSectionNavigation({ sections }: { sections: RowSection[] }) {
   const [active, setActive] = useState(sections[0]?.id ?? "");
+  const [stripRef, stripStyle] = useScrollStrip<HTMLElement>();
   const inBand = useRef(new Set<string>());
   const key = sections.map((section) => section.id).join(",");
 
@@ -74,14 +81,18 @@ export function RowSectionNavigation({ sections }: { sections: RowSection[] }) {
 
   return (
     <nav
+      ref={stripRef}
+      style={stripStyle}
       aria-label="Row settings sections"
       className={cn(
+        scrollStrip,
         // A horizontal scroller under the phone header; a vertical list beside the form from `lg` up.
         "sticky top-14 z-20 -mx-4 flex gap-1 overflow-x-auto border-b bg-background/95 px-4 py-2 backdrop-blur-sm",
         "md:top-0 md:-mx-8 md:px-8",
         "lg:top-6 lg:mx-0 lg:flex-col lg:overflow-visible lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none",
       )}
     >
+      <p className="mb-1 hidden px-3 text-sm font-medium text-muted-foreground lg:block">Needs the Save button</p>
       {sections.map((section) => {
         const current = active === section.id;
         return (
@@ -91,7 +102,7 @@ export function RowSectionNavigation({ sections }: { sections: RowSection[] }) {
             aria-current={current ? "location" : undefined}
             onClick={(event) => jump(event, section.id)}
             className={cn(
-              "shrink-0 whitespace-nowrap rounded-md border px-3 py-1.5 text-sm motion-safe:transition-colors",
+              "flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-md border px-3 py-1.5 text-sm motion-safe:transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               current
                 ? // The amber edge runs along the bottom in the phone scroller and down the left in the
@@ -101,6 +112,9 @@ export function RowSectionNavigation({ sections }: { sections: RowSection[] }) {
             )}
           >
             {section.label}
+            {section.hint && (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">{section.hint}</span>
+            )}
           </a>
         );
       })}

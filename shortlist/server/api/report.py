@@ -10,11 +10,11 @@ Mostly a read of that history, but not entirely: ``POST /report/sync`` kicks off
 sync, and ``DELETE /report/deleted-rows`` permanently deletes the pick history of rows that no longer
 exist — the one destructive action on the dashboard.
 
-**Everything here is windowed** (``?window=7|30|90|all``, default 30). It used to be lifetime-cumulative,
-which made every ratio meaningless: a pick stops being creditable once the row drops it
-(``run_persistence.reconcile_watched``), but the old denominator counted every pick ever delivered,
-forever. Each night therefore added ~60 permanently-uncreditable picks per person to the bottom of
-the fraction, so the number measured how long Shortlist had been installed rather than how good the
+**Everything here is windowed** (``?window=7|30|90|all``, default 30). A lifetime-cumulative ratio would
+be meaningless: a pick stops being creditable once the row drops it
+(``run_persistence.reconcile_watched``), but a lifetime denominator counts every pick ever delivered,
+forever. Each night would add ~60 permanently-uncreditable picks per person to the bottom of the
+fraction, so the number would measure how long Shortlist had been installed rather than how good the
 picks were.
 
 The one ratio that survives — ``overall.landing`` — is computed over a **matured cohort**: picks
@@ -211,7 +211,7 @@ async def clear_deleted_rows(request: Request, slug: str | None = None) -> dict:
             per_slug[slug_] = per_slug.get(slug_, 0) + n
         # The `NOT EXISTS` is a backstop for the gap between this DELETE and `_orphaned_slugs` above.
         # pysqlite opens the write transaction here, so the eligibility read was an autocommit snapshot.
-        # `_unique_slug` no longer hands a new row a slug these picks still name, but a delete of a
+        # `row_editing.unique_slug` no longer hands a new row a slug these picks still name, but a delete of a
         # live row's picks must not rest on a rule in another module.
         live_slug = select(Collection.id).where(Collection.slug == PickRow.collection_slug)
         deleted = (

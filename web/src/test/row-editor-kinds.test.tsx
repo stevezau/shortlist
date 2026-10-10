@@ -8,6 +8,7 @@ import { RowEditor } from "@/components/rows/row-editor";
 import { RowEnableToggle } from "@/components/rows/row-enable-toggle";
 import { ApiError } from "@/lib/api";
 import type * as ApiModule from "@/lib/api";
+import { overrideName } from "@/test/override-name";
 import { blankInput, toInput } from "@/lib/collections";
 import {
   applyRowKind,
@@ -25,10 +26,14 @@ import {
 import { findRowTemplate, ROW_TEMPLATES, type RowTemplate } from "@/lib/row-templates";
 import type { Collection, CollectionInput } from "@/lib/types";
 import { BYW_NAME, CTX, FIXTURES, named, row } from "@/test/row-kind-fixtures";
-import { BUILTINS, CATALOGUE } from "@/test/season-fixtures";
+import { BUILTINS, CATALOGUE, THANKSGIVING, THANKSGIVING_US, preview } from "@/test/season-fixtures";
 
 // Mutable so a test can serve the owner's own seasons beside the built-ins.
-const catalogueData = vi.hoisted(() => ({ current: [] as unknown[] }));
+const catalogueData = vi.hoisted(() => ({
+  current: [] as unknown[],
+  load: null as (() => Promise<unknown[]>) | null,
+}));
+const seasonCalls = vi.hoisted(() => ({ presets: [] as unknown[], create: vi.fn() }));
 
 const { updateCollection, createCollection, settingsData, librariesData, rowSources } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
@@ -69,8 +74,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getSettings: () => Promise.resolve(settingsData.current),
       getLibraries: () => Promise.resolve(librariesData.current),
       getLibraryCollections: () => Promise.resolve([]),
-      getSeasons: () => Promise.resolve(catalogueData.current),
-      getSeasonPresets: () => Promise.resolve([]),
+      getSeasons: () => catalogueData.load?.() ?? Promise.resolve(catalogueData.current),
+      getSeasonPresets: () => Promise.resolve(seasonCalls.presets),
+      createSeason: (body: unknown) => seasonCalls.create(body),
+      previewSeason: () => Promise.resolve(preview()),
       getImageProvider: () => Promise.resolve({ capable: false, provider: "", reason: "" }),
       getRequestRowSources: () => Promise.resolve(rowSources),
       startRun: () => Promise.resolve({ run_id: 1 }),
@@ -138,6 +145,133 @@ beforeEach(() => {
   settingsData.current = {};
   librariesData.current = [];
   catalogueData.current = BUILTINS;
+  catalogueData.load = null;
+  seasonCalls.presets = [];
+  seasonCalls.create.mockReset();
+});
+
+describe("pending ready-made season saves", () => {
+  async function beginAdd(collection: Collection | null = null, beforeAdd?: () => Promise<void>) {
+    let finish!: (season: typeof THANKSGIVING) => void;
+    let fail!: (error: Error) => void;
+    seasonCalls.presets = [THANKSGIVING_US];
+    seasonCalls.create.mockReturnValue(new Promise<typeof THANKSGIVING>((resolve, reject) => {
+      finish = resolve;
+      fail = reject;
+    }));
+    const callbacks = renderEditor(collection, collection ? null : findRowTemplate("seasonal")!);
+    await beforeAdd?.();
+    await userEvent.click(await screen.findByRole("button", { name: "Add Thanksgiving (US)" }));
+    expect(seasonCalls.create).toHaveBeenCalledWith({
+      name: "Thanksgiving", emoji: "🦃", preset: "thanksgiving_us",
+      rule: { kind: "nth", month: 11, day: 1, nth: 4, weekday: 3, offset: 0 },
+      lead_days: 14, after_days: 0, tags: [{ id: 4543, name: "thanksgiving" }],
+      genre: null, excluded_genres: [], collections: [], picks: [],
+    });
+    const completeCreate = () => {
+      catalogueData.current = CATALOGUE;
+      seasonCalls.presets = [];
+      finish(THANKSGIVING);
+    };
+    return {
+      ...callbacks, completeCreate,
+      fail: async () => {
+        fail(new ApiError(503, "Season service unavailable."));
+        await screen.findByText(/Season service unavailable/);
+      },
+      finish: async () => {
+        completeCreate();
+        await waitFor(() => expect(document.querySelector('li[data-season="thanksgiving"] input')).toBeChecked());
+      },
+    };
+  }
+
+  it("waits for a pending preset Add before saving the row with its new season", async () => {
+    const pending = await beginAdd();
+    await save();
+    const bodySentTooEarly = createCollection.mock.calls[0]?.[0];
+    const closedTooEarly = pending.onClose.mock.calls.length;
+    await pending.finish();
+
+    expect(bodySentTooEarly).toBeUndefined();
+    expect(closedTooEarly).toBe(0);
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith(expect.objectContaining({
+      seasons: ["valentines", "halloween", "thanksgiving", "christmas"],
+    })));
+  });
+
+  it("waits for a pending preset Add before leaving a new row", async () => {
+    const pending = await beginAdd();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    const closedTooEarly = pending.onClose.mock.calls.length;
+    await pending.finish();
+
+    expect(closedTooEarly).toBe(0);
+    expect(createCollection).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(pending.onClose).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a saved row's draft intact while a preset Add is pending", async () => {
+    const pending = await beginAdd(
+      row({ ...named("{season} picks"), build: "shared", seasons: ["christmas"] }),
+      () => userEvent.type(screen.getByLabelText("Description"), "Unfinished draft"),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    const descriptionAfterDiscard = (screen.getByLabelText("Description") as HTMLTextAreaElement).value;
+    await pending.finish();
+
+    expect(descriptionAfterDiscard).toBe("Unfinished draft");
+    expect(updateCollection).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByLabelText("Description")).toHaveValue("");
+  });
+
+  it("keeps row saving blocked until the added season's catalogue refetch finishes", async () => {
+    const pending = await beginAdd();
+    let finishRefresh!: (seasons: unknown[]) => void;
+    catalogueData.load = vi.fn(() => new Promise<unknown[]>((resolve) => { finishRefresh = resolve; }));
+    pending.completeCreate();
+    await waitFor(() => expect(catalogueData.load).toHaveBeenCalledWith());
+    await save();
+    const bodySentTooEarly = createCollection.mock.calls[0]?.[0];
+    finishRefresh(CATALOGUE);
+    await waitFor(() => expect(document.querySelector('li[data-season="thanksgiving"] input')).toBeChecked());
+
+    expect(bodySentTooEarly).toBeUndefined();
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith(expect.objectContaining({
+      seasons: ["valentines", "halloween", "thanksgiving", "christmas"],
+    })));
+  });
+
+  it("lets a failed preset Add unlock row editing and save without the failed season", async () => {
+    const pending = await beginAdd();
+    await pending.fail();
+    expect(screen.getByRole("button", { name: "Add row" })).toBeEnabled();
+    await userEvent.type(screen.getByLabelText("Description"), "Still editable");
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith(expect.objectContaining({
+      description: "Still editable", seasons: ["valentines", "halloween", "christmas"],
+    })));
+  });
+
+  it("keeps the row's kind and sharing mode intact while a preset Add is pending", async () => {
+    const pending = await beginAdd();
+    await userEvent.click(kindRadio("Popular on this server"));
+    const seasonalBeforeComplete = (kindRadio("Seasonal") as HTMLInputElement).checked;
+    await userEvent.click(buildRadio("Per person"));
+    const sharedBeforeComplete = (buildRadio("Shared") as HTMLInputElement).checked;
+    await pending.finish();
+
+    expect(seasonalBeforeComplete).toBe(true);
+    expect(sharedBeforeComplete).toBe(true);
+    await save();
+    await waitFor(() => expect(createCollection).toHaveBeenCalledWith(expect.objectContaining({
+      build: "shared", seasons: ["valentines", "halloween", "thanksgiving", "christmas"],
+    })));
+  });
 });
 
 describe("explicit Per person / Shared choice", () => {
@@ -563,18 +697,20 @@ describe("Because you watched: Based on", () => {
     expect(screen.getByText(/Picks new titles every night, so it keeps up/)).toBeInTheDocument();
   });
 
-  it("puts the name for someone new directly under when someone hasn't watched enough", () => {
+  it("keeps the name for someone new with the row's own settings and the cold-start choice in the server defaults", () => {
     renderEditor(row({ ...named(BYW_NAME), max_seeds: 2 }));
     const coldStart = document.querySelector('[data-setting="cold_start"]');
-    const fallback = document.querySelector('[data-setting="fallback_name"]');
-    expect(coldStart?.nextElementSibling).toBe(fallback);
+    expect(coldStart?.closest("[data-override-row]")).toBe(coldStart);
+    expect(screen.getByText("Server defaults").parentElement?.parentElement).toContainElement(coldStart as HTMLElement);
+    expect(document.querySelector('[data-setting="fallback_name"]')).not.toBeNull();
   });
 });
 
 describe("wording", () => {
   it("counts someone as new by the live history threshold, and links to where it's set", async () => {
     settingsData.current = { "recommendations.min_history": 12 };
-    renderEditor(row());
+    // The wording sits under the control, which a row shows once it overrides the default.
+    renderEditor(row({ cold_start: "skip" }));
 
     expect(await screen.findByText(/Someone counts as new until they’ve watched 12 titles/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "change it in Settings" })).toHaveAttribute("href", "/settings#min-history");
@@ -588,8 +724,11 @@ describe("wording", () => {
   it("groups a Watch it again row's fill-up settings under their own heading", () => {
     renderEditor(row({ rewatch: true, watched_pct: 1 }));
     const fillUp = screen.getByRole("region", { name: "When their finished titles run out" });
-    for (const key of ["max_seeds", "candidate_sources", "recency"]) {
-      expect(fillUp.querySelector(`[data-setting="${key}"]`)).not.toBeNull();
+    expect(fillUp.querySelector('[data-setting="candidate_sources"]')).not.toBeNull();
+    // The two dials that can follow the server sit in its list, not in this group.
+    for (const key of ["max_seeds", "recency"]) {
+      expect(fillUp.querySelector(`[data-setting="${key}"]`)).toBeNull();
+      expect(document.querySelector(`[data-setting="${key}"][data-override-row]`)).not.toBeNull();
     }
   });
 });
@@ -1020,7 +1159,7 @@ describe("Picked for You's watch count with a global of 1 or 2", () => {
   it("won't follow the global, which would make it a Because you watched row, and says why", async () => {
     settingsData.current = { "recommendations.max_seeds": 2 };
     renderEditor(row({ max_seeds: 5 }));
-    const toggle = screen.getByRole("switch", { name: /global default for how many recent watches to match/i });
+    const toggle = screen.getByRole("button", { name: overrideName(/how many recent watches/) });
 
     await waitFor(() => expect(toggle).toBeDisabled());
     expect(toggle).toHaveAccessibleDescription(
@@ -1033,9 +1172,9 @@ describe("Picked for You's watch count with a global of 1 or 2", () => {
     renderEditor(row({ max_seeds: null }));
     // Only once settings have loaded does the toggle name the global it follows.
     expect(await screen.findByText("3 watches")).toBeInTheDocument();
-    const toggle = screen.getByRole("switch", { name: /global default for how many recent watches to match/i });
+    const toggle = screen.getByRole("button", { name: overrideName(/how many recent watches/) });
     expect(toggle).toBeEnabled();
-    expect(toggle).toBeChecked();
+    expect(toggle).toHaveTextContent("Override");
   });
 });
 

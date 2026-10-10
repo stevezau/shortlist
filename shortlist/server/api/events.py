@@ -7,7 +7,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query, Request
 from starlette.responses import StreamingResponse
 
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.schemas_events import (
     RunFinishedEvent,
     RunProgressEvent,
@@ -18,6 +17,7 @@ from shortlist.server.api.schemas_events import (
 from shortlist.server.api.schemas_runs import RunLogLineOut
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Event, iso_utc
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services.audit import PLEX_WRITE_SCOPES
 
 router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(require_owner)])

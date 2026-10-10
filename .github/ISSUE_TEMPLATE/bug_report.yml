@@ -13,7 +13,7 @@ body:
     attributes:
       label: Shortlist version
       description: Shown at the bottom of the app's sidebar, or use your image tag.
-      placeholder: e.g. 1.9.3, or dev abc1234
+      placeholder: e.g. 1.10.0, or dev abc1234
     validations:
       required: true
   - type: input

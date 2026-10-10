@@ -12,13 +12,10 @@ from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.clients.plex_pms import PlayEvent
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Delivery,
     PickRow,
@@ -33,15 +30,16 @@ from shortlist.server.services.report_service import BOUNCE_PERCENT, engagement,
 from shortlist.server.services.run_persistence import FINISHED_PERCENT, reconcile_watched
 from shortlist.server.services.watch_events import (
     RowMembership,
-    _attribution_floor,
-    _scan_plays,
     _session_starts,
+    attribution_floor,
     event_credits,
     ingest_play_history,
+    scan_plays,
     session_progress,
     tmdb_by_rating_key,
 )
 from tests.conftest import freeze_clock
+from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
@@ -53,13 +51,6 @@ REPORTED_AT = NOW + timedelta(days=2)
 @pytest.fixture(autouse=True)
 def _report_read_at(monkeypatch):
     freeze_clock(monkeypatch, report_service, REPORTED_AT)
-
-
-@pytest.fixture
-def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
 
 
 @pytest.fixture
@@ -91,6 +82,7 @@ def pick(sessions, run_id, tmdb_id, *, rating_key, created=None, **kw):
                 **kw,
             )
         )
+        personal_delivery(s, run_id)
         s.commit()
 
 
@@ -315,6 +307,7 @@ class TestEmptyAndNullStates:
         with world() as s:
             s.add(Collection(id=2, slug="popular", name="Popular", enabled=True, build="shared"))
             s.add(RunSharedRow(run_id=1, collection_slug="popular", picks=[{"title": "T", "year": 2020}]))
+            shared_delivery(s, 1, slug="popular")
             s.commit()
 
         with world() as s:
@@ -430,6 +423,7 @@ class TestTmdbIdsAreNamespacedPerMediaType:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 PickRow(
                     run_id=1,
@@ -445,6 +439,7 @@ class TestTmdbIdsAreNamespacedPerMediaType:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="2")
             s.add(
                 WatchEvent(
                     plex_account_id=99,
@@ -480,6 +475,7 @@ class TestTmdbIdsAreNamespacedPerMediaType:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 PickRow(
                     run_id=1,
@@ -495,6 +491,7 @@ class TestTmdbIdsAreNamespacedPerMediaType:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="2")
             s.commit()
         session_row(world, 10, started=NOW - timedelta(hours=6), offset=3_000_000)
 
@@ -609,9 +606,7 @@ class TestOutcomesAreDecidedPerTitleNotPerRow:
         assert [p["outcome"] for p in picks] == ["finished"]
 
     def test_an_abandoned_title_counts_once_however_many_nights_it_was_delivered(self, world):
-        """`stop_points` used to count delivery ROWS: one abandonment redelivered five nights read as
-        five, and the error scales with how long a title lingers — which for an abandoned title is
-        exactly the ones that linger longest."""
+        """One abandonment redelivered on several nights is one pick, not one per delivery."""
         for run_id, day in ((1, 2), (2, 1)):
             pick(
                 world,
@@ -626,7 +621,6 @@ class TestOutcomesAreDecidedPerTitleNotPerRow:
         with world() as s:
             data = engagement(s, "30")
 
-        assert sum(b["count"] for b in data["stop_points"]) == 1
         assert len(data["people"][0]["picks"]) == 1
 
 
@@ -651,6 +645,7 @@ class TestFinishedAtIsWhenTheyFinished:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 WatchEvent(
                     plex_account_id=99,
@@ -780,6 +775,7 @@ class TestACreditLandsOnlyOnTheRowThatShowedIt:
                         created_at=created,
                     )
                 )
+                personal_delivery(s, run_id, user_id=1, slug=slug, library="1")
             # `picked` re-delivered something else yesterday, so its newest delivery lacks 510.
             s.add(
                 PickRow(
@@ -795,6 +791,7 @@ class TestACreditLandsOnlyOnTheRowThatShowedIt:
                     created_at=NOW - timedelta(days=1),
                 )
             )
+            personal_delivery(s, 2, user_id=1, slug="picked", library="1")
             s.add(
                 WatchEvent(
                     plex_account_id=99,
@@ -843,6 +840,7 @@ class TestASeriesGetsNoPercentageFromOneEpisode:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 WatchSession(
                     plex_account_id=99,
@@ -1000,6 +998,7 @@ class TestSeriesPercentagesAreCleared:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 PickRow(
                     run_id=1,
@@ -1015,6 +1014,7 @@ class TestSeriesPercentagesAreCleared:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.commit()
             s.execute(sa.text("UPDATE picks SET max_percent = NULL WHERE media_type = 'show'"))
             s.commit()
@@ -1034,7 +1034,7 @@ class TestAPercentageNeverInventsACredit:
     """
 
     def test_a_watch_predating_the_row_does_not_come_back_as_a_drop(self, world):
-        # An unrelated pick from long ago, so `_attribution_floor` reaches back far enough for the old
+        # An unrelated pick from long ago, so `attribution_floor` reaches back far enough for the old
         # session below to be in scope at all. Without it the floor is today and the session is simply
         # never read — which is what made an earlier version of this test pass either way.
         pick(world, 1, 999, rating_key=99, created=NOW - timedelta(days=60))
@@ -1197,11 +1197,12 @@ class TestTheClocksAndTheMaxima:
                         created_at=created,
                     )
                 )
+                personal_delivery(s, 2, user_id=1, slug="picked", library="1")
             s.commit()
 
         with world() as s:
-            timeline = RowMembership(s)._per_person[(1, "picked", "1")]
-        landed = min(at for at, _keys in timeline)
+            timeline = RowMembership(s)._per_person[1]
+        landed = min(row.delivered_at.replace(tzinfo=UTC) for row in timeline)
         assert landed == NOW - timedelta(hours=6), "the earliest pick, not the latest"
 
     def test_a_shared_rows_audience_comes_from_its_NEWEST_delivery(self, world):
@@ -1213,17 +1214,35 @@ class TestTheClocksAndTheMaxima:
             s.add(Run(id=3, trigger="schedule", status="ok", started_at=NOW - timedelta(days=3)))
             s.add(Run(id=4, trigger="schedule", status="ok", started_at=NOW - timedelta(days=1)))
             # Old delivery: alex could see it. New delivery: only sam.
-            s.add(RunSharedRow(run_id=3, collection_slug="staff", status="ok", picks=[], audience=[99]))
-            s.add(RunSharedRow(run_id=4, collection_slug="staff", status="ok", picks=[], audience=[77]))
+            s.add(
+                RunSharedRow(
+                    run_id=3,
+                    collection_slug="staff",
+                    status="ok",
+                    picks=[{"tmdb_id": 550, "media_type": "movie"}],
+                    audience=[99],
+                )
+            )
+            shared_delivery(s, 3, slug="staff")
+            s.add(
+                RunSharedRow(
+                    run_id=4,
+                    collection_slug="staff",
+                    status="ok",
+                    picks=[{"tmdb_id": 550, "media_type": "movie"}],
+                    audience=[77],
+                )
+            )
+            shared_delivery(s, 4, slug="staff")
             s.commit()
 
         with world() as s:
             alex = s.query(User).filter_by(id=1).one()
             membership = RowMembership(s)
-            assert membership._shared_visible_to("staff", alex, NOW) is False, (
+            assert membership.visible_shared_rows(alex, {(550, "movie")}, NOW) == [], (
                 "the NEWEST delivery excluded them; taking the oldest would still say yes"
             )
-            assert membership._shared_visible_to("staff", alex, NOW - timedelta(days=2)) is True, (
+            assert membership.visible_shared_rows(alex, {(550, "movie")}, NOW - timedelta(days=2)) == ["staff"], (
                 "back then the old delivery was in force"
             )
 
@@ -1246,7 +1265,7 @@ class TestTheClocksAndTheMaxima:
 
 
 class TestTheAttributionFloorIsCorrectnessNotJustSpeed:
-    """`_attribution_floor` bounds every scan in the credit path, and its docstring leads with the
+    """`attribution_floor` bounds every scan in the credit path, and its docstring leads with the
     performance case — a table with no ceiling, re-read six times a day.
 
     A verification pass on 2026-08-25 found that framing dangerously incomplete: an earlier audit
@@ -1271,14 +1290,14 @@ class TestTheAttributionFloorIsCorrectnessNotJustSpeed:
         session_row(world, 10, started=NOW - timedelta(hours=6), offset=600_000)
 
         with world() as s:
-            progress = session_progress(s, _attribution_floor(s), tmdb_by_rating_key(s))
+            progress = session_progress(s, attribution_floor(s), tmdb_by_rating_key(s))
 
         assert progress, "the recent sitting should be measured"
         _started, percent = next(iter(progress.values()))
         assert percent == 10, f"a pre-floor sitting decided this pick's percentage ({percent}%)"
 
     def test_a_play_before_the_floor_is_not_scanned(self, world):
-        """`_scan_plays` feeds both the credit pass and `observed`, the set `_withdraw_unwatched`
+        """`scan_plays` feeds both the credit pass and `observed`, the set `_withdraw_unwatched`
         refuses to touch. Widening it therefore also suppresses withdrawals."""
         pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=2))
         with world() as s:
@@ -1295,17 +1314,17 @@ class TestTheAttributionFloorIsCorrectnessNotJustSpeed:
             s.commit()
 
         with world() as s:
-            scanned = _scan_plays(s, tmdb_by_rating_key(s))
+            scanned = scan_plays(s, tmdb_by_rating_key(s))
 
         assert scanned == [], "a play from before the first pick was scanned as creditable"
 
     def test_a_session_before_the_floor_is_not_a_start(self, world):
-        """The same boundary on the session path, which is the other half of what `_scan_plays`
+        """The same boundary on the session path, which is the other half of what `scan_plays`
         unions together."""
         pick(world, 2, 510, rating_key=10, created=NOW - timedelta(days=2))
         session_row(world, 10, started=NOW - timedelta(days=40), offset=1_800_000)
 
         with world() as s:
-            starts = _session_starts(s, _attribution_floor(s), tmdb_by_rating_key(s))
+            starts = _session_starts(s, attribution_floor(s), tmdb_by_rating_key(s))
 
         assert starts == [], "a sitting from before the first pick counted as a start"

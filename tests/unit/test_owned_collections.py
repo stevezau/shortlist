@@ -5,18 +5,7 @@ labelled collections are returned, foreign (Kometa) and unlabelled ones are skip
 """
 
 from shortlist.engine.clients.plex_pms import PlexClient
-
-
-class FakeLabel:
-    def __init__(self, tag: str):
-        self.tag = tag
-
-
-class FakeColl:
-    def __init__(self, title: str, tags: list[str], rating_key: int):
-        self.title = title
-        self.labels = [FakeLabel(t) for t in tags]
-        self.ratingKey = rating_key
+from tests.unit.plex_fakes import FakeColl
 
 
 class FakeSection:

@@ -1,4 +1,4 @@
-import { isPresetCron, timeFromCron } from "@/lib/format";
+import { isPresetCron, timeFromCron } from "@/lib/cron";
 import type { DateRule, Season, SeasonStatus } from "@/lib/types";
 
 /**
@@ -73,6 +73,7 @@ export function addDays(iso: string, days: number): string {
  *  November", "21 days before Easter". For a preset, which comes without the server's label. */
 export function ruleLabel(rule: DateRule): string {
   const month = MONTHS[rule.month - 1] ?? "";
+  if (rule.kind === "month") return `All of ${month}`;
   if (rule.kind === "fixed") return `${rule.day} ${month}`;
   if (rule.kind === "nth") return `${ORDINALS[rule.nth] ?? ""} ${WEEKDAYS[rule.weekday] ?? ""} of ${month}`;
   if (rule.offset === 0) return "Easter Sunday";
@@ -104,28 +105,29 @@ export function timingLabel(lead: number, after: number): string {
 
 /** When a season next shows on a row with these days before and after, e.g. "1 Oct – 31 Oct". Empty
  *  when the server gave no date. */
-export function seasonWindowLabel(season: Pick<Season, "next_dates">, leadDays: number, afterDays: number): string {
-  const next = season.next_dates[0];
+export function seasonWindowLabel(season: Pick<Season, "next_dates" | "next_windows">, leadDays: number, afterDays: number): string {
+  const next = seasonWindows(season, leadDays, afterDays)[0];
   if (!next) return "";
-  return `${seasonDate(addDays(next, -leadDays))} – ${seasonDate(addDays(next, afterDays))}`;
+  return `${seasonDate(next.start)} – ${seasonDate(next.end)}`;
 }
 
 /** ISO start and end, both shown. */
 export type DateSpan = { start: string; end: string };
 
 /** A season's windows around each of its next dates — this year's or next, and the one after. */
-export function seasonWindows(season: Pick<Season, "next_dates">, lead: number, after: number): DateSpan[] {
+export function seasonWindows(season: Pick<Season, "next_dates" | "next_windows">, lead: number, after: number): DateSpan[] {
+  if (season.next_windows?.length) return season.next_windows;
   return season.next_dates.map((day) => ({ start: addDays(day, -lead), end: addDays(day, after) }));
 }
 
-export type SeasonOverlap<S> = { first: S; second: S } & DateSpan;
+type SeasonOverlap<S> = { first: S; second: S } & DateSpan;
 
 /**
  * Every pair of these seasons whose windows share days, with the first days they share, in the order
  * given. Both of each season's next dates are compared, not just the next: on 20 December, Christmas's
  * window is this year's and Thanksgiving's next year's, yet the two still overlap every year.
  */
-export function seasonOverlaps<S extends Pick<Season, "next_dates" | "lead_days" | "after_days">>(
+export function seasonOverlaps<S extends Pick<Season, "next_dates" | "next_windows" | "lead_days" | "after_days">>(
   seasons: readonly S[],
   rowLeadDays: number,
   rowAfterDays: number,

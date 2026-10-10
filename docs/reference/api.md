@@ -1,13 +1,17 @@
 ---
 title: "Reference: the REST API"
-description: Every Shortlist REST endpoint — sign-in, users, rows, runs, requests, events, reports, the support checks and their responses.
+description: The main Shortlist REST endpoints — sign-in, users, rows, runs, requests, events, reports, the support checks and their responses.
 heading: API reference
 ---
 
 The interactive API docs are off by default (they'd disclose the whole surface unauthenticated);
 set `SHORTLIST_ENABLE_DOCS=1` to expose `/api/docs` and `/api/openapi.json` for local development
 (also required if you regenerate the frontend API types with `pnpm -C web gen:api` against a live
-server). Highlights:
+server). The OpenAPI document served there lists every route; this page covers the main ones:
+
+Assistant connections use the separately authenticated MCP endpoint. See the
+[MCP assistant reference](assistant.md) for its tool contracts and permissions, and
+[Connect an assistant](../guides/assistant-access.md) for OAuth and local credentials.
 
 ## Sign-in and setup
 
@@ -179,14 +183,19 @@ GET  /api/picks/{rating_key}/poster -> image bytes
      `rating_key` and only one of the four construction sites carries a `poster_path`, so the PMS is the
      only source that covers all of them — no new column, no migration, no backfill gap. Owner-gated,
      and it refuses any thumb path that is not on this server.
-GET  /api/seasons -> [{slug, name, emoji, description, builtin, rule, rule_label, next_dates, lead_days, after_days, preset, tags, genre, excluded_genres, collections, picks, used_by}]
+GET  /api/seasons -> [{slug, name, emoji, description, builtin, rule, rule_label, next_dates, next_windows, lead_days, after_days, preset, tags, genre, excluded_genres, collections, picks, used_by}]
      Every season in calendar order (owner only; replaces the old `GET /api/collections/seasons`). `rule` is
-     `{kind: fixed|nth|easter, month, day, nth, weekday, offset}`; `rule_label` is it in words ("4th Thursday of
+     `{kind: fixed|nth|easter|month, month, day, nth, weekday, offset}`; `rule_label` is it in words ("4th Thursday of
      November") and `next_dates` the next two dates it falls on. Built-ins have empty sources and null
      `lead_days`/`after_days` (they follow the row's). `used_by` lists the rows that tick the season.
-GET  /api/seasons/presets -> [{key, label, preset, name, emoji, rule, lead_days, after_days, tags, genre, excluded_genres, collections, picks, note}]
-     The ready-made seasons not yet added. `label` carries the region ("Thanksgiving (US)"); `name` does not.
+     For `month`, `next_dates` anchors each showing on its last day and `next_windows` gives the two exact
+     `{start, end}` calendar-month spans, including leap days. Other rules return `next_windows: []`.
+GET  /api/seasons/presets -> [{key, label, category, description, preset, name, emoji, rule, lead_days, after_days, tags, genre, excluded_genres, collections, picks, note}]
+     The ready-made seasons not yet added. `category` is `holidays`, `film_days` or `spotlights`;
+     `description` explains the theme. `label` carries the region ("Thanksgiving (US)"); `name` does not.
 POST /api/seasons (a season body: `name`, `emoji`, `rule`, `lead_days`, `after_days`, `tags`, `genre`, `excluded_genres`, `collections`, `picks`, optional `preset`) -> 201 season
+     A `month` rule shows for the whole selected month; its stored `lead_days` and `after_days` are zero.
+     Creating a preset saves the season for the server; updating a row's `seasons` is a separate request.
 PUT  /api/seasons/{slug} -> season · DELETE /api/seasons/{slug} -> 204
      Refused with 422 and a plain-English `detail`: a bad date rule (29 Feb included), no tag, collection
      or film, a name another season already has (case-insensitive, built-ins included), or a name and emoji
@@ -200,10 +209,12 @@ POST /api/seasons/preview (a draft season body, plus the row's `media` — `movi
      source, plus up to 10 titles. `movies`/`shows` split `total` by type, and are null for a type the row
      builds in no library of. An invalid rule returns 200 with `rule_error` set. 503 without a TMDB
      key or before Plex is connected; 502 when either fails.
-POST /api/seasons/next-date (a date rule: `kind` `fixed`|`nth`|`easter`, `month`, `day`, `nth` — 1–4, or -1 for the last, `weekday` — Monday=0, `offset`) -> {next_date, rule_error}
+     Counts precede row filters and shared-row watcher thresholds; they do not promise a full delivered row.
+POST /api/seasons/next-date (a date rule: `kind` `fixed`|`nth`|`easter`|`month`, `month`, `day`, `nth` — 1–4, or -1 for the last, `weekday` — Monday=0, `offset`) -> {next_date, next_windows, rule_error}
      When the rule next falls, as an ISO date on the server's clock. Worked out from the rule alone — no
      Plex or TMDB call — so it still answers when a preview can't. An invalid rule returns 200 with
-     `next_date` null and `rule_error` set. Owner only.
+     `next_date` null and `rule_error` set. For `month`, `next_date` is the month's last day and
+     `next_windows` supplies the next two complete `{start, end}` spans; other rules return `[]`. Owner only.
 GET  /api/seasons/tmdb-tags?q= · GET /api/seasons/plex-collections?q= · GET /api/seasons/library-search?q=
      Search TMDB keywords, the PMS's collections (read only; each with its library's `media_type`), and the
      libraries' titles. A `q` under 2 characters returns `[]` without asking anyone.
@@ -282,6 +293,7 @@ PUT /api/collections/{id}/up-next {user_id, theme_id} -> theme ref
 POST /api/collections/{id}/up-next/regenerate {user_id} -> theme ref
      Writes a new Up next theme for one person now, with one AI call. 409 while the row's AI is paused, 422 without
      an AI provider or when the row is not on Explore.
+POST /api/collections/{id}/rename {name_template?, old_template?, dry_run?} -> text/event-stream (renames this row's collections on Plex: one `rename` event per person, then a `done` event; `old_template` is the title the row rendered as before, which is what tells this row's collection apart from the person's other rows; `dry_run` previews and writes nothing)
 POST /api/collections/{id}/cleanup {dry_run?} (remove this row's Plex collections for everyone; dry-run previews)
 POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/collections/{id}/poster/image (serve/remove uploaded artwork) · POST /api/collections/{id}/poster/preview {title,subtitle,style} -> generated sample image
 ```
@@ -289,6 +301,7 @@ POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/co
 ## System, jobs and libraries
 
 ```
+GET  /api/system/version -> {current_version, latest_version, update_available, install_type, git_sha, git_branch} (owner-gated; `git_sha`/`git_branch` identify which build a `:dev` image is, and are empty on a source checkout)
 GET  /api/system/image-provider -> {capable, provider, reason} (can the AI provider generate poster images — drives the row editor's Generate gate)
 GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files as a zip; credentials, addresses and this server's machine id removed — the live view above strips credentials only, since it renders on the owner's own screen where the address is what makes a line readable)
 GET  /api/system/libraries -> [{key, title, type}] (the server's Plex libraries, for the row editor)
@@ -304,13 +317,42 @@ GET  /api/system/owned-collections -> {collections:[{library,title,label,rating_
 ## Runs
 
 ```
-GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages backwards; every run carries `privacy` — `{can_see_others, unreadable_filters, filters_not_enforced}`, the accounts that run found able to see other people's rows, whose filter Plex cannot read, or whose filter Plex is not applying. `privacy` is null when the run did not measure who can see what, and always null for a dry run, which builds nothing to check; each of the last two lists is null when that check did not run and `[]` when it ran and found nothing. Reporting only: a finding never changes `status`) · GET /api/runs/summary · GET /api/runs/{id} (each user carries `status`, `error`, `reason` — why a `skipped` user built nothing — `has_trace`, and `cost` — that person's timing and token spend for this run, `null` on a run recorded before this was measured, which must render as "not recorded" and never as `0s`; when present, `{setup_ms, rows: {row_slug: {duration_ms, blocked_ms}}, pools: [{label, tokens, exa_searches, duration_ms, rows}]}` — `setup_ms`/`pools` are the person's shared spend (history fetch + candidate gather), repeated across every row because it belongs to none of them; each row's own `duration_ms` is wall-clock INCLUDING `blocked_ms` (time spent waiting on the shared Plex write lock at concurrency above 1), so that row's own work time is `duration_ms - blocked_ms`; tokens are reported per POOL, never per row — all AI spend happens in the pool-scoped candidate gather, and pools are shared between rows, so a per-row token figure would be an allocation invented by the API rather than a measurement; `pools[].rows` names every row slug that drew on a given pool) · GET /api/runs/{id}/users/{user_id}/trace -> {username, display_name, status, error, reason, trace, breakdown} (the full per-user pipeline trace. History (with true distinct-title watched totals per library, split by media type) / seeds with each seed's weight ingredients, each source's queries+returns tagged with their fate (kept / already_watched / not_in_your_libraries / excluded_genre / lost_ranking_cutoff), the web-search/RAG prompts, resolved vs. hallucinated titles (the AI's resolved proposals carry the same fate so the UI marks each kept vs. dropped), plus `error`/`reason` for a failed or skipped person and `breakdown` (the delivered picks per library); a cold-start user carries a trace too (their thin history + a synthetic `cold_start` source), so `has_trace` is set and the "How we picked" page renders for them; fetched on demand, `trace: {}` on runs predating the feature) · GET /api/runs/{id}/log?after_seq=&format=json|text (the run's activity feed, kept in `run_log_lines` so an older run still has one; `after_seq` returns only what is new, `format=text` is the download) · POST /api/runs {user_ids?, collection_ids?, dry_run?} · POST /api/runs/{id}/cancel · DELETE /api/runs (clear all run history; changes nothing on Plex, and no longer disarms the row reconciles — they address collections by label + rendered title, not by run history)
+GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages backwards; every run carries `privacy` — `{can_see_others, unreadable_filters, filters_not_enforced}`, the accounts that run found able to see other people's rows, whose filter Plex cannot read, or whose filter Plex is not applying. `privacy` is null when the run did not measure who can see what, and always null for a dry run, which builds nothing to check; each of the last two lists is null when that check did not run and `[]` when it ran and found nothing. Reporting only: a finding never changes `status`) · GET /api/runs/summary · GET /api/runs/{id} (each user carries `status`, `error`, `reason` — why a `skipped` user built nothing — `has_trace`, and `cost` — that person's timing and token spend for this run, `null` on a run recorded before this was measured, which must render as "not recorded" and never as `0s`; when present, `{setup_ms, rows: {row_slug: {duration_ms, blocked_ms}}, pools: [{label, tokens, exa_searches, duration_ms, rows}]}` — `setup_ms`/`pools` are the person's shared spend (history fetch + candidate gather), repeated across every row because it belongs to none of them; each row's own `duration_ms` is wall-clock INCLUDING `blocked_ms` (time spent waiting on the shared Plex write lock at concurrency above 1), so that row's own work time is `duration_ms - blocked_ms`; tokens are reported per POOL, never per row — all AI spend happens in the pool-scoped candidate gather, and pools are shared between rows, so a per-row token figure would be an allocation invented by the API rather than a measurement; `pools[].rows` names every row slug that drew on a given pool) · GET /api/runs/{id}/users/{user_id}/trace -> {username, display_name, status, error, reason, trace, breakdown} (the full per-user pipeline trace. History (with true distinct-title watched totals per library, split by media type) / seeds with each seed's weight ingredients, each source's queries+returns tagged with their fate (kept / already_watched / not_in_your_libraries / excluded_genre / lost_ranking_cutoff), the web-search/RAG prompts, resolved vs. hallucinated titles (the AI's resolved proposals carry the same fate so the UI marks each kept vs. dropped), plus `error`/`reason` for a failed or skipped person and `breakdown` (the delivered picks per library); a cold-start user carries a trace too (their thin history + a synthetic `cold_start` source), so `has_trace` is set and the "How we picked" page renders for them; fetched on demand, `trace: {}` on runs predating the feature) · GET /api/runs/{id}/rows/{slug}/trace (the same pipeline trace for one SHARED row, whose title is served as `username`/`display_name`; `{}` on a run recorded before shared rows were persisted) · GET /api/runs/{id}/log?after_seq=&format=json|text (the run's activity feed, kept in `run_log_lines` so an older run still has one; `after_seq` returns only what is new, `format=text` is the download) · POST /api/runs {user_ids?, collection_ids?, dry_run?} · POST /api/runs/{id}/cancel · DELETE /api/runs (permanently clears the run list and step-by-step logs; keeps Plex rows, saved picks, watched-pick counts and the separate delivery records needed for future watch tracking and row cleanup; 409 while any run is queued or running — wait for it to finish)
 ```
+
+Every run carries a `stats` object, written when it finishes. The keys most worth reading:
+
+- `users_ok`, `users_error`, `users_skipped`: people built, failed, and skipped without error.
+- `titles_added`, `titles_removed`: titles that entered or left everyone's rows this run.
+- `rows_swept`, `shares_updated`: rows removed because Plex could not hide them, and share filters written.
+- `titles_requested`: titles sent to Radarr, Sonarr or Overseerr. `requests_queued` is how many a run
+  chose to hold for approval, and `requests_waiting` is the part of that which really sits in the Requests
+  inbox now (the rest was already requested or already in the library). `requests_wanted`,
+  `requests_pool`, `requests_examined` and `requests_lookups` say how many candidates were wanted,
+  pooled, looked at and looked up, `requests_by_row` splits that per row, and `requests_warnings` lists
+  anything a source reported.
+- `llm_tokens`, `llm_output_tokens`, `llm_tokens_by_step`, `exa_searches`, `exa_cache_hits`: AI and web-search
+  spend.
+- `promotion_blockers`, `error`, `dry_run`: why nothing was promoted, the run-level error, and whether it
+  was a dry run.
+- `unhideable_rows`, `unreadable_filters`, `filters_not_enforced`, `privacy_unchecked`,
+  `privacy_write_failed`, `privacy_left_alone`: the privacy findings behind a run's `privacy` field. A key
+  is absent when the run did not measure it, and `{}` or `[]` when it measured and found nothing.
+
+## Catalogs
+
+```
+GET  /api/catalogs/settings -> [setting definitions] (every setting Shortlist knows, with its options, numeric range, prerequisites and what changing it affects)
+GET  /api/catalogs/templates -> [row template definitions] (the templates Add a row offers, with their creation defaults)
+```
+
+Both require the owner browser session. They are read-only descriptions of what exists, not of your values.
 
 ## Requests
 
 ```
 GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent then rejected, capped at 500 rows; `wanted_by` repeats one `wanters` username per value and keeps a title any of them wanted — applied BEFORE the cap, so picking a name searches the whole history rather than the 500 the page loaded; omitted = everyone) · GET /api/requests/status -> {statuses: {request_id: "downloaded"|"downloading"|"queued"|"unmonitored"|null}, radarr: "ok"|"unreachable"|"off", sonarr: same} (live Sonarr/Radarr status for WAITING and SENT items — rejected are skipped; null = the app is fine and doesn't track it, which is why `radarr`/`sonarr` report reachability separately: an app that never answered would otherwise be indistinguishable from one with nothing to say. Fetched separately so the list itself makes no Arr calls, and read from whole-library maps so the cost doesn't scale with inbox size — which is what makes the inbox's poll cheap — it runs every 10s only while a title is actually downloading, and every 30s while an app is unreachable so the badge clears itself when it comes back; a settled inbox does not poll at all) · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids} (permanent) · POST /api/requests/restore {ids} (un-reject → back to Waiting) · POST /api/requests/delete {ids} (removable; can re-surface) · POST /api/requests/clear {ids} (hide SENT items from the log without un-sending — the tombstone stays so the title isn't re-requested)
+POST /api/requests/hold-preview {genres[], tags[]} -> {checked, held[{tmdb_id, title, year, reason, story}], unread} (which waiting movies these TMDB genre ids and tag ids would hold back from automatic sending; the Requests tab's live check before you save. Reads TMDB through the shared cache, saves nothing, and returns 503 without a TMDB key; `unread` counts titles TMDB could not answer for)
 GET  /api/requests/row-sources?pattern= -> {overseerr, radarr, sonarr: "connected"|"unreachable"|"off", complete, problems[], seerr_requests, seerr_requesters, seerr_linked, servers[{kind, name, is4k, tag_requests}], tagged_movies, tagged_shows, people[{user_id, display_name, linked, ready}], tags[{label, source: "overseerr"|"pattern"|"override", user_id, display_name, titles, ambiguous}]}
      The "Your requests" row's setup check, behind the Row editor's sources panel and the Users page's Requests column. Read-only: it reads every
      configured source once and writes nothing. `pattern` (max 200) previews an own-tag pattern such as `req-{username}` — the row's Check
@@ -318,6 +360,20 @@ GET  /api/requests/row-sources?pattern= -> {overseerr, radarr, sonarr: "connecte
      whether its Tag Requests option is on. `complete` is false when a configured source could not be read, with the reason in `problems`
      and that source reported `unreachable` — never a 500, because this screen exists to show what is wrong.
 ```
+
+Manual sends, scheduled acquisition and assistant sends share durable title reservations. A
+reserved or uncertain title cannot be sent again through a different path or by deleting its inbox
+entry. Conflicting manual sends return `409`. The owner can inspect and release a terminal claim
+after checking the destination service:
+
+```
+GET  /api/requests/acquisition-claims?limit=100&offset=0 -> {items, next_offset}
+POST /api/requests/acquisition-claims/{claim_id}/release {review_token, expected_status: "outcome_unknown"|"succeeded", checked_destination: true} -> {id, status: "released"}
+```
+
+These recovery routes require the owner browser session; release also requires CSRF. A changed
+review token/status or an active claim returns `409`. Releasing a claim does not send the title.
+See **Requests → Acquisition checks needing review** in the browser.
 
 ## Events and notifications
 
@@ -359,17 +415,17 @@ GET  /api/notifications/whats-new -> {version, releases[{version, url, published
 
 ```
 Settings -> Connections -> Webhook (`notify.webhook.url` / `notify.webhook.auth_header_name` /
-`notify.webhook.auth_header_value`) and Settings → Connections → Webhook (`notify.webhook.enabled` /
-`notify.webhook.events`).
+`notify.webhook.auth_header_value` / `notify.webhook.enabled` / `notify.webhook.events`).
      Each event in `notify.webhook.events` POSTs generic JSON
      {source, version, id, severity, title, message, event, path, sent_at}, plus `content` and `text`
      carrying "title\nmessage" — the fields Discord and Slack each require — to one webhook.
      Events: run.started, run.finished, run.partial, run.failed, run.stopped, job.started,
-     job.finished, job.failed, privacy.exposure, requests.waiting, update.available ("test" for the
+     job.finished, job.failed, job.skipped, privacy.exposure, requests.waiting, update.available ("test" for the
      button). Default ["run.failed", "privacy.exposure"]; an unknown name is a 422.
      Dry runs and dry-run jobs send nothing. job.started/job.finished skip routine jobs (watch.reconcile)
      and retries, a scheduled privacy.sync never sends job.started, and one that changed nothing never
-     sends job.finished. job.failed means out of retries. notify.send never reports on itself.
+     sends job.finished. job.failed means out of retries. job.skipped is a scheduled job APScheduler dropped
+     for starting too late. notify.send never reports on itself.
      privacy.exposure is a count of accounts, never names, repeated at most once a day while true.
      requests.waiting is sent after a run when more titles wait than last time; update.available once
      per version. No message carries a person's name, a job's detail, or a job's error.
@@ -390,6 +446,7 @@ Settings -> Connections -> Webhook (`notify.webhook.url` / `notify.webhook.auth_
 
 ```
 GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm|radarr|sonarr|overseerr|mdblist|trakt|exa|searxng|native_search|notify} (a PUT that changes anything also writes a `settings.change` audit event carrying `{changed: {key: {from, to}}, actor: {via, account_id, client}}` — `changed` covers the changed keys only (secrets record `<redacted>` on both sides, long object values are summarised), and `actor` says WHO: `via` is `browser` or `api_token`, `client` is a truncated User-Agent. No client IP is recorded, deliberately: these rows are immutable and the support bundle exports them. Read it back with `/api/events/log?scope=settings.change` to see which thresholds a past run actually used, and what changed them)
+GET  /api/settings/defaults -> {key: default} (every setting's built-in default, with secrets and private keys left out, so the Settings page can mark a value that differs from it and offer to reset it)
 GET  /api/settings/arr/{radarr|sonarr}/options -> {quality_profiles, root_folders}
 GET  /api/settings/overseerr/options -> {users[], default_user_id} (the instance's accounts, for the "request as" dropdown, each with whether it auto-approves films/shows and whether it belongs to a real person; `default_user_id` is the account the API key itself is, so the UI can resolve "Server default". No profiles or folders — those are Overseerr's own)
 POST /api/settings/curator/models {provider?, api_key?, ollama_url?} -> {provider, models[]} (models the provider offers; the body lets the picker list the provider being edited before it is saved — blank fields fall back to saved settings, a redacted key means "use the saved key"; [] = free-text fallback)
@@ -414,8 +471,10 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      until the playback listener has observed some, and a title nobody has played since tracking began is in neither.
      SHARED rows count here too. They write no pick rows, so their credits live in `shared_row_watches` and are folded into the same
      per-(person, title) outcome — a title on both a personal and a shared row is one thing that person watched, counted once.
-     A shared-row credit needs a play the delivery ledger and the run's own audience snapshot both agree that person could see at the time;
+     A shared-row credit needs a play the retained delivery and audience records both agree that person could see at the time;
      Plex's watched flag alone never credits one, because everyone sees a shared row and a popular title would otherwise credit for everyone.
+     Matching uses the delivery interval containing the play's timestamp, including when a play is received after a later row rebuild.
+     Clearing or pruning run history preserves current delivery records and future watch tracking; saved recommendations alone do not prove delivery.
      Un-watching in Plex WITHDRAWS a credit, but only one that Plex's flag was the sole evidence for. Every sync
      withdraws — un-mark something tonight and the credit is gone on the next sync, not up to a week later. A credit
      backed by observed playback — a live session or a play-log entry — is kept: it is a fact
@@ -434,6 +493,7 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      old. That matters — a pick stops being creditable once its row drops it, so counting a pick delivered
      yesterday in the denominator drags the rate toward zero for no reason. `per_user`/`per_row` return COUNTS, not rates, sorted by
      what was actually watched: at these sample sizes a percentage is noise, and sorting by one put `1/31` above `3/103`.
+     Each `per_user` entry carries `enabled` (false for someone disabled since); `coverage.users_watched` and its delta count enabled people only, so "N of `users_enabled`" always agrees with the list.
      Every count comes in a WATCHED/FINISHED pair (`overall.finished`, `landing.finished`/`finished_rate`, and a `finished` on each
      `per_user`, `per_row` and `trend` entry). `overall.finished` carries NO `_prev`/`_delta`, unlike its neighbours: this window's
      finishes are counted as of now while the previous window's have had an extra period to complete, so a server behaving perfectly
@@ -444,8 +504,8 @@ GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, tren
      [Watched vs finished](concepts.md#watched-vs-finished) for why Shortlist gets to choose the threshold. Sorting still uses `watched`, deliberately:
      ranking by `finished` would bury every TV row under every movie row.
 POST /api/report/sync -> 202 (kick off a watch-history sync — re-reads every user's watched set from Plex so hit rates and "N titles watched" stay fresh between runs; writes nothing to Plex)
-GET  /api/report/engagement?window=7|30|90|all -> {window, people[], losing[], stop_points[]} (what people DID with their picks: per person with how far
-     each got, the titles several people start and few finish, and where abandons cluster). Outcomes are per (person, title): finished | dropped |
+GET  /api/report/engagement?window=7|30|90|all -> {window, people[]} (what people DID with their picks: per person with how far
+     each got). Outcomes are per (person, title): finished | dropped |
      bounced (under 5% in) | watching (credited, but no live session ever said how far). `percent` is null where no session observed the play —
      which is not 0%, and is the normal state for anything watched before playback tracking was running.
 GET  /api/report/deleted-rows -> [{slug, picks, first_seen, last_seen}] (history left behind by rows that no longer exist, biggest first; NOT windowed — "what can I clear" is a question about all of it)
@@ -467,7 +527,7 @@ DELETE /api/report/deleted-rows?slug= -> {cleared, picks, slugs[]} (permanently 
 GET  /api/system/health -> {status} (the ONE unauthenticated endpoint — liveness only, for Docker's HEALTHCHECK; the version lives on the owner-gated /system/version)
 GET  /api/system/api-token -> {enabled, created_at, token} (owner-gated; token revealable) · POST /api/system/api-token -> {token, created_at} (generate/replace) · DELETE /api/system/api-token (revoke)
 GET  /api/setup/servers (Plex server picker during onboarding) · GET /api/setup/state
-POST /api/system/uninstall {confirm, dry_run?} -> {filters_restored, filters_skipped[], filters_unreachable[], filters_failed[], collections_deleted[], rows_disabled, dry_run, message} (the trust feature: switches every row off and clears its schedules, deletes every Shortlist collection, then restores each account's share filters from its pre-Shortlist snapshot — in that order, so the excludes hiding a row are never removed while the row still exists. `dry_run` previews; the real thing needs the literal string UNINSTALL, and 409s while an engine run is in flight. No single account can stop it: one that has left this server is reported in `filters_skipped`, one plex.tv's roster omits that Shortlist's own records say is here in `filters_unreachable` (worth retrying — that is what a partial roster read looks like), and one plex.tv refuses in `filters_failed`. A write plex.tv accepted but that could not be verified is still audited, with what was sent)
+POST /api/system/uninstall {confirm, dry_run?} -> {filters_restored, filters_skipped[], filters_unreachable[], filters_failed[], collections_deleted[], collections_detail[{library, person, title}], rows_disabled, dry_run, message} (the trust feature: switches every row off and clears its schedules, deletes every Shortlist collection, then restores each account's share filters from its pre-Shortlist snapshot — in that order, so the excludes hiding a row are never removed while the row still exists. `dry_run` previews; the real thing needs the literal string UNINSTALL, and 409s while an engine run is in flight. No single account can stop it: one that has left this server is reported in `filters_skipped`, one plex.tv's roster omits that Shortlist's own records say is here in `filters_unreachable` (worth retrying — that is what a partial roster read looks like), and one plex.tv refuses in `filters_failed`. A write plex.tv accepted but that could not be verified is still audited, with what was sent)
 ```
 
 ## Support checks ("Have an issue?")
@@ -514,6 +574,8 @@ GET  /api/support/jobs -> {jobs[], counts{}, failed, text}
 GET  /api/support/clocks -> {tz, local_now, utc_now, offset_hours, scheduled[], text}
 GET  /api/support/database -> {head, tables_present, tables_expected, missing_tables[], indexes, size_mb, text}
 GET  /api/support/config -> {settings[{env, key, env_set, secret, value, has_value}], text}
+GET  /api/support/errors -> {lines[], total_matched, log_file, text} (the newest WARNING and ERROR log lines, redacted)
+GET  /api/support/runs -> {runs[{id, status, trigger, dry_run, started_at, finished_at, stats, people, failed[{user, error}]}], text} (the last five runs and who failed in each)
 GET  /api/support/bundle.txt -> text/plain; every server-wide block in one downloadable file
 GET  /api/support/report.zip -> the bundle plus every log file, redacted, as one attachment
 GET  /api/support/suggestions -> {users[], titles[], libraries[]} (type-ahead for the inputs above; owner-only, never part of a report)

@@ -121,7 +121,7 @@ describe("StepCustomize seeds from what is already saved", () => {
   });
 
   it("does not clobber a choice the owner made before settings arrived", async () => {
-    // Functional updaters, same as step-history: a slow fetch must never win against typing.
+    // Functional updaters, same as step-tmdb: a slow fetch must never win against typing.
     let resolve!: (value: Record<string, unknown>) => void;
     getSettings.mockReturnValue(
       new Promise<Record<string, unknown>>((r) => {

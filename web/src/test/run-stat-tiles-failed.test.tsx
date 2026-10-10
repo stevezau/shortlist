@@ -8,24 +8,19 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { RunStatTiles } from "@/components/runs/run-stat-tiles";
-import type { RunDetail } from "@/lib/types";
+import { makeTilesRun } from "@/test/run-fixtures";
 
 function renderTiles(overrides: Record<string, unknown>) {
-  const run = {
+  const run = makeTilesRun({
     id: 130,
-    trigger: "manual",
     status: "error",
-    dry_run: false,
     started_at: "2026-09-30T05:25:00Z",
     began_at: "2026-09-30T05:25:00Z",
     finished_at: "2026-09-30T05:26:34Z",
-    users: [],
-    shared_rows: [],
     error: "Shortlist could not reach Plex at http://pms:32400: it did not answer in time.",
-    promotion_blockers: [],
     stats: { error: "Shortlist could not reach Plex." },
     ...overrides,
-  } as unknown as RunDetail;
+  });
   render(<RunStatTiles run={run} />);
 }
 

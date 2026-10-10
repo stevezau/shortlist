@@ -10,6 +10,7 @@ import {
   WatchingAccountPage,
   rowsOnTheSharedShelf,
 } from "@/pages/watching-account";
+import { makeUser } from "@/test/user-fixtures";
 
 const { getUsers, listCollections, updateCollection, dismissNotification } =
   vi.hoisted(() => ({
@@ -35,34 +36,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-function user(over: Partial<User>): User {
-  return {
-    manage_sharing: true,
-    id: 1,
-    username: "u",
-    slug: "u",
-    user_type: "shared",
-    restricted: false,
-    enabled: true,
-    cold_start: false,
-    history_depth: 0,
-    last_run_at: null,
-    request_tag: "",
-    requested_by_tag: "",
-    picks_watched_30d: null,
-    last_pick_watched_at: null,
-    nickname: "",
-    friendly_name: "",
-    display_name: "",
-    avatar_url: "",
-    plex_account_id: 0,
-    restriction_profile: "",
-    unhidden_rows: 0,
-    departed: false,
-    preview_titles: [],
-    prefs: {},
-    ...over,
-  };
+function user(over: Partial<User> = {}): User {
+  return makeUser({ username: "u", slug: "u", ...over });
 }
 
 function row(over: Partial<Collection>): Collection {
@@ -132,7 +107,7 @@ describe("WatchingAccountPage", () => {
     // timing reads as "your shelf is clear now", which it is not.
     renderPage();
     await userEvent.click(
-      await screen.findByRole("button", { name: /do this for me/i }),
+      await screen.findByRole("button", { name: /off the library shelf/i }),
     );
 
     expect(
@@ -152,7 +127,7 @@ describe("WatchingAccountPage", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /do this for me/i }),
+      await screen.findByRole("button", { name: /off the library shelf/i }),
     );
 
     expect(await screen.findByText(/Changed 1 of 2/i)).toBeInTheDocument();
@@ -166,7 +141,7 @@ describe("WatchingAccountPage", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /do this for me/i }),
+      await screen.findByRole("button", { name: /off the library shelf/i }),
     );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalledTimes(2));
@@ -183,6 +158,14 @@ describe("WatchingAccountPage", () => {
     });
   });
 
+  it("names what the button changes and has no lone step number", async () => {
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: /off the library shelf/i });
+    expect(button).not.toHaveTextContent(/do this for me/i);
+    expect(screen.queryByText(/^1$/)).not.toBeInTheDocument();
+  });
+
   it("offers nothing to do when no row is on the friends' shelf", async () => {
     listCollections.mockResolvedValue([row({ placement_friends: "home" })]);
     renderPage();
@@ -194,7 +177,7 @@ describe("WatchingAccountPage", () => {
     // passed BECAUSE of the defect, which is why it never caught it.
     expect(await screen.findByText(/already done/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /do this for me/i }),
+      screen.getByRole("button", { name: /off the library shelf/i }),
     ).toBeDisabled();
   });
 
@@ -236,8 +219,6 @@ describe("WatchingAccountPage", () => {
   });
 });
 
-/** The deep link the Users page uses. The guide is what you read once; the tool is what you come
- *  back for, so pressing "Watching account" has to land on the tool rather than the explainer. */
 describe("WatchingAccountPage when the collections query has not answered", () => {
   it("does not claim the shelf is already clear while it is still loading", async () => {
     // `data ?? []` made an unanswered query indistinguishable from a genuinely clean server, so the
@@ -267,7 +248,7 @@ describe("WatchingAccountPage when the collections query has not answered", () =
     await screen.findByText(/couldn.t check/i);
 
     expect(
-      screen.getByRole("button", { name: /do this for me/i }),
+      screen.getByRole("button", { name: /off the library shelf/i }),
     ).toBeDisabled();
   });
 
@@ -280,6 +261,8 @@ describe("WatchingAccountPage when the collections query has not answered", () =
   });
 });
 
+/** The deep link the Users page uses. The guide is what you read once; the tool is what you come
+ *  back for, so pressing "Watching account" has to land on the tool rather than the explainer. */
 describe("WatchingAccountPage opened with ?setup=1", () => {
   function renderAt(path: string) {
     const client = new QueryClient({

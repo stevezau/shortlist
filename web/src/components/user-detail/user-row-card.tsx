@@ -2,10 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
-import { PickList } from "@/components/pick-list";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { RecentCountField } from "@/components/recent-count-field";
-import { RowName } from "@/components/rows/row-name";
 import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
 import { Badge } from "@/components/ui/badge";
@@ -13,13 +11,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { GroupedPicks } from "@/components/user-detail/grouped-picks";
 import { useAutosave } from "@/lib/autosave";
 import { LIBRARY_NAME } from "@/lib/placeholders";
+import { resolveRowName } from "@/lib/run-rows";
 import { useSetUserRowOverride, useUserRows } from "@/lib/queries";
 import type { User, UserRow } from "@/lib/types";
+import { personName } from "@/lib/user-names";
+import { userState } from "@/lib/user-state";
+
+/** The title an owner reads for one of a person's rows: this library and this person's lead seed
+ *  where they exist, plain words where the row has built nothing yet. */
+function personRowName(row: UserRow, person: string): string {
+  const template =
+    row.library && !row.name.includes(LIBRARY_NAME)
+      ? `${row.name} — ${row.library}`
+      : row.name;
+  const topSeed = row.picks.find((pick) => pick.seed_title)?.seed_title ?? undefined;
+  return resolveRowName(template, { library: row.library || undefined, topSeed, user: person });
+}
 
 /** One of a person's rows: its live picks, and a per-person customization drawer. */
-function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
+function UserRowCard({ userId, name, row }: { userId: number; name: string; row: UserRow }) {
   // Two mutations on purpose: the mute switch and the drawer fail independently, and a failed mute
   // must never be reported (or hidden) as a failed customization.
   const mute = useSetUserRowOverride(userId);
@@ -77,14 +90,7 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
               {/* This card is one library's copy of the row, so `{library_name}` has exactly one
                   value here — and a name that carries it already says which library, so the
                   suffix stays only for a name that does not. */}
-              <RowName
-                name={
-                  row.library && !row.name.includes(LIBRARY_NAME)
-                    ? `${row.name} — ${row.library}`
-                    : row.name
-                }
-                libraryName={row.library || undefined}
-              />
+              <span className="font-medium">{personRowName(row, name)}</span>
               {row.is_default && <Badge variant="outline">default</Badge>}
               {muted && <Badge variant="secondary">muted</Badge>}
             </div>
@@ -135,7 +141,7 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
 
         {!muted &&
           (row.picks.length > 0 ? (
-            <PickList picks={row.picks} collapseAfter={5} />
+            <GroupedPicks picks={row.picks} collapseAfter={10} />
           ) : (
             <p className="text-sm text-muted-foreground">
               No picks in this row yet — use Run now above, or wait for the next
@@ -227,9 +233,39 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
   );
 }
 
+/**
+ * An Off person's rows: listed, but plainly not applying. Their switches are shown off and locked,
+ * because nothing new is built for them and these controls would otherwise claim it is. A row still
+ * on Plex (it has live picks) keeps showing them: Off stops new rows, it does not take the old ones down.
+ */
+function OffRowsList({ rows, name }: { rows: UserRow[]; name: string }) {
+  return (
+    <Card>
+      <ul className="divide-y">
+        {rows.map((row) => (
+          <li key={`${row.collection_id}-${row.section_key}`} className="space-y-3 px-6 py-4">
+            <div className="flex items-center justify-between gap-4 opacity-60">
+              <div>
+                <div className="font-medium text-muted-foreground">{personRowName(row, name)}</div>
+                <div className="text-sm text-faint-foreground">
+                  {row.media === "both" ? "movies & shows" : `${row.media}s`}
+                </div>
+              </div>
+              <Switch checked={false} disabled aria-label={`${row.name} does not apply while ${name} is off`} />
+            </div>
+            {row.picks.length > 0 && <GroupedPicks picks={row.picks} collapseAfter={10} />}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 /** All the rows that reach one user, each with its picks and per-person customization. */
 export function UserRowsSection({ user }: { user: User }) {
   const query = useUserRows(user.id);
+  const off = userState(user) === "off";
+  const name = personName(user);
   return (
     <QueryBoundary
       query={query}
@@ -247,13 +283,17 @@ export function UserRowsSection({ user }: { user: User }) {
         />
       }
     >
-      {(rows) => (
-        <div className="space-y-3">
-          {rows.map((row) => (
-            <UserRowCard key={row.collection_id} userId={user.id} row={row} />
-          ))}
-        </div>
-      )}
+      {(rows) =>
+        off ? (
+          <OffRowsList rows={rows} name={name} />
+        ) : (
+          <div className="space-y-3">
+            {rows.map((row) => (
+              <UserRowCard key={row.collection_id} userId={user.id} name={name} row={row} />
+            ))}
+          </div>
+        )
+      }
     </QueryBoundary>
   );
 }

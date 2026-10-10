@@ -1,7 +1,3 @@
----
-globs: "shortlist/engine/{privacy,delivery}*.py,shortlist/engine/clients/plex*.py"
----
-
 # Plex Safety Rules (non-negotiable)
 
 Shortlist modifies other people's Plex views and share permissions. These rules govern every code
@@ -121,7 +117,7 @@ violate them.
    that underscore is load-bearing: match on `shortlist` alone and the constant label yields an empty
    slug, which is in no roster, so every row on the server classifies as an ORPHAN and orphan
    handling is the one path here that deletes. Pinned by
-   `test_pipeline.py::TestOrphanDeletion::test_the_constant_label_does_not_turn_a_live_row_into_an_orphan`.
+   `test_pipeline_privacy_order.py::TestOrphanDeletion::test_the_constant_label_does_not_turn_a_live_row_into_an_orphan`.
 
    **An empty label read never authorises a delete.** A real PMS returns NO `<Label>` children in
    the collections listing (recorded: `tests/fixtures/pms_collections_listing.json`) — labels arrive

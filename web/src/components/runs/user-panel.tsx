@@ -1,9 +1,8 @@
 import { Check, CircleSlash, Clock, Copy, Telescope } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
-import { TitleLinkIcons } from "@/components/title-link-icons";
 import { TitlePoster } from "@/components/title-poster";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
@@ -32,6 +31,7 @@ import type {
   RunRowCost,
   RunUserResult,
 } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 function CopyForGitHubButton({
   run,
@@ -190,7 +190,23 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
                 .filter(Boolean)
                 .join(" · ")}
             </span>
-            <TitleLinkIcons title={pick} labelled />
+            {links.length > 0 && (
+              <span className="inline-flex items-center gap-1.5">
+                {links.map((link, index) => (
+                  <Fragment key={link.label}>
+                    {index > 0 && <span aria-hidden="true">·</span>}
+                    <a
+                      href={link.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
+                    >
+                      {link.label}
+                    </a>
+                  </Fragment>
+                ))}
+              </span>
+            )}
           </span>
         )}
       </span>
@@ -261,7 +277,7 @@ function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
   return (
     <div className="space-y-3">
       <div className="flex items-baseline gap-2">
-        <h3 className="text-sm font-semibold">{active?.row_title}</h3>
+        <h2 className="text-sm font-semibold">{active?.row_title}</h2>
         {added > 0 && (
           <span className="text-xs text-success">+{added} new</span>
         )}
@@ -308,7 +324,7 @@ function ResultsLegend() {
         <span className="line-through">Title</span> Rotated out for variety
       </span>
       <span className="inline-flex items-center gap-1.5">
-        <span className="font-semibold tabular-nums text-amber-400">#1–3</span>{" "}
+        <span className="font-semibold tabular-nums text-foreground">#1–3</span>{" "}
         Top picks
       </span>
     </div>
@@ -319,10 +335,8 @@ function ResultsLegend() {
 /**
  * One person's result, with their trace button.
  *
- * The button lives HERE and not on the tab that renders the panel. It used to sit in the People
- * tab's own header; when that tab was removed the Rows tab inherited the panel but not the button,
- * and a per-person trace became unreachable from anywhere in the app — while a comment in the Rows
- * tab claimed the panel carried it. Owning it here is what makes that true.
+ * The button lives HERE and not on the tab that renders the panel, so every tab that shows the
+ * panel carries the per-person trace with it.
  */
 export function UserPanel({
   run,
@@ -341,8 +355,7 @@ export function UserPanel({
   cost?: RunRowCost | null;
   setup?: { setup_ms: number; pools: RunPoolCost[] } | null;
 }) {
-  // The per-step split ("gather 900, curate 2.1k") came with the header from the People tab. It was
-  // that tab's only consumer, so dropping it here would have retired the breakdown from the whole app.
+  // The per-step split ("gather 900, curate 2.1k") is shown nowhere else in the app.
   const steps = tokenStepBreakdown(result.llm_tokens_by_step);
   const tokens =
     result.llm_tokens > 0
@@ -354,9 +367,9 @@ export function UserPanel({
   const poolTokens = setup ? sharedPoolsTokens(setup.pools) : 0;
   return (
     <div className="space-y-3">
-      {/* WHOSE result this is, and what it cost — the header the People tab had. Hoisting only the
-          trace button out of that tab left it floating above the picks with nothing to belong to,
-          and left the panel never naming the person whose row you were reading. */}
+      {/* WHOSE result this is, and what it cost. Without it the trace button would float above the
+          picks with nothing to belong to, and the panel would never name the person whose row you
+          are reading. */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b pb-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="truncate font-medium">
@@ -365,10 +378,10 @@ export function UserPanel({
                 to={`/users/${userId}`}
                 className="rounded-sm hover:text-primary hover:underline"
               >
-                {result.display_name || result.username}
+                {personName(result)}
               </Link>
             ) : (
-              result.display_name || result.username
+              personName(result)
             )}
           </span>
           <Badge
@@ -513,9 +526,9 @@ function UserPanelBody({
         </p>
       );
     }
-    // Not started. It used to fall through to the live-log stage below and render a bare "queued…",
-    // which reads like a fragment of a log rather than an answer — and it is the state most of the
-    // roster is in for most of a run, so it is the panel people see most.
+    // Not started. A bare "queued…" from the live-log stage below reads like a fragment of a log
+    // rather than an answer, and this is the state most of the roster is in for most of a run, so it
+    // is the panel people see most.
     // "pending" is not only "not started": a person mid-build carries it too, because a `run_users`
     // row is written only when they FINISH. So this branch has to defer to the live log the moment
     // there is one, or the panel tells you nothing on their Plex has changed while the engine is

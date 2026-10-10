@@ -1,6 +1,3 @@
-import type { ReactNode } from "react";
-import { Link } from "react-router";
-
 import { Badge } from "@/components/ui/badge";
 import { profileName } from "@/lib/user-profile";
 import type { User } from "@/lib/types";
@@ -10,7 +7,7 @@ import type { User } from "@/lib/types";
  * "Type" column that showed "owner" for one person and an em dash for everyone else read as
  * "unknown", when the answer was simply "a shared user", which is the ordinary case.
  */
-export function UserTypeBadge({ user }: { user: User }) {
+function UserTypeBadge({ user }: { user: User }) {
   if (user.user_type === "owner") {
     return (
       <Badge
@@ -48,54 +45,16 @@ export function UserTypeBadge({ user }: { user: User }) {
  * told people with an ordinary Home user that Plex was hiding content from them when it wasn't, and
  * greyed out their enable toggle for no reason (#20).
  */
-export function RestrictedBadge({ user }: { user: User }) {
+function RestrictedBadge({ user }: { user: User }) {
   if (!user.restriction_profile) return null;
   return (
     <Badge
-      variant="destructive"
+      variant="outline"
+      className="text-muted-foreground"
       title={`Plex's ${profileName(user)} restriction profile is set on this account. Plex usually hides collections from it, so no row is built — and Plex refuses privacy filters for profiled accounts. Set the Restriction Profile to None in Plex to give this person recommendations.`}
     >
-      {profileName(user)}
+      Restriction: {profileName(user)}
     </Badge>
-  );
-}
-
-/**
- * This account can see rows that belong to other people, and Shortlist cannot hide them.
- *
- * Only ever non-zero for an account Plex refuses a share filter for. Shortlist used to assume such an
- * account saw no collections at all and skipped it silently; an `older_kid` account on a real server
- * listed three (measured 2026-08-11). The run measures it now, and this is the scannable form of what
- * it found — deliberately absent when the count is 0, so the badge means something when it appears.
- */
-export function UnhiddenRowsBadge({ user }: { user: User }) {
-  const exposed = user.unhidden_rows ?? 0;
-  if (exposed < 1) return null;
-  const badge = (
-    <Badge
-      variant="destructive"
-      // The remedy must match the rest of the feature: turning the person off removes THEIR row,
-      // not their view of everyone else's, so it is deliberately not offered here either.
-      title={`This account can see ${exposed} ${exposed === 1 ? "row" : "rows"} belonging to other people. Hiding a row means a Plex share filter, and Plex refuses to save one while a restriction profile is set — so Shortlist cannot hide ${exposed === 1 ? "it" : "them"}. Set this account's Restriction Profile to None in Plex; turning this person off in Shortlist does not fix it.`}
-    >
-      Sees {exposed} {exposed === 1 ? "row" : "rows"} of others&rsquo;
-    </Badge>
-  );
-  // The most alarming string in the app, and its whole 301-character remedy lives in that
-  // `title` — hover-only on a desktop, unreachable on a phone. This badge is only ever shown for an
-  // account with a restriction profile, which is exactly the account whose own page renders
-  // `RestrictedNote`: the same remedy, in full, as text. So make the badge the way there rather
-  // than restating any of it here.
-  return (
-    <Link
-      to={`/users/${user.id}`}
-      aria-label={`${user.display_name || user.username} can see ${exposed} ${
-        exposed === 1 ? "row" : "rows"
-      } belonging to other people — how to fix it`}
-      className="rounded-full underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {badge}
-    </Link>
   );
 }
 
@@ -142,14 +101,7 @@ export function ColdStartBadge({ user }: { user: User }) {
  * card and their own page). The Users table splits them across its own columns instead, so each
  * sits under the heading that describes it.
  */
-export function UserBadges({
-  user,
-  emptyFallback = null,
-}: {
-  user: User;
-  emptyFallback?: ReactNode;
-}) {
-  void emptyFallback; // every user now has a type, so there is never nothing to show
+export function UserBadges({ user }: { user: User }) {
   return (
     <>
       <UserTypeBadge user={user} />

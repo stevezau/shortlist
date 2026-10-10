@@ -106,8 +106,8 @@ describe("UninstallPage", () => {
     renderPage();
 
     expect(uninstall).toHaveBeenCalledWith(true);
-    expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
     const counts = await screen.findByText(/^Restores /);
+    expect(screen.queryByRole("button", { name: /preview/i })).not.toBeInTheDocument();
     expect(counts).toHaveTextContent(
       "Restores 48 share filters from their snapshots, deletes 2 collections and switches off 3 rows.",
     );
@@ -115,6 +115,42 @@ describe("UninstallPage", () => {
     // The counts come before the controls that act on them.
     const confirm = screen.getByLabelText(/type/i);
     expect(counts.compareDocumentPosition(confirm) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("lists what will be deleted by library, then person, instead of one run-on string", async () => {
+    answer({
+      ...PREVIEW,
+      collections_deleted: ["✨ Picked", "✨ Picked", "✨ Picked"],
+      collections_detail: [
+        { library: "Movies", person: "sarah", title: "✨ Picked" },
+        { library: "Movies", person: "mike", title: "✨ Picked" },
+        { library: "TV", person: "sarah", title: "✨ Picked" },
+      ],
+    });
+    renderPage();
+
+    await screen.findByText(/^Restores /);
+    expect(screen.getByRole("heading", { name: "Movies" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "TV" })).toBeInTheDocument();
+    expect(screen.getAllByText("sarah")).toHaveLength(2);
+    expect(screen.queryByText(/·/)).not.toBeInTheDocument();
+  });
+
+  it("folds the per-collection list behind a disclosure so the confirm box stays within reach", async () => {
+    answer({
+      ...PREVIEW,
+      collections_deleted: ["✨ Picked", "✨ Picked"],
+      collections_detail: [
+        { library: "Movies", person: "sarah", title: "✨ Picked" },
+        { library: "TV", person: "sarah", title: "✨ Picked" },
+      ],
+    });
+    renderPage();
+
+    await screen.findByText(/^Restores /);
+    const summary = screen.getByText(/Show the 2 collections it will delete/i);
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByLabelText(/to confirm/i)).toBeInTheDocument();
   });
 
   it("uses singular words for a count of one", async () => {

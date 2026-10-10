@@ -4,6 +4,7 @@ import {
   groupRunByRow,
   rowCounts,
   rowDisplayName,
+  resolveRowName,
   rowSummary,
   rowTimeMs,
 } from "@/lib/run-rows";
@@ -64,7 +65,7 @@ function run(overrides: Partial<RunDetail> = {}): RunDetail {
 const CONFIG_NAMES = {
   picked: "✨ {library_name} Picked for You",
   because: "🎯 Because you watched {top_seed}",
-  popular: "👥 Popular {library_name} on SFLIX",
+  popular: "👥 Popular {library_name} on Home Server",
 };
 
 describe("rowDisplayName", () => {
@@ -73,7 +74,31 @@ describe("rowDisplayName", () => {
     // the page as "✨ {library_name} Picked for You".
     expect(rowDisplayName(CONFIG_NAMES.picked)).toBe("✨ Picked for You");
     expect(rowDisplayName(CONFIG_NAMES.because)).toBe("🎯 Because you watched");
-    expect(rowDisplayName(CONFIG_NAMES.popular)).toBe("👥 Popular on SFLIX");
+    expect(rowDisplayName(CONFIG_NAMES.popular)).toBe("👥 Popular on Home Server");
+  });
+});
+
+describe("resolveRowName", () => {
+  it("fills the library and the lead seed where they are known", () => {
+    expect(resolveRowName(CONFIG_NAMES.picked, { library: "Movies" })).toBe("✨ Movies Picked for You");
+    expect(resolveRowName(CONFIG_NAMES.because, { topSeed: "Fargo" })).toBe("🎯 Because you watched Fargo");
+  });
+
+  it("falls back to plain words, never braces, where no value exists yet", () => {
+    expect(resolveRowName(CONFIG_NAMES.because)).toBe("🎯 Because you watched …");
+    expect(resolveRowName("☕ {library_name} you've already seen")).toBe("☕ You've already seen");
+    expect(resolveRowName(CONFIG_NAMES.popular)).toBe("👥 Popular on Home Server");
+    expect(resolveRowName("{user}'s picks")).not.toContain("{");
+  });
+
+  it("fills the person where the page knows who it is for", () => {
+    expect(resolveRowName("{user}'s picks", { user: "Sam" })).toBe("Sam's picks");
+    expect(resolveRowName("{user}", { user: "Sam" })).toBe("Sam");
+    expect(resolveRowName("Next up for {user}", { user: "Sam" })).toBe("Next up for Sam");
+  });
+
+  it("never leaves a stray possessive when the person is unknown but named generically", () => {
+    expect(resolveRowName("{user}'s picks", { user: "each person" })).toBe("Each person's picks");
   });
 });
 
@@ -163,7 +188,7 @@ describe("groupRunByRow", () => {
         users: [user({ rows_considered: { picked: "due" } })],
         shared_rows: sharedRows({
           collection_slug: "popular",
-          row_title: "👥 Popular Movies on SFLIX",
+          row_title: "👥 Popular Movies on Home Server",
           status: "ok",
           error: null,
           reason: null,
@@ -181,7 +206,7 @@ describe("groupRunByRow", () => {
     );
 
     const shared = groups.find((g) => g.kind === "shared")!;
-    expect(shared.title).toBe("👥 Popular on SFLIX");
+    expect(shared.title).toBe("👥 Popular on Home Server");
     expect(shared.libraries).toEqual(["Movies"]);
     expect(shared.people).toEqual([]);
     expect(rowSummary(shared)).toBe("1 pick · +1 −1");
@@ -380,7 +405,7 @@ describe("a run that is still going", () => {
 
     expect(groups.map((g) => g.title)).toEqual([
       "✨ Picked for You",
-      "👥 Popular on SFLIX",
+      "👥 Popular on Home Server",
     ]);
     // Nobody done yet, so all three are still to come.
     expect(groups[0]!.pending).toBe(3);

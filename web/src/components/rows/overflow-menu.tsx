@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-export type OverflowMenuItem = {
+type OverflowMenuItem = {
   label: string;
   icon: LucideIcon;
   /** A link item; the menu closes as it navigates. */
@@ -26,7 +26,16 @@ export type OverflowMenuItem = {
  * move through it, Escape closes it and puts focus back on the button, and Tab or a click outside
  * closes it where focus is going.
  */
-export function OverflowMenu({ label, items }: { label: string; items: OverflowMenuItem[] }) {
+export function OverflowMenu({
+  label,
+  items,
+  variant = "ghost",
+}: {
+  label: string;
+  items: OverflowMenuItem[];
+  /** `outline` for a page header, where it sits among bordered buttons and must read as one. */
+  variant?: "ghost" | "outline";
+}) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -88,9 +97,9 @@ export function OverflowMenu({ label, items }: { label: string; items: OverflowM
       <Button
         ref={trigger}
         type="button"
-        variant="ghost"
+        variant={variant}
         size="icon"
-        className="size-8 text-muted-foreground"
+        className={variant === "outline" ? "size-9" : "size-8 text-muted-foreground"}
         aria-label={label}
         aria-haspopup="menu"
         aria-expanded={open}

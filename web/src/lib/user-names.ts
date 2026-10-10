@@ -1,5 +1,10 @@
 import type { User } from "@/lib/types";
 
+/** What the app calls this person: the owner's nickname, else the name Tautulli knows them by, else the username. */
+export function personName(user: { display_name?: string | null; username: string }): string {
+  return user.display_name || user.username;
+}
+
 /** Turn a Plex username into the name the rest of the app calls that person. */
 export type DisplayNameLookup = (username: string) => string;
 
@@ -21,7 +26,7 @@ export function displayNameLookup(
   const byUsername = new Map<string, string>();
   for (const user of users ?? []) {
     if (user.username) {
-      byUsername.set(user.username, user.display_name || user.username);
+      byUsername.set(user.username, personName(user));
     }
   }
   return (username) => byUsername.get(username) || username;

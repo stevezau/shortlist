@@ -85,7 +85,7 @@ class TestFetchItemsToleratesVanishedTitles:
 
     def test_the_drop_is_logged_with_the_keys(self):
         """loguru, not stdlib logging, so `caplog` sees nothing — this uses the sink pattern the rest
-        of the suite uses (test_arr.py, test_clients.py)."""
+        of the suite uses (test_arr.py, test_clients_watched.py)."""
         server = MagicMock()
         server.fetchItems.return_value = [_item(1)]
 

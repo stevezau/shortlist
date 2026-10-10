@@ -26,12 +26,14 @@ from shortlist.server.db.session import make_engine, make_session_factory, run_m
 from shortlist.server.services import jobs
 from shortlist.server.services.season_catalogue import load_catalogue
 from shortlist.server.settings_store import SettingsStore
+from tests.db_helpers import disposing_engine
 
 
 @pytest.fixture
 def sessions(tmp_path: Path):
     run_migrations(tmp_path)
-    return make_session_factory(make_engine(tmp_path))
+    with disposing_engine(make_engine(tmp_path)) as engine:
+        yield make_session_factory(engine)
 
 
 @pytest.fixture
@@ -494,7 +496,17 @@ class TestHandlers:
         """`user.cleanup`, `user.hide`, `user.restore` and `row.reconcile` all take a target and
         DELETE or hide that target's rows. A generic "run a job" button must never be able to aim
         them — every one of them is queued by the mutation handler that knows the target."""
-        for targeted in ("user.cleanup", "user.hide", "user.restore", "row.reconcile"):
+        for targeted in (
+            "user.cleanup",
+            "user.hide",
+            "user.restore",
+            "row.reconcile",
+            # Assistant work requires its saved exact operation, target scopes and spend contract.
+            "assistant.converge",
+            "assistant.run",
+            "assistant.generate_theme",
+            "assistant.request_send",
+        ):
             assert targeted not in jobs.KINDS, targeted
             assert not jobs.BY_KIND[targeted].manual, targeted
         # The manual kinds are all converge-to-desired-state passes that take no target.
@@ -576,6 +588,10 @@ class TestHandlers:
             "notify.send",
             # Reads the libraries, writes only Shortlist's own database (#138).
             "themes.rotate",
+            # RunService owns the run's Plex lock; the other two never write Plex.
+            "assistant.run",
+            "assistant.generate_theme",
+            "assistant.request_send",
         }
         writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
         assert "privacy.sync" in writers and "sync.check" in writers
@@ -651,7 +667,6 @@ class TestRestoreAfterUnpause:
         # placement ignored entirely, which is what the no-spec fallback does.
         placement="off",  # the OWNER's own copy claims nothing
         placement_friends="library",  # everyone else's is Recommended-only, never Home
-        pin_top=True,
     )
 
     def _state(self, sessions, *, promoted: list, merged: list, rows=(), merge_fails=False):
@@ -1381,14 +1396,13 @@ class TestTheAuditRecordsTheEffectiveDryRun:
 
     @pytest.fixture
     def state(self, sessions, monkeypatch):
-        from pathlib import Path
 
         from shortlist.server.services import run_service as run_service_mod
         from shortlist.server.services.run_service import RunService
         from shortlist.server.services.sse import EventBus
 
         monkeypatch.setattr(run_service_mod, "force_dry_run", lambda: True)  # SHORTLIST_DRY_RUN=1
-        service = RunService(sessions, EventBus(), Path("/nonexistent"), None)
+        service = RunService(sessions, EventBus(), None)
         plex = SimpleNamespace(
             sections=lambda: [SimpleNamespace(title="Movies", key=1, type="movie")],
             find_owned_collections=lambda section, label: [],
@@ -1475,6 +1489,20 @@ class TestRetentionPruning:
         with sessions() as session:
             assert session.get(Run, run_id) is None
 
+    def test_pruning_drops_the_cached_dashboard_report(self, sessions):
+        from shortlist.server.services import report_cache
+        from shortlist.server.settings_store import SettingsStore
+
+        self._seed_old_run(sessions)
+        with sessions() as session:
+            SettingsStore(session).set("runs.retention", 1)
+            SettingsStore(session).set("events.retention", 1)
+        report_cache.store_report("30", {"x": 1})
+
+        jobs._HANDLERS["maintenance.prune"](SimpleNamespace(sessions=sessions), {})
+
+        assert report_cache.get_cached_report("30") is None
+
     def test_watch_history_ages_out_on_the_same_cutoff(self, sessions):
         """The two new tables are not tied to a run, so the run prune cannot reach them — and without
         their own sweep they are the only tables here that grow for ever (Plex's own log holds 101,604
@@ -1546,7 +1574,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
 
     A dry run holding that authority cannot delete anything: `ctx.config.dry_run` is True whenever
     `dry_run` is, and converge checks that flag before every delete
-    (`test_pipeline.py::test_dry_run_reports_the_deletion_without_making_it`).
+    (`test_delivery_sweep.py::TestSweepBrokenRows::test_dry_run_reports_the_deletion_without_making_it`).
     """
 
     def _state(self, *, forced_dry_run: bool = False, sections: list | None = None):
@@ -1598,7 +1626,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
             else:
                 report.converged = ["shortlist_ghost"]
 
-        monkeypatch.setattr(pipeline, "_converge_phase", fake_converge)
+        monkeypatch.setattr(pipeline, "converge_phase", fake_converge)
         return seen
 
     def test_a_preview_lists_the_orphans_it_would_remove(self, monkeypatch):
@@ -1621,7 +1649,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
         """ "Check and fix rows on Plex" has to fix a row stranded at the bottom of the Recommended shelf.
 
         That is the literal complaint this button is pressed for, and it did nothing about it: the
-        handler only converged. On SFLIX it was pressed against a shelf holding 14 rows at the bottom
+        handler only converged. On a big server it was pressed against a shelf holding 14 rows at the bottom
         and reported success without issuing a single move (2026-08-12).
         """
         self._converge_spy(monkeypatch)
@@ -1836,6 +1864,7 @@ class TestWatchReconcileTellsTheDashboard:
         from datetime import UTC, datetime, timedelta
 
         from shortlist.server.db.models import Collection, Delivery, PickRow, Run, User, WatchSession
+        from tests.watch_fixtures import personal_delivery
 
         now = datetime.now(UTC)
         with sessions() as s:
@@ -1876,6 +1905,7 @@ class TestWatchReconcileTellsTheDashboard:
                     end_reason="stopped",
                 )
             )
+            personal_delivery(s, run.id, user_id=user.id, slug="mine")
             s.commit()
 
     def _state(self, sessions):
@@ -2934,8 +2964,8 @@ class TestRunlessPrivacyPassesAuditTheirDemotions:
     """The same three jobs run converge, which takes rows off Home — a paused person's, a switched-off shared
     row's, one whose owner is unknown. `privacy.sync` put a count in its detail line and the other two recorded
     nothing (plex-safety rule 10). They never DELETE an orphan — `engine_run(ctx, [])` gives converge no delete
-    authority (`test_pipeline.py` `TestConvergeRecordsEachRowItTouched`) — so there is no `run.orphan_delete`
-    for them to write. Same harness as the filter-write class above."""
+    authority (`test_pipeline_privacy_order.py` `TestConvergeRecordsEachRowItTouched`) — so there is no
+    `run.orphan_delete` for them to write. Same harness as the filter-write class above."""
 
     KINDS = TestRunlessPrivacyPassesAuditFilterWrites.KINDS
     DEMOTED: ClassVar[list[dict]] = [
@@ -3059,7 +3089,7 @@ class TestSyncCheckAuditsWhatItConverged:
             report.converged = sorted(entry["label"] for entry in report.converge_demotions)
             report.orphans_removed = [entry["label"] for entry in report.orphan_deletions]
 
-        monkeypatch.setattr(pipeline, "_converge_phase", fake_converge)
+        monkeypatch.setattr(pipeline, "converge_phase", fake_converge)
         state = self._base_state(
             forced_dry_run=forced_dry_run, sections=[MagicMock(type="movie", key="1", title="Movies")]
         )
@@ -3131,7 +3161,7 @@ class TestSyncCheckAuditsWhatItConverged:
         def unreachable(*args, **kwargs):
             raise RuntimeError("PMS went away")
 
-        monkeypatch.setattr(pipeline, "_build_indexes", unreachable)
+        monkeypatch.setattr(pipeline, "build_indexes", unreachable)
         job_id = jobs.enqueue(sessions, "sync.check", {"confirmed": True}, max_attempts=1)
 
         drain(state)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import socket
+import sqlite3
 import ssl
 from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -11,6 +12,8 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvUser
@@ -24,6 +27,23 @@ from shortlist.engine.models import (
     UserType,
     WatchedItem,
 )
+
+pytest_plugins = ["tests.scratch", "tests.resources"]
+
+
+@event.listens_for(Engine, "connect")
+def _skip_fsync_in_tests(dbapi_conn, _record) -> None:
+    """Test databases are throwaway, so don't wait for the disk on every commit.
+
+    Measured on a shared dev host (encrypted SATA SSD under load): an SQLite commit cost 18 ms on
+    disk against 0.1 ms in RAM, and test_api_collections.py ran in 59s instead of 92-98s with this
+    on. The scratch stays disk-backed (tests/scratch.py); only the per-commit fsync is skipped.
+    """
+    if isinstance(dbapi_conn, sqlite3.Connection):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA synchronous=OFF")
+        cursor.close()
+
 
 NOW = datetime(2026, 7, 12, tzinfo=UTC)
 
@@ -144,7 +164,7 @@ def _schema_template(tmp_path_factory) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _preseed_schema(request, tmp_path: Path, _schema_template: Path) -> None:
+def _preseed_schema(request: pytest.FixtureRequest) -> None:
     """Hand each test a database already at head, so `run_migrations` has nothing to do.
 
     About 1040 fixtures per run call `run_migrations(tmp_path)`, and each rebuilt all 47 revisions
@@ -161,7 +181,22 @@ def _preseed_schema(request, tmp_path: Path, _schema_template: Path) -> None:
         return
     if any(m in request.node.nodeid for m in _REAL_MIGRATION_MODULES):
         return
-    shutil.copyfile(_schema_template, tmp_path / "shortlist.db")
+    # Autouse dependencies forced a 600 KiB database copy even for pure engine tests.
+    # Resolve lazily so only tests already requesting a directory pay for an isolated copy.
+    if "tmp_path" not in request.fixturenames:
+        return
+    tmp_path: Path = request.getfixturevalue("tmp_path")
+    template: Path = request.getfixturevalue("_schema_template")
+    shutil.copyfile(template, tmp_path / "shortlist.db")
+
+
+@pytest.fixture(autouse=True)
+def _reset_shared_apps():
+    """Hand the worker's shared app (`tests.shared_app`) to the next test as `create_app` left it."""
+    yield
+    from tests.shared_app import reset_shared_apps
+
+    reset_shared_apps()
 
 
 @pytest.fixture(autouse=True)

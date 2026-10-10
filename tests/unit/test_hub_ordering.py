@@ -20,6 +20,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from shortlist.engine.clients.plex_pms import PlexClient
+from tests.unit.plex_fakes import FakeColl
 
 _UNSET = "UNSET"  # sentinel: move() was never called on this hub
 
@@ -57,18 +58,6 @@ class FakeHub:
         self.moves += 1
         if self.shelf is not None:
             self.shelf.apply(self, after)
-
-
-class FakeLabel:
-    def __init__(self, tag: str):
-        self.tag = tag
-
-
-class FakeColl:
-    def __init__(self, title: str, tags: list[str], rating_key: int = 0):
-        self.title = title
-        self.labels = [FakeLabel(t) for t in tags]
-        self.ratingKey = rating_key
 
 
 class FakeSection:
@@ -618,7 +607,7 @@ class TestRenamedRow:
     (`pms_managed_hub_renamed_collection.json`, recorded on PMS 1.43.4). A `{top_seed}` row is renamed
     most nights, so matching hubs to collections by title made every such row read as someone else's.
     Each run then saw the shelf out of order, rebuilt all of it, and reported every row as put back.
-    Three runs in a day and the bell blamed Agregarr (measured on SFLIX, 2026-09-16: 15 of 93 rows
+    Three runs in a day and the bell blamed Agregarr (measured on a large production server, 2026-09-16: 15 of 93 rows
     renamed in one library).
     """
 
@@ -636,7 +625,7 @@ class TestRenamedRow:
         assert stale != current, "precondition: the capture shows the manage listing lagging a rename"
         rating_key = int(recorded["collection"]["ratingKey"])
         anchor = FakeHub("Recently Added", "movie.recentlyadded", collection=False)
-        # One row, three people: the renamed copy sits in the middle of its own block, as on SFLIX.
+        # One row, three people: the renamed copy sits in the middle of its own block, as on a large production server.
         mike = FakeHub("Because you watched Up", "b1", identifier="custom.collection.2.11")
         renamed = FakeHub(stale, "renamed", identifier=recorded["manage_hub"]["identifier"])
         amy = FakeHub("Because you watched Heat", "b2", identifier="custom.collection.2.12")
@@ -704,7 +693,7 @@ class TestMovedNamesTheRowsThatWereOutOfPlace:
 
     A bottom-build re-sends EVERY hub, and `moved` used to name every row it re-sent. So one new row,
     or one hub another tool slid in, reported all ~80 rows as put back, and any three passes in a day
-    crossed the "same row three times" line. On SFLIX one of the three passes behind the 2026-09-16
+    crossed the "same row three times" line. On a large production server one of the three passes behind the 2026-09-16
     alert was the owner creating a test row.
     """
 
@@ -1194,7 +1183,7 @@ class TestRowChainsOnTheShelf:
     """The SHELF half of row-to-row placement: what `place_rows` does with a chain's markers.
 
     The marker half — which marker `_shelf_sequence` emits for a follower — is pinned in
-    `test_pipeline.py::TestShelfSequence`, and `test_a_real_config_lands_the_whole_chain_on_the_shelf`
+    `test_pipeline_shelf.py::TestShelfSequence`, and `test_a_real_config_lands_the_whole_chain_on_the_shelf`
     below wires the two together, because both regressions in this area were sequence-shape
     assertions that got updated to match the broken behaviour.
     """

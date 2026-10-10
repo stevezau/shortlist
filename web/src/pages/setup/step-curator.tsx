@@ -126,8 +126,30 @@ export function StepCurator({ data, update }: StepProps) {
     if (provider.id === "none") saveAndTest.mutate(provider);
   };
 
+  // Nothing chosen yet, and nothing but the default saved: start on "None", so Next is open and the
+  // honest answer to "do I need this?" is already selected. An owner with a provider already on
+  // file is not touched, since picking None for them would save over it.
+  const preselected = useRef(false);
+  const savedProvider = settings.data
+    ? settingString(settings.data, "curator.provider")
+    : undefined;
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    if (preselected.current || data.curator_provider) return;
+    if (savedProvider === undefined || (savedProvider !== "" && savedProvider !== "none")) return;
+    preselected.current = true;
+    const none = CURATOR_PROVIDERS.find((p) => p.id === "none");
+    if (none) choose(none);
+    // `choose` is recreated every render; this runs once, guarded by `preselected`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedProvider, data.curator_provider]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
   return (
     <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        Skip this and Shortlist works the same.
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         {[...CURATOR_PROVIDERS].sort((a, b) => Number(b.id === "none") - Number(a.id === "none")).map((provider) => (
           <button

@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { UserAvatar } from "@/components/user-avatar";
 import type { AccountPrivacy, CollectionInput, PlexLibrary, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { personName } from "@/lib/user-names";
 
 type HidesAnswer = { text: string; tone: "ok" | "warn" | "muted"; link?: boolean };
 
@@ -134,7 +135,7 @@ export function RowAudienceTable({
             </thead>
             <tbody className="block divide-y sm:table-row-group">
               {visible.map((user) => {
-                const name = user.display_name || user.username;
+                const name = personName(user);
                 const copy = !user.enabled ? "Shortlist disabled" : user.prefs?.paused ? "Paused" : choosing && !input.audience_user_ids.includes(user.id) ? "Not selected" : where;
                 return (
                   <tr key={user.id} className="grid grid-cols-2 gap-3 p-3 sm:table-row sm:p-0">

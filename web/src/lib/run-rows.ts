@@ -11,7 +11,7 @@ import type {
  *  `due` is intent, not outcome — it says the run meant to build the row, and the person's own
  *  `status` says what became of it. A run recorded before this existed has none of these, which is
  *  `null` here and must read as "not recorded", never as "no rows were considered". */
-export type RowDecision =
+type RowDecision =
   | "due"
   | "not_due"
   | "muted"
@@ -26,9 +26,8 @@ export type RunRowPerson = {
    * Their whole run result, with `breakdown` and `picks` narrowed to THIS row.
    *
    * Kept as a `RunUserResult` rather than a reduced shape of its own so the row view can render it
-   * with the very components the People tab uses — the search-and-filter person list and the
-   * formatted picks panel. Rebuilding thinner versions of those is what made the row view read as
-   * a lesser page than the one it replaced.
+   * with the run page's own components — the search-and-filter person list and the formatted picks
+   * panel — rather than thinner versions of them.
    */
   result: RunUserResult;
   /** THIS row's own cost, or null on a run recorded before it was measured — which must render as
@@ -71,7 +70,7 @@ export type RunRowGroup = {
   shared: RunSharedRowResult | null;
 };
 
-export type RunRowsView = {
+type RunRowsView = {
   /** Rows this run BUILT (or meant to). */
   groups: RunRowGroup[];
   /** Rows that exist but were not part of this run — a scoped run's unselected rows, or a seasonal row
@@ -111,6 +110,28 @@ export function rowDisplayName(name: string): string {
     .replace(/\{[^}]*\}/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * A row's name as an owner reads it: the template with whatever is known filled in, and plain words
+ * for what is not. `{top_seed}` becomes an ellipsis ("Because you watched …") and a missing
+ * `{library_name}` simply drops out, re-capitalising what follows ("You've already seen"). `{user}`
+ * is the person the page is about; a caller that has none passes a generic word, because dropping it
+ * leaves "'S picks". Unlike
+ * `RowName` it never draws a token chip, so it is safe in a title that should read as a name.
+ */
+export function resolveRowName(
+  template: string,
+  known: { library?: string; topSeed?: string; user?: string } = {},
+): string {
+  const filled = template
+    .replaceAll("{library_name}", known.library ?? "")
+    .replaceAll("{top_seed}", known.topSeed ?? "…")
+    .replaceAll("{user}", known.user ?? "");
+  const name = rowDisplayName(filled);
+  // What a dropped leading `{library_name}` leaves behind starts in lower case; the first LETTER
+  // (an emoji prefix has none) is the one to raise.
+  return name.replace(/^([^\p{L}]*)(\p{Ll})/u, (_, lead: string, letter: string) => lead + letter.toUpperCase());
 }
 
 /**
@@ -259,8 +280,7 @@ export function groupRunByRow(
   }
   // Everyone the run means to build for, as PENDING, until their own result lands. Without this a
   // per-person row opened mid-run showed "0 succeeded" and an empty list — the run page's whole job
-  // is to let you watch it happen, and the old People tab synthesised exactly these from
-  // `expected_users` for the same reason.
+  // is to let you watch it happen, and these come from `expected_users`.
   const reported = new Set<string>();
   for (const group of groups.values()) {
     if (group.kind !== "per_person") continue;
@@ -393,7 +413,7 @@ export function rowSummary(group: RunRowGroup): string {
 /** How long a row took, for its card header — or null when there is no honest number to show.
  *
  *  A shared row is one build and carries its own time. A per-person row is many small builds, and its
- *  card used to show no time at all, so three row cards on one run read as two with a figure missing.
+ *  card shows a time too, so three row cards on one run never read as two with a figure missing.
  *  Its time is each person's own work on the row added up — the same `duration_ms - blocked_ms` their
  *  line in the person list shows — which at a run's concurrency is more than the wall clock, so the
  *  card labels it as a total. Null while anyone is still pending (a partial sum reads as final) and on

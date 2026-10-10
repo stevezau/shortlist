@@ -1,5 +1,6 @@
 ---
-globs: "**/*.sh"
+paths:
+  - "**/*.sh"
 ---
 
 # Shell Scripting Guidelines
@@ -11,3 +12,5 @@ globs: "**/*.sh"
 - Use `jq`/`yq` for structured data — avoid ad-hoc `grep`/`awk` parsing of JSON/YAML
 - Define defaults at top, use functions for reusable logic, validate required params early
 - Use `readonly` for constants; keep scripts clean and concise
+- Exceptions: the container entrypoint (`docker/entrypoint.sh`, POSIX `sh -eu` for the slim image) and
+  PreToolUse hooks (no `-e`: they must fail open, or one parse error would block every command)

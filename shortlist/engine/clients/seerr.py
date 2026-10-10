@@ -390,8 +390,8 @@ class SeerrClient:
             # indistinguishable from a library that simply does not hold the title. The run still
             # fails open (a redundant request, never a wrong one), but it must not do so silently.
             #
-            # Graded, not all-or-nothing: the guard used to fire only when NOT ONE row was usable,
-            # so a version that dropped the field on half its rows passed silently — and half a
+            # Graded, not all-or-nothing: a guard that fires only when NOT ONE row is usable lets a
+            # version that drops the field on half its rows pass silently — and half a
             # library quietly becoming re-requestable is the case worth hearing about. A handful of
             # odd rows on a healthy server is normal, so that stays at debug.
             level = "WARNING" if typed * 2 < rows else "DEBUG"

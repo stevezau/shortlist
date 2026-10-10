@@ -10,6 +10,7 @@ import pytest
 from shortlist.server.db.models import Event
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services.audit import LEVELS, add_audit
+from tests.db_helpers import disposing_engine
 
 SERVER = Path(__file__).resolve().parents[2] / "shortlist"
 
@@ -17,10 +18,8 @@ SERVER = Path(__file__).resolve().parents[2] / "shortlist"
 @pytest.fixture
 def db_session(tmp_path: Path):
     run_migrations(tmp_path)
-    engine = make_engine(tmp_path)
-    with make_session_factory(engine)() as session:
+    with disposing_engine(make_engine(tmp_path)) as engine, make_session_factory(engine)() as session:
         yield session
-    engine.dispose()
 
 
 class TestTheAuditLevelVocabulary:

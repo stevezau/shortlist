@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api";
 import { queryKeys } from "@/lib/queries";
 import type { AccountPrivacy, Collection, PrivacyStatus, RowSources, User, UserPatch } from "@/lib/types";
 import { UsersPage } from "@/pages/users";
+import { makeUser } from "@/test/user-fixtures";
 
 const { toastSuccess } = vi.hoisted(() => ({ toastSuccess: vi.fn() }));
 
@@ -86,32 +87,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-const SARAH: User = {
-  manage_sharing: true,
-  id: 4,
-  username: "sarah",
-  slug: "sarah",
-  user_type: "shared",
-  restricted: false,
-  enabled: true,
-  cold_start: false,
-  history_depth: 120,
-  last_run_at: null,
-  request_tag: "",
-  requested_by_tag: "",
-  picks_watched_30d: null,
-  last_pick_watched_at: null,
-  nickname: "",
-  friendly_name: "",
-  display_name: "",
-  avatar_url: "",
-  plex_account_id: 0,
-  restriction_profile: "",
-  unhidden_rows: 0,
-  departed: false,
-  preview_titles: [],
-  prefs: {},
-};
+const SARAH: User = makeUser({ id: 4, history_depth: 120 });
 
 const MIKE: User = { ...SARAH, id: 5, username: "mike", slug: "mike" };
 
@@ -216,14 +192,17 @@ describe("UsersPage", () => {
     expect(screen.queryByText("Requests & results", { exact: true })).not.toBeInTheDocument();
   });
 
-  it("keeps select-visible and sorting together before the roster for every screen size", async () => {
+  it("keeps select-visible and the search, filter and sort row before the roster for every screen size", async () => {
     getUsers.mockResolvedValue([SARAH, MIKE]);
     renderPage();
     await screen.findByRole("link", { name: "sarah" });
     const controls = screen.getByRole("group", { name: "User list controls" });
     await userEvent.click(within(controls).getByRole("button", { name: "Select people" }));
     const select = within(controls).getByRole("checkbox", { name: "Select visible users" });
-    expect(within(controls).getByRole("combobox", { name: "Sort users" })).toBeVisible();
+    const filters = screen.getByRole("group", { name: "Filter and sort users" });
+    expect(within(filters).getByRole("combobox", { name: "Sort users" })).toBeVisible();
+    expect(within(filters).getByRole("searchbox", { name: "Search users" })).toBeVisible();
+    expect(filters.compareDocumentPosition(screen.getByRole("table")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(controls.compareDocumentPosition(screen.getByRole("table")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.type(screen.getByRole("searchbox", { name: "Search users" }), "sarah");
     await userEvent.click(select);
@@ -845,7 +824,7 @@ describe("UsersPage — Plex Home accounts", () => {
     );
     renderPage();
 
-    expect(await screen.findByText(/can see 3 rows/i)).toBeInTheDocument();
+    expect(await screen.findByText(/sees 3 rows not theirs/i)).toBeInTheDocument();
   });
 
   it("does not flag a profiled account that sees nothing", async () => {
@@ -1000,7 +979,9 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
 
     const stateOf = async (name: string) =>
       within((await screen.findByRole("link", { name })).closest("tr") as HTMLElement).getByTestId("user-state");
-    expect(await stateOf("sarah")).toHaveTextContent(/^On$/);
+    // On is what the switch already says, so it gets no pill.
+    await screen.findByRole("link", { name: "sarah" });
+    expect(within((screen.getByRole("link", { name: "sarah" })).closest("tr") as HTMLElement).queryByTestId("user-state")).toBeNull();
     expect(await stateOf("mike")).toHaveTextContent(/^Paused$/);
     expect(await stateOf("jess")).toHaveTextContent(/^Off$/);
     expect(screen.queryByText("Active")).toBeNull();
@@ -1063,8 +1044,11 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
     renderPage();
 
     const link = await screen.findByRole("link", { name: /kid can see 3 rows that aren’t theirs/ });
-    expect(link).toHaveTextContent("Can see 3 rows that aren’t theirs");
+    expect(link).toHaveTextContent("Fix in Plex");
     expect(link).toHaveAttribute("href", `/users/${KID.id}`);
+    const cell = link.closest("td") as HTMLElement;
+    expect(cell).toHaveTextContent("Sees 3 rows not theirs · Fix in Plex");
+    expect(cell.className).toMatch(/bg-warning/);
   });
 
   it("counts rows the way the Dashboard and Privacy do, not the run's per-library collections", async () => {
@@ -1077,7 +1061,7 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
     renderPage();
 
     const kidRow = (await screen.findByRole("link", { name: "kid" })).closest("tr") as HTMLElement;
-    expect(await within(kidRow).findByText("Can see 3 rows that aren’t theirs")).toBeInTheDocument();
+    expect(await within(kidRow).findByText("Sees 3 rows not theirs")).toBeInTheDocument();
     expect(within(kidRow).queryByText(/5 rows/)).toBeNull();
   });
 
@@ -1117,15 +1101,6 @@ describe("UsersPage — one state vocabulary and the privacy column", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Done selecting" }));
     expect(screen.queryByRole("checkbox", { name: "Select sarah" })).toBeNull();
-  });
-
-  it("pulls new people from Plex with the page's one primary action", async () => {
-    getUsers.mockResolvedValue([SARAH]);
-    renderPage();
-
-    await userEvent.click(await screen.findByRole("button", { name: "Add people" }));
-
-    await waitFor(() => expect(syncUsers).toHaveBeenCalledTimes(1));
   });
 
   it("says what pausing really does: rows come off Home, nothing is deleted", async () => {

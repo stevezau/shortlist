@@ -9,24 +9,10 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { RunStatTiles } from "@/components/runs/run-stat-tiles";
-import type { RunDetail } from "@/lib/types";
+import { makeTilesRun } from "@/test/run-fixtures";
 
 function renderTokenTile(stats: Record<string, unknown>): HTMLElement {
-  const run = {
-    id: 1,
-    trigger: "manual",
-    status: "ok",
-    dry_run: false,
-    started_at: "2026-09-13T04:18:00Z",
-    began_at: "2026-09-13T04:18:00Z",
-    finished_at: "2026-09-13T04:24:00Z",
-    users: [],
-    shared_rows: [],
-    error: null,
-    promotion_blockers: [],
-    stats: { users_ok: 1, users_error: 0, titles_requested: 0, requests_queued: 0, ...stats },
-  } as unknown as RunDetail;
-  render(<RunStatTiles run={run} />);
+  render(<RunStatTiles run={makeTilesRun({}, stats)} />);
   const tile = screen.getByText("AI tokens").closest<HTMLElement>("[title]");
   if (!tile) throw new Error("the AI tokens tile did not render");
   return tile;

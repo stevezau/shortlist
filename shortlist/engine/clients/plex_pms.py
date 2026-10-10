@@ -117,7 +117,7 @@ class SectionNotShared(RuntimeError):
 # Shortlist's invisible per-account title marker is exactly 64 zero-width chars (see
 # delivery.row_marker). Checked locally here rather than imported to avoid a delivery↔client import
 # cycle; the two definitions must stay in lockstep.
-_MARKER_CHARS = ("​", "‌")
+_MARKER_CHARS = ("\u200b", "\u200c")
 
 
 def has_shortlist_marker(title: str) -> bool:
@@ -260,8 +260,8 @@ def _nearest_foreign_above(order: list[str], ours: set[str]) -> dict[str, str | 
 #:
 #: All three are spelled out because none can be inferred from position in the list. A block sitting
 #: before an anchor entry is indistinguishable from one that simply wants the top; and a block with
-#: no marker at all used to inherit the PREVIOUS block's anchor, so a row set to "Top" after an
-#: anchored row silently landed under that row's collection.
+#: no marker at all would inherit the PREVIOUS block's anchor, so a row set to "Top" after an
+#: anchored row would silently land under that row's collection.
 ANCHOR_KINDS = ("anchor", "anchor_before")
 TOP = "top"
 POSITION_KINDS = (*ANCHOR_KINDS, TOP)
@@ -297,9 +297,15 @@ def is_promoted(hub) -> bool:
     invisible to everyone, so its position on the shelf is meaningless and moving it is pure churn.
     Any single flag is enough: a row on the owner's Home alone still has a visible position.
     """
-    return any(
-        bool(getattr(hub, flag, False))
-        for flag in ("promotedToSharedHome", "promotedToOwnHome", "promotedToRecommended")
+    return any(_surface_flags(hub))
+
+
+def _surface_flags(hub) -> tuple[bool, bool, bool]:
+    """A managed hub's ``(recommended, own_home, shared_home)`` promotion flags; a missing one reads False."""
+    return (
+        bool(getattr(hub, "promotedToRecommended", False)),
+        bool(getattr(hub, "promotedToOwnHome", False)),
+        bool(getattr(hub, "promotedToSharedHome", False)),
     )
 
 
@@ -385,7 +391,7 @@ class _TimingHTTPAdapter(HTTPAdapter):
 
     plexapi talks to the PMS through ``requests`` DIRECTLY, bypassing the logged ``http_retry`` wrapper
     that instruments Tautulli/TMDB — so a slow ``collection.items()``/``addItems``/``fetch`` was
-    completely invisible in the logs (SFLIX run 3: 465s per TV row with zero log lines, 2026-07-19).
+    completely invisible in the logs (a large production server run 3: 465s per TV row with zero log lines, 2026-07-19).
     Logs method + path + status + duration; the query string is dropped so the ``X-Plex-Token`` never
     reaches the log (rule 9).
     """
@@ -413,7 +419,7 @@ def _retrying_session() -> requests.Session:
     """A requests session that retries transient PMS failures (read/connect timeouts, 429, 5xx).
 
     plexapi talks to the PMS over ``requests``; without this a single slow response fails the whole
-    run (SFLIX run 3 died on one 30s read timeout). Only idempotent methods are retried, so a
+    run (a large production server run 3 died on one 30s read timeout). Only idempotent methods are retried, so a
     collection create/label (POST/PUT) is never repeated — just the reads that dominate a run.
     """
     retry = Retry(
@@ -444,7 +450,7 @@ _PMS_TIMEOUTS = (
 )
 
 #: Plex answering with a server error rather than dropping the connection. Same transient overload
-#: as a read timeout — SFLIX 2026-09-06: `PUT /library/collections/687180/items` returned 500 after
+#: as a read timeout — a large production server 2026-09-06: `PUT /library/collections/687180/items` returned 500 after
 #: exactly 10.0s while that very collection served eight GETs and a children read as 200 either
 #: side of it — but it arrives as a `BadRequest`, not a timeout, so the retry ladder never saw it
 #: and one wobble failed a whole user for the run.
@@ -505,7 +511,7 @@ def _retry_idempotent(
     * poster upload/reset — last write wins.
 
     At scale a busy PMS pushes these into read timeouts, and one un-retried timeout used to fail the
-    whole user (SFLIX 48-user rollout, 2026-07-18). The backoff also gives the server air.
+    whole user (a large production server 48-user rollout, 2026-07-18). The backoff also gives the server air.
 
     ``already_done`` is the exception type meaning "the thing you asked for is already true" on a
     RETRY — never on the first attempt, where it is a genuine surprise worth raising.
@@ -620,12 +626,12 @@ class PlexClient:
         # This 20s default is for the fast-fail connection probes (setup/test-connection/section list).
         # The RUN's client is built by context_builder with the configurable `plex.timeout_s` (default
         # 45), because a large TV library's collection rebuild legitimately takes 15-20s and 20s timed
-        # those out + retried (SFLIX 47-user run, 2026-07-20).
+        # those out + retried (a large production server 47-user run, 2026-07-20).
         # On why the default is 20, not 60: on a LAN PMS a single call taking >20s means the server is
         # stalled, not working, and waiting the full 60s just multiplied the damage (a stuck GET retried
-        # 4x = ~240s, serialized behind the write-lock; SFLIX run 3, 2026-07-19). The retrying session's
-        # backoff still covers real transients, and the reorder no longer holds the write-lock (deferred,
-        # best-effort) so the old "keep the ceiling high for the busy reorder" reason is gone.
+        # 4x = ~240s, serialized behind the write-lock; a large production server, 2026-07-19). The retrying
+        # session's backoff still covers real transients, and the reorder does not hold the write-lock (deferred,
+        # best-effort), so there is no reason to keep the ceiling high for it.
         session = _retrying_session()
         if not follow_redirects:
             # `net_guard.check_url` validates the ADDRESS, and its own docstring says the check is
@@ -640,8 +646,8 @@ class PlexClient:
         self._token = token
         # Every raw (non-plexapi) PMS read in this class must use THIS, not a hardcoded number —
         # plexapi's own calls already get `timeout` via the PlexServer above; `user_hubs` and
-        # `_read_watched_page` used to hardcode 30/45 here, silently ignoring the operator's
-        # configured `plex.timeout_s` on exactly the two heaviest raw reads.
+        # `_read_watched_page` take it here too, so the operator's configured `plex.timeout_s`
+        # applies to the two heaviest raw reads.
         self._timeout = timeout
         # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
         # constructs one per run), so these live exactly one run — no cross-run staleness. Library
@@ -993,12 +999,8 @@ class PlexClient:
                 }
                 if flags:
                     try:
-                        hub = collection.visibility()
-                        row |= {
-                            "recommended": bool(getattr(hub, "promotedToRecommended", False)),
-                            "own_home": bool(getattr(hub, "promotedToOwnHome", False)),
-                            "shared_home": bool(getattr(hub, "promotedToSharedHome", False)),
-                        }
+                        recommended, own_home, shared_home = _surface_flags(collection.visibility())
+                        row |= {"recommended": recommended, "own_home": own_home, "shared_home": shared_home}
                     except Exception as e:
                         # One unreadable hub must not cost the whole walk — this is the tool someone
                         # reaches for when the server is already misbehaving.
@@ -1013,7 +1015,7 @@ class PlexClient:
         so a collection built from shows keeps `subtype="show"` even after its contents are
         swapped for movies. A mismatched collection is matched by neither `filterMovies` nor
         `filterTelevision`, which makes it impossible to hide from anyone — so it must be
-        deleted and recreated, never edited in place (SFLIX, 2026-07-12).
+        deleted and recreated, never edited in place (a large production server, 2026-07-12).
 
         The subtype is conclusive, so it answers on its own: falling through to the items would
         cost a PMS round-trip per user per library, every night, for rows that are already fine.
@@ -1055,7 +1057,7 @@ class PlexClient:
         # Keep the per-section cache WARM: append the new collection rather than wiping the whole
         # cache. Wiping meant every subsequent user re-read the ENTIRE (and growing) section.collections()
         # list to find their own row — O(N^2) PMS reads across a rollout, the dominant delivery cost on a
-        # busy server (SFLIX 48-user run, 2026-07-18). Its label is applied next (stored_label reloads
+        # busy server (a 48-user run, 2026-07-18). Its label is applied next (stored_label reloads
         # this same object in place), so the cached entry becomes correctly labelled.
         cached = self._collections_cache.get(section.key)
         if cached is not None:
@@ -1065,7 +1067,7 @@ class PlexClient:
     def stored_label(self, collection: Collection, label: str, *, extra: str | None = None) -> str:
         """Ensure `label` is on the collection and return it AS STORED (Plex title-cases it).
 
-        ``extra`` puts a SECOND label on in the same write. Measured on SFLIX 2026-09-06: a label PUT
+        ``extra`` puts a SECOND label on in the same write. Measured on a large server 2026-09-06: a label PUT
         costs ~9.3s whatever it carries, and every new row takes two of them (its ``shortlist_<user>``
         and the constant ``shortlist``) — 64 PUTs, 593s, 21% of that run. plexapi's ``editTags``
         concatenates ``existing + items`` and issues ONE ``PUT /library/sections/<key>/all``, so
@@ -1159,13 +1161,11 @@ class PlexClient:
         is the leak-safe half of promotion, independent of where the row is shown. ``home``/``shared``/
         ``recommended`` pick the surfaces (a per-row placement).
 
-        Position is NOT set here. This used to honour a `pin_top` flag with ``move(after=None)``, once
-        per collection per run — the very primitive `place_rows` documents as unusable on its own: it
-        writes ``min - 1000``, and a built-in stuck at the minimum (a library's own
-        `movie.recentlyadded` refuses to move) makes everything sent above it land ON that value. One
-        such rebuild collapsed 72 of 94 hubs onto `1000`. `place_rows` owns position now, and a row
-        with no per-library placement already defaults to the top — so the flag was redundant as well
-        as unsafe, and it fired even when the owner had switched shelf ordering off.
+        Position is NOT set here: ``move(after=None)`` per collection per run is the very primitive
+        `place_rows` documents as unusable on its own — it writes ``min - 1000``, and a built-in stuck
+        at the minimum (a library's own `movie.recentlyadded` refuses to move) makes everything sent
+        above it land ON that value (measured: one rebuild collapsed 72 of 94 hubs onto `1000`).
+        `place_rows` owns position, and a row with no per-library placement already defaults to the top.
         """
         start = time.monotonic()
 
@@ -1210,14 +1210,7 @@ class PlexClient:
         the ones that would actually change — so the Tools button offered to "fix" rows that were
         already down (caught on the live server: preview said 2, the live pass corrected 0).
         """
-        hub = collection.visibility()
-        return any(
-            (
-                bool(getattr(hub, "promotedToRecommended", False)),
-                bool(getattr(hub, "promotedToOwnHome", False)),
-                bool(getattr(hub, "promotedToSharedHome", False)),
-            )
-        )
+        return any(_surface_flags(collection.visibility()))
 
     def demote_all(self, collection: Collection, *, reason: str = "") -> bool:
         """Take a collection off EVERY surface, leaving it (and its label) in place.
@@ -1230,11 +1223,7 @@ class PlexClient:
         Idempotent: reads first and writes nothing when the collection already claims nothing.
         """
         hub = collection.visibility()
-        claims = (
-            bool(getattr(hub, "promotedToRecommended", False)),
-            bool(getattr(hub, "promotedToOwnHome", False)),
-            bool(getattr(hub, "promotedToSharedHome", False)),
-        )
+        claims = _surface_flags(hub)
         if not any(claims):
             return False
         hub.updateVisibility(recommended=False, home=False, shared=False)
@@ -1254,13 +1243,10 @@ class PlexClient:
         when a write actually happened.
         """
         hub = collection.visibility()
-        if not getattr(hub, "promotedToOwnHome", False):
+        recommended, own_home, shared_home = _surface_flags(hub)
+        if not own_home:
             return False
-        hub.updateVisibility(
-            recommended=bool(getattr(hub, "promotedToRecommended", False)),
-            home=False,
-            shared=bool(getattr(hub, "promotedToSharedHome", False)),
-        )
+        hub.updateVisibility(recommended=recommended, home=False, shared=shared_home)
         logger.info("{}: demoted off the owner's Home (converge)", log_title(collection.title))
         return True
 
@@ -1323,7 +1309,7 @@ class PlexClient:
             By identifier. The manage listing keeps a collection's title from when it was promoted, so
             matching by title made every row renamed in place — a `{top_seed}` row, most nights — read
             as another tool's hub: the pass found the shelf out of order, rebuilt all of it, and
-            reported every row as put back (SFLIX, 2026-09-16). Title is only the fallback for an
+            reported every row as put back (a large production server, 2026-09-16). Title is only the fallback for an
             identifier that names no ratingKey at all.
             """
             rating_key = hub_rating_key(hub)
@@ -1367,11 +1353,11 @@ class PlexClient:
             # no position a viewer can see, so following it buries the row (issue #106); refused here
             # rather than silently reinterpreted. Plex's own built-ins are always usable.
             anchor_ident: dict[str, str] = {}
-            # Anchors we cannot use, BY NAME. One unusable anchor used to return for the whole
-            # library, so a single row pointed at a hub the owner had switched off in Manage
-            # Recommendations stopped every other row here from being placed — and said so only in a
-            # log line, with the audit naming every anchor at once. Now it costs that row its
-            # placement and nothing else, and each name is audited on its own.
+            # Anchors we cannot use, BY NAME. Returning for the whole
+            # library on one unusable anchor would let a single row pointed at a hub the owner had
+            # switched off in Manage Recommendations stop every other row here from being placed. So an
+            # unusable anchor costs that row its placement and nothing else, and each name is audited
+            # on its own.
             refused: list[str] = []
             for kind, value in sequence:
                 if kind not in ANCHOR_KINDS or value in anchor_ident or value in refused:
@@ -1549,7 +1535,7 @@ class PlexClient:
         items to add (``add_items``), so this makes ZERO extra PMS reads. It used to re-fetch
         ``collection.items()`` here — a second read of what the caller had just read — and the caller
         fetched ALL wanted items even when only a few changed. On a slow, single-writer PMS those reads
-        were the dominant per-user delivery cost, serialized across users (SFLIX, 2026-07-18).
+        were the dominant per-user delivery cost, serialized across users (a large production server, 2026-07-18).
 
         Ordering (Plex's ``moveItem``, one PMS round-trip per item, no bulk API) is deliberately NOT done
         here: it runs once at the very end via ``order_collection`` — best-effort, so a slow PMS degrades
@@ -1810,11 +1796,11 @@ class PlexClient:
             visible.update(int(m["ratingKey"]) for m in r.json().get("MediaContainer", {}).get("Metadata", []) or [])
         return visible & set(rating_keys)
 
-    def user_hubs(self, canary_token: str, path: str = "/hubs") -> list[dict]:
+    def user_hubs(self, user_token: str, path: str = "/hubs") -> list[dict]:
         """Fetch hubs AS another user (for visibility checks). Uses that user's server token, not the owner's."""
         r = http_retry.get(
             self._server.url(path, includeToken=False),
-            headers={"X-Plex-Token": canary_token, "Accept": "application/json"},
+            headers={"X-Plex-Token": user_token, "Accept": "application/json"},
             timeout=self._timeout,
         )
         r.raise_for_status()
@@ -1892,17 +1878,7 @@ class PlexClient:
         if dry_run:
             logger.info("DRY RUN: would mark ratingKey={} played for the target account", rating_key)
             return True
-        r = http_retry.get(
-            self._server.url("/:/scrobble", includeToken=False),
-            params={"key": str(rating_key), "identifier": "com.plexapp.plugins.library"},
-            headers={"X-Plex-Token": token, "Accept": "application/json"},
-            timeout=self._timeout,
-        )
-        if r.status_code in (401, 403, 404):
-            logger.debug("scrobble skipped for ratingKey={} (HTTP {})", rating_key, r.status_code)
-            return False
-        r.raise_for_status()
-        return True
+        return self._user_write("/:/scrobble", {"key": str(rating_key)}, rating_key, token)
 
     def unscrobble_as(self, rating_key: int, token: str, *, dry_run: bool = False) -> bool:
         """Mark one item UNWATCHED as another account — the only call here that removes state.
@@ -2115,14 +2091,16 @@ class PlexClient:
         scheme = "wss" if base.startswith("https://") else "ws"
         return f"{scheme}://{base.split('://', 1)[1]}/:/websockets/notifications"
 
-    def active_sessions(self) -> dict[str, dict]:
+    def active_sessions(self, *, owner_account_id: int | None = None) -> dict[str, dict]:
         """What is playing right now, keyed by Plex's `sessionKey`.
 
         The notification socket carries no user and no runtime — only a session key, a rating key and
         an offset — so this read is what turns an anonymous position update into "this person is 40%
-        through this title". `<User id>` here IS the plex.tv account id (verified against a live
-        server: 14136324 is the account we hold for that user), which is what makes it joinable where
-        a display name would not be.
+        through this title". Shared/Home users carry their plex.tv account ID. The server owner
+        instead carries the PMS-local ID 1 (observed during a genuine Plex Web play). Only a caller
+        that verified this server's identity may supply its canonical owner account. Without that
+        evidence the owner stays unresolved; neither a display name nor the local ID proves a
+        plex.tv identity.
         """
         r = http_retry.get(
             self._server.url("/status/sessions", includeToken=False),
@@ -2136,9 +2114,12 @@ class PlexClient:
             if not key:
                 continue
             user = el.find("User")
+            account_id = int(user.get("id")) if user is not None and (user.get("id") or "").isdigit() else None
+            if account_id == 1:
+                account_id = owner_account_id if type(owner_account_id) is int and owner_account_id > 0 else None
             grandparent = (el.get("grandparentRatingKey") or "").strip()
             out[key] = {
-                "account_id": int(user.get("id")) if user is not None and (user.get("id") or "").isdigit() else None,
+                "account_id": account_id,
                 "rating_key": int(el.get("ratingKey") or 0) or None,
                 "show_rating_key": int(grandparent) if grandparent.isdigit() else None,
                 "media_type": el.get("type") or "",
@@ -2279,7 +2260,7 @@ class PlexClient:
 
                 Done by ORDERING, not filtering: the read is sorted ``lastViewedAt:desc`` and stops at
                 the first title older than the cutoff. A `lastViewedAt>=` query filter was tried first
-                and is **silently ignored** by PMS 1.43.3 (live-probed 2026-07-30 against SFLIX:
+                and is **silently ignored** by PMS 1.43.3 (live-probed 2026-07-30 against a large production server:
                 unfiltered, `>=` and `>>=` all returned the same totalSize of 1077 — as did a `year>>=`
                 control, so param filtering on this endpoint does not work at all). Ignoring a filter
                 is the worst failure mode available: it returns everything while looking like it
@@ -2608,9 +2589,34 @@ class PlexClient:
         episode nobody finished.
         """
         newest = 0
+
+        def fold(page: list[ET.Element]) -> None:
+            nonlocal newest
+            for el in page:
+                try:
+                    views = int(el.get("viewCount") or 0)
+                    stamp = int(el.get("lastViewedAt") or 0)
+                except ValueError:
+                    continue
+                if views > 0:
+                    newest = max(newest, stamp)  # unwatched and part-watched rows are both excluded
+
+        url = self._server.url(f"/library/metadata/{show_rating_key}/allLeaves", includeToken=False)
+        if not self._page_through(url, token, f"show {show_rating_key} is not visible to this user", fold):
+            logger.warning("watched read: show {} did not finish paging its episodes", show_rating_key)
+        return newest
+
+    def _page_through(self, url: str, token: str, not_shared_message: str, fold_page) -> bool:
+        """GET ``url`` page by page as ``token``, handing each page's elements to ``fold_page``.
+
+        Returns True once the end is proven (an empty page, or ``start`` reaching a reported
+        ``totalSize``), False when `_EPISODE_PAGE_LIMIT` pages passed without it.
+
+        Raises:
+            SectionNotShared: The server answered 403.
+        """
         start = 0
         for _ in range(self._EPISODE_PAGE_LIMIT):
-            url = self._server.url(f"/library/metadata/{show_rating_key}/allLeaves", includeToken=False)
             r = http_retry.get(
                 url,
                 headers={
@@ -2621,26 +2627,18 @@ class PlexClient:
                 timeout=self._timeout,
             )
             if r.status_code == 403:
-                raise SectionNotShared(f"show {show_rating_key} is not visible to this user")
+                raise SectionNotShared(not_shared_message)
             r.raise_for_status()
             root = ET.fromstring(r.text)
             page = list(root)
-            for el in page:
-                try:
-                    views = int(el.get("viewCount") or 0)
-                    stamp = int(el.get("lastViewedAt") or 0)
-                except ValueError:
-                    continue
-                if views > 0:
-                    newest = max(newest, stamp)  # unwatched and part-watched rows are both excluded
+            fold_page(page)
             if not page:
-                return newest
+                return True
             start += len(page)
             reported = root.get("totalSize")
             if reported is not None and start >= int(reported):
-                return newest
-        logger.warning("watched read: show {} did not finish paging its episodes", show_rating_key)
-        return newest
+                return True
+        return False
 
     def _newest_episode_stamps(self, section_key: str | int, token: str) -> dict[int, int] | None:
         """`{show ratingKey: newest watched episode lastViewedAt}` for one show library, read as `token`.
@@ -2656,31 +2654,8 @@ class PlexClient:
             an arbitrary subset and every date taken from it is arbitrarily too old.
         """
         newest: dict[int, int] = {}
-        start = 0
-        # A server that reports no `totalSize` AND caps the container below what we asked for
-        # answers every page short, so "short page" cannot mean "the end" — that read stops after one
-        # page and dates every show from the first 2% of an unordered list. Page until the server
-        # returns an EMPTY page instead, which costs one extra request and cannot be misread. The
-        # bound is a safety stop against a server that never empties, not an expected exit.
-        for _ in range(self._EPISODE_PAGE_LIMIT):
-            url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
-            # `?` or `&`: plexapi appends `?X-Plex-Token=...` to `url()` even with `includeToken=False`
-            # whenever `log.show_secrets` is on, and a hardcoded `?` then made `type=4` part of the
-            # token value rather than a parameter — answered with the whole library, not its episodes.
-            r = http_retry.get(
-                f"{url}{'&' if '?' in url else '?'}type=4&unwatched=0",
-                headers={
-                    "X-Plex-Token": token,
-                    "X-Plex-Container-Start": str(start),
-                    "X-Plex-Container-Size": str(self._WATCHED_PAGE),
-                },
-                timeout=self._timeout,
-            )
-            if r.status_code == 403:
-                raise SectionNotShared(f"section {section_key} is not shared with this user")
-            r.raise_for_status()
-            root = ET.fromstring(r.text)
-            page = list(root)
+
+        def fold(page: list[ET.Element]) -> None:
             for el in page:
                 raw = el.get("grandparentRatingKey")
                 if raw is None:
@@ -2702,12 +2677,20 @@ class PlexClient:
                     continue
                 if stamp > newest.get(key, 0):
                     newest[key] = stamp
-            if not page:
-                return newest
-            start += len(page)
-            reported = root.get("totalSize")
-            if reported is not None and start >= int(reported):
-                return newest
+
+        # A server that reports no `totalSize` AND caps the container below what we asked for
+        # answers every page short, so "short page" cannot mean "the end" — that read stops after one
+        # page and dates every show from the first 2% of an unordered list. `_page_through` pages until
+        # the server returns an EMPTY page instead, which costs one extra request and cannot be
+        # misread. Its page bound is a safety stop against a server that never empties, not an
+        # expected exit.
+        url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
+        # `?` or `&`: plexapi appends `?X-Plex-Token=...` to `url()` even with `includeToken=False`
+        # whenever `log.show_secrets` is on, and a hardcoded `?` then made `type=4` part of the
+        # token value rather than a parameter — answered with the whole library, not its episodes.
+        url = f"{url}{'&' if '?' in url else '?'}type=4&unwatched=0"
+        if self._page_through(url, token, f"section {section_key} is not shared with this user", fold):
+            return newest
         logger.warning(
             "watched read: section {} — episode read did not terminate in {} pages, dates left unknown",
             section_key,
@@ -2777,7 +2760,7 @@ class PlexClient:
         # 403 here is the PMS saying this token cannot see this library — an unshared library, not a
         # broken read. It has to be a distinct signal: treated as a generic failure it invalidated the
         # WHOLE person's watch cache on every sync, forcing an uncached complete re-read of every
-        # library for ever (SFLIX: two users, hourly, silently). See `SectionNotShared`.
+        # library for ever (a large production server: two users, hourly, silently). See `SectionNotShared`.
         if r.status_code == 403:
             raise SectionNotShared(f"section {section_key} is not shared with this user")
         r.raise_for_status()

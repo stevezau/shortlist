@@ -162,6 +162,50 @@ class TestUsersApi:
         assert users["mike"]["picks_watched_30d"] is None
         assert users["mike"]["last_pick_watched_at"] is None
 
+    def test_the_header_count_includes_shared_row_watches_like_the_dashboard(self, client: TestClient):
+        """The dashboard's "watched" credits shared rows too. A header that left them out read 6 where
+        the dashboard read 11 for the same person and window."""
+        from shortlist.server.db.models import PickRow, Run, SharedRowWatch
+
+        now = datetime.now(UTC)
+        with client.app.state.sessions() as session:
+            sarah = session.query(User).filter_by(slug="sarah").one()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=sarah.id,
+                    tmdb_id=1,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Own pick",
+                    watched_at=now - timedelta(days=5),
+                )
+            )
+            # Title 1 is on a shared row too: one title watched, not two.
+            for tmdb_id, watched_at in ((1, now - timedelta(days=4)), (2, now - timedelta(days=2))):
+                session.add(
+                    SharedRowWatch(
+                        user_id=sarah.id,
+                        collection_slug="popular",
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        watched_at=watched_at,
+                    )
+                )
+            session.commit()
+
+        sarah_out = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+
+        assert sarah_out["picks_watched_30d"] == 2
+        assert sarah_out["last_pick_watched_at"] == (now - timedelta(days=2)).isoformat()
+
     def test_an_old_watch_sets_the_last_watched_date_but_adds_nothing_to_the_count(self, client: TestClient):
         from shortlist.server.db.models import PickRow, Run
 
@@ -473,31 +517,34 @@ class TestUsersApi:
         Storing the flag without queueing anything would leave the account exactly as polluted as
         before until the next nightly run — the "settings PATCH was inert" shape from §12's audit.
         """
-        import shortlist.server.api.users as users_api
+        from shortlist.server.db.models import Job
+        from shortlist.server.services import jobs
 
-        reasons: list[str] = []
+        async def no_drain(state, reason):
+            return None
 
-        async def fake_queue(state, reason):
-            reasons.append(reason)
+        monkeypatch.setattr(jobs, "drain_now", no_drain)
 
-        monkeypatch.setattr(users_api.jobs, "queue_privacy_sync", fake_queue)
+        def privacy_steps():
+            with client.app.state.sessions() as session:
+                return [
+                    step
+                    for job in session.query(Job).filter_by(kind="assistant.converge")
+                    for step in job.payload["steps"]
+                    if step["kind"] == "privacy.sync"
+                ]
+
         target = next(u for u in client.get("/api/users").json() if u["username"] == "mike")
-        assert target["manage_sharing"] is True  # managed by default — no live server changes on upgrade
-
+        assert target["manage_sharing"] is True
+        before = len(privacy_steps())
         r = client.patch(f"/api/users/{target['id']}", json={"manage_sharing": False})
-
         assert r.status_code == 200 and r.json()["manage_sharing"] is False
-        assert len(reasons) == 1 and "leave their Plex sharing alone" in reasons[0]
-
-        # Turning it back on queues the merge again...
+        assert len(privacy_steps()) == before + 1
         r = client.patch(f"/api/users/{target['id']}", json={"manage_sharing": True})
         assert r.json()["manage_sharing"] is True
-        assert len(reasons) == 2
-
-        # ...and a PATCH that does not CHANGE it queues nothing, so an unrelated edit (a nickname,
-        # the enabled switch) never fires a server-wide filter pass on the side.
+        assert len(privacy_steps()) == before + 2
         client.patch(f"/api/users/{target['id']}", json={"manage_sharing": True, "nickname": "Michael"})
-        assert len(reasons) == 2
+        assert len(privacy_steps()) == before + 2
 
     def test_the_owner_cannot_be_marked_left_alone(self, client: TestClient):
         """Plex has no share filters for the account that owns the server (rule 5), so the flag can
@@ -714,12 +761,29 @@ class TestUserSync:
         """The accounts are already saved and the nightly run is still the backstop, so a Plex
         outage here must not fail the sync the operator asked for."""
 
-        def explode(state, dry_run):
+        attempts: list[bool] = []
+
+        def explode(**kwargs):
+            attempts.append(True)
             raise RuntimeError("Plex is down")
 
         monkeypatch.setattr(client.app.state.run_service, "build_context", explode)
 
-        assert client.post("/api/users/sync").status_code == 200
+        response = client.post("/api/users/sync")
+
+        assert response.status_code == 200
+        # `build_context` runs in the queued `privacy.sync` job, never in this request: the sync is
+        # already inside the drain, so the share-filter pass waits for the next one.
+        assert attempts == []
+        queued = [j for j in client.get("/api/system/jobs").json() if j["kind"] == "privacy.sync"]
+        assert [j["status"] for j in queued] == ["queued"]
+
+        # Drain it now. The job must reach `build_context`, fail there, and be recorded as failed
+        # (retried with backoff) — not read as done, and not take the drain down.
+        assert client.post("/api/system/jobs", json={"kind": "sync.check"}).status_code < 500
+        assert attempts, "the share-filter job never reached build_context"
+        filters = [j for j in client.get("/api/system/jobs").json() if j["kind"] == "privacy.sync"]
+        assert filters and all(j["status"] != "done" for j in filters)
 
     def test_a_home_read_blip_never_wipes_a_stored_restriction_profile(self, client: TestClient, plextv, monkeypatch):
         """`/api/home/users` is a best-effort enrichment: when it fails, every profile comes back "".
@@ -1212,6 +1276,39 @@ class TestUserRowsApi:
     def _sarah_id(self, client: TestClient) -> int:
         return next(u["id"] for u in client.get("/api/users").json() if u["slug"] == "sarah")
 
+    def test_override_write_uses_configured_audience_even_before_activation(self, client: TestClient):
+        from shortlist.server.db.models import Collection, CollectionAudience, CollectionUserOverride, Job
+
+        member_id = self._sarah_id(client)
+        outsider_id = next(user["id"] for user in client.get("/api/users").json() if user["id"] != member_id)
+        with client.app.state.sessions() as session:
+            row = Collection(slug="subset-override", name="Subset override", audience="subset", enabled=True)
+            session.add(row)
+            session.flush()
+            row_id = row.id
+            session.add(CollectionAudience(collection_id=row_id, user_id=member_id))
+            session.commit()
+            jobs_before = session.query(Job).count()
+
+        assert row_id not in {row["collection_id"] for row in client.get(f"/api/users/{outsider_id}/rows").json()}
+        rejected = client.put(f"/api/users/{outsider_id}/rows/{row_id}", json={"muted": True, "row_size": 20})
+        assert rejected.status_code == 422
+        with client.app.state.sessions() as session:
+            assert session.get(CollectionUserOverride, (row_id, outsider_id)) is None
+            assert session.query(Job).count() == jobs_before
+            session.get(Collection, row_id).enabled = False
+            session.get(User, member_id).enabled = False
+            session.commit()
+
+        assert row_id not in {row["collection_id"] for row in client.get(f"/api/users/{member_id}/rows").json()}
+        saved = client.put(f"/api/users/{member_id}/rows/{row_id}", json={"row_size": 20, "recent_count": 6})
+        assert saved.status_code == 200, saved.text
+        assert saved.json() == {"collection_id": row_id, "muted": False, "row_size": 20, "recent_count": 6}
+        with client.app.state.sessions() as session:
+            stored = session.get(CollectionUserOverride, (row_id, member_id))
+            assert (stored.muted, stored.row_size, stored.recent_count) == (False, 20, 6)
+            assert session.query(Job).count() == jobs_before
+
     def test_rows_lists_the_default_row_with_no_picks_yet(self, client: TestClient):
         uid = self._sarah_id(client)
         rows = client.get(f"/api/users/{uid}/rows").json()
@@ -1240,6 +1337,7 @@ class TestUserRowsApi:
         picks. Plex still holds the last real run's titles, so that is what the page shows — not
         "No picks in this row yet" for every person after one cancelled dry run."""
         from shortlist.server.db.models import Delivery, PickRow, Run, RunUser
+        from tests.watch_fixtures import personal_delivery
 
         uid = self._sarah_id(client)
 
@@ -1265,6 +1363,7 @@ class TestUserRowsApi:
             session.flush()
             session.add(RunUser(run_id=built.id, user_id=uid, status="ok"))
             session.add(pick(built.id, "Arrival"))
+            personal_delivery(session, built.id, user_id=uid)
             cancelled_dry = Run(trigger="manual", status="aborted", dry_run=True)
             session.add(cancelled_dry)
             session.flush()
@@ -1281,6 +1380,7 @@ class TestUserRowsApi:
             session.flush()
             session.add(RunUser(run_id=rebuilt.id, user_id=uid, status="ok"))
             session.add(pick(rebuilt.id, "Contact"))
+            personal_delivery(session, rebuilt.id, user_id=uid)
             session.commit()
 
         row = client.get(f"/api/users/{uid}/rows").json()[0]
@@ -1290,6 +1390,7 @@ class TestUserRowsApi:
         """Rows have their own crons, so the newest run is often scoped to ONE row. The other row's
         picks are still on Plex, so the page must show them, not "No picks in this row yet"."""
         from shortlist.server.db.models import Collection, Delivery, PickRow, Run, RunUser
+        from tests.watch_fixtures import personal_delivery
 
         uid = self._sarah_id(client)
 
@@ -1324,6 +1425,9 @@ class TestUserRowsApi:
             session.add(pick(run_a.id, "picked", "A picked"))
             session.add(pick(run_a.id, "weekend", "A weekend"))
             session.add(pick(run_b.id, "picked", "B picked"))
+            personal_delivery(session, run_a.id, user_id=uid)
+            personal_delivery(session, run_a.id, user_id=uid, slug="weekend")
+            personal_delivery(session, run_b.id, user_id=uid)
             session.commit()
 
         rows = {r["slug"]: r for r in client.get(f"/api/users/{uid}/rows").json()}
@@ -1710,11 +1814,11 @@ def test_requested_by_tag_round_trips(client: TestClient):
     assert next(u for u in client.get("/api/users").json() if u["id"] == uid)["requested_by_tag"] == "children"
 
 
-def _seed_user_with_runs(session, slug: str, finished: datetime) -> list[str]:
+def _seed_user_with_runs(session, slug: str, finished: datetime, *, account_id: int) -> list[str]:
     """A user with two runs; only the LATER run's top three picks (by rank) may reach the preview."""
     from shortlist.server.db.models import PickRow, Run, RunUser
 
-    user = User(plex_account_id=900000 + abs(hash(slug)) % 99999, username=slug, slug=slug)
+    user = User(plex_account_id=account_id, username=slug, slug=slug)
     session.add(user)
     session.flush()
     runs = []
@@ -1744,7 +1848,10 @@ class TestUsersListQueries:
     def test_the_list_reports_last_run_time_and_a_three_title_preview_per_person(self, client: TestClient):
         finished = datetime(2026, 6, 1, 12, tzinfo=UTC)
         with client.app.state.sessions() as session:
-            expected = {slug: _seed_user_with_runs(session, slug, finished) for slug in ("ann", "bob", "cy")}
+            expected = {
+                slug: _seed_user_with_runs(session, slug, finished, account_id=account_id)
+                for account_id, slug in enumerate(("ann", "bob", "cy"), start=900000)
+            }
             session.commit()
 
         users = {u["username"]: u for u in client.get("/api/users").json()}
@@ -1778,12 +1885,12 @@ class TestUsersListQueries:
 
         with client.app.state.sessions() as session:
             for i in range(1, 3):
-                _seed_user_with_runs(session, f"few{i}", finished)
+                _seed_user_with_runs(session, f"few{i}", finished, account_id=900000 + i)
             session.commit()
         few = statements_for_list()
         with client.app.state.sessions() as session:
             for i in range(3, 30):
-                _seed_user_with_runs(session, f"many{i}", finished)
+                _seed_user_with_runs(session, f"many{i}", finished, account_id=900000 + i)
             session.commit()
 
         assert statements_for_list() == few

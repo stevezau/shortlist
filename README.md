@@ -49,8 +49,7 @@
 ![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
 
 <sub>What lands on Plex: a real "Picked for You" row from the maintainer's server, visible only to
-its owner. Four "watched" ticks were painted out, because that run predates the freshness fix. Rows
-built today carry none.</sub>
+its owner. Four "watched" ticks have been painted out.</sub>
 
 ## What it does
 
@@ -70,6 +69,12 @@ to the wrong person, not even briefly.
 **It slots into the stack you already run.** Watch history comes straight from Plex. Candidates come
 from TMDB and Trakt. Gaps can be handed to **Radarr/Sonarr** or **Overseerr/Jellyseerr**. Kometa's
 collections are left completely alone.
+
+**An assistant can help configure it.** Optional [MCP access](docs/guides/assistant-access.md) lets
+local or hosted assistants view Shortlist or manage its supported settings, rows and normal saved
+runs. The owner chooses **View only** or **Manage Shortlist** for each named connection. Normal runs
+use the configured services and may incur provider charges; sensitive changes still need browser
+approval.
 
 **Requirements and limits:**
 
@@ -93,7 +98,7 @@ is private.
 
 | Start each row from a template                                        | Add as many rows as you like           |
 | --------------------------------------------------------------------- | -------------------------------------- |
-| ![The Add a row template gallery](docs/images/templates.webp) | ![The rows page](docs/images/rows.webp) |
+| ![The Add a row page](docs/images/templates.webp) | ![The rows page](docs/images/rows.webp) |
 
 | Every pick, and _why_ it was picked                    | Watch every run, step by step                    |
 | ------------------------------------------------------ | ------------------------------------------------ |
@@ -130,14 +135,14 @@ but nobody pictured here watched anything.</sub>
 
 **Make it yours**
 
-- 🎞️ **Six row kinds, ten templates.** Picked for You, Because you watched, Watch it again, Popular on
+- 🎞️ **Six row kinds, eleven templates.** Picked for You, Because you watched, Watch it again, Popular on
   this server (shared), Seasonal and Your requests. Start each row from a template (Fresh finds, From
-  the vault, Movie night and More TV to watch are the others) rather than a blank form. Every row has
+  the vault, Movie night, More TV to watch and the AI's Describe a row are the others) rather than a blank form. Every row has
   its own sources, size, libraries, cadence and audience, and you can add as many as you like.
 - 🗓️ **A rebuild cadence you control**: nightly, weekly, monthly or never, so nobody opens Plex to a
   completely reshuffled row every day.
-- 🎃 **Seasonal rows**: one row that follows the calendar: Halloween, Christmas, Valentine's Day plus ten
-  ready-made holidays such as Thanksgiving and Easter, or your own dates. Picked for each person and
+- 🎃 **Seasonal rows**: one row that follows the calendar: Halloween, Christmas, Valentine's Day plus twenty
+  ready-made holidays, film days and spotlights such as Thanksgiving and Easter, or your own dates. Picked for each person and
   hidden between seasons.
 - 🚫 **Block a bad seed.** A film someone put on for a friend shouldn't shape their picks. Block it
   from a run's "How we picked" page. The watch stays in their Plex history and just stops seeding.
@@ -150,7 +155,7 @@ but nobody pictured here watched anything.</sub>
 - 📥 **Fills its own gaps (optional).** When a great pick isn't in your library, Shortlist can ask
   **Radarr/Sonarr** for it, or file a request in **Overseerr/Jellyseerr**. Off by default and
   cautious: the strongest few auto-send each night, and the rest wait in a **Requests** inbox for
-  one-click approval.
+  one-click approval. Genres and TMDB tags you pick (concert films, say) never auto-send.
 - 📬 **A "Your requests" row.** What each person asked for in Overseerr (or tagged with their name in
   Radarr/Sonarr), once it's on Plex and until they've watched it. Private per person, newest first,
   no AI. A person with nothing ready simply has no row.
@@ -163,7 +168,7 @@ but nobody pictured here watched anything.</sub>
 - 📊 **Know if it's working.** A dashboard tracks what was delivered against what people actually
   watched, per user and per row, and separates a title they **started** from one they **finished**.
 - 🖥️ **A clear dashboard.** Dashboard, Users, Privacy, Runs (with a per-person "How we picked") and Activity pages, including
-  "Changes on Plex", a row editor with a jump list, and three-tab Settings. See [the interface guide](https://shortlistapp.dev/guides/interface/).
+  "Changes on Plex", a row editor with a jump list, and four-tab Settings. See [the interface guide](https://shortlistapp.dev/guides/interface/).
 - 🧪 **Safe mode.** Set `SHORTLIST_DRY_RUN=1` to try it against your real server without writing a
   single change.
 - 📦 **Homelab-native**: one container, a `/config` volume, a multi-arch image on GHCR, a healthcheck

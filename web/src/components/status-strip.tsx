@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-export type StatusTone = "ok" | "warn" | "error" | "neutral";
+type StatusTone = "ok" | "warn" | "error" | "neutral";
 
 const DOT: Record<StatusTone, string> = {
   ok: "bg-success",

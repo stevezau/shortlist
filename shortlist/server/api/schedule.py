@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, iso_utc
 from shortlist.server.scheduler import DEFAULT_CRONS, effective_cron
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services.jobs import CATALOG
 from shortlist.server.settings_store import SettingsStore
 

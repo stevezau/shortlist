@@ -29,15 +29,6 @@ const MAX_SEEDS_DEFAULT = 30;
  * claiming a default that may not be this server's.
  */
 
-/** The raw global value, for callers that need to phrase it themselves rather than take the
- *  toggle caption. The row preview says what a row will actually DO, so "whatever the global is"
- *  would be the one line on that panel which answers nothing. */
-export function watchedPctGlobalValue(
-  settings: Settings | undefined,
-): number | null {
-  return num(settings, "recommendations.watched_pct");
-}
-
 export function refreshDaysGlobalValue(
   settings: Settings | undefined,
 ): number | null {
@@ -80,12 +71,6 @@ export function idleHoldGlobal(settings: Settings | undefined): string | null {
   if (days === null) return null;
   if (days <= 0) return "off — titles refresh whatever they watched";
   return `held up to ${days} days`;
-}
-
-export function recencyGlobalValue(
-  settings: Settings | undefined,
-): number | null {
-  return num(settings, "recommendations.recency");
 }
 
 /** 0..1 fraction → "50% — leans towards recent releases". */

@@ -23,6 +23,7 @@ import type {
   RunRequest,
   SeasonInput,
   SeasonPreviewInput,
+  HoldPreviewInput,
   Settings,
   User,
   UserPatch,
@@ -81,8 +82,10 @@ export const queryKeys = {
   schedule: ["schedule"] as const,
   libraries: ["libraries"] as const,
   seasons: ["seasons"] as const,
+  seasonCreate: ["season-create"] as const,
   seasonPresets: ["season-presets"] as const,
   seasonPreview: (draft: SeasonPreviewInput) => ["season-preview", draft] as const,
+  holdPreview: (draft: HoldPreviewInput) => ["hold-preview", draft] as const,
   seasonNextDate: (rule: DateRule) => ["season-next-date", rule] as const,
   themeCapabilities: ["theme-capabilities"] as const,
   themePrompts: ["theme-prompts"] as const,
@@ -94,7 +97,6 @@ export const queryKeys = {
   ownedCollections: ["owned-collections"] as const,
   notifications: ["notifications"] as const,
   whatsNew: ["whats-new"] as const,
-  syncs: ["syncs"] as const,
   version: ["version"] as const,
   imageProvider: ["image-provider"] as const,
   backups: ["backups"] as const,
@@ -105,6 +107,11 @@ export const queryKeys = {
   jobsCatalog: ["jobs", "catalog"] as const,
   privacyStatus: ["privacy", "status"] as const,
   plexChanges: ["events", "plex-writes"] as const,
+  watchSnapshots: ["watch-snapshots"] as const,
+  acquisitionClaims: ["requests", "acquisition-claims"] as const,
+  collectionEffectiveness: (id: number | null) => ["collection-effectiveness", id] as const,
+  jobsActivity: ["jobs", "activity"] as const,
+  runsActive: ["runs", "active"] as const,
 };
 
 /**
@@ -322,8 +329,13 @@ export function useSettings() {
   return useQuery({ queryKey: queryKeys.settings, queryFn: api.getSettings });
 }
 
-export function useSyncs() {
-  return useQuery({ queryKey: queryKeys.syncs, queryFn: api.getSyncs });
+/** The built-in default of every setting. They never change while the app runs, so fetch once. */
+export function useSettingDefaults() {
+  return useQuery({
+    queryKey: [...queryKeys.settings, "defaults"] as const,
+    queryFn: api.getSettingDefaults,
+    staleTime: Infinity,
+  });
 }
 
 /** Whether the AI provider can generate poster images — for the row editor's Generate gate. */
@@ -490,7 +502,7 @@ export function useDeleteCollection() {
   });
 }
 
-/** Quality profiles + root folders for a Sonarr/Radarr — only fetched once it's connected. */
+/** Overseerr/Jellyseerr accounts for the "request as" dropdown — only fetched once it's connected. */
 export function useSeerrOptions(enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.seerrOptions,
@@ -520,6 +532,7 @@ export function useRequestRowSources(pattern: string, enabled: boolean, rowId: n
   });
 }
 
+/** Quality profiles + root folders for a Sonarr/Radarr — only fetched once it's connected. */
 export function useArrOptions(service: "radarr" | "sonarr", enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.arrOptions(service),
@@ -624,6 +637,19 @@ export function useSeasonPreview(
   });
 }
 
+/** Which waiting inbox movies draft hold picks would catch — the request settings' live check. */
+export function useHoldPreview(draft: HoldPreviewInput, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.holdPreview(draft),
+    queryFn: () => api.previewHolds(draft),
+    staleTime: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
 /** When a date rule next falls, for the editor's "Next: …" line. Asked apart from the count, so a count
  *  that fails never takes the date with it. The answer only moves at midnight. */
 export function useSeasonNextDate(rule: DateRule) {
@@ -679,6 +705,7 @@ function useInvalidateSeasons() {
 export function useCreateSeason() {
   const invalidate = useInvalidateSeasons();
   return useMutation({
+    mutationKey: queryKeys.seasonCreate,
     mutationFn: (body: SeasonInput) => api.createSeason(body),
     onSuccess: invalidate,
   });
@@ -757,9 +784,6 @@ export function useUserHistory(id: number) {
   });
 }
 
-/** A page of someone's cached watched set. `placeholderData` keeps the previous page on screen while
- *  a new search resolves — without it every keystroke blanks the list to a skeleton, which reads as
- *  "no results" for a moment and makes typing feel broken. */
 /** What they did with their picks — finished, part-watched, abandoned. */
 export function useUserOutcomes(id: number) {
   return useQuery({
@@ -768,6 +792,9 @@ export function useUserOutcomes(id: number) {
   });
 }
 
+/** A page of someone's cached watched set. `placeholderData` keeps the previous page on screen while
+ *  a new search resolves — without it every keystroke blanks the list to a skeleton, which reads as
+ *  "no results" for a moment and makes typing feel broken. */
 export function useUserWatched(id: number, filters: WatchedFilters) {
   return useQuery({
     queryKey: queryKeys.userWatched(id, filters),
@@ -776,8 +803,8 @@ export function useUserWatched(id: number, filters: WatchedFilters) {
   });
 }
 
-/** Plex Home users the owner could move their watching to. `enabled: false` — it is a live plex.tv
- *  read behind a "look again" button, so it runs when asked rather than on mount. */
+/** Plex Home users the owner could move their watching to. A live plex.tv read that runs on mount;
+ *  the "look again" button refetches it. */
 export function useHomeUserCandidates() {
   return useQuery({
     queryKey: queryKeys.homeUsers,
@@ -799,15 +826,14 @@ export function useTransferWatchHistory() {
       // watched set, which the users list and every watch-history panel read from.
       if (result.dry_run) return;
       queryClient.invalidateQueries({ queryKey: queryKeys.users });
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      queryClient.invalidateQueries({ queryKey: ["watch-snapshots"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchSnapshots });
     },
   });
 }
 
 export function useWatchSnapshots() {
   return useQuery({
-    queryKey: ["watch-snapshots"],
+    queryKey: queryKeys.watchSnapshots,
     queryFn: () => api.listWatchSnapshots(),
     retry: false,
   });
@@ -823,8 +849,7 @@ export function useUndoWatchTransfer() {
       // views reading it are just as stale afterwards.
       if (result.dry_run) return;
       queryClient.invalidateQueries({ queryKey: queryKeys.users });
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      queryClient.invalidateQueries({ queryKey: ["watch-snapshots"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchSnapshots });
     },
   });
 }
@@ -935,10 +960,9 @@ export function arrStatusInterval(
 /**
  * Live Sonarr/Radarr state for the inbox's badges.
  *
- * It POLLS. It used to fetch once on mount with a 30s `staleTime` and no interval, so a title that
- * finished downloading while you watched the page went on reading "Searching" until you reloaded —
- * which is exactly the "it takes ages to say Downloaded" the inbox was reported for. Nothing
- * invalidated this key either, so a title you had just sent showed no status at all.
+ * It POLLS. A single fetch on mount would leave a title that finished downloading while you watched
+ * the page reading "Searching" until you reloaded, and a title you had just sent would show no
+ * status at all unless sending invalidates this key.
  *
  * Polls ONLY while a title is actually moving. One fetch is a whole-library read from each Arr
  * (`RadarrClient.status_by_tmdb` pulls `/api/v3/movie` entire), which is the right shape for asking
@@ -1035,9 +1059,9 @@ export function useReport(window: ReportWindow = "30") {
  * Kick off a watch-history sync, and refresh the report once it actually finishes.
  *
  * The sync runs in the background, so the POST returning tells you nothing about when it's done —
- * this used to guess with a flat 4s `setTimeout`, which could refetch before the sync landed (a
- * slow server) or long after (a fast one, leaving the "last synced" time stale in between). The
- * sync already emits `sync.finished` on the shared SSE bus the moment it's actually done; this
+ * a flat `setTimeout` guess would refetch before the sync landed (a slow server) or long after (a
+ * fast one, leaving the "last synced" time stale in between). The
+ * sync emits `sync.finished` on the shared SSE bus the moment it's actually done; this
  * listens for that instead of guessing.
  */
 export function useSyncWatched() {
@@ -1069,6 +1093,27 @@ export function useSendRequests() {
       // Nothing invalidated this key at all before, so a title you had just sent sat with no badge
       // until the next poll came round — or, with no poll, until a reload.
       queryClient.invalidateQueries({ queryKey: queryKeys.arrStatus });
+    },
+  });
+}
+
+export function useAcquisitionClaims() {
+  return useQuery({
+    queryKey: queryKeys.acquisitionClaims,
+    queryFn: () => api.listAcquisitionClaims(),
+    staleTime: 15_000,
+    retry: false,
+  });
+}
+
+export function useReleaseAcquisitionClaim() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reviewToken, expectedStatus }: { id: number; reviewToken: string; expectedStatus: "outcome_unknown" | "succeeded" }) =>
+      api.releaseAcquisitionClaim(id, reviewToken, expectedStatus),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.acquisitionClaims });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.requests });
     },
   });
 }
@@ -1128,7 +1173,7 @@ export function useLogs(
 }
 
 /** How many audit events one "Load older changes" press fetches (the server's default page). */
-export const PLEX_CHANGES_PAGE = 200;
+const PLEX_CHANGES_PAGE = 200;
 
 /**
  * Every write Shortlist made to Plex or plex.tv, newest first, paged backwards by event id.
@@ -1157,7 +1202,7 @@ export function usePlexChanges() {
  *  history, and asking for one would 404. */
 export function useCollectionEffectiveness(id: number | null) {
   return useQuery({
-    queryKey: ["collection-effectiveness", id],
+    queryKey: queryKeys.collectionEffectiveness(id),
     queryFn: () => api.getCollectionEffectiveness(id as number),
     enabled: id !== null,
   });

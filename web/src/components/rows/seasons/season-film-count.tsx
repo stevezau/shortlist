@@ -22,7 +22,7 @@ export function SeasonFilmCount({
   row: SeasonRow;
   /** Say "in your libraries" too, where nothing else says where they are counted. */
   inLibraries?: boolean;
-  /** Show "Enough … for this row" too, not only a warning. */
+  /** Show the match-count verdict too, not only a warning. */
   chipWhenOk?: boolean;
 }) {
   const preview = useSeasonPreview(previewInput(source, row));

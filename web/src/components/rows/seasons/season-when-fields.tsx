@@ -15,6 +15,7 @@ const KINDS: readonly { kind: DateRule["kind"]; label: string }[] = [
   { kind: "fixed", label: "Same day every year" },
   { kind: "nth", label: "A weekday in a month" },
   { kind: "easter", label: "Days from Easter" },
+  { kind: "month", label: "Full month" },
 ];
 
 const WHICH: readonly { value: number; label: string }[] = [
@@ -56,7 +57,7 @@ const EASTER_OFFSETS = Array.from({ length: MAX_EASTER_OFFSET * 2 + 1 }, (_, i) 
 
 /**
  * When a season falls (#137 D7) and how long it shows (D8): a fixed day, the nth (or last) weekday of
- * a month, or days from Easter, each chosen from lists, so no date has to be typed.
+ * a month, days from Easter, or a complete calendar month, chosen without typing dates.
  */
 export function SeasonWhenFields({
   rule,
@@ -120,7 +121,10 @@ export function SeasonWhenFields({
               variant="outline"
               aria-pressed={active}
               className={active ? selectedClass : unselectedClass}
-              onClick={() => set({ kind })}
+              onClick={() => {
+                set({ kind });
+                if (kind === "month") onTiming({ lead_days: 0, after_days: 0 });
+              }}
             >
               {label}
             </Button>
@@ -129,6 +133,7 @@ export function SeasonWhenFields({
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
+        {rule.kind === "month" && monthSelect}
         {rule.kind === "fixed" && (
           <>
             <Field id={ids.day} label="Day">
@@ -209,13 +214,18 @@ export function SeasonWhenFields({
           Easter moves each year; Shortlist works it out for you.
         </p>
       )}
+      {rule.kind === "month" && (
+        <p className="text-sm text-muted-foreground">
+          Shows from the first to the last day of {MONTH_NAMES[rule.month - 1]} every year, including leap years.
+        </p>
+      )}
       {ruleError && (
         <p id={errorId} role="alert" className="text-sm text-destructive-text">
           {ruleError}
         </p>
       )}
 
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
+      {rule.kind !== "month" && <p className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
         <label className="inline-flex flex-wrap items-center gap-2">
           Shows from{" "}
           <Input
@@ -240,7 +250,7 @@ export function SeasonWhenFields({
           />{" "}
           days after.
         </label>
-      </p>
+      </p>}
       {nextLine && <p className="rounded-md bg-muted/60 px-3 py-2 text-sm">{nextLine}</p>}
     </section>
   );

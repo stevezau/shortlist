@@ -154,7 +154,7 @@ describe("RowAiInstructionsField", () => {
   it("lists three or more sources with commas and a final and", () => {
     renderField({ value: { mode: "add", text: "x" }, otherSources: ["TMDB similar", "TMDB discover", "Trakt"] });
     expect(
-      screen.getByText("TMDB similar, TMDB discover and Trakt don't read these instructions, so this row will be a mix."),
+      screen.getByText("TMDB similar, TMDB discover (popular titles in their favourite genres) and Trakt don't read these instructions, so this row will be a mix."),
     ).toBeInTheDocument();
   });
 
@@ -188,10 +188,11 @@ describe("RowAiInstructionsField", () => {
 
   it("explains what the instructions steer on Exa and SearXNG, and says nothing extra on native", () => {
     renderField({ value: { mode: "add", text: "x" }, backend: "exa" });
+    expect(screen.getByText(/You search with Exa, a web-search service\./)).toBeInTheDocument();
     expect(screen.getByText(/these instructions decide which of Exa's titles the AI keeps/)).toBeInTheDocument();
     cleanup();
     renderField({ value: { mode: "add", text: "x" }, backend: "searxng" });
-    expect(screen.getByText(/You search with SearXNG/)).toBeInTheDocument();
+    expect(screen.getByText(/You search with SearXNG, a self-hosted search engine/)).toBeInTheDocument();
     cleanup();
     renderField({ value: { mode: "add", text: "x" }, backend: "native" });
     expect(screen.queryByText(/You search with/)).toBeNull();

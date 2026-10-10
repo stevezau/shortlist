@@ -15,7 +15,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from shortlist.engine.delivery import strip_marker
-from tests.e2e.conftest import ShortlistApp, _free_port, _ThreadedServer
+from tests.e2e.conftest import ShortlistApp, _free_port
 from tests.fakes.fake_arr import (
     ARR_API_KEY,
     REQUESTED_MOVIE_KEY,
@@ -26,6 +26,7 @@ from tests.fakes.fake_arr import (
     make_fake_seerr,
 )
 from tests.fakes.fake_plex import FakePlexState
+from tests.uvicorn_thread import UvicornThread
 
 pytestmark = pytest.mark.e2e
 
@@ -46,9 +47,9 @@ def fake_request_sources(fake_plex) -> Iterator[RequestSourceUrls]:
     """Fake Overseerr, Radarr and Sonarr, booted once for the module beside the fake Plex."""
     _, _, state = fake_plex
     servers = {
-        "overseerr": _ThreadedServer(make_fake_seerr(state), _free_port()),
-        "radarr": _ThreadedServer(make_fake_arr("radarr", state), _free_port()),
-        "sonarr": _ThreadedServer(make_fake_arr("sonarr", state), _free_port()),
+        "overseerr": UvicornThread(make_fake_seerr(state), _free_port()),
+        "radarr": UvicornThread(make_fake_arr("radarr", state), _free_port()),
+        "sonarr": UvicornThread(make_fake_arr("sonarr", state), _free_port()),
     }
     for server in servers.values():
         server.start()
@@ -106,7 +107,8 @@ def test_a_requests_row_reaches_only_the_person_who_asked_when_built_from_the_te
     # (a) The owner adds the row from its template tile and checks its sources from the editor.
     _open_add_a_row(page)
     page.get_by_role("button", name="Your requests").click()
-    page.get_by_role("button", name="Use template").click()
+    # The sources check lives in the full editor, which the add-a-row screen links to.
+    page.get_by_role("link", name="Set every option yourself").click()
     expect(page.get_by_text("Which requests show up")).to_be_visible(timeout=LOAD)
     # The Check button lives under the collapsed "Use my own tags" disclosure.
     page.get_by_text("Use my own tags").click()
@@ -174,5 +176,7 @@ def test_the_your_requests_template_cannot_be_confirmed_when_no_source_is_connec
     expect(
         page.get_by_text("Needs a way to know who asked for what: an Overseerr or Jellyseerr connection")
     ).to_be_visible(timeout=CHECK)
-    expect(page.get_by_role("button", name="Use template")).to_be_disabled()
-    expect(page.get_by_role("link", name="Settings")).to_have_attribute("href", "/settings#connections")
+    expect(page.get_by_role("button", name="Add row")).to_be_disabled()
+    expect(page.get_by_role("main").get_by_role("link", name="Settings")).to_have_attribute(
+        "href", "/settings#connections"
+    )

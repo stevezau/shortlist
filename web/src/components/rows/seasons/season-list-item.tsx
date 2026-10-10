@@ -61,10 +61,10 @@ export function SeasonListItem({
             <span id={detailsId} className="block text-muted-foreground">
               <span className="block">
                 {season.rule_label}
-                {next && ` · next ${longDate(next)}`}
+                {next && season.rule.kind !== "month" && ` · next ${longDate(next)}`}
               </span>{" "}
               <span className="block">
-                Shows {seasonWindowLabel(season, lead, after)}, {timingLabel(lead, after)}
+                Shows {seasonWindowLabel(season, lead, after)}, {season.rule.kind === "month" ? "every year" : timingLabel(lead, after)}
               </span>
               {season.builtin && season.description && (
                 <>

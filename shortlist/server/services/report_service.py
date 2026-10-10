@@ -17,7 +17,7 @@ import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, case, cast, func, literal, or_
+from sqlalchemy import String, case, cast, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from shortlist.engine import placeholders
@@ -27,7 +27,9 @@ from shortlist.server.db.models import (
     Collection,
     PickRow,
     RequestCandidate,
+    RowDeliverySnapshot,
     Run,
+    RunSharedRow,
     RunUser,
     SharedRowWatch,
     User,
@@ -35,8 +37,9 @@ from shortlist.server.db.models import (
     WatchSession,
     iso_utc,
 )
+from shortlist.server.services.delivery_snapshots import utc as _as_utc
 from shortlist.server.services.report_cache import current_generation, get_cached_report, store_report
-from shortlist.server.services.run_service import HIT_WINDOW_DAYS
+from shortlist.server.services.run_persistence import HIT_WINDOW_DAYS
 from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY, STREAM_DOWN_SINCE_KEY
 from shortlist.server.settings_store import SettingsStore
 
@@ -108,12 +111,6 @@ def _period_is_comparable(started_running: datetime | None, prev_since: datetime
     if prev_since is None or started_running is None:
         return False
     return started_running <= prev_since
-
-
-def _as_utc(value: datetime) -> datetime:
-    """SQLite hands back naive datetimes for some columns and aware ones for others; comparing the
-    two raises. Treat naive as UTC, which is what every writer in this app stores."""
-    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 def _in_period(column, start, end=None) -> list:
@@ -223,8 +220,7 @@ def _counts(session: Session, group_cols, key_expr, start, shared_cols=None, sha
     else:
         # A UNION per group, never a sum. Summing double-counts `per_user`: one person who watched a
         # title carried by BOTH a personal and a shared row is one title watched, and each scan
-        # returns it. Pinned by
-        # `test_shared_row_watches.py::test_one_title_on_both_kinds_of_row_is_not_double_counted_for_a_person`,
+        # returns it. Pinned by `test_shared_row_watches.py::TestTheBreakdownsAgreeWithTheTiles`,
         # which caught exactly that when this was a sum.
         watched = _grouped_union(
             session, cols, key_expr, _watched_in(start), s_cols, shared_key, _shared_watched_in(start)
@@ -276,10 +272,20 @@ def _finished_count(session: Session, start, end=None) -> int:
     )
 
 
-def _watchers_count(session: Session, start, end=None) -> int:
-    return _distinct_across_both(
-        session, PickRow.user_id, _watched_in(start, end), SharedRowWatch.user_id, _shared_watched_in(start, end)
-    )
+def _watchers_count(session: Session, start, end=None, *, enabled_only: bool = False) -> int:
+    """People who watched in the period.
+
+    `enabled_only` restricts it to people enabled NOW. The dashboard prints the figure as "N of
+    `users_enabled`", and `users_enabled` is current: counting someone the owner has since disabled
+    could put N above that denominator, or out of step with the list beside it.
+    """
+    picks_filters = _watched_in(start, end)
+    shared_filters = _shared_watched_in(start, end)
+    if enabled_only:
+        enabled = session.query(User.id).filter(User.enabled.is_(True))
+        picks_filters = [*picks_filters, PickRow.user_id.in_(enabled)]
+        shared_filters = [*shared_filters, SharedRowWatch.user_id.in_(enabled)]
+    return _distinct_across_both(session, PickRow.user_id, picks_filters, SharedRowWatch.user_id, shared_filters)
 
 
 def _avg_days_to_watch(session: Session, start, end=None) -> float | None:
@@ -435,7 +441,7 @@ def _landing(session: Session, now: datetime, days: int | None) -> dict:
     }
 
 
-class _RowNamer:
+class RowNamer:
     """Renders a row slug + library into the name the dashboard shows for that line.
 
     Picks outlive the row that made them (deleting a row keeps its watch history), and a slug with no
@@ -450,7 +456,7 @@ class _RowNamer:
         # override tier of engine `resolve_row_template` is dropped for this aggregate label, and a
         # custom row uses its stored name). Rendered per library below.
         # The default row's template is the GLOBAL one, full stop — never its own column. The engine
-        # forces that column empty when it builds specs (`context_builder.py:604,698`), so reading it
+        # forces that column empty when it builds specs, so reading it
         # here made reports the one surface that could disagree with what Plex actually got: a
         # database carrying a stale value (written before the API guarded it) shows the old name for
         # ever, while delivery uses the global. Ignoring it makes this match delivery on both old and
@@ -573,10 +579,10 @@ def _requests_summary(session: Session, since: datetime | None) -> dict:
 BOUNCE_PERCENT = 5
 #: How long a stopped watch is left alone before it may be called an abandonment.
 #:
-#: An outcome used to be decided on percentage ALONE, with no notion of time — so a film someone
-#: started this evening and paused at 40% was reported as "gave up on it after 40%" immediately, and
-#: a play still in progress was reported that way while it was playing. Observed on the maintainer's
-#: server 2026-08-24: a pick credited at 1% appeared under "gave up" while its session was still open.
+#: An outcome is not decided on percentage ALONE: with no notion of time, a film someone
+#: started this evening and paused at 40% would be reported as "gave up on it after 40%" immediately, and
+#: a play still in progress would be reported that way while it was playing (observed 2026-08-24: a
+#: pick credited at 1% appeared under "gave up" while its session was still open).
 #:
 #: 24 hours because resuming the next evening is ordinary behaviour, and the report is read the
 #: morning after. Anything inside the window reads as `watching` — an honest "not yet known" rather
@@ -860,7 +866,7 @@ def _title_art(session: Session, keys: set[tuple[int, str]], history_of: dict[tu
     return art
 
 
-def _recent_watches(session: Session, users: dict[int, User], namer: _RowNamer, since: datetime | None) -> list[dict]:
+def _recent_watches(session: Session, users: dict[int, User], namer: RowNamer, since: datetime | None) -> list[dict]:
     """The recent-watches feed: one line per (person, title), like every other figure here.
 
     NOT one per pick row. A title re-recommended over several runs has one pick row per run, and the
@@ -1052,17 +1058,17 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
         _PERSON_TITLE,
         since,
         # A shared row has no per-library split: it is ONE collection, so its line is keyed with empty
-        # section and library, which `_RowNamer.label` renders from the row's own name.
+        # section and library, which `RowNamer.label` renders from the row's own name.
         [SharedRowWatch.collection_slug, literal("").label("section_key"), literal("").label("library")],
         _SHARED_PERSON_TITLE,
     )
 
     watched_now = _watched_count(session, since)
     finished_now = _finished_count(session, since)
-    watchers_now = _watchers_count(session, since)
+    watchers_now = _watchers_count(session, since, enabled_only=True)
     avg_now = _avg_days_to_watch(session, since)
     watched_prev = _watched_count(session, prev_since, since) if comparable else None
-    watchers_prev = _watchers_count(session, prev_since, since) if comparable else None
+    watchers_prev = _watchers_count(session, prev_since, since, enabled_only=True) if comparable else None
     avg_prev = _avg_days_to_watch(session, prev_since, since) if comparable else None
 
     delivered_now = (
@@ -1107,7 +1113,7 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
     store = SettingsStore(session)
     last_watch_sync = store.get("report.watch_synced_at")  # when the daily job last ran
     users = {u.id: u for u in session.query(User).all()}
-    namer = _RowNamer(session, store.get("row.name_template") or DEFAULT_ROW_TEMPLATE)
+    namer = RowNamer(session, store.get("row.name_template") or DEFAULT_ROW_TEMPLATE)
 
     # Reach: who's actually covered. `users_enabled`/`rows_enabled` describe the server as it is
     # NOW, so they are deliberately not windowed — "3 of 11 people" only reads if 11 is current.
@@ -1224,6 +1230,8 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
                 "username": users[uid].username,
                 "display_name": users[uid].display_name,  # nickname → Tautulli → username
                 "slug": users[uid].slug,
+                # Disabled people keep their history, but are not who the dashboard counts "of N".
+                "enabled": users[uid].enabled,
             }
             if uid in users
             else None
@@ -1411,23 +1419,67 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
     )
     watched_all += shared_watched
     finished_all += shared_finished
-    shared_first = (
-        session.query(func.min(SharedRowWatch.watched_at)).filter(SharedRowWatch.collection_slug == slug).scalar()
+    # A shared watch proves only that somebody watched a title, not when that row reached Plex.
+    # `RunSharedRow.delivered_at` is stamped at the delivery boundary.  The parent run may later
+    # report an error for a different row, so the shared row's own successful outcome is decisive;
+    # dry runs never count as delivery history.
+    shared_delivery_filters = (
+        RunSharedRow.collection_slug == slug,
+        RunSharedRow.status == "ok",
+        RunSharedRow.delivered_at.isnot(None),
+        Run.dry_run.is_(False),
     )
-    # A shared row's earliest credit stands in for "has this row ever done anything", which is the
-    # only question `first` is asked here.
-    if first is None:
-        first = shared_first
-    if shared_first is not None and last is None:
-        last = shared_first
+    shared_first, shared_last = (
+        session.query(func.min(RunSharedRow.delivered_at), func.max(RunSharedRow.delivered_at))
+        .join(Run, Run.id == RunSharedRow.run_id)
+        .filter(*shared_delivery_filters)
+        .one()
+    )
+    # How many titles the shared copy holds right now: the newest real delivery's picks, which span every
+    # library the row builds. None when no shared delivery is on record (a per-person row, or one never built).
+    latest_picks = (
+        session.query(RunSharedRow.picks)
+        .join(Run, Run.id == RunSharedRow.run_id)
+        .filter(*shared_delivery_filters)
+        .order_by(RunSharedRow.delivered_at.desc())
+        .limit(1)
+        .scalar()
+    )
+    shared_titles: dict[str, int] | None = None
+    if latest_picks is not None:
+        distinct = {(pick.get("media_type"), pick.get("tmdb_id")) for pick in latest_picks}
+        shared_titles = {}
+        for media_type, _ in sorted(distinct, key=lambda key: (str(key[0]), str(key[1]))):
+            kind = str(media_type or "")
+            shared_titles[kind] = shared_titles.get(kind, 0) + 1
+    # Before `RunSharedRow.delivered_at` existed, a non-legacy delivery snapshot is durable evidence
+    # that a shared row actually reached Plex. It is written only for confirmed, non-dry deliveries
+    # and survives run-log retention; a run's queued/start time and a later watch are not
+    # substitutes. Migration 0102's `legacy:` snapshots may instead carry inferred began/start
+    # times, so they cannot supply this panel's delivery clock. Keep this separate from `runs`
+    # below: the Runs tile must still mirror retained RunSharedRow records selected by /api/runs.
+    snapshot_first, snapshot_last = (
+        session.query(func.min(RowDeliverySnapshot.delivered_at), func.max(RowDeliverySnapshot.delivered_at))
+        .filter(
+            RowDeliverySnapshot.collection_slug == slug,
+            RowDeliverySnapshot.shared.is_(True),
+            ~RowDeliverySnapshot.source_key.startswith("legacy:"),
+        )
+        .one()
+    )
+    if first is not None or shared_first is not None or snapshot_first is not None:
+        first = min(value for value in (first, shared_first, snapshot_first) if value is not None)
+    if last is not None or shared_last is not None or snapshot_last is not None:
+        last = max(value for value in (last, shared_last, snapshot_last) if value is not None)
 
     # Counted the SAME way `/api/runs?collection=<slug>` selects them, because the panel's Runs tile
     # links straight to that list — a tile that says 40 above a list of 11 is worse than no tile.
     # Both therefore count runs STILL ON RECORD: `runs.retention` prunes old runs and nulls the
     # picks' run_id (migration 0040, so picks outlive their run), and neither side pretends the
     # pruned ones are still there.
-    built_in = session.query(PickRow.run_id).filter(*mine).distinct()
-    runs = session.query(func.count(Run.id)).filter(Run.id.in_(built_in)).scalar() or 0
+    built_in = select(PickRow.run_id).filter(*mine).distinct()
+    shared_built_in = select(RunSharedRow.run_id).join(Run).filter(*shared_delivery_filters).distinct()
+    runs = session.query(func.count(Run.id)).filter(Run.id.in_(built_in.union(shared_built_in))).scalar() or 0
 
     matured_until = now - timedelta(days=HIT_WINDOW_DAYS)
     cohort = [PickRow.created_at < matured_until]
@@ -1465,6 +1517,7 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
         "first_delivered_at": iso_utc(first) if first else None,
         "last_delivered_at": iso_utc(last) if last else None,
         "matured_days": HIT_WINDOW_DAYS,
+        "shared_titles": shared_titles,
         # None, not a zeroed dict: "no cohort yet" and "a cohort that landed nothing" are different
         # answers and the panel says different things about them.
         "matured": (
@@ -1493,27 +1546,22 @@ def engagement(session: Session, window: str) -> dict:
     the "titles that lose people" table and the stop-point histogram it used to feed were removed
     (three cards that filled a screen to deliver, on a real 47-user server, one fact).
 
-    `losing`, `stop_points` and `observed` are still computed and still returned. Measured on that
-    server the whole call is 18ms and 15.8KB, so this is not a cost worth a breaking change to a
-    documented response — and they are the natural answers to questions an owner will ask again.
+    The response is `people` only: the "titles that lose people" table, the stop-point histogram and the
+    `observed` flag were removed with the cards that read them (owner decision 2026-10-10).
 
     Every outcome comes from :func:`resolve_outcomes`, the same function the headline split reads, so
-    the two can never disagree. Two views of one set, because they answer different questions: `people`
-    is "what did THIS person do with their row", which an owner opens when someone says the picks are
-    no good; `losing` is "what does everyone do with THIS pick", which says a title is a bad
-    recommendation rather than a bad night.
+    the two can never disagree. `people` is "what did THIS
+    person do with their row", which an owner opens when someone says the picks are no good.
     """
     if window not in WINDOWS:
         window = DEFAULT_WINDOW
     days = WINDOWS[window]
     since = datetime.now(UTC) - timedelta(days=days) if days else None
     users = {u.id: u for u in session.query(User).all()}
-    namer = _RowNamer(session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE)
+    namer = RowNamer(session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE)
 
     people: dict[int, list[dict]] = defaultdict(list)
-    per_title: dict[tuple[int, str], dict] = {}
-    abandoned: list[int] = []
-    for (user_id, tmdb_id, media_type), entry in resolve_outcomes(session, since).items():
+    for (user_id, _tmdb_id, media_type), entry in resolve_outcomes(session, since).items():
         if user_id not in users:
             continue
         people[user_id].append(
@@ -1528,56 +1576,12 @@ def engagement(session: Session, window: str) -> dict:
                 "observed_at": iso_utc(entry["observed_at"]) if entry["observed_at"] else None,
             }
         )
-        agg = per_title.setdefault(
-            (tmdb_id, media_type),
-            {"title": entry["title"], "media_type": media_type, "started": 0, "finished": 0, "percents": []},
-        )
-        if entry["outcome"] == "finished":
-            agg["started"] += 1
-            agg["finished"] += 1
-        elif entry["percent"] is not None:
-            # STARTED, always — a percentage means playback happened, whoever is still mid-film.
-            agg["started"] += 1
-            # ABANDONED only when the outcome says so. Keyed on the outcome rather than on "has a
-            # percentage", because since `SETTLING_HOURS` those are no longer the same question: a
-            # watch still open, or stopped an hour ago, carries a percentage and is not an
-            # abandonment. Reading the raw percentage here put in-progress watches into the
-            # stop-point histogram while `resolve_outcomes` called them `watching`, so the chart and
-            # the tile beside it counted different sets — the exact disagreement
-            # `test_the_histogram_always_sums_to_the_abandonments` exists to catch, and did.
-            if entry["outcome"] in ("bounced", "dropped"):
-                agg["percents"].append(entry["percent"])
-                abandoned.append(entry["percent"])
 
-    def median(values: list[int]) -> int | None:
-        if not values:
-            return None
-        ordered = sorted(values)
-        return ordered[len(ordered) // 2]
-
-    # Titles that LOSE people. Gated on TWO OBSERVED abandonments, not on `started >= 2`: `started`
-    # used to include people whose progress is unknown, so one credited pre-tracking pick plus one
-    # real drop rendered as "2 started · 0 finished · stops at 2%" — a pattern claimed from a single
-    # data point, under a heading that says one person abandoning something is not a signal.
-    losing = [
-        {
-            "title": agg["title"],
-            "media_type": agg["media_type"],
-            "started": agg["started"],
-            "finished": agg["finished"],
-            "stops_at": median(agg["percents"]),
-        }
-        for agg in per_title.values()
-        if len(agg["percents"]) >= 2 and agg["finished"] * 2 <= agg["started"]
-    ]
-    losing.sort(key=lambda t: (-t["started"], t["stops_at"] or 0))
-
-    buckets = [("0-10%", 0, 10), ("10-25%", 10, 25), ("25-50%", 25, 50), ("50-75%", 50, 75), ("75%+", 75, 101)]
     # Sorted so the OBSERVED outcomes lead, then truncated. Sorting finished-first and cutting at 40
     # removed exactly the rows this page exists to show: a person with 45 finished picks and 5 fresh
     # drops saw forty "finished" and no drops at all, under a header reading "40 picks".
     #
-    # `dropped` now leads `bounced`, and the order matters more than it used to. The findings card
+    # `dropped` leads `bounced`, and the order matters. The findings card
     # keeps only `dropped` — a bounce is under 5%, too little to tell a wrong pick from a mis-click —
     # so with bounces sorting first, one person with 40 or more of them in the window had every real
     # abandonment truncated away before the frontend ever saw it. The card would then print
@@ -1597,12 +1601,4 @@ def engagement(session: Session, window: str) -> dict:
     return {
         "window": window,
         "people": out_people,
-        "losing": losing[:20],
-        "stop_points": [
-            {"label": label, "count": sum(1 for p in abandoned if lo <= p < hi)} for label, lo, hi in buckets
-        ],
-        # Whether any live playback has been OBSERVED at all. The panel's empty state used to gate on
-        # `people` being empty, which never happens on a server with existing picks — so the owner got
-        # a wall of "WATCHING · —" rows and five empty bars instead of the explanation.
-        "observed": bool(abandoned) or any(p["percent"] is not None for e in out_people for p in e["picks"]),
     }

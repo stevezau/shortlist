@@ -163,14 +163,15 @@ class TestSettingsValidation:
         assert "requests.min_rating" in message["changed"]
 
     def test_the_actor_distinguishes_an_api_token_from_a_browser(self, client: TestClient):
-        """The untested half, and the likelier culprit: a value that moves with nobody owning up to
-        it is more often an automation than the owner's own browser."""
-        token = client.post("/api/settings/token").json().get("token")
-        if not token:  # the endpoint shape differs across builds; skip rather than assert on it
-            import pytest as _pytest
+        """A programmatic owner mutation retains its API-token attribution in the audit record."""
+        minted = client.post("/api/system/api-token")
+        assert minted.status_code == 200, minted.text
+        token = minted.json()["token"]
 
-            _pytest.skip("no API token endpoint on this build")
-        resp = client.put(
+        # Use a separate cookie-less client: the Bearer token itself, rather than the owner browser
+        # session, must authorize the write and determine the immutable audit actor.
+        bare = TestClient(client.app)
+        resp = bare.put(
             "/api/settings",
             json={"values": {"requests.min_votes": 111}},
             headers={"Authorization": f"Bearer {token}", "User-Agent": "curl/8.4.0"},
@@ -304,7 +305,7 @@ class TestSettingsValidation:
         import shortlist.engine.curator as curator_mod
 
         # A DIFFERENT provider is saved; the form is editing OpenAI with a not-yet-saved key. The picker
-        # must list what's in the request, so the dropdown updates before Save — the bug Steve hit.
+        # must list what's in the request, so the dropdown updates before Save — the bug the maintainer hit.
         client.put("/api/settings", json={"values": {"curator.provider": "anthropic", "curator.api_key": "sk-saved"}})
         captured: dict = {}
 
@@ -508,6 +509,21 @@ class TestSettingsApi:
         assert r.status_code == 200
         assert r.json()["row.size"] == 20
         assert client.put("/api/settings", json={"values": {"evil.key": 1}}).status_code == 422
+
+    def test_defaults_are_served_unchanged_by_what_has_been_saved_and_never_carry_a_secret(self, client: TestClient):
+        """The Settings page marks a value that differs from its default, so these must be the
+        built-in ones even after the owner has changed them, and nothing secret may ride along."""
+        client.put("/api/settings", json={"values": {"row.size": 20, "tmdb.apikey": "real-key"}})
+
+        defaults = client.get("/api/settings/defaults")
+
+        assert defaults.status_code == 200
+        body = defaults.json()
+        assert body["row.size"] == 15
+        from shortlist.server.settings_store import PRIVATE_KEYS, SECRET_KEYS
+
+        assert not set(body) & (SECRET_KEYS | PRIVATE_KEYS)
+        assert "real-key" not in defaults.text
 
     def test_every_stored_setting_survives_the_response_model(self, client: TestClient):
         """This endpoint's key set is genuinely dynamic — `DEFAULTS` plus whatever the DB holds — so
@@ -853,12 +869,12 @@ class TestSettingsApi:
             ok = client.post("/api/settings/test/notify").json()
         assert ok["ok"] is True and "204" in ok["message"]
         sent = json.loads(route.calls.last.request.content)
-        assert sent | {"sent_at": ""} == notify.webhook_body(notify.test_item(), now=None) | {"sent_at": ""}
+        assert sent | {"sent_at": ""} == notify.webhook_body(notify.sample_item(), now=None) | {"sent_at": ""}
         assert sent["source"] == "shortlist" and sent["id"] == "notify-test"
         assert set(off) == {"ok", "message"} and set(ok) == {"ok", "message"}
 
     def test_the_webhook_address_is_ssrf_checked_but_the_sentinel_still_round_trips(self, client: TestClient):
-        """Both halves, because adding this key to `_FETCHED_URL_KEYS` creates a new combination.
+        """Both halves, because adding this key to `FETCHED_URL_KEYS` creates a new combination.
 
         It is the first setting that is BOTH a URL the server fetches AND a secret, so the redacted
         sentinel now reaches the SSRF guard. Checked as an address it fails ("must start with http"),
@@ -1023,7 +1039,11 @@ class TestSettingsThatDoRealWork:
         invisible until something writes."""
         client.put("/api/settings", json={"values": {"privacy.hide_shared_from_disabled": False}})
 
-        assert [j["kind"] for j in client.get("/api/system/jobs").json()] == ["privacy.sync"]
+        queued = client.get("/api/system/jobs").json()
+        assert len(queued) == 1 and queued[0]["kind"] == "assistant.converge"
+        assert queued[0]["payload"]["steps"] == [
+            {"kind": "privacy.sync", "payload": {"reason": "the shared-row privacy setting changed"}}
+        ]
 
     def test_saving_the_same_value_queues_nothing(self, client: TestClient):
         """A settings save sends the whole form, so every unrelated edit would otherwise trigger a

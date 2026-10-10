@@ -9,7 +9,7 @@ import type { RunDetail, RunUserResult } from "@/lib/types";
 const CONFIG_NAMES = {
   picked: "✨ {library_name} Picked for You",
   because: "🎯 Because you watched {top_seed}",
-  popular: "👥 Popular {library_name} on SFLIX",
+  popular: "👥 Popular {library_name} on Home Server",
 };
 
 const pick = (rank: number, title: string, reason = "") => ({
@@ -116,20 +116,32 @@ describe("RunRowsTab", () => {
     // run looked like it had touched rows the operator never chose.
     renderTab();
 
-    expect(screen.getByText("✨ Picked for You")).toBeInTheDocument();
+    expect(screen.getAllByText("✨ Movies Picked for You").length).toBeGreaterThan(0);
     expect(
       screen.queryByText("🎯 Because you watched"),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/1 row wasn.t in this run/i)).toBeInTheDocument();
   });
 
-  it("marks {library_name} in the row header as a placeholder, the way the Rows page does", () => {
-    // The header spans every library the row built, so no one library's name can fill the token —
-    // and silently dropping it turned "📬 {library_name} you asked for" into "📬 you asked for".
+  it("lets the row title take the full card width on a phone, with status and actions wrapping under it", () => {
+    // jsdom has no layout, so pin the classes: a zero flex-basis let the title be squeezed to one word
+    // per line beside the status badge at 320px.
     renderTab();
 
     const header = screen.getByRole("button", { name: /Picked for You/ });
-    expect(within(header).getByText("library name")).toBeInTheDocument();
+    expect(header).toHaveClass("basis-full");
+    expect(header).toHaveClass("sm:basis-0");
+  });
+
+  it("fills {library_name} in the row header with each library, never a placeholder chip", () => {
+    // The header spans every library the row built, so it names one title per library instead of
+    // drawing the token as a "library name" chip.
+    renderTab();
+
+    const header = screen.getByRole("button", { name: /Picked for You/ });
+    expect(within(header).getByText("✨ Movies Picked for You")).toBeInTheDocument();
+    expect(within(header).getByText("✨ TV Shows Picked for You")).toBeInTheDocument();
+    expect(within(header).queryByText("library name")).toBeNull();
     expect(within(header).queryByText(/\{library_name\}/)).toBeNull();
   });
 
@@ -146,15 +158,11 @@ describe("RunRowsTab", () => {
     expect(screen.getByText(/Because you watched \(out of season\)/)).toBeInTheDocument();
   });
 
-  it("names a multi-library row once, with its libraries beside it", () => {
-    // Movies looked like it never ran because the row took its name from whichever delivered title
-    // arrived last. The row has ONE name; the libraries are their own field.
+  it("names every library a multi-library row built, so Movies never looks like it did not run", () => {
     renderTab();
 
-    expect(screen.getByText("Movies · TV Shows")).toBeInTheDocument();
-    expect(
-      screen.queryByText("✨ TV Shows Picked for You"),
-    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("✨ Movies Picked for You").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("✨ TV Shows Picked for You").length).toBeGreaterThan(0);
   });
 
   it("opens the row a deep-linked person is in, with them selected", () => {
@@ -220,7 +228,7 @@ describe("RunRowsTab", () => {
         shared_rows: [
           {
             collection_slug: "popular",
-            row_title: "👥 Popular Movies on SFLIX",
+            row_title: "👥 Popular Movies on Home Server",
             status: "ok",
             error: null,
             reason: null,
@@ -233,7 +241,7 @@ describe("RunRowsTab", () => {
             breakdown: [
               {
                 row_slug: "popular",
-                row_title: "👥 Popular Movies on SFLIX",
+                row_title: "👥 Popular Movies on Home Server",
                 library_key: "1",
                 library_title: "Movies",
                 added: ["Dune"],
@@ -250,7 +258,7 @@ describe("RunRowsTab", () => {
       } as unknown as Partial<RunDetail>),
     );
 
-    expect(screen.getByText("👥 Popular on SFLIX")).toBeInTheDocument();
+    expect(screen.getByText("👥 Popular Movies on Home Server")).toBeInTheDocument();
     // One library here, so no tab strip — with two it switches instead of stacking, which is what
     // kept a 40-pick row from scrolling for pages.
     expect(screen.getByText("Dune")).toBeInTheDocument();
@@ -270,7 +278,7 @@ describe("RunRowsTab", () => {
         shared_rows: [
           {
             collection_slug: "popular",
-            row_title: "👥 Popular Movies on SFLIX",
+            row_title: "👥 Popular Movies on Home Server",
             status: "ok",
             error: null,
             reason: null,
@@ -278,19 +286,19 @@ describe("RunRowsTab", () => {
             llm_tokens: 0,
             llm_tokens_by_step: {},
             exa_searches: 0,
-            diff: { duplicates_removed: ["👥 Popular Movies on SFLIX"] },
+            diff: { duplicates_removed: ["👥 Popular Movies on Home Server"] },
             picks: [pick(1, "Dune")],
             breakdown: [
               {
                 row_slug: "popular",
-                row_title: "👥 Popular Movies on SFLIX",
+                row_title: "👥 Popular Movies on Home Server",
                 library_key: "1",
                 library_title: "Movies",
                 added: [],
                 removed: [],
                 kept: ["Dune"],
                 deleted: [],
-                duplicates_removed: ["👥 Popular Movies on SFLIX"],
+                duplicates_removed: ["👥 Popular Movies on Home Server"],
                 created: false,
                 picks: [pick(1, "Dune", "11 people watched it")],
               },
@@ -302,7 +310,7 @@ describe("RunRowsTab", () => {
     );
 
     const note = screen.getByText(/removed a duplicate copy of this row/i);
-    expect(note).toHaveTextContent("👥 Popular Movies on SFLIX");
+    expect(note).toHaveTextContent("👥 Popular Movies on Home Server");
     // The row is still live, with its picks right beside this — so no alarm colour and no "deleted".
     expect(note).not.toHaveClass("text-destructive-text");
     expect(screen.queryByText(/deleted/i)).not.toBeInTheDocument();
@@ -315,7 +323,7 @@ describe("RunRowsTab", () => {
         shared_rows: [
           {
             collection_slug: "popular",
-            row_title: "👥 Popular Movies on SFLIX",
+            row_title: "👥 Popular Movies on Home Server",
             status: "skipped",
             error: null,
             reason:
@@ -815,7 +823,7 @@ describe("RunRowsTab — per-row cost", () => {
    *  but `_row_timer` wraps the loop body and starts BEFORE the cancel check, so a cost exists for
    *  it anyway. That cost is what the person list used to render, as a green tick beside "0s". */
   const cancelledMidPerson = run({
-    status: "cancelled",
+    status: "aborted",
     users: [
       user({
         duration_ms: PERSON_WHOLE_RUN_MS,
@@ -858,7 +866,7 @@ describe("RunRowsTab — per-row cost", () => {
     // breakdown too — so exactly the person this exists to catch still got a tick. What actually
     // separates the two is whether per-row COST was recorded at all.
     const onlyRowSkipped = run({
-      status: "cancelled",
+      status: "aborted",
       users: [
         user({
           duration_ms: PERSON_WHOLE_RUN_MS,
@@ -937,12 +945,41 @@ describe("RunRowsTab — a shared row that hasn't built yet", () => {
       } as unknown as Partial<RunDetail>),
     );
 
-    expect(screen.getByText("👥 Popular on SFLIX")).toBeInTheDocument();
+    expect(screen.getByText("👥 Popular on Home Server")).toBeInTheDocument();
     expect(screen.getByText("Pending")).toBeInTheDocument();
 
     // Sole row, so it is already open — the panel must explain itself rather than be an empty box.
     expect(
       screen.getByText(/builds once everyone’s own rows are done/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows a per-person row's name with readable words, not a placeholder chip", () => {
+    const { container } = renderTab(
+      run({
+        users: [
+          user({
+            rows_considered: { picked: "not_due", because: "due" },
+            breakdown: [{ row_slug: "because", row_title: "x", library_key: "1", library_title: "Movies", added: [], removed: [], kept: [], deleted: [], created: false, picks: [] }],
+          }),
+        ],
+      }),
+    );
+    expect(container).toHaveTextContent("Because you watched each person’s top title");
+    expect(container).not.toHaveTextContent("top seed");
+  });
+
+  it("shows a per-person row's status before it is expanded", () => {
+    renderTab(
+      run({
+        users: [
+          user({ slug: "sarah", breakdown: [{ row_slug: "picked", row_title: "x", library_key: "1", library_title: "Movies", added: [], removed: [], kept: [], deleted: [], created: false, picks: [] }] }),
+        ],
+      }),
+    );
+    // Collapsed by default with several rows; each per-person row header carries its status, and no Trace
+    // link, because a per-person trace belongs to the person.
+    expect(screen.getAllByText("OK").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: /Trace/ })).toBeNull();
   });
 });

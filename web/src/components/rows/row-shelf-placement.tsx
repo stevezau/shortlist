@@ -20,10 +20,9 @@ type Mode = "top" | "after" | "before" | "off";
 
 /** No entry = the default, which is the top of the shelf. `enabled: false` = never positioned.
  *
- * "No entry" used to mean "inherit the per-library default from Settings", and that default was
- * itself decided two ways: with no library configured it meant the top, and the moment one was
- * configured every other library silently meant "leave alone" — while the screen read "Wherever
- * Plex puts them" in both cases. One default, stated here, replaces it. */
+ * There is one default, stated here: a per-library default in Settings would be decided two ways
+ * (the top with no library configured, "leave alone" for every other library once one was) while the
+ * screen read "Wherever Plex puts them" in both cases. */
 function modeOf(entry: Entry | undefined): Mode {
   if (!entry) return "top";
   if (entry.enabled === false) return "off";
@@ -72,7 +71,7 @@ function LibraryAnchor({
     targetsLibrary(library, row.libraryKeys, row.media),
   );
   // A collection on no Plex shelf has no position to be relative to, so it can
-  // anchor nothing (issue #106 — the engine used to follow it anyway and bury the row at the very
+  // anchor nothing (issue #106 — following it anyway buries the row at the very
   // bottom). Shown but unselectable rather than hidden: an owner whose saved anchor simply vanished
   // from the list has no way to tell "not on the shelf" from "deleted".
   const onShelf = (collections.data ?? []).filter((c) => c.on_shelf);

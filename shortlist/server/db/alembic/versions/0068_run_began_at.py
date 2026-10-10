@@ -2,7 +2,7 @@
 
 `runs.started_at` is stamped by the column default at INSERT — when the run was ASKED for. A run that
 sat in the queue for nine minutes and was then cancelled without ever executing therefore reported a
-nine-minute duration on the Runs page, having done nothing at all (reported on SFLIX, 2026-08-13:
+nine-minute duration on the Runs page, having done nothing at all (reported on a large production server, 2026-08-13:
 three runs queued together and cancelled, each claiming "9m 26s"). Duration has to be measured from
 the moment the engine began, and a run that never got there has no duration to show.
 

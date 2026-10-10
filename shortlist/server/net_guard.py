@@ -59,6 +59,9 @@ def _is_blocked_ip(host: str) -> bool:
             address = ipaddress.ip_address(candidate)
         except ValueError:
             continue
+        # `::ffff:169.254.169.254` is the metadata address to the OS but is not "in" an IPv4 network.
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
         if any(address in net for net in _BLOCKED_NETS):
             return True
     return False
@@ -81,17 +84,3 @@ def check_url(url: str, *, what: str = "That address") -> None:
             f"{what} points at a cloud metadata address, which Shortlist will not request. "
             "Use your media server's own address."
         )
-
-
-def safe_backup_name(name: str) -> str:
-    """A backup filename, or raise — never a path.
-
-    ``config_dir / BACKUP_SUBDIR / name`` with an unvalidated ``name`` lets `../../etc/passwd` escape
-    the backups directory, and restore then copies whatever it finds over the database. Owner-only and
-    self-inflicted, but it costs one check to make the traversal impossible rather than merely
-    unattractive.
-    """
-    cleaned = (name or "").strip()
-    if not cleaned or cleaned != cleaned.strip("/\\") or "/" in cleaned or "\\" in cleaned or ".." in cleaned:
-        raise ValueError("backup name must be a plain filename")
-    return cleaned

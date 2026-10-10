@@ -33,6 +33,25 @@ function trace(
   };
 }
 
+/** A delivered "picked" row in one library; tests vary only the library and its picks. */
+type BreakdownEntry = RunUserTraceResponse["breakdown"][number];
+
+function breakdownEntry(patch: Partial<BreakdownEntry> = {}): BreakdownEntry {
+  return {
+    row_slug: "picked",
+    row_title: "Picked",
+    library_key: "1",
+    library_title: "Movies",
+    added: [],
+    removed: [],
+    kept: [],
+    deleted: [],
+    created: true,
+    picks: [],
+    ...patch,
+  };
+}
+
 describe("buildLibraries", () => {
   it("orders libraries by first-seen, delivered rows before watch/seed-only libraries", () => {
     const data = trace({
@@ -53,18 +72,11 @@ describe("buildLibraries", () => {
         },
       },
       breakdown: [
-        {
-          row_slug: "picked",
-          row_title: "Picked",
+        breakdownEntry({
           library_key: "1",
           library_title: "Delivered Lib",
-          added: [],
-          removed: [],
-          kept: [],
-          deleted: [],
-          created: true,
           picks: [],
-        },
+        }),
       ],
     });
     const libs = buildLibraries(data);
@@ -83,16 +95,9 @@ describe("buildLibraries", () => {
         },
       },
       breakdown: [
-        {
-          row_slug: "picked",
-          row_title: "Picked",
+        breakdownEntry({
           library_key: "1",
           library_title: "Movies",
-          added: [],
-          removed: [],
-          kept: [],
-          deleted: [],
-          created: true,
           picks: [
             {
               rank: 1,
@@ -105,17 +110,10 @@ describe("buildLibraries", () => {
               affinity: null,
             },
           ],
-        },
-        {
-          row_slug: "picked",
-          row_title: "Picked",
+        }),
+        breakdownEntry({
           library_key: "2",
           library_title: "4K Movies",
-          added: [],
-          removed: [],
-          kept: [],
-          deleted: [],
-          created: true,
           picks: [
             {
               rank: 1,
@@ -128,7 +126,7 @@ describe("buildLibraries", () => {
               affinity: null,
             },
           ],
-        },
+        }),
       ],
     });
     const libs = buildLibraries(data);
@@ -157,16 +155,9 @@ describe("buildLibraries", () => {
         ],
       },
       breakdown: [
-        {
-          row_slug: "picked",
-          row_title: "Picked",
+        breakdownEntry({
           library_key: "1",
           library_title: "Movies",
-          added: [],
-          removed: [],
-          kept: [],
-          deleted: [],
-          created: true,
           picks: [
             {
               rank: 1,
@@ -179,7 +170,7 @@ describe("buildLibraries", () => {
               affinity: null,
             },
           ],
-        },
+        }),
       ],
     });
     const lib = buildLibraries(data)[0];
@@ -190,16 +181,9 @@ describe("buildLibraries", () => {
   it("flags sharedSearch only when >1 named library holds the same media type", () => {
     const data = trace({
       breakdown: [
-        {
-          row_slug: "picked",
-          row_title: "Picked",
+        breakdownEntry({
           library_key: "1",
           library_title: "Movies",
-          added: [],
-          removed: [],
-          kept: [],
-          deleted: [],
-          created: true,
           picks: [
             {
               rank: 1,
@@ -212,17 +196,10 @@ describe("buildLibraries", () => {
               affinity: null,
             },
           ],
-        },
-        {
-          row_slug: "picked",
-          row_title: "Picked",
+        }),
+        breakdownEntry({
           library_key: "2",
           library_title: "4K Movies",
-          added: [],
-          removed: [],
-          kept: [],
-          deleted: [],
-          created: true,
           picks: [
             {
               rank: 1,
@@ -235,17 +212,10 @@ describe("buildLibraries", () => {
               affinity: null,
             },
           ],
-        },
-        {
-          row_slug: "picked",
-          row_title: "Picked",
+        }),
+        breakdownEntry({
           library_key: "3",
           library_title: "TV",
-          added: [],
-          removed: [],
-          kept: [],
-          deleted: [],
-          created: true,
           picks: [
             {
               rank: 1,
@@ -258,7 +228,7 @@ describe("buildLibraries", () => {
               affinity: null,
             },
           ],
-        },
+        }),
       ],
     });
     const libs = buildLibraries(data);
@@ -370,16 +340,9 @@ describe("plain-English trace helpers", () => {
           },
         },
         breakdown: [
-          {
-            row_slug: "picked",
-            row_title: "Picked",
+          breakdownEntry({
             library_key: "1",
             library_title: "Movies",
-            added: [],
-            removed: [],
-            kept: [],
-            deleted: [],
-            created: true,
             picks: [
               {
                 rank: 1,
@@ -392,7 +355,7 @@ describe("plain-English trace helpers", () => {
                 affinity: null,
               },
             ],
-          },
+          }),
         ],
       }),
     )[0];

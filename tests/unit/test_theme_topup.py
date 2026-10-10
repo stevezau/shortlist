@@ -6,13 +6,11 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 from shortlist.engine.models import MediaType, RowLimits
 from shortlist.engine.themes import ThemePick, ThemeSpec
-from shortlist.server.db.models import Base, Collection, Event, PickRow, Run, Theme, ThemeHistory, User
+from shortlist.server.db.models import Collection, Event, PickRow, Run, Theme, ThemeHistory, User
 from shortlist.server.services.theme_author import ThemeAuthorError, ThemeDraft, ThemeStats
 from shortlist.server.services.theme_rotation import TOP_UP_CHANGE, AuthoringTools, top_up_themes
 
@@ -87,10 +85,8 @@ def _library_index(monkeypatch):
 
 
 @pytest.fixture
-def sessions():
-    engine = create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
+def sessions(threaded_sessions):
+    return threaded_sessions
 
 
 def _theme(slug: str = "twists", **fields) -> Theme:

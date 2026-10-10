@@ -10,12 +10,13 @@ playback sessions and capped at ~200 rows.
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
 from loguru import logger
+from plexapi.library import LibrarySection
 
 from shortlist.engine.clients.plex_pms import PlexClient, SectionNotShared, WatchedRead
 from shortlist.engine.clients.plextv import PlexTvClient
@@ -98,14 +99,14 @@ class ShareTokenWatchSource:
             return token
         # Not in the shared list: a managed Home profile with no invite of its own. Switch + exchange.
         try:
-            return self._plextv.canary_server_token(user.plex_account_id)
+            return self._plextv.home_user_server_token(user.plex_account_id)
         except Exception as e:
             logger.warning(
                 "{}: no server token available ({}) — treating as no watch history", user.username, type(e).__name__
             )
             return None
 
-    def episode_dates(self, user: UserProfile, section, show_keys: set[int]) -> dict[int, datetime]:
+    def episode_dates(self, user: UserProfile, section: LibrarySection, show_keys: set[int]) -> dict[int, datetime]:
         """When each of these shows was last watched, read from its episodes AS this user.
 
         Sits beside `fetch_section` because it needs the same per-user token.
@@ -126,7 +127,7 @@ class ShareTokenWatchSource:
     def fetch_section(
         self,
         user: UserProfile,
-        section,
+        section: LibrarySection,
         media_type: MediaType,
         *,
         since: datetime | None = None,
@@ -412,7 +413,7 @@ def ratings_policy(history: list[WatchedItem], threshold: float | None) -> Ratin
 
 def derive_seeds(
     history: list[WatchedItem],
-    resolve_tmdb_id,
+    resolve_tmdb_id: Callable[[WatchedItem], int | None],
     *,
     max_seeds: int = 30,
     blocked: set[int] | None = None,
@@ -425,7 +426,7 @@ def derive_seeds(
     Weight is ``0.5 ** (recency_days / RECENCY_HALF_LIFE_DAYS)`` — an exponential decay off the
     person's most-recent watch, with NO frequency term. What someone reached for lately is the honest
     signal of what to recommend tonight; watch_count is deliberately excluded from the weight because
-    an old favourite rewatched many times years ago (SFLIX/MooHouse: The Girl on the Train, 18x but
+    an old favourite rewatched many times years ago (a guest account: The Girl on the Train, 18x but
     ~8.7 years ago) would otherwise dominate the seeds over a title watched once yesterday. Because
     the weight is strictly monotonic in recency, the seed ORDER now matches the "recent watches" panel
     exactly. ``watch_count`` is still carried on each Seed for display ("watched 4x"), just not scored.
@@ -485,7 +486,7 @@ def derive_seeds(
 
     # Guarantee each media type the person watches a share of the seed budget. Otherwise the global
     # top-N by weight can be entirely one type — a TV-heavy watcher's 30 seeds are all shows, so the
-    # movie half of a `media=both` row gets no candidates and never builds (SFLIX/MooHouse: 58 of her
+    # movie half of a `media=both` row gets no candidates and never builds (a guest account: 58 of her
     # last 60 watches were TV, so her Movies row stayed empty despite 598 movie watches; 2026-07-20).
     movies = [s for s in seeds if s.media_type is MediaType.MOVIE]
     shows = [s for s in seeds if s.media_type is MediaType.SHOW]

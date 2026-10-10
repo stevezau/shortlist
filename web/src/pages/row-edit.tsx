@@ -1,6 +1,5 @@
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { QueryBoundary } from "@/components/query-boundary";
 import { RowEditor } from "@/components/rows/row-editor";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,8 +10,8 @@ import { useHashScroll } from "@/lib/use-hash-scroll";
 /**
  * The add/edit-a-row screen.
  *
- * `/rows/new?template=<id>` to add, `/rows/:id` to edit. A page rather than the dialog it used to
- * be: a modal is capped at 90% of the viewport, and that cap — not the number of settings — is what
+ * `/rows/new/full?template=<id>` for the full add form (the plain `/rows/new` is the short one in `row-new.tsx`), `/rows/:id` to edit. A page rather than a
+ * dialog: a modal is capped at 90% of the viewport, and that cap — not the number of settings — is what
  * forced every group of settings into a collapsed accordion, which in turn hid the warnings that
  * only matter before you save. A page shows every section at once, and makes a single section
  * linkable from anywhere else in the app (`/rows/3#schedule`).
@@ -35,7 +34,6 @@ export function RowEditPage() {
 
   return (
     <div className="space-y-4">
-      <BackLink to="/rows" label="Rows" />
       {/* Only the collections list gates rendering. The users list feeds the audience picker and the
           reach warning, and an empty one degrades to "no audience detail" rather than blocking the
           editor — someone adding their first row has no users synced yet. */}

@@ -107,6 +107,13 @@ describe("TraceView", () => {
     );
   });
 
+  it("says a tab's count is every row's titles in that library, not one row's", () => {
+    render(<TraceView data={okTrace()} />);
+    for (const tab of screen.getAllByRole("tab")) {
+      expect(tab).toHaveAttribute("title", expect.stringMatching(/delivered .* every row/));
+    }
+  });
+
   it("tags each seed with recency only — no play-count, since frequency no longer scores", () => {
     render(<TraceView data={okTrace()} />);
     expect(screen.getByText(/3 days ago/)).toBeTruthy();
@@ -309,6 +316,29 @@ describe("TraceView", () => {
     expect(within(searched).getByText(/Step 2/)).toBeTruthy();
   });
 
+  it("names the titles whose web search failed, so a thin web result is not mistaken for a quiet one", () => {
+    const data = okTrace();
+    const gather = data.trace.gathers?.[0];
+    if (!gather) throw new Error("fixture must have a gather");
+    gather.sources = [
+      ...(gather.sources ?? []),
+      { source: "llm_web", status: "ok", contributed: 0, detail: "" },
+    ];
+    gather.web = {
+      mode: "exa",
+      searches: [],
+      failed_seeds: ["Dune", "Arrival"],
+    };
+    render(<TraceView data={data} />);
+    const searched = screen
+      .getByText(/Where we searched/)
+      .closest("section") as HTMLElement;
+    expect(
+      within(searched).getByText(/2 searches failed and were skipped/),
+    ).toBeTruthy();
+    expect(within(searched).getByText(/Dune, Arrival/)).toBeTruthy();
+  });
+
   it("explains how the shortlist was ordered, grounded in this library's picks — and says no AI ranks", () => {
     const data = okTrace();
     // Give the delivered pick a source + seed_title so the "grounded in this row" line has real numbers.
@@ -431,7 +461,7 @@ describe("TraceView", () => {
   it("renders a cold-start user's flow — 'Popular titles', no ranking step, and a delivered ending", () => {
     // A cold user files a history stage (no seeds) + a synthetic cold_start gather. The flow must be
     // cold-aware: the search step becomes "Popular titles", the ranking step is omitted (no taste
-    // ranking runs), and the tab still reaches a delivered ending — this is the Cassie bug's fix.
+    // ranking runs), and the tab still reaches a delivered ending — this is the fix for a tab stuck before delivery.
     const data = okTrace({
       status: "cold_start",
       trace: {
@@ -997,8 +1027,8 @@ describe("TraceView for a shared row", () => {
   // A shared row belongs to nobody, so every "they / their" in this view is wrong for it — and it
   // records no per-person history stage at all, by design.
   const sharedData = {
-    username: "👥 Popular Movies on SFLIX",
-    display_name: "👥 Popular Movies on SFLIX",
+    username: "👥 Popular Movies on Home Server",
+    display_name: "👥 Popular Movies on Home Server",
     status: "ok",
     error: null,
     reason: null,
@@ -1009,11 +1039,11 @@ describe("TraceView for a shared row", () => {
 
   it("drops the person framing and names the row as the run page does", () => {
     render(
-      <TraceView data={sharedData} rowName="👥 Popular {library_name} on SFLIX" sharedRow />,
+      <TraceView data={sharedData} rowName="👥 Popular {library_name} on Home Server" sharedRow />,
     );
 
     expect(
-      screen.getByRole("heading", { name: /How we picked for 👥 Popular library name on SFLIX/ }),
+      screen.getByRole("heading", { name: /How we picked for 👥 Popular on Home Server/ }),
     ).toBeInTheDocument();
     expect(screen.getByText(/for this shared row/i)).toBeInTheDocument();
     expect(screen.queryByText(/for this person/i)).not.toBeInTheDocument();
@@ -1193,6 +1223,8 @@ describe("Trace seed action feedback", () => {
     const block = vi.spyOn(api, "blockSeed").mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce({ blocked_seeds: [] });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><TraceView data={okTrace()} userId={7} /></QueryClientProvider>);
+    expect(screen.queryByRole("button", { name: "Don’t seed" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Edit seeds" }));
     await userEvent.click(screen.getByRole("button", { name: "Don’t seed" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Couldn’t block this seed");
     expect(screen.queryByRole("button", { name: "Seed blocked" })).not.toBeInTheDocument();

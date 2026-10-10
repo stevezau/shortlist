@@ -5,10 +5,13 @@ from __future__ import annotations
 import re
 import time
 import uuid
-from collections.abc import Callable
-from dataclasses import replace
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 
 from loguru import logger
+from plexapi.collection import Collection
+from plexapi.library import LibrarySection
 
 from shortlist.engine import placeholders
 from shortlist.engine.clients.plex_pms import CollectionRejectedItems, PlexClient, log_title
@@ -63,14 +66,14 @@ def is_name_freeing_helper(title: str) -> bool:
 
 def rename_or_keep(
     plex: PlexClient,
-    collection,
+    collection: Collection,
     title: str,
     profile: UserProfile,
-    section,
+    section: LibrarySection,
     *,
     label: str,
     marker: str,
-    spare_item=None,
+    spare_item: object | None = None,
     read_spare_item: Callable[[], object | None] | None = None,
     may_free_name: Callable[[], bool] | None = None,
 ) -> str:
@@ -87,7 +90,7 @@ def rename_or_keep(
     one of three things holds the name:
 
     - An ORPHAN, left by a deleted collection. The pre-#119 rebuild deleted rows nightly, so a
-      `{top_seed}` row whose seed comes back meets one: on SFLIX four rows kept their old seed's name
+      `{top_seed}` row whose seed comes back meets one: on a large server four rows kept their old seed's name
       every night while the run reported the new one. `_reclaim_orphaned_name` frees it for this row.
     - The same person's row in ANOTHER library (a twin, e.g. two rows sharing a name under #121, or a
       `{top_seed}` row borrowing its seed). Only a create can share that name: REBUILD.
@@ -284,6 +287,7 @@ def _rebuild_under_name(
         added=[p.title for p in picks if p.rating_key not in dead], collection_title=display, created=True
     )
     diff.rating_key = _rating_key(collection)
+    diff.delivered_keys = [p.rating_key for p in picks if p.rating_key not in dead]
     return diff, stored, collection
 
 
@@ -309,7 +313,7 @@ def row_marker(plex_account_id: int) -> str:
     A Plex collection is a TAG on items, keyed by TITLE within a library — not an independent bag
     with its own membership. Two rows sharing a title in one library are therefore ONE membership,
     and every user's row shows the union of everyone's picks: on a live server a film picked for a
-    single user turned up in another user's row, carrying one collection tag (SFLIX, 2026-07-13).
+    single user turned up in another user's row, carrying one collection tag (a large production server, 2026-07-13).
     "Picked for You" has to mean picked for YOU, so the titles must differ.
 
     They must also LOOK identical — nobody wants their own name stapled to their row — so the
@@ -374,12 +378,10 @@ def top_seed_of(picks: list[Pick]) -> str:
     would have picked a new name most nights, rewriting the title on Plex each time. `rank` is stamped
     before ordering and still means "how good a match".
 
-    Skipping the UNSEEDED picks is issue #84. It used to take the single best pick and use its seed
-    "if it has one" — so a row whose top pick came from a source that seeds nothing (trending, popular
-    on this server, a web-search suggestion) rendered no seed AT ALL and fell back to the default
-    title, with a dozen perfectly good seeded picks sitting right behind it. The reporter saw it on
-    every account on their server, including ones with years of history, which is what "no seed" was
-    never meant to mean: it is supposed to mean a cold start.
+    Skipping the UNSEEDED picks is issue #84. Taking the single best pick's seed "if it has one"
+    would render no seed AT ALL whenever the top pick came from a source that seeds nothing (trending,
+    popular on this server, a web-search suggestion), falling back to the default title with a dozen
+    perfectly good seeded picks right behind it. "No seed" is supposed to mean a cold start.
 
     When NO pick carries a seed, the title names the watch the row was built from (`lead_seed_title`,
     stamped on every pick). That is issue #133: a new watch with no look-alikes in the library leaves
@@ -404,7 +406,7 @@ def seed_source(section_picks: list[Pick], row_picks: list[Pick]) -> list[Pick]:
 
     A library uses its OWN seed first: a `{top_seed}` row spanning two libraries genuinely follows a
     different watch in each and its titles should say so (pinned by
-    test_pipeline.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
+    test_pipeline_shelf.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
     Borrowing is the step BEFORE giving up and using the default name — issue #84, where a
     `movies & shows` row whose seeds were all films delivered the seeded title to Movies and
     "✨ Picked for You" to TV, so one row appeared twice under two names on the same person's Plex.
@@ -503,7 +505,7 @@ _POSTER_TEXT_ENGINES = {"text": "text", "ai": "ai", "generate": "ai"}
 
 def apply_poster(
     plex: PlexClient,
-    collection,
+    collection: Collection,
     poster: PosterSpec | None,
     profile: UserProfile,
     picks: list[Pick],
@@ -589,7 +591,7 @@ def _field_change(wanted: str, current: str | None, written: str | None) -> tupl
 
 def apply_row_details(
     plex: PlexClient,
-    collection,
+    collection: Collection,
     spec: RowSpec,
     profile: UserProfile,
     picks: list[Pick],
@@ -707,11 +709,11 @@ def _allowed_media(media: str) -> set[MediaType]:
     return {MediaType(media)}
 
 
-def section_kind(section) -> MediaType:
+def section_kind(section: LibrarySection) -> MediaType:
     return MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
 
 
-def sections_for_keys(sections: list, library_keys) -> list:
+def sections_for_keys(sections: list, library_keys: Iterable[str | int]) -> list:
     """The sections a row's ``library_keys`` name, in ``sections`` order.
 
     str() on BOTH sides is load-bearing: the pool-narrowing half of the decision
@@ -730,7 +732,9 @@ def target_sections(sections: list, spec: RowSpec) -> list:
     return sections_for_keys(candidates, spec.library_keys) if spec.library_keys else candidates
 
 
-def rows_can_share_a_library(media_a: str, keys_a, media_b: str, keys_b) -> bool:
+def rows_can_share_a_library(
+    media_a: str, keys_a: Iterable[str | int], media_b: str, keys_b: Iterable[str | int]
+) -> bool:
     """Whether two rows could ever build in the same library, answered without reading Plex.
 
     The duplicate-title check's scope (issue #121): per-person rows are told apart by title only
@@ -738,7 +742,7 @@ def rows_can_share_a_library(media_a: str, keys_a, media_b: str, keys_b) -> bool
     an empty ``library_keys`` follows the server and picks up libraries added later, so the only safe
     "no" is one that holds for every library the server could ever have: media types that never meet,
     or two named library sets with nothing in common. It errs towards "yes" (a refused save) and never
-    towards "no" (two rows on one collection); `test_delivery.py::TestRowsCanShareALibrary` pins that
+    towards "no" (two rows on one collection); `test_delivery_renames.py::TestRowsCanShareALibrary` pins that
     against `target_sections`.
     """
     media_types_meet = bool(_allowed_media(media_a) & _allowed_media(media_b))
@@ -787,6 +791,41 @@ def titles_other_rows_build(
     return claimed
 
 
+@dataclass
+class RowDeliveryRetry:
+    """Evidence owned by one person's single row-retry chain, never reused by another delivery."""
+
+    confirmations: dict[tuple[int, str, str, str], dict] = field(default_factory=dict)
+    boundaries: dict[tuple[int, str, str, str], dict] = field(default_factory=dict)
+
+    @staticmethod
+    def _same_membership(left: dict, right: dict) -> bool:
+        def signature(entry: dict) -> tuple:
+            return (
+                entry["rating_key"],
+                frozenset((p["tmdb_id"], p["media_type"], p["rating_key"]) for p in entry["picks"]),
+                None if entry["audience"] is None else frozenset(entry["audience"]),
+                frozenset(entry["muted"]),
+            )
+
+        return signature(left) == signature(right)
+
+    def confirmed(
+        self, identity: tuple[int, str, str, str], entry: dict, previous: dict | None, one: CollectionDiff
+    ) -> None:
+        """Retain the first boundary, but reuse its start only across an explicitly unchanged reread."""
+        self.boundaries.setdefault(
+            identity,
+            {key: entry[key] for key in ("row_slug", "library_key", "rating_key", "delivered_at")},
+        )
+        if {p["rating_key"] for p in entry["picks"]} != set(one.delivered_keys):
+            return  # incomplete title identity cannot establish continuous membership
+        if previous is not None and one.membership_unchanged and self._same_membership(previous, entry):
+            entry["delivery_id"] = previous["delivery_id"]
+            entry["delivered_at"] = previous["delivered_at"]
+        self.confirmations[identity] = entry
+
+
 def deliver_rows(
     plex: PlexClient,
     profile: UserProfile,
@@ -808,6 +847,7 @@ def deliver_rows(
     on_write: Callable[[dict], None] | None = None,
     on_label_stored: Callable[[], None] | None = None,
     written_details: dict[str, WrittenDetails] | None = None,
+    retry_state: RowDeliveryRetry | None = None,
 ) -> tuple[CollectionDiff, str | None]:
     """Deliver one row's picks as one collection per targeted library. Returns (diff, stored label).
 
@@ -897,6 +937,10 @@ def deliver_rows(
         ]
         if not this_section:
             continue
+        identity = (profile.plex_account_id, profile.slug, spec.slug, str(section.key))
+        # An attempt that fails before confirming must invalidate continuity. Its earlier known
+        # boundary remains separate, so an exhausted retry cannot extend the old row's eligibility.
+        previous = retry_state.confirmations.pop(identity, None) if retry_state is not None else None
         # Per-library timing: this is the one place we can see that (e.g.) a TV row costs 6x a Movies
         # row, which points straight at removeItems (one DELETE per item) on a full-turnover row. The
         # PMS timing adapter breaks each of those calls down further (perf diag 2026-07-19).
@@ -948,6 +992,10 @@ def deliver_rows(
         entry: dict | None = None
         if breakdown is not None:
             entry = {
+                "delivery_id": str(uuid.uuid4()),
+                "delivered_at": datetime.now(UTC).isoformat(),
+                "audience": sorted(spec.audience) if spec.audience is not None else None,
+                "muted": sorted(spec.muted_accounts),
                 "row_slug": spec.slug,
                 "row_title": one.collection_title,
                 # The ledger's handle on this collection. Everything else in this entry describes
@@ -996,8 +1044,11 @@ def deliver_rows(
                         "order_rating_source": p.order_rating_source,
                     }
                     for p in this_section
+                    if one.delivered_keys is None or p.rating_key in one.delivered_keys
                 ],
             }
+            if retry_state is not None and not dry_run and one.rating_key > 0 and one.delivered_keys is not None:
+                retry_state.confirmed(identity, entry, previous, one)
             breakdown.append(entry)
         # Recorded the instant the PMS confirms the label — if the NEXT library blows up, this
         # row still gets excluded on every other user's share this run.
@@ -1107,10 +1158,9 @@ def remove_row(
         # `_rating_key` also returns 0 for a collection carrying no key — so a 0 would match every
         # keyless collection under this label. Only a real key may ever select an object for deletion.
         ledger_key = (delivered_keys or {}).get(str(section.key)) or None
-        # "" IS the unrenderable signal now — `render_row_name` no longer answers with a substitute
-        # name, so this no longer has to infer "unnameable" from a title that merely LOOKS like the
-        # default. That inference was always slightly wrong: a row deliberately titled exactly
-        # "✨ Picked for You" was treated as unnameable and left for a sweep.
+        # "" IS the unrenderable signal: `render_row_name` answers with no substitute name, so
+        # "unnameable" is never inferred from a title that merely LOOKS like the default (a row
+        # deliberately titled exactly "✨ Picked for You" is a real name, not one to leave for a sweep).
         # A `{top_seed}` template is unrenderable HERE whatever its fallback says. This function
         # renders with no picks, so a row with a fallback renders the FALLBACK title — but a seeded
         # user's collection wears "Because you watched X", so matching on it finds nothing (a muted
@@ -1245,57 +1295,6 @@ def remove_row_collections(
                 plex.delete_owned_collection(collection, LABEL_PREFIX)
                 logger.info("removed '{}' in '{}' (label {})", display, section.title, label)
     return removed
-
-
-def rename_row_collections(
-    plex: PlexClient,
-    config: EngineConfig,
-    *,
-    label: str,
-    marker: str,
-    old_display: str,
-    new_display: str,
-    dry_run: bool,
-) -> list[str]:
-    """Rename this account's row collection IN PLACE — ``old_display`` → ``new_display``, keeping the
-    invisible account marker — across every library that holds it. An on-demand reconcile OUTSIDE a
-    run (the owner renamed a row): a multi-row user's renamed row is updated rather than orphaned with
-    a new copy (single-row users are already renamed seamlessly by the next run's delivery).
-
-    Privacy-neutral: the filter that hides a row is keyed on its LABEL, which is untouched here, so
-    changing only the human title can never make the server less private (it neither creates,
-    promotes, nor alters a share filter).
-    Matches only collections under ``label`` whose marker-stripped title equals ``old_display``; a
-    foreign (Kometa) collection never carries our label and ``find_owned_collections`` only returns
-    ours. Returns the library titles renamed (or, in a dry run, that would be).
-    """
-    if not label.lower().startswith(f"{LABEL_PREFIX}_"):
-        # Lowercased for the same reason as the removal guard: `User.label` stores Plex's TITLE-CASED
-        # form ("Shortlist_sarah"), and a case-sensitive test returns [] for it — indistinguishable
-        # from "nothing matched", so a rename would leave the row under its old name with nothing but
-        # a log line. Defensive: no caller passes the title-cased form today, and this is what keeps
-        # one from silently no-opping if it ever does.
-        # The UNDERSCORE matters (rule 4): every row now also carries the bare `shortlist` label, and
-        # `find_owned_collections` matches a tag exactly — so a caller passing the constant label
-        # would select every Shortlist collection on the server rather than one row's.
-        # Belt-and-suspenders: only ever retitle under one of OUR labels, matching the delete
-        # path's ownership re-check. find_owned_collections already scopes to this label, so this only
-        # guards against a caller ever passing a foreign one.
-        logger.warning("refusing to rename under a non-Shortlist label {!r}", label)
-        return []
-    renamed: list[str] = []
-    new_title = new_display + marker
-    for section in plex.sections():
-        for collection in plex.find_owned_collections(section, label):
-            if strip_marker(collection.title) != old_display or collection.title == new_title:
-                continue  # not this row, or already carries the new title
-            renamed.append(section.title)
-            if dry_run:
-                logger.info("[dry-run] would rename '{}' → '{}' in '{}'", old_display, new_display, section.title)
-            else:
-                collection.editTitle(new_title)
-                logger.info("renamed '{}' → '{}' in '{}'", old_display, new_display, section.title)
-    return renamed
 
 
 def reset_row_posters(
@@ -1761,7 +1760,7 @@ def _deliver_one(
     #
     # This library's OWN picks name the row when they carry a seed — a `{top_seed}` row spanning two
     # libraries follows a different watch in each, and each title says which (pinned by
-    # test_pipeline.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
+    # test_pipeline_shelf.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
     #
     # `title_picks` — the ROW's whole pick list — is the fallback BEFORE the default title, and that
     # is issue #84. Rendering only from `picks` meant a `movies & shows` row whose seeds were all
@@ -1842,6 +1841,7 @@ def _deliver_one(
             on_write=on_write,
         )
         diff.rating_key = _rating_key(collection)
+        diff.delivered_keys = [p.rating_key for p in picks if p.rating_key not in set(vanished)]
         if vanished:
             # Deleted from Plex between the picks being made and the row being created. The row holds
             # the survivors, so the diff must name only those — otherwise the run reports having
@@ -1923,15 +1923,17 @@ def _deliver_one(
 
     if not to_add_keys and to_remove_count == 0:
         # Membership already IS the wanted set — skip the add/remove/sortUpdate writes entirely. An
-        # unchanged row used to fire a sortUpdate every run (a real write on a slow library, for
+        # unchanged row would otherwise fire a sortUpdate every run (a real write on a slow library, for
         # nothing). The deferred order pass still runs via order_work, so a refresh-night re-rank is still
-        # applied and the collection keeps its custom sort from prior runs. (perf: SFLIX 2026-07-19)
+        # applied and the collection keeps its custom sort from prior runs.
         if order_work is not None:
             order_work.append((collection, wanted_keys))
         apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
         stored = plex.stored_label(collection, label)
         _apply_shortlist_label(plex, collection, profile.username)
         diff.rating_key = _rating_key(collection)
+        diff.delivered_keys = wanted_keys
+        diff.membership_unchanged = True
         logger.info(
             "{}: '{}' in '{}' unchanged ({} items) — no membership write",
             profile.username,
@@ -1971,7 +1973,7 @@ def _deliver_one(
         plex.set_items(collection, existing_items, add_items, wanted_keys)
     except CollectionRejectedItems:
         # A Plex collection can end up in a state where it refuses EVERY add. Observed on a real
-        # server (darren3437, SFLIX, runs 21 and 22): an empty collection of ours 400'd on a batch of
+        # server (one user, a large production server, runs 21 and 22): an empty collection of ours 400'd on a batch of
         # 30 valid shows AND on a single one, while a sibling collection accepted the very same item
         # a second later. Same library, same subtype, same machineIdentifier, every ratingKey
         # resolving — the object itself was broken, and it stayed broken run after run, so that
@@ -2014,6 +2016,7 @@ def _deliver_one(
             on_write=on_write,
         )
         diff.rating_key = _rating_key(collection)
+        diff.delivered_keys = [p.rating_key for p in picks if p.rating_key not in set(vanished)]
         if vanished:
             dead = set(vanished)
             diff.added = [p.title for p in picks if p.rating_key not in dead]
@@ -2025,6 +2028,7 @@ def _deliver_one(
     stored = plex.stored_label(collection, label)
     _apply_shortlist_label(plex, collection, profile.username)
     diff.rating_key = _rating_key(collection)
+    diff.delivered_keys = wanted_keys
     # Promotion is deliberately NOT done here: the pipeline promotes only after every user's
     # share filters have been merged, so a new row is never PROMOTED before its exclusions exist
     # (see plex-safety rule 1 on the Collections tab).
@@ -2150,7 +2154,7 @@ def sweep_broken_rows(
             # No shortlist label. If the title still carries our invisible marker, it's an ORPHAN —
             # a per-user row whose label write never landed (an interrupted run). With no label, NO
             # `label!=` share filter can hide it, so EVERY user sees it: the exact leak that stranded
-            # unlabelled "Picked for You" rows on SFLIX. The marker proves it's ours, so delete it;
+            # unlabelled "Picked for You" rows on a large production server. The marker proves it's ours, so delete it;
             # the next successful run rebuilds the owner's row, labelled. A collection with no marker
             # is genuinely foreign (Kometa and friends) — leave it alone (rule 4).
             if not has_marker(collection.title) or systemic_failure:

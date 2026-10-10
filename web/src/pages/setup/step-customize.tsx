@@ -38,7 +38,7 @@ export function StepCustomize({ update, next, back }: StepProps) {
   // fields above silently reset to their literals and the next save wrote those defaults OVER the
   // owner's stored values. The worst case was "Skip for now — you can change this later", which is
   // also a save: a control whose label promises nothing changes was replacing a custom row name
-  // with the classic default. Same pattern as `step-history`, for the same reason.
+  // with the classic default. Same pattern as `step-tmdb`, for the same reason.
   const settings = useSettings();
   const seeded = useRef(false);
   useEffect(() => {
@@ -50,7 +50,7 @@ export function StepCustomize({ update, next, back }: StepProps) {
     // Functional updaters: if the fetch was slow and the owner already picked something, their
     // choice wins. An absent saved value never overwrites what they chose.
     //
-    // All three called unconditionally at the effect's top level, exactly as `step-history` does.
+    // All three called unconditionally at the effect's top level, exactly as `step-tmdb` does.
     // Wrapping them in `if (savedTpl)` reads more naturally but trips
     // `react-hooks/set-state-in-effect`, which is an ERROR in this config and would fail CI's lint
     // job — so the "is there anything to apply?" test lives inside each updater instead.
@@ -118,7 +118,7 @@ export function StepCustomize({ update, next, back }: StepProps) {
       <div className="min-w-0 space-y-6">
       {settings.isError && <ErrorState error={settings.error} onRetry={() => void settings.refetch()} />}
       <fieldset className="space-y-3">
-        <legend className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">Row name</legend>
+        <legend className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Row name</legend>
         <div className="grid gap-2">
           {templateOptions.map((option) => (
             <button
@@ -140,7 +140,7 @@ export function StepCustomize({ update, next, back }: StepProps) {
                   </p>
                   <p className="text-xs text-muted-foreground">{option.hint}</p>
               </div>
-              {option.id === "static" && <span className="pt-1 text-[9px] font-medium uppercase tracking-wide text-primary/80">Classic</span>}
+              {option.id === "static" && <span className="pt-1 text-xs font-medium uppercase tracking-wide text-primary/80">Classic</span>}
             </button>
           ))}
         </div>
@@ -189,16 +189,16 @@ export function StepCustomize({ update, next, back }: StepProps) {
       <div className="min-w-0 space-y-4 md:sticky md:top-8">
       <section aria-label="Preview on Plex" className="overflow-hidden rounded-xl border bg-gradient-to-br from-primary/5 via-card to-background">
         <div className="flex items-center justify-between border-b px-5 py-4">
-          <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Live preview</p>
+          <p className="text-xs uppercase tracking-widest text-muted-foreground">Live preview</p>
           <span className="text-xs text-primary/75">On Plex</span>
         </div>
         <div className="space-y-3 px-5 pb-5 pt-6">
-        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Home · Movies</p>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Home · Movies</p>
         <FakePlexRow
           title={renderRowName(template) || STATIC_TPL}
           illustrative
         />
-        <div className="flex justify-between gap-3 text-[10px] text-muted-foreground"><span>Showing 4 of {rowSize} titles</span><span>Illustrative picks</span></div>
+        <div className="flex justify-between gap-3 text-xs text-muted-foreground"><span>Showing 4 of {rowSize} titles</span><span>Illustrative picks</span></div>
         </div>
         <p className="border-t bg-background/60 px-5 py-4 text-xs leading-relaxed text-muted-foreground">
           Each person gets their own recommendations. This example previews the name;

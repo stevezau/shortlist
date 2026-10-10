@@ -8,8 +8,9 @@ import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { RunsPage } from "@/pages/runs";
 
-const { getRuns, startRun, getJobs, getRunsSummary } = vi.hoisted(() => ({
+const { getRuns, startRun, getJobs, getRunsSummary, getSchedule } = vi.hoisted(() => ({
   getRuns: vi.fn(),
+  getSchedule: vi.fn(async () => ({ rows: [], jobs: [] })),
   startRun: vi.fn(),
   // The page also renders the background-jobs history; unmocked it would error and put a second
   // alert on screen, which is not what these tests are about.
@@ -42,6 +43,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       startRun: (body: unknown) => startRun(body),
       getJobs: () => getJobs(),
       getRunsSummary: () => getRunsSummary(),
+      getSchedule: () => getSchedule(),
     },
   };
 });
@@ -96,7 +98,7 @@ describe("RunsPage", () => {
   it("clears a finished run from the list without a manual refresh", async () => {
     // The list had no live updates at all: no SSE, no polling. A run that finished left its row
     // reading "Running" with a ticking timer for as long as the page stayed open — so a cancel that
-    // HAD worked looked like one that was ignored, which is exactly how it was reported (SFLIX,
+    // HAD worked looked like one that was ignored, which is exactly how it was reported (a large production server,
     // 2026-08-13: the log said the run completed at 2m51s while this page still said Running at
     // 3m20s).
     const running = {
@@ -124,11 +126,37 @@ describe("RunsPage", () => {
     expect(screen.queryByText(/^Running$/)).toBeNull();
   });
 
+  it("counts skipped people in neutral text, and says how long until the next run", async () => {
+    // A skipped person is not a problem, so a healthy no-op run must not read like a warning; and
+    // "Next run" answers with a time until, not the "just now" of a time ago clamped at zero.
+    getRuns.mockResolvedValue([
+      {
+        id: 7,
+        trigger: "schedule",
+        status: "ok",
+        started_at: "2026-07-15T04:18:00Z",
+        began_at: "2026-07-15T04:18:00Z",
+        finished_at: "2026-07-15T04:19:00Z",
+        dry_run: false,
+        stats: { users_ok: 0, users_skipped: 46, users_error: 0 },
+      },
+    ]);
+    getRunsSummary.mockResolvedValue({ total: 1, ok: 1, error: 0, last_finished: "2026-07-15T04:19:00Z", last_status: "ok" });
+    getSchedule.mockResolvedValue({
+      rows: [{ cron: "30 2 * * *", next_run: new Date(Date.now() + 12.5 * 3600_000).toISOString() }],
+      jobs: [],
+    } as never);
+    renderPage();
+    const skipped = await screen.findByText(/46 skipped/);
+    expect(skipped.className).not.toContain("text-warning");
+    expect(await screen.findByText(/^in 12h/)).toBeInTheDocument();
+  });
+
   it("surfaces the server's reason when a run can't start", async () => {
     getRuns.mockResolvedValue([]);
     startRun.mockRejectedValue(new ApiError(503, START_FAILURE));
     renderPage();
-    await screen.findByText(/No runs yet/i);
+    await screen.findByText(/No run history/i);
 
     await userEvent.click(
       screen.getByRole("button", { name: /Run all rows now/i }),
@@ -144,7 +172,7 @@ describe("RunsPage", () => {
     getRuns.mockResolvedValue([]);
     startRun.mockResolvedValue({ run_id: 1 });
     renderPage();
-    await screen.findByText(/No runs yet/i);
+    await screen.findByText(/No run history/i);
 
     await userEvent.click(
       screen.getByRole("button", { name: /Run all rows now/i }),
@@ -181,6 +209,35 @@ describe("RunsPage — the headline above the table", () => {
     expect(screen.getByText(/all finished cleanly/i)).toBeInTheDocument();
     expect(screen.queryByText("Succeeded")).toBeNull();
     expect(screen.queryByText("Failed")).toBeNull();
+  });
+
+  it("does not call a run with a privacy warning clean", async () => {
+    // The strip said "all finished cleanly" for a run the dashboard and the run page call
+    // "OK with warnings".
+    getRunsSummary.mockResolvedValue({
+      total: 1,
+      ok: 1,
+      error: 0,
+      last_finished: "2026-09-04T18:00:00Z",
+      last_status: "ok",
+    });
+    getRuns.mockResolvedValue([
+      {
+        id: 7,
+        trigger: "schedule",
+        status: "ok",
+        started_at: "2026-09-04T17:58:00Z",
+        finished_at: "2026-09-04T18:00:00Z",
+        dry_run: false,
+        privacy: { can_see_others: ["kid"], unreadable_filters: [], filters_not_enforced: [] },
+        stats: { users_ok: 3, users_error: 0 },
+      },
+    ]);
+    renderPage();
+
+    expect(await screen.findByText("1 with warnings")).toBeInTheDocument();
+    expect(screen.queryByText(/all finished cleanly/i)).toBeNull();
+    expect(screen.getAllByText(/^OK · \d+ warnings?$/).length).toBeGreaterThan(0);
   });
 
   it("keeps the one number that cannot be derived — how many failed", async () => {

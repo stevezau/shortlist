@@ -1,7 +1,8 @@
 # Watch signals — what Plex will tell us, and what to build on it
 
-Status: **design, nothing built.** Everything in "What the server actually offers" was probed against
-SFLIX (PMS 1.43.3.10793) on 2026-08-23 with the admin token. Numbers are that server's, not
+Status: **historical design investigation; §5 records the current delivery-membership invariant.**
+Everything in "What the server actually offers" was probed against
+A large production server (PMS 1.43.3.10793) on 2026-08-23 with the admin token. Numbers are that server's, not
 illustrative.
 
 Written because the membership rule shipped in `82e1bfd` ("only credit a watch if the title was in
@@ -146,7 +147,7 @@ people are watching live — a real step up in what a privacy-focused tool knows
 
 ## 5. What this does to the reconcile — the actual prize
 
-Today's rule needs a snapshot of each person's live rows taken _before_ the run rebuilds them
+The original rule needed a snapshot of each person's live rows taken _before_ the run rebuilt them
 (`RunService.start_run`), because by reconcile time the row has already dropped the title — dropped
 _because_ it was watched. That snapshot is a workaround for having only one timestamp and no history.
 
@@ -154,13 +155,23 @@ With real event times the question becomes historical and the workaround disappe
 
 > credit the pick if there is a watch event at time T where the title was in one of their rows at T.
 
-"In their row at T" is answerable from `picks` + `runs` at any later date — the pick's group had a
-delivery from a run started at or before T, and that delivery contained the title. That is exactly the
-SQL used to measure this change's impact before shipping it, so it is known to work on real data.
+"In their row at T" is answered by `row_delivery_snapshots` (migration 0108), independently of
+disposable `runs` and `run_shared_rows`. Each confirmed per-library result records the actual delivery
+time, exact typed titles, and the end of its interval; shared rows also preserve audience and mutes.
+Personal snapshots reference retained picks after validating person, row, library and title identity.
+Empty deliveries and confirmed removals end prior membership. Dry runs and omitted or failed writes
+do not replace it. Run enqueue time is never delivery evidence.
 
-Consequences: the pre-run snapshot goes away; ordering between the reconcile and the rebuild stops
-mattering; and a late-arriving event (from a backfill, or after downtime) is attributed correctly
-rather than being judged against today's rows.
+Clearing or pruning run history leaves current membership and attribution intact. Closed intervals
+are retained for the watch-event horizon; current intervals remain until replaced or removed. Late
+events use the interval at playback time, with current enabled-row and delivery-ledger guards still
+refusing rows that have been removed entirely. Current picks, carry-forward and artwork previews use
+the independent current intervals too; a historical run link may be absent.
+
+The migration only backfills trustworthy linked delivery evidence. Already detached picks cannot
+reconstruct it. If a legacy write has neither a delivery clock nor an execution clock, its row/library
+history is refused until a new actual delivery establishes membership; queued runs may overlap, so
+their enqueue timestamps cannot establish replacement order.
 
 ## 6. Data model
 
@@ -195,11 +206,11 @@ than the pick history can be attributed anyway.
   (a `stopped` state racing the session teardown), which would cost us the identity lookup.
 - Does the history log get an entry when a title is marked watched **without** playback?
 - Do managed/Home users appear in the history log under their own `accountID`? **Partly answered
-  (SFLIX, 2026-08-24, 18,756 events across 51 distinct ids).** Managed users do — one appears under
+  (a large production server, 2026-08-24, 18,756 events across 51 distinct ids).** Managed users do — one appears under
   its own id and credits normally. But two ids in the log match no user row: `1`, with 3 events from
   December 2025 and March 2026, and `725647550` with 37, almost certainly a share that has since
   been removed. `1` is conventionally the server owner in Plex's history endpoint, and the owner here
-  really does have a different id (`5245144`), so an owner watching on the ADMIN account would very
+  really does have a different id (`1000000`), so an owner watching on the ADMIN account would very
   likely not be credited.
 
   Deliberately NOT mapped `1` → owner. Three stale events are not enough evidence to attribute

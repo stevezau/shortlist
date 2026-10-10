@@ -8,8 +8,9 @@ import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { jobStatusLabel, timeAgo } from "@/lib/format";
-import { isActiveJob, jobDuration, jobStatusTone } from "@/lib/job-status";
+import { timeAgo } from "@/lib/format";
+import { isInFlight } from "@/lib/job-activity";
+import { jobDuration, jobStatusLabel, jobStatusTone } from "@/lib/job-status";
 import type { Job, JobCatalogEntry } from "@/lib/types";
 
 type Filter = "all" | "failed" | "active";
@@ -48,8 +49,8 @@ function ActivityRow({
             className="size-2 shrink-0 animate-pulse rounded-full bg-primary"
           />
         )}
-        {/* Which JOB this was, in the same words as the Jobs tab — the old flat table showed the raw
-            kind (`sync.check`), which means nothing to someone reading their own server's history. */}
+        {/* Which JOB this was, in the same words as the Jobs tab — the raw kind (`sync.check`) means
+            nothing to someone reading their own server's history. */}
         <span className="min-w-0 flex-1 font-medium sm:w-36 sm:flex-none lg:w-48">
           {label}
         </span>
@@ -75,6 +76,59 @@ function ActivityRow({
         </span>
       </button>
       {open && <JobDetail job={job} />}
+    </div>
+  );
+}
+
+/** Back-to-back finished runs of one job kind (a playback credit every few minutes) that would
+ *  otherwise bury the nightly run, backups and syncs. Only `done` folds: a failure, a retry or a job
+ *  in flight is something to look at one by one. */
+function groupRepeats(rows: Job[]): Job[][] {
+  const groups: Job[][] = [];
+  for (const job of rows) {
+    const previous = groups[groups.length - 1];
+    if (job.status === "done" && previous?.[0]?.status === "done" && previous[0].kind === job.kind) {
+      previous.push(job);
+    } else {
+      groups.push([job]);
+    }
+  }
+  return groups;
+}
+
+function RepeatGroup({ jobs, label, first }: { jobs: Job[]; label: string; first: boolean }) {
+  const [open, setOpen] = useState(false);
+  const newest = jobs[0];
+  return (
+    <div className={first ? "" : "border-t"}>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 text-left text-sm hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+        />
+        <span className="min-w-0 flex-1 font-medium sm:w-36 sm:flex-none lg:w-48">{label}</span>
+        <span className="shrink-0 rounded-full bg-muted px-2 text-xs tabular-nums text-muted-foreground">
+          &times;{jobs.length}
+        </span>
+        <span className={`order-1 w-full pl-7 sm:order-none sm:w-auto sm:pl-0 ${jobStatusTone("done")}`}>
+          All done
+        </span>
+        <span className="ml-auto shrink-0 whitespace-nowrap text-muted-foreground">
+          {newest?.created_at ? `latest ${timeAgo(newest.created_at)}` : "—"}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t bg-muted/20 pl-4">
+          {jobs.map((job, index) => (
+            <ActivityRow key={job.id} job={job} label={label} first={index === 0} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -114,7 +168,7 @@ export function ActivityFeed({
     // Slow when idle rather than stopping: a feed of "every background job this server has run" that
     // never refetches shows a job appearing only if you happen to reload.
     refetchInterval: (query) =>
-      (query.state.data ?? []).some(isActiveJob) ? 3_000 : 15_000,
+      (query.state.data ?? []).some(isInFlight) ? 3_000 : 15_000,
   });
   // A full page back means there is probably more; a short one means we reached the end.
   const maybeMore = (jobs.data ?? []).length >= limit;
@@ -147,7 +201,7 @@ export function ActivityFeed({
         {(rows) => {
           // "failed" arrives already narrowed by the server; only "active" is still a predicate,
           // because queued-or-running is two statuses and the endpoint takes one.
-          const shown = filter === "active" ? rows.filter(isActiveJob) : rows;
+          const shown = filter === "active" ? rows.filter(isInFlight) : rows;
           if (rows.length === 0 && filter === "all") {
             // An empty state has to say WHY, or a working feature reads as a broken one.
             return (
@@ -171,14 +225,15 @@ export function ActivityFeed({
           return (
             <>
               <div className="overflow-hidden rounded-md border">
-                {shown.map((job, index) => (
-                  <ActivityRow
-                    key={job.id}
-                    job={job}
-                    label={labels[job.kind] ?? job.kind}
-                    first={index === 0}
-                  />
-                ))}
+                {groupRepeats(shown).map((group, index) => {
+                  const lead = group[0] as Job;
+                  const label = labels[lead.kind] ?? lead.kind;
+                  return group.length > 1 ? (
+                    <RepeatGroup key={lead.id} jobs={group} label={label} first={index === 0} />
+                  ) : (
+                    <ActivityRow key={lead.id} job={lead} label={label} first={index === 0} />
+                  );
+                })}
               </div>
               {maybeMore && (
                 <div className="flex justify-center pt-1">

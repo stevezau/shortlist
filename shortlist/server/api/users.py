@@ -12,18 +12,18 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import String, case, cast, func
+from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
 from shortlist.engine.placeholders import refusal
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.serializers import UserOut, UserPickOut, pick_dict, user_dict
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
     Event,
     PickRow,
+    RowDeliverySnapshot,
     Run,
     RunUser,
     SharedRowWatch,
@@ -31,12 +31,9 @@ from shortlist.server.db.models import (
     iso_utc,
 )
 from shortlist.server.prefs import blocked_entries
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services import jobs, report_service
-from shortlist.server.services.user_sync import (
-    remove_users_rows,
-    rename_after_nickname,
-)
-from shortlist.server.services.watch_events import _as_utc
+from shortlist.server.services.delivery_snapshots import utc
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
@@ -50,8 +47,8 @@ class BlockSeedBody(BaseModel):
 
 
 class UserPrefs(BaseModel):
-    # `row_size` and `max_rating` used to live here. Neither did anything: max_rating filtered no
-    # content at all, and a row's own size always won. Per-person row size lives on the row override
+    # There is no per-person `row_size` or `max_rating` here: a row's own size always wins and a
+    # rating cap filtered nothing. Per-person row size lives on the row override
     # (PUT /users/{id}/rows/{collection_id}), which the UI actually exposes.
     row_name_tpl: str | None = None
     excluded_genres: list[str] | None = None
@@ -189,8 +186,8 @@ class WatchedTitleOut(PassthroughModel):
     watched_at: str
     year: int | None
     watch_count: int
-    # Display names of the Plex libraries holding this title, sorted. Usually one; two or more is the
-    # duplicate this page used to render as separate rows. Empty for rows cached before 0087, whose
+    # Display names of the Plex libraries holding this title, sorted. Usually one; two or more is a
+    # duplicate, rendered as one row. Empty for rows cached before 0087, whose
     # library name is filled in by that person's next sync.
     libraries: list[str]
     # A show's progress straight from Plex. Both None for movies and for anything reporting no
@@ -254,39 +251,6 @@ class UserSyncOut(PassthroughModel):
     total: int
 
 
-def merged_prefs(stored: dict, sent: BaseModel) -> dict:
-    """``stored`` with the fields ``sent`` actually mentioned applied, and nothing else touched.
-
-    Read with ``model_fields_set``, never with an ``is not None`` filter. "The client did not mention
-    this field" and "the client set it to null" are different instructions, and only the first means
-    "leave it alone" — the None filter collapsed them, so a pref could be set but never CLEARED. It
-    would also have started silently clobbering the day a ``UserPrefs`` field gained a non-``None``
-    default, because ``model_dump()`` renders that default whether or not the client sent it, writing
-    it into every user on every unrelated PATCH. ``PATCH /collections`` and ``PUT …/rows`` already
-    read the request this way; this was the last partial write that did not.
-
-    ``model_dump`` rather than ``getattr``, and that is not a style choice: ``prefs`` is a JSON
-    column and ``blocked_seeds`` accepts objects, so reading the field off the model would hand
-    SQLAlchemy ``BlockSeedBody`` instances instead of dicts. ``exclude_unset`` gives exactly the
-    fields ``model_fields_set`` names, with the nested models already converted.
-
-    Args:
-        stored: The prefs mapping as it is on the user right now. Never mutated.
-        sent: The parsed request body's prefs model.
-
-    Returns:
-        A new mapping. Keys the model knows nothing about (an install's accrued ``history_depth``,
-        say) pass through untouched.
-    """
-    merged = dict(stored)
-    for key, value in sent.model_dump(exclude_unset=True).items():
-        if value is None:
-            merged.pop(key, None)  # an explicit null clears the override
-        else:
-            merged[key] = value
-    return merged
-
-
 def _watch_depths(session) -> dict[int, int]:
     """user_id -> how many DISTINCT watched titles we last read for them.
 
@@ -333,24 +297,37 @@ def _unhidden_row_counts(session) -> dict[str, int]:
 def _pick_watching(session: Session) -> dict[int, tuple[int, datetime | None]]:
     """Per user with any pick: distinct titles watched in the last 30 days, and the latest watch ever.
 
-    One grouped query for everyone. DISTINCT title, not pick row: a title recommended over several
+    Shared-row watches count too, as on the dashboard (`report_service._counts`): a title on both a
+    personal and a shared row is ONE title, so the two sides are UNIONed per person, never added.
+
+    Two grouped queries for everyone. DISTINCT title, not pick row: a title recommended over several
     runs is one title, so counting rows would skew the figure. `||` via .concat(), NOT func.concat:
     the latter compiles to SQLite's concat() scalar, which only exists in SQLite >= 3.44 — the
     runtime image ships 3.40, so it would 500.
     """
     title = cast(PickRow.tmdb_id, String).concat("-").concat(PickRow.media_type)
+    shared_title = cast(SharedRowWatch.tmdb_id, String).concat("-").concat(SharedRowWatch.media_type)
     # `watched_at` is stored as UTC; SQLite drops the offset on write, so compare against UTC.
     cutoff = datetime.now(UTC) - timedelta(days=30)
-    rows = (
-        session.query(
-            PickRow.user_id,
-            func.count(func.distinct(case((PickRow.watched_at >= cutoff, title)))),
-            func.max(PickRow.watched_at),
+    recent = (
+        session.query(PickRow.user_id.label("user_id"), title.label("title"))
+        .filter(PickRow.watched_at >= cutoff)
+        .union(
+            session.query(SharedRowWatch.user_id, shared_title).filter(SharedRowWatch.watched_at >= cutoff),
         )
-        .group_by(PickRow.user_id)
-        .all()
+        .subquery()
     )
-    return {user_id: (count, last) for user_id, count, last in rows}
+    counts = dict(session.query(recent.c.user_id, func.count()).group_by(recent.c.user_id).all())
+    last = {
+        user_id: at
+        for user_id, at in session.query(PickRow.user_id, func.max(PickRow.watched_at)).group_by(PickRow.user_id)
+    }
+    for user_id, at in session.query(SharedRowWatch.user_id, func.max(SharedRowWatch.watched_at)).group_by(
+        SharedRowWatch.user_id
+    ):
+        if at is not None and (last.get(user_id) is None or at > last[user_id]):
+            last[user_id] = at
+    return {user_id: (counts.get(user_id, 0), at) for user_id, at in last.items()}
 
 
 def _latest_run_ids(session: Session):
@@ -426,89 +403,49 @@ async def set_all_users_enabled(body: BulkEnabled, request: Request) -> dict:
     Plex now and writes their share filters — the same cleanup the per-user toggle does, so 'off'
     means gone, not merely 'not refreshed'. Enabling gives back the shared rows that disabling hid;
     their own rows rebuild on the next run. Best-effort + audited."""
+    from shortlist.server.assistant.row_effects import queue_convergence_in_session
+    from shortlist.server.services.person_changes import apply_person_in_session, prepare_person_in_session
+
     state = request.app.state
-    to_clean: list[str] = []
-    reinstated = 0
     with state.sessions() as session:
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
         users = session.query(User).all()
-        for user in users:
-            if body.enabled is False and user.enabled:
-                to_clean.append(user.slug)  # was on, now off -> remove their rows from Plex
-            if body.enabled is True and not user.enabled:
-                reinstated += 1  # was off, now on -> the excludes that hid every shared row must go
-            user.enabled = body.enabled
-        session.commit()
+        mutations = [prepare_person_in_session(session, user.id, UserPatch(enabled=body.enabled)) for user in users]
+        cleaned = sum(bool(user.enabled and not body.enabled) for user in users)
+        steps = []
+        privacy_step = None
+        for mutation in mutations:
+            apply_person_in_session(session, mutation)
+            for step in mutation.steps:
+                if step["kind"] == "privacy.sync":
+                    privacy_step = step
+                else:
+                    steps.append(step)
+        # Finish every person's cleanup before the global filter pass. A failed
+        # privacy request must not prevent a later person's collections being removed.
+        if privacy_step is not None:
+            steps.append(privacy_step)
+        if steps:
+            queue_convergence_in_session(session, steps, domain="people")
         total = len(users)
-    await remove_users_rows(state, to_clean)
-    if reinstated:
-        await jobs.queue_privacy_sync(state, f"{reinstated} people were turned back on")
-    return {"updated": total, "cleaned": len(to_clean), "enabled": body.enabled}
+        session.commit()
+    if steps:
+        await jobs.drain_now(state, "people enablement changed")
+    return {"updated": total, "cleaned": cleaned, "enabled": body.enabled}
 
 
 @router.patch("/{user_id}", response_model=UserOut)
 async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
+    from shortlist.server.assistant.row_effects import queue_convergence_in_session
+    from shortlist.server.services.person_changes import apply_person_in_session, prepare_person_in_session
+
     state = request.app.state
-    disabled_slug: str | None = None
-    enabled_slug: str | None = None
-    paused_slug: str | None = None
-    unpaused_slug: str | None = None
-    sharing_slug: tuple[str, bool] | None = None  # (slug, now managed?) when the setting actually changed
-    was_called: dict[str, str] = {}  # {slug -> the display name their collections are still titled with}
     with state.sessions() as session:
-        user = session.get(User, user_id)
-        if user is None:
-            raise HTTPException(status_code=404, detail="user not found")
-        if patch.enabled is not None:
-            if user.enabled and patch.enabled is False:
-                # Turned off → remove their rows from Plex now, not just stop delivering to them.
-                disabled_slug = user.slug
-            if not user.enabled and patch.enabled is True:
-                # Turned back on → the excludes that hid every shared row from them must come off.
-                # Their own row is a rebuild, so that part still waits for the next run.
-                enabled_slug = user.slug
-            user.enabled = patch.enabled
-        if patch.manage_sharing is not None and user.user_type == "owner":
-            # Plex has no share filters for the account that owns the server (rule 5), so this flag
-            # can never mean anything for them. Ignored rather than stored: persisting it would badge
-            # the owner "Sharing untouched" in the Users list, which describes a state that does not
-            # exist. The UI already hides the switch for them; this is the same answer at the API.
-            patch.manage_sharing = None
-        if patch.manage_sharing is not None and patch.manage_sharing != user.manage_sharing:
-            # Both directions need the same pass, and it is the same pass everything else uses:
-            # `privacy.sync` is `engine_run(ctx, [])`, which walks every account's filter and builds,
-            # delivers and promotes nothing. Turning management OFF makes it remove our excludes from
-            # this one account; turning it back ON merges them in again. Neither creates a row, so the
-            # leak-safe ordering of §12 has nothing to order here — no row becomes visible that was not
-            # already on the server.
-            sharing_slug = (user.slug, patch.manage_sharing)
-            user.manage_sharing = patch.manage_sharing
-        if patch.nickname is not None:
-            nickname = patch.nickname.strip()
-            # Checked whether it is being SET or CLEARED: clearing falls back to the Tautulli or
-            # Plex name, which is just as capable of colliding as one that was typed.
-            _reject_display_name_clash(session, user, nickname or user.friendly_name or user.username)
-            if nickname != (user.nickname or ""):
-                was_called[user.slug] = user.display_name  # captured BEFORE the write
-            user.nickname = nickname
-        if patch.request_tag is not None:
-            user.request_tag = patch.request_tag.strip()
-        if patch.requested_by_tag is not None:
-            user.requested_by_tag = patch.requested_by_tag.strip()
-        if patch.prefs is not None:
-            was_paused = bool((user.prefs or {}).get("paused"))
-            prefs = merged_prefs(user.prefs or {}, patch.prefs)
-            user.prefs = prefs
-            # Pausing means "stop showing their row", so it has to come down NOW — a paused person is
-            # absent from every run by definition, so nothing else would ever act on it. Unpausing is
-            # the exact mirror: the collections still exist, they are merely demoted, so putting them
-            # back is a re-promote. Leaving it to "the next run" was wrong — a row whose schedule is
-            # blank has no next run, and neither does one while `paused_all` is set, so an unpaused
-            # person could stay invisible indefinitely.
-            now_paused = bool(prefs.get("paused"))
-            if now_paused and not was_paused:
-                paused_slug = user.slug
-            elif was_paused and not now_paused:
-                unpaused_slug = user.slug
+        session.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        mutation = prepare_person_in_session(session, user_id, patch)
+        user = apply_person_in_session(session, mutation)
+        if mutation.steps:
+            queue_convergence_in_session(session, mutation.steps, domain="people")
         session.commit()
         result = user_dict(
             user,
@@ -518,28 +455,8 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
             None,
             unhidden_rows=_unhidden_row_counts(session).get(user.username, 0),
         )
-    if disabled_slug is not None:
-        await remove_users_rows(state, [disabled_slug])
-    if enabled_slug is not None:
-        await jobs.queue_privacy_sync(state, f"'{enabled_slug}' was turned back on")
-    if sharing_slug is not None:
-        slug, managed = sharing_slug
-        # Both read as a clause after the job toast's "Share filters merged for every account
-        # after …", the same shape the enable/disable reasons already use.
-        await jobs.queue_privacy_sync(
-            state,
-            f"'{slug}' was set back to managed Plex sharing"
-            if managed
-            else f"'{slug}' was set to leave their Plex sharing alone",
-        )
-    if paused_slug is not None:
-        await _hide_paused_users_rows(state, paused_slug)
-    if unpaused_slug is not None:
-        await _restore_paused_users_rows(state, unpaused_slug)
-    # A nickname changes what `{user}` renders to, so this person's existing collections carry a title
-    # no future run will write. Renaming them in place is the same reconcile a row rename uses; without
-    # it a multi-row user keeps the old-named copy alongside the new one.
-    await rename_after_nickname(state, was_called)
+    if mutation.steps:
+        await jobs.drain_now(state, "person preferences changed")
     return result
 
 
@@ -662,13 +579,13 @@ def user_outcomes(user_id: int, request: Request) -> list[dict]:
         if session.get(User, user_id) is None:
             raise HTTPException(status_code=404, detail="user not found")
         outcomes = report_service.resolve_outcomes(session, None)
-        # Filtered on the USER only. An extra `watched_at is not None` test used to sit here, which
-        # was redundant with `resolve_outcomes`' own gate for the ordinary case and actively wrong for
+        # Filtered on the USER only. An extra `watched_at is not None` test here would be redundant with
+        # `resolve_outcomes`' own gate for the ordinary case and wrong for
         # the rest: an entry it lets through — finished, never separately credited — is one the
         # dashboard counts and this page hid, so the two disagreed about the same title. One place
         # decides what an outcome is, and it is not this one.
         mine = [(key, entry) for key, entry in outcomes.items() if key[0] == user_id]
-        namer = report_service._RowNamer(
+        namer = report_service.RowNamer(
             session, SettingsStore(session).get("row.name_template") or DEFAULT_ROW_TEMPLATE
         )
         # Newest first: "what did they just watch" is the question, not "what did they watch in 2019".
@@ -679,7 +596,7 @@ def user_outcomes(user_id: int, request: Request) -> list[dict]:
         # reversed it sorted to the very top: an untimestamped row from any era announced as the most
         # recent thing they watched.
         floor = datetime.min.replace(tzinfo=UTC)
-        mine.sort(key=lambda kv: _as_utc(kv[1]["watched_at"] or kv[1]["finished_at"] or floor), reverse=True)
+        mine.sort(key=lambda kv: utc(kv[1]["watched_at"] or kv[1]["finished_at"] or floor), reverse=True)
         return [
             {
                 "tmdb_id": key[1],
@@ -791,28 +708,6 @@ async def user_watched(
     return page
 
 
-def _reject_display_name_clash(session: Session, user: User, nickname: str) -> None:
-    """Refuse a nickname that renders to the same row title as somebody else's.
-
-    `{user}` renders `display_name` (nickname → Tautulli friendly name → username). Only the
-    username is unique on Plex, so two people resolving to the same display name ask for two
-    collections with one title in one library — which PMS refuses, leaving that person's row failing
-    every night with an error that reads as a generic Plex fault. Privacy is unaffected either way
-    (collections are matched on `shortlist_<slug>` before title), so this is about a legible failure,
-    not a leak: say so at the point of entry rather than in tomorrow's run log.
-    """
-    wanted = nickname.casefold()
-    for other in session.query(User).filter(User.id != user.id):
-        theirs = other.nickname or other.friendly_name or other.username
-        if theirs.casefold() == wanted:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"{other.username} already shows up as “{theirs}” — pick a different name so their rows stay apart"
-                ),
-            )
-
-
 @router.post("/sync", response_model=UserSyncOut)
 async def sync_users(request: Request) -> dict:
     """Pull shared + Home users — and the owner — from plex.tv into the users table (idempotent).
@@ -852,42 +747,6 @@ async def sync_users(request: Request) -> dict:
     return result
 
 
-async def _hide_paused_users_rows(state, user_slug: str) -> None:
-    """Queue the take-down for a just-paused user, and drain it so it happens now.
-
-    Durable rather than fire-and-forget for the same reason disable cleanup is: a paused user is
-    absent from every subsequent run, so if this write is lost to a Plex outage nothing would ever
-    retry it and their row would stay up indefinitely.
-    """
-    from shortlist.server.services.jobs import enqueue, run_pending
-
-    enqueue(state.sessions, "user.hide", {"slug": user_slug})
-    try:
-        await run_pending(state)
-    except Exception as e:
-        logger.warning(
-            "paused {} but their rows could not be hidden right now ({}: {}) — queued for retry",
-            user_slug,
-            type(e).__name__,
-            redact(str(e)),
-        )
-
-
-async def _restore_paused_users_rows(state, user_slug: str) -> None:
-    """Put an un-paused user's rows back.
-
-    ONE job, deliberately. `user.restore` merges every account's share filters itself before promoting
-    anything — plex-safety rule 1's ordering, in straight-line code. Splitting it into a queued
-    `privacy.sync` followed by a queued `user.restore` would NOT have been ordered: a job whose retry
-    backoff has not elapsed is stepped over, so a filter pass that failed against a 503 plex.tv would
-    be skipped and the promotion would land anyway.
-    """
-    from shortlist.server.services.jobs import drain_now, enqueue
-
-    enqueue(state.sessions, "user.restore", {"slug": user_slug})
-    await drain_now(state, f"'{user_slug}' was un-paused")
-
-
 class RemovedOut(PassthroughModel):
     """What `DELETE /users/{id}` dropped. `user_id` is still valid — the row is archived, not deleted."""
 
@@ -923,6 +782,7 @@ async def remove_departed_user(user_id: int, request: Request) -> dict:
                 status_code=409,
                 detail=f"{user.display_name} still shares this server — turn them off instead of removing them",
             )
+        session.query(RowDeliverySnapshot).filter_by(user_id=user_id).delete(synchronize_session=False)
         picks = session.query(PickRow).filter_by(user_id=user_id).delete(synchronize_session=False)
         # Shared-row watches go with the picks: they are the same fact about the same person for a row
         # that happens to have no pick rows, and leaving them would keep a departed account in the

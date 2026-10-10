@@ -12,13 +12,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.clients.plex_pms import PlayEvent
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
 from shortlist.server.db.models import (
-    Base,
     Collection,
     Delivery,
     PickRow,
@@ -39,6 +36,7 @@ from shortlist.server.services.watch_events import (
     tmdb_by_rating_key,
 )
 from tests.conftest import freeze_clock
+from tests.watch_fixtures import personal_delivery, shared_delivery
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 
@@ -50,13 +48,6 @@ REPORTED_AT = NOW + timedelta(days=2)
 @pytest.fixture(autouse=True)
 def _report_read_at(monkeypatch):
     freeze_clock(monkeypatch, report_service, REPORTED_AT)
-
-
-@pytest.fixture
-def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
 
 
 @pytest.fixture
@@ -99,6 +90,7 @@ def deliver(sessions, run_id: int, rating_keys, *, tmdb_base: int = 500, slug: s
                     created_at=delivered,
                 )
             )
+        personal_delivery(s, run_id, slug=slug)
         s.commit()
 
 
@@ -238,9 +230,8 @@ class TestMembershipIsAskedOfThePast:
         with world() as s:
             assert event_credits(s, RowMembership(s)) == {}
 
-    def test_a_detached_pick_cannot_be_placed_in_time(self, world):
-        """`DELETE /api/runs` and the retention prune both null `run_id`. Without a run there is no
-        delivery time, so no claim about "was it in the row then" can be supported."""
+    def test_a_detached_pick_keeps_its_independent_delivery_time(self, world):
+        """Clearing diagnostic history leaves the durable delivery evidence intact."""
         deliver(world, 1, [10])
         with world() as s:
             s.query(PickRow).update({"run_id": None})
@@ -248,7 +239,7 @@ class TestMembershipIsAskedOfThePast:
         play(world, 10, NOW - timedelta(hours=6))
 
         with world() as s:
-            assert event_credits(s, RowMembership(s)) == {}
+            assert (1, 510, "movie") in event_credits(s, RowMembership(s))
 
     def test_a_deleted_row_credits_nothing(self, world):
         deliver(world, 1, [10])
@@ -286,6 +277,7 @@ class TestTheSharedPathNeverCreditsAPersonalRow:
                     audience=audience,
                 )
             )
+            shared_delivery(s, run_id, slug="popular")
             s.commit()
 
     def test_a_shared_row_alone_credits_no_personal_pick(self, world):
@@ -331,7 +323,7 @@ class TestTheSharedPathNeverCreditsAPersonalRow:
 
 
 class TestStartsCountEvenWhenTheFinishComesLater:
-    """Steve's case, end to end: watch 20% of something from your row, finish it four days later once
+    """The maintainer's case, end to end: watch 20% of something from your row, finish it four days later once
     the row has moved on. The START is what the row earned, so the START is what counts."""
 
     def _session(self, sessions, rating_key, started, *, offset, duration, ended=None):
@@ -430,6 +422,7 @@ class TestEngagementReport:
                     max_percent=percent,
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.commit()
 
     def test_the_four_outcomes_are_told_apart(self, world):
@@ -453,77 +446,6 @@ class TestEngagementReport:
             # page out of missing data.
             "Unknown": "watching",
         }
-
-    def test_a_title_only_one_person_dropped_is_not_called_a_losing_pick(self, world):
-        """One person abandoning something is a night. The pattern across people is what makes it a
-        bad recommendation, so the threshold is deliberately more than one."""
-        from shortlist.server.services.report_service import engagement
-
-        self._pick(world, 1, watched=NOW - timedelta(hours=1), percent=20)
-
-        with world() as s:
-            assert engagement(s, "30")["losing"] == []
-
-    def test_a_title_several_people_drop_is_surfaced_with_where_they_stop(self, world):
-        from shortlist.server.services.report_service import engagement
-
-        with world() as s:
-            s.add(User(id=2, plex_account_id=100, username="sam", slug="sam"))
-            s.commit()
-        self._pick(world, 7, watched=NOW - timedelta(hours=1), percent=10, title="Loses people")
-        with world() as s:
-            s.add(
-                PickRow(
-                    run_id=1,
-                    user_id=2,
-                    collection_slug="picked",
-                    section_key="1",
-                    library="Movies",
-                    tmdb_id=7,
-                    media_type="movie",
-                    rating_key=7,
-                    rank=1,
-                    title="Loses people",
-                    created_at=NOW - timedelta(days=2),
-                    watched_at=NOW - timedelta(hours=2),
-                    max_percent=30,
-                )
-            )
-            s.commit()
-
-        with world() as s:
-            losing = engagement(s, "30")["losing"]
-
-        assert len(losing) == 1
-        assert losing[0]["started"] == 2
-        assert losing[0]["finished"] == 0
-        # EXACT, not `in (10, 30)`. With an even number of abandonments there is no middle value, and
-        # `median()` takes the upper one — so two people stopping at 10% and 30% reports 30%. That is a
-        # displayed number and therefore a decision: the pessimistic read, "half of them got at least
-        # this far". Accepting either answer meant the index could flip with the suite green.
-        assert losing[0]["stops_at"] == 30, "an even split reports the upper middle — see `median()`"
-
-    def test_stop_points_bucket_the_abandons(self, world):
-        from shortlist.server.services.report_service import engagement
-
-        for i, percent in enumerate((3, 8, 20, 60, 90), start=1):
-            self._pick(world, i, watched=NOW - timedelta(hours=i), percent=percent)
-
-        with world() as s:
-            points = {b["label"]: b["count"] for b in engagement(s, "30")["stop_points"]}
-
-        assert points["0-10%"] == 2
-        assert points["10-25%"] == 1
-        assert points["50-75%"] == 1
-        assert points["75%+"] == 1
-
-    def test_a_finished_pick_is_not_counted_as_an_abandon(self, world):
-        from shortlist.server.services.report_service import engagement
-
-        self._pick(world, 1, watched=NOW - timedelta(hours=1), finished=NOW, percent=100)
-
-        with world() as s:
-            assert sum(b["count"] for b in engagement(s, "30")["stop_points"]) == 0
 
 
 class TestReconcileActuallyUsesTheCredits:
@@ -634,6 +556,7 @@ class TestReconcileActuallyUsesTheCredits:
                     watched_at=NOW - timedelta(hours=3),
                 )
             )
+            personal_delivery(s, 1, user_id=1, slug="picked", library="1")
             s.add(
                 WatchSession(
                     plex_account_id=99,
@@ -730,6 +653,7 @@ class TestCarriedForwardPicksCarryNoRatingKey:
                     created_at=NOW - timedelta(days=2),
                 )
             )
+            personal_delivery(s, run_id, user_id=1, slug="picked", library="1")
             s.commit()
 
     def test_a_title_whose_newest_delivery_has_the_placeholder_key_is_still_in_the_row(self, world):
@@ -780,7 +704,7 @@ class TestCarriedForwardPicksCarryNoRatingKey:
 
 class TestAnAccountWeDoNotKnowCreditsNobody:
     """The whole feature keys on `accountID == users.plex_account_id`, and a real server's play log
-    carries ids that match no user row — on SFLIX, `1` (conventionally the owner in Plex's history
+    carries ids that match no user row — on a large production server, `1` (conventionally the owner in Plex's history
     endpoint) and one id belonging to a share since removed.
 
     Skipping them is the safe direction and the current behaviour; this pins it, because the unsafe

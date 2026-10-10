@@ -49,7 +49,7 @@ import type {
 } from "@/lib/types";
 
 /** What every kind block reads. `shown` and `hidden` are `visibleSettings` / `hiddenButRead`. */
-export type KindBlockProps = {
+type KindBlockProps = {
   input: CollectionInput;
   set: (patch: Partial<CollectionInput>) => void;
   ctx: RowKindContext;
@@ -104,6 +104,13 @@ function ColdStart(props: KindBlockProps) {
 }
 
 function PickedBlock(props: KindBlockProps) {
+  // With none of its three settings applicable the block would be a heading between two rules.
+  const hasSettings =
+    props.shown.has("max_seeds") ||
+    props.shown.has("seed_window") ||
+    props.hidden.includes("seed_window") ||
+    props.shown.has("cold_start");
+  if (!hasSettings) return null;
   return (
     <KindBlock title="How picks are chosen">
       {props.shown.has("max_seeds") && (

@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 import { SeasonPreviewError } from "./season-preview-error";
 
-export type CountedPreview = SeasonPreview & { draft: SeasonPreviewInput };
+type CountedPreview = SeasonPreview & { draft: SeasonPreviewInput };
 
 /** What to do about a verdict, in the row's own word for its titles. */
 function verdictHelp(level: "few" | "alike" | "ok", titles: string): string {
@@ -20,7 +20,7 @@ function verdictHelp(level: "few" | "alike" | "ok", titles: string): string {
 /**
  * What a draft season finds (#137 D10), beside the editor's form: how many of the row's kind of title in
  * the row's libraries, whether that's enough for the row the editor was opened from, where they come from,
- * a sample, and which other rows use the season. Every number is the server's count, as a run would make it.
+ * a sample, and which other rows use the season. Counts cover matching sources before row eligibility.
  */
 export function SeasonSummary({
   preview,
@@ -145,6 +145,10 @@ function SummaryBody({ preview, row }: { preview: UseQueryResult<CountedPreview>
           {help && <p className="text-muted-foreground">{help}</p>}
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        Your row’s filters and watch requirements may reduce this selection.
+      </p>
 
       {breakdown.length > 0 && (
         <dl className="space-y-1 text-sm">

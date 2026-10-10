@@ -32,3 +32,9 @@ overrides:
   # three advisories on this line (2.1.4 fixed only the two above); eslint's minimatch 10 already
   # brings the unaffected 5.x line, which this range leaves alone.
   brace-expansion@>=2.0.0 <2.1.7: 2.1.7
+  # GHSA (source-map-js >=1.0.0 <1.2.2): event-loop DoS on a crafted source map. Reached only through
+  # the PostCSS/Vite build toolchain, never the runtime image (the Dockerfile ships web/dist, not
+  # node_modules). 1.2.2 is a same-major patch, so nothing that depends on it changes shape.
+  source-map-js@>=1.0.0 <1.2.2: 1.2.2
+  # GHSA-rj75-hqrm-r3gf: quadratic selector parsing. Reached only via tailwindcss 3 (build time).
+  postcss-selector-parser@<7.1.6: 7.1.6

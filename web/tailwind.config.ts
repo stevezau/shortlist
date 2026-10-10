@@ -52,6 +52,7 @@ export default {
           foreground: "hsl(var(--plex-foreground))",
         },
         support: "hsl(var(--support))",
+        chart: "hsl(var(--chart))",
         elevated: {
           DEFAULT: "hsl(var(--elevated))",
           foreground: "hsl(var(--elevated-foreground))",
@@ -88,28 +89,15 @@ export default {
         // black shadows are invisible here.
         elevated:
           "0 1px 0 0 hsl(0 0% 100% / 0.04) inset, 0 8px 24px -12px hsl(240 40% 2% / 0.7)",
-        glow: "0 0 0 1px hsl(var(--primary) / 0.25), 0 8px 30px -8px hsl(var(--primary) / 0.35)",
         // The 2px amber edge that marks a selected item: along the bottom for horizontal controls
         // (segments, chips), along the left for vertical lists (the nav rail, settings sub-nav).
         "selected-x": "inset 0 -2px 0 0 hsl(var(--primary))",
         "selected-y": "inset 2px 0 0 0 hsl(var(--primary))",
       },
       keyframes: {
-        // Welcome-step mock: the Picked-for-You row appearing on a Plex Home.
-        "row-in": {
-          "0%": { opacity: "0", transform: "translateY(14px)" },
-          "12%": { opacity: "1", transform: "translateY(0)" },
-          "88%": { opacity: "1", transform: "translateY(0)" },
-          "100%": { opacity: "0", transform: "translateY(14px)" },
-        },
         "fade-in": {
           "0%": { opacity: "0", transform: "translateY(6px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
-        },
-        // The mobile nav drawer sliding in from the left edge.
-        "slide-in-left": {
-          "0%": { transform: "translateX(-100%)" },
-          "100%": { transform: "translateX(0)" },
         },
         // Indeterminate progress: a sliver sweeps left-to-right while an opaque call is in flight.
         "progress-indeterminate": {
@@ -118,9 +106,7 @@ export default {
         },
       },
       animation: {
-        "row-in": "row-in 7s ease-in-out infinite",
         "fade-in": "fade-in 0.3s ease-out",
-        "slide-in-left": "slide-in-left 0.2s ease-out",
         "progress-indeterminate":
           "progress-indeterminate 1.2s ease-in-out infinite",
       },

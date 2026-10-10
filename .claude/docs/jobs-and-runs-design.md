@@ -1,7 +1,8 @@
 # Runs, Jobs, and Convergence — design
 
-Status: **phases 1-10 shipped** (2026-07-28). Owner decisions recorded inline. §7's library question is
-settled: build it, no dependency. Phases 1-4 are shipped; see §8 for what remains.
+Status: **shipped** (phases 1-10, 2026-07-28; the §12 audit fixed 2026-07-29). Owner decisions are recorded
+inline. §7's library question is settled: build it, no dependency. §9 and §11 are historical hand-over
+notes; §12 is the live register of state changes and whether each reaches Plex.
 
 This is the design for making Shortlist's background work reliable, visible and self-healing. It is
 written down because it is a large change spanning the engine, the server and the UI.
@@ -13,7 +14,7 @@ written down because it is a large change spanning the engine, the server and th
 Every bug found on 2026-07-28 has one root cause: **Shortlist applies changes imperatively to the
 users in tonight's run, and nothing ever reconciles anything else.**
 
-Confirmed on the maintainer's production server (SFLIX, 96 Shortlist collections):
+Confirmed on the maintainer's production server ( a large production server, 96 Shortlist collections):
 
 | Observation                                                                 | Cause                                                                                                                                                                                                         |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -102,7 +103,7 @@ Runs keep their identity. Four changes:
 
 1. **`_promote_phase` returns the ratingKeys it promoted** so converge knows what it need not revisit.
    _(done)_
-2. **`_converge_phase` runs after promotion** — walks every library, clears `promotedToOwnHome` on
+2. **`converge_phase` runs after promotion** — walks every library, clears `promotedToOwnHome` on
    any Shortlist collection promote did not reach. Narrow on purpose: own-home only, clear-only, so
    it is monotonically private and needs no `filters_ok` gate. _(done)_
 3. **Boot recovery — half of this already exists.** `create_app` already aborts orphaned
@@ -152,17 +153,30 @@ Two details that are easy to get wrong:
 
 ### 5.1 Job catalogue
 
-| Kind            | Trigger                                                  | Does                                                             |
-| --------------- | -------------------------------------------------------- | ---------------------------------------------------------------- |
-| `user.cleanup`  | user disabled                                            | delete their collections (demote-then-delete)                    |
-| `user.hide`     | user paused                                              | demote all flags, keep the collection                            |
-| `user.restore`  | user unpaused                                            | re-promote to the row's placement                                |
-| `filters.apply` | user enabled/disabled, audience change, new account seen | write the affected accounts' share filters only                  |
-| `row.reconcile` | row deleted/disabled/renamed/audience shrunk             | existing reconcile, now durable + retried                        |
-| `sync.check`    | Tools button, and post-run                               | the converge pass on demand                                      |
-| `sync.users`    | Tools button, schedule                                   | existing user sync; enqueues `filters.apply` for any new account |
-| `sync.history`  | Tools button                                             | existing                                                         |
-| `backup.create` | Tools button, schedule                                   | existing                                                         |
+The registered kinds are the `@handler` functions in `shortlist/server/services/jobs.py`; the manual
+subset (`KINDS`) comes from `CATALOG` there.
+
+| Kind                           | Trigger                                                  | Does                                                              |
+| ------------------------------ | -------------------------------------------------------- | ----------------------------------------------------------------- |
+| `user.cleanup`                 | user disabled                                            | delete their collections (demote-then-delete)                     |
+| `user.hide`                    | user paused                                              | demote all flags, keep the collection                             |
+| `user.restore`                 | user unpaused                                            | re-promote to the row's placement                                 |
+| `privacy.sync`                 | user enabled/disabled, audience change, new account seen | write the affected accounts' share filters                        |
+| `rows.visibility`              | row edit, midnight tick                                  | merge filters, then re-promote the affected row(s)                |
+| `row.reconcile`                | row deleted/disabled/renamed/audience shrunk             | reconcile the row's collections, durable and retried              |
+| `sync.check`                   | Tools button, and post-run                               | the converge pass on demand                                       |
+| `sync.users`                   | Tools button, schedule                                   | user sync; enqueues `privacy.sync` for any new account            |
+| `sync.history`                 | Tools button                                             | refresh watch history                                             |
+| `watch.reconcile`              | schedule, Tools button                                   | credit plays against delivered picks                              |
+| `backup.take`                  | Tools button, schedule                                   | write a database backup                                           |
+| `maintenance.prune`            | schedule, Tools button                                   | retention pruning                                                 |
+| `themes.rotate`                | schedule                                                 | rotate the seasonal themes                                        |
+| `watching_account.transfer`    | owner action                                             | copy a watching account's history to another                      |
+| `watching_account.undo`        | owner action                                             | undo that transfer                                                |
+| `notify.send`                  | an alert or run outcome                                  | deliver one notification                                          |
+| `assistant.run`                | assistant request                                        | run the engine on the assistant's behalf                          |
+| `assistant.generate_theme`     | assistant request                                        | author a themed row                                               |
+| `assistant.request_send`       | assistant request                                        | send requests to Radarr/Sonarr                                    |
 
 ---
 
@@ -172,16 +186,16 @@ Every case, and where it is handled. **E** = eagerly (job, seconds). **R** = rec
 
 | Case                                | Their own row                                                   | Others' rows hidden from them                                                    |
 | ----------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Active user                         | built each run                                                  | E `filters.apply` + R                                                            |
+| Active user                         | built each run                                                  | E `privacy.sync` + R                                                            |
 | **Paused**                          | E `user.hide`; restored on unpause                              | unchanged — excludes still match, collection kept                                |
-| **Disabled**                        | E `user.cleanup` (retried)                                      | E `filters.apply` with `hide_all_shared`                                         |
+| **Disabled**                        | E `user.cleanup` (retried)                                      | E `privacy.sync` with `hide_all_shared`                                         |
 | **Removed from Plex**               | R — demote always; delete only when the roster read succeeded   | n/a (no share)                                                                   |
-| **New account**                     | next run builds it                                              | **E `filters.apply` immediately** — closes the leak in §1.1                      |
+| **New account**                     | next run builds it                                              | **E `privacy.sync` immediately** — closes the leak in §1.1                      |
 | **Not selected in a scoped run**    | untouched                                                       | R — excludes derive from server state, already correct                           |
 | **Run errored / cancelled**         | delivered unpromoted (safe)                                     | R                                                                                |
 | **Managed user**                    | none today (skipped) — see issue #20                            | ⚠️ **no excludes at all** — unresolved, see §9                                   |
 | **Per-person row, audience shrunk** | E delete their collection                                       | R                                                                                |
-| **Shared row, audience shrunk**     | one collection, nothing to delete                               | **E `filters.apply`** for the dropped accounts                                   |
+| **Shared row, audience shrunk**     | one collection, nothing to delete                               | **E `privacy.sync`** for the dropped accounts                                   |
 | **Row disabled**                    | E `row.reconcile` (per-person today; shared rows are a gap, F5) | R — union-only, stays excluded                                                   |
 | **Owner**                           | own row only                                                    | ⚠️ **structurally impossible** — no share with yourself                          |
 | **Left alone (`manage_sharing=0`)** | unaffected — they still get a row if enabled                    | **none, by request** — E removes ours; a RESTRICTED shared row's exclude is kept |
@@ -223,7 +237,7 @@ Payload is data, never a closure, so a job survives the process that queued it.
 ## 8. Phasing
 
 1. ✅ Placement grid + `off` state + per-collection Recommended + managed-user routing fix
-2. ✅ `_converge_phase` (own-home, clear-only) + `promote()` no longer defaults `home=True`
+2. ✅ `converge_phase` (own-home, clear-only) + `promote()` no longer defaults `home=True`
 3. ✅ `dry_run` recorded in the disable-cleanup audit
 4. ✅ Jobs table + worker + boot recovery + notification on failure (`services/jobs.py`;
    APScheduler drains every 10s and sweeps abandoned jobs every 5m; `BEGIN IMMEDIATE` claim)
@@ -319,10 +333,12 @@ and every `:dev` user.
 
 ---
 
-## 11. Not built — the handover list
+## 11. Hand-over list (historical; superseded by §12)
 
-Everything above ships and runs on the maintainer's server. These do not, and are described here
-precisely enough to pick up cold.
+Written before the §12 audit. A (settings changes reconfiguring Plex) and B (issue #20) are built:
+§12's root cause 3 covers A, and `engine/privacy.py` gates managed accounts on
+`remote.restricted and remote.restriction_profile` for B. C and the §9 items are the only parts that
+may still be open; check the code before relying on any of it.
 
 ### A. Settings changes do not reconfigure anything
 
@@ -417,6 +433,10 @@ plex.tv action actually happen, and when? Ranked by EXPOSURE first.
 closed it, is below — kept rather than deleted because the _shapes_ recur, and because several of the
 fixes are load-bearing in ways the code alone doesn't explain.
 
+The signature defect of this codebase is the same shape each time: a privacy surface asserting a guarantee
+it has not verified (a screen headline contradicting its own red panel, a summary escalating on one
+failure list while ignoring its sibling). Ask of every new status or summary what it actually read.
+
 ### The three root causes, and what replaced them
 
 1. **Reconcile addressing was wrong.** Per-person collections were addressed by "the title the latest
@@ -507,7 +527,7 @@ collections — unattended, on the daily sync. It is bounded twice:
   from a mass departure as an empty one. One person leaving is routine and still acts immediately; half
   of them at once is a partial read, so it writes a `user.departed.refused` Event instead of acting.
 
-Both mirror `_converge_phase`, which gates orphan DELETION on `bool(known)` for the same reason. Caught
+Both mirror `converge_phase`, which gates orphan DELETION on `bool(known)` for the same reason. Caught
 in review, 2026-07-29 — the happy-path test passed throughout.
 
 The sweep has two halves, and only one of them is destructive:
@@ -612,7 +632,7 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
 | H4    | `privacy.hide_shared_from_disabled` toggled  | Settings PATCH inert                                                                                                                                                                                                 | Queues `privacy.sync` on a real change                                                                                            |
 | H5/H6 | Disable a user (single or bulk)              | Collections removed, but their OWN filter never written — so an opted-out account kept seeing public shared rows                                                                                                     | `user.cleanup` per user, then one `privacy.sync`                                                                                  |
 | H7    | `row.name_template` changed in **Settings**  | Only the Rows page reconciled; the Settings door did not, so the next run built a SECOND collection and left the old one labelled and promoted for ever                                                              | Renames via `run_row_rename_from_plex`, keyed on the previous template                                                            |
-| H8/H9 | Row `media` or `library_keys` narrowed       | Collections in the dropped libraries were never removed, never refreshed, and re-promoted every run by promotion's no-spec fallback                                                                                  | `_stranded_sections` diffs old vs new `target_sections`; only the libraries it left are swept. An unreadable Plex removes NOTHING |
+| H8/H9 | Row `media` or `library_keys` narrowed       | Collections in the dropped libraries were never removed, never refreshed, and re-promoted every run by promotion's no-spec fallback                                                                                  | `stranded_sections` (`server/services/row_editing.py`) diffs old vs new `target_sections`; only the libraries it left are swept. An unreadable Plex removes NOTHING |
 | H10   | Row `build` per_person→shared                | Inherited H1                                                                                                                                                                                                         | Fixed with H1; also queues `privacy.sync`                                                                                         |
 | H11   | ALL collection reconciles                    | Bare `run_in_executor` — no retry, no `Job` row, no `_plex_busy()`                                                                                                                                                   | Queued as `row.reconcile`                                                                                                         |
 | H12   | `_sync_owner` demotes a stale OWNER→SHARED   | That account had NO excludes while typed owner (rule 5), and nothing fired                                                                                                                                           | `_sync_owner` reports demotions; the caller queues `privacy.sync`                                                                 |
@@ -622,7 +642,7 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
 
 - ~~`{top_seed}` restore placement~~ **CLOSED.** `promote_user_rows` takes `placement_keys`
   ({ratingKey -> row slug}) from the ledger and prefers it over any title, so an un-paused
-  `{top_seed}` row gets its configured placement even with run history wiped. Verified live on SFLIX
+  `{top_seed}` row gets its configured placement even with run history wiped. Verified live on a large production server
   with `DELETE /api/runs` first: the row came back Recommended-only, as configured, not on Home.
 - **MED, unchanged and by design**: placement / pin_top / mute / content settings are next-run-only —
   they change what a row IS, not who may see it, so there is nothing to write between runs.
@@ -715,7 +735,7 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
   so its deliveries from before 0096 have no record and are promoted as before. A run lays its own deliveries
   over both, as `live_delivered_keys` does. A person whose in-season seasonal row built nothing is a promotion candidate,
   as one with a dormant row is, so the hiding happens on the run too. Season PUT/DELETE queue a pass
-  (`api/seasons._pass_owed`) for every enabled following row shown before or after the edit whose shown-today
+  (`season_rules.pass_owed`) for every enabled following row shown before or after the edit whose shown-today
   answer, or the day or window of the season it shows, changed. The pass, not the gate, judges the ledger's own
   record: a gate that guessed from the season's pre-edit day skipped the pass on a second edit before the next
   run. A rename or an edit to a field the rule's kind ignores queues nothing.
@@ -828,10 +848,10 @@ now, at the door and at the point of use.
 
 ---
 
-## 15. Live verification on SFLIX, 2026-07-29
+## 15. Live verification on a large production server, 2026-07-29
 
 Run against the real server (50 accounts, 105 MB database) after deploying `199c6fa`. A throwaway row
-and Steve's own MooHouse account were used; no other user's row was touched.
+and the maintainer's own Guest account were used; no other user's row was touched.
 
 | What                                                  | Result                                                                                 |
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -869,7 +889,7 @@ path. **Only a live disable surfaced it**: every unit test exercised the per-row
 ## 16. The bug live testing found that no test would have (2026-07-29)
 
 **A scoped run rebuilt a DIFFERENT row's collection as itself.** Found by building a second row on
-SFLIX and watching the first row's Movies collection disappear.
+A large production server and watching the first row's Movies collection disappear.
 
 `deliver_rows` takes `sole_row`, which licenses it to treat a title mismatch as an in-place RENAME —
 safe only when there is genuinely one row that could have moved. It was derived from the rows the run
@@ -997,7 +1017,7 @@ collections, with the row renamed so it reaches the key branch). All four fail o
 
 ## 19. The Recommended shelf: a co-managing tool owned it, and we only fought back once a night (2026-08-12)
 
-SFLIX's owner opened Manage Recommendations and found the "✨ Movies Picked for You" rows in three
+the production server owner opened Manage Recommendations and found the "✨ Movies Picked for You" rows in three
 disjoint blocks — 27 at the top, 5 in the middle, 14 stranded at the bottom, out of 46. Pressing
 "Privacy sync" and "Check and fix rows on Plex" changed nothing. Nothing was orphaned: all 46 rows
 were correctly labelled, marker-verified, in the delivery ledger, owned by enabled users, and
@@ -1030,22 +1050,22 @@ the faster clock won every round but one.
 Both are the §12 shape — **a state change reported as done that never reached Plex** — and either
 alone was enough to guarantee the loss. This is why "Fix privacy" and "Fix rows" changed nothing.
 
-**1. `delivery_sections` was empty on every run with no users.** `_build_indexes` answered two
+**1. `delivery_sections` was empty on every run with no users.** `build_indexes` answered two
 different questions with one list: WHICH libraries rows live in, and WHETHER to walk their contents.
-With no users it returned `[]` for both, so `ctx.delivery_sections` was empty and `_order_phase`
+With no users it returned `[]` for both, so `ctx.delivery_sections` was empty and `order_phase`
 iterated nothing. Every `privacy.sync` — the nightly job, and the "Fix privacy" button — was
 structurally incapable of ordering anything. Naming the sections is in-memory filtering of a list
 already held; only the INDEXING costs thousands of PMS reads, and that is what stays gated on users.
 
 **2. The rows to move came from the run in progress.** A per-library `hub_anchor` override sent
-`_order_phase` down a branch that took its rows from `report.users[].placement_titles`, which only
+`order_phase` down a branch that took its rows from `report.users[].placement_titles`, which only
 ever holds what THIS run delivered. A no-user run produced an empty map, so no group was built and no
 move was issued — silently, with no log line. It also dropped any paused, errored or skipped user's
 row from the ordering pass on a full run. Now: when every row in a library resolves to the same
 anchor — every ordinary server, and every server with one row — they all move in one call that names
 no rows at all, so it cannot depend on who ran. Only genuinely diverging rows are partitioned, by the
 durable ledger's ratingKeys. A test asserted the bug as a requirement
-(`test_order_phase_skips_an_overridden_row_with_no_delivered_titles`); it is now inverted.
+(the test is now inverted).
 
 With both fixed, `sync.check` orders the shelf too — so Shortlist re-applies at the end of every run
 and at `sync.check_cron` (05:45, and off-able).
@@ -1067,7 +1087,7 @@ tie-break for owners who care about ordering, it is **the only thing that fixes 
 Shortlist's hubs from agregarr's randomiser, stop that job, or turn `manage_shelf_order` off and let
 agregarr place our rows. This is recorded so the next person does not go looking for a third bug.
 
-### `order_owned_hubs` counted requests, not results
+### The shelf-placement loop counted requests, not results
 
 Independent of the above, and a real defect: whenever any one row was out of place the loop chained
 `move(after=previous)` over EVERY row — 47 unpaced PUTs in 344ms, of which ~27 re-asserted rows
@@ -1083,7 +1103,7 @@ failure. It returns `verified`, and the audit records it at `warning` level when
 run and would otherwise have no record at all.
 
 **What was NOT established:** that Plex drops hub moves it answers 200 to. That was the first reading
-of the evidence and it is unproven — agregarr explains the observed shelf completely. Live on SFLIX
+of the evidence and it is unproven — agregarr explains the observed shelf completely. Live on a large production server
 the 19 planned moves converged and verified on the FIRST attempt, and the next pass returned "already
 in place". The retry/verify machinery is justified by honesty, not by a known Plex fault. Do not cite
 a Plex bug here without new evidence.
@@ -1106,12 +1126,12 @@ AFTER re-promote  own_home=True   homeVisibility='all'
 ```
 
 Reported upstream as [agregarr/agregarr#622](https://github.com/agregarr/agregarr/issues/622), where
-it is still open. The recovery ran 204 times in 24 hours on SFLIX; the same window put all 31 Kometa
+it is still open. The recovery ran 204 times in 24 hours on a large production server; the same window put all 31 Kometa
 collections in one library on `homeVisibility="all"`.
 
 **It matters because the owner is the one account with no share filter** (rule 5), so
 `promotedToOwnHome` is the single surface a `label!=` exclude cannot cover — which is exactly why
-`_converge_phase` clears that flag, and only that flag, on every run (`pipeline.py:908`). So
+`converge_phase` clears that flag, and only that flag, on every run. So
 Shortlist already repairs this: the exposure is the window between runs, not permanent. Say it that
 way. An earlier draft of the notification copy claimed the rows simply "appear on your own home
 screen", which reads as a standing leak and overstates it.
@@ -1163,5 +1183,5 @@ what genuinely is not:
   never `0s`. No backfill was done: writing zeros would claim every historical run took no time.
 
 `run_shared_rows.duration_ms` was already genuinely per-row (one shared row, one result) and needed no
-change. Full design, the rejected "split the cost per row" alternative, and why it would have been a
-lie: `.claude/docs/plans/per-row-run-cost.md`.
+change. Splitting the cost per row was rejected: it would be an allocation the UI invented, not a
+measurement.

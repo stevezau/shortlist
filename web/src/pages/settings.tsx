@@ -1,7 +1,11 @@
+import { Bot } from "lucide-react";
+import { Link } from "react-router";
+
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary } from "@/components/query-boundary";
 import { AdvancedSection } from "@/components/settings/advanced-section";
 import { ApiAccessCard } from "@/components/settings/api-access-card";
+import { AssistantAccessCard } from "@/components/settings/assistant-access-card";
 import { ConnectionsSection } from "@/components/settings/connections-section";
 import { DangerZoneSection } from "@/components/settings/danger-zone-section";
 import { DefaultsSection } from "@/components/settings/defaults-section";
@@ -12,14 +16,10 @@ import { SaveBar, SaveBarProvider } from "@/components/settings/save-bar";
 import { SectionsWithJumps, SettingsTabs } from "@/components/settings/section-layout";
 import { DEFAULTS_SECTIONS } from "@/components/settings/sections";
 import { SettingsSearch } from "@/components/settings/settings-search";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
-
-/** Connections: every service Shortlist talks to, and where its alerts go. */
-function ConnectionsTab({ settings }: { settings: Settings }) {
-  return <ConnectionsSection settings={settings} />;
-}
 
 /** Defaults: what every new row starts from. Each section still saves itself as before; the bar at
  *  the foot reports all of them at once. */
@@ -30,7 +30,6 @@ function DefaultsTab({ settings }: { settings: Settings }) {
         <RecommendationsSection settings={settings} />
         <DefaultsSection settings={settings} />
         <RowPlacementSection settings={settings} />
-        <RequestsSection settings={settings} />
       </SectionsWithJumps>
       <SaveBar />
     </SaveBarProvider>
@@ -44,7 +43,8 @@ function SystemTab({ settings }: { settings: Settings }) {
       <div className="space-y-10">
         <AdvancedSection settings={settings} />
         <ApiAccessCard />
-        <DangerZoneSection settings={settings} />
+        <AssistantAccessCard />
+        <DangerZoneSection />
       </div>
       <SaveBar />
     </SaveBarProvider>
@@ -52,27 +52,32 @@ function SystemTab({ settings }: { settings: Settings }) {
 }
 
 /**
- * Settings: three tabs at `/settings/connections`, `/settings/defaults` and `/settings/system`.
- * `/settings` and the old single-page `/settings#section` links land on the tab that section lives
- * on now (see `SettingsTabs`).
+ * Settings: four tabs at `/settings/connections`, `/settings/defaults`, `/settings/requests` and
+ * `/settings/system`.
+ * `/settings` and single-page `/settings#section` links land on the tab that section lives on (see
+ * `SettingsTabs`).
  */
 export function SettingsPage() {
   const settingsQuery = useSettings();
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div>
       <PageHeader
         title="Settings"
         subtitle="Your services, the defaults every new row starts from, and how Shortlist runs."
-        actions={<SettingsSearch />}
+        actions={<>
+          <Button asChild variant="outline"><Link to="/assistant-access"><Bot aria-hidden="true" /> AI assistants</Link></Button>
+          <SettingsSearch />
+        </>}
       />
 
       <QueryBoundary query={settingsQuery} skeleton={<Skeleton className="h-96 w-full" />}>
         {(settings) => (
           <SettingsTabs
             content={{
-              connections: <ConnectionsTab settings={settings} />,
+              connections: <ConnectionsSection settings={settings} />,
               defaults: <DefaultsTab settings={settings} />,
+              requests: <RequestsSection settings={settings} />,
               system: <SystemTab settings={settings} />,
             }}
           />

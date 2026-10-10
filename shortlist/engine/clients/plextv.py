@@ -191,8 +191,8 @@ class PlexTvClient:
         parental-controlled one from a plain one — so Shortlist skipped both, and a managed user with no
         age restriction never got the `label!=` excludes that hide other people's rows (issue #20).
 
-        `/api/home/users` carries `restrictionProfile` ("little_kid" | "older_kid" | "teen", absent for
-        none), which is exactly that distinction. It matters because Plex will not accept label
+        `/api/home/users` carries `restrictionProfile` ("little_kid" | "older_kid" | "teen", empty or absent
+        for none), which is exactly that distinction. It matters because Plex will not accept label
         restrictions at all while a preset is applied — "For Managed users, the restriction profile must
         be set to None if you wish to edit Rating and Label restrictions on the library types"
         (support.plex.tv/articles/204232573-restricting-the-shares/).
@@ -205,7 +205,7 @@ class PlexTvClient:
         try:
             r = http_retry.get(f"{PLEXTV}/api/home/users", headers=self._headers(), timeout=self._timeout)
             r.raise_for_status()
-            # Parsing is INSIDE the try. It used to sit outside, so a single non-numeric id raised out
+            # Parsing is INSIDE the try: outside it, a single non-numeric id raises out
             # of `list_users()` — which the pipeline reads as "could not read the plex.tv user list" and
             # writes no filters for anyone, promoting nothing, for the whole server. The exact opposite
             # of the best-effort behaviour this method promises (rule 11: assume nothing about a shape).
@@ -255,13 +255,13 @@ class PlexTvClient:
         plex.tv mints a per-user ``accessToken`` for each shared invite (``GET
         /api/servers/{machine_id}/shared_servers``). Passed to the PMS as that user's ``X-Plex-Token``
         it reads the library AS them — including their ``viewCount``/``viewedLeafCount`` and their
-        MARKS, which the playback-history API never returns (live-verified 2026-07-24: a MooHouse
+        MARKS, which the playback-history API never returns (live-verified 2026-07-24: a Guest
         mark-as-watched absent from 11,476 history rows was present via this token). This is how
         Shortlist sees "already watched" for shared users without mounting the PMS database.
 
         The owner is NOT in this list (they own the server, not shared to it) — read the owner's own
         state with the admin token. Home users ARE included, so this one call covers the whole shared
-        roster; only a non-shared managed sub-account needs the switch path (`canary_server_token`).
+        roster; only a non-shared managed sub-account needs the switch path (`home_user_server_token`).
 
         The returned tokens are live per-user credentials (plex-safety rule 9): kept in memory for the
         run, never logged, never persisted.
@@ -288,7 +288,7 @@ class PlexTvClient:
         net_backoff = 2.0
         # What the LAST attempt actually failed with — reported if every attempt is exhausted, so the
         # final error names its real cause instead of always blaming throttling (a repeated connect
-        # failure used to raise "still throttling", sending the operator to the wrong diagnosis on
+        # failure reported as "still throttling" sends the operator to the wrong diagnosis on
         # the most privacy-sensitive write path).
         last_failure = "no attempt was made"
         server_tries = 0
@@ -364,9 +364,9 @@ class PlexTvClient:
         data = r.json()
         return data.get("users", data if isinstance(data, list) else [])
 
-    def canary_server_token(self, plex_account_id: int) -> str:
-        """Mint a server-scoped access token for a (non-PIN) Home user — lets a test view the server
-        as that user to confirm each account's Home shows only its own rows.
+    def home_user_server_token(self, plex_account_id: int) -> str:
+        """Mint a server-scoped access token for a (non-PIN) Home user — lets us read the server
+        as that user (their Home, their watch history) when they have no shared-server token of their own.
 
         Switch to the Home user, then exchange the plex.tv token for this server's
         ``accessToken`` via the resources listing (the switch token alone 401s on the PMS).
@@ -392,5 +392,5 @@ class PlexTvClient:
         r.raise_for_status()
         resource = next((x for x in r.json() if x.get("clientIdentifier") == self._machine_id), None)
         if resource is None or not resource.get("accessToken"):
-            raise LookupError(f"no server access token for canary {plex_account_id} on {self._machine_id}")
+            raise LookupError(f"no server access token for account {plex_account_id} on {self._machine_id}")
         return resource["accessToken"]

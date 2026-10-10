@@ -3,7 +3,6 @@ import { Download, Play } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import {
   QueryBoundary,
   EmptyState,
@@ -39,10 +38,12 @@ import {
 import { mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
 import { errorBucket } from "@/lib/run-format";
 import { privacyFindings } from "@/lib/run-privacy";
+import { runHealth } from "@/lib/run-status";
 import { RunProgress } from "@/components/runs/run-progress";
 import { useHashScroll } from "@/lib/use-hash-scroll";
 import { useSSE } from "@/lib/sse";
 import type { RunDetail, RunLogEntry, RunUserStageEvent } from "@/lib/types";
+import { personName } from "@/lib/user-names";
 
 /** The people a run failed for, grouped by the reason — because 45 people can share one cause.
  *
@@ -66,7 +67,7 @@ function failuresByReason(
     // Unrecognised errors group by their own text, so they are never merged with each other.
     const key = bucket ?? `raw:${user.error}`;
     const group = groups.get(key) ?? { reason: user.error, people: [] };
-    group.people.push(user.display_name || user.username);
+    group.people.push(personName(user));
     groups.set(key, group);
   }
   return [...groups.values()].sort((a, b) => b.people.length - a.people.length);
@@ -152,11 +153,11 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
 /** The things that differ per tab. The metrics and the failure banner are NOT tabbed: they are
  *  the answer to "how did this run go", which you want regardless of which detail you came for.
  *
- *  `rows` is the default and the primary axis, because a ROW is what a run builds. People-first left
- *  a SHARED row — which belongs to nobody — with nowhere to appear at all, so a run whose only work
- *  was a shared row rendered as a wall of "skipped" with its actual output off screen. There is no
- *  People tab any more: its person list and per-person panel were the right shape and are kept, but
- *  inside the row they belong to rather than as a second way of slicing the same run. */
+ *  `rows` is the default and the primary axis, because a ROW is what a run builds. People-first
+ *  would leave a SHARED row — which belongs to nobody — with nowhere to appear at all, so a run whose
+ *  only work was a shared row would render as a wall of "skipped" with its actual output off screen.
+ *  The person list and per-person panel live inside the row they belong to rather than as a second
+ *  way of slicing the same run. */
 type RunTab = "rows" | "log";
 
 export function RunDetailPage() {
@@ -176,10 +177,9 @@ export function RunDetailPage() {
   // Tab and the deep-linked person both live in the URL, so a refresh, a bookmark, and the link
   // from a person's Runs tab all land exactly where they said they would.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = (searchParams.get("tab") as RunTab | null) ?? "rows";
-  // Deep link from a person's Recent runs. It survived the People tab's removal as a dead parameter:
-  // the link was still built, nothing read it, and clicking "Run #NN" from someone's page landed on
-  // the top of a run with forty others in it.
+  const tab: RunTab = searchParams.get("tab") === "log" ? "log" : "rows";
+  // Deep link from a person's Recent runs, so clicking "Run #NN" from someone's page lands on
+  // their row rather than the top of a run with forty others in it.
   const focusUser = searchParams.get("user");
   useHashScroll(runQuery.isSuccess);
   const setTab = (next: RunTab) => {
@@ -231,8 +231,8 @@ export function RunDetailPage() {
 
   // Keep an in-flight run's page live: refetch on every stage/finish event, and append the stage to
   // the activity log so it scrolls in real time. Guarded on run_id — appendStage/mergeRunLog already
-  // drop events for another run from the LOG, but the refetch used to fire regardless, so sitting on
-  // finished run #12 while run #40 streamed refetched #12 on every one of #40's events.
+  // drop events for another run from the LOG, and so is the refetch, or sitting on
+  // finished run #12 while run #40 streamed would refetch #12 on every one of #40's events.
   useSSE({
     onRunUserStage: (event) => {
       appendStage(event);
@@ -264,8 +264,6 @@ export function RunDetailPage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to="/runs" label="Runs" />
-
       {!Number.isFinite(runId) ? (
         <EmptyState
           title="That run doesn’t exist"
@@ -285,7 +283,25 @@ export function RunDetailPage() {
             <div className="space-y-6">
               <PageHeader
                 className="mb-0"
-                title={`Run #${run.id}`}
+                title={
+                  // The breadcrumb is part of the title line, so this page's title sits at the same
+                  // height as every other page's.
+                  <>
+                    <Link to="/runs" className="font-normal text-muted-foreground hover:text-foreground">
+                      Runs
+                    </Link>
+                    <span className="font-normal text-faint-foreground">{" / "}</span>
+                    Run #{run.id}
+                    {run.finished_at && (
+                      <Badge
+                        variant={runHealth(run).tone === "warn" ? "warning" : runStatusVariant(run.status)}
+                        className="ml-3 align-middle"
+                      >
+                        {runHealth(run).label}
+                      </Badge>
+                    )}
+                  </>
+                }
                 // `runs.started_at` is stamped at INSERT — when the run was ASKED for, not when it
                 // began — so a run still waiting on the writer lock read "started 03:30 · still
                 // running" directly under a badge saying "Queued". This is also the page the Rows
@@ -299,9 +315,9 @@ export function RunDetailPage() {
                     </>
                   ) : !run.began_at ? (
                     // Cancelled or reaped while still queued. Its status is no longer "queued", so
-                    // this used to fall through and claim "started 03:30 · finished 03:39" — the same
-                    // nine minutes the list row now correctly calls "never ran", one click away and
-                    // directly above a Duration cell reading "—".
+                    // without this branch it would claim "started 03:30 · finished 03:39" — the same
+                    // nine minutes the list row calls "never ran", directly above a Duration cell
+                    // reading "—".
                     <>
                       {triggerLabel(run.trigger)} · queued{" "}
                       {formatDate(run.started_at)} · never started
@@ -351,17 +367,18 @@ export function RunDetailPage() {
                           </Button>
                         </>
                       )}
-                    {/* The screen's one filled-amber action, once there is nothing to cancel: the same
-                        mutation the Runs page uses, then straight to the new run, as the Rows page does. */}
+                    {/* Outline, not amber: a past run is a record, and re-running it is the same mutation
+                        the Runs page uses, then straight to the new run, as the Rows page does. */}
                     {run.finished_at && (
                       <Button
+                        variant="outline"
                         loading={startRun.isPending}
                         onClick={() =>
                           startRun.mutate({}, { onSuccess: (created) => void navigate(`/runs/${created.run_id}`) })
                         }
                       >
                         {!startRun.isPending && <Play aria-hidden="true" />}
-                        Run now
+                        Run again
                       </Button>
                     )}
                   </>

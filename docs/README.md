@@ -27,6 +27,8 @@ outage, is the comment above `url:` in _config.yml.
 | [FAQ](faq.md)                                             | Privacy model, Plex requirements, Kometa coexistence, uninstalling |
 | [Plex how-to](plex-how-to.md)                             | What Plex itself can and can't do, and the manual methods          |
 | [Per-user Plex collections](plex-per-user-collections.md) | The label + share-filter mechanism everything above is built on    |
+| [How a row is filled](guides/rows/what-goes-in.md)        | Because you watched and Watch it again rows, cold start, title order |
+| [AI and cost](guides/ai.md)                               | What AI adds, which search backend to pick, keeping the bill small |
 
 **The short version:** run the container, log in with Plex, pick your users, and every night each
 user gets a personal "✨ Picked for You" row built from their own watch history, using Plex sharing

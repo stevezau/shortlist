@@ -1,3 +1,4 @@
+import { joinList } from "@/lib/format";
 import type { CollectionInput, Placement, PlexLibrary, User } from "@/lib/types";
 
 /** A row targets a library when it lists it, or (when it lists none) any library of its media type. */
@@ -61,10 +62,7 @@ export function othersCount(users: User[]): number {
 }
 
 /** "a", "a and b", "a, b and c" — for reading a placement back as a sentence. */
-export function joinPhrases(parts: string[]): string {
-  if (parts.length <= 1) return parts[0] ?? "";
-  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-}
+export const joinPhrases = joinList;
 
 function surfaces(home: boolean, library: boolean, whose: string): string {
   return joinPhrases(

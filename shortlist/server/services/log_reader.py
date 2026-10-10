@@ -136,15 +136,23 @@ def read_lines(config_dir: Path, *, level: str = "DEBUG", query: str = "", limit
     # more than `limit` can show — so the idle poll costs a quarter as much. A SEARCH is different:
     # it is user-initiated, one-off, and the whole point is finding something further back, so it
     # gets the full window rather than quietly reporting "no matches" for a line 2 MB ago.
-    window = 4_000_000 if query.strip() else 1_000_000
-    entries = parse(scrub(tail_text(files[-1], max_bytes=window)))
     wanted = _at_least(level)
     needle = query.strip().lower()
-    matched = [
-        e
-        for e in entries
-        if e.level in wanted and (not needle or needle in e.message.lower() or needle in e.source.lower())
-    ]
+
+    def scan(window: int) -> list[LogLine]:
+        entries = parse(scrub(tail_text(files[-1], max_bytes=window)))
+        return [
+            e
+            for e in entries
+            if e.level in wanted and (not needle or needle in e.message.lower() or needle in e.source.lower())
+        ]
+
+    matched = scan(4_000_000 if needle else 1_000_000)
+    # The window is bytes, not lines: a run's DEBUG chatter can fill 1 MB with no INFO line in it,
+    # and the Log tab then read "nothing logged yet" on a server that had just finished a run. An
+    # empty quiet view pays for the wider read once instead of lying.
+    if not matched and not needle and files[-1].stat().st_size > 1_000_000:
+        matched = scan(4_000_000)
     kept = matched[-limit:] if limit > 0 else matched
     return {
         "lines": [e.as_dict() for e in kept],

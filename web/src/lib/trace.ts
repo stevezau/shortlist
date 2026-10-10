@@ -346,7 +346,7 @@ export function requestFoundInLabel(foundIn: string[]): string {
 }
 
 /** One title as the shortlist step shows it: what it is, and the numbers its verdict rested on. */
-export interface ShortlistTitle {
+interface ShortlistTitle {
   tmdb_id: number;
   /** The media type this candidate was judged as. Required for the request lookup, which is keyed
    *  `"<tmdb_id>:<media>"` — a tmdb_id is NOT unique on its own (the DB constraint is the pair). */
@@ -359,17 +359,17 @@ export interface ShortlistTitle {
 }
 
 /** Titles sharing one fate, biggest group first (after `kept`). */
-export interface ShortlistGroup {
+interface ShortlistGroup {
   fate: TraceFate;
   titles: ShortlistTitle[];
 }
 
 /** Every candidate this library saw, grouped by what became of it.
  *
- * The step this feeds used to state only counts — "40 candidates survived filtering" — which is a
- * summary, not a trace: it cannot answer "why isn't X in my row", the question the page exists for.
- * The per-title verdicts were already recorded (`fate`, plus the `year`/`rating`/`age_weight` it was
- * judged on); they were just buried per-seed inside each source and never gathered into one view.
+ * Counts alone ("40 candidates survived filtering") are a summary, not a trace: they cannot answer
+ * "why isn't X in my row", the question the page exists for. The per-title verdicts (`fate`, plus the
+ * `year`/`rating`/`age_weight` it was judged on) are recorded per-seed inside each source; this gathers
+ * them into one view.
  *
  * Deduped by tmdb_id, because the pool dedupes by (tmdb_id, media): a title two sources both
  * returned is ONE candidate, and counting it twice would make the totals disagree with the row.
@@ -434,7 +434,7 @@ export function shortlistBreakdown(lib: LibraryView): {
 
 /** One delivered pick with the two rotations marked, so the ordering rules are visible rather than
  *  asserted. */
-export interface OrderingRow {
+interface OrderingRow {
   pick: Pick;
   /** This rank is where a different SOURCE got its turn (the first fairness pass). */
   newSource: boolean;

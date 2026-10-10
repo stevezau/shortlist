@@ -183,6 +183,8 @@ in several places and pushed the proof (the two Homes) below the fold.
           <li>📺 More TV Shows to watch</li>
         </ul>
         <a href="{{ '/guides/rows/' | relative_url }}">Rows and templates</a>
+        <a href="{{ '/guides/rows/what-goes-in/' | relative_url }}">How a row is filled</a>
+        <a href="{{ '/guides/ai/' | relative_url }}">AI and cost</a>
       </div>
     </div>
   </section>
@@ -250,7 +252,7 @@ in several places and pushed the proof (the two Homes) below the fold.
   {%- comment -%}
   The two questions that disqualify a reader are answered first and open, in their short form
   (`short` / `short_a` in _data/faq.yml). The rest keep the wording people type into a search box.
-  The FAQPage structured data lives on /faq/ only.
+  The FAQPage structured data (faq-jsonld.html) is emitted below from the same list, and on /faq/.
   {%- endcomment -%}
   <section class="section" id="faq">
     <div class="home-wide home-split">
@@ -280,6 +282,8 @@ in several places and pushed the proof (the two Homes) below the fold.
       </div>
     </div>
   </section>
+
+  {% include faq-jsonld.html %}
 
   <section class="section section--tint home-close">
     <div class="home-wide home-split">

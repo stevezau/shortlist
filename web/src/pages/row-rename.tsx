@@ -3,7 +3,6 @@ import { Check, Clock, Loader2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 
-import { BackLink } from "@/components/back-link";
 import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
@@ -14,25 +13,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, apiUrl } from "@/lib/api";
+import { api, streamRename, type RenameEvent } from "@/lib/api";
 import { TOP_SEED } from "@/lib/placeholders";
 import { useCollections, useUsers } from "@/lib/queries";
 import type { Collection, User } from "@/lib/types";
-
-interface RenameEvent {
-  user?: string;
-  display_name?: string;
-  old?: string;
-  new?: string;
-  libraries?: string[];
-  library?: string;
-  /** Plex only lets a new collection share this name, so the row's next run rebuilds it under it. */
-  next_run?: boolean;
-  done?: boolean;
-  total?: number;
-  /** With `user`: that one person's collection could not be renamed, and the rest carry on. */
-  error?: string;
-}
 
 /**
  * How many people this row is built for: its audience, less anyone switched off or gone from the
@@ -100,55 +84,23 @@ export function RowRenamePage() {
     setRunning(true);
     setSaving(false);
     try {
-      const response = await fetch(
-        apiUrl(`/api/collections/${collectionId}/rename`),
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-shortlist-csrf": "1",
-          },
-          credentials: "include",
-          body: JSON.stringify({
-            name_template: template,
-            old_template: prevTemplate,
-          }),
-        },
-      );
-      if (!response.ok || !response.body) {
-        setError(`Server returned ${response.status}`);
-        setRunning(false);
-        return;
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n\n");
-        buffer = lines.pop() ?? "";
-        for (const chunk of lines) {
-          const dataLine = chunk
-            .split("\n")
-            .find((l) => l.startsWith("data: "));
-          if (!dataLine) continue;
-          const event: RenameEvent = JSON.parse(dataLine.slice(6));
-          // Only an error about the whole rename stops it. One person's refusal is theirs: the server
-          // carries on with everyone else, and stopping here hid every rename that followed it.
-          if (event.error && !event.user) {
-            setError(event.error);
-            setRunning(false);
-            return;
-          }
-          setEvents((prev) => [...prev, event]);
-          if (event.done) {
-            setRunning(false);
-            queryClient.invalidateQueries({ queryKey: ["collections"] });
-          }
+      let failed = false;
+      await streamRename(collectionId, { name_template: template, old_template: prevTemplate }, (event) => {
+        // Only an error about the whole rename stops it. One person's refusal is theirs: the server
+        // carries on with everyone else, and stopping here hid every rename that followed it.
+        if (event.error && !event.user) {
+          failed = true;
+          setError(event.error);
+          setRunning(false);
+          return false;
         }
-      }
+        setEvents((prev) => [...prev, event]);
+        if (event.done) {
+          setRunning(false);
+          queryClient.invalidateQueries({ queryKey: ["collections"] });
+        }
+      });
+      if (failed) return;
       setRunning(false);
       queryClient.invalidateQueries({ queryKey: ["collections"] });
     } catch (e) {
@@ -158,9 +110,8 @@ export function RowRenamePage() {
   }
 
   // Start as soon as the collection has loaded. `handleSubmit`, NOT `startRename`: the name still
-  // has to be SAVED before it is applied to Plex. The old auto-start called `startRename("", prev)`
-  // because the card's dialog had already saved it on the way here — that dialog is gone, and
-  // reusing its path from the editor would have streamed a rename to the name already on record.
+  // has to be SAVED before it is applied to Plex. `startRename("", prev)` would stream a rename
+  // to the name already on record, because nothing on the way here has saved the new one.
   //
   // Guarded by a ref rather than by `running`/`events`, so a re-render between the click and the
   // first streamed event cannot start a second rename over the top of the first.
@@ -213,11 +164,14 @@ export function RowRenamePage() {
 
   return (
     <div className="space-y-6">
-      <BackLink to="/rows" label="Rows" />
       <PageHeader
         className="mb-0"
         title={
           <>
+            <Link to="/rows" className="font-normal text-muted-foreground hover:text-foreground">
+              Rows
+            </Link>
+            <span className="font-normal text-faint-foreground">{" / "}</span>
             {confirmed ? "Renaming " : "Rename "}
             {collection?.name ? <RowName name={collection.name} className="" /> : "row"}
           </>

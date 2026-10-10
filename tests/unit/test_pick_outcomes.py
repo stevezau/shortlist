@@ -15,12 +15,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
-from shortlist.server.db.models import Base, Collection, Delivery, PickRow, User
+from shortlist.server.db.models import Collection, Delivery, PickRow, User
 from shortlist.server.services.run_persistence import live_pick_ids, reconcile_watched
+from tests.watch_fixtures import personal_delivery
 
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 
@@ -68,13 +67,6 @@ class TestIsFinished:
 
     def test_a_series_reporting_zero_watched_episodes_is_not_finished(self):
         assert watched_item(MediaType.SHOW, viewed=0, leaf=12).is_finished is False
-
-
-@pytest.fixture
-def sessions():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine)
-    return sessionmaker(engine)
 
 
 #: The run that last delivered alex's row — its picks are what `live_pick_ids` calls live.
@@ -148,6 +140,9 @@ def add_pick(
                     created_at=created + timedelta(days=1),
                 )
             )
+        personal_delivery(session, LIVE_RUN if live else STALE_RUN, slug=slug)
+        if not live:
+            personal_delivery(session, LIVE_RUN, slug=slug)
         session.commit()
         return pick.id
 
@@ -373,7 +368,11 @@ class TestOnlyLiveRowsAreCredited:
         # As it was before tonight's rebuild: the title WAS on their shelf.
         snapshot = {1: {pid}}
 
-        reconcile_watched(sessions, [profile([watched_item(MediaType.MOVIE, tmdb_id=100, when=NOW)])], snapshot)
+        reconcile_watched(
+            sessions,
+            [profile([watched_item(MediaType.MOVIE, tmdb_id=100, when=NOW - timedelta(days=4, hours=12))])],
+            snapshot,
+        )
 
         assert read(sessions, pid).watched_at is not None
 
@@ -400,6 +399,7 @@ class TestOnlyLiveRowsAreCredited:
                     created_at=NOW,
                 )
             )
+            personal_delivery(session, LIVE_RUN, user_id=2)
             session.commit()
             everyone = live_pick_ids(session)
             assert set(everyone) == {1, 2}
@@ -520,9 +520,8 @@ class TestLivenessMeansOnPlexNotMerelyConfigured:
 
         assert read(sessions, pid).watched_at is None
 
-    def test_picks_detached_from_their_run_are_not_live(self, sessions, user):
-        """`DELETE /api/runs` and the retention prune both null every pick's `run_id`. The documented
-        cost is that such picks stop being creditable until their row next delivers."""
+    def test_picks_detached_from_their_run_keep_delivered_membership(self, sessions, user):
+        """Deleting run history preserves the delivered evidence used for future watches."""
         pid = add_pick(sessions, tmdb_id=100, media_type="movie", created=NOW - timedelta(days=1))
         with sessions() as session:
             session.query(PickRow).update({"run_id": None})
@@ -530,7 +529,7 @@ class TestLivenessMeansOnPlexNotMerelyConfigured:
 
         reconcile_watched(sessions, [profile([watched_item(MediaType.MOVIE, tmdb_id=100, when=NOW)])])
 
-        assert read(sessions, pid).watched_at is None
+        assert read(sessions, pid).watched_at is not None
 
     def test_a_group_recovers_the_moment_its_row_delivers_again(self, sessions, user):
         """Detachment is not permanent. Both paths that null `run_id` are wholesale — `DELETE /api/runs`

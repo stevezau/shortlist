@@ -5,6 +5,8 @@ own recommendation rows (Picked for You, Because you watched, seasonal picks, th
 for), built from what they watched and hidden from everyone else. One Docker
 container, no AI key required.
 
+Stable 1.x, running nightly on a 40-user server. `latest` is the current stable release.
+
 [Website](https://shortlistapp.dev/) ·
 [Tools compared](https://shortlistapp.dev/plex-recommendation-tools/) ·
 [Source on GitHub](https://github.com/stevezau/shortlist) ·
@@ -91,7 +93,7 @@ Multi-arch: `linux/amd64` and `linux/arm64`.
   a live web search for current titles TMDB and Trakt miss.
 - **No hallucinated picks.** Every title is verified to exist in your library before it's delivered.
 - **Every pick explains itself** — "Because you watched _Arrival_".
-- **Six row kinds, ten templates**: Picked for You, Because you watched, Watch it again, Popular on
+- **Six row kinds, eleven templates**: Picked for You, Because you watched, Watch it again, Popular on
   this server (shared), Seasonal and Your requests. Add as many rows as you like, each with its own
   sources, size, libraries, refresh cadence and audience.
 - **Seasonal rows** — a row that follows the calendar: Halloween, Christmas and Valentine's Day,

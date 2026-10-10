@@ -1,3 +1,4 @@
+import { useIsMutating, useQueryClient } from "@tanstack/react-query";
 import { ListChecks, Lock } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
@@ -9,12 +10,15 @@ import { RowRequestSettings } from "@/components/rows/row-request-settings";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { InheritableField } from "@/components/rows/inheritable-field";
 import { LibraryPicker } from "@/components/rows/library-picker";
+import { OverridesList } from "@/components/rows/overrides-list";
+import { OverridesTarget } from "@/components/rows/overrides-target";
+import { PlacementSeen } from "@/components/rows/placement-seen";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowAudienceTable } from "@/components/rows/row-audience-table";
 import { RowContentsFields } from "@/components/rows/row-contents-fields";
 import { draftChanges } from "@/components/rows/row-draft-diff";
-import { mediaLabel, rowLibraries, rowReach } from "@/components/rows/row-facts";
+import { mediaLabel, overridesHint, reachedUsers, rowLibraries, rowReach } from "@/components/rows/row-facts";
 import { RowKindChangeDialog } from "@/components/rows/row-kind-change-dialog";
 import { RowBuildPicker, RowKindPicker } from "@/components/rows/row-kind-picker";
 import { RowLiveStrip } from "@/components/rows/row-live-strip";
@@ -44,9 +48,13 @@ import { Label } from "@/components/ui/label";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, hasUnsavedChanges, OVER_TIME_DEFAULTS, toInput } from "@/lib/collections";
+import { LIBRARY_NAME } from "@/lib/placeholders";
+import { showDaysSummary } from "@/lib/show-days";
+import { hasHome, hasLibrary } from "@/lib/placement";
 import { describeCron } from "@/lib/cron";
 import { settingString } from "@/lib/format";
 import {
+  queryKeys,
   useCollectionEffectiveness,
   useLibraries,
   usePrivacyStatus,
@@ -64,11 +72,11 @@ import {
   baselineTakes,
   DEFAULT_ROW_NAME_SETTINGS,
   describeKindChange,
-  FILL_META,
   followsAWatch as rowFollowsAWatch,
   hiddenButRead,
   isAiRow,
   KIND_META,
+  kindTitle,
   kindBaseline as baselineOf,
   kindDisabledReason,
   kindSwitchBase,
@@ -101,6 +109,8 @@ import {
   RATING_SOURCES,
 } from "@/lib/rating-sources";
 import type { Collection, CollectionInput, User } from "@/lib/types";
+import { personName } from "@/lib/user-names";
+import { dayAndTime } from "@/lib/when";
 
 /** The global `row.name_template` every install ships with, until Settings says otherwise. */
 const DEFAULT_ROW_NAME = "✨ {library_name} Picked for You";
@@ -134,12 +144,6 @@ function pickOrderHelp(
   }
 }
 
-function kindTitle(choice: RowKindChoice): string {
-  return choice.kind === "seasonal"
-    ? `${KIND_META.seasonal.title} · ${FILL_META[choice.fill].title}`
-    : KIND_META[choice.kind].title;
-}
-
 /** One section of the editor: a heading the jump list links to, a line on what it decides, and
  *  its settings in a single card (never a card inside a card). */
 function EditorSection({
@@ -152,7 +156,7 @@ function EditorSection({
 }: {
   id: string;
   title: string;
-  description: string;
+  description: ReactNode;
   /** An id for the card itself, so an older link to it still lands. */
   panelId?: string;
   danger?: boolean;
@@ -182,13 +186,10 @@ function EditorSection({
 
 /** "today at 02:30", "tomorrow at 02:30", "Sun 5 Oct at 02:30": a run time in the reader's own clock. */
 function runTime(iso: string, now: Date = new Date()): string {
-  const when = new Date(iso);
-  const time = when.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  if (when.toDateString() === now.toDateString()) return `today at ${time}`;
-  if (when.toDateString() === tomorrow.toDateString()) return `tomorrow at ${time}`;
-  return `${when.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} at ${time}`;
+  const parts = dayAndTime(iso, now);
+  if (!parts) return "—";
+  const day = /^(Today|Tomorrow|Yesterday)$/.test(parts.day) ? parts.day.toLowerCase() : parts.day;
+  return `${day} at ${parts.time}`;
 }
 
 /** When the row next runs. The scheduler's own answer when the schedule on screen is the saved one;
@@ -243,6 +244,10 @@ export function RowEditor({
    *  the screen only streams the rename from the title the collections still carry. */
   onRename?: (proposedName: string, saved?: { oldTemplate: string }) => void;
 }) {
+  const queryClient = useQueryClient();
+  // The new season must reach the draft before this row can save or discard it.
+  const addingSeason = useIsMutating({ mutationKey: queryKeys.seasonCreate }) > 0;
+  const seasonPending = () => queryClient.isMutating({ mutationKey: queryKeys.seasonCreate }) > 0;
   const save = useSaveCollection();
   const saveSettings = useSaveSettings();
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
@@ -276,6 +281,8 @@ export function RowEditor({
   // would leave showing the discarded edit.
   const [draftVersion, setDraftVersion] = useState(0);
   const isDefault = collection?.slug === "picked";
+  // Where the inheritable settings' one-line rows are collected (see `OverridesList`).
+  const [overridesList, setOverridesList] = useState<HTMLElement | null>(null);
 
   // Live on Plex's on/off switch saves straight away, so what it saved is the saved row's `enabled`
   // from then on — and the form's, or Save would send back the value the page opened with and undo
@@ -475,6 +482,7 @@ export function RowEditor({
     input.media === "movie" ? "every movie library" : input.media === "show" ? "every TV library" : "every library";
   const landsIn = libraries.data ? rowLibraries(input, libraries.data) : null;
   const reach = rowReach(input, users);
+  const savedSeason = collection?.season_status?.showing ?? collection?.season_status?.next ?? undefined;
   const savedReach = savedRow ? rowReach(savedRow, users) : null;
   const changes = [
     ...draftChanges(input, savedRow, pendingRename ? { name: pendingRename.name, from: savedName } : null),
@@ -497,9 +505,16 @@ export function RowEditor({
     collection && input.schedule.trim() === (collection.schedule ?? "").trim()
       ? (scheduleGroup?.next_run ?? null)
       : null;
+  const onShelf = hasLibrary(input.placement) || hasLibrary(input.placement_friends);
+  const onHome = hasHome(input.placement) || hasHome(input.placement_friends);
+  const days = showDaysSummary(input.show_days);
+  const placementLine = `Recommended shelf ${onShelf ? "on" : "off"} · Home screen ${onHome ? "on" : "off"} · ${
+    days === "Every day" ? "every day" : days
+  }`;
   const effectiveCadence = input.refresh_days ?? refreshDaysGlobalValue(settings.data);
 
   const submit = () => {
+    if (seasonPending()) return;
     // Keep 'Top', 'off', and real anchors — a row slug or a collection title. Drop a half-set library
     // (mode chosen, nothing picked yet) so it falls back to the default rather than being POSTed as an
     // empty anchor, which the API rejects. Also drop the empty twin of whichever kind was chosen: the
@@ -589,6 +604,7 @@ export function RowEditor({
   // Back to the row as saved, the way the page first opened it. The on/off switch's change is part
   // of the saved row by now, so it survives.
   const discard = () => {
+    if (seasonPending()) return;
     const back = savedRow ? toInput(savedRow) : input;
     setInput(back);
     setKindBaseline(baselineOf(back));
@@ -614,37 +630,92 @@ export function RowEditor({
     onRename?.(renameDraft.trim());
   };
 
+  const whatGoesInHint = overridesHint(input, [
+    "refresh_days",
+    "idle_hold_days",
+    "watched_pct",
+    "recent_count",
+    "recency",
+    "max_seeds",
+    "cold_start",
+    "min_year",
+    "max_year",
+    "min_rating",
+    "max_runtime",
+  ]);
+  const requestKeys = (Object.keys(input) as (keyof CollectionInput)[]).filter((key) => key.startsWith("req_"));
   const sections: RowSection[] = [
     { id: "name-and-look", label: "Name & look" },
     { id: "who-gets-it", label: "Who gets it" },
-    { id: "what-goes-in", label: "What goes in" },
+    { id: "what-goes-in", label: "What goes in", hint: whatGoesInHint ?? undefined },
     ...(aiRow ? [{ id: "try-it", label: "Try it" }] : []),
     { id: "schedule", label: "Schedule" },
     { id: "placement", label: "Placement" },
     // A Your requests row never searches, so it has nothing to ask for and nothing to set here, and
     // an empty section would only be somewhere to be wrong. An AI row is library-only and never asks either.
-    ...(input.requests_row || aiRow ? [] : [{ id: "requests", label: "Requests" }]),
+    ...(input.requests_row || aiRow
+      ? []
+      : [{ id: "requests", label: "Requests", hint: overridesHint(input, requestKeys) ?? "server default" }]),
     // A row being created has nothing on Plex to remove yet.
     ...(collection ? [{ id: "danger-zone", label: "Danger zone" }] : []),
   ];
 
-  const subtitle = savedRow
+  // Each library's own Plex title, so the header can say what the row is called where people see it.
+  // A name without the library in it reads the same everywhere, so it is shown once.
+  const savedLibraries = savedRow && libraries.data ? rowLibraries(savedRow, libraries.data) : [];
+  const plexTitles = savedName.includes(LIBRARY_NAME) ? savedLibraries : savedLibraries.slice(0, 1);
+  const facts = savedRow
     ? [
         savedRow.build === "shared" ? "Shared" : "Per person",
         savedRow.audience === "everyone"
           ? `everyone${savedReach === null ? "" : ` (${savedReach})`}`
-          : `chosen people${savedReach === null ? "" : ` (${savedReach})`}`,
+          : `${savedReach === null ? "" : `${savedReach} `}chosen people`,
         mediaLabel(savedRow.media),
         ...(isDefault ? ["the default row"] : []),
       ].join(" · ")
     : "Nothing reaches Plex until you add it.";
+  const subtitle = savedRow ? (
+    <>
+      {facts}
+      {plexTitles.length > 0 && (
+        <span className="mt-1.5 flex flex-wrap items-center gap-2">
+          On Plex it appears as
+          {plexTitles.map((library) => (
+            <span
+              key={library.key}
+              className="rounded-full border border-border-strong bg-elevated px-2.5 py-0.5 text-xs text-foreground"
+            >
+              <RowName
+                name={savedName}
+                libraryName={savedName.includes(LIBRARY_NAME) ? library.title : undefined}
+                season={savedSeason}
+                className=""
+              />
+            </span>
+          ))}
+        </span>
+      )}
+    </>
+  ) : (
+    facts
+  );
 
   return (
     <div className="w-full space-y-6">
       <PageHeader
         // The name as a template, its placeholders drawn as chips: there is no single rendered name,
         // because each person and each library fills it differently.
-        title={collection ? <RowName name={savedName} className="" /> : "Add a row"}
+        title={
+          // The breadcrumb is part of the title line, like Run #N, so this page's title sits at the
+          // same height as every other page's.
+          <>
+            <Link to="/rows" className="font-normal text-muted-foreground hover:text-foreground">
+              Rows
+            </Link>
+            <span className="font-normal text-faint-foreground">{" / "}</span>
+            {collection ? <RowName name={savedName} libraryName="" season={savedSeason} className="" /> : "Add a row"}
+          </>
+        }
         subtitle={subtitle}
         className="mb-0"
         actions={
@@ -678,13 +749,13 @@ export function RowEditor({
       {savedRow && (
         <RowLiveStrip
           collection={savedRow}
-          enableDisabled={save.isPending}
+          enableDisabled={save.isPending || addingSeason}
           onEnableSaving={setEnableSaving}
           onEnableSaved={(enabled) => {
             setSavedEnabled(enabled);
             setInput((prev) => ({ ...prev, enabled }));
           }}
-          renameDisabled={enableSaving || pendingRename !== null}
+          renameDisabled={enableSaving || pendingRename !== null || addingSeason}
           onRename={openRename}
           unsaved={changes.length > 0}
           history={effectiveness.data}
@@ -703,7 +774,8 @@ export function RowEditor({
 
         {/* `min-w-0`: a grid item's default `min-width: auto` resolves to its min-content width,
             and the widest unbreakable thing inside once pushed a 320px page 60px sideways. */}
-        <div className="mt-6 min-w-0 space-y-10 lg:mt-0">
+        <OverridesTarget.Provider value={overridesList}>
+        <fieldset disabled={addingSeason} aria-label="Row settings" className="mt-6 min-w-0 space-y-10 lg:mt-0">
           <EditorSection
             id="name-and-look"
             title="Name & look"
@@ -933,8 +1005,8 @@ export function RowEditor({
                     // without anyone touching the flag. Its control is hidden then, and the API refuses
                     // that one combination — a save failing with no visible cause.
                     //
-                    // `=== "movie"`, matching the API exactly. It used to clear on anything that wasn't
-                    // shows-only, which silently switched the flag off when a row widened to "films and
+                    // `=== "movie"`, matching the API exactly. Clearing on anything that isn't
+                    // shows-only would silently switch the flag off when a row widened to "films and
                     // shows" — a combination both the API and the engine accept.
                     ...(next.media === "movie" ? { unstarted_only: false } : {}),
                   })
@@ -952,6 +1024,7 @@ export function RowEditor({
                 <RowSizeField
                   value={input.size}
                   onChange={(size) => set({ size })}
+                  presets={[15, 20, 30]}
                 />
               </div>
             )}
@@ -1035,6 +1108,7 @@ export function RowEditor({
                 )
               }
             />
+            <OverridesList onTarget={setOverridesList} />
           </EditorSection>
 
           {aiRow && (
@@ -1068,7 +1142,6 @@ export function RowEditor({
                 label="Titles refresh every…"
                 labelFor="row-refresh-days"
                 description="How often this row swaps some of its titles for new ones."
-                ariaLabel="Use the global refresh cadence"
                 inheriting={input.refresh_days === null}
                 globalValue={refreshDaysGlobal(settings.data)}
                 onToggle={(on) =>
@@ -1106,7 +1179,6 @@ export function RowEditor({
                 label="Hold when they aren't watching"
                 labelFor="row-idle-hold-days"
                 description="How long this row waits when the person it belongs to hasn't watched anything since it was built."
-                ariaLabel="Use the global hold for inactive viewers"
                 inheriting={input.idle_hold_days === null}
                 globalValue={idleHoldGlobal(settings.data)}
                 onToggle={(on) =>
@@ -1150,7 +1222,24 @@ export function RowEditor({
             title="Placement"
             description="Which Plex screens it shows on, where it sits, and on which days."
           >
-            <div data-setting="placement" className="space-y-3">
+            <PlacementSeen
+              placement={input.placement}
+              placementFriends={input.placement_friends}
+              personName={(() => {
+                const person = reachedUsers(input, users)[0];
+                return person ? personName(person) : null;
+              })()}
+            />
+            {/* Closed, the line above says where the row shows; the controls open with "Edit placement". */}
+            <details data-settings-group="Placement" className="group border-t pt-4">
+              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+                <span className="min-w-0 text-sm text-muted-foreground">{placementLine}</span>
+                <span className="shrink-0 whitespace-nowrap rounded-md border border-border-strong bg-elevated px-3 py-1.5 text-sm font-medium hover:bg-raised">
+                  Edit placement
+                </span>
+              </summary>
+              <div className="space-y-4 pt-4">
+            <div data-setting="placement" className="space-y-3 border-t pt-4">
               <Label>Where it shows</Label>
               <PlacementToggles
                 placement={input.placement}
@@ -1193,13 +1282,24 @@ export function RowEditor({
                 onChange={(sort_title_prefix) => set({ sort_title_prefix })}
               />
             </div>
+              </div>
+            </details>
           </EditorSection>
 
           {!input.requests_row && !aiRow && (
             <EditorSection
               id="requests"
               title="Requests"
-              description="What this row asks Sonarr and Radarr for when a pick isn't on the server yet, and where those titles land."
+              description={
+                <>
+                  What this row asks Sonarr and Radarr for when a pick isn't on the server yet, and where those
+                  titles land. Change the defaults for every row in{" "}
+                  <Link to="/settings#requests" className="underline underline-offset-2 hover:text-foreground">
+                    Settings
+                  </Link>
+                  .
+                </>
+              }
             >
               {shown.has("requests") ? (
                 <div data-setting="requests" className="space-y-4">
@@ -1255,17 +1355,19 @@ export function RowEditor({
               {aiBlocked}
             </p>
           )}
-        </div>
+        </fieldset>
+        </OverridesTarget.Provider>
       </div>
 
       <RowSaveBar
         changes={changes}
         isNew={!collection}
         saving={save.isPending || saveTheme.isPending}
+        busyMessage={addingSeason ? "Adding season… wait before saving this row." : undefined}
         saveDisabled={!input.name.trim() || pendingProblem !== null || enableSaving || aiBlocked !== null}
         onSave={submit}
         onDiscard={discard}
-        onCancel={onClose}
+        onCancel={() => { if (!seasonPending()) onClose(); }}
       />
 
       <RowRenameDialog

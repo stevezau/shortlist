@@ -1,14 +1,12 @@
-import {
-  Play,
-  Trash2,
-  X,
-} from "lucide-react";
-import { useRef, useState } from "react";
+import { ChevronRight, Clock, ListChecks, Play, Trash2, X } from "lucide-react";
+import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
+import { OverflowMenu } from "@/components/rows/overflow-menu";
 import { PageHeader } from "@/components/page-header";
+import { StatusCell, StatusRow, StatusStrip } from "@/components/status-strip";
 import { RunRowsDialog } from "@/components/runs/run-rows-dialog";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
@@ -34,9 +32,9 @@ import {
   formatDate,
   formatDuration,
   runElapsedMs,
-  runStatusLabel,
   runStatusVariant,
   timeAgo,
+  timeUntil,
   triggerLabel,
 } from "@/lib/format";
 import {
@@ -47,9 +45,14 @@ import {
   useCollections,
   useRunsPaged,
   useRunsSummary,
+  useSchedule,
   useStartRun,
 } from "@/lib/queries";
+import { latestFinishedRun, nextRowRun } from "@/lib/dashboard-status";
+import { hasPrivacyWarning, privacyWarnings } from "@/lib/run-privacy";
+import { historyHint, runHealth } from "@/lib/run-status";
 import { useSSE } from "@/lib/sse";
+import { dayTime } from "@/lib/when";
 import type { Run, RunsSummary } from "@/lib/types";
 import { useLiveClock } from "@/lib/use-live-clock";
 
@@ -110,9 +113,9 @@ export function RunDuration({ run }: { run: Run }) {
       </span>
     );
   }
-  // A run cancelled while still queued never executed, so it has no duration. It used to be measured
-  // from `started_at`, which is set when the row is CREATED — so three runs queued together and
-  // cancelled nine minutes later each claimed nine minutes of work none of them had done.
+  // A run cancelled while still queued never executed, so it has no duration. Measuring it from
+  // `started_at`, which is set when the row is CREATED, would make three runs queued together and
+  // cancelled nine minutes later each claim nine minutes of work none of them had done.
   if (!run.began_at) {
     return (
       <span className="text-muted-foreground" title="This run never started">
@@ -130,12 +133,19 @@ export function RunDuration({ run }: { run: Run }) {
 
 function RunRow({ run }: { run: Run }) {
   const cancel = useCancelRun();
+  const navigate = useNavigate();
+  const health = runHealth(run);
   return (
-    <TableRow className="group grid grid-cols-2 gap-x-3 px-2 py-2 md:table-row md:p-0">
+    // The whole row opens the run; the "#N" link stays for keyboard and middle-click.
+    <TableRow
+      className="group relative grid cursor-pointer grid-cols-2 gap-x-3 px-2 py-2 md:table-row md:p-0"
+      onClick={() => void navigate(`/runs/${run.id}`)}
+    >
       <TableCell>
         <Link
           to={`/runs/${run.id}`}
-          className="rounded-sm font-medium tabular-nums group-hover:text-primary group-hover:underline"
+          // Padded out to a 24px-plus target; the negative margin keeps the row's layout as it was.
+          className="-m-1.5 inline-block rounded-sm p-1.5 font-medium tabular-nums group-hover:text-primary group-hover:underline"
         >
           #{run.id}
         </Link>
@@ -154,8 +164,8 @@ function RunRow({ run }: { run: Run }) {
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap gap-1">
-          <Badge variant={runStatusVariant(run.status)}>
-            {runStatusLabel(run.status)}
+          <Badge variant={health.tone === "warn" ? "warning" : runStatusVariant(run.status)}>
+            {health.label}
           </Badge>
           {run.dry_run && (
             <Badge
@@ -172,7 +182,10 @@ function RunRow({ run }: { run: Run }) {
               className="h-6 px-2 text-xs"
               loading={cancel.isPending}
               disabled={cancel.isPending || cancel.isSuccess}
-              onClick={() => cancel.mutate(run.id)}
+              onClick={(event) => {
+                event.stopPropagation();
+                cancel.mutate(run.id);
+              }}
               title="Stop this run. It finishes the person it's on, then stops."
             >
               {!cancel.isPending && <X aria-hidden="true" />}
@@ -185,13 +198,13 @@ function RunRow({ run }: { run: Run }) {
         {/* Each figure after the first carries its own "·"; the -ml + overflow-hidden pair clips the
             one that lands at the start of a wrapped line, so no line ever opens on a separator. */}
         <div className="overflow-hidden">
-        <div className="-ml-4 flex flex-wrap items-center gap-y-0.5 [&>*]:before:inline-block [&>*]:before:w-4 [&>*]:before:text-center [&>*]:before:content-['·']">
+        <div className="-ml-4 flex flex-wrap items-center gap-y-0.5 [&>*]:whitespace-nowrap [&>*]:before:inline-block [&>*]:before:w-4 [&>*]:before:text-center [&>*]:before:content-['·']">
           <span>
             {run.stats.users_ok} ok
             {/* A skipped person built nothing but nothing went wrong — counting them as "ok" made a
                 run where everyone was skipped read as a clean success. */}
             {(run.stats.users_skipped ?? 0) > 0 && (
-              <span className="text-warning">
+              <span>
                 {" "}
                 · {run.stats.users_skipped} skipped
               </span>
@@ -228,34 +241,67 @@ function RunRow({ run }: { run: Run }) {
         </div>
         </div>
       </TableCell>
+      <TableCell className="hidden w-8 text-right md:table-cell">
+        <ChevronRight
+          aria-hidden="true"
+          className="ml-auto h-4 w-4 text-faint-foreground group-hover:text-foreground"
+        />
+      </TableCell>
     </TableRow>
   );
 }
 
-/** How the run history reads in one line: all clean, or how many were not. */
-function historyHint(summary: RunsSummary): string {
-  // The caller only renders these tiles when `total > 0`; without this line an empty summary would
-  // fall through to `ok === total` and claim every run finished cleanly when there are none.
-  if (summary.total === 0) return "none yet";
-  if (summary.error > 0) return `${summary.error} failed`;
-  if (summary.ok === summary.total) return "all finished cleanly";
-  return `${summary.ok} finished cleanly`;
-}
-
-/**
- * The headline above the runs table: when the last one ran, and what the history looks like.
- *
- * TWO tiles, not four. "Runs 1 / Succeeded 1 / Failed 0 / Last run" gave four boxes to one run's
- * worth of information — three of them derivable from the fourth, and all four reading "1, 1, 0"
- * on the install where a dashboard is least useful. The only number that cannot be derived is how
- * many runs failed, so that is the hint on the count rather than a box of its own.
- */
-function RunsStats({ summary }: { summary: RunsSummary }) {
+/** The strip above the runs table: the last run, the next one, how many are recorded, and how many warned. */
+function RunsStats({ summary, runs }: { summary: RunsSummary; runs: Run[] }) {
+  const schedule = useSchedule();
+  const last = latestFinishedRun(runs);
+  const health = last ? runHealth(last) : null;
+  const warned = runs.filter(hasPrivacyWarning);
+  const firstWarned = warned[0];
+  const next = nextRowRun(schedule.data);
+  const failed = summary.error > 0;
   return (
-    <dl className="mb-5 flex flex-wrap gap-x-8 gap-y-3 rounded-lg border bg-card px-4 py-3">
-      <div><dt className="text-xs text-muted-foreground">Last run</dt><dd className="mt-1 font-medium">{summary.last_finished ? timeAgo(summary.last_finished) : "never"}<span className="ml-2 text-xs font-normal text-muted-foreground">{summary.last_status ? runStatusLabel(summary.last_status) : "—"}</span></dd></div>
-      <div><dt className="text-xs text-muted-foreground">Runs recorded</dt><dd className="mt-1 font-medium">{summary.total}<span className={summary.error > 0 ? "ml-2 text-xs font-normal text-destructive-text" : "ml-2 text-xs font-normal text-muted-foreground"}>{historyHint(summary)}</span></dd></div>
-    </dl>
+    <StatusStrip label="Run history" className="mb-5">
+      <StatusRow className="md:grid-cols-4 md:[&>*:last-child:nth-child(odd)]:col-span-1">
+        <StatusCell
+          label="Last run"
+          tone={health?.tone ?? "neutral"}
+          value={
+            health ? (
+              <Badge variant={health.tone === "warn" ? "warning" : health.tone === "ok" ? "success" : "destructive"}>
+                {health.label}
+              </Badge>
+            ) : (
+              "never"
+            )
+          }
+          sub={summary.last_finished ? timeAgo(summary.last_finished) : "Nothing has run yet"}
+        />
+        <StatusCell
+          icon={Clock}
+          label="Next run"
+          value={next ? dayTime(next.at) : "Not scheduled"}
+          sub={next ? timeUntil(next.at) : "No row has a schedule"}
+        />
+        <StatusCell
+          icon={ListChecks}
+          label="Runs recorded"
+          tone={failed ? "error" : "neutral"}
+          value={summary.total}
+          sub={historyHint(summary, runs)}
+        />
+        <StatusCell
+          label="With warnings"
+          tone={warned.length > 0 ? "warn" : "ok"}
+          value={warned.length}
+          sub={
+            firstWarned
+              ? `Run #${firstWarned.id} · ${privacyWarnings(firstWarned.privacy).join(", ")}`
+              : "None in the runs shown"
+          }
+        />
+      </StatusRow>
+    </StatusStrip>
   );
 }
 
@@ -272,9 +318,9 @@ export function RunsPage() {
   const collections = useCollections();
   const startRun = useStartRun();
   // Live updates. Without this the list is a snapshot: a run that finishes leaves its row reading
-  // "Running" with a ticking timer for as long as the page stays open, because nothing refetches. On
-  // a real server that made a cancel that HAD worked look like one that was ignored — the operator
-  // watches this page, and this page never changed its mind (SFLIX, 2026-08-13).
+  // "Running" with a ticking timer for as long as the page stays open, because nothing refetches. That
+  // makes a cancel that HAS worked look like one that was ignored: the operator watches this page,
+  // and this page never changes its mind.
   useSSE({
     onRunFinished: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.runs });
@@ -282,7 +328,6 @@ export function RunsPage() {
   });
   const clearRuns = useClearRuns();
   const [clearOpen, setClearOpen] = useState(false);
-  const clearTrigger = useRef<HTMLButtonElement>(null);
   const rowName =
     rowSlug && collections.data
       ? collections.data.find((c) => c.slug === rowSlug)?.name
@@ -294,18 +339,7 @@ export function RunsPage() {
         title="Runs"
         subtitle="Every time Shortlist rebuilt rows, and how it went."
         actions={
-          <div className="flex flex-wrap gap-2">
-            {!rowSlug && (summary.data?.total ?? 0) > 0 && (
-              <Button
-                variant="ghost"
-                className="text-muted-foreground"
-                ref={clearTrigger}
-                onClick={() => setClearOpen(true)}
-              >
-                <Trash2 aria-hidden="true" />
-                Clear runs
-              </Button>
-            )}
+          <>
             <RunRowsDialog
               onRun={(collection_ids) => startRun.mutate({ collection_ids })}
               isPending={startRun.isPending}
@@ -317,24 +351,37 @@ export function RunsPage() {
               {!startRun.isPending && <Play aria-hidden="true" />}
               Run all rows now
             </Button>
-          </div>
+            {!rowSlug && (summary.data?.total ?? 0) > 0 && (
+              <OverflowMenu
+                label="More run actions"
+                variant="outline"
+                items={[
+                  {
+                    label: "Clear run history",
+                    icon: Trash2,
+                    danger: true,
+                    onSelect: () => setClearOpen(true),
+                  },
+                ]}
+              />
+            )}
+          </>
         }
       />
 
       {/* Page-level stats, but not while filtered to one row (they'd describe every run, not this row). */}
       {!rowSlug && summary.data && summary.data.total > 0 && (
-        <RunsStats summary={summary.data} />
+        <RunsStats summary={summary.data} runs={runs} />
       )}
 
       <Dialog open={clearOpen} onOpenChange={setClearOpen}>
-        <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); clearTrigger.current?.focus(); }}>
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Clear all run history?</DialogTitle>
             <DialogDescription>
-              This empties the list below and the step-by-step record of each
-              run. Everything the Dashboard counts &mdash; what was put in
-              people&rsquo;s rows, and what they went on to watch &mdash; is
-              kept. Nothing changes on Plex.
+              Permanently deletes the run list and step-by-step logs. Your
+              Plex rows, saved picks and watched-pick counts are kept, and
+              watch tracking continues.
             </DialogDescription>
           </DialogHeader>
           {clearRuns.isError && (
@@ -345,7 +392,7 @@ export function RunsPage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setClearOpen(false)}>
-              Keep them
+              Keep run history
             </Button>
             <Button
               variant="destructive"
@@ -395,13 +442,13 @@ export function RunsPage() {
         isEmpty={() => runs.length === 0}
         empty={
           <EmptyState
-            title={rowSlug ? "No runs for this row yet" : "No runs yet"}
+            title={rowSlug ? "No runs for this row yet" : "No run history"}
             hint={
               rowSlug
                 ? "This row hasn't been built in any recorded run yet. It'll show up here after its next run."
                 : // There is no single global schedule any more — each row carries its own cron
                   // (Collection.schedule), and a row with a blank one never runs on a timer at all.
-                  "Shortlist hasn't built any rows so far. Start one with the button above, or wait for a row to reach its own schedule — each row is given one in its editor, on the Rows page."
+                  "New runs will appear here. Start one above, or check row schedules on the Rows page."
             }
           />
         }
@@ -424,8 +471,11 @@ export function RunsPage() {
                     <TableHead className="hidden md:table-cell">
                       Duration
                     </TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>Result</TableHead>
                     <TableHead>Users</TableHead>
+                    <TableHead className="hidden w-8 md:table-cell">
+                      <span className="sr-only">Open</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody className="grid md:table-row-group">

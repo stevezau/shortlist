@@ -23,11 +23,10 @@ import respx
 from fastapi.testclient import TestClient
 from plexapi.exceptions import NotFound
 
-from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Server
-from shortlist.server.main import create_app
 from shortlist.server.settings_store import SettingsStore
+from tests.shared_app import app_for
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -59,7 +58,7 @@ def _clear_thumb_memo():
 @pytest.fixture
 def app_client(tmp_path):
     """The real app, a linked server, and Plex credentials in settings."""
-    app = create_app(config_dir=tmp_path)
+    app = app_for(tmp_path)
     with TestClient(app) as test_client:
         with app.state.sessions() as session:
             session.add(
@@ -243,7 +242,7 @@ class TestPickPoster:
 
         assert r.status_code == 304
         assert not r.content
-        plex.read_artwork.assert_not_called(), "a 304 must not cost a PMS image read"
+        plex.read_artwork.assert_not_called()
 
     def test_the_endpoint_refuses_a_request_without_an_owner_session(self, app_client, monkeypatch):
         plex = _fake_plex(monkeypatch)
@@ -328,13 +327,6 @@ class TestTheEventLoopIsNeverBlocked:
         assert isinstance(picks._CLIENT_LOCK, type(threading.Lock()))
         source = inspect.getsource(picks._plex_client)
         assert "with _CLIENT_LOCK:" in source, "the cache write is not guarded"
-
-
-def test_the_client_exposes_both_halves():
-    """A guard against the endpoint growing its own PMS parsing: the shape knowledge lives in one
-    place, and that place is the client."""
-    assert callable(PlexClient.item_thumb_path)
-    assert callable(PlexClient.read_artwork)
 
 
 def test_a_non_image_content_type_from_the_pms_is_not_echoed_back():
