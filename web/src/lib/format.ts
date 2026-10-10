@@ -90,6 +90,10 @@ export function formatDuration(ms: number | null): string {
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
   const minutes = Math.floor(seconds / 60);
+  if (minutes >= 60) {
+    const total = Math.round(seconds / 60);
+    return `${Math.floor(total / 60)}h ${total % 60}m`;
+  }
   return `${minutes}m ${Math.round(seconds % 60)}s`;
 }
 
