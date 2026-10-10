@@ -1,4 +1,4 @@
-"""The base every response model in this package inherits.
+"""The base every API model inherits.
 
 There is exactly one rule here, and it is why this module exists rather than each router declaring
 its own config: **a response model must document a payload, never filter it.**

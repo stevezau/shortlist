@@ -198,7 +198,7 @@ class TestCollectionsApi:
 
     def test_unstarted_only_is_refused_on_a_movies_row(self, client: TestClient):
         """A movie is finished the moment it is watched, so there is no "started" state. The flag is
-        structurally inert there (`_started_shows` yields only SHOW keys) and the editor hides it — so
+        structurally inert there (`started_shows` yields only SHOW keys) and the editor hides it — so
         storing it would leave a row behaving unlike what its settings say."""
         r = client.post(
             "/api/collections",

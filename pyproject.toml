@@ -39,6 +39,7 @@ dependencies = [
     # Imported directly (requests/urllib3 in plex_pms and plex_reachability, starlette across the server,
     # anyio in the assistant stdio bridge) but otherwise only present because plexapi, fastapi and mcp pull them in.
     "requests>=2.31",
+    "urllib3>=2.0",
     "starlette>=0.37",
     "anyio>=4.0",
     "mcp==2.3.0",

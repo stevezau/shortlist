@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.schema_base import PassthroughModel
 
 #: Which of the two Tools-page syncs an event belongs to. `watched` refreshes every user's watch
 #: status; `users` re-reads the plex.tv roster.

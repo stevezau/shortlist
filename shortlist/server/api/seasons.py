@@ -34,9 +34,9 @@ from shortlist.engine.seasons import (
     Preset,
     Season,
 )
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import SeasonDef
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services import jobs
 from shortlist.server.services.library_index import library_index, row_sections
 from shortlist.server.services.season_catalogue import load_catalogue

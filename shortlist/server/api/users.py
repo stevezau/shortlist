@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
 from shortlist.engine.placeholders import refusal
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.serializers import UserOut, UserPickOut, pick_dict, user_dict
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
@@ -32,6 +31,7 @@ from shortlist.server.db.models import (
     iso_utc,
 )
 from shortlist.server.prefs import blocked_entries
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services import jobs, report_service
 from shortlist.server.services.delivery_snapshots import utc
 from shortlist.server.settings_store import SettingsStore
@@ -47,8 +47,8 @@ class BlockSeedBody(BaseModel):
 
 
 class UserPrefs(BaseModel):
-    # `row_size` and `max_rating` used to live here. Neither did anything: max_rating filtered no
-    # content at all, and a row's own size always won. Per-person row size lives on the row override
+    # There is no per-person `row_size` or `max_rating` here: a row's own size always wins and a
+    # rating cap filtered nothing. Per-person row size lives on the row override
     # (PUT /users/{id}/rows/{collection_id}), which the UI actually exposes.
     row_name_tpl: str | None = None
     excluded_genres: list[str] | None = None
@@ -186,8 +186,8 @@ class WatchedTitleOut(PassthroughModel):
     watched_at: str
     year: int | None
     watch_count: int
-    # Display names of the Plex libraries holding this title, sorted. Usually one; two or more is the
-    # duplicate this page used to render as separate rows. Empty for rows cached before 0087, whose
+    # Display names of the Plex libraries holding this title, sorted. Usually one; two or more is a
+    # duplicate, rendered as one row. Empty for rows cached before 0087, whose
     # library name is filled in by that person's next sync.
     libraries: list[str]
     # A show's progress straight from Plex. Both None for movies and for anything reporting no
@@ -579,8 +579,8 @@ def user_outcomes(user_id: int, request: Request) -> list[dict]:
         if session.get(User, user_id) is None:
             raise HTTPException(status_code=404, detail="user not found")
         outcomes = report_service.resolve_outcomes(session, None)
-        # Filtered on the USER only. An extra `watched_at is not None` test used to sit here, which
-        # was redundant with `resolve_outcomes`' own gate for the ordinary case and actively wrong for
+        # Filtered on the USER only. An extra `watched_at is not None` test here would be redundant with
+        # `resolve_outcomes`' own gate for the ordinary case and wrong for
         # the rest: an entry it lets through — finished, never separately credited — is one the
         # dashboard counts and this page hid, so the two disagreed about the same title. One place
         # decides what an outcome is, and it is not this one.

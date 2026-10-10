@@ -119,7 +119,7 @@ class TestASecretNeedsASecretBox:
 
 
 class TestUnsetIsNotTheSameAsStoringABlank:
-    """`unset` removes the row; `set(key, "")` writes one. For the crons the UI can switch off, those
+    """`unset_in_transaction` removes the row; `set(key, "")` writes one. For the crons the UI can switch off, those
     two states mean opposite things — off vs. run at the built-in default (`scheduler._OFF_ABLE`)."""
 
     def test_unset_removes_the_row_so_has_row_goes_back_to_false(self, sessions):
@@ -128,7 +128,7 @@ class TestUnsetIsNotTheSameAsStoringABlank:
             store.set("sync.check_cron", "")
             assert store.has_row("sync.check_cron") is True
 
-            assert store.unset("sync.check_cron") is True
+            assert store.unset_in_transaction("sync.check_cron") is True
 
             assert store.has_row("sync.check_cron") is False
             # Back to the declared default, exactly as a key that was never written reads.
@@ -138,7 +138,7 @@ class TestUnsetIsNotTheSameAsStoringABlank:
         with sessions() as session:
             store = SettingsStore(session)
 
-            assert store.unset("sync.check_cron") is False
+            assert store.unset_in_transaction("sync.check_cron") is False
             assert store.has_row("sync.check_cron") is False
 
 

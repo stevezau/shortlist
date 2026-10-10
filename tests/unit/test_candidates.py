@@ -1889,7 +1889,7 @@ class TestStructuredExtractionPath:
         Asserted against the constants, not against literals: the full TTL is a freshness/cost dial
         that gets retuned (14 days -> 7 on 2026-09-05), and this test is about the RELATIONSHIP
         between the two TTLs, which must hold at every setting. The value itself is pinned where it
-        makes a promise to the owner — `test_cache_prune.py::test_cache_ttl_matches_the_ui`.
+        makes a promise to the owner — `test_cache_prune.py::TestCacheTtlIsVisibleToTheOwner`.
         """
         self._tmdb(mock_tmdb)
         cache = _DictCache()

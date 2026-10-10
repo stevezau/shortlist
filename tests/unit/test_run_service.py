@@ -162,7 +162,7 @@ class TestRunExecution:
     def test_cancel_run_signals_an_armed_run_and_ignores_others(self, sessions, tmp_path):
         import threading
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         assert service.cancel_run(999) is False  # nothing in-flight with that id
         service._cancels[7] = threading.Event()  # simulate a run currently executing
         assert service.cancel_run(7) is True
@@ -174,7 +174,7 @@ class TestRunExecution:
         again is a no-op, and a no-op is a success."""
         import threading
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         service._cancels[7] = threading.Event()
         assert service.cancel_run(7) is True
         assert service.cancel_run(7) is True  # idempotent, not a lie
@@ -186,7 +186,7 @@ class TestRunExecution:
 
         from shortlist.server.db.models import Run
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             session.add(Run(id=7, status="running", trigger="manual", stats={}))
             session.commit()
@@ -201,7 +201,7 @@ class TestRunExecution:
         """A skipped person built nothing. Folding them into `users_ok` is what made a run where
         EVERY person was skipped report "3 succeeded · all succeeded" over three "Skipped" rows —
         the summary contradicting the rows right beneath it (issue #3 follow-up)."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         report = RunReport(
             started_at=datetime.now(UTC),
@@ -230,7 +230,7 @@ class TestRunExecution:
 
     def test_run_persists_report_picks_and_events(self, sessions, tmp_path, monkeypatch):
         bus = EventBus()
-        service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, bus, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
 
@@ -289,7 +289,7 @@ class TestRunExecution:
         The hook itself is covered in `test_notify_delivery.py`; what only this can show is that
         `_run_locked` actually calls it, on the path where the engine RETURNS a not-ok report.
         """
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
         with sessions() as session:
@@ -312,7 +312,7 @@ class TestRunExecution:
 
         Hooking only the tidy path would stay silent exactly when Plex or plex.tv fell over.
         """
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         def _boom(ctx, profiles):
@@ -334,7 +334,7 @@ class TestRunExecution:
 
     def test_a_healthy_run_queues_no_alert(self, sessions, tmp_path, monkeypatch):
         """The guard at the call site. Without it the hook fires on every run and the owner mutes it."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         healthy = RunReport(
             started_at=datetime.now(UTC),
@@ -358,7 +358,7 @@ class TestRunExecution:
 
     def test_a_run_announces_its_start_and_its_finish_when_the_owner_chose_them(self, sessions, tmp_path, monkeypatch):
         """The wiring for `run.started` and `run.finished`, through the real `RunService`."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         healthy = RunReport(
             started_at=datetime.now(UTC),
@@ -389,7 +389,7 @@ class TestRunExecution:
         """SHORTLIST_DRY_RUN forces even a non-dry 'Run now' to dry-run — the safety a demo/test
         instance pointed at a real server relies on (it can never write to Plex)."""
         monkeypatch.setenv("SHORTLIST_DRY_RUN", "1")
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         captured: dict = {}
 
         def fake_build_context(**kw):
@@ -413,7 +413,7 @@ class TestRunExecution:
         row delete/rename/poster/disable reconciles) gets its context, so forcing dry-run here covers
         all of them. Assert a caller's dry_run=False is overridden when the env is set."""
         monkeypatch.setenv("SHORTLIST_DRY_RUN", "1")
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         captured: dict = {}
         monkeypatch.setattr(service._ctx, "build", lambda **kw: captured.update(kw) or SimpleNamespace())
 
@@ -447,7 +447,7 @@ class TestRunExecution:
     def test_live_persist_then_end_persist_writes_each_user_exactly_once(self, sessions, tmp_path):
         """The live per-user persist writes a user; the end-of-run persist must NOT write them again —
         exactly one RunUser + its picks + one run.user event, not two."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         run_id = self._new_run(sessions)
         report = self._one_user_report("sarah")
 
@@ -468,7 +468,7 @@ class TestRunExecution:
     def test_end_persist_backstops_a_user_the_live_path_missed(self, sessions, tmp_path):
         """If the live persist never ran for a user (hook raised / unwired), the end-of-run persist
         still writes them exactly once."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         run_id = self._new_run(sessions)
 
         service._persist_report(run_id, self._report(self._one_user_report("mike")))
@@ -479,7 +479,7 @@ class TestRunExecution:
     def test_an_unreadable_filter_is_recorded_on_every_run_that_looked_empty_included(self, sessions, tmp_path):
         """Empty must be written too, or one bad night pins the alert through every fixed run after it —
         the shape `filters_not_enforced` already had to be fixed for."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         run_id = self._new_run(sessions)
         report = self._report(self._one_user_report("sarah"))
         report.unhideable_measured = True
@@ -492,7 +492,7 @@ class TestRunExecution:
     def test_the_accounts_a_run_could_not_vouch_for_are_recorded(self, sessions, tmp_path):
         """The run page counts an account as hiding only when the run vouched for it; these three keys are
         what it reads, and an absent key reads as "not fully measured" on every new run."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         run_id = self._new_run(sessions)
         report = self._report(self._one_user_report("sarah"))
         report.unhideable_measured = True
@@ -509,7 +509,7 @@ class TestRunExecution:
             ]
 
     def test_a_run_that_restored_an_owners_restriction_records_who(self, sessions, tmp_path):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         run_id = self._new_run(sessions)
         report = self._report(self._one_user_report("sarah"))
         report.restrictions_restored = {201: "sarah"}
@@ -526,7 +526,7 @@ class TestRunExecution:
         created, labelled and promoted with NO audit event at all (plex-safety rule 10), and a failed
         shared row produced an errored run with nothing to show for it."""
         bus = EventBus()
-        service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, bus, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         shared = UserRunReport(
@@ -561,7 +561,7 @@ class TestRunExecution:
         run in front finished: on a real server, half an hour of "Stopping…" on four runs at once.
 
         Nothing has been built at that point, so there is nothing to unwind."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         run_id = self._new_run(sessions)
         # Queued: the cancel Event exists from the moment `start_run` arms it.
         service._cancels[run_id] = threading.Event()
@@ -582,7 +582,7 @@ class TestRunExecution:
         a shared row that had just built 40 picks."""
         from shortlist.server.db.models import RunSharedRow
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         shared = UserRunReport(
             username="Shared · popular",
@@ -629,7 +629,7 @@ class TestRunExecution:
         `shared_<slug>` key, so the ledger and the deliverer must agree on it."""
         from shortlist.server.db.models import Delivery
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         shared = UserRunReport(
             username="Shared · popular",
@@ -663,7 +663,7 @@ class TestRunExecution:
     def test_a_skipped_shared_row_is_counted_as_skipped_and_still_audited(self, sessions, tmp_path, monkeypatch):
         """A shared row has no RunUser row, so this event is the only record of its outcome (rule 10)
         — and a row that built nothing must not inflate the run's success count."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         shared = UserRunReport(
             username="Shared · popular",
@@ -690,7 +690,7 @@ class TestRunExecution:
 
     def test_a_failed_shared_row_makes_the_run_an_error(self, sessions, tmp_path, monkeypatch):
         bus = EventBus()
-        service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, bus, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         shared = UserRunReport(
@@ -731,7 +731,7 @@ class TestRunExecution:
         from shortlist.server.db.models import DEFAULT_SLUG, User
 
         bus = EventBus()
-        service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, bus, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         # The `sessions` fixture already seeds sarah. Last night's run put tmdb 1 and 2 in her row;
@@ -801,7 +801,7 @@ class TestRunExecution:
         from shortlist.server.db.models import RequestCandidate
 
         bus = EventBus()
-        service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, bus, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         why = RequestWhy(user="Sarah", row="Sarah's Picks", seed="Blade Runner", source="tmdb_similar")
@@ -847,7 +847,7 @@ class TestRunExecution:
 
     def test_dry_run_persists_no_picks(self, sessions, tmp_path, monkeypatch):
         bus = EventBus()
-        service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, bus, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report(dry_run=True))
 
@@ -860,7 +860,7 @@ class TestRunExecution:
             assert session.query(PickRow).count() == 0
 
     def test_context_build_failure_marks_run_error(self, sessions, tmp_path, monkeypatch):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
 
         def boom(**kw):
             raise RuntimeError("Plex connection is not configured yet")
@@ -879,7 +879,7 @@ class TestRunExecution:
         self, sessions, tmp_path, monkeypatch
     ):
         # Issue #139: the run page printed `ConnectionError: HTTPSConnectionPool(host=...)`.
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
 
         def boom(**kw):
             raise PlexUnreachable("Shortlist could not reach Plex at http://pms:32400: it did not answer in time.")
@@ -894,7 +894,7 @@ class TestRunExecution:
         assert run.stats["error"] == "Shortlist could not reach Plex at http://pms:32400: it did not answer in time."
 
     def test_a_failed_runs_error_is_scrubbed_of_tokens(self, sessions, tmp_path, monkeypatch):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
 
         def boom(**kw):
             raise RuntimeError("GET http://pms:32400/library?X-Plex-Token=abcdefghij0123456789 failed")
@@ -912,7 +912,7 @@ class TestRunExecution:
     def test_a_run_that_fails_before_it_starts_says_why_in_its_own_log(self, sessions, tmp_path, monkeypatch):
         # The engine's warnings are only captured once it is running, so a failure building the
         # context reached the container log and left the run's Log tab empty.
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
 
         def boom(**kw):
             raise RuntimeError("Plex connection is not configured yet")
@@ -931,7 +931,7 @@ class TestRunExecution:
         ]
 
     def test_user_ids_narrows_but_never_widens_past_enabled(self, sessions, tmp_path):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             mike = session.query(User).filter_by(slug="mike").one()
             mike.enabled = False
@@ -944,7 +944,7 @@ class TestRunExecution:
             assert service.enabled_profiles(session, []) == []
 
     def test_enabled_profiles_skips_paused_and_maps_prefs(self, sessions, tmp_path):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             mike = session.query(User).filter_by(slug="mike").one()
             mike.prefs = {"paused": True}
@@ -960,7 +960,7 @@ class TestPauseAll:
     """The Danger Zone switch was a no-op: the key wasn't storable and nothing read it."""
 
     def test_paused_all_stops_every_run_without_disabling_users(self, sessions, tmp_path):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             assert {p.slug for p in service.enabled_profiles(session)} == {"sarah", "mike"}
             SettingsStore(session, service._secrets).set("paused_all", True)
@@ -1037,7 +1037,7 @@ class TestAFinishedRunStartsTheWorkItWasBlocking:
     """
 
     def _service_with_a_drain_spy(self, sessions, tmp_path, monkeypatch):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         drained: list[bool] = []
 
@@ -1086,7 +1086,7 @@ class TestAFinishedRunStartsTheWorkItWasBlocking:
 
     def test_a_broken_queue_never_fails_an_otherwise_good_run(self, sessions, tmp_path, monkeypatch):
         """The drain is opportunistic: the queue is durable and the worker re-ticks regardless."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
 
@@ -1152,7 +1152,7 @@ class TestShutdownNeverStartsAWriterBesideALiveEngine:
     def test_a_cancelled_run_task_starts_no_writer_while_its_engine_thread_runs(self, sessions, tmp_path, monkeypatch):
         from shortlist.server.services import jobs
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         service.state = SimpleNamespace(run_service=service, sessions=sessions)
         engine_started, release_engine, engine_done = threading.Event(), threading.Event(), threading.Event()
@@ -1210,7 +1210,7 @@ class TestRunLogBuffer:
     """The in-memory run activity log: append via the progress sink, replay, and bounded eviction."""
 
     def test_appends_replays_and_evicts_old_runs(self, sessions, tmp_path):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         sink = service._new_run_log(1)
         sink({"stage": "history", "user": "sarah"})
         sink({"stage": "candidates", "user": "sarah"})
@@ -1224,7 +1224,7 @@ class TestRunLogBuffer:
     def test_stamps_a_monotonic_seq_so_the_live_tail_can_be_deduped(self, sessions, tmp_path):
         """The client merges a seeded fetch with the SSE tail. Timestamps are not unique enough to
         dedupe on — several lines land in the same millisecond."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         sink = service._new_run_log(1)
         for stage in ("history", "candidates", "delivering"):
             sink({"stage": stage, "user": "sarah"})
@@ -1236,7 +1236,7 @@ class TestRunLogBuffer:
         """The whole point of persisting it: opening an older run's log used to show nothing at all."""
         from shortlist.server.db.models import Run
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="ok")
             session.add(run)
@@ -1261,7 +1261,7 @@ class TestRunLogBuffer:
     def test_a_broken_log_write_never_fails_the_run(self, sessions, tmp_path, monkeypatch):
         """The run has already written to Plex by the time the tail flushes. Losing narration is an
         annoyance; raising here would turn it into a failed run that actually succeeded."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         sink = service._new_run_log(1)
         sink({"stage": "history", "user": "sarah"})
 
@@ -1276,7 +1276,7 @@ class TestRunLogBuffer:
         it into the table came back indistinguishable from narration once the run left memory."""
         from shortlist.server.db.models import Run
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="ok")
             session.add(run)
@@ -1299,7 +1299,7 @@ class TestTheWatchSyncSaysItsUnmatchedWatchedSummaryOnce:
     def test_the_summary_is_asked_for_once_after_every_read(self, sessions, tmp_path, monkeypatch):
         from shortlist.engine.models import UserProfile, UserType
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         order: list[str] = []
 
         def read(profile, *args, **kwargs):
@@ -1326,7 +1326,7 @@ class TestTheWatchSyncSaysItsUnmatchedWatchedSummaryOnce:
 
     def test_a_sync_that_never_built_a_context_asks_for_nothing(self, sessions, tmp_path, monkeypatch):
         """Plex not configured: the sync skips, and there is no source to ask."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
 
         def unconfigured(**kwargs):
             raise RuntimeError("plex is not configured")
@@ -1344,7 +1344,7 @@ class TestTheRunLogCarriesTheEnginesWarnings:
     same moment, and a run's log must hold only what THAT run's work said."""
 
     def _run(self, sessions, tmp_path, monkeypatch, engine) -> tuple[RunService, int]:
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", engine)
 
@@ -1461,7 +1461,7 @@ class TestCancellingAQueuedRunIsImmediate:
     """
 
     def test_a_queued_run_is_aborted_without_waiting_for_the_lock(self, sessions, tmp_path):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="queued", stats={})
             session.add(run)
@@ -1481,7 +1481,7 @@ class TestCancellingAQueuedRunIsImmediate:
         """NULL `began_at` is what makes the Runs page say "never ran" instead of billing the queue
         wait as work. Three runs queued together and cancelled nine minutes later each reported
         "9m 26s" (a large production server, 2026-08-13) — measured from `started_at`, which is stamped at INSERT."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="queued", stats={})
             session.add(run)
@@ -1500,7 +1500,7 @@ class TestCancellingAQueuedRunIsImmediate:
         """The stamp has no other coverage, and `run.status = "running"` has already been moved once
         in this file (the cancel-while-queued fix). Move it again without this and every run on the
         page reads "never ran", with nothing failing."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="queued", stats={})
             session.add(run)
@@ -1527,7 +1527,7 @@ class TestCancellingAQueuedRunIsImmediate:
         claimed again — silently, looking like a backlog rather than a fault, until a restart. On a
         Watchtower host that means a departed user's `label!=` excludes are never pruned.
         """
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="queued", stats={})
             session.add(run)
@@ -1545,7 +1545,7 @@ class TestCancellingAQueuedRunIsImmediate:
     def test_a_running_run_is_still_only_signalled(self, sessions, tmp_path):
         """The cooperative path is unchanged: a running run is mid-write, so it is asked to stop
         rather than declared stopped — finishing the row in hand is what keeps Plex consistent."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="running", stats={})
             session.add(run)
@@ -1578,7 +1578,7 @@ class TestThePerRowRequestBreakdownIsPersisted:
             claimed_by_row={"picked": 6, "because": 1},
             sent_by_row={"picked": 5},
         )
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
 
@@ -1601,7 +1601,7 @@ class TestThePerRowRequestBreakdownIsPersisted:
 
     def test_a_run_with_no_request_phase_records_no_empty_dict(self, sessions, tmp_path, monkeypatch):
         """An empty key would read as "measured, and every row was zero" — it wasn't measured."""
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
 
@@ -1629,7 +1629,7 @@ class TestTheLiveRowSnapshotIsTakenBeforeTheRebuild:
         from shortlist.server.db.models import DEFAULT_SLUG, User
 
         bus = EventBus()
-        service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, bus, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         now = datetime.now(UTC)
@@ -1726,7 +1726,7 @@ class TestARunSettlesOffTheEventLoop:
     for 4.4s+ (and the context's PMS request for up to 45s), stalling /api/system/health and SSE."""
 
     def _service(self, sessions, tmp_path, monkeypatch):
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
         service.state = None
         return service
@@ -1831,7 +1831,7 @@ class TestAFinishedRunDropsTheCachedReport:
     def test_a_run_that_completes_clears_the_cache(self, sessions, tmp_path, monkeypatch):
         from shortlist.server.services import report_cache
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
         report_cache.store_report("30", {"stale": True})
@@ -1847,7 +1847,7 @@ class TestAFinishedRunDropsTheCachedReport:
     def test_a_run_cancelled_while_queued_clears_the_cache(self, sessions, tmp_path):
         from shortlist.server.services import report_cache
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         with sessions() as session:
             run = Run(trigger="manual", status="queued")
             session.add(run)
@@ -1863,7 +1863,7 @@ class TestAFinishedRunDropsTheCachedReport:
     def test_a_run_that_errors_clears_the_cache(self, sessions, tmp_path, monkeypatch):
         from shortlist.server.services import report_cache
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         def boom(ctx, profiles):
@@ -1884,7 +1884,7 @@ class TestAFinishedRunDropsTheCachedReport:
     def test_a_run_stopped_mid_run_clears_the_cache(self, sessions, tmp_path, monkeypatch):
         from shortlist.server.services import report_cache
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         engine_started = threading.Event()
 
@@ -1917,7 +1917,7 @@ class TestAFinishedRunDropsTheCachedReport:
         aborted first — so only the in-lock early exit can drop the cached report."""
         from shortlist.server.services import report_cache
 
-        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service = RunService(sessions, EventBus(), SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
 

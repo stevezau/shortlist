@@ -49,23 +49,6 @@ class TestPlacement:
             "recommended": True,
         }
 
-    def test_a_legacy_pinned_row_is_promoted_without_being_positioned(self, ctx: EngineContext):
-        """`pin_top` no longer reaches `promote`.
-
-        It used to add one `move(after=None)` per collection per run — the "to the top" primitive
-        `place_rows` documents as unusable alone, because a built-in stuck at the minimum float makes
-        everything sent above it land ON that value. It also fired with shelf ordering switched OFF,
-        contradicting that setting. Placement owns position now, and an unconfigured library already
-        defaults to the top, so nothing is lost by ignoring the flag.
-        """
-        from shortlist.engine.models import RowSpec
-        from shortlist.engine.pipeline import _promote_one
-
-        _promote_one(ctx, MagicMock(), RowSpec(slug="x", name_template="", size=10, placement="home", pin_top=True))
-
-        assert ctx.plex.promote.call_args.kwargs == {"shared": True, "home": True, "recommended": False}
-        assert "pin_top" not in ctx.plex.promote.call_args.kwargs
-
     def test_recommended_is_chosen_per_collection_not_ored_across_audiences(self, ctx: EngineContext):
         """The Recommended flag comes from WHOSE row the collection is (issue #6).
 
@@ -622,7 +605,7 @@ class TestLibraryScoping:
         scanned: list[str] = []
         ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
 
-        pipeline_mod._build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, sports, shows])
+        pipeline_mod.build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, sports, shows])
 
         assert scanned == ["1"]  # Movies only — Sports and TV Shows never read
         assert [str(s.key) for s in ctx.delivery_sections] == ["1"]
@@ -646,7 +629,7 @@ class TestLibraryScoping:
         scanned: list[str] = []
         ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
 
-        pipeline_mod._build_indexes(ctx, [], [movies, sports])
+        pipeline_mod.build_indexes(ctx, [], [movies, sports])
 
         assert [str(s.key) for s in ctx.delivery_sections] == ["1"]  # the shelf phase has a library
         assert scanned == []  # and not one item was read
@@ -661,7 +644,7 @@ class TestLibraryScoping:
         scanned: list[str] = []
         ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
 
-        pipeline_mod._build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, shows])
+        pipeline_mod.build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, shows])
 
         assert sorted(scanned) == ["1", "2"]
 

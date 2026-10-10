@@ -9,8 +9,8 @@ render belongs here.
 from __future__ import annotations
 
 from shortlist.engine.models import UserType
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.db.models import DEFAULT_SLUG, PickRow, User, iso_utc
+from shortlist.server.schema_base import PassthroughModel
 
 #: Every response model in this package sets it. A Pydantic response model does not merely DESCRIBE a
 #: response, it FILTERS it — a key the model forgot to declare is dropped from the payload, silently,

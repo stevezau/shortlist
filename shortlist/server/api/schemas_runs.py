@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
-from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.schema_base import PassthroughModel
 
 
 class PassthroughModel(PassthroughModel):

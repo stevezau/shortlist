@@ -15,10 +15,10 @@ from shortlist.engine.clients.arr import ArrError
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.search import EXA_SEARCH_TYPES
 from shortlist.engine.clients.seerr import SeerrError
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Server
 from shortlist.server.net_guard import BlockedUrl, check_url
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services import jobs
 from shortlist.server.services.audit import actor_of, add_audit
 from shortlist.server.services.connection_choices import (
@@ -30,7 +30,6 @@ from shortlist.server.services.connection_choices import (
 from shortlist.server.services.plex_reachability import error_text
 from shortlist.server.services.settings_validation import (
     KNOWN_KEYS,
-    REDACTED_PLACEHOLDER,
     reject_blocked_urls,
     validate_values,
 )
@@ -41,22 +40,6 @@ router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(
 
 class SettingsUpdate(BaseModel):
     values: dict[str, object]
-
-
-def _re_points_plex(values: dict[str, object]) -> bool:
-    """Whether this write actually changes which Plex server we talk to.
-
-    Mirrors the write loop's own skip: a redacted token round-tripped from the UI is not a new value,
-    so it must not count. Treating it as a re-point would throw the cached library list away every
-    time anyone saved the Settings page, putting Plex back on the next page load for no reason.
-    """
-    for key in ("plex.url", "plex.token"):
-        if key not in values:
-            continue
-        if key in SECRET_KEYS and values[key] == REDACTED_PLACEHOLDER:
-            continue
-        return True
-    return False
 
 
 class CuratorModelsRequest(BaseModel):
@@ -234,10 +217,9 @@ async def test_connection(service: str, request: Request) -> dict:
                 # in a couple of seconds and cost as little as possible, and proving the key is the
                 # only thing this button claims to do.
                 #
-                # Taken from EXA_SEARCH_TYPES rather than named literally. It used to hardcode
-                # "fast"; when that mode was dropped for returning no titles, `ExaClient` clamped the
-                # unknown value to the DEFAULT — so every auto-test on the Settings page silently ran
-                # `deep-lite` at 1.7x the price and logged a warning nobody had asked for.
+                # Taken from EXA_SEARCH_TYPES rather than named literally: a literal for a dropped mode
+                # is clamped by `ExaClient` to the DEFAULT, so every auto-test on the Settings page
+                # would silently run `deep-lite` at 1.7x the price.
                 return ExaClient(api_key, search_type=EXA_SEARCH_TYPES[0]).ping()
             if service == "native_search":
                 # A REAL web search, not a capability lookup. `supports_native_web_search` says the

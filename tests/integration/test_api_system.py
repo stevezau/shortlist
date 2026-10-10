@@ -421,16 +421,6 @@ class TestSystemResponseShapes:
         }
         assert body["latest_version"] is None and body["update_available"] is False
 
-    def test_syncs_reports_each_schedule_with_its_nested_shape(self, client: TestClient):
-        body = client.get("/api/system/syncs").json()
-
-        assert set(body) == {"watched", "users", "backup"}
-        assert set(body["watched"]) == {"last", "next", "cron"}
-        assert set(body["users"]) == {"last", "next", "cron"}
-        # Backups carry no "last": the backup list itself is that answer, so the nested shape differs.
-        assert set(body["backup"]) == {"next", "cron", "max_keep"}
-        assert isinstance(body["backup"]["max_keep"], int)
-
     def test_image_provider_explains_itself_when_it_cannot_generate(self, client: TestClient):
         body = client.get("/api/system/image-provider").json()
 

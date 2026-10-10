@@ -2471,8 +2471,8 @@ export interface paths {
         /**
          * Health
          * @description Liveness only — this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its
-         *     consumer. The version used to be here too; an unauthenticated caller does not need to know which
-         *     build to look up advisories for. The UI reads it from `/system/version`, which is owner-gated.
+         *     consumer. It carries no version: an unauthenticated caller does not need to know which build to
+         *     look up advisories for. The UI reads it from `/system/version`, which is owner-gated.
          */
         get: operations["health_api_system_health_get"];
         put?: never;
@@ -2691,26 +2691,6 @@ export interface paths {
          *     cleanup/uninstall finds and removes, so the owner can eyeball nothing has drifted (rule 10).
          */
         get: operations["owned_collections_audit_api_system_owned_collections_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/system/syncs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Syncs
-         * @description When each sync last ran and when it next fires — for the Tools page "last synced" lines.
-         */
-        get: operations["syncs_api_system_syncs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3691,20 +3671,6 @@ export interface components {
             privacy_note: string;
             /** Restored */
             restored: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * BackupScheduleOut
-         * @description Backups have no "last ran" line on the Tools page — the backup list itself is that answer.
-         */
-        BackupScheduleOut: {
-            /** Cron */
-            cron: string;
-            /** Max Keep */
-            max_keep: number;
-            /** Next */
-            next: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -7487,28 +7453,6 @@ export interface components {
             job_id: number;
             /** Started */
             started: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * SyncStateOut
-         * @description One sync's schedule summary: when it last ran, when it fires next, and on what cron.
-         */
-        SyncStateOut: {
-            /** Cron */
-            cron: string;
-            /** Last */
-            last: string | null;
-            /** Next */
-            next: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** SyncsOut */
-        SyncsOut: {
-            backup: components["schemas"]["BackupScheduleOut"];
-            users: components["schemas"]["SyncStateOut"];
-            watched: components["schemas"]["SyncStateOut"];
         } & {
             [key: string]: unknown;
         };
@@ -12106,26 +12050,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OwnedCollectionsOut"];
-                };
-            };
-        };
-    };
-    syncs_api_system_syncs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SyncsOut"];
                 };
             };
         };

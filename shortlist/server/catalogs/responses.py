@@ -1,6 +1,6 @@
 """REST output schemas derived from strict catalog definitions, retaining future fields."""
 
-from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.schema_base import PassthroughModel
 
 from .models import (
     EffectReference,

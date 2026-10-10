@@ -40,7 +40,7 @@ def sessions(tmp_path: Path):
 
 @pytest.fixture
 def service(sessions, tmp_path):
-    return RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+    return RunService(sessions, EventBus(), SecretBox(tmp_path))
 
 
 @pytest.fixture
@@ -2756,27 +2756,12 @@ class TestRowVisibilitySchedule:
         assert spec.show_home is False
         assert spec.show_owner_library is True
 
-    def test_a_permanently_off_row_is_not_marked_as_hidden_by_a_schedule(
-        self, service, sessions, configured, monkeypatch
-    ):
-        """The two must stay distinguishable. Promotion disables its no-spec fallback when a SCHEDULE
-        could be hiding a row; keying that on the resolved placement instead would disable it on any
-        server with one friends-off row — a setting unrelated to day schedules, and one whose fallback
-        is what stops a row that lost its ledger identity from silently disappearing."""
-        self._row(sessions, show_days=[], placement="off", placement_friends="off")
-
-        spec = self._spec(service, monkeypatch, self.TUESDAY)
-
-        assert spec.placement == "off"
-        assert spec.hidden_by_schedule is False
-
-    def test_a_row_hidden_by_todays_schedule_says_so(self, service, sessions, configured, monkeypatch):
+    def test_a_row_hidden_by_todays_schedule_is_placed_off(self, service, sessions, configured, monkeypatch):
         self._row(sessions, show_days=[1])  # Mondays only; judged on a Tuesday
 
         spec = self._spec(service, monkeypatch, self.TUESDAY)
 
         assert spec.placement == "off"
-        assert spec.hidden_by_schedule is True
 
 
 class TestBuildRequestHolds:

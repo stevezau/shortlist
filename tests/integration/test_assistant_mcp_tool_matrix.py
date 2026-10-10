@@ -48,6 +48,7 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.main import create_app
 from shortlist.server.settings_store import SettingsStore
+from tests.assistant_grants import find_grant_for_client, replace_grant_authority
 from tests.e2e.conftest import OWNER_ACCOUNT_ID, PMS_VERSION, _make_fake_tmdb
 from tests.fakes.fake_plex import FakeCollection, FakePlexState, make_fake_plex, make_fake_plextv, seed_state
 from tests.uvicorn_thread import UvicornThread
@@ -348,7 +349,7 @@ def test_mcp_public_run_tool_uses_configured_policy_for_manage_and_rejects_budge
             assert session.get(AssistantChange, legacy["change_id"]).kind == "run"
 
         repository = app.state.assistant_auth.repository
-        grant = repository.find_grant_for_client("mcp-wire-matrix")
+        grant = find_grant_for_client(repository, "mcp-wire-matrix")
         assert grant is not None
         managed = repository.set_basic_access(
             grant.grant_id,
@@ -562,8 +563,9 @@ def test_mcp_setup_status_distinguishes_denied_readiness_from_missing_setup(tmp_
     with _wire_app(tmp_path, monkeypatch, capabilities=frozenset(capabilities)) as (wire, app, _state):
         if hidden == "configuration":
             repository = app.state.assistant_auth.repository
-            grant = repository.find_grant_for_client("mcp-wire-matrix")
-            repository.replace_grant_authority(
+            grant = find_grant_for_client(repository, "mcp-wire-matrix")
+            replace_grant_authority(
+                repository,
                 grant.grant_id,
                 capabilities=grant.capabilities,
                 constraints=replace(grant.constraints, setting_groups=frozenset()),
@@ -632,8 +634,9 @@ def test_mcp_sdk_configured_choices_read_real_loopback_service_shapes(tmp_path, 
                     store.set(f"requests.{kind}.apikey", f"synthetic-{kind}-key")
                 session.commit()
             repository = app.state.assistant_auth.repository
-            grant = repository.find_grant_for_client("mcp-wire-matrix")
-            repository.replace_grant_authority(
+            grant = find_grant_for_client(repository, "mcp-wire-matrix")
+            replace_grant_authority(
+                repository,
                 grant.grant_id,
                 capabilities=grant.capabilities,
                 constraints=replace(
@@ -691,8 +694,9 @@ def test_mcp_sdk_curator_model_choices_use_real_saved_provider_http(tmp_path, mo
                 store.set("curator.model", "alpha")
                 session.commit()
             repository = app.state.assistant_auth.repository
-            grant = repository.find_grant_for_client("mcp-wire-matrix")
-            repository.replace_grant_authority(
+            grant = find_grant_for_client(repository, "mcp-wire-matrix")
+            replace_grant_authority(
+                repository,
                 grant.grant_id,
                 capabilities=grant.capabilities,
                 constraints=replace(grant.constraints, destination_ids=frozenset({url})),
@@ -769,8 +773,9 @@ def test_mcp_sdk_curator_models_never_follow_redirect_outside_approved_destinati
                     store.set(key, value)
                 session.commit()
             repository = app.state.assistant_auth.repository
-            grant = repository.find_grant_for_client("mcp-wire-matrix")
-            repository.replace_grant_authority(
+            grant = find_grant_for_client(repository, "mcp-wire-matrix")
+            replace_grant_authority(
+                repository,
                 grant.grant_id,
                 capabilities=grant.capabilities,
                 constraints=replace(grant.constraints, destination_ids=frozenset({url})),
@@ -1297,8 +1302,9 @@ def test_mcp_sdk_person_row_settings_roundtrip_inheritance_staleness_and_scope(t
             session.add(Collection(id=11, slug="outside-row", name="Outside row", library_keys=["2"], enabled=False))
             session.commit()
         repository = app.state.assistant_auth.repository
-        grant = repository.find_grant_for_client("mcp-wire-matrix")
-        repository.replace_grant_authority(
+        grant = find_grant_for_client(repository, "mcp-wire-matrix")
+        replace_grant_authority(
+            repository,
             grant.grant_id,
             capabilities=grant.capabilities,
             constraints=replace(
@@ -1414,8 +1420,9 @@ def test_mcp_sdk_person_row_settings_roundtrip_inheritance_staleness_and_scope(t
             {"change_id": denied_row["change_id"], "idempotency_key": _idempotency("out-of-row-override")},
         )
 
-        grant = repository.find_grant_for_client("mcp-wire-matrix")
-        repository.replace_grant_authority(
+        grant = find_grant_for_client(repository, "mcp-wire-matrix")
+        replace_grant_authority(
+            repository,
             grant.grant_id,
             capabilities=grant.capabilities,
             constraints=replace(grant.constraints, library_keys=frozenset({"2"})),
@@ -1435,8 +1442,9 @@ def test_mcp_sdk_person_row_settings_roundtrip_inheritance_staleness_and_scope(t
             "shortlist_apply_change",
             {"change_id": denied["change_id"], "idempotency_key": _idempotency("out-of-library-override")},
         )
-        grant = repository.find_grant_for_client("mcp-wire-matrix")
-        repository.replace_grant_authority(
+        grant = find_grant_for_client(repository, "mcp-wire-matrix")
+        replace_grant_authority(
+            repository,
             grant.grant_id,
             capabilities=grant.capabilities - {Capability.PEOPLE_READ},
             constraints=replace(grant.constraints, library_keys=frozenset({"1"})),
@@ -1586,7 +1594,7 @@ def test_mcp_sdk_verified_paused_theme_setup_needs_no_ai_provider_or_capability(
             assert (
                 session.get(
                     AssistantBudget,
-                    app.state.assistant_auth.repository.find_grant_for_client("mcp-wire-matrix").grant_id,
+                    find_grant_for_client(app.state.assistant_auth.repository, "mcp-wire-matrix").grant_id,
                 )
                 is None
             )
@@ -1944,8 +1952,9 @@ def test_mcp_sdk_narrowing_library_scope_requires_authority_for_removed_collecti
         before_collections = deepcopy(state.collections)
         movie_key = next(key for key, collection in state.collections.items() if collection.section_id == 1)
         repository = app.state.assistant_auth.repository
-        grant = repository.find_grant_for_client("mcp-wire-matrix")
-        repository.replace_grant_authority(
+        grant = find_grant_for_client(repository, "mcp-wire-matrix")
+        replace_grant_authority(
+            repository,
             grant.grant_id,
             capabilities=grant.capabilities,
             constraints=replace(

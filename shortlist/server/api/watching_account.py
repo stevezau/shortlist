@@ -20,10 +20,10 @@ from sqlalchemy import or_
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.models import UserType
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Job, User, WatchStateSnapshot, iso_utc
 from shortlist.server.safe_mode import force_dry_run
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services.watching_account import TransferReport, candidate_home_users
 
 router = APIRouter(prefix="/watching-account", tags=["watching-account"], dependencies=[Depends(require_owner)])

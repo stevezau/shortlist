@@ -18,10 +18,10 @@ from sqlalchemy.orm import Session
 
 from shortlist.engine.curator import make_curator
 from shortlist.engine.models import MediaType
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.seasons import off_loop, plex_reader
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, Theme
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services import theme_store
 from shortlist.server.services.context_builder import curator_kwargs
 from shortlist.server.services.library_index import library_index
@@ -284,7 +284,7 @@ def _row_libraries(session: Session, collection_id: int | None) -> list[str]:
     collection = session.get(Collection, collection_id)
     if collection is None:
         raise HTTPException(status_code=404, detail="collection not found")
-    # Pause blocks AI spend (preview); hand edits and 0-token saves stay legitimate (`_spend_on`).
+    # Pause blocks AI spend (preview); hand edits and 0-token saves stay legitimate.
     if collection.ai_paused:
         raise HTTPException(status_code=409, detail=PAUSED)
     return [str(k) for k in collection.library_keys or []]

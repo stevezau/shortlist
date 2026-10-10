@@ -199,7 +199,7 @@ def read_sharing_status(
 
     # Which labels need hiding: the per-person rows that EXIST ON PLEX, read from the server.
     #
-    # NOT the enabled-user list, which is what this used to do. The engine only ever excludes labels
+    # NOT the enabled-user list. The engine only ever excludes labels
     # it found on the PMS (`desired_excludes` <- `stored_labels`), so an enabled user who has never
     # received a row — a cold start, zero picks, a delivery that failed — contributes a label that
     # can never appear in anybody's filter. Every account then read as "missing" it, and this

@@ -38,7 +38,9 @@ from loguru import logger
 from shortlist.engine.models import LABEL_PREFIX, SHARED_LABEL_PREFIX, FilterSnapshot, UserProfile, UserType
 
 if TYPE_CHECKING:
+    from shortlist.engine.clients.plex_pms import PlexClient
     from shortlist.engine.clients.plextv import PlexTvClient, PlexTvUser
+    from shortlist.engine.models import EngineConfig
 
 FILTER_FIELDS = ("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos")
 RESTRICTED_FILTER_FIELDS = ("filterMovies", "filterTelevision")
@@ -671,7 +673,7 @@ class SnapshotStore(Protocol):
 _UNSHARED = object()  # sentinel: a label the CONFIG does not declare as a shared row
 
 
-def shared_label_audiences(config) -> dict[str, set[int] | None]:
+def shared_label_audiences(config: EngineConfig) -> dict[str, set[int] | None]:
     """Lowercased label -> audience account ids (None = public) for every CONFIGURED shared row.
 
     The one definition of "what is a shared row, and who is allowed to see it" — used by the writer
@@ -811,8 +813,8 @@ def sync_user_restrictions(
         # managed account, preset or not — so keying on it also skipped managed users with NO age
         # restriction, who see everything and genuinely need their excludes (#20).
         #
-        # BOTH are required so the new skip is a strict SUBSET of the old one: no account that used to
-        # receive excludes can lose them here. The two flags come from different endpoints and nothing
+        # BOTH are required so the skip is a strict SUBSET of "every account gets excludes": no account
+        # that should receive excludes can lose them here. The two flags come from different endpoints and nothing
         # enforces a relationship, so a `restricted="0"` account that somehow reports a profile keeps
         # its excludes rather than silently losing them.
         logger.debug(
@@ -834,10 +836,9 @@ def sync_user_restrictions(
     # have (re-enabled after a disable, or added to a subset row's audience). Un-hiding a *shared* row
     # only ever reveals a public or in-audience row, so one gate is enough there.
     #
-    # A PRIVATE-row exclude is the leak direction, and used to be exempt from pruning entirely for that
-    # reason. It no longer is — but only under THREE guards, because a departed person's exclude
-    # otherwise sits in every account's filter for ever (a real server reached 990-character filter
-    # strings, growing by one entry per departure). All three must agree the row is gone:
+    # A PRIVATE-row exclude is the leak direction, so it is pruned only under THREE guards,
+    # because a departed person's exclude otherwise sits in every account's filter for ever (a real server reached
+    # 990-character filter strings, growing by one entry per departure). All three must agree the row is gone:
     #
     #   1. The SERVER, BY LABEL: a complete, non-empty enumeration in which no collection carries the
     #      label (`existing_lower`, from `collection.labels`).
@@ -929,7 +930,7 @@ def sync_user_restrictions(
             # `desired_excludes(own_label, stored_labels, ...)`, built from the same `stored_labels`
             # that produced `existing_lower`, so for another account's private label it is strictly
             # implied by the `existing_lower` clause. It is kept because it costs nothing and reads as
-            # intent, not because it is independent — the comment here used to claim it was.
+            # intent, not because it is independent.
             #
             # None means "we could not read it", and not knowing must never license a removal — the
             # same rule `existing_lower` follows.
@@ -1359,7 +1360,7 @@ def unhidden_rows_on_home(hubs: list[dict], owned: dict[str, object], user_slug:
     return sorted((visible & ours) - theirs)
 
 
-def unhidden_rows_visible_to(pms_as_user, owned: dict[str, object], user_slug: str) -> list[int]:
+def unhidden_rows_visible_to(pms_as_user: PlexClient, owned: dict[str, object], user_slug: str) -> list[int]:
     """ratingKeys of OUR per-person rows this account can see that are not its own.
 
     Answers, by measurement, the question the skip above only ever assumed: when Plex refuses a label

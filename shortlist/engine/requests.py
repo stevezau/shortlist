@@ -673,8 +673,8 @@ def request_missing(
     slug_by_key = {(o.tmdb_id, o.media_type): o.arr_slug for o in report.outcomes}
     for m in report.sent:
         m.arr_slug = slug_by_key.get((m.tmdb_id, m.media_type))
-    # A failed auto-send (status "error") used to vanish: it was in neither `sent` nor `queued`, so it
-    # never reached the inbox and retried blindly every night. Queue it WITH the reason. Only "error"
+    # A failed auto-send (status "error") is in neither `sent` nor `queued`, so unless queued here it
+    # never reaches the inbox and retries blindly every night. Queue it WITH the reason. Only "error"
     # — the skips are settled facts (already in the Arr, or no TVDB id) and surfacing them is noise.
     fail_detail = {(o.tmdb_id, o.media_type): o.detail for o in report.outcomes if o.status == "error"}
     # EVERY queued copy of a key, not one of them. A dict comprehension here kept the LAST copy while

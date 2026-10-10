@@ -220,8 +220,7 @@ def _counts(session: Session, group_cols, key_expr, start, shared_cols=None, sha
     else:
         # A UNION per group, never a sum. Summing double-counts `per_user`: one person who watched a
         # title carried by BOTH a personal and a shared row is one title watched, and each scan
-        # returns it. Pinned by
-        # `test_shared_row_watches.py::test_one_title_on_both_kinds_of_row_is_not_double_counted_for_a_person`,
+        # returns it. Pinned by `test_shared_row_watches.py::TestTheBreakdownsAgreeWithTheTiles`,
         # which caught exactly that when this was a sum.
         watched = _grouped_union(
             session, cols, key_expr, _watched_in(start), s_cols, shared_key, _shared_watched_in(start)
@@ -580,10 +579,10 @@ def _requests_summary(session: Session, since: datetime | None) -> dict:
 BOUNCE_PERCENT = 5
 #: How long a stopped watch is left alone before it may be called an abandonment.
 #:
-#: An outcome used to be decided on percentage ALONE, with no notion of time — so a film someone
-#: started this evening and paused at 40% was reported as "gave up on it after 40%" immediately, and
-#: a play still in progress was reported that way while it was playing. Observed on the maintainer's
-#: server 2026-08-24: a pick credited at 1% appeared under "gave up" while its session was still open.
+#: An outcome is not decided on percentage ALONE: with no notion of time, a film someone
+#: started this evening and paused at 40% would be reported as "gave up on it after 40%" immediately, and
+#: a play still in progress would be reported that way while it was playing (observed 2026-08-24: a
+#: pick credited at 1% appeared under "gave up" while its session was still open).
 #:
 #: 24 hours because resuming the next evening is ordinary behaviour, and the report is read the
 #: morning after. Anything inside the window reads as `watching` — an honest "not yet known" rather
@@ -1582,7 +1581,7 @@ def engagement(session: Session, window: str) -> dict:
     # removed exactly the rows this page exists to show: a person with 45 finished picks and 5 fresh
     # drops saw forty "finished" and no drops at all, under a header reading "40 picks".
     #
-    # `dropped` now leads `bounced`, and the order matters more than it used to. The findings card
+    # `dropped` leads `bounced`, and the order matters. The findings card
     # keeps only `dropped` — a bounce is under 5%, too little to tell a wrong pick from a mis-click —
     # so with bounces sorting first, one person with 40 or more of them in the window had every real
     # abandonment truncated away before the frontend ever saw it. The card would then print

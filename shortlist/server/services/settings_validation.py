@@ -302,7 +302,7 @@ VALIDATORS = {
     "notify.webhook.auth_header_name": _header_name,
     "notify.webhook.auth_header_value": _header_value,
     # `candidates_pre_rank` is derived from this ceiling (2x), so the pool always clears the largest
-    # legal row — it used to be a flat 40 restated here, which met the ceiling and left no headroom.
+    # legal row with headroom (a flat number equal to the ceiling would leave none).
     "row.size": _bounded_int(MIN_ROW_SIZE, MAX_ROW_SIZE),
     "runs.retention": _bounded_int(0, 24),  # months; 0 = keep forever
     "events.retention": _bounded_int(0, 24),  # months; 0 = keep forever (the default)
@@ -427,7 +427,7 @@ def reject_blocked_urls(values: dict[str, object]) -> None:
             continue  # blank clears the setting — nothing to fetch
         # `notify.webhook.url` is the first key that is BOTH a fetched URL and a secret, so the
         # redacted sentinel now reaches this guard. It means "leave the stored value alone", exactly
-        # as it does in the write loop and in `_re_points_plex` — checking it as an address would
+        # as it does in the write loop — checking it as an address would
         # 422 the whole settings save every time anyone pressed Save with a webhook configured.
         if key in SECRET_KEYS and value == REDACTED_PLACEHOLDER:
             continue

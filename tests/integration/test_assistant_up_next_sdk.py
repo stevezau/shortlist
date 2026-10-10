@@ -14,6 +14,7 @@ from sqlalchemy import select, text
 from shortlist.server.assistant_auth import Capability
 from shortlist.server.db.models import Collection, CollectionAudience, Theme, ThemeHistory, User
 from shortlist.server.services.theme_rotation import queue_next
+from tests.assistant_grants import find_grant_for_client, replace_grant_authority
 from tests.integration.test_assistant_mcp_tool_matrix import _apply, _approve_owner_change, _wire_app
 
 pytestmark = pytest.mark.integration
@@ -118,7 +119,7 @@ def test_sdk_up_next_requires_standing_authority_and_exact_approval_does_not_gra
                 ]
                 session.commit()
         repository = app.state.assistant_auth.repository
-        grant = repository.find_grant_for_client("mcp-wire-matrix")
+        grant = find_grant_for_client(repository, "mcp-wire-matrix")
         caps = grant.capabilities - {Capability.HISTORY_EXPORT}
         if denial == "capability":
             caps -= {Capability.THEMES_WRITE}
@@ -129,8 +130,8 @@ def test_sdk_up_next_requires_standing_authority_and_exact_approval_does_not_gra
             include_future_libraries=denial != "library",
             library_keys=frozenset({"1"}),
         )
-        repository.replace_grant_authority(
-            grant.grant_id, capabilities=caps, constraints=constraints, expected_revision=grant.revision
+        replace_grant_authority(
+            repository, grant.grant_id, capabilities=caps, constraints=constraints, expected_revision=grant.revision
         )
         plan = _call(wire, "shortlist_plan_people", _request(person_id))
         assert plan["authorization"]["can_apply"] is False
@@ -249,7 +250,7 @@ def test_sdk_replacing_private_queue_needs_only_target_write_authority(tmp_path,
             )
             session.commit()
         repository = app.state.assistant_auth.repository
-        grant = repository.find_grant_for_client("mcp-wire-matrix")
+        grant = find_grant_for_client(repository, "mcp-wire-matrix")
         caps = grant.capabilities - {Capability.HISTORY_EXPORT}
         constraints = replace(
             grant.constraints,
@@ -258,8 +259,8 @@ def test_sdk_replacing_private_queue_needs_only_target_write_authority(tmp_path,
             include_future_libraries=False,
             library_keys=frozenset({"1"}),
         )
-        repository.replace_grant_authority(
-            grant.grant_id, capabilities=caps, constraints=constraints, expected_revision=grant.revision
+        replace_grant_authority(
+            repository, grant.grant_id, capabilities=caps, constraints=constraints, expected_revision=grant.revision
         )
         plan = _call(wire, "shortlist_plan_people", _request(person_id))
         assert plan["authorization"]["can_apply"] is True

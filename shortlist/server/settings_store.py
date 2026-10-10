@@ -54,7 +54,7 @@ DEFAULTS: dict[str, Any] = {
     "requests.sonarr.quality_profile_id": 0,
     "requests.sonarr.root_folder": "",
     # How much of a show Sonarr monitors when Shortlist adds it — Sonarr's own Add Series "Monitor"
-    # choice, passed through. "all" is Sonarr's default and the only behaviour there used to be.
+    # choice, passed through. "all" is Sonarr's default.
     "requests.sonarr.monitor": "all",
     "requests.rating_source": "tmdb",  # tmdb (no setup) | imdb | trakt | tomatoes | metacritic (via MDBList)
     "requests.min_rating": 7.0,  # rating floor on the chosen source
@@ -134,9 +134,8 @@ DEFAULTS: dict[str, Any] = {
     #               or per-search bill, though it still FORWARDS each query to real engines
     #               (Google/Brave/DDG), so it is not an air-gapped path.
     # Either external works with every provider and is the only kind a local Ollama model can use.
-    # There was a fourth value, 'auto' (native UNIONED with whichever external was configured). It
-    # was the default and it was removed in 1.3 — the name described nothing, and owners could not
-    # tell what it was doing. Migration 0063 pins every existing install to what it was really using.
+    # Only native or one external provider: a union of both ('auto') was dropped because owners could
+    # not tell what it was doing. Migration 0063 pins existing installs to what they were really using.
     "llm_web.search_provider": "native",
     # Owner's own guidance for AI web search (#138). It REPLACES the built-in guidance on every row without
     # its own instructions, and rows set to "add" append theirs after it. "" = the built-in wording.
@@ -455,19 +454,6 @@ class SettingsStore:
             row.value = {"v": value}
         self._session.flush()
 
-    def unset(self, key: str) -> bool:
-        """Delete this key's row, putting it back to "never written". Returns whether a row went.
-
-        The counterpart to `has_row`, and the only way to express "use the built-in default" for a
-        cron the UI can switch off: writing "" there means OFF (`scheduler._OFF_ABLE`), so the
-        default is reachable ONLY by removing the row. Storing a blank and deleting the row are
-        different states — see `scheduler._resolve_cron`.
-        """
-        removed = self.unset_in_transaction(key)
-        if removed:
-            self._session.commit()
-        return removed
-
     def unset_in_transaction(self, key: str) -> bool:
         """Restore inheritance without committing other changes in the caller's session."""
         row = self._session.get(Setting, key)
@@ -521,7 +507,8 @@ class SettingsStore:
                 continue
             try:
                 self._secrets.decrypt(value)
-            except Exception:
+            except Exception as e:
+                logger.debug("stored secret {} does not decrypt ({})", key, type(e).__name__)
                 bad.append(key)
         return bad
 

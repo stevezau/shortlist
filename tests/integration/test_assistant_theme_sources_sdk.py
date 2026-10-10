@@ -14,6 +14,7 @@ from shortlist.engine.themes import load_theme
 from shortlist.server.assistant.theme_adapter import AssistantTheme
 from shortlist.server.db.models import Theme
 from shortlist.server.services.theme_store import spec_from_row
+from tests.assistant_grants import find_grant_for_client, replace_grant_authority
 from tests.integration.test_assistant_mcp_tool_matrix import _apply, _approve_owner_change, _wire_app
 
 pytestmark = pytest.mark.integration
@@ -149,8 +150,9 @@ def test_sdk_theme_update_rejects_changed_sources_before_apply(tmp_path, monkeyp
 def test_sdk_theme_collection_scope_denies_apply_and_redacts_after_exact_approval(tmp_path, monkeypatch, section_key):
     with _wire_app(tmp_path, monkeypatch, configured_provider=False) as (wire, app, _state):
         repository = app.state.assistant_auth.repository
-        grant = repository.find_grant_for_client("mcp-wire-matrix")
-        repository.replace_grant_authority(
+        grant = find_grant_for_client(repository, "mcp-wire-matrix")
+        replace_grant_authority(
+            repository,
             grant.grant_id,
             capabilities=grant.capabilities,
             expected_revision=grant.revision,

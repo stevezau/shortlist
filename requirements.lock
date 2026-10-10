@@ -201,7 +201,9 @@ typing-inspection==0.4.2
 tzlocal==5.4.4
     # via apscheduler
 urllib3==2.8.0
-    # via requests
+    # via
+    #   shortlist (pyproject.toml)
+    #   requests
 uvicorn==0.51.0
     # via
     #   shortlist (pyproject.toml)

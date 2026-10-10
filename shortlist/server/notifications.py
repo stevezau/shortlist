@@ -764,11 +764,10 @@ def _failed_jobs(session: Session) -> dict | None:
     if not failed:
         return None
     kinds = sorted({job.kind for job in failed})
-    # The body used to make two claims about every failure. Neither is true of all of them, and
-    # `watch.reconcile` — the live credit pass — is the first kind in the catalog for which BOTH are
-    # false: it never touches Plex, and it is not in the manual allow-list, so "run it again" points
-    # at a button that returns 422. The same wrongness was already latent for `backup.take` and
-    # `maintenance.prune`.
+    # The body must not claim "Plex may not reflect this" or "run it again" for every failure. For
+    # `watch.reconcile` — the live credit pass — both are false: it never touches Plex, and it is not
+    # in the manual allow-list, so "run it again" points at a button that returns 422. The same holds
+    # for `backup.take` and `maintenance.prune`.
 
     entries = {e.kind: e for e in jobs_service.CATALOG}
     touched_plex = any(entries[k].writes_plex for k in kinds if k in entries)
@@ -891,7 +890,7 @@ def _shelf_contention(session: Session) -> dict | None:
             # row back 50 times ... so something else is moving it" and named Kometa and Agregarr.
             #
             # `is not True` rather than `is False`: a record with no verdict at all — an older row, a
-            # shape from before this field existed — is not evidence either. `_shelf_unreachable` is
+            # shape from before this field existed — is not evidence either. `_recent_service_errors` is
             # where the failures are reported, in their own words.
             continue
         library = message.get("library") or "a library"

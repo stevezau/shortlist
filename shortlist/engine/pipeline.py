@@ -129,7 +129,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # doesn't look frozen while it runs.
     _emit(ctx, "Shortlist", "preparing", {})
     sections = ctx.plex.sections()
-    seed_index, library_index = _build_indexes(ctx, users, sections)
+    seed_index, library_index = build_indexes(ctx, users, sections)
     # What the delivery libraries now hold — so the server can drop inbox candidates that have since
     # arrived on the server (grabbed elsewhere) instead of leaving them to linger forever.
     report.library_present = {(tmdb_id, media_type) for media_type, idx in library_index.items() for tmdb_id in idx}
@@ -193,7 +193,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # `users=[]` is the privacy-sync shape (rule 1: sweep + merge only). It has no authority to
     # DELETE anyone's collection — it was never given a roster to judge against, and its own contract
     # says it can only ever make the server more private.
-    _converge_phase(ctx, promoted, report, may_delete=bool(users))
+    converge_phase(ctx, promoted, report, may_delete=bool(users))
     _emit(
         ctx,
         "Shortlist",
@@ -213,7 +213,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # a hub has to be promoted to be movable). Best-effort and privacy-neutral.
     if filters_ok:
         _emit(ctx, "Shortlist", "shelves", {})
-        _order_phase(ctx, report)
+        order_phase(ctx, report)
 
     # Sonarr/Radarr requests, dead LAST — after every Plex write is done.
     if requests_on:
@@ -292,7 +292,7 @@ def _library_index(ctx: EngineContext, section, genre_counts: Counter[str] | Non
         # `.genres` raises per item, which `build_library_index` suppresses): a full index and an
         # empty tally. Inferring from emptiness would make such a section miss on every single run,
         # for ever — a complete `section.all()` walk per run, which is exactly the "thousands of PMS
-        # reads" `_build_indexes` avoids. Entries written before this key existed carry no `tallied`,
+        # reads" `build_indexes` avoids. Entries written before this key existed carry no `tallied`,
         # so they miss once and self-heal.
         if genre_counts is None or payload.get("tallied"):
             index = {int(k): v for k, v in payload["index"].items()}
@@ -327,7 +327,7 @@ def _library_index(ctx: EngineContext, section, genre_counts: Counter[str] | Non
     return index
 
 
-def _build_indexes(
+def build_indexes(
     ctx: EngineContext, users: list[UserProfile], sections: list
 ) -> tuple[dict[int, int], dict[MediaType, dict[int, int]]]:
     """Build the library indexes a run reads from.
@@ -371,10 +371,10 @@ def _build_indexes(
         for section in target_sections(sections, spec)
     }
     # WHICH libraries rows live in, and WHETHER to walk their contents, are two different questions.
-    # This used to answer both with one list, so a run with no users — `engine_run(ctx, [])`, i.e. every
-    # `privacy.sync` — got `delivery_sections = []` and the shelf-ordering phase then iterated nothing
-    # at all. That is the second, independent reason a large server's shelf could never be repaired by a job:
-    # even with the right rows to move, there were no libraries to move them in (2026-08-12).
+    # One list for both would leave a run with no users — `engine_run(ctx, [])`, i.e. every
+    # `privacy.sync` — with `delivery_sections = []`, and the shelf-ordering phase would iterate nothing
+    # at all: even with the right rows to move, there would be no libraries to move them in, so a job
+    # could never repair a large server's shelf.
     # Naming the sections is pure in-memory filtering of a list we already hold; it is the INDEXING
     # below that costs thousands of PMS reads, and that is what stays gated on there being users.
     ctx.delivery_sections = [section for section in sections if str(section.key) in wanted_keys]
@@ -742,7 +742,7 @@ def _deliver_phase(
     shared_specs = [s for s in ctx.config.shared_rows() if ctx.config.should_build(s)] if build_shared else []
     # Out of season (discussion #124): nothing is built, but the collection is promoted with its `off`
     # placement so the row that was on screen in season comes off every surface. Whatever this run's
-    # scope: it only clears that one collection's flags (shelf order is `_order_phase`'s, which never
+    # scope: it only clears that one collection's flags (shelf order is `order_phase`'s, which never
     # reads this list), so unlike a per-person candidate it re-places nothing else, and it backs up the
     # midnight pass on the nights after that pass stops looking.
     if users and not ctx.cancelled():
@@ -1155,8 +1155,8 @@ def _privacy_sync_phase(
     # consider its owner "not enabled in Shortlist" or "not in tonight's run". Syncing only the
     # processed users is how, on a live server, 45 of 48 accounts ended up able to see three other
     # people's private rows: only the three Shortlist managed had excludes written at all. It is also
-    # why a single-user run (building just one person's row) used to mint a row that nobody's filter
-    # hid — the other accounts never had an exclude written for it.
+    # why a single-user run (building just one person's row) would mint a row that nobody's filter
+    # hides — the other accounts would never have an exclude written for it.
     #
     # We ask plex.tv who can see the server rather than trusting our own user table, because the
     # audience is Plex's fact, not ours.
@@ -1277,12 +1277,10 @@ def _privacy_sync_phase(
             # plex.tv permanently refused the write (422). Safe to skip ONLY for an account with a
             # parental PROFILE: Plex declines label restrictions while one is set.
             #
-            # It used to add "and such an account sees zero collections anyway, so there is nothing an
-            # exclude would have hidden". That is FALSE and `privacy.py` says so with a measurement:
-            # true of `little_kid`, not of `older_kid`, one of which listed three collections on a real
-            # server (2026-08-11, #76). The sentence mattered because it was the load-bearing
-            # justification for skipping an account on a privacy path while promotion proceeds for the
-            # whole server. What actually makes the skip acceptable is narrower: nothing we can write
+            # "Such an account sees zero collections anyway, so there is nothing an exclude would have
+            # hidden" is NOT the justification, and `privacy.py` says so with a measurement: true of
+            # `little_kid`, not of `older_kid`, one of which listed three collections on a real
+            # server (2026-08-11, #76). What makes the skip acceptable is narrower: nothing we can write
             # would hide these rows, so blocking the run would punish everyone else permanently for one
             # account's Plex settings. So skip, but MEASURE — `_record_unhideable` below reports what
             # the account can really see, which is the only honest version of "expected".
@@ -1431,7 +1429,7 @@ def built_seasons(ctx: EngineContext, report: RunReport | None = None) -> dict[t
 
     A seasonal row that finds nothing for its new season in a library delivers nothing there, so that library
     keeps last season's collection — its title and its films (#137 C-1). Promotion hides a collection whose
-    answer here is not tonight's season (`_built_for_another_season`).
+    answer here is not tonight's season (`_unless_built_for_another_season`).
 
     Three sources, later ones winning: the season part of the stored picks' recipe (`rows.recipe_season`),
     the delivery ledger's record, and — given ``report`` — what THIS run delivered or removed, laid over the
@@ -1699,7 +1697,7 @@ def promote_user_rows(
     # (Home / Library) and pin-to-top. Keyed by the exact title delivery wrote and recorded per library
     # during this user's run (a {top_seed} title differs per library).
     # `per_person_rows()`, NOT `config.rows`: with no rows configured it synthesizes the legacy default
-    # spec, which is what every other phase builds from (_build_indexes, delivery). Reading the raw
+    # spec, which is what every other phase builds from (build_indexes, delivery). Reading the raw
     # list here meant an unmanaged-rows config had an EMPTY map, so every title lookup missed and every
     # collection fell to the no-spec fallback — placement silently ignored.
     # As this person sees them: an explore row's title follows THEIR theme, as delivery rendered it.
@@ -1836,7 +1834,7 @@ def _converged_row(section, collection, label: str, reason: str | None = None) -
     return entry
 
 
-def _converge_phase(
+def converge_phase(
     ctx: EngineContext, promoted: set[int], report: RunReport, *, may_delete: bool | None = None
 ) -> None:
     """Take every Shortlist row this run did NOT promote off the owner's Home.
@@ -2035,8 +2033,8 @@ def _promote_one(
         # people's rows silently disappearing. Under-showing here is NOT the safe direction.
         #
         # `recommended=False` is still deliberate. That flag is the one surface where the OWNER sees
-        # every row (no share filter can hide it from them), so defaulting it on — as this used to —
-        # forced rows onto the owner's shelf regardless of placement, including rows switched fully
+        # every row (no share filter can hide it from them), so defaulting it on
+        # would force rows onto the owner's shelf regardless of placement, including rows switched fully
         # off. Home flags stay per-audience: each only ever shows the row to its own owner.
         if user_type is UserType.OWNER:
             ctx.plex.promote(collection, shared=False, home=True, recommended=False)
@@ -2096,7 +2094,7 @@ def _collection_order_phase(ctx: EngineContext, order_work: list[tuple]) -> None
                 "ordering '{}' failed ({}: {}) — left in delivery order",
                 title,
                 type(e).__name__,
-                redact(str(e)),  # plexapi error text can carry the token — see `_order_one_section`
+                redact(str(e)),  # plexapi error text can carry the token — `redact` masks it
             )
     logger.info("ordered {} collection(s), {} move(s) total", len(deduped), total)
 
@@ -2125,7 +2123,7 @@ def _row_keys_by_slug(ctx: EngineContext, report: RunReport, section_key: str) -
     return out
 
 
-def _order_phase(ctx: EngineContext, report: RunReport) -> None:
+def order_phase(ctx: EngineContext, report: RunReport) -> None:
     """Place each library's Shortlist rows in its Recommended shelf, per that row's own placement.
 
     Each row carries its placement per library (``RowSpec.hub_anchors``); a row with none configured

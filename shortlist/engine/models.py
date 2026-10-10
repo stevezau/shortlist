@@ -140,7 +140,7 @@ class WatchedItem:
         "watched"). Of the thresholds available this is the strictest and the least arguable, and it
         is already the wording the user page shows per title ("3 of 12 episodes" / "finished").
 
-        Deliberately NOT the engine's already-seen bar (`rows._watched_titles`, effectively 3
+        Deliberately NOT the engine's already-seen bar (`rows.watched_titles`, effectively 3
         episodes or 15%): that one answers "engaged enough not to recommend this again?", which is a
         different question with a legitimately looser answer.
 
@@ -256,8 +256,8 @@ class Candidate:
     # which gives each source a fair share of the pool it draws the row from.
     sources: set[str] = field(default_factory=set)
     # How strongly the source that produced it vouched for it, 0..1. TMDB sets this from which
-    # endpoint suggested the title and how near the top of that list it sat — the similarity signal
-    # that used to be discarded. Sources with no ranking of their own (discover, Trakt, the web
+    # endpoint suggested the title and how near the top of that list it sat — the similarity signal.
+    # Sources with no ranking of their own (discover, Trakt, the web
     # source) keep the neutral 1.0: they are deliberate picks, not the tail of a list, and
     # penalising them for lacking a signal they never had is what `pre_rank`'s round-robin exists to
     # prevent. A title several seeds suggested keeps the strongest claim any of them made.
@@ -657,23 +657,10 @@ class RowSpec:
     # The same, for each FRIEND's (shared user's) own collection — "home" means Friends' Home there.
     # None = inherit from `placement` (backward compat); set explicitly to diverge.
     placement_friends: str | None = None
-    # This row is hidden TODAY by its day schedule (issue #102), as opposed to being switched off
-    # permanently. Both resolve `placement` to "off", so the placement alone cannot tell them apart —
-    # and promotion needs to, because it stops guessing about unidentifiable collections only when a
-    # schedule could be hiding one. Set by the server when it resolves the schedule; the engine never
-    # reads a clock.
-    hidden_by_schedule: bool = False
-    # LEGACY, and the engine no longer reads it. It used to pin the row to the top of its library's
-    # Recommended shelf with `ManagedHub.move(after=None)` on every promote — the one insert that can
-    # collapse a library's hub order (see `place_rows`), and redundant besides, since a row with no
-    # placement already sits at the top. Carried only so the row editor can migrate it into a
-    # per-library "Top" the first time that row is saved.
-    pin_top: bool = False
     # Where THIS row sits in the Recommended shelf, per library, keyed by section key -> HubAnchor.
     # A library ABSENT here means the top of the shelf, which is the shipped default — there is no
-    # global default to inherit any more (`EngineConfig.hub_anchors` and the `rows.hub_anchor` setting
-    # were retired: they were a second place to set the same thing and disagreed with their own
-    # screen). Not "leave it alone" either — Plex appends new hubs at the bottom, so a new row nothing
+    # global default to inherit (a second place to set the same thing would disagree with the row's
+    # own screen). Not "leave it alone" either — Plex appends new hubs at the bottom, so a new row nothing
     # positions starts out of sight; opting out is `HubAnchor.enabled`, set deliberately per row.
     hub_anchors: dict[str, HubAnchor] = field(default_factory=dict)
     # Optional custom poster for this row's Plex collection(s). None -> leave Plex's own artwork alone.
@@ -1351,7 +1338,7 @@ class EngineConfig:
     # show a person is caught up on sits a few episodes short of 100% (the newest ep just aired, or one
     # was marked-not-played), so 0.9 kept re-recommending shows they've clearly finished — Guest's
     # "Deadliest Catch: The Viking Returns" at 8/9 = 89% slipped under the 0.9 bar (2026-07-21). The
-    # season-worth floor in `_watched_titles` catches long shows; this catches near-complete short ones.
+    # season-worth floor in `watched_titles` catches long shows; this catches near-complete short ones.
     watched_show_pct: float = 0.8
     # Refresh cadence in DAYS: 0 (the dataclass default) = frozen, never rebuilt once built; 1 =
     # every night; N = every N days. Overridable per row. `settings_store` defaults the PRODUCT to 8.
@@ -1389,7 +1376,7 @@ class EngineConfig:
     candidate_sources: list[str] = field(default_factory=lambda: ["tmdb_similar"])
     # Which backend the llm_web source searches with — exactly one: 'native' (the provider's own
     # web-search tool, Claude/GPT/Gemini only), 'exa', or 'searxng'. Either external is the only path
-    # for a local Ollama model. ('auto', which unioned native with an external, was removed in 1.3.)
+    # for a local Ollama model.
     web_search_provider: str = "native"
     # Server-wide AI web search instructions (#138); "" = Shortlist's built-in guidance.
     web_instructions: str = ""
@@ -1501,7 +1488,6 @@ class StageCounts:
     seeds: int = 0
     candidates: int = 0
     in_library: int = 0
-    pre_ranked: int = 0
     picks: int = 0
 
 
@@ -1689,10 +1675,10 @@ class RunReport:
     #   * a MOVE — `moved` (the row titles) and `verified` (did the shelf actually end up that way);
     #   * a placement that could NOT be applied — `placed: False`, `moved: []`, `reason` in
     #     a refused anchor, and deliberately NO `verified`, because nothing was asked of Plex.
-    # Reporting the second as the first is exactly what the Jobs detail line used to do: a buried row
-    # announced as "repositioned". Empty when every library was already in place, when none holds a
-    # row of ours, or when `manage_shelf_order` is off — NOT when no anchor is configured, which
-    # falls back to moving every row to the top and so fills this normally.
+    # The second must not be reported as the first: a buried row would be announced as "repositioned".
+    # Empty when every library was already in place, when none holds a row of ours, or when `manage_shelf_order` is
+    # off — NOT when no anchor is configured, which falls back to moving every row to the top and so fills this
+    # normally.
     hub_orderings: list[dict] = field(default_factory=list)
     # Sonarr/Radarr requests made (or, in dry-run, that would be made) for picks the library lacks.
     # None when the feature is off — distinct from an empty report (on, but nothing qualified).

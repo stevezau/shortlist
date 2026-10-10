@@ -295,8 +295,9 @@ class WatchStream:
                     .all()
                 }
                 return all(bool((values.get(k) or {}).get("v")) for k in ("plex.url", "plex.token"))
-        except Exception:
+        except Exception as e:
             # Cannot tell. Stay quiet rather than alert on a database blip.
+            logger.debug("plex credentials check failed ({}); not alerting", type(e).__name__)
             return False
 
     def _write_health(self, *, connected: bool, resume: bool = False) -> None:
@@ -393,7 +394,7 @@ class WatchStream:
             try:
                 # `_mark_connected` is handed in so the backoff clears the moment the socket CONNECTS,
                 # not when `_listen` returns — which only happens on shutdown. Every real drop goes
-                # through the `except` below, so the delay used to double monotonically for the life
+                # through the `except` below, so the delay would double monotonically for the life
                 # of the process and settle at two minutes of unobserved playback per blip.
                 await self._listen(ctx, on_connected=self._mark_connected)
             except asyncio.CancelledError:
@@ -516,10 +517,10 @@ class WatchStream:
             return
         for event in container.get("PlaySessionStateNotification", []) or []:
             # PER EVENT, so one odd frame cannot end tracking for everybody. `viewOffset` and
-            # `ratingKey` are parsed with `int()`, and a non-numeric value there used to raise all the
-            # way out to `run()` — which treated it as a dropped socket, reconnected, and closed every
-            # live session as `replaced`. One client sending one strange frame fragmented every watch
-            # in progress. These payload shapes are not fixture-backed, so they are assumptions.
+            # `ratingKey` are parsed with `int()`, and a non-numeric value there would raise all the
+            # way out to `run()` — which treats it as a dropped socket, reconnects, and closes every
+            # live session as `replaced`, so one client sending one strange frame would fragment every
+            # watch in progress. These payload shapes are not fixture-backed, so they are assumptions.
             try:
                 await self._on_playing(ctx, event)
             except Exception as e:

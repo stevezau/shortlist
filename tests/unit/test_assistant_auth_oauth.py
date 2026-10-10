@@ -13,6 +13,7 @@ from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantP
 from shortlist.server.assistant_auth.credentials import CredentialHasher
 from shortlist.server.assistant_auth.oauth import OAuthService
 from shortlist.server.assistant_auth.repository import AssistantAuthRepository
+from tests.assistant_grants import find_grant_for_client
 from tests.assistant_oauth import authorize, exchange_code, issue_pair, pkce_challenge, refresh
 from tests.db_helpers import create_schema, disposing_engine
 
@@ -100,7 +101,7 @@ def test_authorization_code_requires_s256_and_exact_redirect_resource_and_scope(
 
 
 def _pair(service: OAuthService, verifier: str = "x" * 64, scopes: set[str] | None = None):
-    grant = service.repository.find_grant_for_client("public-client")
+    grant = find_grant_for_client(service.repository, "public-client")
     return issue_pair(
         service,
         owner_account_id=42,
@@ -115,7 +116,7 @@ def _pair(service: OAuthService, verifier: str = "x" * 64, scopes: set[str] | No
 def test_code_is_one_use_and_tokens_are_bound_to_grant_client_resource_and_issuer(tmp_path) -> None:
     with _service(tmp_path) as service:
         verifier = "x" * 64
-        grant = service.repository.find_grant_for_client("public-client")
+        grant = find_grant_for_client(service.repository, "public-client")
         code = authorize(
             service,
             owner_account_id=42,
@@ -146,7 +147,7 @@ def test_code_is_one_use_and_tokens_are_bound_to_grant_client_resource_and_issue
 
 def test_code_is_refused_for_the_wrong_verifier_redirect_or_resource(tmp_path) -> None:
     with _service(tmp_path) as service:
-        grant = service.repository.find_grant_for_client("public-client")
+        grant = find_grant_for_client(service.repository, "public-client")
         for override in (
             {"verifier": "w" * 64},
             {"redirect_uri": f"{REDIRECT}/other"},
@@ -239,7 +240,7 @@ def test_authlib_successor_save_rejects_a_revoked_family(tmp_path) -> None:
 
 def test_grant_revocation_immediately_invalidates_access_and_refresh(tmp_path) -> None:
     with _service(tmp_path) as service:
-        grant = service.repository.find_grant_for_client("public-client")
+        grant = find_grant_for_client(service.repository, "public-client")
         tokens = _pair(service, "q" * 64)
 
         service.repository.revoke_grant(grant.grant_id, now=NOW + timedelta(seconds=1))

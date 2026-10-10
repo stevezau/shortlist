@@ -24,10 +24,10 @@ from shortlist.engine.models import MediaType
 from shortlist.engine.request_config import resolve_request_config
 from shortlist.engine.request_holds import is_story_film, match_hold
 from shortlist.engine.requests import RequestBatch, request_titles_by_row
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.assistant_auth.routes import BrowserOwnerDep
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, Event, RequestCandidate, iso_utc
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services.context_builder import row_request_overrides
 
 router = APIRouter(prefix="/requests", tags=["requests"], dependencies=[Depends(require_owner)])
@@ -400,9 +400,9 @@ async def get_arr_status(request: Request) -> dict:
             if status is None and shows_by_tvdb and not shows_by_tmdb:
                 try:
                     tvdb_id = tmdb.external_ids(row.tmdb_id, MediaType.SHOW).get("tvdb_id")
-                # Deliberately NOT a bare `except Exception`: this used to pass `MediaType.TV`, which
-                # does not exist, and the AttributeError was swallowed to a debug line — so on Sonarr
-                # v3 the fallback silently no-op'd for ever and every show showed a blank status. Only
+                # Deliberately NOT a bare `except Exception`: a wrong enum name here would raise AttributeError,
+                # be swallowed to a debug line, and the fallback would silently no-op for ever on Sonarr
+                # v3, leaving every show with a blank status. Only
                 # a transport failure or the TMDB client's own HTTP error is tolerable here; anything
                 # else is a bug and must be loud.
                 except (httpx.HTTPError, RuntimeError) as e:

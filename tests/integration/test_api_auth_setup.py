@@ -562,6 +562,17 @@ class TestSetupApi:
 
         assert body == {"linked": True, "server_name": "Home Server"}
 
+    def test_linking_refuses_a_cloud_metadata_address_before_storing_anything(self, client: TestClient):
+        """`/link` writes the URL straight to the store, so it needs the same `check_url` guard as `/probe`."""
+        self._sign_in_with_a_plex_token(client)
+
+        r = client.post(
+            "/api/setup/link",
+            json={"plex_url": "http://169.254.169.254/", "machine_id": "m1", "owner_account_id": OWNER_ID},
+        )
+
+        assert r.status_code == 422
+
 
 class TestUninstall:
     def test_wrong_confirmation_rejected(self, client: TestClient):

@@ -363,7 +363,7 @@ def test_the_default_row_can_be_deleted_like_any_other(page: Page, app: Shortlis
     # carries one honest "Remove or delete…" that opens the editor's danger section, where that
     # difference is already written out (audit finding, Sep 2026). The 204 and the row actually
     # disappearing are covered in
-    # tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
+    # tests/integration/test_api_collections.py::TestCollectionsApi::test_the_default_row_can_be_deleted_like_any_other.
     assert picked, "the seeded default row must exist for this to mean anything"
     rows = app.api("GET", "/api/collections").json()
     menus = page.get_by_role("button", name=re.compile(r"^More actions for "))

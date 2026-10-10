@@ -105,7 +105,7 @@ def run_env(tmp_path):
         from shortlist.server.services.secrets import SecretBox
 
         state = SimpleNamespace(sessions=sessions, secrets=SecretBox(tmp_path), assistant_auth=object())
-        state.run_service = RunService(sessions, SimpleNamespace(publish=lambda *a: None), tmp_path, state.secrets)
+        state.run_service = RunService(sessions, SimpleNamespace(publish=lambda *a: None), state.secrets)
         state.run_service.state = state
         yield state
 

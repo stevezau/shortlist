@@ -93,29 +93,6 @@ def test_repository_persists_only_a_digest_of_the_local_credential() -> None:
         assert credential_rows[0].token_digest == repository.hasher.digest(raw)
 
 
-def test_reducing_a_grant_increments_revision_and_invalidates_old_context() -> None:
-    with _repository() as (repository, _):
-        grant = repository.create_grant(
-            owner_account_id=42,
-            client_id="client",
-            name="Assistant",
-            preset=GrantPreset.OWNER_AUTOMATION,
-            constraints=GrantConstraints(),
-            now=NOW,
-        )
-
-        updated = repository.replace_grant_authority(
-            grant.grant_id,
-            capabilities={Capability.INSTANCE_READ},
-            constraints=GrantConstraints(max_batch_size=1),
-            expected_revision=grant.revision,
-            now=NOW,
-        )
-
-        assert updated.revision == grant.revision + 1
-        assert updated.capabilities == frozenset({Capability.INSTANCE_READ})
-
-
 def test_explicit_basic_role_change_preserves_legacy_identity_expiry_and_paid_history() -> None:
     with _repository() as (repository, sessions):
         expires_at = NOW + timedelta(days=40)

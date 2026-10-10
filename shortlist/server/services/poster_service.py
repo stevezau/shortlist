@@ -92,10 +92,6 @@ class PosterStudio:
         self._sessions = sessions
         self._ai = ai
 
-    @property
-    def ai_available(self) -> bool:
-        return self._ai is not None
-
     def render(self, *, title: str, subtitle: str, style: str, engine: str) -> bytes | None:
         seed = poster_seed(engine if engine == "ai" else "text", title, subtitle, style)
         with self._sessions() as session:

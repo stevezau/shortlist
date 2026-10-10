@@ -21,7 +21,7 @@ from tests.db_helpers import disposing_engine
 def service(tmp_path: Path) -> Iterator[RunService]:
     run_migrations(tmp_path)
     with disposing_engine(make_engine(tmp_path)) as engine:
-        yield RunService(make_session_factory(engine), EventBus(), tmp_path, SecretBox(tmp_path))
+        yield RunService(make_session_factory(engine), EventBus(), SecretBox(tmp_path))
 
 
 @pytest.mark.parametrize("cancel_shutdown", [False, True])

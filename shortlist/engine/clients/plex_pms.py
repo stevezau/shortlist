@@ -260,8 +260,8 @@ def _nearest_foreign_above(order: list[str], ours: set[str]) -> dict[str, str | 
 #:
 #: All three are spelled out because none can be inferred from position in the list. A block sitting
 #: before an anchor entry is indistinguishable from one that simply wants the top; and a block with
-#: no marker at all used to inherit the PREVIOUS block's anchor, so a row set to "Top" after an
-#: anchored row silently landed under that row's collection.
+#: no marker at all would inherit the PREVIOUS block's anchor, so a row set to "Top" after an
+#: anchored row would silently land under that row's collection.
 ANCHOR_KINDS = ("anchor", "anchor_before")
 TOP = "top"
 POSITION_KINDS = (*ANCHOR_KINDS, TOP)
@@ -646,8 +646,8 @@ class PlexClient:
         self._token = token
         # Every raw (non-plexapi) PMS read in this class must use THIS, not a hardcoded number —
         # plexapi's own calls already get `timeout` via the PlexServer above; `user_hubs` and
-        # `_read_watched_page` used to hardcode 30/45 here, silently ignoring the operator's
-        # configured `plex.timeout_s` on exactly the two heaviest raw reads.
+        # `_read_watched_page` take it here too, so the operator's configured `plex.timeout_s`
+        # applies to the two heaviest raw reads.
         self._timeout = timeout
         # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
         # constructs one per run), so these live exactly one run — no cross-run staleness. Library
@@ -1161,13 +1161,11 @@ class PlexClient:
         is the leak-safe half of promotion, independent of where the row is shown. ``home``/``shared``/
         ``recommended`` pick the surfaces (a per-row placement).
 
-        Position is NOT set here. This used to honour a `pin_top` flag with ``move(after=None)``, once
-        per collection per run — the very primitive `place_rows` documents as unusable on its own: it
-        writes ``min - 1000``, and a built-in stuck at the minimum (a library's own
-        `movie.recentlyadded` refuses to move) makes everything sent above it land ON that value. One
-        such rebuild collapsed 72 of 94 hubs onto `1000`. `place_rows` owns position now, and a row
-        with no per-library placement already defaults to the top — so the flag was redundant as well
-        as unsafe, and it fired even when the owner had switched shelf ordering off.
+        Position is NOT set here: ``move(after=None)`` per collection per run is the very primitive
+        `place_rows` documents as unusable on its own — it writes ``min - 1000``, and a built-in stuck
+        at the minimum (a library's own `movie.recentlyadded` refuses to move) makes everything sent
+        above it land ON that value (measured: one rebuild collapsed 72 of 94 hubs onto `1000`).
+        `place_rows` owns position, and a row with no per-library placement already defaults to the top.
         """
         start = time.monotonic()
 
@@ -1355,11 +1353,11 @@ class PlexClient:
             # no position a viewer can see, so following it buries the row (issue #106); refused here
             # rather than silently reinterpreted. Plex's own built-ins are always usable.
             anchor_ident: dict[str, str] = {}
-            # Anchors we cannot use, BY NAME. One unusable anchor used to return for the whole
-            # library, so a single row pointed at a hub the owner had switched off in Manage
-            # Recommendations stopped every other row here from being placed — and said so only in a
-            # log line, with the audit naming every anchor at once. Now it costs that row its
-            # placement and nothing else, and each name is audited on its own.
+            # Anchors we cannot use, BY NAME. Returning for the whole
+            # library on one unusable anchor would let a single row pointed at a hub the owner had
+            # switched off in Manage Recommendations stop every other row here from being placed. So an
+            # unusable anchor costs that row its placement and nothing else, and each name is audited
+            # on its own.
             refused: list[str] = []
             for kind, value in sequence:
                 if kind not in ANCHOR_KINDS or value in anchor_ident or value in refused:

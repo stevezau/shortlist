@@ -109,7 +109,6 @@ async def assistant_lifespan(app):
         logger.error("Assistant access is disabled: its canonical URL configuration is invalid")
         yield
         return
-    state.assistant_settings = settings
     if not settings.enabled:
         yield
         return

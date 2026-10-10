@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.serializers import UserPickOut, pick_dict
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
@@ -19,6 +18,7 @@ from shortlist.server.db.models import (
     PickRow,
     User,
 )
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services.person_row_overrides import (
     RowOverridePatch,
     apply_person_row_override_in_session,

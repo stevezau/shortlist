@@ -144,7 +144,7 @@ def _open_database_and_wire_state(app: FastAPI, config_dir: Path) -> tuple[dict 
     closed before a restore swapped the database, and the engine (disposed at shutdown).
     """
     # A restore the owner queued is swapped in here, before migrations or anything else opens the
-    # database: swapping it under open connections is how a restore used to be undone by the very
+    # database: swapping it under open connections is how a restore gets undone by the very
     # restart it asked for (see `backups.restore_backup`). The notes they had closed are read first,
     # so an older copy does not reopen them.
     closed_notes = (
@@ -164,7 +164,7 @@ def _open_database_and_wire_state(app: FastAPI, config_dir: Path) -> tuple[dict 
     app.state.bus = bus
     app.state.session_secret = _instance_secret(config_dir, "session.secret")
     app.state.client_id = _instance_secret(config_dir, "client.id")[:32]
-    app.state.run_service = RunService(sessions, bus, config_dir, secret_box)
+    app.state.run_service = RunService(sessions, bus, secret_box)
     # Handed back so a finished run can drain the queue it was blocking, instead of the jobs
     # waiting out the worker's next 60s tick. Set after construction because `run_pending` needs
     # the whole state (handlers reach for `run_service`, `secrets`, `sessions`), and that state
@@ -230,9 +230,8 @@ def _seed_settings_and_configure_logging(
     store.purge_legacy()  # drop stale rows from removed settings (e.g. old API-token hash)
     # Heal any secret still stored in the clear — `tmdb.apikey` was, on every install that
     # predates it joining SECRET_KEYS (rule 9). Both results are REPORTED below, after the
-    # file sink exists: this used to log at this point, which is before `configure_logging`
-    # attaches /config/logs, so the one persistent trace of a credential problem was written
-    # to a sink that did not exist yet and never reached the log file at all.
+    # file sink exists: `configure_logging` attaches /config/logs later, so a log here would be
+    # written to a sink that does not exist yet and never reach the log file.
     healed = store.encrypt_plaintext_secrets()
     unreadable = store.undecryptable_secrets()
     store.seed_from_env(dict(os.environ))

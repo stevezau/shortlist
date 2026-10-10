@@ -667,7 +667,6 @@ class TestRestoreAfterUnpause:
         # placement ignored entirely, which is what the no-spec fallback does.
         placement="off",  # the OWNER's own copy claims nothing
         placement_friends="library",  # everyone else's is Recommended-only, never Home
-        pin_top=True,
     )
 
     def _state(self, sessions, *, promoted: list, merged: list, rows=(), merge_fails=False):
@@ -1397,14 +1396,13 @@ class TestTheAuditRecordsTheEffectiveDryRun:
 
     @pytest.fixture
     def state(self, sessions, monkeypatch):
-        from pathlib import Path
 
         from shortlist.server.services import run_service as run_service_mod
         from shortlist.server.services.run_service import RunService
         from shortlist.server.services.sse import EventBus
 
         monkeypatch.setattr(run_service_mod, "force_dry_run", lambda: True)  # SHORTLIST_DRY_RUN=1
-        service = RunService(sessions, EventBus(), Path("/nonexistent"), None)
+        service = RunService(sessions, EventBus(), None)
         plex = SimpleNamespace(
             sections=lambda: [SimpleNamespace(title="Movies", key=1, type="movie")],
             find_owned_collections=lambda section, label: [],
@@ -1576,7 +1574,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
 
     A dry run holding that authority cannot delete anything: `ctx.config.dry_run` is True whenever
     `dry_run` is, and converge checks that flag before every delete
-    (`test_pipeline.py::test_dry_run_reports_the_deletion_without_making_it`).
+    (`test_delivery_sweep.py::TestSweepBrokenRows::test_dry_run_reports_the_deletion_without_making_it`).
     """
 
     def _state(self, *, forced_dry_run: bool = False, sections: list | None = None):
@@ -1628,7 +1626,7 @@ class TestSyncCheckPreviewsWhatItWouldDelete:
             else:
                 report.converged = ["shortlist_ghost"]
 
-        monkeypatch.setattr(pipeline, "_converge_phase", fake_converge)
+        monkeypatch.setattr(pipeline, "converge_phase", fake_converge)
         return seen
 
     def test_a_preview_lists_the_orphans_it_would_remove(self, monkeypatch):
@@ -2966,8 +2964,8 @@ class TestRunlessPrivacyPassesAuditTheirDemotions:
     """The same three jobs run converge, which takes rows off Home — a paused person's, a switched-off shared
     row's, one whose owner is unknown. `privacy.sync` put a count in its detail line and the other two recorded
     nothing (plex-safety rule 10). They never DELETE an orphan — `engine_run(ctx, [])` gives converge no delete
-    authority (`test_pipeline.py` `TestConvergeRecordsEachRowItTouched`) — so there is no `run.orphan_delete`
-    for them to write. Same harness as the filter-write class above."""
+    authority (`test_pipeline_privacy_order.py` `TestConvergeRecordsEachRowItTouched`) — so there is no
+    `run.orphan_delete` for them to write. Same harness as the filter-write class above."""
 
     KINDS = TestRunlessPrivacyPassesAuditFilterWrites.KINDS
     DEMOTED: ClassVar[list[dict]] = [
@@ -3091,7 +3089,7 @@ class TestSyncCheckAuditsWhatItConverged:
             report.converged = sorted(entry["label"] for entry in report.converge_demotions)
             report.orphans_removed = [entry["label"] for entry in report.orphan_deletions]
 
-        monkeypatch.setattr(pipeline, "_converge_phase", fake_converge)
+        monkeypatch.setattr(pipeline, "converge_phase", fake_converge)
         state = self._base_state(
             forced_dry_run=forced_dry_run, sections=[MagicMock(type="movie", key="1", title="Movies")]
         )
@@ -3163,7 +3161,7 @@ class TestSyncCheckAuditsWhatItConverged:
         def unreachable(*args, **kwargs):
             raise RuntimeError("PMS went away")
 
-        monkeypatch.setattr(pipeline, "_build_indexes", unreachable)
+        monkeypatch.setattr(pipeline, "build_indexes", unreachable)
         job_id = jobs.enqueue(sessions, "sync.check", {"confirmed": True}, max_attempts=1)
 
         drain(state)

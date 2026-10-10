@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import HTTPException
 from loguru import logger
@@ -48,7 +49,7 @@ def _refusal_event(session: Session, half: str, slugs: list[str], population: in
     )
 
 
-async def remove_users_rows(state, user_slugs: list[str]) -> None:
+async def remove_users_rows(state: Any, user_slugs: list[str]) -> None:
     """Remove ALL of every just-disabled user's Shortlist collections (their whole label).
 
     Queued as a durable job rather than done inline. This path used to be fire-and-forget: if Plex
@@ -84,7 +85,7 @@ async def remove_users_rows(state, user_slugs: list[str]) -> None:
     await jobs.queue_privacy_sync(state, reason)
 
 
-async def rename_after_nickname(state, was_called: dict[str, str], *, holds_writer_lock: bool = False) -> None:
+async def rename_after_nickname(state: Any, was_called: dict[str, str], *, holds_writer_lock: bool = False) -> None:
     """Re-render every per-person row's titles so a name change lands on Plex now, not next run.
 
     Reuses the row-rename reconcile with each row's UNCHANGED template. What moved is not the template
@@ -217,7 +218,7 @@ def _sync_owner(
     return "updated"
 
 
-async def sync_users_from_state(state) -> dict:
+async def sync_users_from_state(state: Any) -> dict:
     """The roster sync itself, taking `app.state` rather than a Request.
 
     Split out so the scheduled sync can run as a durable JOB. It used to build a fake `Request` just
@@ -337,8 +338,8 @@ async def sync_users_from_state(state) -> dict:
         # matches by rendered title, so no sweep ever collects it.
         display_changed = _display_names_drifted(session, before)
         # Anyone Shortlist knows who is NO LONGER on the share has lost access to the server, so their
-        # rows must come down. Nothing used to notice: they stayed enabled, so every run tried their
-        # dead share token and failed, and their collection sat promoted to Shared Home indefinitely
+        # rows must come down. Left enabled, every run would try their
+        # dead share token and fail, and their collection would sit promoted to Shared Home indefinitely
         # with no user left to see it. Turning them OFF (rather than deleting the row) reuses the whole
         # tested disable path — remove their collections, then write the filters — and keeps their
         # history, so if they come back the owner switches them on again.
@@ -346,12 +347,12 @@ async def sync_users_from_state(state) -> dict:
         # Bounded twice over, because this runs UNATTENDED on the daily user sync and its follow-up
         # DELETES collections. "plex.tv returned nothing" is indistinguishable from "nobody shares this
         # server any more", and a truncated read is indistinguishable from a mass departure — so an
-        # incomplete picture must do nothing rather than guess, the same way `_converge_phase` gates
+        # incomplete picture must do nothing rather than guess, the same way `converge_phase` gates
         # orphan deletion on a non-empty user list.
         on_roster = {r.id for r in roster} | ({owner_account_id} if owner_account_id else set())
         # Everyone the Users list can still show. Being switched off does not make somebody present,
-        # and this used to compare only ENABLED accounts against the roster — so a user who was
-        # already off when they left Plex was stuck twice over: nothing explained why their row was
+        # so comparing only ENABLED accounts against the roster would leave a user who was
+        # already off when they left Plex stuck twice over: nothing would explain why their row is
         # blank, and Remove refuses anyone not marked departed (409), so they could not be filed away
         # either.
         #

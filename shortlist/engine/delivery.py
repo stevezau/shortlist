@@ -5,11 +5,13 @@ from __future__ import annotations
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from loguru import logger
+from plexapi.collection import Collection
+from plexapi.library import LibrarySection
 
 from shortlist.engine import placeholders
 from shortlist.engine.clients.plex_pms import CollectionRejectedItems, PlexClient, log_title
@@ -64,14 +66,14 @@ def is_name_freeing_helper(title: str) -> bool:
 
 def rename_or_keep(
     plex: PlexClient,
-    collection,
+    collection: Collection,
     title: str,
     profile: UserProfile,
-    section,
+    section: LibrarySection,
     *,
     label: str,
     marker: str,
-    spare_item=None,
+    spare_item: object | None = None,
     read_spare_item: Callable[[], object | None] | None = None,
     may_free_name: Callable[[], bool] | None = None,
 ) -> str:
@@ -376,12 +378,10 @@ def top_seed_of(picks: list[Pick]) -> str:
     would have picked a new name most nights, rewriting the title on Plex each time. `rank` is stamped
     before ordering and still means "how good a match".
 
-    Skipping the UNSEEDED picks is issue #84. It used to take the single best pick and use its seed
-    "if it has one" — so a row whose top pick came from a source that seeds nothing (trending, popular
-    on this server, a web-search suggestion) rendered no seed AT ALL and fell back to the default
-    title, with a dozen perfectly good seeded picks sitting right behind it. The reporter saw it on
-    every account on their server, including ones with years of history, which is what "no seed" was
-    never meant to mean: it is supposed to mean a cold start.
+    Skipping the UNSEEDED picks is issue #84. Taking the single best pick's seed "if it has one"
+    would render no seed AT ALL whenever the top pick came from a source that seeds nothing (trending,
+    popular on this server, a web-search suggestion), falling back to the default title with a dozen
+    perfectly good seeded picks right behind it. "No seed" is supposed to mean a cold start.
 
     When NO pick carries a seed, the title names the watch the row was built from (`lead_seed_title`,
     stamped on every pick). That is issue #133: a new watch with no look-alikes in the library leaves
@@ -406,7 +406,7 @@ def seed_source(section_picks: list[Pick], row_picks: list[Pick]) -> list[Pick]:
 
     A library uses its OWN seed first: a `{top_seed}` row spanning two libraries genuinely follows a
     different watch in each and its titles should say so (pinned by
-    test_pipeline.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
+    test_pipeline_shelf.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
     Borrowing is the step BEFORE giving up and using the default name — issue #84, where a
     `movies & shows` row whose seeds were all films delivered the seeded title to Movies and
     "✨ Picked for You" to TV, so one row appeared twice under two names on the same person's Plex.
@@ -505,7 +505,7 @@ _POSTER_TEXT_ENGINES = {"text": "text", "ai": "ai", "generate": "ai"}
 
 def apply_poster(
     plex: PlexClient,
-    collection,
+    collection: Collection,
     poster: PosterSpec | None,
     profile: UserProfile,
     picks: list[Pick],
@@ -591,7 +591,7 @@ def _field_change(wanted: str, current: str | None, written: str | None) -> tupl
 
 def apply_row_details(
     plex: PlexClient,
-    collection,
+    collection: Collection,
     spec: RowSpec,
     profile: UserProfile,
     picks: list[Pick],
@@ -709,11 +709,11 @@ def _allowed_media(media: str) -> set[MediaType]:
     return {MediaType(media)}
 
 
-def section_kind(section) -> MediaType:
+def section_kind(section: LibrarySection) -> MediaType:
     return MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
 
 
-def sections_for_keys(sections: list, library_keys) -> list:
+def sections_for_keys(sections: list, library_keys: Iterable[str | int]) -> list:
     """The sections a row's ``library_keys`` name, in ``sections`` order.
 
     str() on BOTH sides is load-bearing: the pool-narrowing half of the decision
@@ -732,7 +732,9 @@ def target_sections(sections: list, spec: RowSpec) -> list:
     return sections_for_keys(candidates, spec.library_keys) if spec.library_keys else candidates
 
 
-def rows_can_share_a_library(media_a: str, keys_a, media_b: str, keys_b) -> bool:
+def rows_can_share_a_library(
+    media_a: str, keys_a: Iterable[str | int], media_b: str, keys_b: Iterable[str | int]
+) -> bool:
     """Whether two rows could ever build in the same library, answered without reading Plex.
 
     The duplicate-title check's scope (issue #121): per-person rows are told apart by title only
@@ -740,7 +742,7 @@ def rows_can_share_a_library(media_a: str, keys_a, media_b: str, keys_b) -> bool
     an empty ``library_keys`` follows the server and picks up libraries added later, so the only safe
     "no" is one that holds for every library the server could ever have: media types that never meet,
     or two named library sets with nothing in common. It errs towards "yes" (a refused save) and never
-    towards "no" (two rows on one collection); `test_delivery.py::TestRowsCanShareALibrary` pins that
+    towards "no" (two rows on one collection); `test_delivery_renames.py::TestRowsCanShareALibrary` pins that
     against `target_sections`.
     """
     media_types_meet = bool(_allowed_media(media_a) & _allowed_media(media_b))
@@ -798,7 +800,7 @@ class RowDeliveryRetry:
 
     @staticmethod
     def _same_membership(left: dict, right: dict) -> bool:
-        def signature(entry):
+        def signature(entry: dict) -> tuple:
             return (
                 entry["rating_key"],
                 frozenset((p["tmdb_id"], p["media_type"], p["rating_key"]) for p in entry["picks"]),
@@ -1759,7 +1761,7 @@ def _deliver_one(
     #
     # This library's OWN picks name the row when they carry a seed — a `{top_seed}` row spanning two
     # libraries follows a different watch in each, and each title says which (pinned by
-    # test_pipeline.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
+    # test_pipeline_shelf.py::TestPlacement::test_a_top_seed_row_records_a_placement_title_per_library).
     #
     # `title_picks` — the ROW's whole pick list — is the fallback BEFORE the default title, and that
     # is issue #84. Rendering only from `picks` meant a `movies & shows` row whose seeds were all
@@ -1922,9 +1924,9 @@ def _deliver_one(
 
     if not to_add_keys and to_remove_count == 0:
         # Membership already IS the wanted set — skip the add/remove/sortUpdate writes entirely. An
-        # unchanged row used to fire a sortUpdate every run (a real write on a slow library, for
+        # unchanged row would otherwise fire a sortUpdate every run (a real write on a slow library, for
         # nothing). The deferred order pass still runs via order_work, so a refresh-night re-rank is still
-        # applied and the collection keeps its custom sort from prior runs. (perf: a large production server 2026-07-19)
+        # applied and the collection keeps its custom sort from prior runs.
         if order_work is not None:
             order_work.append((collection, wanted_keys))
         apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)

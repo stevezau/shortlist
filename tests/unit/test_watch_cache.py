@@ -117,7 +117,7 @@ def sync_pms(
     This models the IDEAL reader. Whether the real `PlexClient.watched_titles` can actually deliver
     that coverage — and correctly refuses to claim it when it cannot — is the contract between the
     client and this cache, and is covered against real HTTP in
-    `test_clients.py::TestWatchedWindowCoverage`.
+    `test_clients_watched.py::TestWatchedWindowCoverage`.
     """
 
     def read(since):

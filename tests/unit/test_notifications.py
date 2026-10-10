@@ -985,7 +985,7 @@ class TestShelfContention:
         # otherwise would send someone to swap images expecting a settled shelf.
         assert "still reorders" in body
         # And it must not overstate the exposure: converge clears promotedToOwnHome on every run
-        # (pipeline.py `_converge_phase`), so this is a window between runs, not a permanent leak.
+        # (pipeline.py `converge_phase`), so this is a window between runs, not a permanent leak.
         assert "clears that on every run" in body
         # No hardcoded date about someone else's release cadence — it rots on every server running
         # the image the day they cut a release.

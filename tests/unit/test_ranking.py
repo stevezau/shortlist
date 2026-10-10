@@ -337,11 +337,11 @@ class TestWatchedTitles:
     show or one with a new season."""
 
     def _finished(self, movies, plays, episodes, pct=0.9):
-        from shortlist.engine.rows import _watched_titles
+        from shortlist.engine.rows import watched_titles
 
         # Plex gives per-show (viewed, total) counts; the old split plays/episodes dicts merge into that.
         watched_shows = {tid: (viewed, episodes.get(tid)) for tid, viewed in plays.items()}
-        return _watched_titles(set(movies), watched_shows, pct)
+        return watched_titles(set(movies), watched_shows, pct)
 
     def test_counts_finished_movies_and_shows_but_not_partial(self):
         # movie 1 watched; show 10 finished (9 of 10 eps); show 20 partway (2 of 10); show 30 well
@@ -473,22 +473,22 @@ class TestStartedShows:
     """ "A series to start" — stricter than the finished filter, which lets a part-watched show through."""
 
     def test_one_viewed_episode_disqualifies_a_show(self):
-        from shortlist.engine.rows import _started_shows, _watched_titles
+        from shortlist.engine.rows import started_shows, watched_titles
 
         watched_shows = {10: (1, 40), 11: (0, 12), 12: (40, 40)}
 
-        started = _started_shows(watched_shows)
+        started = started_shows(watched_shows)
 
         assert (10, MediaType.SHOW) in started, "1 of 40 episodes is still STARTED"
         assert (11, MediaType.SHOW) not in started, "never opened — the only kind this row wants"
         assert (12, MediaType.SHOW) in started
         # The point of the flag: the normal filter lets the barely-started show straight through.
-        assert (10, MediaType.SHOW) not in _watched_titles(set(), watched_shows, 0.8)
+        assert (10, MediaType.SHOW) not in watched_titles(set(), watched_shows, 0.8)
 
     def test_a_show_with_an_unknown_episode_count_still_counts_as_started(self):
-        from shortlist.engine.rows import _started_shows
+        from shortlist.engine.rows import started_shows
 
-        assert (10, MediaType.SHOW) in _started_shows({10: (3, None)})
+        assert (10, MediaType.SHOW) in started_shows({10: (3, None)})
 
 
 class TestPreferWatchedPadding:
@@ -858,7 +858,7 @@ class TestPoolKeyMatchesPoolExclusions:
     def test_same_key_implies_same_exclusions_across_the_whole_matrix(self):
         from types import SimpleNamespace
 
-        from shortlist.engine.rows import RowPolicy, _watched_titles
+        from shortlist.engine.rows import RowPolicy, watched_titles
 
         # One finished movie, one finished show, one merely STARTED show, and one whose episode total
         # Plex could not report — the four shapes that make the three exclusion sets differ.
@@ -869,7 +869,7 @@ class TestPoolKeyMatchesPoolExclusions:
         # exactly as they do in production. Stubbing each one would be testing a second copy of the
         # resolution order rather than the one that ships.
         stub = object.__new__(RowPolicy)
-        stub.watched_titles = _watched_titles(watched_movies, watched_shows, 0.8)
+        stub.watched_titles = watched_titles(watched_movies, watched_shows, 0.8)
         stub.watched_shows = watched_shows
         stub.cfg = SimpleNamespace(watched_pct=0.0, watched_show_pct=0.8)
 
@@ -907,22 +907,22 @@ class TestPoolKeyMatchesPoolExclusions:
         """
         from types import SimpleNamespace
 
-        from shortlist.engine.rows import RowPolicy, _started_shows, _watched_titles
+        from shortlist.engine.rows import RowPolicy, started_shows, watched_titles
 
         watched_shows = {10: (8, 8), 20: (1, 40), 30: (0, None)}
         stub = object.__new__(RowPolicy)
-        stub.watched_titles = _watched_titles({949}, watched_shows, 0.8)
+        stub.watched_titles = watched_titles({949}, watched_shows, 0.8)
         stub.watched_shows = watched_shows
         stub.cfg = SimpleNamespace(watched_pct=0.0, watched_show_pct=0.8)
 
         zero_pct = stub.zero_pct_exclusions()
 
-        assert _started_shows(watched_shows) <= zero_pct
+        assert started_shows(watched_shows) <= zero_pct
 
 
 class TestRankAgainstPoolOrdersOnly:
     """`_rank_against_pool` orders; it must never decide membership. The refresh branch chooses the
-    row's `k` before calling it — see `TestRefreshNightVariety` in test_pipeline.py, which is the
+    row's `k` before calling it — see `TestRefreshNightVariety` in test_pipeline_picking.py, which is the
     test that actually catches a regression here."""
 
     @staticmethod

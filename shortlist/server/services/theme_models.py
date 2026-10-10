@@ -13,8 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from shortlist.engine.models import MediaType, RowLimits
 from shortlist.engine.themes import GENRE_IDS_BY_NAME, ThemeSpec, theme_content_hash
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.db.models import Theme
+from shortlist.server.schema_base import PassthroughModel
 
 
 class TagIO(PassthroughModel):

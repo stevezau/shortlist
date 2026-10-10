@@ -508,11 +508,10 @@ def rows_titled_from(
     # Both of the incoming row's possible titles, for the same reason `row_title_keys` collects both.
     catalogue = load_catalogue(session)
     wanted_keys = title_keys(template, catalogue=catalogue, theme=theme) | {k for k in (title_key(fallback_name),) if k}
-    # An unrenderable template has no title to collide on. Since issue #84 that includes every
-    # `{top_seed}` template, which renders to "" without picks — an improvement: they all used to
-    # render the same substitute name and so were refused against each other and against any row
-    # genuinely titled that. A `{top_seed}` row's real collision is between two PEOPLE-less renders
-    # at delivery time, which `_run_user` logs when it happens.
+    # An unrenderable template has no title to collide on. That includes every
+    # `{top_seed}` template, which renders to "" without picks: rendering the same substitute name
+    # would refuse them against each other and against any row genuinely titled that. A `{top_seed}` row's real
+    # collision is between two PEOPLE-less renders at delivery time, which `_run_user` logs when it happens.
     if not wanted_keys:
         return []
     clashes: list[Collection] = []

@@ -559,13 +559,13 @@ class TestCollectionOrderPhase:
         from types import SimpleNamespace
 
         from shortlist.engine.models import HubAnchor
-        from shortlist.engine.pipeline import _order_phase
+        from shortlist.engine.pipeline import order_phase
 
         ctx.config.hub_anchors = {"1": HubAnchor(anchor_title="Recently Added Movies", before=False)}
         ctx.config.manage_shelf_order = False
         report = SimpleNamespace(hub_orderings=[])
 
-        _order_phase(ctx, report)
+        order_phase(ctx, report)
 
         ctx.plex.place_rows.assert_not_called()
         assert report.hub_orderings == []
@@ -599,7 +599,7 @@ class TestConverge:
         paused: set[str] | None = None,
     ):
         from shortlist.engine.models import RunReport
-        from shortlist.engine.pipeline import _converge_phase
+        from shortlist.engine.pipeline import converge_phase
 
         ctx.owner_slug = owner_slug
         ctx.paused_slugs = paused or set()
@@ -610,7 +610,7 @@ class TestConverge:
         ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
         ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
         report = RunReport(started_at=datetime.now(UTC))
-        _converge_phase(ctx, promoted, report)
+        converge_phase(ctx, promoted, report)
         return report
 
     def test_a_stranded_row_is_taken_off_the_owners_home(self, ctx: EngineContext):
@@ -809,7 +809,7 @@ class TestOrphanDeletion:
 
     def _run(self, ctx, collections, *, known: dict, may_delete: bool, dry_run: bool = False):
         from shortlist.engine.models import RunReport
-        from shortlist.engine.pipeline import _converge_phase
+        from shortlist.engine.pipeline import converge_phase
 
         ctx.owner_slug = "steve"
         ctx.known_slugs = known
@@ -819,7 +819,7 @@ class TestOrphanDeletion:
         ctx.plex.claims_any_surface.return_value = True
         ctx.plex.demote_all.return_value = True
         report = RunReport(started_at=datetime.now(UTC))
-        _converge_phase(ctx, set(), report)
+        converge_phase(ctx, set(), report)
         return report
 
     def test_the_constant_label_does_not_turn_a_live_row_into_an_orphan(self, ctx: EngineContext):
@@ -860,7 +860,7 @@ class TestOrphanDeletion:
         audit row said "share filters merged" while a collection was destroyed.
         """
         from shortlist.engine.models import RunReport
-        from shortlist.engine.pipeline import _converge_phase
+        from shortlist.engine.pipeline import converge_phase
 
         orphan = self._collection(1, "Shortlist_ghost")
         ctx.owner_slug = "steve"
@@ -872,7 +872,7 @@ class TestOrphanDeletion:
         ctx.plex.demote_all.return_value = True
 
         report = RunReport(started_at=datetime.now(UTC))
-        _converge_phase(ctx, set(), report, may_delete=False)
+        converge_phase(ctx, set(), report, may_delete=False)
 
         ctx.plex.delete_owned_collection.assert_not_called()
         assert report.orphans_removed == [], "a pass with no users must not destroy anyone's row"
@@ -964,7 +964,7 @@ class TestConvergeRecordsEachRowItTouched:
 
     def _run(self, ctx, collection, *, paused=frozenset(), known=None, may_delete=False, dry_run=False):
         from shortlist.engine.models import RunReport
-        from shortlist.engine.pipeline import _converge_phase
+        from shortlist.engine.pipeline import converge_phase
 
         section = ctx.plex.sections.return_value[0]
         section.key = 1
@@ -981,7 +981,7 @@ class TestConvergeRecordsEachRowItTouched:
         ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
         ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
         report = RunReport(started_at=datetime.now(UTC))
-        _converge_phase(ctx, set(), report)
+        converge_phase(ctx, set(), report)
         return report
 
     @staticmethod
@@ -1059,7 +1059,7 @@ class TestConvergeRecordsEachRowItTouched:
     def test_a_pass_with_no_users_records_no_deletion_however_complete_the_roster(self, ctx: EngineContext):
         """Why the three run-less jobs audit demotions and not deletions: `engine_run(ctx, [])` hands converge no
         delete authority, so an orphan is DEMOTED (and recorded as one) even when the roster is complete and the
-        context would allow it. Through the real `run`, not `_converge_phase`, so the authority it passes is
+        context would allow it. Through the real `run`, not `converge_phase`, so the authority it passes is
         what is pinned."""
         orphan = self._collection(1, "Shortlist_ghost")
         section = ctx.plex.sections.return_value[0]

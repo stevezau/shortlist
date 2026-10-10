@@ -367,7 +367,7 @@ class TestPerRowOverrides:
 
     def test_rewatch_works_for_shows_where_finished_is_a_different_predicate(self, ctx: EngineContext, mock_plextv):
         """For movies "finished" is any watch; for shows it is the `watched_show_pct` fraction plus a
-        length-scaled floor (`_watched_titles`) — a different predicate, so a different cell."""
+        length-scaled floor (`watched_titles`) — a different predicate, so a different cell."""
         show_section = MagicMock()
         show_section.type = "show"
         show_section.title = "TV Shows"
@@ -411,7 +411,7 @@ class TestPerRowOverrides:
     def test_unstarted_only_applies_on_a_both_media_row_not_just_a_shows_row(self, ctx: EngineContext, mock_plextv):
         """`media="both"` is its own cell: the filter must not be gated on the row being shows-only.
 
-        Movie immunity is asserted at the unit level instead (`TestStartedShows` — `_started_shows`
+        Movie immunity is asserted at the unit level instead (`TestStartedShows` — `started_shows`
         yields only SHOW keys, so nothing it returns can match a movie candidate). Doing it here would
         need a second seed of the other type, because candidates inherit their SEED's media type — so
         a movie-seeded gather types even a TV title as a movie and the test would pass for the wrong
@@ -2223,7 +2223,7 @@ class TestAutoUserTag:
         ]
         # A slug with an underscore, because that is what a two-word Plex name produces. It reaches
         # the client verbatim; turning it into `moo-house` for the Arr's charset is the CLIENT's job
-        # and is pinned separately (`test_arr.py::test_tags_are_sanitized_to_the_arr_charset`).
+        # and is pinned separately (`test_arr.py::TestRadarrAddMovie::test_tags_are_sanitized_to_the_arr_charset`).
         steve = make_profile("Guest", account_id=100, slug="guest_user")
         mock_plextv.users = [plextv_user(100, "Guest")]
         ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]

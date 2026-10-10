@@ -165,8 +165,7 @@ class TmdbClient:
         results = self.search_all(query, media_type)
         if not results:
             return None
-        # `max` keeps the first of equal scores, so a tie falls back to TMDB's own popularity order —
-        # which is what this function used to return outright.
+        # `max` keeps the first of equal scores, so a tie falls back to TMDB's own popularity order.
         return max(results, key=lambda r: _match_score(r, query, year))
 
     def search_all(self, title: str, media_type: MediaType) -> list[dict]:

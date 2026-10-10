@@ -24,9 +24,9 @@ from shortlist.server.services import season_rules
 @pytest.fixture(autouse=True)
 def _forget_scanned_libraries():
     """The API's library scans are memoised in the process; one test's library must not answer another's."""
-    library_index_mod.forget()
+    library_index_mod._memo.clear()
     yield
-    library_index_mod.forget()
+    library_index_mod._memo.clear()
 
 
 def _body(**overrides) -> dict:

@@ -291,7 +291,6 @@ class TestPosterStudio:
     def test_ai_engine_without_provider_returns_none(self, sessions):
         studio = PosterStudio(sessions, ai=None)
         assert studio.render(title="Hi", subtitle="", style="", engine="ai") is None
-        assert studio.ai_available is False
 
     def test_ai_engine_uses_the_injected_artist(self, sessions):
         ai = MagicMock()

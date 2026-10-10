@@ -1319,8 +1319,6 @@ class ContextBuilder:
                     pick_order=collection.pick_order or "best",
                     placement=(collection.placement or "both") if shown else "off",
                     placement_friends=(collection.placement_friends or "both") if shown else "off",
-                    hidden_by_schedule=not shown,
-                    pin_top=bool(collection.pin_top),
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],
                     poster=self._build_poster(session, collection),
@@ -1410,9 +1408,9 @@ class ContextBuilder:
         """This row's per-library Recommended-shelf placement (`collection.hub_anchor`).
 
         A library with no entry here means "top of the shelf", which is the shipped default — not
-        "leave it alone", and no longer a global default read from Settings (`rows.hub_anchor` was
-        retired: it was a second place to set the same thing). Legacy `pin_top` is not read by the
-        engine at all any more; the editor migrates it into a per-library "Top" when the row is saved.
+        "leave it alone", and no longer a global default read from Settings (`rows.hub_anchor` is
+        not a setting). The editor migrates the legacy `pin_top` column into a per-library "Top" when
+        the row is saved; the engine never reads it.
         """
         return cls._parse_hub_anchors(collection.hub_anchor or {})
 
@@ -1435,7 +1433,7 @@ class ContextBuilder:
         audience THEN, not necessarily now. It skips the render gate on purpose, because a switched
         `{top_seed}` row is the case most likely to be missed: `remove_row` matches an unrenderable title by
         its ledger key ONLY and leaves a copy the ledger does not name alone. Not a DISABLED shared row:
-        retired specs are indexed where they live (`pipeline._build_indexes`), so one would keep a library
+        retired specs are indexed where they live (`pipeline.build_indexes`), so one would keep a library
         that nothing else targets in every run's index, and its watches seeding everyone's picks.
         """
         account_by_user, audience_by_collection = self.audience_maps(session)

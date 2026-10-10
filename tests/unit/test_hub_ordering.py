@@ -1183,7 +1183,7 @@ class TestRowChainsOnTheShelf:
     """The SHELF half of row-to-row placement: what `place_rows` does with a chain's markers.
 
     The marker half — which marker `_shelf_sequence` emits for a follower — is pinned in
-    `test_pipeline.py::TestShelfSequence`, and `test_a_real_config_lands_the_whole_chain_on_the_shelf`
+    `test_pipeline_shelf.py::TestShelfSequence`, and `test_a_real_config_lands_the_whole_chain_on_the_shelf`
     below wires the two together, because both regressions in this area were sequence-shape
     assertions that got updated to match the broken behaviour.
     """

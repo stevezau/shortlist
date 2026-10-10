@@ -14,8 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import check_csrf, read_session
+from shortlist.server.schema_base import PassthroughModel
 
 from .authlib_adapter import ASGIAuthorizationServer, PreparedOAuthRequest
 from .destinations import (

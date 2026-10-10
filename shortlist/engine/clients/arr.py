@@ -269,7 +269,7 @@ class _ArrClient:
         if tag_id is not None:
             self._resolved[key] = tag_id
             self._existing_tags[key] = tag_id
-            # A real write into the operator's arr — leave a trail (this file was previously silent).
+            # A real write into the operator's arr — leave a trail.
             logger.debug("{}: created tag {!r} (id {})", self.app_name, label, tag_id)
         return tag_id
 

@@ -19,7 +19,7 @@ from loguru import logger
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.curator.base import Curator, taste_summary
 from shortlist.engine.models import MediaType, RowLimits, UserProfile, slugify
-from shortlist.engine.seasons import _CollectionReader
+from shortlist.engine.seasons import CollectionReader
 from shortlist.engine.themes import GENRE_IDS_BY_NAME, ThemePick, ThemeSpec, load_theme
 
 __all__ = [
@@ -138,7 +138,7 @@ def author_theme(
     media: MediaType | tuple[MediaType, ...],
     curator: Curator,
     tmdb: TmdbClient,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     library_index: dict[MediaType, dict[int, int]],
     profile: UserProfile | None = None,
     current: ThemeSpec | None = None,

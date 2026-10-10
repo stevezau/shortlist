@@ -402,7 +402,7 @@ class _ListReader(Protocol):
     def list_item(self, tmdb_id: int, media_type: MediaType) -> dict | None: ...
 
 
-class _CollectionReader(Protocol):
+class CollectionReader(Protocol):
     def collection_members(self, section_key: str, title: str) -> list[LibraryTitle] | None: ...
 
 
@@ -504,7 +504,7 @@ class _SourceReads:
 
 def _read_sources(
     tmdb: _ListReader,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     season: Season,
     discover: Callable[[MediaType, dict], list[dict]],
     *,
@@ -555,7 +555,7 @@ def _read_sources(
 
 def load_titles(
     tmdb: _ListReader,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     season: Season,
     library_index: dict[MediaType, dict[int, int]],
 ) -> SeasonTitles:
@@ -638,7 +638,7 @@ class SeasonPreview:
 
 def preview(
     tmdb: _PagedListReader,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     season: Season,
     library_index: dict[MediaType, dict[int, int]],
     *,

@@ -284,8 +284,8 @@ CATALOG: tuple[JobKind, ...] = (
         ),
         manual=True,
         writes_plex=False,  # local database only
-        # Queued by the run service the moment a run's results are safely persisted. It used to run
-        # INSIDE that persist's transaction, so a bulk delete that failed took the whole persist with
+        # Queued by the run service the moment a run's results are safely persisted. Running it
+        # INSIDE that persist's transaction would let a failed bulk delete take the whole persist with
         # it — discarding the record of a run that had already written to Plex.
         schedule_job_id="maintenance-prune",
         schedule_setting="maintenance.prune_cron",
@@ -902,7 +902,8 @@ def _max_parallel_readonly(state) -> int:
     try:
         with state.sessions() as session:
             value = SettingsStore(session).get("jobs.max_parallel_readonly")
-    except Exception:
+    except Exception as e:
+        logger.debug("jobs.max_parallel_readonly unreadable ({}); using the default", type(e).__name__)
         return DEFAULT_MAX_PARALLEL_READONLY
     if isinstance(value, int) and value >= 1:
         return value
@@ -984,7 +985,7 @@ async def _execute(state, sessions, job_id: int, kind: str) -> None:
         notify.enqueue_job_event(sessions, job_id, "job.started")
     fn = _HANDLERS.get(kind)
     if fn is None:
-        # The kind was removed in an upgrade while a job was queued. Nothing can run it.
+        # The kind no longer exists (an upgrade dropped it while a job was queued). Nothing can run it.
         _finish(sessions, job_id, error=f"no handler registered for {kind!r}")
         return
     # A handler that declares `job_id` gets its own row id. Only the watching-account transfer wants
@@ -1135,7 +1136,7 @@ def _sync_check(state, payload: dict) -> dict:
     own-home is monotonically private, so this needs no privacy gate.
     """
     from shortlist.engine.models import RunReport
-    from shortlist.engine.pipeline import _build_indexes, _converge_phase, _order_phase
+    from shortlist.engine.pipeline import build_indexes, converge_phase, order_phase
 
     report = RunReport(started_at=datetime.now(UTC))
     requested = payload.get("dry_run", False)
@@ -1153,17 +1154,17 @@ def _sync_check(state, payload: dict) -> dict:
     # callout could never render and Fix deleted unannounced. Granting it here cannot delete
     # anything: `dry_run` is True only when `ctx.config.dry_run` is (it is one of the two terms it is
     # OR'd from), and converge checks that flag before every delete, logging the would-be removal.
-    _converge_phase(ctx, set(), report, may_delete=confirmed or dry_run)
+    converge_phase(ctx, set(), report, may_delete=confirmed or dry_run)
     # Before the shelf pass, whose library read can raise: an orphan deleted here is gone from Plex, and the
     # retry's converge finds nothing left to record.
     _audit_runless_pass(state, report, dry_run, "sync.check")
     # A row stranded at the bottom of the Recommended shelf IS a row "in the wrong place", which is
     # what this button says it fixes — so put the shelf right here too, not only on a full run. It is
     # cosmetic and privacy-neutral (positions only, on hubs already promoted and browse-hidden), so it
-    # needs no privacy gate and `_apply_placement` swallows its own failures. `_build_indexes` with no
+    # needs no privacy gate and `_apply_placement` swallows its own failures. `build_indexes` with no
     # users names the libraries rows live in without reading a single item inside them.
-    _build_indexes(ctx, [], ctx.plex.sections())
-    _order_phase(ctx, report)
+    build_indexes(ctx, [], ctx.plex.sections())
+    order_phase(ctx, report)
     _audit_hub_orderings(state, report, dry_run)
     # Deletions are reported SEPARATELY and named first. Folding them into `fixed` would hide the one
     # irreversible thing this does behind a number, in the very preview an operator reads to decide
@@ -1625,8 +1626,8 @@ def _user_cleanup(state, payload: dict) -> dict:
     from shortlist.server.services.collection_reconcile import forget_user_deliveries
 
     slug = payload["slug"]
-    # Through the chokepoint, not `force_dry_run()` here: this used to call the safe-mode helper
-    # itself, which is the one idiom `build_context` exists to make unnecessary — and the only way the
+    # Through the chokepoint, not `force_dry_run()` here: calling the safe-mode helper
+    # here is the one idiom `build_context` exists to make unnecessary — and the only way the
     # value the handler logs can drift from the value the writes actually used.
     requested = payload.get("dry_run", False)
     ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
@@ -2098,8 +2099,8 @@ def _rows_visibility(state, payload: dict) -> dict:
             "detail": f"{len(scheduled)} row(s) are waiting for today's schedule — everything is paused",
         }
 
-    # A pass the row editor queued for ONE row applies that row only. Saving one row's seasons used to
-    # re-promote every row on the server (seen live 2026-09-27); the midnight tick, with no row, is the
+    # A pass the row editor queued for ONE row applies that row only. Saving one row's seasons must not
+    # re-promote every row on the server; the midnight tick, with no row, is the
     # server-wide pass.
     row = payload.get("row") or None
     changed = [row] if row else sorted(scheduled)
@@ -2134,7 +2135,7 @@ def _rows_visibility(state, payload: dict) -> dict:
     # account's filter and creates/promotes nothing; it reports failure by RETURN VALUE, so it is
     # checked rather than assumed.
     # The shelf ORDER is not this job's business — the 03:30 run owns it. Left on, `engine_run` would
-    # run `_order_phase` here every night, writing the `shelf.order` events that
+    # run `order_phase` here every night, writing the `shelf.order` events that
     # `notifications._shelf_contention` counts (3 in 24h reads as another tool fighting us, issue
     # #106). It would also order BEFORE promoting, the inverse of a run, so a row being shown today is
     # not yet on the shelf when the ordering happens and moves again at 03:30 — a second recorded move

@@ -21,15 +21,18 @@ import functools
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
 import shortlist
+from shortlist.engine.clients.plex_pms import PlexClient
+from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.context import EngineContext
-from shortlist.engine.models import RunReport
+from shortlist.engine.models import RequestConfig, RequestSources, RunReport, UserProfile
 from shortlist.engine.pipeline import run as engine_run
+from shortlist.engine.provider_calls import ProviderCallControls
+from shortlist.engine.requests import AcquisitionGuard
 from shortlist.server.db.models import Collection, Run, RunUser, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services import jobs, notify, run_persistence
@@ -90,10 +93,9 @@ def _engine_run_logged(run_id: int, log_sink: Callable[[dict], None], ctx: Engin
 
 
 class RunService:
-    def __init__(self, session_factory: sessionmaker[Session], bus: EventBus, config_dir: Path, secret_box):
+    def __init__(self, session_factory: sessionmaker[Session], bus: EventBus, secret_box):
         self._sessions = session_factory
         self._bus = bus
-        self._config_dir = config_dir
         self._secrets = secret_box
         self._ctx = ContextBuilder(session_factory, secret_box, bus)
         self._lock = asyncio.Lock()  # one run at a time; nightly + manual runs must not overlap
@@ -150,8 +152,8 @@ class RunService:
         collection_ids: list[int] | None = None,
         plex_only: bool = False,
         session: Session | None = None,
-        provider_controls=None,
-        acquisition_guard=None,
+        provider_controls: ProviderCallControls | None = None,
+        acquisition_guard: AcquisitionGuard | None = None,
     ) -> EngineContext:
         """The engine context for any Plex-touching path.
 
@@ -180,27 +182,27 @@ class RunService:
             ),
         )
 
-    def build_requests_context(self):
+    def build_requests_context(self) -> tuple[RequestConfig | None, TmdbClient]:
         """Requests config + TMDB client for the approval inbox's manual send — no Plex/LLM I/O."""
         return self._ctx.build_requests_only()
 
-    def build_tmdb_only(self):
+    def build_tmdb_only(self) -> TmdbClient | None:
         """A TMDB client, or None without an API key — for the season editor (issue #137)."""
         return self._ctx.build_tmdb_only()
 
-    def build_plex_reader(self):
+    def build_plex_reader(self) -> PlexClient | None:
         """The owner's PMS, or None before setup — for the season editor's reads (issue #137). Connects."""
         return self._ctx.build_plex_reader()
 
-    def profile_with_history(self, session: Session, user_id: int):
+    def profile_with_history(self, session: Session, user_id: int) -> UserProfile:
         """One person's profile with their watch history filled in, as a run reads it — for theme authoring."""
         return self._ctx.profile_with_history(session, user_id)
 
-    def build_request_sources_only(self):
+    def build_request_sources_only(self) -> tuple[RequestSources | None, list[UserProfile], dict[int, int]]:
         """Request sources + enabled roster + plex id -> DB id for the requests-row setup check."""
         return self._ctx.build_request_sources_only()
 
-    def enabled_profiles(self, session: Session, user_ids: list[int] | None = None):
+    def enabled_profiles(self, session: Session, user_ids: list[int] | None = None) -> list[UserProfile]:
         return self._ctx.enabled_profiles(session, user_ids)
 
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
@@ -220,7 +222,9 @@ class RunService:
 
     # -- watch-cache orchestration (delegated to WatchSync) -------------------------------
 
-    def refresh_watched(self, ctx, profile, *, force_full: bool = False, sweep_dead: bool = False) -> list:
+    def refresh_watched(
+        self, ctx: EngineContext, profile: UserProfile, *, force_full: bool = False, sweep_dead: bool = False
+    ) -> list:
         return self._watch.refresh_watched(ctx, profile, force_full=force_full, sweep_dead=sweep_dead)
 
     async def sync_watched(self) -> None:
@@ -432,8 +436,8 @@ class RunService:
                 raise asyncio.CancelledError
         finally:
             # A run holds the Plex writer lock, so `_plex_busy` parks every writer job behind it.
-            # Nothing used to tell the queue when that ended, leaving jobs idle until the worker's
-            # next 60s tick — measured at 29s of doing nothing on a real server. Draining here is a
+            # Without telling the queue when that ends, jobs sit idle until the worker's
+            # next 60s tick (measured at 29s of doing nothing on a real server). Draining here is a
             # latency fix only; the tick stays as the backstop.
             #
             # In a `finally`, so a run that ERRORED or was CANCELLED drains too: it released the
@@ -579,9 +583,9 @@ class RunService:
                 ctx.on_user_done = lambda profile, user_report: self._persist_user_live(
                     run_id, profile, user_report, dry_run
                 )
-                # Fill each person's history from the cache BEFORE the engine runs. The run used to
-                # do its own complete per-user read — the same read the nightly sync had already
-                # done hours earlier — which was half the total cost of a night.
+                # Fill each person's history from the cache BEFORE the engine runs. The run's own
+                # complete per-user read would repeat the one the nightly sync did hours earlier, and
+                # was half the total cost of a night.
                 await loop.run_in_executor(None, self._watch.prefill_history, ctx, profiles, run_id)
                 # What is in each person's rows RIGHT NOW, before the engine rebuilds them. This is
                 # the shelf they were actually looking at during the window they were watching in,
@@ -613,9 +617,9 @@ class RunService:
                 if not dry_run:
                     # Guarded, and the guard is the point. Every row is already built and delivered
                     # on Plex by the time this runs; crediting is bookkeeping over our own database.
-                    # An exception here used to land in the `except` below and mark a completely
-                    # successful run as ERROR — the same shape as the retention prune, which was
-                    # moved out of the persist transaction for exactly this reason. Whatever this
+                    # An exception here would land in the `except` below and mark a completely
+                    # successful run as ERROR — the same shape as the retention prune, which runs
+                    # outside the persist transaction for exactly this reason. Whatever this
                     # pass misses, the nightly sync reaches from the same records.
                     try:
                         await loop.run_in_executor(None, self._reconcile_watched, profiles, live_picks)
@@ -728,10 +732,10 @@ class RunService:
             # save owns `Run.stats` now: writing the flag would race it or outlive the run.
             logger.info("run {} cancel ignored — it is already finishing", run_id)
             return True
-        # Recorded on the RUN, not just in memory and an SSE event, so any client can see it. The
-        # button used to read "Stopping..." off local mutation state alone: a page refresh forgot,
-        # offered a live-looking Cancel, and every press after that 409'd with "this run isn't
-        # currently running" — the opposite of the truth, on a run that was very much running.
+        # Recorded on the RUN, not just in memory and an SSE event, so any client can see it. A
+        # button reading "Stopping..." off local mutation state alone forgets on a page refresh,
+        # offers a live-looking Cancel, and every press after that 409s with "this run isn't
+        # currently running" — the opposite of the truth, on a run that is very much running.
         # Best-effort: the Event above IS the cancellation, and it has already taken effect. This row
         # is a convenience so a reloaded page knows. SQLite is single-writer and the run's own thread
         # is writing users and log lines, so a busy timeout here must not surface as a failed cancel —
@@ -743,10 +747,9 @@ class RunService:
                     # A QUEUED run is finished here and now. It has not started, holds nothing and has
                     # written nothing, so there is nothing to unwind and nothing to be careful about.
                     #
-                    # It used to be marked aborted only once it ACQUIRED the Plex writer lock — which
-                    # is exactly what it is waiting for. Queue two runs, cancel both, and the second
-                    # sat on "Stopping…" until the FIRST one finished, because the code meant to stop
-                    # it could not run until the thing it was queued behind got out of the way. The
+                    # Marking it aborted only once it ACQUIRES the Plex writer lock would wait on exactly
+                    # what it is queued behind: queue two runs, cancel both, and the second would sit on
+                    # "Stopping…" until the FIRST one finished. The
                     # flag is still set below, so if it is already mid-start it bails there too.
                     if run.status == "queued":
                         run.status = "aborted"

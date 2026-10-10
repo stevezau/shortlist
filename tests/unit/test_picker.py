@@ -1,6 +1,6 @@
 """The code-based picker that replaced the LLM curate step: reason templates + pick assembly.
 
-`build_picks` itself is exercised end-to-end in test_pipeline.py; here we pin the reason WORDING,
+`build_picks` itself is exercised end-to-end in test_pipeline_run.py; here we pin the reason WORDING,
 whose three branches (genre / bare-seed / seedless) are otherwise only hit incidentally.
 """
 

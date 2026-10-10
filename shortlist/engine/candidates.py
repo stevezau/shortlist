@@ -23,15 +23,17 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from shortlist.engine.clients.search import SearchResult, TitleCandidate, extracts_titles
+from shortlist.engine.clients.search import SearchResult, TitleCandidate, WebSearchProvider, extracts_titles
 from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
+from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.curator.base import (
+    Curator,
     build_web_pick_prompt,
     build_web_query_for_title,
     build_web_rag_prompt,
     try_parse_web_titles,
 )
-from shortlist.engine.models import MAX_ROW_SIZE, Attribution, Candidate, MediaType, Seed
+from shortlist.engine.models import MAX_ROW_SIZE, Attribution, Candidate, MediaType, Seed, UserProfile
 from shortlist.engine.web_guidance import Guidance
 
 # One cached web search PER recent title (Exa bills per search): cache the RESULTS by (media, tmdb_id)
@@ -162,10 +164,10 @@ def _web_search_capable(curator, search, mode: str) -> bool:
 
 
 def web_recommendations(
-    curator,
-    search,
+    curator: Curator,
+    search: WebSearchProvider,
     mode: str,
-    profile,
+    profile: UserProfile,
     seeds: list[Seed],
     k: int,
     stats: GatherStats,
@@ -853,10 +855,10 @@ def gather_candidates(
     seeds: list[Seed],
     *,
     sources: list[str] | None = None,
-    curator=None,
-    profile=None,
-    trakt=None,
-    search=None,
+    curator: Curator | None = None,
+    profile: UserProfile | None = None,
+    trakt: TraktClient | None = None,
+    search: WebSearchProvider | None = None,
     web_search_mode: str = "native",
     web_search_cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
@@ -934,7 +936,9 @@ def gather_candidates(
             pool[key].affinity = measured[key]
         return pool[key]
 
-    def merge(tmdb_id: int, title: str, media_type: MediaType, year, genres, source: str) -> Candidate:
+    def merge(
+        tmdb_id: int, title: str, media_type: MediaType, year: int | None, genres: list[str] | None, source: str
+    ) -> Candidate:
         """Merge a candidate described by explicit fields (non-TMDB sources) into the pool."""
         key = (tmdb_id, media_type)
         if key not in pool:
@@ -944,7 +948,7 @@ def gather_candidates(
         pool[key].sources.add(source)
         return pool[key]
 
-    # Fetch each media type's genre map once up front (used to name every candidate, whatever source
+    # Fetch each media type's genre map once up front (it names every candidate, whatever source
     # produced it) — never per seed.
     for media_type in {s.media_type for s in seeds}:
         genres_for(media_type)
@@ -989,8 +993,8 @@ def gather_candidates(
                     returned.append((int(item.get("id") or 0), item.get("title") or item.get("name") or ""))
                 _record_seed_query("tmdb_similar", seed, returned)
         except Exception as e:
-            # The only source that used to have no isolation: a TMDB hiccup here killed the user's
-            # whole run, discarding the pools every other source had already gathered.
+            # Isolated like every other source: a TMDB hiccup here must not kill the user's
+            # whole run and discard the pools the other sources already gathered.
             failures["tmdb_similar"] = f"{type(e).__name__}: {e}"
             logger.warning("tmdb_similar source failed ({}); continuing with the other sources", type(e).__name__)
 
@@ -1035,8 +1039,8 @@ def gather_candidates(
             failures["trakt"] = f"{type(e).__name__}: {e}"
             logger.warning("trakt source failed ({}); continuing with the other sources", type(e).__name__)
 
-    # Whether this source can run is `_web_search_capable`'s question ALONE — it used to also require
-    # a real (non-Null) curator, which quietly outranked it and made that function's Exa branch dead
+    # Whether this source can run is `_web_search_capable`'s question ALONE — also requiring
+    # a real (non-Null) curator would quietly outrank it and make that function's Exa branch dead
     # code. Exa returns extracted titles, so Exa with no AI provider is a complete setup.
     # `curator is not None` stays: `_web_search_capable` reads capabilities off the curator with
     # getattr defaults, and None would read as capable.

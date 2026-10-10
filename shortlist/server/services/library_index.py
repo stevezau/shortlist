@@ -80,12 +80,6 @@ def row_sections(plex: _LibraryReader, *, media: str, library_keys: Collection[s
     return target_sections(plex.sections(), row)
 
 
-def forget() -> None:
-    """Drop every scan held here."""
-    with _memo_lock:
-        _memo.clear()
-
-
 def _section_index(plex: _LibraryReader, cache: DbCache, section: LibrarySection) -> dict[int, int]:
     signature = plex.section_signature(section)
     # The run's key (`pipeline._library_index`). With no signature a run never caches, so there is nothing to read.

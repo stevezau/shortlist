@@ -205,7 +205,7 @@ class PlexTvClient:
         try:
             r = http_retry.get(f"{PLEXTV}/api/home/users", headers=self._headers(), timeout=self._timeout)
             r.raise_for_status()
-            # Parsing is INSIDE the try. It used to sit outside, so a single non-numeric id raised out
+            # Parsing is INSIDE the try: outside it, a single non-numeric id raises out
             # of `list_users()` — which the pipeline reads as "could not read the plex.tv user list" and
             # writes no filters for anyone, promoting nothing, for the whole server. The exact opposite
             # of the best-effort behaviour this method promises (rule 11: assume nothing about a shape).
@@ -288,7 +288,7 @@ class PlexTvClient:
         net_backoff = 2.0
         # What the LAST attempt actually failed with — reported if every attempt is exhausted, so the
         # final error names its real cause instead of always blaming throttling (a repeated connect
-        # failure used to raise "still throttling", sending the operator to the wrong diagnosis on
+        # failure reported as "still throttling" sends the operator to the wrong diagnosis on
         # the most privacy-sensitive write path).
         last_failure = "no attempt was made"
         server_tries = 0

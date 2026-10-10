@@ -21,7 +21,6 @@ from shortlist.engine.models import (
 )
 from shortlist.engine.placeholders import fill_theme, uses_season, uses_theme
 from shortlist.engine.web_guidance import INSTRUCTION_MODES
-from shortlist.server.api.schemas import PassthroughModel, StrictRequestModel
 from shortlist.server.assistant.row_effects import (
     privacy_sync_step,
     queue_convergence_in_session,
@@ -39,6 +38,7 @@ from shortlist.server.db.models import (
     iso_utc,
 )
 from shortlist.server.safe_mode import force_dry_run
+from shortlist.server.schema_base import PassthroughModel, StrictRequestModel
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs, poster_service, report_service
 from shortlist.server.services.audit import add_audit, write_audit
@@ -325,7 +325,7 @@ class RowDeletePreviewOut(PassthroughModel):
     #: Collection titles that would be removed from Plex, for everyone who has this row.
     collections: list[str]
     #: Slugs of OTHER rows that would lose their shelf placement because it is positioned relative to
-    #: this one. `forget_anchor_row` clears these; nothing warned about it before the fact.
+    #: this one. `delete_row_in_session` clears these; nothing warned about it before the fact.
     anchors_cleared: list[str]
     #: Whether every account's share filter would be recomputed (this row's label stops being
     #: declared shared, so the exclude has to come out of all of them).
@@ -778,8 +778,7 @@ async def delete_collection(collection_id: int, request: Request, dry_run: bool 
         collection = session.get(Collection, collection_id)
         if collection is None:
             raise HTTPException(status_code=404, detail="collection not found")
-        # The default row is deletable like any other. It used to 422 here, on the reasoning that
-        # there must "always be a home for users with no other row" — but rows are user-created now,
+        # The default row is deletable like any other: rows are user-created,
         # `EngineConfig.rows_defined` means an empty list is "everything is off" rather than
         # "resurrect the default", and an un-deletable item with no visible reason is its own bug
         # report. Disabling it is still the reversible option; this is the permanent one.
@@ -789,7 +788,7 @@ async def delete_collection(collection_id: int, request: Request, dry_run: bool 
         # (Plex down at this moment, container killed mid-write) would have nothing to address.
         template = reconcile.row_template(session, slug, state.secrets)
         if dry_run:
-            # The same walk `forget_anchor_row` does, minus the write — one shared predicate, so the
+            # The same walk `delete_row_in_session` does, minus the write — one shared predicate, so the
             # warning and the delete that carries it out cannot disagree.
             anchors = rows_anchored_to(session, slug)
             has_schedule = bool((collection.schedule or "").strip())
@@ -968,8 +967,8 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
 
     async def generate():
         while True:
-            # `Queue.get` is a BLOCKING stdlib call. Awaiting it here used to be a plain call with a
-            # 0.1s timeout, which froze the event loop for that long on every empty tick — and a
+            # `Queue.get` is a BLOCKING stdlib call. A plain call with a
+            # 0.1s timeout would freeze the event loop for that long on every empty tick — and a
             # rename walks every user over plex.tv, so the loop (SSE, other requests, the Docker
             # HEALTHCHECK) was unavailable roughly two thirds of the time. The wait belongs on a
             # worker thread. `_run`'s `finally` always puts the sentinel, so this can't hang.

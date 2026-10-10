@@ -77,7 +77,8 @@ class AnthropicCurator:
         """Model ids this key can use, newest first — populates the setup model picker."""
         try:
             return [m.id for m in self._client.models.list(limit=100).data]
-        except Exception:
+        except Exception as e:
+            logger.warning("Anthropic model list unavailable ({}); offering the built-in list", type(e).__name__)
             return [
                 "claude-sonnet-5",
                 "claude-haiku-4-5",

@@ -142,9 +142,9 @@ def plan_row_changes(change: RowChange, stranded_sections: Callable[[], set[str]
     if change.build_before == "per_person" and dropped:
         plan.append(PlannedWork(kind=RECONCILE, scope="collection.audience", only_user_ids=sorted(dropped)))
 
-    # Switching a row OFF must take its collections down, not merely stop refreshing them. Nothing
-    # used to fire here: the next run removes the row only for the users it processes, so anyone
-    # paused, disabled or restricted kept it indefinitely — and a row with no schedule has no next
+    # Switching a row OFF must take its collections down, not merely stop refreshing them. The
+    # next run removes the row only for the users it processes, so without this anyone
+    # paused, disabled or restricted keeps it indefinitely — and a row with no schedule has no next
     # run at all.
     if change.enabled_before and not change.enabled_after:
         plan.append(PlannedWork(kind=RECONCILE, scope="collection.disable"))

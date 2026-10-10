@@ -304,8 +304,8 @@ def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
 
     async def fire() -> None:
         # Queued, not called. This is the sync that notices a NEW account (and writes the filters that
-        # stop them seeing everyone's rows) and notices someone leaving the share — and its only
-        # failure path used to be a log line nobody reads. As a job it retries with backoff, shows up
+        # stop them seeing everyone's rows) and notices someone leaving the share — and a bare
+        # log line on failure is one nobody reads. As a job it retries with backoff, shows up
         # on the Jobs page, and raises a notification if it gives up.
         await _queue_and_drain(app, "sync.users")
 

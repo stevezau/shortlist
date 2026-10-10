@@ -211,7 +211,7 @@ async def clear_deleted_rows(request: Request, slug: str | None = None) -> dict:
             per_slug[slug_] = per_slug.get(slug_, 0) + n
         # The `NOT EXISTS` is a backstop for the gap between this DELETE and `_orphaned_slugs` above.
         # pysqlite opens the write transaction here, so the eligibility read was an autocommit snapshot.
-        # `_unique_slug` no longer hands a new row a slug these picks still name, but a delete of a
+        # `row_editing.unique_slug` no longer hands a new row a slug these picks still name, but a delete of a
         # live row's picks must not rest on a rule in another module.
         live_slug = select(Collection.id).where(Collection.slug == PickRow.collection_slug)
         deleted = (

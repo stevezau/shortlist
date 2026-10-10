@@ -78,8 +78,8 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
     safe_label = re.sub(r"[^a-z0-9_-]", "-", (label or "backup").strip().lower())[:32] or "backup"
     backup_path = backup_dir / f"shortlist_{ts}_{safe_label}.db"
     # Copied under another name and renamed once complete. A process stopped mid-copy (a container
-    # stop during "Back up now" or the pre-migration backup) used to leave a half-written file under
-    # the real name: listed, kept by rotation, and restorable with no integrity check.
+    # stop during "Back up now" or the pre-migration backup) would leave a half-written file under
+    # the real name if copied in place: listed, kept by rotation, and restorable with no integrity check.
     partial = backup_path.with_name(backup_path.name + PARTIAL_SUFFIX)
 
     with _backup_lock:
@@ -91,9 +91,9 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
                 dst = sqlite3.connect(str(partial))
                 src.backup(dst)
             finally:
-                # Both handles, always, and before the rename or the unlink below. They used to be
-                # closed only on the success path, so a failure mid-`backup()` leaked two SQLite
-                # connections and then unlinked a file `dst` still held — and this runs on every boot.
+                # Both handles, always, and before the rename or the unlink below. Closing only on the
+                # success path would leak two SQLite connections on a failure mid-`backup()` and then
+                # unlink a file `dst` still held — and this runs on every boot.
                 for conn in (dst, src):
                     if conn is not None:
                         conn.close()

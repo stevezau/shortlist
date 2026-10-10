@@ -10,12 +10,13 @@ playback sessions and capped at ~200 rows.
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
 from loguru import logger
+from plexapi.library import LibrarySection
 
 from shortlist.engine.clients.plex_pms import PlexClient, SectionNotShared, WatchedRead
 from shortlist.engine.clients.plextv import PlexTvClient
@@ -105,7 +106,7 @@ class ShareTokenWatchSource:
             )
             return None
 
-    def episode_dates(self, user: UserProfile, section, show_keys: set[int]) -> dict[int, datetime]:
+    def episode_dates(self, user: UserProfile, section: LibrarySection, show_keys: set[int]) -> dict[int, datetime]:
         """When each of these shows was last watched, read from its episodes AS this user.
 
         Sits beside `fetch_section` because it needs the same per-user token.
@@ -126,7 +127,7 @@ class ShareTokenWatchSource:
     def fetch_section(
         self,
         user: UserProfile,
-        section,
+        section: LibrarySection,
         media_type: MediaType,
         *,
         since: datetime | None = None,
@@ -412,7 +413,7 @@ def ratings_policy(history: list[WatchedItem], threshold: float | None) -> Ratin
 
 def derive_seeds(
     history: list[WatchedItem],
-    resolve_tmdb_id,
+    resolve_tmdb_id: Callable[[WatchedItem], int | None],
     *,
     max_seeds: int = 30,
     blocked: set[int] | None = None,

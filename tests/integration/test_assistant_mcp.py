@@ -14,6 +14,7 @@ from shortlist.server.assistant_auth import Capability, GrantConstraints, GrantP
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Server
 from shortlist.server.main import create_app
+from tests.assistant_grants import find_grant_for_client
 from tests.assistant_oauth import issue_pair
 from tests.shared_app import app_for
 from tests.uvicorn_thread import UvicornThread
@@ -824,7 +825,7 @@ def test_created_row_is_available_with_same_bearer_and_without_scope_widening(tm
         if credential_kind == "oauth":
             oauth = app.state.assistant_auth.oauth
             repository = app.state.assistant_auth.repository
-            grant = repository.find_grant_for_client("mcp-test-client")
+            grant = find_grant_for_client(repository, "mcp-test-client")
             redirect = "http://127.0.0.1:49152/callback"
             repository.register_oauth_client(
                 client_id=grant.client_id,

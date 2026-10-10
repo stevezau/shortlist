@@ -1345,14 +1345,14 @@ class TestTheRecordedShowLibraryResponse:
     def test_most_of_what_it_returns_is_not_finished(self, mock_plex: PlexClient):
         """Half the recorded rows sit under the OLD `min(80%, max(3, 15%))` bar, so under the old
         rule they stayed eligible to be recommended back to the person watching them."""
-        from shortlist.engine.rows import _watched_titles
+        from shortlist.engine.rows import watched_titles
 
         mock_plex._server.url.return_value = self._URL
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
 
         items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
         shows = {i.tmdb_id: (i.viewed_leaf_count, i.leaf_count) for i in items}
-        finished = _watched_titles(set(), shows, 0.8)
+        finished = watched_titles(set(), shows, 0.8)
 
         assert len(items) == 10
         assert len(finished) == 5, "five of ten started shows did not count as watched"

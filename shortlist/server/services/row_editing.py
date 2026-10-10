@@ -7,9 +7,10 @@ checks read them; the HTTP routes and their response models stay in `shortlist.s
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import HTTPException
 from loguru import logger
@@ -38,7 +39,6 @@ from shortlist.engine.placeholders import refusal
 from shortlist.engine.rows import row_shown_today
 from shortlist.engine.themes import ThemeSpec
 from shortlist.engine.web_guidance import INSTRUCTION_MODES, MAX_INSTRUCTIONS_CHARS
-from shortlist.server.api.schemas import StrictRequestModel
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
     Collection,
@@ -55,6 +55,7 @@ from shortlist.server.db.models import (
     User,
 )
 from shortlist.server.scheduler import crontab_trigger
+from shortlist.server.schema_base import StrictRequestModel
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import poster_service
 from shortlist.server.services.poster_service import load_upload
@@ -63,6 +64,7 @@ from shortlist.server.services.row_changes import (
 )
 from shortlist.server.services.row_views import ai_instructions_view, live_avoid_rows, row_display_name
 from shortlist.server.services.season_catalogue import load_catalogue
+from shortlist.server.services.secrets import SecretBox
 from shortlist.server.settings_store import SettingsStore
 
 # Slugs reserved by the engine: `shared` prefixes every shared collection's label, and `probe` is
@@ -583,22 +585,6 @@ def rows_anchored_to(session: Session, gone: str) -> list[str]:
     ]
 
 
-def forget_anchor_row(session: Session, gone: str) -> list[str]:
-    """Drop every placement that positioned a row relative to ``gone``. Returns the slugs changed.
-
-    Called when a row is deleted. Without it those rows keep pointing at a row that no longer exists,
-    and the engine — which skips an anchor it cannot resolve, correctly, because a row may simply not
-    have delivered into that library yet — would leave them unplaced every night from then on. That
-    is the right response to a TRANSIENT miss and the wrong one to a permanent one, and the
-    difference is invisible from inside the run. Clearing the reference falls them back to the
-    library default, which is where a row with no placement of its own belongs.
-    """
-    changed = rows_anchored_to(session, gone)
-    for row in session.query(Collection).filter(Collection.slug.in_(changed)).all():
-        row.hub_anchor = {lib: entry for lib, entry in (row.hub_anchor or {}).items() if not anchored_to(entry, gone)}
-    return changed
-
-
 def validate_pairing(*, rewatch: bool, unstarted_only: bool, media: str) -> None:
     """Refuse the two combinations of these three fields that a row cannot honour.
 
@@ -619,7 +605,7 @@ def validate_pairing(*, rewatch: bool, unstarted_only: bool, media: str) -> None
             detail="a rewatch row can't also exclude everything already started — "
             "they ask for opposite things, so the row would fill with titles nobody has seen",
         )
-    # "Shows only" in the field's own docs, and structurally: `_started_shows` yields only show keys, so
+    # "Shows only" in the field's own docs, and structurally: `started_shows` yields only show keys, so
     # on a movies row the flag is inert. Storing an inert setting the editor won't even show is how a
     # row ends up behaving unlike what its settings say.
     if unstarted_only and media == "movie":
@@ -630,7 +616,7 @@ def validate_pairing(*, rewatch: bool, unstarted_only: bool, media: str) -> None
         )
 
 
-def poster_view(session, collection: Collection) -> dict:
+def poster_view(session: Session, collection: Collection) -> dict:
     """The row's poster config for the editor — never the image bytes, just what's set plus whether an
     image is viewable (so the editor/row card can show a thumbnail via the image endpoint).
 
@@ -736,7 +722,7 @@ def preview_titles(session: Session, slugs: list[str]) -> dict[str, list[dict]]:
 
 
 def serialize_row(
-    session,
+    session: Session,
     collection: Collection,
     now: datetime | None = None,
     *,
@@ -992,15 +978,15 @@ def unattributed_theme_tokens(session: Session, theme: Theme | None, *, exclude_
 
 
 def reject_duplicate_name(
-    session,
-    secrets,
+    session: Session,
+    secrets: SecretBox | None,
     template: str,
     *,
     exclude_slug: str = "",
     build: str = "",
     fallback_name: str = "",
     media: str = "both",
-    library_keys=(),
+    library_keys: Iterable[str | int] = (),
     already_clashing: frozenset[str] = frozenset(),
     theme: ThemeSpec | None = None,
 ) -> None:
@@ -1043,9 +1029,8 @@ def reject_duplicate_name(
         if clash.slug == DEFAULT_SLUG
         else f"the row {clash.name!r} ({clash.slug})"
     )
-    # Name the FIELD that collided, not just the row. A fallback clash used to be reported as
-    # "'More like {top_seed}' is already the title of …" — quoting the row name, which is fine, and
-    # sending the operator to the box that isn't the problem.
+    # Name the FIELD that collided, not just the row. Quoting only the row name ("'More like {top_seed}' is already
+    # the title of …") on a fallback clash sends the operator to the box that isn't the problem.
     culprit = template
     where = "name"
     if fallback_name and reconcile.title_key(fallback_name) in reconcile.row_title_keys(
@@ -1077,8 +1062,8 @@ TITLE_MOVING_FIELDS = {
 
 
 def reject_new_person_title_clash(
-    session,
-    secrets,
+    session: Session,
+    secrets: SecretBox | None,
     collection: Collection,
     body: CollectionIn,
     sent: set[str],
@@ -1188,7 +1173,7 @@ def unique_slug(session: Session, base: str) -> str:
     return dedupe_slug(base, is_taken)
 
 
-def set_audience(session, collection: Collection, body: CollectionIn) -> None:
+def set_audience(session: Session, collection: Collection, body: CollectionIn) -> None:
     """Replace this row's audience with the requested user ids, refusing any that don't exist.
 
     The ids are RESOLVED first, deliberately. `CollectionAudience.user_id` is a foreign key and the
@@ -1217,7 +1202,7 @@ def audience_after_set(body: CollectionIn) -> list[int]:
     return list(dict.fromkeys(body.audience_user_ids))  # dedupe, keep order
 
 
-def validate_audience_ids(session, body: CollectionIn) -> None:
+def validate_audience_ids(session: Session, body: CollectionIn) -> None:
     """Refuse an audience naming a user who does not exist.
 
     Hoisted out of `set_audience` so the PATCH handler can run it BEFORE its first write. It used to
@@ -1329,7 +1314,7 @@ PATCHABLE_COLUMNS = (
 
 
 def stranded_sections(
-    state,
+    state: Any,
     *,
     old_media: str,
     old_keys: list[str],
@@ -1378,8 +1363,8 @@ def stranded_sections(
 
 
 def apply_row_patch(
-    session,
-    secrets,
+    session: Session,
+    secrets: SecretBox | None,
     collection: Collection,
     body: CollectionIn,
     sent: set[str],
@@ -1472,7 +1457,7 @@ def merged_template(collection: Collection, body: CollectionIn, sent: set[str]) 
     )
 
 
-def row_snapshot(session, collection: Collection) -> dict:
+def row_snapshot(session: Session, collection: Collection) -> dict:
     """The fields a row edit is judged on, read off the row as it stands right now.
 
     Taken once before the patch and once after, so `plan_row_changes` compares two like-for-like
@@ -1507,7 +1492,7 @@ def row_snapshot(session, collection: Collection) -> dict:
     }
 
 
-def projected_snapshot(session, collection: Collection, body: CollectionIn, sent: set[str]) -> dict:
+def projected_snapshot(session: Session, collection: Collection, body: CollectionIn, sent: set[str]) -> dict:
     """What :func:`row_snapshot` WOULD return after this PATCH, computed without touching the row.
 
     The dry-run counterpart to `row_snapshot`, and deliberately NOT "apply it and roll back": the

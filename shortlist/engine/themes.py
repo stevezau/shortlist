@@ -16,11 +16,11 @@ from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.limits import apply_limits, apply_runtime_limit
 from shortlist.engine.models import Candidate, MediaType, RowLimits
 from shortlist.engine.seasons import (
+    CollectionReader,
     CollectionRef,
     DateRule,
     Season,
     SeasonTitles,
-    _CollectionReader,
     _ListReader,
     _read_sources,
 )
@@ -191,7 +191,7 @@ def _candidate(media_type: MediaType, item: dict) -> Candidate:
 
 def load_theme(
     tmdb: _ListReader | TmdbClient,
-    plex: _CollectionReader,
+    plex: CollectionReader,
     spec: ThemeSpec,
     library_index: dict[MediaType, dict[int, int]],
     max_details: int | None = None,

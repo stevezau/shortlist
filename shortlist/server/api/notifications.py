@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 import shortlist
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.notifications import DISMISSED_KEY, build_notifications
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services.audit import Level
 from shortlist.server.settings_store import SettingsStore
 from shortlist.server.whats_new import mark_seen, pending

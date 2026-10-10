@@ -69,7 +69,6 @@ class DeletedRow:
     slug: str
     build: str
     template: str
-    had_schedule: bool
     anchors_cleared: tuple[str, ...]
 
 
@@ -528,7 +527,6 @@ def delete_row_in_session(session: Session, collection_id: int, *, template: str
         slug=collection.slug,
         build=collection.build,
         template=template,
-        had_schedule=bool((collection.schedule or "").strip()),
         anchors_cleared=_forget_anchor_row(session, collection.slug),
     )
     session.query(CollectionAudience).filter_by(collection_id=collection.id).delete()

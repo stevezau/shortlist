@@ -626,7 +626,7 @@ class TestCollectionsSeed:
                 session, SettingsStore(session, client.app.state.secrets), catalogue=load_catalogue(session)
             )
         spec = next(s for s in specs if s.slug == "top_row")
-        assert spec.placement == "library" and spec.pin_top is True
+        assert spec.placement == "library"
         assert spec.show_library and not spec.show_home  # library-only
 
     @pytest.mark.parametrize("order", ROW_ORDERS)

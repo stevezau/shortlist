@@ -1,7 +1,7 @@
 """shortlist/server/services/collection_reconcile.py: the on-demand Plex reconciles that run outside
 the nightly pipeline (row delete/rename/build-flip/audience-shrink).
 
-Modeled on `tests/unit/test_delivery.py` — a `MagicMock(spec=PlexClient)` stands in for the server,
+Modeled on `tests/unit/test_delivery_rows.py` — a `MagicMock(spec=PlexClient)` stands in for the server,
 and assertions land on the exact label/title arguments the SUT hands it, not just "was it called".
 """
 

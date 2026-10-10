@@ -413,38 +413,6 @@
         "title": "BackupRestoredOut",
         "type": "object"
       },
-      "BackupScheduleOut": {
-        "additionalProperties": true,
-        "description": "Backups have no \"last ran\" line on the Tools page \u2014 the backup list itself is that answer.",
-        "properties": {
-          "cron": {
-            "title": "Cron",
-            "type": "string"
-          },
-          "max_keep": {
-            "title": "Max Keep",
-            "type": "integer"
-          },
-          "next": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next"
-          }
-        },
-        "required": [
-          "next",
-          "cron",
-          "max_keep"
-        ],
-        "title": "BackupScheduleOut",
-        "type": "object"
-      },
       "BlockSeedBody": {
         "properties": {
           "media_type": {
@@ -9705,66 +9673,6 @@
         "title": "SyncStartedOut",
         "type": "object"
       },
-      "SyncStateOut": {
-        "additionalProperties": true,
-        "description": "One sync's schedule summary: when it last ran, when it fires next, and on what cron.",
-        "properties": {
-          "cron": {
-            "title": "Cron",
-            "type": "string"
-          },
-          "last": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last"
-          },
-          "next": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next"
-          }
-        },
-        "required": [
-          "last",
-          "next",
-          "cron"
-        ],
-        "title": "SyncStateOut",
-        "type": "object"
-      },
-      "SyncsOut": {
-        "additionalProperties": true,
-        "properties": {
-          "backup": {
-            "$ref": "#/components/schemas/BackupScheduleOut"
-          },
-          "users": {
-            "$ref": "#/components/schemas/SyncStateOut"
-          },
-          "watched": {
-            "$ref": "#/components/schemas/SyncStateOut"
-          }
-        },
-        "required": [
-          "watched",
-          "users",
-          "backup"
-        ],
-        "title": "SyncsOut",
-        "type": "object"
-      },
       "TagIO": {
         "additionalProperties": true,
         "description": "A TMDB tag (keyword), with its name so the editor can show it without asking TMDB.",
@@ -16841,7 +16749,7 @@
     },
     "/api/system/health": {
       "get": {
-        "description": "Liveness only \u2014 this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its\nconsumer. The version used to be here too; an unauthenticated caller does not need to know which\nbuild to look up advisories for. The UI reads it from `/system/version`, which is owner-gated.",
+        "description": "Liveness only \u2014 this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its\nconsumer. It carries no version: an unauthenticated caller does not need to know which build to\nlook up advisories for. The UI reads it from `/system/version`, which is owner-gated.",
         "operationId": "health_api_system_health_get",
         "responses": {
           "200": {
@@ -17237,28 +17145,6 @@
           }
         },
         "summary": "Owned Collections Audit",
-        "tags": [
-          "system"
-        ]
-      }
-    },
-    "/api/system/syncs": {
-      "get": {
-        "description": "When each sync last ran and when it next fires \u2014 for the Tools page \"last synced\" lines.",
-        "operationId": "syncs_api_system_syncs_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncsOut"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Syncs",
         "tags": [
           "system"
         ]

@@ -38,8 +38,8 @@ from loguru import logger
 _SECRET_RE = re.compile(r"((?:X-Plex-Token|api_?key)=)[^&\s\"']+", re.IGNORECASE)
 
 # Credentials that can appear in a string but NOT as a query parameter, so `_SECRET_RE` misses them —
-# a header form, a JSON/dict body, or a bare provider key. Most of these were previously in
-# `server/services/log_reader.scrub` alone; `redact()` is what guards API 502 details and `events`
+# a header form, a JSON/dict body, or a bare provider key. Most of these are also in
+# `server/services/log_reader.scrub`; `redact()` is what guards API 502 details and `events`
 # rows (plex-safety rule 9 applies equally there), so it must be at least as strong. `X-Api-Key` —
 # the header `arr.py` sends — was missed by BOTH ladders before this: `api_?key` in the JSON pattern
 # below only matches a quoted key of exactly "api_key"/"apikey", not "X-Api-Key". Each pattern keeps
@@ -182,8 +182,8 @@ def _send(
         except retry_exc as exc:
             elapsed = time.monotonic() - started
             if attempt >= attempts:  # the expensive budget
-                # The last failure used to propagate unlogged, so a request abandoned at its timeout
-                # looked the same as one that failed fast.
+                # Log the last failure: otherwise a request abandoned at its timeout looks the same as one
+                # that failed fast.
                 logger.warning(
                     "{} {} failed ({}); attempt {}/{} took {:.1f}s, giving up",
                     method,

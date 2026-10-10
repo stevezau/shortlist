@@ -609,7 +609,7 @@ class RunSharedRow(Base):
     #: write alone costs ~16.5s, times 47 people). Judging a play against the run's START means
     #: judging it against the row the run was BUILDING rather than the one Plex was still serving —
     #: which drops a credit for a title this run removed, and invents one for a title it added.
-    #: `_load_per_person` derives its equivalent from `min(picks.created_at)`; a shared row writes no
+    #: A person's row derives its equivalent from `min(picks.created_at)`; a shared row writes no
     #: picks, so it has to be stamped here. NULL on rows written before this column existed has no
     #: exact delivery clock; readers must not infer one from the parent run's start time.
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -686,7 +686,7 @@ class PickRow(Base):
     # A movie has no middle state, so this is stamped with the same value as `watched_at`. A series
     # gets it only once every episode is watched — the wording the user page already uses. It is
     # deliberately NOT the engine's "already seen" bar: that one is `min(80%, max(3, 15%))` episodes
-    # (rows.py `_watched_titles`), which answers "engaged enough not to re-recommend?", a different
+    # (rows.py `watched_titles`), which answers "engaged enough not to re-recommend?", a different
     # question from "did they finish it?". Two thresholds, on purpose.
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     # The furthest they got, 0-100, from `watch_sessions`. Denormalised so the report does not join
@@ -1042,7 +1042,7 @@ class RequestCandidate(Base):
     # an old title from the Sent log bumps it and pulls a months-old request into a recent window,
     # while an edit after the send pushes it out. The dashboard's "watched since sent" needs a
     # timestamp that means what it says. NULL on rows sent before this column existed — the report
-    # falls back to `updated_at` for those, which is exactly as good as it used to be.
+    # falls back to `updated_at` for those, which is the best clock those rows have.
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

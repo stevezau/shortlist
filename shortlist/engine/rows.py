@@ -307,7 +307,7 @@ def _engaged_floor(total: int) -> float:
     return max(_ENGAGED_EPISODES, total * _ENGAGED_FRACTION)
 
 
-def _watched_titles(
+def watched_titles(
     watched_movies: set[int],
     watched_shows: dict[int, tuple[int, int | None]],
     show_pct: float,
@@ -608,10 +608,10 @@ def _rewatch_candidates(
     return out, reasons
 
 
-def _started_shows(watched_shows: dict[int, tuple[int, int | None]]) -> set[tuple[int, MediaType]]:
+def started_shows(watched_shows: dict[int, tuple[int, int | None]]) -> set[tuple[int, MediaType]]:
     """Shows this person has watched ANY episode of — what an "unstarted only" row must exclude.
 
-    Deliberately not ``_watched_titles``: that one asks "have they finished it", so a show they are
+    Deliberately not ``watched_titles``: that one asks "have they finished it", so a show they are
     three episodes into passes. Here a single viewed episode disqualifies it.
     """
     return {(tid, MediaType.SHOW) for tid, (viewed, _total) in watched_shows.items() if viewed and viewed > 0}
@@ -1602,7 +1602,7 @@ def _library_resolvers(ctx: EngineContext) -> tuple[Callable[[WatchedItem], str]
     def library_of_watch(item: WatchedItem) -> str:
         return section_titles.get(rating_key_to_section.get(item.rating_key or -1, ""), "")
 
-    def library_of_seed(s) -> str:
+    def library_of_seed(s: Seed) -> str:
         return section_titles.get(tmdb_to_section.get(s.tmdb_id, ""), "")
 
     return library_of_watch, library_of_seed
@@ -2299,7 +2299,7 @@ class RowPolicy:
 
     def mark_finished_titles(self) -> None:
         """Derive the finished-title set from the breakdown, once. Must run before any pool is built."""
-        self.watched_titles |= _watched_titles(self.watched_movies, self.watched_shows, self.cfg.watched_show_pct)
+        self.watched_titles |= watched_titles(self.watched_movies, self.watched_shows, self.cfg.watched_show_pct)
 
     def effective_watched_pct(self, spec: RowSpec) -> float:
         return spec.watched_pct if spec.watched_pct is not None else self.cfg.watched_pct
@@ -2325,14 +2325,14 @@ class RowPolicy:
         (2 of 176). So a show someone was two episodes into was, to a 0% row, a fresh discovery — and
         five of ten started shows on that server were eligible to be recommended straight back.
 
-        Now the two agree: at 0%, started IS watched. `_watched_titles` survives for the >0 cap, where
+        Now the two agree: at 0%, started IS watched. `watched_titles` survives for the >0 cap, where
         "finished" still has to mean something definite for `floor(k * pct)` to be meaningful.
 
-        A UNION rather than a swap: `_started_shows` needs ``viewed > 0``, while `_watched_titles`
+        A UNION rather than a swap: `started_shows` needs ``viewed > 0``, while `watched_titles`
         also counts a show whose episode total Plex could not report at all. Dropping the latter would
         quietly re-admit those.
         """
-        return self.watched_titles | _started_shows(self.watched_shows)
+        return self.watched_titles | started_shows(self.watched_shows)
 
     def pool_exclusions(self, spec: RowSpec) -> set[tuple[int, MediaType]] | None:
         """Titles this row's pool must not contain, or None when this row has no exclusion rule.
@@ -2350,7 +2350,7 @@ class RowPolicy:
         if self.excludes_watched(spec):
             excluded |= self.zero_pct_exclusions()
             rule = True
-        # `and spec.media != "movie"` mirrors `pool_key` EXACTLY. `_started_shows` only ever yields
+        # `and spec.media != "movie"` mirrors `pool_key` EXACTLY. `started_shows` only ever yields
         # SHOW keys, so on a movies row this contributes nothing — but setting `rule` anyway returned
         # an empty SET where an identical sibling row returns None, and `_gather_pool` reads None
         # as "exclude the seeds" and a set as "exclude exactly this". Same key, two different pools:
@@ -2358,7 +2358,7 @@ class RowPolicy:
         # Today the API refuses that combination, but a guard in another module is not what should be
         # keeping this correct.
         if spec.unstarted_only and spec.media != "movie":
-            excluded |= _started_shows(self.watched_shows)
+            excluded |= started_shows(self.watched_shows)
             rule = True
         return excluded if rule else None
 
@@ -2559,7 +2559,7 @@ class RowPolicy:
             #
             # Three ways this contributes nothing, and keying on it anyway costs a whole extra
             # TMDB/LLM gather per person per night:
-            #   * a movies-only row — `_started_shows` yields only SHOW keys, which can never match
+            #   * a movies-only row — `started_shows` yields only SHOW keys, which can never match
             #     anything in that pool;
             #   * a 0% row — since 1.2 `zero_pct_exclusions` already unions the started shows in, so
             #     the two rows' exclusion sets are byte-identical. Without this term a default 0% row
@@ -2826,12 +2826,6 @@ def _warm_start(
     pools = policy.pool_cache.values()
     report.counts.candidates = len({(c.tmdb_id, c.media_type) for p in pools for c in p[0]})
     report.counts.in_library = len({(c.tmdb_id, c.media_type) for p in pools for c in p[1]})
-    # Union the per-row re-cuts in too: a row overriding the release-date weight reaches titles the
-    # shared cut dropped, and counting only `pools` under-reports what was actually pre-ranked.
-    report.counts.pre_ranked = len(
-        {(c.tmdb_id, c.media_type) for p in pools for c in p[2]}
-        | {(c.tmdb_id, c.media_type) for cut in policy.recency_cuts.values() for c in cut}
-    )
     if demand is not None:
         _record_demand(policy, demand)
     report.status = "ok"
@@ -3296,7 +3290,7 @@ def _warm_section_picks(
         # Independent of `pct`: see `_reusable_prior`. Movies are exempt because a movie with any
         # view is already finished, so "started" is not a distinct state there.
         started=(
-            frozenset(_started_shows(policy.watched_shows))
+            frozenset(started_shows(policy.watched_shows))
             if spec.unstarted_only and spec.media != "movie"
             else frozenset()
         ),
@@ -4320,17 +4314,15 @@ def _shared_row(
     # "Popular on this server" is a COUNT, not a recommendation — so nothing is searched for and no
     # LLM is asked.
     #
-    # It used to derive SEEDS from the pooled history and run the same TMDB-similar + web-search
-    # pipeline a per-person row uses. `_gather_pool` excludes the seeds from its own results (a
+    # Deriving SEEDS from the pooled history and running the same TMDB-similar + web-search
+    # pipeline a per-person row uses would be wrong here. `_gather_pool` excludes the seeds from its own results (a
     # recommendation you have already watched is the thing a row shouldn't surface), and here the
     # seeds ARE the popular titles — so the most-watched titles on the server were structurally
     # barred from the row named after them, and every pick was a similar-title suggestion hard-stamped
     # "Popular on this server". On a live server that cost ~10k AI tokens and a minute a night to
     # produce a list this `sorted()` answers exactly (owner decision, 2026-08-13).
-    # The owner's server-wide block list still applies. It used to act at seed derivation only, which
-    # meant a blocked title could reappear via another seed's similar-titles; with no search left
-    # there is one place to apply it and blocking now simply keeps the title out — which is what the
-    # setting has always claimed to do.
+    # The owner's server-wide block list still applies, in this one place: blocking simply keeps the
+    # title out, which is what the setting claims to do.
     blocked = set(cfg.blocked_shared_seeds)
     season = ctx.season_titles.get(spec.season.slug) if spec.season is not None else None
     if spec.season is not None and season is None:
@@ -4353,9 +4345,8 @@ def _shared_row(
         # than reshuffling everything that drew level.
         key=lambda kv: (-kv[1], example[kv[0]].title.lower()),
     )
-    # Record WHY the row looks like this. The trace used to come from `_record_gather`, which was
-    # part of the search — deleting the search deleted the trace with it, and nothing failed because
-    # no test asserted a trace still existed. A tally has plenty to show, and it is all right here.
+    # Record WHY the row looks like this: there is no search to leave a trace, but a tally has
+    # plenty to show.
     user_report.trace["history"] = {
         "total": len(agg_history),
         "recent": [

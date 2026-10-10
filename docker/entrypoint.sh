@@ -15,11 +15,6 @@ PGID="${PGID:-1000}"
 FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-*}"
 PORT="${PORT:-5959}"
 
-# --timeout-graceful-shutdown is a backstop. uvicorn waits for every open connection before running
-# the app's shutdown, and a connection that never ends used to let `docker stop` run out its 10s and
-# SIGKILL the container with the scheduler and playback listener never stopped. The app now ends its
-# own event streams on the stop signal; this bounds anything else. 3s, plus up to 5s for the
-# listener's own shutdown, stays inside Docker's default 10s.
 RUN_AS=""
 if [ "$(id -u)" = "0" ]; then
     getent group shortlist >/dev/null 2>&1 || addgroup --gid "$PGID" shortlist 2>/dev/null || true
@@ -29,6 +24,11 @@ if [ "$(id -u)" = "0" ]; then
     RUN_AS="gosu $PUID:$PGID"
 fi
 
+# --timeout-graceful-shutdown is a backstop. uvicorn waits for every open connection before running
+# the app's shutdown, and a connection that never ends would let `docker stop` run out its 10s and
+# SIGKILL the container with the scheduler and playback listener never stopped. The app ends its
+# own event streams on the stop signal; this bounds anything else. 3s, plus up to 5s for the
+# listener's own shutdown, stays inside Docker's default 10s.
 # RUN_AS is deliberately unquoted: it word-splits into `gosu <uid:gid>`, or into nothing when not root.
 # shellcheck disable=SC2086
 exec $RUN_AS uvicorn shortlist.server.main:app --host 0.0.0.0 --port "$PORT" \

@@ -1,6 +1,6 @@
 """Every response model must pass undeclared keys through, not filter them out.
 
-This is the guard for the rule in `shortlist/server/api/schemas.py`. It exists because the obvious
+This is the guard for the rule in `shortlist/server/schema_base.py`. It exists because the obvious
 test does NOT catch a violation: asserting an endpoint's key set passes whether or not the model
 declares every field, precisely BECAUSE `extra="allow"` lets the undeclared ones through. Those
 assertions protect the passthrough; nothing protected the passthrough itself.
@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.schema_base import PassthroughModel
 
 
 @pytest.fixture
@@ -92,7 +92,7 @@ class TestEveryResponseModelIsAPassthrough:
         )
         assert offenders == [], (
             "these response models DROP undeclared keys from the payload — inherit "
-            f"{PassthroughModel.__name__} (see shortlist/server/api/schemas.py): " + ", ".join(offenders)
+            f"{PassthroughModel.__name__} (see shortlist/server/schema_base.py): " + ", ".join(offenders)
         )
 
     def test_a_passthrough_model_really_does_keep_an_undeclared_key(self):

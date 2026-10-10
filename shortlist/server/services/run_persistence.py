@@ -489,9 +489,9 @@ def _apply_shared(
             # event log — so whenever anyone stops a video mid-run, both produce the same new row and
             # the second one violates the four-column primary key.
             #
-            # Read-then-insert cannot fix that: `existing` was read at the top of the pass. The loser
-            # used to raise all the way out — and when the loser was the run, it landed in the run's
-            # own `except`, marking a run that had built and delivered every row on Plex as ERROR.
+            # Read-then-insert cannot fix that: `existing` was read at the top of the pass. The loser must
+            # not raise out: when the loser is the run, it would land in the run's own `except` and
+            # mark a run that had built and delivered every row on Plex as ERROR.
             row = SharedRowWatch(
                 user_id=user.id,
                 collection_slug=slug,
@@ -983,9 +983,9 @@ def persist_report(
             add_audit(session, RESTRICTION_RESTORED_SCOPE, "info", account_id=account_id, username=username)
         session.commit()
     # Retention is applied AFTER this transaction commits, as its own `maintenance.prune` job.
-    # It used to share this transaction: a bulk delete across runs/run_users/run_log_lines/picks
-    # that failed took the persist down with it, discarding the results of a run that had already
-    # written to Plex. Housekeeping must never be able to cost a run its record.
+    # Sharing this transaction would let a failed bulk delete across runs/run_users/run_log_lines/picks
+    # take the persist down with it, discarding the results of a run that had already written to Plex.
+    # Housekeeping must never be able to cost a run its record.
     _queue_retention_prune(sessions)
 
 
@@ -1217,7 +1217,7 @@ def _shared_audience(session: Session, slug: str) -> list[int] | None:
     # The allow-list ONLY. Mutes are a separate deny-list (`_shared_muted` / `RunSharedRow.muted`),
     # and the two columns must not encode the same fact: subtract the mute here and `audience` stops
     # meaning "who was allowed to see this" and starts meaning "who was allowed AND had not muted it",
-    # which no reader can tell apart from the first. `_shared_visible_to` then answers correctly only
+    # which no reader can tell apart from the first. `RowMembership.visible_shared_rows` then answers correctly only
     # because it applies the deny-list a second time, so the column is wrong and the answer is right
     # by luck. Any future reader of `audience` alone — a UI, an export, an audit of who a row went to
     # — inherits the corruption.
@@ -1587,8 +1587,8 @@ def _emit_request_events(session: Session, run_id: int, report, waiting: int = 0
             _add_event(session, "requests.incomplete_config", "warning", run_id, dry_run=report.dry_run, detail=msg)
     if report.requests is not None and report.requests.ratings_rate_limited:
         _add_event(session, "requests.rate_limited", "warning", run_id, dry_run=report.dry_run)
-    # A run that asked for nothing used to emit nothing at all, so "Shortlist has sent Radarr nothing
-    # for five days" left no trace in the app — the only record was a single INFO line in the
+    # A run that asked for nothing still emits an event: otherwise "Shortlist has sent Radarr nothing
+    # for five days" leaves no trace in the app beyond one INFO line in the
     # container log. Record the shape of the zero: how many titles cleared the base floors, how many
     # the rating gate got to rate, and what that cost. A gate that stopped short of the pool is the
     # actionable case (raise max_per_run / lower the floor); one that rated everything and still

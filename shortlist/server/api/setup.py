@@ -22,10 +22,10 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.plextv import PLEXTV
-from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import owned_machine_ids, require_setup_access
 from shortlist.server.db.models import Server
-from shortlist.server.net_guard import BlockedUrl
+from shortlist.server.net_guard import BlockedUrl, check_url
+from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services.plex_reachability import (
     address_kind,
     describe_address,
@@ -275,6 +275,10 @@ async def link_server(body: LinkRequest, request: Request) -> dict:
         raise HTTPException(status_code=401, detail="sign in with Plex to claim this instance")
     if session_data["account_id"] != body.owner_account_id:
         raise HTTPException(status_code=403, detail="you can only link a server your account owns")
+    try:
+        check_url(body.plex_url, what="The Plex URL")
+    except BlockedUrl as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     state = request.app.state
     token = _plex_token(request, session_data)
 
