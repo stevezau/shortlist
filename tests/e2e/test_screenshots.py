@@ -17,6 +17,7 @@ import io
 import os
 import re
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -133,6 +134,54 @@ def _capture(page: Page, path: str, *names: str, wait: str | None = None) -> Non
         _shot(page, name)
 
 
+def _seed_history(app: ShortlistApp) -> None:
+    """Give the install a few weeks of watching, so the dashboard shows what an owner sees later.
+
+    `build_real_rows` leaves one night's picks that nobody has watched, so the dashboard's headline
+    section read "Nothing watched yet", the watch sync "not started" and the next run "Not scheduled".
+    This stamps the run's own picks as watched over the last ~30 days (some finished), backdates when
+    they were delivered so "time to watch" has something to average, switches the live watch listener
+    on, and gives the row a nightly cron. Written through the ORM, on the rows a run really made.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from shortlist.server.db.models import PickRow, utcnow
+    from shortlist.server.services.watch_stream import STREAM_CONNECTED_KEY
+    from shortlist.server.settings_store import SettingsStore
+
+    now = utcnow()
+    users = _users_by_name(app)
+    engine = create_engine(f"sqlite:///{app.config_dir / 'shortlist.db'}")
+    try:
+        with Session(engine) as session:
+            # (share of a person's picks watched, share of those finished): sarah and mike are the
+            # regulars, jess dips in now and then, the kid account watches little.
+            habits = {"sarah": (0.8, 0.6), "mike": (0.7, 0.5), "jess": (0.5, 0.4), "kid": (0.35, 0.5)}
+            for name, (watched_share, finished_share) in habits.items():
+                picks = session.query(PickRow).filter(PickRow.user_id == users[name]["id"]).order_by(PickRow.rank).all()
+                watched = picks[: max(1, round(len(picks) * watched_share))]
+                for i, pick in enumerate(watched):
+                    # Spread across the last 30 days; delivery precedes the watch by 1-9 days.
+                    watched_at = now - timedelta(days=1 + (i * 29) // max(1, len(watched)), hours=(i * 7) % 11)
+                    pick.created_at = watched_at - timedelta(days=1 + (i * 5) % 9)
+                    pick.watched_at = watched_at
+                    if i < round(len(watched) * finished_share):
+                        pick.finished_at = watched_at
+                        pick.max_percent = 100
+                    else:
+                        pick.max_percent = 35 + (i * 13) % 50
+            store = SettingsStore(session)
+            store.set(STREAM_CONNECTED_KEY, (now - timedelta(days=12)).isoformat())
+            store.set("report.watch_synced_at", (now - timedelta(hours=6)).isoformat())
+            session.commit()
+    finally:
+        engine.dispose()
+    row = next(c for c in app.api("GET", "/api/collections").json() if c["slug"] == "picked")
+    patched = app.api("PATCH", f"/api/collections/{row['id']}", json={"name": row["name"], "schedule": "30 2 * * *"})
+    assert patched.status_code == 200, patched.text
+
+
 #: Titles for the Requests inbox. Real films and a real show, none of them in the fake library — the
 #: inbox is titles the library does NOT have. No poster path: the inbox would fetch TMDB's image host,
 #: and no capture may touch the network, so each draws its placeholder tile.
@@ -239,6 +288,7 @@ def test_capture_app_screenshots(shot_page: Page, app: ShortlistApp) -> None:
     sarah = _users_by_name(app)["sarah"]["id"]
     run_id = app.api("GET", "/api/runs").json()[0]["id"]
     default_row = next(c for c in app.api("GET", "/api/collections").json() if c["slug"] == "picked")
+    _seed_history(app)
 
     # The fake server carries a managed account with a parental preset ("kid"), which Plex will not
     # filter — so this run finishes "OK with warnings", the state the run and privacy screens exist
