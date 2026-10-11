@@ -88,8 +88,7 @@ def target_snapshot(cfg: RequestConfig, media_type: str) -> dict:
             "destination": service_destination(target.url) if target else "",
             "configured": target is not None,
             "request_as_user_id": target.request_as_user_id if target else 0,
-            "monitor": cfg.sonarr_monitor if media_type == "show" else None,
-            "season_count": cfg.season_count if media_type == "show" else None,
+            **_show_scope(cfg, media_type),
         }
     target = cfg.radarr if media_type == "movie" else cfg.sonarr
     return {
@@ -100,8 +99,16 @@ def target_snapshot(cfg: RequestConfig, media_type: str) -> dict:
         "root_folder": target.root_folder if target else None,
         "tag": target.tag if target else "",
         "monitor": cfg.sonarr_monitor if media_type == "show" else None,
-        "season_count": cfg.season_count if media_type == "show" else None,
+        **_show_scope(cfg, media_type),
     }
+
+
+def _show_scope(cfg: RequestConfig, media_type: str) -> dict:
+    """How much of a show is sent, for shows only. A film's snapshot keeps its old shape, so a film
+    send approved before these keys existed still matches at dispatch."""
+    if media_type != "show":
+        return {}
+    return {"monitor": cfg.sonarr_monitor, "season_count": cfg.season_count}
 
 
 def service_destination(url: str) -> str:
