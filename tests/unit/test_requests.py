@@ -686,7 +686,7 @@ class TestRequestMissing:
         demand = self._demand(MissingTitle(20, "show", MediaType.SHOW, 2020, rating=8.0, vote_count=500))
         report = _request_missing(_cfg(sonarr=SONARR), Exploding(), demand, dry_run=False)
 
-        assert report.outcomes[0].status == "error"
+        assert report.outcomes[0].status == "skipped_not_sent"
         assert "may work next run" in report.outcomes[0].detail
         assert "add it in Sonarr" not in report.outcomes[0].detail
 
@@ -905,7 +905,7 @@ class TestRequestMissing:
         cfg = _cfg(radarr=RADARR, sonarr=SONARR)
         report = _request_missing(cfg, FakeTmdb(raise_on=20), demand, dry_run=False)
         statuses = {o.tmdb_id: o.status for o in report.outcomes}
-        assert statuses == {10: "requested", 20: "error"}  # both recorded; the movie still went through
+        assert statuses == {10: "requested", 20: "skipped_not_sent"}  # both recorded; the movie still went through
         assert sonarr.series_calls == []  # the failed lookup never reached Sonarr
 
     def test_one_titles_failure_does_not_stop_the_rest(self, monkeypatch):

@@ -1198,7 +1198,7 @@ class RequestOutcome:
     title: str
     media_type: MediaType
     # requested | would_request | skipped_present | skipped_no_tvdb | skipped_no_target | skipped_unsupported
-    # | skipped_no_seasons | error
+    # | skipped_no_seasons | skipped_not_sent | error
     status: str
     detail: str = ""
     # The arr's own titleSlug (Sonarr/Radarr) for the resolved title, so the inbox can deep-link

@@ -130,3 +130,85 @@ def test_startup_settles_only_orphaned_synchronous_work_and_is_idempotent(reques
             "automatic": "outcome_unknown",
             "assistant": "reserved",
         }
+
+
+class TestAFailureBeforeSendingNeverBlocksTheTitle:
+    """A claim records any outcome but `requested`/`skipped_*` as an uncertain send, and an uncertain
+    send is excluded from every later run until the owner releases it by hand. So a failure that
+    provably sent nothing must not report "error" — or one TMDB or Sonarr blip blocks the show for good,
+    while its detail promises it "may work next run"."""
+
+    SHOW = MissingTitle(tmdb_id=202, media_type=MediaType.SHOW, title="Show", year=2020, rating=8, vote_count=900)
+
+    def _send(self, env, tmdb, sonarr=None, monkeypatch=None):
+        from shortlist.engine import requests as requests_mod
+
+        if sonarr is not None:
+            monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
+        cfg = RequestConfig(enabled=True, target="arr", sonarr=ArrTarget("http://sonarr.test", "key", 1, "/tv"))
+        [outcome] = requests_mod._send_claims(
+            [("movies", self.SHOW)],
+            {"movies": cfg},
+            tmdb,
+            dry_run=False,
+            min_write_interval=0,
+            acquisition_guard=AutomaticRequestGuard(env.state.sessions),
+        )
+        with env.state.sessions() as session:
+            claim = session.scalars(select(AssistantRequestDispatch)).one()
+            return outcome, claim.status, durable_handled_requests(session)
+
+    def test_an_unreachable_tmdb_during_the_tvdb_lookup(self, request_env):
+        from tests.unit.test_requests import FakeTmdb
+
+        outcome, claim_status, handled = self._send(request_env, FakeTmdb(raise_on=202))
+
+        assert outcome.status.startswith("skipped_"), outcome.status
+        assert "next run" in outcome.detail
+        assert claim_status == "refused"
+        assert handled == set()
+
+    def test_sonarr_failing_its_lookup_before_the_add(self, request_env, monkeypatch):
+        from shortlist.engine.clients.arr import ArrError, SonarrClient
+        from tests.unit.test_requests import FakeTmdb
+
+        class LookupDown(SonarrClient):
+            def __init__(self):
+                super().__init__(ArrTarget("http://sonarr.test", "key", 1, "/tv"))
+
+            def _get(self, path, **params):
+                raise ArrError("Sonarr unreachable (ConnectError)")
+
+            def _post(self, path, body):
+                pytest.fail("nothing may be posted after a failed lookup")
+
+        outcome, claim_status, handled = self._send(request_env, FakeTmdb({202: 81189}), LookupDown(), monkeypatch)
+
+        assert outcome.status.startswith("skipped_"), outcome.status
+        assert "unreachable" in outcome.detail
+        assert claim_status == "refused"
+        assert handled == set()
+
+    def test_a_failed_add_post_is_still_uncertain(self, request_env, monkeypatch):
+        """The other side of the line: once the add itself was attempted, Sonarr may have taken it, so
+        the claim stays uncertain and the title is not sent twice."""
+        from shortlist.engine.clients.arr import ArrError, SonarrClient
+        from tests.unit.test_requests import FakeTmdb
+
+        class AddTimesOut(SonarrClient):
+            def __init__(self):
+                super().__init__(ArrTarget("http://sonarr.test", "key", 1, "/tv"))
+
+            def _get(self, path, **params):
+                if path.startswith("/api/v3/series/lookup"):
+                    return [{"tvdbId": 81189, "title": "Show", "titleSlug": "show", "seasons": []}]
+                return []
+
+            def _post(self, path, body):
+                raise ArrError("Sonarr unreachable (ReadTimeout)")
+
+        outcome, claim_status, handled = self._send(request_env, FakeTmdb({202: 81189}), AddTimesOut(), monkeypatch)
+
+        assert outcome.status == "error"
+        assert claim_status == "outcome_unknown"
+        assert handled == {(202, "show")}

@@ -45,17 +45,6 @@ reviewer who rediscovers a finding checks the history before fixing it again.
   its own ratings). Cutting it means fewer per-item reloads in the engine (a product change, and it would speed
   real runs too) or a smaller fake library.
 
-**Request claims (found by the #154 architecture review, 2026-10-11):**
-
-- A show whose TheTVDB lookup fails because TMDB can't be reached is never requested again. `_tvdb_for_sonarr`
-  (`shortlist/engine/requests.py:1237`) returns status `"error"` before anything is sent, and
-  `finish_request_dispatch` (`request_actions.py`) records every status other than `requested`/`skipped_*` as
-  `outcome_unknown`, which `durable_handled_requests` excludes from every later run and the inbox refuses to
-  send — while the detail tells the owner "it may work next run". Precondition: auto-send on, and TMDB
-  unreachable during that lookup. Fix shape: the #154 one — a `skipped_*` status for a refusal that provably
-  sent nothing, re-queued with its reason via `_REQUEUED_SKIPS`. Check the same for Arr lookup GETs that fail
-  before the POST.
-
 ---
 
 ## LEFT ON PURPOSE
@@ -152,6 +141,17 @@ Everything below is fixed, resolved or not a bug. Newest first, then older audit
 
 ---
 
+
+## CLOSED 2026-10-11 — a failure before anything was sent blocked the title for good
+
+- Found by the #154 architecture review. A TMDB failure during a show's TheTVDB lookup, an Arr lookup or tag
+  call failing before the add POST, or an Arr answering "could not find this title" all returned `"error"`,
+  which the request claim records as `outcome_unknown` — excluded from every later run and refused by the
+  inbox until the owner released it by hand. They now return `skipped_not_sent` (in `_REQUEUED_SKIPS`, so the
+  inbox still shows the reason); `ArrNotSentError` marks Arr calls made before the POST. A failed add POST is
+  still `"error"`, because it may have landed.
+
+---
 
 ## CLOSED 2026-10-11 — 1.11.0 release review leftover
 

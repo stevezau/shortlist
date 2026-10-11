@@ -13,6 +13,8 @@ Sonarr/Radarr versions instead of guessing at required metadata fields.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import httpx
 from loguru import logger
@@ -56,6 +58,25 @@ class ArrError(RuntimeError):
     Never carries the URL or api key: the message is surfaced in the UI and written to events, and
     an Arr api key is a secret like any other (plex-safety rule 9).
     """
+
+
+class ArrNotSentError(ArrError):
+    """An add failed before the add itself was posted, so the title certainly was not sent.
+
+    The distinction is what the request claim needs: a failure after the POST may have landed and is
+    never retried, while one before it can safely be tried again next run.
+    """
+
+
+@contextmanager
+def _nothing_sent_yet() -> Iterator[None]:
+    """Mark any ``ArrError`` raised inside as one that happened before the add was posted."""
+    try:
+        yield
+    except ArrNotSentError:
+        raise
+    except ArrError as e:
+        raise ArrNotSentError(str(e)) from e
 
 
 _JSON_TYPES = {dict: "an object", list: "a list", str: "a string", int: "a number", float: "a number"}
@@ -345,24 +366,27 @@ class RadarrClient(_ArrClient):
 
         ``extra_tags`` are per-user/per-row labels layered onto the target's global tag. ``slug`` is
         Radarr's titleSlug for the inbox deep-link (None if the title didn't resolve).
-        status is one of: would_request (dry-run), requested, skipped_present, error.
+        status is one of: would_request (dry-run), requested, skipped_present, skipped_not_sent, error.
         """
-        resource = self._get(f"/api/v3/movie/lookup/tmdb?tmdbId={tmdb_id}")
+        with _nothing_sent_yet():
+            resource = self._get(f"/api/v3/movie/lookup/tmdb?tmdbId={tmdb_id}")
         if not isinstance(resource, dict) or not resource.get("tmdbId"):
-            return "error", "Radarr could not find this title", None
+            return "skipped_not_sent", "Radarr could not find this title", None
         slug = resource.get("titleSlug") or None
         if resource.get("id"):  # a non-zero id means Radarr already tracks it
             return "skipped_present", "already in Radarr", slug
         if dry_run:
             logger.info("[dry-run] Radarr: would add tmdb {}", tmdb_id)
             return "would_request", "would add to Radarr", slug
+        with _nothing_sent_yet():
+            tags = self._tag_ids(extra_tags)
         body = {
             **resource,
             "qualityProfileId": self._target.quality_profile_id,
             "rootFolderPath": self._target.root_folder,
             "monitored": True,
             "minimumAvailability": "released",
-            "tags": self._tag_ids(extra_tags),
+            "tags": tags,
             "addOptions": {"searchForMovie": True},
         }
         self._post("/api/v3/movie", body)
@@ -435,17 +459,18 @@ class SonarrClient(_ArrClient):
 
         ``extra_tags`` are per-user/per-row labels layered onto the target's global tag. ``slug`` is
         Sonarr's titleSlug — the ONLY way to deep-link its series page (Sonarr has no id-based URL).
-        status is one of: would_request (dry-run), requested, skipped_present, error.
+        status is one of: would_request (dry-run), requested, skipped_present, skipped_not_sent, error.
 
         ``monitor`` is one of ``SONARR_MONITOR_MODES`` and decides how much of the show Sonarr
         monitors, and therefore downloads: "all" takes the whole back catalogue, "firstSeason" a
         taster, "none" files it unmonitored for later. ``season_count`` widens "firstSeason" and
         "lastSeason" to that many seasons; Sonarr has no mode for that, so it is sent as per-season flags.
         """
-        results = self._get(f"/api/v3/series/lookup?term=tvdb:{tvdb_id}")
+        with _nothing_sent_yet():
+            results = self._get(f"/api/v3/series/lookup?term=tvdb:{tvdb_id}")
         resource = _match_tvdb(results, tvdb_id)
         if resource is None:
-            return "error", "Sonarr could not find this title", None
+            return "skipped_not_sent", "Sonarr could not find this title", None
         slug = resource.get("titleSlug") or None
         if resource.get("id"):  # a non-zero id means Sonarr already tracks it
             return "skipped_present", "already in Sonarr", slug
@@ -458,6 +483,8 @@ class SonarrClient(_ArrClient):
             logger.info("[dry-run] Sonarr: would add tvdb {} monitoring {}", tvdb_id, picked or mode)
             return "would_request", f"would add to Sonarr ({scope})", slug
         wanted = mode != "none"
+        with _nothing_sent_yet():
+            tags = self._tag_ids(extra_tags)
         body = {
             **resource,
             "qualityProfileId": self._target.quality_profile_id,
@@ -474,7 +501,7 @@ class SonarrClient(_ArrClient):
             # issue #100 again in slow motion, and it would make "season 1 only" a lie in the UI.
             # Only "all" keeps taking new seasons, because that is the one choice that asked for them.
             "monitorNewItems": "all" if mode == "all" else "none",
-            "tags": self._tag_ids(extra_tags),
+            "tags": tags,
             # Searching is what the mode is FOR: a search with nothing monitored finds nothing, so
             # asking for one on `none` only queues a command that reports zero results.
             "addOptions": {"searchForMissingEpisodes": wanted, "monitor": mode},

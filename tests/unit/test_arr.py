@@ -394,13 +394,14 @@ class TestSonarrAddSeries:
         assert not post.called
 
     @respx.mock
-    def test_errors_when_tvdb_not_found_in_results(self):
-        # A term search can return near-matches; the client must only add the exact tvdbId.
+    def test_refuses_when_tvdb_not_found_in_results(self):
+        # A term search can return near-matches; the client must only add the exact tvdbId. Nothing was
+        # added, so it is a retryable not-sent skip rather than an uncertain "error".
         respx.get("http://sonarr.test/api/v3/series/lookup").mock(
             return_value=httpx.Response(200, json=[{**SERIES_LOOKUP, "tvdbId": 999999}])
         )
         status, _, _ = SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=False)
-        assert status == "error"
+        assert status == "skipped_not_sent"
 
 
 class TestSeveralSeasons:

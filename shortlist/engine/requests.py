@@ -23,7 +23,7 @@ from typing import NamedTuple
 
 from loguru import logger
 
-from shortlist.engine.clients.arr import ArrError, RadarrClient, SonarrClient
+from shortlist.engine.clients.arr import ArrError, ArrNotSentError, RadarrClient, SonarrClient
 from shortlist.engine.clients.mdblist import (
     RATING_CACHE_TTL_S,
     VOTE_SOURCES,
@@ -1234,7 +1234,10 @@ def _tvdb_for_sonarr(title: MissingTitle, tmdb: TmdbClient) -> tuple[int | None,
         logger.warning("TVDB lookup for {!r} failed: {}", title.title, e)
         # Distinct from the skip below on purpose: THIS one is a lookup that failed (TMDB down, a
         # timeout), so retrying may well work. The skip is a settled fact about the data and never will.
-        return None, ("error", "couldn't reach TMDB to look up this show's TheTVDB id — it may work next run")
+        return None, (
+            "skipped_not_sent",
+            "couldn't reach TMDB to look up this show's TheTVDB id — it may work next run",
+        )
     if title.tvdb_id is None:
         # Says what to DO, because nothing here can. Sonarr identifies shows by TheTVDB id and TMDB is
         # where we look it up; when TMDB has not recorded one there is no way to name the show to
@@ -1253,8 +1256,9 @@ def _tvdb_for_sonarr(title: MissingTitle, tmdb: TmdbClient) -> tuple[int | None,
 
 
 # Skips the inbox should still show. They are `skipped_*` rather than "error" because the request
-# claim records any other status as an uncertain send, which is never retried.
-_REQUEUED_SKIPS = ("skipped_unsupported", "skipped_no_seasons")
+# claim records any other status as an uncertain send, which is never retried — "error" is kept for a
+# failure that may have reached the app. `skipped_not_sent` is any failure before anything was sent.
+_REQUEUED_SKIPS = ("skipped_unsupported", "skipped_no_seasons", "skipped_not_sent")
 
 
 def _today() -> date:
@@ -1380,6 +1384,9 @@ def _request_one(
             tvdb_id, dry_run=dry_run, extra_tags=title.tags, monitor=sonarr_monitor, season_count=season_count
         )
         return outcome(status, detail, slug)
+    except ArrNotSentError as e:
+        logger.warning("request for {!r} failed before anything was sent: {}", title.title, e)
+        return outcome("skipped_not_sent", str(e))
     except ArrError as e:
         # A request failing is a footnote, never a run failure — Sonarr/Radarr are optional plumbing.
         logger.warning("request for {!r} failed: {}", title.title, e)
