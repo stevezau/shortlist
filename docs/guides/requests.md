@@ -38,17 +38,20 @@ Set it up under **Settings → Requests**:
    the app under _Settings → General_), then press **Test**. Save. The Requests tab shows a **Go to
    Connections** button until an app is connected.
 3. Once connected, pick a **Quality** profile and a **Save to** folder from the dropdowns. Shortlist
-   reads these straight from the app, so there are no ids to look up. For Sonarr, also pick **how
-   much of a show to grab** — these are Sonarr's own Add Series _Monitor_ choices, so they mean
-   exactly what they mean there. (Sonarr's other monitor options aren't offered: on a show your
-   server doesn't have yet, _Future_, _Existing_ and _Recent_ each monitor nothing at all, which
-   **None** already says plainly.) **All Episodes** (the default) takes the whole back catalogue, which
-   on a twelve-season show is twelve seasons of downloads the night it is added; **First Season**
-   makes it a taster you can extend in Sonarr later; **None** files the show unmonitored so nothing
-   downloads until you say so. Anything other than All Episodes also turns Sonarr's **Monitor New
-   Seasons** off for that show, so a restriction on a still-running series holds when the next season
-   airs instead of quietly growing back. It applies only to shows Shortlist adds — one Sonarr already tracks is
-   left exactly as you have it.
+   reads these straight from the app, so there are no ids to look up.
+   Then pick **how much of a show to grab** (it sits below the Radarr and Sonarr cards, because it
+   applies to either route). Choose **Start from** _First seasons_ or _Last seasons_ and
+   **how many seasons**, or tick **Every season** (the default), which takes the whole back catalogue —
+   on a twelve-season show, twelve seasons of downloads the night it is added. _First seasons, 1_ is a
+   taster you can extend in Sonarr later; _Last seasons, 3_ is the newest three. For a count above 1
+   Shortlist marks each season in Sonarr itself, because Sonarr has no mode for "the first three".
+   Two extra choices exist when requests go straight to Sonarr: **Pilot episode** (the first episode,
+   nothing else) and **Add unmonitored**, which files the show so nothing downloads until you say so.
+   (Sonarr's other monitor options aren't offered: on a show your server doesn't have yet, _Future_,
+   _Existing_ and _Recent_ each monitor nothing at all, which _Add unmonitored_ already says plainly.)
+   Anything other than _Every season_ also turns Sonarr's **Monitor New Seasons** off for that show, so a
+   restriction on a still-running series holds when the next season airs instead of quietly growing back.
+   It applies only to shows Shortlist adds — one Sonarr already tracks is left exactly as you have it.
 4. Choose **Send on its own, or ask me first**: titles wanted by enough people _and_ rated highly
    enough go out as soon as a run finds them; everything else that clears the guardrails waits in
    your **Requests** inbox. Turn it off for a fully manual queue. While it's on, also set **the most
@@ -101,6 +104,15 @@ turned off, and pick it here. Its requests then wait in Overseerr for your yes, 
 coming from Shortlist rather than from a person. Shortlist never creates that account for you — it
 only lists the accounts already there. On many servers every existing account can already
 auto-approve, in which case making one is the only way to get a queue in Overseerr at all.
+
+**How much of a show works here too.** Under _First seasons_ or _Last seasons_ Shortlist works out the
+season numbers from TMDB and asks Overseerr for exactly those, so a request can be "seasons 1 to 2"
+instead of the whole show. Seasons that air later follow Overseerr's own **Monitor New Seasons** option
+on its Sonarr server (_All_ by default), not anything set in Shortlist. **Pilot episode** and **Add
+unmonitored** are Sonarr's own options and can't be sent through Overseerr: a show on a row set to one of
+them is not requested, and shows in the Requests inbox with a note to pick first or last seasons. If
+TMDB can't be read for a show, that show waits and is tried again on the next run rather than being
+requested in full.
 
 The picker lists every account on the instance, with accounts made for this first and people on your
 server after them, and tells you which ones auto-approve.
@@ -392,8 +404,8 @@ knowing about the group in the row editor itself:
 - Every on/off setting in it is a switch, the same as everywhere else in the editor.
 - A setting the row can't actually use is left off the screen rather than shown disabled: Radarr's
   root folder and quality profile only appear when requests go to Radarr and the row has a movie
-  library (the same pairing applies to Sonarr, plus Sonarr's "how much of a show" setting, for a show
-  library); the request tag and "tag with who it's for" only appear when requests go to Radarr/Sonarr,
+  library (the same pairing applies to Sonarr, for a show library); "how much of a show" (start and
+  count) appears on either route for any row that draws shows; the request tag and "tag with who it's for" only appear when requests go to Radarr/Sonarr,
   since Overseerr/Jellyseerr has no tags field for them to reach. If requests are off entirely, the
   group just shows a note saying so, linking to Settings.
 - **How many people must want it** only means something when the row reaches more than one person.

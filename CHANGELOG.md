@@ -16,6 +16,15 @@ All notable changes to this project are documented here. This project follows
   picked** shows what each search was for. With Exa or SearXNG each extra title is one more search; with
   the AI's own search there is no extra cost. Adds migration 0112.
 
+- **Choose how many seasons of a show to request, on either route** ([#154](https://github.com/stevezau/shortlist/issues/154)).
+  **How much of a show to grab** now has a **Start from** (First or Last seasons) and a **How many seasons**
+  count, or **Every season**, and it works when requests go through Overseerr, Jellyseerr or Seerr as well as
+  straight to Sonarr. Rows can set their own. **If you request through Overseerr, check this setting after
+  upgrading:** a First or Last Season choice made for Sonarr used to be ignored there (every season was
+  requested), and now applies. Pilot episode and Add unmonitored stay Sonarr-only; through Overseerr a show
+  set to one of them is not sent, and waits in the inbox with the reason until you pick another choice.
+  Rows already set to First or Last Season keep taking one season. Adds migration 0113.
+
 ### Fixed
 
 - **Agregarr trailer placeholders no longer count as the real title** ([#151](https://github.com/stevezau/shortlist/issues/151)).

@@ -295,14 +295,43 @@ describe("RequestsSettings", () => {
       "requests.sonarr.apikey": "•••••",
     });
 
-    const monitor = await screen.findByLabelText(/How much of a show to grab/i);
-    expect(monitor).toHaveValue("all");
-    await userEvent.selectOptions(monitor, "firstSeason");
+    // The control became a start + count + "Every season" tick (#154), so the old select is gone.
+    const every = await screen.findByRole("checkbox", { name: "Every season" });
+    expect(every).toBeChecked();
+    await userEvent.click(every);
 
     expect(screen.getByText(/Season 1 only/)).toBeTruthy();
     await waitFor(() =>
       expect(putSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ "requests.sonarr.monitor": "firstSeason" }),
+        expect.objectContaining({
+          "requests.sonarr.monitor": "firstSeason",
+          "requests.season_count": 1,
+        }),
+      ),
+    );
+  });
+
+  it("offers the same choice, without Sonarr-only modes, when Overseerr is the route", async () => {
+    renderPanel({
+      "requests.enabled": true,
+      "requests.target": "overseerr",
+      "requests.overseerr.url": "http://overseerr",
+      "requests.overseerr.apikey": "•••••",
+      "requests.sonarr.monitor": "lastSeason",
+      "requests.season_count": 2,
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Last seasons" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "Pilot episode" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "More seasons" }));
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          "requests.sonarr.monitor": "lastSeason",
+          "requests.season_count": 3,
+        }),
       ),
     );
   });

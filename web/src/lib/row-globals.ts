@@ -10,7 +10,11 @@ import {
   languageName,
   otherLanguageBar,
 } from "@/lib/request-language";
-import { asSonarrMonitor, SONARR_MONITOR_LABELS } from "@/lib/sonarr-monitor";
+import {
+  asSeasonCount,
+  asSonarrMonitor,
+  sonarrMonitorSummary,
+} from "@/lib/sonarr-monitor";
 import { mixName } from "@/lib/history-mix";
 import type { Settings } from "@/lib/types";
 
@@ -220,14 +224,15 @@ export function requestRootFolderGlobal(
   return typeof raw === "string" && raw ? raw : null;
 }
 
-/** Sonarr's monitor choice, in its own words — "All Episodes", "First Season". */
+/** How much of a show the global setting grabs — "Every season", "First seasons · 2". */
 export function requestSonarrMonitorGlobal(
   settings: Settings | undefined,
 ): string | null {
   if (!settings) return null;
-  return SONARR_MONITOR_LABELS[
-    asSonarrMonitor(settings["requests.sonarr.monitor"])
-  ];
+  return sonarrMonitorSummary(
+    asSonarrMonitor(settings["requests.sonarr.monitor"]),
+    asSeasonCount(settings["requests.season_count"]),
+  );
 }
 
 /**

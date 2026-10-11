@@ -248,6 +248,24 @@ class TestPerRowRequestSettingsApi:
         ).json()
         assert cleared["req_sonarr_monitor"] is None
 
+    def test_a_rows_season_count_round_trips_and_clears(self, client: TestClient):
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        assert created["req_season_count"] is None
+
+        patched = client.patch(f"/api/collections/{created['id']}", json={"name": "Kids", "req_season_count": 3}).json()
+        assert patched["req_season_count"] == 3
+
+        cleared = client.patch(
+            f"/api/collections/{created['id']}", json={"name": "Kids", "req_season_count": None}
+        ).json()
+        assert cleared["req_season_count"] is None
+
+    @pytest.mark.parametrize("bad", [0, 100, -1])
+    def test_a_season_count_outside_one_to_ninety_nine_is_refused(self, client: TestClient, bad: int):
+        created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
+        resp = client.patch(f"/api/collections/{created['id']}", json={"name": "Kids", "req_season_count": bad})
+        assert resp.status_code == 422, resp.text
+
     def test_a_rows_language_settings_round_trip_and_clear(self, client: TestClient):
         created = client.post("/api/collections", json={"name": "Kids", "build": "per_person"}).json()
         assert (created["req_language_mode"], created["req_preferred_languages"], created["req_min_rating_other"]) == (

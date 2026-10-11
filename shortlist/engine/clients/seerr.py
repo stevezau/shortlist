@@ -23,6 +23,7 @@ from loguru import logger
 from shortlist.engine.clients import http_retry
 from shortlist.engine.clients.arr import json_shape
 from shortlist.engine.models import MediaType, SeerrTarget
+from shortlist.engine.show_seasons import describe_seasons
 
 #: ``MediaInfo.status``, mapped to the vocabulary the request inbox already speaks (the same four
 #: words ``clients/arr.py`` produces).
@@ -515,7 +516,9 @@ class SeerrClient:
             return out
         return set()
 
-    def request_title(self, tmdb_id: int, media_type: MediaType, *, dry_run: bool) -> tuple[str, str, str | None]:
+    def request_title(
+        self, tmdb_id: int, media_type: MediaType, *, dry_run: bool, seasons: list[int] | None = None
+    ) -> tuple[str, str, str | None]:
         """File one request. Returns ``(status, detail, slug)``; never raises for a normal skip.
 
         ``slug`` is None on this target — Overseerr's own URL for a title is
@@ -524,6 +527,8 @@ class SeerrClient:
 
         status is one of: would_request (dry-run), requested, skipped_present, error — the same
         vocabulary the Arr path returns, so the inbox and the run report need no new cases.
+
+        ``seasons`` names the seasons of a show to request; None asks for all of them. Movies ignore it.
         """
         kind = _MEDIA_TYPE.get(media_type)
         if kind is None:
@@ -540,14 +545,15 @@ class SeerrClient:
             known = None
         if known is not None:
             return "skipped_present", f"already in {self.app_name} ({known})", None
+        scope = f" {describe_seasons(seasons)}" if kind == "tv" and seasons else ""
         if dry_run:
             logger.info("[dry-run] {}: would request {} tmdb {}", self.app_name, kind, tmdb_id)
-            return "would_request", f"would request from {self.app_name}", None
+            return "would_request", f"would request{scope} from {self.app_name}", None
         body: dict[str, object] = {"mediaType": kind, "mediaId": tmdb_id}
         if kind == "tv":
             # Without this Overseerr files a show request with no seasons, which it accepts and then
             # never sends to Sonarr — the request sits "approved" forever with nothing behind it.
-            body["seasons"] = "all"
+            body["seasons"] = seasons if seasons is not None else "all"
         # "Request as" rides in `X-API-User`, not the body's `userId`. `MediaRequest.request` checks a
         # `userId` account's permission and quota but sets APPROVED or PENDING from the CALLER's
         # permissions, and filing for another account needs Manage Requests, itself an auto-approve
@@ -557,7 +563,7 @@ class SeerrClient:
         self._post("/request", body, as_user=self._target.request_as_user_id)
         # Whether it lands as pending or auto-approved is the chosen account's permission, not ours —
         # so the detail says what happened here and lets the *seerr own the rest.
-        return "requested", f"requested from {self.app_name}", None
+        return "requested", f"requested{scope} from {self.app_name}", None
 
 
 def _approves(permissions: int, specific: int) -> bool:

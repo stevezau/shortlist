@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from "react-router";
 import { RequestHoldsField } from "@/components/request-holds-field";
 import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
+import { ShowSeasonsControl } from "@/components/show-seasons-control";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -35,12 +36,7 @@ import {
 } from "@/lib/request-flow";
 import { selectedClass } from "@/lib/selected";
 import type { SonarrMonitor } from "@/lib/sonarr-monitor";
-import {
-  asSonarrMonitor,
-  SONARR_MONITOR_HINTS,
-  SONARR_MONITOR_LABELS,
-  SONARR_MONITOR_MODES,
-} from "@/lib/sonarr-monitor";
+import { asSeasonCount, asSonarrMonitor } from "@/lib/sonarr-monitor";
 import { hasMdblist } from "@/lib/sources";
 import type { SeasonTag, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -66,8 +62,10 @@ interface RequestsForm {
   overseerrUserId: number;
   radarr: ArrForm;
   sonarr: ArrForm;
-  /** How much of a show Sonarr monitors when a request goes out. Sonarr's own Add Series choice. */
+  /** How much of a show a request takes: Sonarr's Add Series "Monitor" choice, or a season list for Overseerr. */
   sonarrMonitor: SonarrMonitor;
+  /** How many seasons first/last take; ignored by every other mode. */
+  seasonCount: number;
   ratingSource: RatingSource;
   /** How the gate treats a title's original language. "any" is the shipped default. */
   languageMode: LanguageMode;
@@ -134,6 +132,7 @@ function readForm(settings: Settings): RequestsForm {
     radarr: readArr(settings, "requests.radarr"),
     sonarr: readArr(settings, "requests.sonarr"),
     sonarrMonitor: asSonarrMonitor(settings["requests.sonarr.monitor"]),
+    seasonCount: asSeasonCount(settings["requests.season_count"]),
     ratingSource: RATING_SOURCES.includes(
       settingString(settings, "requests.rating_source", "tmdb") as RatingSource,
     )
@@ -185,8 +184,6 @@ function ArrCard({
   onChange,
   connected,
   onGoToConnections,
-  monitor,
-  onMonitorChange,
 }: {
   service: "radarr" | "sonarr";
   title: string;
@@ -196,15 +193,10 @@ function ArrCard({
   /** True once this app's URL + key are SAVED (in Connections), so its profiles/folders can load. */
   connected: boolean;
   onGoToConnections: () => void;
-  /** Sonarr only — how much of a show to take. Films have no seasons, so Radarr passes neither. */
-  monitor?: SonarrMonitor;
-  onMonitorChange?: (next: SonarrMonitor) => void;
 }) {
   const options = useArrOptions(service, connected);
   const profileId = useId();
   const folderId = useId();
-  const monitorId = useId();
-
   return (
     <div className="space-y-4">
       <div className="space-y-1">
@@ -292,31 +284,6 @@ function ArrCard({
                   ))}
                 </select>
               </div>
-            </div>
-          )}
-
-          {/* Sonarr only, and outside the error branch above on purpose: this list is Sonarr's
-              enum, not something fetched, so an unreachable Sonarr is no reason to hide it. */}
-          {monitor !== undefined && onMonitorChange && (
-            <div className="space-y-2">
-              <Label htmlFor={monitorId}>How much of a show to grab</Label>
-              <select
-                id={monitorId}
-                className={selectClass}
-                value={monitor}
-                onChange={(e) =>
-                  onMonitorChange(asSonarrMonitor(e.target.value))
-                }
-              >
-                {SONARR_MONITOR_MODES.map((mode) => (
-                  <option key={mode} value={mode}>
-                    {SONARR_MONITOR_LABELS[mode]}
-                  </option>
-                ))}
-              </select>
-              <p className="text-sm text-muted-foreground">
-                {SONARR_MONITOR_HINTS[monitor]}
-              </p>
             </div>
           )}
         </>
@@ -627,6 +594,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.sonarr.quality_profile_id": form.sonarr.qualityProfileId,
       "requests.sonarr.root_folder": form.sonarr.rootFolder,
       "requests.sonarr.monitor": form.sonarrMonitor,
+      "requests.season_count": form.seasonCount,
       "requests.rating_source": form.ratingSource,
       "requests.language_mode": form.languageMode,
       "requests.preferred_languages": form.preferredLanguages,
@@ -767,11 +735,27 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   onChange={(sonarr) => set({ sonarr })}
                   connected={sonarrConnected}
                   onGoToConnections={goToConnections}
-                  monitor={form.sonarrMonitor}
-                  onMonitorChange={(sonarrMonitor) => set({ sonarrMonitor })}
                 />
               </div>
             )}
+
+            <div className="space-y-3 border-t pt-5">
+              <div className="space-y-1">
+                <p className="font-medium">How much of a show to grab</p>
+                <p className="text-sm text-muted-foreground">
+                  A long-running show can arrive whole, season after season.
+                  Choose how much of one to ask for.
+                </p>
+              </div>
+              <ShowSeasonsControl
+                mode={form.sonarrMonitor}
+                count={form.seasonCount}
+                target={form.target}
+                onChange={({ mode, count }) =>
+                  set({ sonarrMonitor: mode, seasonCount: count })
+                }
+              />
+            </div>
 
             {/* Both tag controls are Arr-only, and hidden rather than disabled on the *seerr route.
                 Overseerr's POST /request body carries no tags field at all, so leaving them on

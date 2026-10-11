@@ -87,6 +87,7 @@ COLLECTION_KEYS = {
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
     "req_sonarr_monitor",
+    "req_season_count",
     "req_language_mode",
     "req_preferred_languages",
     "req_min_rating_other",

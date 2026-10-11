@@ -30,6 +30,7 @@ const INHERITS: RowRequestInput = {
   req_sonarr_root_folder: null,
   req_sonarr_quality_profile_id: null,
   req_sonarr_monitor: null,
+  req_season_count: null,
   req_language_mode: null,
   req_preferred_languages: null,
   req_min_rating_other: null,
@@ -185,7 +186,7 @@ describe("RowRequestSettings", () => {
     // Sonarr's label, not ours: someone comparing this row with Sonarr's Add Series screen must not
     // have to work out which of our words means which of theirs.
     renderSection();
-    expect(screen.getByText(/All Episodes/)).toBeInTheDocument();
+    expect(screen.getByText(/Every season/)).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 
@@ -194,14 +195,68 @@ describe("RowRequestSettings", () => {
     await userEvent.click(
       screen.getByLabelText(overrideName(/how much of a show/)),
     );
-    expect(set).toHaveBeenCalledWith({ req_sonarr_monitor: "firstSeason" });
+    expect(set).toHaveBeenCalledWith({
+      req_sonarr_monitor: "firstSeason",
+      req_season_count: 1,
+    });
   });
 
   it("says what the chosen mode actually downloads", async () => {
     const set = renderSection({ req_sonarr_monitor: "firstSeason" });
     expect(screen.getByText(/Season 1 only/)).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByRole("combobox"), "none");
-    expect(set).toHaveBeenCalledWith({ req_sonarr_monitor: "none" });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Add unmonitored" }),
+    );
+    expect(set).toHaveBeenCalledWith({
+      req_sonarr_monitor: "none",
+      req_season_count: 1,
+    });
+  });
+
+  it("offers the seasons override on the Overseerr route too, but not on a movie-only row", () => {
+    renderSection({}, { target: "overseerr" });
+    expect(
+      screen.getByLabelText(overrideName(/how much of a show/)),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the seasons override for a movie-only row", () => {
+    renderSection({}, { media: "movie" });
+    expect(
+      screen.queryByLabelText(overrideName(/how much of a show/)),
+    ).toBeNull();
+  });
+
+  it("names the global start and count while inheriting", () => {
+    // SETTINGS has no season count, so it reads as the 1 first/last always meant.
+    renderSection();
+    expect(screen.getByText(/Every season/)).toBeInTheDocument();
+  });
+
+  it("returning to the global clears both the mode and the count", async () => {
+    const set = renderSection({
+      req_sonarr_monitor: "lastSeason",
+      req_season_count: 3,
+    });
+    await userEvent.click(
+      screen.getByLabelText(overrideName(/how much of a show/)),
+    );
+    expect(set).toHaveBeenCalledWith({
+      req_sonarr_monitor: null,
+      req_season_count: null,
+    });
+  });
+
+  it("changing the count sends it with the mode", async () => {
+    const set = renderSection({
+      req_sonarr_monitor: "lastSeason",
+      req_season_count: 2,
+    });
+    await userEvent.click(screen.getByRole("button", { name: "More seasons" }));
+    expect(set).toHaveBeenCalledWith({
+      req_sonarr_monitor: "lastSeason",
+      req_season_count: 3,
+    });
   });
 
   it("warns when requests are switched off entirely", () => {

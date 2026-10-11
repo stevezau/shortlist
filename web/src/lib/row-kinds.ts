@@ -490,6 +490,7 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   req_sonarr_quality_profile_id: "requests",
   req_sonarr_root_folder: "requests",
   req_sonarr_monitor: "requests",
+  req_season_count: "requests",
   req_language_mode: "requests",
   req_preferred_languages: "requests",
   req_auto_user_tag: "requests",

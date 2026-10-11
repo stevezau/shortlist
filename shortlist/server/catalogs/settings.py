@@ -918,11 +918,20 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
     ),
     _setting(
         "requests.sonarr.monitor",
-        "Sonarr monitoring mode",
-        "How much of a newly added series Sonarr monitors for acquisition.",
+        "How much of a show to grab",
+        "Which seasons of a newly requested show are asked for: first or last seasons, every season, "
+        "and (direct Sonarr requests only) the pilot episode or unmonitored.",
         SettingGroup.REQUESTS,
         options=_options(tuple(SONARR_MONITOR_MODES)),
-        prerequisites=(_prerequisite("requests.target", ("arr",), "Used by direct Sonarr requests."),),
+        effects=(LOCAL, FUTURE_REQUEST),
+        capabilities=(Capability.REQUESTS_SEND,),
+    ),
+    _setting(
+        "requests.season_count",
+        "Seasons to request",
+        "How many seasons first or last seasons take (1 to 99); ignored by the other choices.",
+        SettingGroup.REQUESTS,
+        range=NumericRange(minimum=1, maximum=99, unit="seasons"),
         effects=(LOCAL, FUTURE_REQUEST),
         capabilities=(Capability.REQUESTS_SEND,),
     ),

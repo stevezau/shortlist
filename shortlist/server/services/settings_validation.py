@@ -92,6 +92,17 @@ def _bounded_int(low: int, high: int):
     return check
 
 
+def _whole_int(low: int, high: int):
+    """A JSON integer in range — not a float, string or bool that `int()` would quietly convert."""
+
+    def check(value: object) -> str | None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return f"must be a whole number between {low} and {high}"
+        return None if low <= value <= high else f"must be between {low} and {high}"
+
+    return check
+
+
 def _bounded_float(low: float, high: float):
     def check(value: object) -> str | None:
         try:
@@ -390,6 +401,7 @@ VALIDATORS = {
     # Sonarr 400s the whole add on a value outside its enum, so the typo is refused here rather than
     # discovered a fortnight later as a request that never arrived.
     "requests.sonarr.monitor": _one_of(*SONARR_MONITOR_MODES),
+    "requests.season_count": _whole_int(1, 99),
     "row.name_template": _non_blank_row_template,
 }
 

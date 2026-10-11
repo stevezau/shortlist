@@ -72,6 +72,7 @@ export const EVERY_OVERRIDE: Partial<Collection> = {
   req_sonarr_quality_profile_id: 5,
   req_sonarr_root_folder: "/data/Kids TV",
   req_sonarr_monitor: "firstSeason",
+  req_season_count: 2,
   req_language_mode: "prefer",
   req_preferred_languages: ["en", "fr"],
   req_min_rating_other: 8,

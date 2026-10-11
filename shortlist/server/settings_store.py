@@ -56,6 +56,7 @@ DEFAULTS: dict[str, Any] = {
     # How much of a show Sonarr monitors when Shortlist adds it — Sonarr's own Add Series "Monitor"
     # choice, passed through. "all" is Sonarr's default.
     "requests.sonarr.monitor": "all",
+    "requests.season_count": 1,
     "requests.rating_source": "tmdb",  # tmdb (no setup) | imdb | trakt | tomatoes | metacritic (via MDBList)
     "requests.min_rating": 7.0,  # rating floor on the chosen source
     # How the request gate treats a title's original language. "any" is what every build before this

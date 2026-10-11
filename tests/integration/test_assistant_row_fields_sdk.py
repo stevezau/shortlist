@@ -77,6 +77,7 @@ ROW_CASES = {
         "req_sonarr_quality_profile_id": 3,
         "req_sonarr_root_folder": "/synthetic/shows",
         "req_sonarr_monitor": "firstSeason",
+        "req_season_count": 2,
         "req_language_mode": "prefer",
         "req_preferred_languages": ["en", "fr"],
         "req_min_rating_other": 9.0,
@@ -129,6 +130,7 @@ NULL_FIELDS = {
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
     "req_sonarr_monitor",
+    "req_season_count",
     "req_language_mode",
     "req_preferred_languages",
     "req_min_rating_other",
@@ -175,7 +177,7 @@ def _assert_readback(wire, app, row_id, expected):
 def test_row_field_cases_cover_the_entire_advertised_writable_contract():
     covered = set(BASE) | {"name"} | set().union(*(set(case) for case in ROW_CASES.values()))
     assert covered == set(ROW_FIELD_DEFINITIONS)
-    assert len(covered) == 74
+    assert len(covered) == 75
     assert not {"id", "slug", "dry_run", "defer_rename", "poster_upload"} & covered
 
 

@@ -240,6 +240,14 @@ class CollectionOut(PassthroughModel):
         ),
         json_schema_extra={"enum": [*SONARR_MONITOR_MODES, None]},
     )
+    req_season_count: int | None = Field(
+        description=(
+            "How many seasons 'firstSeason'/'lastSeason' take for this row's requests; "
+            "null inherits the global requests.season_count."
+        ),
+        ge=1,
+        le=99,
+    )
     req_language_mode: str | None = Field(
         description=(
             "How this row treats a title's original language when requesting: 'any' (one bar for "

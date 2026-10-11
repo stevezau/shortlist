@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import math
+from datetime import date
+from typing import ClassVar
+
+import pytest
 
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients.arr import ArrError
@@ -66,6 +70,7 @@ class FakeArr:
         self.movie_calls: list[tuple[int, bool]] = []
         self.series_calls: list[tuple[int, bool]] = []
         self.monitor_calls: list[str] = []  # the Sonarr monitor mode each add was sent with
+        self.season_count_calls: list[int] = []  # and the season count
         self.tag_calls: list[set[str]] = []  # extra_tags passed on each add, in call order
         self.raise_on = raise_on
         self.skip_present = skip_present or set()
@@ -104,8 +109,15 @@ class FakeArr:
         return ("would_request" if dry_run else "requested", "ok", f"movie-{tmdb_id}")
 
     def add_series(
-        self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None, monitor: str = "all"
+        self,
+        tvdb_id: int,
+        *,
+        dry_run: bool,
+        extra_tags: set[str] | None = None,
+        monitor: str = "all",
+        season_count: int = 1,
     ) -> tuple[str, str, str | None]:
+        self.season_count_calls.append(season_count)
         self.series_calls.append((tvdb_id, dry_run))
         self.tag_calls.append(set(extra_tags or set()))
         self.monitor_calls.append(monitor)
@@ -123,7 +135,9 @@ class FakeTmdb:
         poster_raises: bool = False,
         overviews: dict[int, str] | None = None,
         overview_raises: bool = False,
+        details: dict | Exception | None = None,
     ):
+        self._details = details
         self._tvdb = tvdb or {}
         self._raise_on = raise_on
         self._imdb = imdb or {}
@@ -138,6 +152,11 @@ class FakeTmdb:
         if self._raise_on == tmdb_id:
             raise RuntimeError("TMDB API error HTTP 503")  # a non-ArrError, like the real client raises
         return self._tvdb.get(tmdb_id)
+
+    def details(self, tmdb_id: int, media_type: MediaType) -> dict:
+        if isinstance(self._details, Exception):
+            raise self._details
+        return self._details or {}
 
     def imdb_id(self, tmdb_id: int, media_type: MediaType) -> str | None:
         return self._imdb.get(tmdb_id, f"tt{tmdb_id:07d}")  # default: every title has a synthetic IMDb id
@@ -1939,6 +1958,7 @@ class FakeSeerr:
         self.raise_on_state = raise_on_state
         self.state_calls = 0
         self.requests: list[tuple[int, MediaType, bool]] = []
+        self.season_calls: list[list[int] | None] = []  # the seasons each request named; None = all
 
     def blocklisted(self) -> set[tuple[str, int]]:
         return self.blocked
@@ -1949,8 +1969,9 @@ class FakeSeerr:
             raise self.raise_on_state
         return self.state
 
-    def request_title(self, tmdb_id: int, media_type: MediaType, *, dry_run: bool):
+    def request_title(self, tmdb_id: int, media_type: MediaType, *, dry_run: bool, seasons: list[int] | None = None):
         self.requests.append((tmdb_id, media_type, dry_run))
+        self.season_calls.append(seasons)
         if (media_type.value, tmdb_id) in self.state:
             return "skipped_present", "already in Overseerr", None
         return ("would_request" if dry_run else "requested"), "requested from Overseerr", None
@@ -2065,7 +2086,7 @@ class TestOverseerrTarget:
         """The *seerr is optional plumbing — the same promise `_request_one` makes for the Arrs."""
 
         class Boom(FakeSeerr):
-            def request_title(self, tmdb_id, media_type, *, dry_run):
+            def request_title(self, tmdb_id, media_type, *, dry_run, seasons=None):
                 raise SeerrError("Overseerr refused the request (HTTP 500): boom")
 
         fake = Boom()
@@ -2123,3 +2144,106 @@ class TestOverseerrTarget:
         # The reason travels ON the title, which is what the inbox renders — and it names the
         # BLOCKLIST, not "an Arr exclusion list", so the owner is sent to the app that holds it.
         assert queued[603].detail == "on the blocklist"
+
+
+class TestSeasonsOnTheSeerrRoute:
+    """First/last N seasons reach Overseerr as a season list; the modes it cannot take are refused."""
+
+    SHOW = MissingTitle(1399, "a show", MediaType.SHOW, 2011, rating=9.2, vote_count=900, demand=3)
+    DETAILS: ClassVar[dict] = {
+        "seasons": [
+            {"season_number": 0, "episode_count": 3, "air_date": "2010-01-01"},
+            {"season_number": 1, "episode_count": 10, "air_date": "2011-01-01"},
+            {"season_number": 2, "episode_count": 10, "air_date": "2012-01-01"},
+            {"season_number": 3, "episode_count": 10, "air_date": "2013-01-01"},
+        ]
+    }
+
+    def _send(self, monkeypatch, *, monitor: str, count: int = 2, details=None):
+        fake = FakeSeerr()
+        monkeypatch.setattr(requests_mod, "SeerrClient", lambda *a, **k: fake)
+        monkeypatch.setattr(requests_mod, "_today", lambda: date(2026, 10, 11))
+        cfg = _cfg(overseerr=OVERSEERR, sonarr_monitor=monitor, season_count=count)
+        tmdb = FakeTmdb({1399: 81189}, details=self.DETAILS if details is None else details)
+        report = requests_mod.request_titles_by_row({"r": cfg}, tmdb, [("r", self.SHOW)], dry_run=False)
+        return fake, report.outcomes[0]
+
+    def test_all_still_asks_for_every_season(self, monkeypatch):
+        fake, outcome = self._send(monkeypatch, monitor="all")
+        assert fake.season_calls == [None]
+        assert outcome.status == "requested"
+
+    def test_first_seasons_are_computed_from_tmdb(self, monkeypatch):
+        fake, _ = self._send(monkeypatch, monitor="firstSeason", count=2)
+        assert fake.season_calls == [[1, 2]]
+
+    def test_last_seasons_are_computed_from_tmdb(self, monkeypatch):
+        fake, _ = self._send(monkeypatch, monitor="lastSeason", count=2)
+        assert fake.season_calls == [[2, 3]]
+
+    # Every refusal here is a `skipped_*` status, never "error": the request claim records anything
+    # else as an uncertain send, and an uncertain send is never retried — so one TMDB blip, or a
+    # Sonarr-only mode left over from before the owner switched routes, would block the show for good.
+    @pytest.mark.parametrize("mode", ["pilot", "none"])
+    def test_a_mode_overseerr_cannot_take_is_refused_and_sends_nothing(self, monkeypatch, mode):
+        fake, outcome = self._send(monkeypatch, monitor=mode)
+        assert fake.requests == []
+        assert outcome.status == "skipped_unsupported"
+        assert "Overseerr can't take" in outcome.detail
+        assert "How much of a show to grab" in outcome.detail
+
+    def test_a_tmdb_failure_is_refused_never_a_request_for_every_season(self, monkeypatch):
+        fake, outcome = self._send(monkeypatch, monitor="firstSeason", details=RuntimeError("TMDB API error HTTP 503"))
+        assert fake.requests == []
+        assert outcome.status == "skipped_no_seasons"
+        assert "next run" in outcome.detail
+        assert "503" not in outcome.detail
+
+    def test_a_show_with_no_listed_seasons_is_refused(self, monkeypatch):
+        fake, outcome = self._send(monkeypatch, monitor="lastSeason", details={"seasons": []})
+        assert fake.requests == []
+        assert outcome.status == "skipped_no_seasons"
+        assert "lists no seasons" in outcome.detail
+
+    @pytest.mark.parametrize(
+        ("mode", "details"),
+        [("pilot", None), ("firstSeason", RuntimeError("TMDB down")), ("lastSeason", {"seasons": []})],
+    )
+    def test_a_refused_show_waits_in_the_inbox_with_its_reason(self, monkeypatch, mode, details):
+        """Skips are normally settled facts the inbox leaves out; these are not — the owner can act on
+        them, and next run may succeed — so the auto-send pass queues them with the reason."""
+        fake = FakeSeerr()
+        monkeypatch.setattr(requests_mod, "SeerrClient", lambda *a, **k: fake)
+        monkeypatch.setattr(requests_mod, "_today", lambda: date(2026, 10, 11))
+        cfg = _cfg(overseerr=OVERSEERR, sonarr_monitor=mode, season_count=1)
+        tmdb = FakeTmdb({1399: 81189}, details=self.DETAILS if details is None else details)
+        demand = {(self.SHOW.tmdb_id, self.SHOW.media_type): self.SHOW}
+
+        report = _request_missing(cfg, tmdb, demand, dry_run=False)
+
+        assert fake.requests == []
+        [held] = report.queued
+        assert held.tmdb_id == 1399
+        assert held.detail == report.outcomes[0].detail
+
+    def test_a_movie_is_unaffected_by_the_mode(self, monkeypatch):
+        fake = FakeSeerr()
+        monkeypatch.setattr(requests_mod, "SeerrClient", lambda *a, **k: fake)
+        movie = MissingTitle(603, "a movie", MediaType.MOVIE, 1999, rating=8.7, vote_count=900, demand=3)
+        cfg = _cfg(overseerr=OVERSEERR, sonarr_monitor="pilot")
+        report = requests_mod.request_titles_by_row({"r": cfg}, FakeTmdb(), [("r", movie)], dry_run=False)
+        assert fake.season_calls == [None]
+        assert report.outcomes[0].status == "requested"
+
+    def test_the_arr_route_passes_the_count_to_sonarr(self):
+        sonarr = FakeArr()
+        requests_mod._request_one(
+            self.SHOW,
+            None,
+            sonarr,
+            FakeTmdb({1399: 81189}),
+            dry_run=False,
+            sonarr_monitor="lastSeason",
+            season_count=3,
+        )
+        assert sonarr.season_count_calls == [3]

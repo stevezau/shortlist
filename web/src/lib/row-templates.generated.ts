@@ -55,6 +55,7 @@ export function generatedRowInputDefaults(): CollectionInput {
   "req_sonarr_quality_profile_id": null,
   "req_sonarr_root_folder": null,
   "req_sonarr_monitor": null,
+  "req_season_count": null,
   "req_language_mode": null,
   "req_preferred_languages": null,
   "req_min_rating_other": null,

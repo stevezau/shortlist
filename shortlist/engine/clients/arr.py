@@ -19,6 +19,7 @@ from loguru import logger
 
 from shortlist.engine.clients import http_retry
 from shortlist.engine.models import SONARR_MONITOR_MODES, ArrTarget
+from shortlist.engine.show_seasons import describe_seasons, pick_season_numbers
 
 
 def _sanitize_tag(label: str | None) -> str:
@@ -422,7 +423,13 @@ class SonarrClient(_ArrClient):
         return by_tvdb, by_tmdb
 
     def add_series(
-        self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None, monitor: str = "all"
+        self,
+        tvdb_id: int,
+        *,
+        dry_run: bool,
+        extra_tags: set[str] | None = None,
+        monitor: str = "all",
+        season_count: int = 1,
     ) -> tuple[str, str, str | None]:
         """Request one series by TVDB id. Returns (status, detail, slug); never raises for a normal skip.
 
@@ -432,7 +439,8 @@ class SonarrClient(_ArrClient):
 
         ``monitor`` is one of ``SONARR_MONITOR_MODES`` and decides how much of the show Sonarr
         monitors, and therefore downloads: "all" takes the whole back catalogue, "firstSeason" a
-        taster, "none" files it unmonitored for later.
+        taster, "none" files it unmonitored for later. ``season_count`` widens "firstSeason" and
+        "lastSeason" to that many seasons; Sonarr has no mode for that, so it is sent as per-season flags.
         """
         results = self._get(f"/api/v3/series/lookup?term=tvdb:{tvdb_id}")
         resource = _match_tvdb(results, tvdb_id)
@@ -442,9 +450,13 @@ class SonarrClient(_ArrClient):
         if resource.get("id"):  # a non-zero id means Sonarr already tracks it
             return "skipped_present", "already in Sonarr", slug
         mode = _monitor_mode(monitor)
+        picked: list[int] = []
+        if mode in ("firstSeason", "lastSeason") and season_count > 1:
+            picked = pick_season_numbers([s["seasonNumber"] for s in resource.get("seasons") or []], mode, season_count)
+        scope = describe_seasons(picked) if picked else _MONITOR_DETAIL[mode]
         if dry_run:
-            logger.info("[dry-run] Sonarr: would add tvdb {} monitoring {}", tvdb_id, mode)
-            return "would_request", f"would add to Sonarr ({_MONITOR_DETAIL[mode]})", slug
+            logger.info("[dry-run] Sonarr: would add tvdb {} monitoring {}", tvdb_id, picked or mode)
+            return "would_request", f"would add to Sonarr ({scope})", slug
         wanted = mode != "none"
         body = {
             **resource,
@@ -467,10 +479,19 @@ class SonarrClient(_ArrClient):
             # asking for one on `none` only queues a command that reports zero results.
             "addOptions": {"searchForMissingEpisodes": wanted, "monitor": mode},
         }
+        if picked:
+            # No native mode takes N seasons, so say "skip" and flag the seasons ourselves. Measured
+            # 2026-10-11 on a real Sonarr 4.0.20: `monitor: skip` with per-season flags monitored exactly
+            # seasons 1-2 of Breaking Bad (7/7 and 13/13 episodes, the rest 0) and 36-38 of The Simpsons,
+            # and `monitorNewItems` stayed "none". Sonarr's EpisodeMonitoredService returns early for
+            # MonitorTypes.Skip ("use season information when series was added"). The native modes above
+            # stay on the path measured on 4.0.19 — this one is only for N > 1.
+            body["addOptions"]["monitor"] = "skip"
+            body["seasons"] = [{**s, "monitored": s["seasonNumber"] in picked} for s in resource.get("seasons") or []]
         self._post("/api/v3/series", body)
         if not wanted:
             return "requested", "added to Sonarr, unmonitored — nothing downloads until you monitor it", slug
-        return "requested", f"added to Sonarr and searching ({_MONITOR_DETAIL[mode]})", slug
+        return "requested", f"added to Sonarr and searching ({scope})", slug
 
 
 # What each monitor mode does, in the words the owner reads in the Requests inbox. Sonarr's own

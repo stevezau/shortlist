@@ -93,7 +93,13 @@ class FakeArr:
         return ("would_request" if dry_run else "requested", "queued in Radarr", f"movie-{tmdb_id}")
 
     def add_series(
-        self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None, monitor: str = "all"
+        self,
+        tvdb_id: int,
+        *,
+        dry_run: bool,
+        extra_tags: set[str] | None = None,
+        monitor: str = "all",
+        season_count: int = 1,
     ) -> tuple[str, str, str | None]:
         self.series_calls.append((tvdb_id, dry_run))
         self.monitor_calls.append(monitor)

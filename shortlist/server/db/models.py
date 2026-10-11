@@ -302,6 +302,8 @@ class Collection(Base):
     # choice). NULL -> inherit the global `requests.sonarr.monitor`. A kids row can take season 1
     # only while everything else keeps the whole run of a show.
     req_sonarr_monitor: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    # How many seasons "firstSeason"/"lastSeason" take for THIS row. NULL -> inherit `requests.season_count`.
+    req_season_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     # This row's language preference for requests. NULL -> inherit the global `requests.language_mode`
     # / `requests.preferred_languages` / `requests.min_rating_other`. A kids row can be English-only
     # while an anime row stays on "any".

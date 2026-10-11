@@ -88,6 +88,7 @@ export function toInput(collection: Collection): CollectionInput {
       collection.req_sonarr_quality_profile_id ?? null,
     req_sonarr_root_folder: collection.req_sonarr_root_folder ?? null,
     req_sonarr_monitor: collection.req_sonarr_monitor ?? null,
+    req_season_count: collection.req_season_count ?? null,
     req_language_mode: collection.req_language_mode ?? null,
     req_preferred_languages: collection.req_preferred_languages ?? null,
     req_min_rating_other: collection.req_min_rating_other ?? null,

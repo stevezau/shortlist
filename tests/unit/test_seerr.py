@@ -373,6 +373,29 @@ class TestRequestTitle:
         assert "downloaded" in detail
         assert not post.called
 
+    def test_a_show_request_can_name_its_seasons(self):
+        with respx.mock:
+            self._mock_media()
+            post = respx.post(f"{BASE}/request").mock(return_value=httpx.Response(201, json={"id": 9}))
+            _, detail, _ = _client().request_title(94997, MediaType.SHOW, dry_run=False, seasons=[1, 2])
+        assert json.loads(post.calls[0].request.content)["seasons"] == [1, 2]
+        assert "seasons 1\u20132" in detail
+
+    def test_the_dry_run_names_the_seasons(self):
+        with respx.mock:
+            self._mock_media()
+            post = respx.post(f"{BASE}/request")
+            _, detail, _ = _client().request_title(94997, MediaType.SHOW, dry_run=True, seasons=[3])
+        assert "season 3" in detail
+        assert not post.called
+
+    def test_a_movie_never_sends_seasons(self):
+        with respx.mock:
+            self._mock_media()
+            post = respx.post(f"{BASE}/request").mock(return_value=httpx.Response(201, json={"id": 9}))
+            _client().request_title(603, MediaType.MOVIE, dry_run=False, seasons=[1])
+        assert "seasons" not in json.loads(post.calls[0].request.content)
+
     def test_dry_run_writes_nothing(self):
         with respx.mock:
             self._mock_media()

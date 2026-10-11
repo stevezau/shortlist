@@ -63,6 +63,7 @@ ROW_INPUT_DEFAULTS: dict[str, object] = {
     "req_sonarr_quality_profile_id": None,
     "req_sonarr_root_folder": None,
     "req_sonarr_monitor": None,
+    "req_season_count": None,
     "req_language_mode": None,
     "req_preferred_languages": None,
     "req_min_rating_other": None,

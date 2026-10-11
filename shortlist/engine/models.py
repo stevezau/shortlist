@@ -879,6 +879,15 @@ def row_monitor_or_inherit(stored: str | None) -> str | None:
     return stored if stored in SONARR_MONITOR_MODES else None
 
 
+def row_season_count_or_inherit(stored: int | None) -> int | None:
+    """One row's stored season count, or None (inherit) when it is not a count the editor offers.
+
+    Same degrade-to-inherit contract as :func:`row_monitor_or_inherit`: the API refuses a count
+    outside 1-99, so a row holding one could not be saved at all if it were served as itself.
+    """
+    return stored if isinstance(stored, int) and 1 <= stored <= 99 else None
+
+
 @dataclass(frozen=True)
 class ArrTarget:
     """Where and how a Sonarr/Radarr instance should file a newly-requested title."""
@@ -1017,6 +1026,9 @@ class RequestConfig:
     # A long-running show on "all" backfills every season the night it is added (issue #100), where a
     # taster ("firstSeason") or a catch-up-from-here ("none", added unmonitored) is often what was meant.
     sonarr_monitor: str = "all"
+    # How many seasons "firstSeason"/"lastSeason" take, on either request route; ignored by the other
+    # modes. 1 is what those two modes always meant, so an upgrade changes nothing.
+    season_count: int = 1
     # TMDB movie genre ids and tag (keyword) ids the owner never wants requested automatically. A movie
     # with any of them waits in the inbox instead (`request_holds`); empty, the default, holds nothing.
     hold_genres: frozenset[int] = frozenset()
@@ -1071,6 +1083,8 @@ class RequestOverrides:
     # it is a row that has cleared its language list, which in "only" mode requests nothing at all.
     preferred_languages: tuple[str, ...] | None = None
     min_rating_other: float | None = None
+    # Appended last, per the positional hazard above.
+    season_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1160,7 +1174,8 @@ class RequestOutcome:
     tmdb_id: int
     title: str
     media_type: MediaType
-    # requested | would_request | skipped_present | skipped_no_tvdb | skipped_no_target | error
+    # requested | would_request | skipped_present | skipped_no_tvdb | skipped_no_target | skipped_unsupported
+    # | skipped_no_seasons | error
     status: str
     detail: str = ""
     # The arr's own titleSlug (Sonarr/Radarr) for the resolved title, so the inbox can deep-link

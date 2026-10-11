@@ -79,6 +79,7 @@ SETTING_VALUES = {
     "requests.sonarr.quality_profile_id": 3,
     "requests.sonarr.root_folder": "/synthetic/shows",
     "requests.sonarr.monitor": "firstSeason",
+    "requests.season_count": 2,
     "notify.webhook.enabled": True,
     "notify.webhook.events": ["run.finished", "privacy.exposure"],
     "notify.webhook.auth_header_name": "X-Synthetic-Authorization",
@@ -104,7 +105,7 @@ SETTING_VALUES = {
 def test_the_roundtrip_cases_cover_exactly_every_advertised_writable_setting():
     writable = {item.key for item in get_settings_catalog() if item.assistant_writable}
     assert set(SETTING_VALUES) == writable
-    assert len(writable) == 75
+    assert len(writable) == 76
 
 
 @pytest.mark.parametrize(

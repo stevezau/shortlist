@@ -4025,6 +4025,8 @@ export interface components {
             req_radarr_quality_profile_id?: number | null;
             /** Req Radarr Root Folder */
             req_radarr_root_folder?: string | null;
+            /** Req Season Count */
+            req_season_count?: number | null;
             /**
              * Req Sonarr Monitor
              * @enum {unknown}
@@ -4317,6 +4319,11 @@ export interface components {
             req_radarr_quality_profile_id: number | null;
             /** Req Radarr Root Folder */
             req_radarr_root_folder: string | null;
+            /**
+             * Req Season Count
+             * @description How many seasons 'firstSeason'/'lastSeason' take for this row's requests; null inherits the global requests.season_count.
+             */
+            req_season_count: number | null;
             /**
              * Req Sonarr Monitor
              * @description How much of a show Sonarr monitors for this row's requests (Sonarr's Add Series 'Monitor' choice); null inherits the global requests.sonarr.monitor.

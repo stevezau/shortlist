@@ -818,6 +818,31 @@ class TestBuildRequests:
         with self._store(sessions, tmp_path, base | {"requests.sonarr.monitor": "firstSeason"}) as chosen:
             assert ContextBuilder.build_requests(chosen).sonarr_monitor == "firstSeason"
 
+    def test_the_season_count_reaches_the_engine_config_and_a_bad_row_value_inherits(self, sessions, tmp_path):
+        from shortlist.server.db.models import Collection
+        from shortlist.server.services.context_builder import row_request_overrides
+
+        base = {"requests.enabled": True}
+        with self._store(sessions, tmp_path, base) as store:
+            assert ContextBuilder.build_requests(store).season_count == 1
+        with self._store(sessions, tmp_path, base | {"requests.season_count": 3}) as chosen:
+            assert ContextBuilder.build_requests(chosen).season_count == 3
+
+        row = Collection(slug="r", name="R", build="per_person", req_sonarr_monitor="lastSeason", req_season_count=2)
+        assert row_request_overrides(row).season_count == 2
+        # A stored value below 1 is nothing the editor offers; it reads as inherit rather than as 1.
+        zero = Collection(slug="r", name="R", build="per_person", req_sonarr_monitor="lastSeason", req_season_count=0)
+        assert row_request_overrides(zero).season_count is None
+
+    def test_a_row_count_without_a_row_mode_is_not_sent(self):
+        """The editor shows such a row as inheriting the global, mode AND count — so the run must too.
+        Otherwise an API or assistant write of the count alone asks for 5 seasons under a screen
+        promising the global's 1."""
+        from shortlist.server.db.models import Collection
+        from shortlist.server.services.context_builder import row_request_overrides
+
+        assert row_request_overrides(Collection(slug="r", name="R", build="per_person", req_season_count=5)) is None
+
     def test_half_configured_app_is_left_as_none(self, sessions, tmp_path):
         # Radarr has a URL but no key -> its target is None (movies skipped), Sonarr is whole.
         with self._store(

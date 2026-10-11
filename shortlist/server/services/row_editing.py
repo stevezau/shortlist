@@ -34,6 +34,7 @@ from shortlist.engine.models import (
     row_language_mode_or_inherit,
     row_languages_or_inherit,
     row_monitor_or_inherit,
+    row_season_count_or_inherit,
 )
 from shortlist.engine.placeholders import refusal
 from shortlist.engine.rows import row_shown_today
@@ -264,6 +265,8 @@ class CollectionIn(StrictRequestModel):
     req_sonarr_monitor: str | None = Field(
         default=None, max_length=32, json_schema_extra={"enum": [*SONARR_MONITOR_MODES, None]}
     )
+    # How many seasons first/last take for this row; null inherits requests.season_count.
+    req_season_count: int | None = Field(default=None, ge=1, le=99)
     # This row's language preference; null on any of the three inherits the matching global. Same
     # advertised-enum reasoning as `req_sonarr_monitor` above.
     req_language_mode: str | None = Field(
@@ -830,6 +833,7 @@ def serialize_row(
         # back and be refused by the closed-set check, so a row holding a retired mode could not be
         # saved at all — not even renamed.
         "req_sonarr_monitor": row_monitor_or_inherit(collection.req_sonarr_monitor),
+        "req_season_count": row_season_count_or_inherit(collection.req_season_count),
         "req_language_mode": row_language_mode_or_inherit(collection.req_language_mode),
         "req_preferred_languages": row_languages_or_inherit(collection.req_preferred_languages),
         "req_min_rating_other": collection.req_min_rating_other,
@@ -1261,6 +1265,7 @@ REQUEST_COLUMNS = (
     "req_sonarr_quality_profile_id",
     "req_sonarr_root_folder",
     "req_sonarr_monitor",
+    "req_season_count",
     "req_language_mode",
     "req_preferred_languages",
     "req_min_rating_other",

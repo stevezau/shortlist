@@ -88,6 +88,8 @@ def target_snapshot(cfg: RequestConfig, media_type: str) -> dict:
             "destination": service_destination(target.url) if target else "",
             "configured": target is not None,
             "request_as_user_id": target.request_as_user_id if target else 0,
+            "monitor": cfg.sonarr_monitor if media_type == "show" else None,
+            "season_count": cfg.season_count if media_type == "show" else None,
         }
     target = cfg.radarr if media_type == "movie" else cfg.sonarr
     return {
@@ -98,6 +100,7 @@ def target_snapshot(cfg: RequestConfig, media_type: str) -> dict:
         "root_folder": target.root_folder if target else None,
         "tag": target.tag if target else "",
         "monitor": cfg.sonarr_monitor if media_type == "show" else None,
+        "season_count": cfg.season_count if media_type == "show" else None,
     }
 
 

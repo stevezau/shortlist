@@ -1297,6 +1297,19 @@
             ],
             "title": "Req Radarr Root Folder"
           },
+          "req_season_count": {
+            "anyOf": [
+              {
+                "maximum": 99.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Req Season Count"
+          },
           "req_sonarr_monitor": {
             "anyOf": [
               {
@@ -2059,6 +2072,20 @@
             ],
             "title": "Req Radarr Root Folder"
           },
+          "req_season_count": {
+            "anyOf": [
+              {
+                "maximum": 99.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many seasons 'firstSeason'/'lastSeason' take for this row's requests; null inherits the global requests.season_count.",
+            "title": "Req Season Count"
+          },
           "req_sonarr_monitor": {
             "anyOf": [
               {
@@ -2319,6 +2346,7 @@
           "req_sonarr_quality_profile_id",
           "req_sonarr_root_folder",
           "req_sonarr_monitor",
+          "req_season_count",
           "req_language_mode",
           "req_preferred_languages",
           "req_min_rating_other",

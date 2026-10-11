@@ -52,6 +52,16 @@ class TestSettingsValidation:
             resp = client.put("/api/settings", json={"values": {"requests.sonarr.monitor": refused}})
             assert resp.status_code == 422, f"{refused} was accepted"
 
+    def test_the_season_count_accepts_one_to_ninety_nine(self, client: TestClient):
+        for offered in (1, 2, 99):
+            resp = client.put("/api/settings", json={"values": {"requests.season_count": offered}})
+            assert resp.status_code == 200, f"{offered}: {resp.text}"
+        # 2.5 and True as well: `int()` accepts both, so a bounds check alone stored 2.5 — which the run
+        # read as 2 and the settings screen showed as 1.
+        for refused in (0, 100, -3, "many", None, 2.5, True, "2"):
+            resp = client.put("/api/settings", json={"values": {"requests.season_count": refused}})
+            assert resp.status_code == 422, f"{refused!r} was accepted"
+
     def test_the_language_mode_accepts_only_the_modes_shortlist_offers(self, client: TestClient):
         for offered in ("any", "prefer", "only"):
             resp = client.put("/api/settings", json={"values": {"requests.language_mode": offered}})

@@ -54,6 +54,7 @@ from shortlist.engine.models import (
     row_language_mode_or_inherit,
     row_languages_or_inherit,
     row_monitor_or_inherit,
+    row_season_count_or_inherit,
 )
 from shortlist.engine.provider_calls import ProviderCallControls
 from shortlist.engine.requests import AcquisitionGuard
@@ -246,6 +247,7 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
     """
     if collection.build == "shared":
         return None
+    row_mode = row_monitor_or_inherit(collection.req_sonarr_monitor)
     overrides = RequestOverrides(
         min_rating=collection.req_min_rating,
         min_votes=collection.req_min_votes,
@@ -260,7 +262,9 @@ def row_request_overrides(collection: Collection) -> RequestOverrides | None:
         radarr_root_folder=collection.req_radarr_root_folder or None,
         sonarr_quality_profile_id=collection.req_sonarr_quality_profile_id,
         sonarr_root_folder=collection.req_sonarr_root_folder or None,
-        sonarr_monitor=row_monitor_or_inherit(collection.req_sonarr_monitor),
+        sonarr_monitor=row_mode,
+        # Only with the row's own mode: the editor shows a row with no mode as inheriting both.
+        season_count=row_season_count_or_inherit(collection.req_season_count) if row_mode is not None else None,
         language_mode=row_language_mode_or_inherit(collection.req_language_mode),
         preferred_languages=row_languages_or_inherit(collection.req_preferred_languages),
         min_rating_other=collection.req_min_rating_other,
@@ -1628,6 +1632,7 @@ class ContextBuilder:
             auto_min_rating=float(store.get("requests.auto_min_rating")),
             auto_user_tag=bool(store.get("requests.auto_user_tag")),
             sonarr_monitor=store.get("requests.sonarr.monitor") or "all",
+            season_count=int(store.get("requests.season_count") or 1),
             hold_genres=frozenset(int(g) for g in store.get("requests.hold_genres") or []),
             hold_tags=frozenset(int(t) for t in store.get("requests.hold_tags") or {}),
             language_mode=store.get("requests.language_mode") or "any",

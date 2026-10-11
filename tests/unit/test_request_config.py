@@ -143,6 +143,14 @@ class TestTheSonarrMonitorMode:
         assert resolved.sonarr == SONARR
 
 
+class TestTheSeasonCount:
+    def test_it_inherits_the_global_when_the_row_says_nothing(self):
+        assert resolve_request_config(_cfg(season_count=3), RequestOverrides()).season_count == 3
+
+    def test_a_row_can_override_it(self):
+        assert resolve_request_config(_cfg(season_count=3), RequestOverrides(season_count=1)).season_count == 1
+
+
 class TestZeroIsARealChoiceNotAnUnsetSentinel:
     """Architecture review, 2026-08-18 (HIGH). `max_per_row` used 0 as its "inherit" sentinel, so a
     row set to 0 — which the editor offers, and describes as "this row never asks for anything on its

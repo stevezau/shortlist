@@ -22,6 +22,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 
 import { GlobalDefaultToggle } from "@/components/rows/global-default-row";
+import { ShowSeasonsControl } from "@/components/show-seasons-control";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -46,12 +47,7 @@ import {
   languageName,
 } from "@/lib/request-language";
 import type { RowSonarrMonitor } from "@/lib/sonarr-monitor";
-import {
-  asSonarrMonitor,
-  SONARR_MONITOR_HINTS,
-  SONARR_MONITOR_LABELS,
-  SONARR_MONITOR_MODES,
-} from "@/lib/sonarr-monitor";
+import { asSeasonCount } from "@/lib/sonarr-monitor";
 import type { Settings } from "@/lib/types";
 
 /** The subset of the row draft this section reads and writes. */
@@ -68,6 +64,7 @@ export type RowRequestInput = {
   req_sonarr_root_folder: string | null;
   req_sonarr_quality_profile_id: number | null;
   req_sonarr_monitor: RowSonarrMonitor;
+  req_season_count: number | null;
   req_language_mode: RowLanguageMode;
   req_preferred_languages: string[] | null;
   req_min_rating_other: number | null;
@@ -157,6 +154,8 @@ export function RowRequestSettings({
   const hideRadarr = target === "overseerr" || radarrReady === false || media === "show";
   const hideSonarr = target === "overseerr" || sonarrReady === false || media === "movie";
   const hideTag = target === "overseerr";
+  // Both routes take a season choice; a Sonarr that isn't set up only matters when it is the route.
+  const hideShowSeasons = media === "movie" || (target !== "overseerr" && sonarrReady === false);
 
   const globalMinDemand =
     typeof settings?.["requests.min_demand"] === "number"
@@ -548,36 +547,35 @@ export function RowRequestSettings({
               }
             />
           </RequestField>
-
-          <RequestField
-            label="How much of a show this row grabs"
-            labelFor="row-req-sonarr-monitor"
-            description="Sonarr downloads what it monitors, so a long-running show normally arrives whole. A row that's meant as a taster can take the first season and no more."
-            inheriting={input.req_sonarr_monitor === null}
-            globalValue={requestSonarrMonitorGlobal(settings)}
-            onToggle={(on) =>
-              set({ req_sonarr_monitor: on ? null : "firstSeason" })
-            }
-          >
-            <select
-              id="row-req-sonarr-monitor"
-              className="h-9 w-full rounded-md border bg-elevated px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={input.req_sonarr_monitor ?? "all"}
-              onChange={(e) =>
-                set({ req_sonarr_monitor: asSonarrMonitor(e.target.value) })
-              }
-            >
-              {SONARR_MONITOR_MODES.map((mode) => (
-                <option key={mode} value={mode}>
-                  {SONARR_MONITOR_LABELS[mode]}
-                </option>
-              ))}
-            </select>
-            <p className="text-sm text-muted-foreground">
-              {SONARR_MONITOR_HINTS[input.req_sonarr_monitor ?? "all"]}
-            </p>
-          </RequestField>
         </>
+      )}
+      {!hideShowSeasons && (
+        <RequestField
+          label="How much of a show this row grabs"
+          description="A long-running show normally arrives whole. A row that's meant as a taster can take the first season and no more."
+          inheriting={input.req_sonarr_monitor === null}
+          globalValue={requestSonarrMonitorGlobal(settings)}
+          onToggle={(on) =>
+            set(
+              on
+                ? { req_sonarr_monitor: null, req_season_count: null }
+                : { req_sonarr_monitor: "firstSeason", req_season_count: 1 },
+            )
+          }
+        >
+          <ShowSeasonsControl
+            mode={input.req_sonarr_monitor ?? "all"}
+            // A row saved before the count existed carries none, and the run then uses the global's.
+            count={
+              input.req_season_count ??
+              asSeasonCount(settings?.["requests.season_count"])
+            }
+            target={target ?? "arr"}
+            onChange={({ mode, count }) =>
+              set({ req_sonarr_monitor: mode, req_season_count: count })
+            }
+          />
+        </RequestField>
       )}
     </div>
   );

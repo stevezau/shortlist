@@ -403,6 +403,55 @@ class TestSonarrAddSeries:
         assert status == "error"
 
 
+class TestSeveralSeasons:
+    """More than one season has no native Sonarr monitor mode, so the per-season flags carry it."""
+
+    def _add(self, **kwargs):
+        respx.get("http://sonarr.test/api/v3/series/lookup").mock(
+            return_value=httpx.Response(200, json=[SERIES_LOOKUP])
+        )
+        post = respx.post("http://sonarr.test/api/v3/series").mock(return_value=httpx.Response(201, json={"id": 3}))
+        result = SonarrClient(SONARR).add_series(SERIES_TVDB, dry_run=kwargs.pop("dry_run", False), **kwargs)
+        return result, post
+
+    @pytest.mark.parametrize(("mode", "monitored"), [("firstSeason", {1, 2, 3}), ("lastSeason", {4, 5, 6})])
+    @respx.mock
+    def test_skip_plus_per_season_flags(self, mode, monitored):
+        (status, detail, _), post = self._add(monitor=mode, season_count=3)
+
+        assert status == "requested"
+        body = json.loads(post.calls.last.request.content)
+        assert body["addOptions"] == {"searchForMissingEpisodes": True, "monitor": "skip"}
+        assert {s["seasonNumber"]: s["monitored"] for s in body["seasons"]} == {n: n in monitored for n in range(7)}
+        assert body["monitored"] is True
+        assert body["monitorNewItems"] == "none"
+        assert f"seasons {min(monitored)}\u2013{max(monitored)}" in detail
+
+    @respx.mock
+    def test_the_dry_run_names_the_seasons_and_posts_nothing(self):
+        (status, detail, _), post = self._add(monitor="firstSeason", season_count=2, dry_run=True)
+
+        assert status == "would_request"
+        assert detail == "would add to Sonarr (seasons 1\u20132)"
+        assert not post.called
+
+    @pytest.mark.parametrize("mode", ["firstSeason", "lastSeason"])
+    @respx.mock
+    def test_a_count_of_one_keeps_the_native_body(self, mode):
+        _, with_count = self._add(monitor=mode, season_count=1)
+        native = json.loads(with_count.calls.last.request.content)
+        assert native["addOptions"] == {"searchForMissingEpisodes": True, "monitor": mode}
+        assert native["seasons"] == SERIES_LOOKUP["seasons"]
+
+    @pytest.mark.parametrize("mode", ["all", "pilot", "none"])
+    @respx.mock
+    def test_other_modes_ignore_the_count(self, mode):
+        _, post = self._add(monitor=mode, season_count=4)
+        body = json.loads(post.calls.last.request.content)
+        assert body["addOptions"]["monitor"] == mode
+        assert body["seasons"] == SERIES_LOOKUP["seasons"]
+
+
 class TestTheMonitorModeTable:
     def test_every_offered_mode_has_a_plain_english_detail(self):
         # `add_series` indexes this table by the resolved mode on every successful add, so a mode
