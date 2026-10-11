@@ -213,4 +213,6 @@ row's own kind settings (for a Picked for You row that's under **How picks are c
 again, under **When their finished titles run out**). The global stops at 5 while a row can go down to
 1, because narrowing to one watch is a choice worth making for a single row rather than imposing on
 every row at once. **Watches the AI web search looks up** is a slice off the front of that same list,
-and caps the AI web-search source alone.
+and caps the AI web-search source alone. **How much of their history it searches from** adds long-time
+favourites and older watches to those recent ones (presets: Recent only, A little older, Balanced, Deep, or
+Custom). It defaults to Recent only, and a row, or one person on a row, can set their own.

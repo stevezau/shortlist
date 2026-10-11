@@ -496,6 +496,35 @@ _SETTINGS: tuple[SettingDefinition, ...] = (
         effects=(*_PROVIDER_EFFECTS, FUTURE_ROW),
     ),
     _setting(
+        "recommendations.favourite_count",
+        "Web-search favourites count",
+        "How many long-time favourites the AI web-search source searches for each row, on top of the recent "
+        "watches; zero searches none.",
+        SettingGroup.RECOMMENDATIONS,
+        range=NumericRange(minimum=0, maximum=10, unit="watched titles"),
+        effects=(*_PROVIDER_EFFECTS, FUTURE_ROW),
+    ),
+    _setting(
+        "recommendations.older_count",
+        "Web-search older watches count",
+        "How many older watches, sampled across their history and rotating weekly, the AI web-search source "
+        "searches for each row, on top of the recent watches; zero searches none.",
+        SettingGroup.RECOMMENDATIONS,
+        range=NumericRange(minimum=0, maximum=10, unit="watched titles"),
+        effects=(*_PROVIDER_EFFECTS, FUTURE_ROW),
+    ),
+    _setting(
+        "recommendations.older_lookback_years",
+        "Older watches look-back",
+        "Only watches from this many years back are sampled as older watches; zero means any time.",
+        SettingGroup.RECOMMENDATIONS,
+        options=tuple(
+            SettingOption(value=years, label=label)
+            for years, label in ((0, "Any time"), (5, "Last 5 years"), (3, "Last 3 years"), (1, "Last year"))
+        ),
+        effects=(*_PROVIDER_EFFECTS, FUTURE_ROW),
+    ),
+    _setting(
         "recommendations.max_seeds",
         "Recommendation seed count",
         "Maximum watched titles used to seed all candidate sources for a row.",

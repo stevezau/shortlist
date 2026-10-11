@@ -67,7 +67,10 @@ class PersonRowOverride(RowOverridePatch, StrictModel):
         if "up_next_theme_id" in self.model_fields_set and self.up_next_theme_id is None:
             raise ValueError("up_next_theme_id selects a saved theme; omit it instead of null")
         if not self.model_fields_set - {"row_id"}:
-            raise ValueError("row_overrides entries require muted, row_size, recent_count or up_next_theme_id")
+            raise ValueError(
+                "row_overrides entries require muted, row_size, recent_count, favourite_count, older_count "
+                "or up_next_theme_id"
+            )
         return self
 
 

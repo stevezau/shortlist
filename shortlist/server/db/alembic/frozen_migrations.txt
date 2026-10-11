@@ -93,3 +93,4 @@
 0109  0272ecf5145541cbc74df4157aac5187af1e715786007e66bfccaeaa9ad616fe  amended:2026-10-11  Skip unparseable JSON in runs/jobs/events history instead of blocking startup; assistant authority records still refuse (1.11.0 release review LOW).
 0110  1555b58d36f9f89aa94f1ec25d04d4883d3048313efe66dbb4ffedcf4f3c9960  frozen
 0111  b9fa7947fc83e0033a6e98a99a4811acbf7747dd87a8e410109fa6cef77d29a3  frozen
+0112  4b6cd86c49af75313ccb91b55fc5ef4c641aa229da345e86196f2ea851c190d4  frozen

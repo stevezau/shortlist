@@ -78,6 +78,7 @@ import type {
   RunsSummary,
   ScheduleResponse,
   RunUserTraceResponse,
+  HistoryMixOut,
   RowOverridePatch,
   SupportHealth,
   SupportLibraries,
@@ -452,6 +453,10 @@ export const api = {
 
   getUserHistory: (id: number): Promise<WatchItem[]> =>
     request(`/api/users/${id}/history`),
+
+  /** This week's recent, favourite and older titles for one row. A live Plex read, so call on demand. */
+  getHistoryMix: (userId: number, collectionId: number): Promise<HistoryMixOut> =>
+    request(`/api/users/${userId}/history-mix?collection_id=${collectionId}`),
 
   /** What this person did with the picks they were given: finished, part-watched, or abandoned. */
   getUserOutcomes: (id: number): Promise<UserPickOutcome[]> =>

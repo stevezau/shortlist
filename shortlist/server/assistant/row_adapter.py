@@ -349,6 +349,8 @@ class RowAdapter:
             "idle_hold_days",
             "recency",
             "recent_count",
+            "favourite_count",
+            "older_count",
             "max_seeds",
             "cold_start",
             "seed_window",

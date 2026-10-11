@@ -82,13 +82,23 @@ def test_reader_uses_engine_default_row_and_global_inheritance_precedence(sessio
     with sessions() as session:
         result = read_person_row_override_in_session(session, 1, 1, secrets=None)
         assert result["supported"] is True
-        assert result["stored"] == {"muted": False, "row_size": 20, "recent_count": 4}
+        assert result["stored"] == {
+            "muted": False,
+            "row_size": 20,
+            "recent_count": 4,
+            "favourite_count": None,
+            "older_count": None,
+        }
         assert result["effective"] == {
             "muted": False,
             "row_size": 20,
             "recent_count": 4,
+            "favourite_count": 0,
+            "older_count": 0,
             "base_row_size": 15,
             "base_recent_count": 10,
+            "base_favourite_count": 0,
+            "base_older_count": 0,
         }
 
         mutation = prepare_person_row_override_in_session(
@@ -96,7 +106,13 @@ def test_reader_uses_engine_default_row_and_global_inheritance_precedence(sessio
         )
         apply_person_row_override_in_session(session, mutation)
         result = read_person_row_override_in_session(session, 1, 1, secrets=None)
-        assert result["stored"] == {"muted": False, "row_size": None, "recent_count": None}
+        assert result["stored"] == {
+            "muted": False,
+            "row_size": None,
+            "recent_count": None,
+            "favourite_count": None,
+            "older_count": None,
+        }
         assert result["effective"]["row_size"] == result["effective"]["base_row_size"] == 15
         assert result["effective"]["recent_count"] == result["effective"]["base_recent_count"] == 10
 
@@ -136,7 +152,7 @@ def test_legacy_shared_override_is_read_only_to_mcp_but_owner_api_can_clear_it(s
         result = read_person_row_override_in_session(session, 1, 3, secrets=None)
         assert result == {
             "supported": False,
-            "stored": {"muted": True, "row_size": 20, "recent_count": 4},
+            "stored": {"muted": True, "row_size": 20, "recent_count": 4, "favourite_count": None, "older_count": None},
             "effective": None,
             "warning": "A legacy shared-row override is read-only here; new assistant plans cannot modify it.",
         }
@@ -221,3 +237,32 @@ def test_sparse_override_patch_preserves_omitted_values_and_declares_only_narrow
                 assert len(mutation.steps) == 1
             else:
                 assert mutation.steps == ()
+
+
+def test_history_mix_counts_round_trip_and_zero_is_a_choice_not_inheritance(sessions):
+    with sessions() as session:
+        mutation = prepare_person_row_override_in_session(
+            session, 1, 1, RowOverridePatch(favourite_count=0, older_count=6)
+        )
+        assert mutation.changed == {
+            "favourite_count": {"before": None, "after": 0},
+            "older_count": {"before": None, "after": 6},
+        }
+        apply_person_row_override_in_session(session, mutation)
+        result = read_person_row_override_in_session(session, 1, 1, secrets=None)
+        assert result["stored"]["favourite_count"] == 0 and result["stored"]["older_count"] == 6
+        assert result["effective"]["favourite_count"] == 0 and result["effective"]["older_count"] == 6
+
+        session.get(Collection, 1).favourite_count = 4
+        cleared = prepare_person_row_override_in_session(session, 1, 1, RowOverridePatch(favourite_count=None))
+        apply_person_row_override_in_session(session, cleared)
+        result = read_person_row_override_in_session(session, 1, 1, secrets=None)
+        assert result["stored"]["favourite_count"] is None
+        assert result["effective"]["favourite_count"] == result["effective"]["base_favourite_count"] == 4
+
+
+@pytest.mark.parametrize("field", ["favourite_count", "older_count"])
+@pytest.mark.parametrize("value", [-1, 11])
+def test_history_mix_counts_are_bounded(field, value):
+    with pytest.raises(ValueError, match=field):
+        RowOverridePatch(**{field: value})

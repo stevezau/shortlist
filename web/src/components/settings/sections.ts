@@ -132,6 +132,8 @@ const SETTINGS_SEARCH_INDEX: SettingsSearchEntry[] = [
   { label: "Hold rows for inactive viewers", keywords: "idle inactive hold more recommendation controls", to: at("defaults", "idle-hold-days"), where: "Defaults" },
   { label: "How many recent watches to match", keywords: "seeds history taste", to: at("defaults", "max-seeds"), where: "Defaults" },
   { label: "Watches the AI web search looks up", keywords: "recent count searches", to: at("defaults", "recent-count"), where: "Defaults" },
+  { label: "How much of their history it searches from", keywords: "history mix favourites older watches presets", to: at("defaults", "history-mix"), where: "Defaults" },
+  { label: "Older watches from", keywords: "look back lookback years older history", to: at("defaults", "older-lookback"), where: "Defaults" },
   { label: "Respect Plex ratings", keywords: "ratings dislike thumbs down stars", to: at("defaults", "use-plex-ratings"), where: "Defaults" },
   { label: "Enough watch history", keywords: "minimum history threshold", to: at("defaults", "min-history"), where: "Defaults" },
   { label: "When someone hasn’t watched enough", keywords: "cold start new user fallback", to: at("defaults", "cold-start"), where: "Defaults" },

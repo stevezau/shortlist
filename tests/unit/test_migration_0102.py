@@ -313,10 +313,11 @@ def test_0102_migrated_show_is_visible_to_the_runtime_membership_reader(legacy: 
     personal = _entry(media_type=MediaType.SHOW.value)
     shared = _entry(row="shared-row", media_type=MediaType.SHOW.value)
     _pick(legacy, 1, personal)
+    # Core inserts: the ORM would also write columns a later migration adds, which this old schema lacks.
+    legacy.execute(sa.insert(Collection).values(slug="daily", name="Daily", enabled=True))
+    legacy.execute(sa.insert(Collection).values(slug="shared-row", name="Shared", enabled=True, build="shared"))
     legacy.add_all(
         [
-            Collection(slug="daily", name="Daily", enabled=True),
-            Collection(slug="shared-row", name="Shared", enabled=True, build="shared"),
             Delivery(collection_slug="daily", user_slug="alice", library_key="1", rating_key=personal["rating_key"]),
             Delivery(
                 collection_slug="shared-row",

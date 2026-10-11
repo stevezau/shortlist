@@ -1088,7 +1088,11 @@ class ContextBuilder:
             if slug is None:
                 continue
             out.setdefault(row.user_id, {})[slug] = RowOverride(
-                muted=row.muted, size=row.row_size, recent_count=row.recent_count
+                muted=row.muted,
+                size=row.row_size,
+                recent_count=row.recent_count,
+                favourite_count=row.favourite_count,
+                older_count=row.older_count,
             )
         return out
 
@@ -1179,6 +1183,10 @@ class ContextBuilder:
             # DEFAULTS value when the key is unset, so the zero survives.
             orphan_confirm_delay_s=float(store.get("plex.orphan_confirm_delay_s")),
             recent_count=int(store.get("recommendations.recent_count") or 10),
+            # No `or` fallback: 0 is the default and a legal choice.
+            favourite_count=int(store.get("recommendations.favourite_count")),
+            older_count=int(store.get("recommendations.older_count")),
+            older_lookback_years=int(store.get("recommendations.older_lookback_years")),
             max_seeds=int(store.get("recommendations.max_seeds") or 30),
             rating_source=store.get("recommendations.rating_source") or "tmdb",
             min_history=int(store.get("recommendations.min_history") or 10),
@@ -1305,6 +1313,8 @@ class ContextBuilder:
                     idle_hold_days=collection.idle_hold_days,  # None -> inherit the global idle ceiling
                     recency=collection.recency,  # None -> inherit the global recency
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
+                    favourite_count=collection.favourite_count,  # None -> inherit the global favourite_count
+                    older_count=collection.older_count,  # None -> inherit the global older_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
                     max_runtime=collection.max_runtime,  # the four limits: None = no limit
                     min_year=collection.min_year,

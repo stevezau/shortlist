@@ -1,6 +1,8 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { HistoryMixField, HISTORY_MIX_HELP, type HistoryMix } from "@/components/history-mix-field";
 import { MutationAlert } from "@/components/mutation-alert";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { RecentCountField } from "@/components/recent-count-field";
@@ -12,10 +14,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { GroupedPicks } from "@/components/user-detail/grouped-picks";
+import { HistoryMixView } from "@/components/user-detail/history-mix-view";
 import { useAutosave } from "@/lib/autosave";
+import { mixModeLine } from "@/lib/history-mix";
 import { LIBRARY_NAME } from "@/lib/placeholders";
 import { resolveRowName } from "@/lib/run-rows";
-import { useSetUserRowOverride, useUserRows } from "@/lib/queries";
+import { useSetUserRowOverride, useSettings, useUserRows } from "@/lib/queries";
 import type { User, UserRow } from "@/lib/types";
 import { personName } from "@/lib/user-names";
 import { userState } from "@/lib/user-state";
@@ -32,7 +36,10 @@ function personRowName(row: UserRow, person: string): string {
 }
 
 /** One of a person's rows: its live picks, and a per-person customization drawer. */
-function UserRowCard({ userId, name, row }: { userId: number; name: string; row: UserRow }) {
+function UserRowCard({ user, name, row }: { user: User; name: string; row: UserRow }) {
+  const userId = user.id;
+  const queryClient = useQueryClient();
+  const settings = useSettings();
   // Two mutations on purpose: the mute switch and the drawer fail independently, and a failed mute
   // must never be reported (or hidden) as a failed customization.
   const mute = useSetUserRowOverride(userId);
@@ -44,6 +51,13 @@ function UserRowCard({ userId, name, row }: { userId: number; name: string; row:
   const [recent, setRecent] = useState<string>(
     row.override.recent_count ? String(row.override.recent_count) : "default",
   );
+  // null = follow the row's mix. Both counts are stored together, so the pair is all-or-nothing.
+  const [mix, setMix] = useState<HistoryMix | null>(() =>
+    row.override.favourite_count !== null && row.override.older_count !== null
+      ? { favourites: row.override.favourite_count, older: row.override.older_count }
+      : null,
+  );
+  const [showMix, setShowMix] = useState(false);
   const [saved, setSaved] = useState(false);
 
   // Muted is what the SERVER says, with the in-flight value laid over it only while the PUT is
@@ -67,7 +81,7 @@ function UserRowCard({ userId, name, row }: { userId: number; name: string; row:
   // The drawer auto-saves like every other section of the app, so collapsing it ("Hide
   // customization" — which sounds harmless) or walking away can't silently discard an edit. Both
   // knobs ride the one PUT; "default" clears that field's override back to the row's own setting.
-  const retrySave = useAutosave({ size, recent }, () => {
+  const retrySave = useAutosave({ size, recent, mix }, () => {
     setSaved(false);
     save.mutate(
       {
@@ -75,11 +89,22 @@ function UserRowCard({ userId, name, row }: { userId: number; name: string; row:
         patch: {
           row_size: size === "default" ? null : Number(size),
           recent_count: recent === "default" ? null : Number(recent),
+          favourite_count: mix?.favourites ?? null,
+          older_count: mix?.older ?? null,
         },
       },
-      { onSuccess: () => setSaved(true) },
+      {
+        onSuccess: () => {
+          setSaved(true);
+          // What the saved counts pick this week is no longer what a fetched mix shows.
+          void queryClient.invalidateQueries({ queryKey: ["users", userId, "history-mix"] });
+        },
+      },
     );
   });
+
+  const mixCounts = mix ?? { favourites: row.favourite_count, older: row.older_count };
+  const mixInUse = mixCounts.favourites > 0 || mixCounts.older > 0;
 
   return (
     <Card className={muted ? "opacity-60" : ""}>
@@ -148,6 +173,20 @@ function UserRowCard({ userId, name, row }: { userId: number; name: string; row:
               run.
             </p>
           ))}
+
+        {!muted && mixInUse && (
+          <div className="space-y-2">
+            <Button
+              variant="outline"
+              size="sm"
+              aria-expanded={showMix}
+              onClick={() => setShowMix((v) => !v)}
+            >
+              {showMix ? "Hide this week’s mix" : "Show this week’s mix"}
+            </Button>
+            {showMix && <HistoryMixView user={user} collectionId={row.collection_id} />}
+          </div>
+        )}
 
         <div className="border-t pt-3">
           {/* The save state lives OUTSIDE the drawer: an auto-save can land (or fail) after the
@@ -225,6 +264,19 @@ function UserRowCard({ userId, name, row }: { userId: number; name: string; row:
                   />
                 )}
               </div>
+
+              <div className="space-y-2 border-t pt-4">
+                <p className="text-sm text-muted-foreground">{HISTORY_MIX_HELP}</p>
+                <HistoryMixField
+                  value={mix}
+                  onChange={setMix}
+                  inherited={{
+                    prefix: "Row default",
+                    mix: { favourites: row.favourite_count, older: row.older_count },
+                  }}
+                  modeLine={mixModeLine(settings.data)}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -289,7 +341,7 @@ export function UserRowsSection({ user }: { user: User }) {
         ) : (
           <div className="space-y-3">
             {rows.map((row) => (
-              <UserRowCard key={row.collection_id} userId={user.id} name={name} row={row} />
+              <UserRowCard key={row.collection_id} user={user} name={name} row={row} />
             ))}
           </div>
         )

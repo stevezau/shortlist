@@ -8,8 +8,9 @@ Plex ratings can be believed, what they rated high and low.
 Pure: takes history, returns data and text. Where the text goes is the curator's business.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 from shortlist.engine.history import RatingsPolicy, distinct_recent
@@ -18,6 +19,9 @@ from shortlist.engine.models import MediaType, Seed, WatchedItem
 _HIGH_RATING = 8.0  # 4 stars of 5
 _FAVOURITE_PLAYS = 2  # a movie played this often counts as a favourite
 _FAVOURITE_EPISODES = 20  # a show watched this deep counts as a favourite even if unfinished
+_DROPPED_BELOW_EPISODES = 3  # a show left unfinished before this many episodes was tried and dropped
+_RENDERED_FAVOURITES = 6  # the fewest favourites a wide profile lists, whatever number are searched
+_WEEK_S = 7 * 86400
 _TITLE_MAX = 80
 
 _INTRO = (
@@ -45,6 +49,7 @@ class TasteProfile:
     favourites: list[WatchedItem] = field(default_factory=list)  # strongest first, movies and shows interleaved
     rated_high: list[WatchedItem] = field(default_factory=list)  # trusted human rating >= 4 stars
     rated_low: list[WatchedItem] = field(default_factory=list)  # trusted human rating at or below the dislike bar
+    older: list[WatchedItem] = field(default_factory=list)  # an even sample of the rest of their history, newest first
 
     def search_candidates(self) -> list[WatchedItem]:
         """Titles worth a web search of their own: loved ones first, then the long-time favourites."""
@@ -56,6 +61,10 @@ class TasteProfile:
                 seen.add(key)
                 out.append(item)
         return out
+
+    def older_candidates(self) -> list[WatchedItem]:
+        """Titles worth a web search of their own from further back in their history."""
+        return list(self.older)
 
     def render(self) -> str:
         """The taste text a pick prompt carries. Empty sections are left out."""
@@ -69,6 +78,8 @@ class TasteProfile:
                     [_watched_line(i) for i in self.favourites],
                 )
             )
+        if self.older:
+            sections.append(_section("Also watched over the years (a sample):", [_watched_line(i) for i in self.older]))
         rated = [f"- Rated highly: {_rated_label(i)}" for i in self.rated_high]
         rated += [f"- Rated low: {_rated_label(i)}" for i in self.rated_low]
         if rated:
@@ -86,6 +97,10 @@ def build_taste(
     recent_limit: int = 12,
     favourite_limit: int = 12,
     rated_limit: int = 6,
+    older_limit: int = 0,
+    now: datetime | None = None,
+    lookback_years: int = 0,
+    searched: Set[tuple[int, MediaType]] = frozenset(),
 ) -> TasteProfile:
     """Shape ``history`` into a `TasteProfile`.
 
@@ -97,6 +112,11 @@ def build_taste(
         recent_limit: Most titles under "recently".
         favourite_limit: Most titles under "favourites".
         rated_limit: Most titles across the two rated lists; low-rated ones get the room first.
+        older_limit: Most titles under "older watches", sampled evenly across their history and rotating weekly.
+        now: The clock the sample rotates by and the look-back counts from; the current time when omitted.
+        lookback_years: Older watches must be newer than this many years; 0 means any time.
+        searched: (TMDB id, media) of titles the row already searches as its recent group. Never a favourite
+            or an older watch: a row's seeds are not always the newest titles, and a repeat wastes a slot.
     """
     titles = [t for t in _merge_titles(history) if t.tmdb_id is None or t.tmdb_id not in blocked]
     counts_ratings = _counts_ratings(ratings)
@@ -117,10 +137,21 @@ def build_taste(
 
     rest.sort(key=lambda i: i.watched_at, reverse=True)
     recent = rest[:recent_limit]
-    after_recent = rest[len(recent) :]
+    after_recent = [i for i in rest[len(recent) :] if (i.tmdb_id, i.media_type) not in searched]
+    all_favourites = _favourites(after_recent)
+    older: list[WatchedItem] = []
+    if older_limit > 0:
+        now = now or datetime.now(UTC)
+        taken = {id(i) for i in all_favourites}
+        pool = [i for i in after_recent if id(i) not in taken and not _dropped_show(i)]
+        if lookback_years > 0:
+            cutoff = now - timedelta(days=lookback_years * 365)
+            pool = [i for i in pool if _aware(i.watched_at) >= cutoff]
+        older = _spread_sample(pool, older_limit, int(now.timestamp() // _WEEK_S))
     return TasteProfile(
         recent=recent,
-        favourites=_favourites(after_recent)[:favourite_limit],
+        favourites=all_favourites[:favourite_limit],
+        older=older,
         rated_high=high[:high_n],
         rated_low=low[:low_n],
     )
@@ -158,28 +189,99 @@ def recent_taste(
     return TastePrompt(recent_list_text(distinct_recent(kept, limit)), False)
 
 
-def taste_and_favourites(
+class HistoryMix(NamedTuple):
+    """What a row's AI web search is told of a person's history, and the titles it searches beyond the recent."""
+
+    taste: TastePrompt | None
+    favourite_seeds: list[Seed]
+    older_seeds: list[Seed]
+
+
+def history_mix(
     history: list[WatchedItem],
     *,
     blocked: set[int],
     ratings: RatingsPolicy | None,
     resolve: Callable[[WatchedItem], int | None],
-) -> tuple[TastePrompt, list[Seed]]:
-    """The rendered taste text for the pick prompt, and the favourite titles to give their own web search.
+    favourites: int,
+    older: int,
+    now: datetime | None = None,
+    lookback_years: int = 0,
+    searched: Set[tuple[int, MediaType]] = frozenset(),
+) -> HistoryMix:
+    """The rendered taste text for the pick prompt, and the favourite and older titles to search for.
 
-    The one place a row (`rows.RowPolicy.taste_for`) and the replay both turn a history into the wide profile.
-    A row builds it from its own libraries and media; the replay from the whole history. A favourite that
-    resolves to no TMDB id is left out.
+    The one place a row (`rows.RowPolicy.taste_for`), the history-mix endpoint and the replay all turn a
+    history into the wide profile. A row builds it from its own libraries and media; the replay from the
+    whole history. A title that resolves to no TMDB id is left out of the seeds.
+
+    "Don't seed" holds TMDB ids, and a watch on a legacy agent carries none until it is resolved, so a
+    title the profile picked is resolved and, if blocked, taken out and the profile rebuilt, until none is.
     """
-    profile = build_taste(history, blocked=blocked, ratings=ratings)
-    favourites: list[Seed] = []
-    for item in profile.search_candidates():
+    hidden: set[tuple[str, MediaType]] = set()
+    while True:
+        kept = [i for i in history if (i.title, i.media_type) not in hidden]
+        profile = build_taste(
+            kept,
+            blocked=blocked,
+            ratings=ratings,
+            favourite_limit=max(favourites, _RENDERED_FAVOURITES),
+            older_limit=older,
+            now=now,
+            lookback_years=lookback_years,
+            searched=searched,
+        )
+        named = [*profile.recent, *profile.favourites, *profile.older, *profile.rated_high, *profile.rated_low]
+        newly = {(i.title, i.media_type) for i in named if i.tmdb_id is None and resolve(i) in blocked}
+        if not newly:
+            break
+        hidden |= newly
+    return HistoryMix(
+        TastePrompt(profile.render(), True),
+        _seeds(profile.search_candidates(), resolve),
+        _seeds(profile.older_candidates(), resolve),
+    )
+
+
+def _seeds(items: list[WatchedItem], resolve: Callable[[WatchedItem], int | None]) -> list[Seed]:
+    seeds: list[Seed] = []
+    for item in items:
         tmdb_id = item.tmdb_id if item.tmdb_id is not None else resolve(item)
         if tmdb_id is not None:
-            favourites.append(
+            seeds.append(
                 Seed(tmdb_id=tmdb_id, title=item.title, media_type=item.media_type, watch_count=item.watch_count)
             )
-    return TastePrompt(profile.render(), True), favourites
+    return seeds
+
+
+def _aware(moment: datetime) -> datetime:
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def _dropped_show(item: WatchedItem) -> bool:
+    """A show they stopped watching early: not finished, and fewer than three episodes."""
+    return (
+        item.media_type is MediaType.SHOW and not item.is_finished and _episodes_watched(item) < _DROPPED_BELOW_EPISODES
+    )
+
+
+def _spread_sample(items: list[WatchedItem], n: int, week: int) -> list[WatchedItem]:
+    """``n`` titles spread evenly across ``items``' history, a different pick from each stretch each week.
+
+    Oldest to newest, the list is cut into ``n`` stretches of near-equal size and one title is taken from
+    each, so the sample covers the whole span rather than the latest corner of it. The title taken from a
+    stretch moves along by one every week, so over a few weeks a long history is covered rather than
+    sampled by the same ten titles forever. Returned newest first.
+    """
+    if len(items) <= n:
+        return sorted(items, key=lambda i: i.watched_at, reverse=True)
+    ordered = sorted(items, key=lambda i: i.watched_at)
+    picked: list[WatchedItem] = []
+    for index in range(n):
+        chunk = ordered[index * len(ordered) // n : (index + 1) * len(ordered) // n]
+        if chunk:
+            picked.append(chunk[(week + index) % len(chunk)])
+    return sorted(picked, key=lambda i: i.watched_at, reverse=True)
 
 
 def _merge_titles(history: list[WatchedItem]) -> list[WatchedItem]:

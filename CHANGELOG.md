@@ -6,6 +6,16 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **AI web search can look further back in someone's history** ([#152](https://github.com/stevezau/shortlist/issues/152)).
+  Until now it only looked at what they watched lately. **Settings, Defaults, How much of their history it
+  searches from** adds their long-time favourites and older watches from across the years, as presets from
+  Recent only (the default, nothing changes) to Deep. A row or one person on a row can set their own, a
+  person's page has **Show this week's mix** with a **Don't use** button on each title, and **How we
+  picked** shows what each search was for. With Exa or SearXNG each extra title is one more search; with
+  the AI's own search there is no extra cost. Adds migration 0112.
+
 ### Fixed
 
 - **Agregarr trailer placeholders no longer count as the real title** ([#151](https://github.com/stevezau/shortlist/issues/151)).

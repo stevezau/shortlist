@@ -219,6 +219,12 @@ class Collection(Base):
     # How many of a person's most recent watches the web-search source searches for this row (one
     # cached search each). NULL -> inherit the global recommendations.recent_count.
     recent_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # How many long-time favourites and older watches it searches too (#152). NULL -> inherit the global
+    # recommendations.favourite_count / older_count.
+    # No `default=None`: an unset column is left out of the INSERT, so tests that insert a row at an older
+    # migration revision keep working.
+    favourite_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    older_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # How many watched titles SEED this row — what every source searches from, not just the web one.
     # NULL -> inherit the engine default (30).
     max_seeds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -480,6 +486,9 @@ class CollectionUserOverride(Base):
     # How many recent watches the AI web-search source searches for THIS person on THIS row (1..25).
     # None -> fall through to the row's own recent_count, then the global recommendations.recent_count.
     recent_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The same for long-time favourites and older watches (#152); None -> the row's own, then the global.
+    favourite_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    older_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 

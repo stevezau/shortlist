@@ -11,6 +11,7 @@ import {
   otherLanguageBar,
 } from "@/lib/request-language";
 import { asSonarrMonitor, SONARR_MONITOR_LABELS } from "@/lib/sonarr-monitor";
+import { mixName } from "@/lib/history-mix";
 import type { Settings } from "@/lib/types";
 
 /** Mirrors the server's `recommendations.*` defaults (shortlist/server/settings_store.py) — used
@@ -93,6 +94,14 @@ export function recentCountGlobal(
   return `${count} recent ${count === 1 ? "watch" : "watches"}`;
 }
 
+/** The server's history mix as a preset name: "Balanced", or "Custom" when its two counts match none. */
+export function historyMixGlobal(settings: Settings | undefined): string | null {
+  const favourites = num(settings, "recommendations.favourite_count");
+  const older = num(settings, "recommendations.older_count");
+  if (favourites === null || older === null) return null;
+  return mixName(favourites, older);
+}
+
 export function maxSeedsGlobal(settings: Settings | undefined): string | null {
   const count = num(settings, "recommendations.max_seeds");
   if (count === null) return null;
@@ -129,6 +138,14 @@ export function recencySeed(settings: Settings | undefined): number {
 
 export function recentCountSeed(settings: Settings | undefined): number {
   return num(settings, "recommendations.recent_count") ?? RECENT_COUNT_DEFAULT;
+}
+
+/** The server's two history-mix counts; Recent only (0/0) while settings load. */
+export function historyMixSeed(settings: Settings | undefined): { favourites: number; older: number } {
+  return {
+    favourites: num(settings, "recommendations.favourite_count") ?? 0,
+    older: num(settings, "recommendations.older_count") ?? 0,
+  };
 }
 
 export function maxSeedsSeed(settings: Settings | undefined): number {

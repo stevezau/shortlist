@@ -1330,13 +1330,23 @@ def test_mcp_sdk_person_row_settings_roundtrip_inheritance_staleness_and_scope(t
             "row_id": 10,
             "row_slug": "matrix-row",
             "supported": True,
-            "stored": {"muted": False, "row_size": 20, "recent_count": 4},
+            "stored": {
+                "muted": False,
+                "row_size": 20,
+                "recent_count": 4,
+                "favourite_count": None,
+                "older_count": None,
+            },
             "effective": {
                 "muted": False,
                 "row_size": 20,
                 "recent_count": 4,
+                "favourite_count": 0,
+                "older_count": 0,
                 "base_row_size": 22,
                 "base_recent_count": 7,
+                "base_favourite_count": 0,
+                "base_older_count": 0,
             },
         }
         for suffix, patch, stored, effective in (
@@ -1360,7 +1370,7 @@ def test_mcp_sdk_person_row_settings_roundtrip_inheritance_staleness_and_scope(t
             assert "Private taste sentinel" not in str(plan)
             _apply(wire, plan["change_id"], f"person-row-{suffix}")
             result = read()
-            assert result["stored"] == stored
+            assert {name: result["stored"][name] for name in stored} == stored
             assert (result["effective"]["row_size"], result["effective"]["recent_count"]) == effective
             with app.state.sessions() as session:
                 saved = session.get(CollectionUserOverride, (10, person_id))

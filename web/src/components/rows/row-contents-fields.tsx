@@ -6,6 +6,7 @@ import {
   RECENT_COUNT_LABEL,
   RecentCountField,
 } from "@/components/recent-count-field";
+import { HistoryMixField, HISTORY_MIX_HELP, HISTORY_MIX_LABEL } from "@/components/history-mix-field";
 import { InheritableField } from "@/components/rows/inheritable-field";
 import { RowAiInstructionsField } from "@/components/rows/row-ai-instructions-field";
 import { RowLimitsFields } from "@/components/rows/row-limits-fields";
@@ -18,7 +19,10 @@ import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { mixModeLine } from "@/lib/history-mix";
 import {
+  historyMixGlobal,
+  historyMixSeed,
   recencyGlobal,
   recencySeed,
   recentCountGlobal,
@@ -94,6 +98,32 @@ export function RowContentsFields({
         label=""
         value={input.recent_count ?? 0}
         onChange={(next) => set({ recent_count: next })}
+      />
+    </InheritableField>
+  );
+
+  const inheritingMix = input.favourite_count === null && input.older_count === null;
+  const historyMix = shown.has("history_mix") && (
+    <InheritableField
+      setting="history_mix"
+      label={HISTORY_MIX_LABEL}
+      description={HISTORY_MIX_HELP}
+      inheriting={inheritingMix}
+      globalValue={historyMixGlobal(settings)}
+      onToggle={(on) => {
+        const seed = historyMixSeed(settings);
+        set(
+          on
+            ? { favourite_count: null, older_count: null }
+            : { favourite_count: seed.favourites, older_count: seed.older },
+        );
+      }}
+    >
+      <HistoryMixField
+        label=""
+        value={{ favourites: input.favourite_count ?? 0, older: input.older_count ?? 0 }}
+        onChange={(mix) => mix && set({ favourite_count: mix.favourites, older_count: mix.older })}
+        modeLine={mixModeLine(settings)}
       />
     </InheritableField>
   );
@@ -211,6 +241,7 @@ export function RowContentsFields({
         {takeTurns}
         {sources}
         {recentCount}
+        {historyMix}
         {aiInstructions}
         {recency}
         {shown.has("limits") && <RowLimitsFields input={input} set={set} />}
@@ -222,6 +253,7 @@ export function RowContentsFields({
     <>
       {sources}
       {recentCount}
+      {historyMix}
       {aiInstructions}
       {watched}
       {/* Defensive: every kind that shows this also shows the cap it sits under. */}

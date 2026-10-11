@@ -324,6 +324,36 @@ describe("RecommendationsSection", () => {
     expect(screen.queryByText(/cached for 7 days/i)).toBeNull();
   });
 
+  it("sets both history-mix counts from a preset and saves them", async () => {
+    renderSection({ "recommendations.favourite_count": 0, "recommendations.older_count": 0 });
+    expect(screen.getByRole("radio", { name: "Recent only" })).toHaveAttribute("aria-checked", "true");
+
+    await userEvent.click(screen.getByRole("radio", { name: "Balanced" }));
+
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    const saved = putSettings.mock.calls.at(-1)?.[0];
+    expect(saved?.["recommendations.favourite_count"]).toBe(6);
+    expect(saved?.["recommendations.older_count"]).toBe(6);
+  });
+
+  it("selects Custom for counts that match no preset", () => {
+    renderSection({ "recommendations.favourite_count": 6, "recommendations.older_count": 2 });
+    expect(screen.getByRole("radio", { name: "Custom" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("saves the older-watches look-back", async () => {
+    renderSection({ "recommendations.older_lookback_years": 0 });
+    await userEvent.selectOptions(screen.getByLabelText("Older watches from"), "3");
+
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(putSettings.mock.calls.at(-1)?.[0]?.["recommendations.older_lookback_years"]).toBe(3);
+  });
+
+  it("names the search setup in the history-mix line", () => {
+    renderSection({ "llm_web.search_provider": "searxng" });
+    expect(screen.getByText(/one more search on your SearXNG server/)).toBeInTheDocument();
+  });
+
   it("shows Shortlist's built-in instructions until the owner writes their own, which starts from its template", async () => {
     previewWebPrompt.mockResolvedValue({
       backend: "exa",

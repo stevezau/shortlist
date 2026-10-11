@@ -35,6 +35,8 @@ class RowOverrideOut(PassthroughModel):
 
     row_size: int | None
     recent_count: int | None
+    favourite_count: int | None
+    older_count: int | None
 
 
 class UserRowOut(PassthroughModel):
@@ -48,6 +50,8 @@ class UserRowOut(PassthroughModel):
     section_key: str
     size: int
     recent_count: int  # the row's EFFECTIVE depth — what "use the row's default" resolves to
+    favourite_count: int  # likewise, long-time favourites searched
+    older_count: int  # likewise, older watches searched
     is_default: bool
     muted: bool
     override: RowOverrideOut
@@ -61,6 +65,8 @@ class RowOverrideSavedOut(PassthroughModel):
     muted: bool
     row_size: int | None
     recent_count: int | None
+    favourite_count: int | None
+    older_count: int | None
 
 
 def _applicable_rows(session, user: User) -> list[Collection]:
@@ -104,11 +110,17 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
         # own column falls through to the global default the same way for every row, so report that
         # resolved base — it's what "Use the row's default" means for this person's override.
         global_recent_count = int(store.get("recommendations.recent_count"))
+        global_favourite_count = int(store.get("recommendations.favourite_count"))
+        global_older_count = int(store.get("recommendations.older_count"))
 
         out = []
         for collection in _applicable_rows(session, user):
             override = overrides.get(collection.id)
             row_recent_count = collection.recent_count if collection.recent_count is not None else global_recent_count
+            row_favourite_count = (
+                collection.favourite_count if collection.favourite_count is not None else global_favourite_count
+            )
+            row_older_count = collection.older_count if collection.older_count is not None else global_older_count
             slug = collection.slug
             # Collect all library keys this row delivered to, preserving order from the picks.
             lib_keys = list(dict.fromkeys(k for (s, k) in picks_by_row_lib if s == slug))
@@ -127,11 +139,15 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
                         "section_key": section_key,
                         "size": global_size if slug == DEFAULT_SLUG else collection.size,
                         "recent_count": row_recent_count,
+                        "favourite_count": row_favourite_count,
+                        "older_count": row_older_count,
                         "is_default": slug == DEFAULT_SLUG,
                         "muted": bool(override and override.muted),
                         "override": {
                             "row_size": override.row_size if override else None,
                             "recent_count": override.recent_count if override else None,
+                            "favourite_count": override.favourite_count if override else None,
+                            "older_count": override.older_count if override else None,
                         },
                         "picks": picks,
                     }
@@ -167,6 +183,8 @@ async def set_user_row_override(user_id: int, collection_id: int, patch: RowOver
             "muted": bool(override and override.muted),
             "row_size": override.row_size if override else None,
             "recent_count": override.recent_count if override else None,
+            "favourite_count": override.favourite_count if override else None,
+            "older_count": override.older_count if override else None,
         }
     if mutation.steps:
         await jobs.drain_now(state, "person row override changed")

@@ -357,6 +357,7 @@ export const ROW_SETTING_KEYS = [
   "rewatch_cooldown_days",
   "candidate_sources",
   "recent_count",
+  "history_mix",
   "ai_instructions",
   "watched_pct",
   "unstarted_only",
@@ -399,6 +400,7 @@ export const SETTING_LABELS: Readonly<Record<RowSettingKey, string>> = {
   rewatch_cooldown_days: "Skip titles finished recently",
   candidate_sources: "Sources",
   recent_count: "Recent watches for AI web search",
+  history_mix: "History the AI web search draws on",
   ai_instructions: "AI instructions",
   watched_pct: "Already-watched titles",
   unstarted_only: "Only series they haven't started",
@@ -449,6 +451,8 @@ export const FIELD_SETTING: { readonly [K in keyof CollectionInput]-?: RowSettin
   idle_hold_days: "idle_hold_days",
   recency: "recency",
   recent_count: "recent_count",
+  favourite_count: "history_mix",
+  older_count: "history_mix",
   ai_instructions: "ai_instructions",
   theme_id: "kind", // an AI row's theme is part of what kind of row it is
   // Explore and the over-time controls exist only on an AI row, which has its own section for them.
@@ -532,6 +536,7 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "cold_start",
     "candidate_sources",
     "recent_count",
+    "history_mix",
     "ai_instructions",
     "watched_pct",
     "unstarted_only",
@@ -548,6 +553,7 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "fallback_name",
     "candidate_sources",
     "recent_count",
+    "history_mix",
     "ai_instructions",
     "watched_pct",
     "unstarted_only",
@@ -565,6 +571,7 @@ const FILL_SETTINGS: Readonly<Record<RowFill, readonly RowSettingKey[]>> = {
     "max_seeds",
     "candidate_sources",
     "recent_count",
+    "history_mix",
     "ai_instructions",
     "recency",
     "limits",
@@ -623,7 +630,10 @@ export function visibleSettings(
   if (fill === "again" && takeTurnsEnabled(input, ctx)) shown.add("seed_window");
   // The engine renders the fallback whenever a {top_seed} name has no watch to fill it, whatever the kind.
   if (namesASeed(input, ctx)) shown.add("fallback_name");
-  if (!rowSources(input, ctx).includes("llm_web")) shown.delete("recent_count");
+  if (!rowSources(input, ctx).includes("llm_web")) {
+    shown.delete("recent_count");
+    shown.delete("history_mix");
+  }
   if (!rowSources(input, ctx).includes("llm_web")) shown.delete("ai_instructions");
   // The API refuses it on a movies-only row.
   if (input.media === "movie") shown.delete("unstarted_only");

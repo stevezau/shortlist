@@ -148,6 +148,15 @@ def _one_of(*allowed: str):
     return check
 
 
+def _one_of_ints(*allowed: int):
+    def check(value: object) -> str | None:
+        if isinstance(value, bool) or not isinstance(value, int) or value not in allowed:
+            return f"must be one of {', '.join(str(a) for a in allowed)}"
+        return None
+
+    return check
+
+
 def _text_at_most(limit: int) -> Callable[[object], str | None]:
     """Free text up to ``limit`` characters (no other free-text setting caps its length yet)."""
 
@@ -342,6 +351,9 @@ VALIDATORS = {
     "recommendations.idle_hold_days": _bounded_int(0, MAX_REFRESH_DAYS),
     "recommendations.recency": _bounded_float(0.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
+    "recommendations.favourite_count": _bounded_int(0, 10),
+    "recommendations.older_count": _bounded_int(0, 10),
+    "recommendations.older_lookback_years": _one_of_ints(0, 1, 3, 5),
     "recommendations.max_seeds": _bounded_int(5, 100),
     "recommendations.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     # Floor of 1, not 0: at 0 nobody is ever cold, which silently disables the whole cold-start path

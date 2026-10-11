@@ -164,6 +164,8 @@ def create_row_in_session(session: Session, secrets, body) -> Collection:
         idle_hold_days=body.idle_hold_days,
         recency=body.recency,
         recent_count=body.recent_count,
+        favourite_count=body.favourite_count,
+        older_count=body.older_count,
         max_seeds=body.max_seeds,
         max_runtime=body.max_runtime,
         min_year=body.min_year,

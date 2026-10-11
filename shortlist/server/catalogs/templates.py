@@ -41,6 +41,8 @@ ROW_INPUT_DEFAULTS: dict[str, object] = {
     "idle_hold_days": None,
     "recency": None,
     "recent_count": None,
+    "favourite_count": None,
+    "older_count": None,
     "max_seeds": None,
     "max_runtime": None,
     "min_year": None,

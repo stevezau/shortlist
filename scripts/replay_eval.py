@@ -2,14 +2,17 @@
 
 Issue #152. It hides each person's most recent DISCOVERIES one at a time (a movie watched once, a show
 whose first play was within a day of the watch), rebuilds what the AI would have been shown from only what
-they had watched before, and runs the real web search and the real AI pick on it. Four arms:
+they had watched before, and runs the real web search and the real AI pick on it. Arms are history mixes,
+(favourites, older) searched on top of the recent ones, set in `ARM_MIX`:
 
-    A  recent taste text, no favourite searches (what a run sends today)
-    B  wide taste text (recent, long-time favourites, their ratings)
-    C  wide taste text, plus the web searches of FAVOURITES long-time favourites
-    D  as B, but the AI is switched off: code ranks everything the search found
+    A  0 / 0, the recent taste text (what a run sends by default)
+    B  3 / 3     C  6 / 6     D  10 / 10
 
 A, B and C run twice; the A rerun is the noise floor (the AI is not deterministic).
+
+`EXA_ONLY` skips the AI: the one arm D runs with no AI pick, and the report says, for every F and O up to
+10, how many cases the first F favourite searches and the first O older searches would have found the
+held-out title in. One such run answers it for every mix at once.
 
     SHORTLIST_CONFIG=/path/to/COPY/of/config .venv/bin/python scripts/replay_eval.py
 
@@ -55,18 +58,14 @@ from shortlist.server.services.watch_cache import WatchCache
 MAX_HOLDOUTS_PER_USER = 5
 MAX_CASES: int | None = None  # stop after this many cases in total; None = every case
 ARMS = ("A", "B", "C", "D")  # which arms to run; ("A", "B") is a cheap smoke test
-FAVOURITES = 8  # arm C: long-time favourites searched in addition to the recent ones
+ARM_MIX = {"A": (0, 0), "B": (3, 3), "C": (6, 6), "D": (10, 10)}  # arm -> (favourites, older) searched
+EXA_ONLY = False  # True: only arm D, with no AI pick, and report which searches found the held-out title
 WORKERS = 4  # people replayed in parallel
 # A, B and C run twice; the AI is not deterministic, so the A rerun measures how far a number moves by itself.
 REPEATED = ("A", "B", "C")
 # ──────────────────────────────────────────────────────────────────────────────────────────────────
 
-ARM_NOTES = {
-    "A": "recent taste text, no favourite searches",
-    "B": "wide taste text",
-    "C": f"wide taste text + {FAVOURITES} favourite searches",
-    "D": "no AI pick: the first 40 titles the search extracted, ranked in code (what a run does without an AI)",
-}
+ARM_NOTES = {key: f"{fav} favourite + {older} older searches" for key, (fav, older) in ARM_MIX.items()}
 
 
 class _NoAi:
@@ -79,7 +78,7 @@ class _NoAi:
     last_output_tokens = 0
 
     def complete(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
-        raise AssertionError("arm D must never ask the AI")
+        raise AssertionError("EXA_ONLY must never ask the AI")
 
 
 @dataclass(frozen=True)
@@ -93,13 +92,15 @@ def make_arms(base: EngineConfig, curator: object) -> dict[str, Arm]:
     """The arms over the server's own settings and sources, with AI web search always among them."""
     sources = list(base.candidate_sources)
     web = replace(base, candidate_sources=sources if "llm_web" in sources else [*sources, "llm_web"])
-    configs = {
-        "A": replace(web, taste_mode="recent", favourite_count=0),
-        "B": replace(web, taste_mode="wide", favourite_count=0),
-        "C": replace(web, taste_mode="wide", favourite_count=FAVOURITES),
-        "D": replace(web, taste_mode="wide", favourite_count=0),
+    keys = ("D",) if EXA_ONLY else ARMS
+    return {
+        key: Arm(
+            key,
+            replace(web, favourite_count=ARM_MIX[key][0], older_count=ARM_MIX[key][1]),
+            _NoAi() if EXA_ONLY else curator,
+        )
+        for key in keys
     }
-    return {key: Arm(key, configs[key], _NoAi() if key == "D" else curator) for key in ARMS}
 
 
 def first_plays(session, account_id: int) -> dict[int, datetime]:
@@ -138,7 +139,7 @@ def replay_user(
 
 
 def report(results: list[tuple[HoldoutCase, dict[str, ReplayOutcome]]], arms: dict[str, Arm]) -> None:
-    keys = [k for k in ("A", "A'", "B", "B'", "C", "C'", "D") if any(k in o for _, o in results)]
+    keys = [k for k in ("A", "A'", "B", "B'", "C", "C'", "D", "D'") if any(k in o for _, o in results)]
     print(f"{'user':<12}{'title':<30}" + "".join(f"{k:<18}" for k in keys))
     print("-" * (42 + 18 * len(keys)))
     for case, outcomes in results:
@@ -175,12 +176,29 @@ def report(results: list[tuple[HoldoutCase, dict[str, ReplayOutcome]]], arms: di
     pair("B", "C")
     pair("A", "A'")
     print("  (A -> A' is the same arm run twice: the gap is the noise floor any other difference must beat.)")
-    if "D" in keys:
-        got = [o["D"] for _, o in results if "D" in o]
-        print(f"  D (no AI): in the row for {sum(o.in_final_row for o in got)} of {len(got)} cases")
+    if EXA_ONLY:
+        report_found_by_group([o["D"] for _, o in results if "D" in o])
     print()
     for key in arms:
         print(f"  {key}: {ARM_NOTES[key]}")
+
+
+def report_found_by_group(outcomes: list[ReplayOutcome]) -> None:
+    """Cases where the first F favourite and first O older searches held the title, for each F and O."""
+    steps = (0, 1, 2, 3, 5, 6, 8, 10)
+
+    def found(outcome: ReplayOutcome, fav: int, older: int) -> bool:
+        groups = outcome.found_by_group
+        return (
+            bool(groups.get("recent"))
+            or any(n <= fav for n in groups.get("favourite", []))
+            or any(n <= older for n in groups.get("older", []))
+        )
+
+    print(f"\nCases (of {len(outcomes)}) where the searches held the title, by favourites (rows) and older (columns):")
+    print(f"{'':<6}" + "".join(f"{older:>6}" for older in steps))
+    for fav in steps:
+        print(f"{fav:<6}" + "".join(f"{sum(found(o, fav, older) for o in outcomes):>6}" for older in steps))
 
 
 def main() -> None:

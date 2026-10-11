@@ -34,7 +34,7 @@ from shortlist.engine import history as history_mod
 from shortlist.engine import ranking
 from shortlist.engine.clients.tmdb import Cache, TmdbClient
 from shortlist.engine.models import Candidate, EngineConfig, MediaType, UserProfile, WatchedItem
-from shortlist.engine.taste import recent_taste, taste_and_favourites
+from shortlist.engine.taste import history_mix, recent_taste
 
 #: Agreement among non-tied paired cases below which the aggregate direction means nothing at this
 #: sample size. Reported, never enforced — it exists to stop a 51/49 split reading as a result.
@@ -85,6 +85,9 @@ class ReplayOutcome:
     #: The AI answered with nothing usable, so the run used the search's whole extraction instead. Counted apart:
     #: it makes `ai_picked` true for reasons that have nothing to do with what the AI was told.
     ai_fallback: bool = False
+    #: Per kind of search ("recent", "favourite", "older"), the 1-based positions within that kind whose extraction
+    #: held the title. "Would F favourites have found it" is then "any position <= F", for every F from one run.
+    found_by_group: dict[str, list[int]] = field(default_factory=dict)
 
     @property
     def hit(self) -> bool:
@@ -189,12 +192,21 @@ def replay_case(
     # The profile carries the REDUCED history, never the full one: the AI is shown it, and a held-out title in
     # a prompt would hand the model the answer.
     profile = replace(case.user, history=case.history_before)
-    taste, favourite_seeds = None, []
+    taste, favourite_seeds, older_seeds = None, [], []
+    wide = (config.favourite_count > 0 or config.older_count > 0) and config.max_seeds != 1
     if "llm_web" in config.candidate_sources:
         ratings = history_mod.ratings_policy(case.history_before, config.dislike_threshold)
-        if config.taste_mode == "wide" and config.max_seeds != 1:
-            taste, favourite_seeds = taste_and_favourites(
-                case.history_before, blocked=profile.blocked_seeds, ratings=ratings, resolve=resolve_tmdb_id
+        if wide:
+            # Dated at the watch being predicted, so the sample and the look-back see the history as it stood.
+            taste, favourite_seeds, older_seeds = history_mix(
+                case.history_before,
+                blocked=profile.blocked_seeds,
+                ratings=ratings,
+                resolve=resolve_tmdb_id,
+                favourites=config.favourite_count,
+                older=config.older_count,
+                now=case.held_out.watched_at,
+                lookback_years=config.older_lookback_years,
             )
         else:
             # Arm A sends what a run sends for a films-and-TV row over every library: the recent list without
@@ -216,12 +228,20 @@ def replay_case(
         taste=taste,
         favourite_seeds=favourite_seeds,
         favourite_count=config.favourite_count if taste is not None and taste.wide else 0,
+        older_seeds=older_seeds,
+        older_count=config.older_count if taste is not None and taste.wide else 0,
     )
     gathered = any((c.tmdb_id, c.media_type) == key for c in pool)
     held_title = case.held_out.title.strip().lower()
     found_by_search = any(
         t.title.strip().lower() == held_title and t.media == case.held_out.media_type.value for t in stats.web_found
     )
+    found_by_group: dict[str, list[int]] = {}
+    seen_in_kind: dict[str, int] = {}
+    for kind, titles in stats.web_found_by_search:
+        seen_in_kind[kind] = seen_in_kind.get(kind, 0) + 1
+        if any(t.title.strip().lower() == held_title and t.media == case.held_out.media_type.value for t in titles):
+            found_by_group.setdefault(kind, []).append(seen_in_kind[kind])
     proposals = stats.trace.get("web", {}).get("proposals", [])
     curator_can_complete = curator is not None and getattr(curator, "can_complete", True)
     ai_picked = any((p["tmdb_id"], p["media"]) == (key[0], key[1].value) for p in proposals)
@@ -263,6 +283,7 @@ def replay_case(
         ai_fallback=bool(stats.trace.get("web", {}).get("unpicked")) and curator_can_complete,
         tokens=sum(stats.tokens_by_source.values()),
         new_searches=stats.exa_searches,
+        found_by_group=found_by_group,
     )
 
 

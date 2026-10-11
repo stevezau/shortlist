@@ -206,6 +206,8 @@ class CollectionOut(PassthroughModel):
     idle_hold_days: int | None
     recency: float | None
     recent_count: int | None
+    favourite_count: int | None
+    older_count: int | None
     max_seeds: int | None
     max_runtime: int | None
     min_year: int | None

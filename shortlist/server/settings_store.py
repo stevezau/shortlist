@@ -194,6 +194,12 @@ DEFAULTS: dict[str, Any] = {
     # How many of a person's most recent watches the web-search source searches per row (one cached
     # Exa search each). Row-overridable. Fewer = tighter/cheaper; the DbCache dedups shared titles.
     "recommendations.recent_count": 10,
+    # The history mix (#152): how many long-time favourites and older watches the web search looks up on top
+    # of the recent ones. 0 = none, which is how it behaved before. Row- and person-overridable.
+    "recommendations.favourite_count": 0,
+    "recommendations.older_count": 0,
+    # Older watches must be newer than this many years; 0 = any time. Server level only.
+    "recommendations.older_lookback_years": 0,
     # How many watched titles SEED a row — what every source searches from, not just the web one.
     # Row-overridable, and the row is where a deliberately narrow value belongs: the floor here is 5
     # because a server-wide 1 or 2 would starve every movies-and-TV row of one of its media types.

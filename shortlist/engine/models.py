@@ -355,6 +355,8 @@ class RowOverride:
     muted: bool = False  # this person doesn't get this row at all
     size: int | None = None  # override the row's size for this person
     recent_count: int | None = None  # override how many recent watches the web-search source searches
+    favourite_count: int | None = None  # override how many long-time favourites it searches too
+    older_count: int | None = None  # override how many older watches it searches too
 
 
 @dataclass
@@ -589,6 +591,10 @@ class RowSpec:
     # broader reach. Only affects the llm_web source; TMDB/Trakt still use the full seed set. None ->
     # inherit EngineConfig.recent_count.
     recent_count: int | None = None
+    # How many long-time favourites and older watches the WEB-SEARCH source searches for this row on top of
+    # the recent ones (#152, the "history mix"). None -> inherit EngineConfig; 0 turns that group off.
+    favourite_count: int | None = None
+    older_count: int | None = None
     # How many of this person's watched titles SEED this row — the titles every source searches from.
     # Unlike recent_count (which only caps the web-search source), this caps the seed set itself, so it
     # decides what the whole row is derived from. Small values make a row about one or two things they
@@ -1298,12 +1304,12 @@ class EngineConfig:
     # How many of a person's most recent watched titles the web-search source searches per row (one
     # cached Exa search each). Row-overridable via RowSpec.recent_count.
     recent_count: int = 10
-    # Replay experiments (#152), not settings: nothing reads them from the database or the UI. "wide" tells
-    # the AI web search a person's whole `TasteProfile` rather than the recent titles, and `favourite_count`
-    # adds web searches for their long-time favourites (wide mode only). Measured 2026-10-11 over 138
-    # discoveries and 46 people: no gain from either, so both stay at their defaults, "recent" and 0.
-    taste_mode: str = "recent"
+    # The history mix (#152): web searches for a person's long-time favourites and older watches, on top of
+    # the recent ones. Either above 0 tells the AI their whole `TasteProfile` rather than the recent titles.
+    # Older watches must be newer than `older_lookback_years` (0 = any time). Row- and person-overridable.
     favourite_count: int = 0
+    older_count: int = 0
+    older_lookback_years: int = 0
     # When True (default), a DISABLED (opted-out) Shortlist user has EVERY shared row hidden too — even
     # public "Popular on this server" rows — so disabling someone removes them from Shortlist entirely.
     hide_shared_from_disabled: bool = True

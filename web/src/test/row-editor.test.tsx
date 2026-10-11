@@ -1846,6 +1846,49 @@ describe("RowEditor — settings that would do nothing are not offered", () => {
   });
 });
 
+describe("RowEditor — history mix", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("is hidden on a row without AI web search", async () => {
+    settingsData.current = { "candidates.sources": ["tmdb_similar"] };
+    renderEditor(row());
+    await screen.findByText("How many recent watches to match");
+    expect(screen.queryByText("How much of their history it searches from")).not.toBeInTheDocument();
+  });
+
+  it("names the server's preset while the row follows it", async () => {
+    settingsData.current = {
+      "candidates.sources": ["llm_web"],
+      "recommendations.favourite_count": 6,
+      "recommendations.older_count": 6,
+    };
+    renderEditor(row({ favourite_count: null, older_count: null }));
+    expect(await screen.findByText("How much of their history it searches from")).toBeInTheDocument();
+    expect(screen.getByText("Balanced")).toBeInTheDocument();
+  });
+
+  it("round-trips a per-row mix into the PATCH body, starting from the server's counts", async () => {
+    settingsData.current = {
+      "candidates.sources": ["llm_web"],
+      "recommendations.favourite_count": 3,
+      "recommendations.older_count": 3,
+    };
+    renderEditor(row({ favourite_count: null, older_count: null }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: overrideName(/history the ai web search draws on|how much of their history/i) }),
+    );
+    await userEvent.click(screen.getByRole("radio", { name: "Deep" }));
+    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const saved = updateCollection.mock.calls.at(0)?.[1] as Collection;
+    expect(saved.favourite_count).toBe(10);
+    expect(saved.older_count).toBe(10);
+  });
+});
+
 describe("RowEditor — the outcome preview", () => {
   beforeEach(() => {
     settingsData.current = {};

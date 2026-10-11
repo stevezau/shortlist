@@ -63,6 +63,8 @@ COLLECTION_KEYS = {
     "idle_hold_days",
     "recency",
     "recent_count",
+    "favourite_count",
+    "older_count",
     "max_seeds",
     "max_runtime",
     "min_year",

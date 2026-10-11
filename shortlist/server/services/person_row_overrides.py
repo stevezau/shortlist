@@ -11,6 +11,8 @@ from shortlist.engine.models import MAX_ROW_SIZE, MIN_ROW_SIZE
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, CollectionUserOverride, User
 from shortlist.server.settings_store import SettingsStore
 
+_NUMERIC_FIELDS = {"row_size", "recent_count", "favourite_count", "older_count"}
+
 
 class RowOverridePatch(BaseModel):
     """PATCH-shaped stored preference values shared by REST and assistant planning."""
@@ -20,6 +22,8 @@ class RowOverridePatch(BaseModel):
     muted: bool | None = None
     row_size: int | None = Field(default=None, ge=MIN_ROW_SIZE, le=MAX_ROW_SIZE)
     recent_count: int | None = Field(default=None, ge=1, le=25)
+    favourite_count: int | None = Field(default=None, ge=0, le=10)
+    older_count: int | None = Field(default=None, ge=0, le=10)
 
 
 @dataclass(frozen=True)
@@ -79,6 +83,8 @@ def prepare_person_row_override_in_session(
         "muted": bool(existing and existing.muted),
         "row_size": existing.row_size if existing else None,
         "recent_count": existing.recent_count if existing else None,
+        "favourite_count": existing.favourite_count if existing else None,
+        "older_count": existing.older_count if existing else None,
     }
     values: dict[str, object] = {}
     for field in patch.model_fields_set:
@@ -87,7 +93,7 @@ def prepare_person_row_override_in_session(
         # null as an unmute; numeric nulls intentionally restore inheritance.
         values[field] = bool(value) if field == "muted" else value
     if legacy_shared and any(
-        (field == "muted" and value is True) or (field in {"row_size", "recent_count"} and value is not None)
+        (field == "muted" and value is True) or (field in _NUMERIC_FIELDS and value is not None)
         for field, value in values.items()
     ):
         raise ValueError("legacy shared row overrides can only be cleared in the owner API")
@@ -146,6 +152,8 @@ def read_person_row_override_in_session(
         "muted": bool(override and override.muted),
         "row_size": override.row_size if override else None,
         "recent_count": override.recent_count if override else None,
+        "favourite_count": override.favourite_count if override else None,
+        "older_count": override.older_count if override else None,
     }
     if row.build != "per_person":
         return {
@@ -161,11 +169,21 @@ def read_person_row_override_in_session(
     base_recent_count = (
         row.recent_count if row.recent_count is not None else int(store.get("recommendations.recent_count"))
     )
+    base_favourite_count = (
+        row.favourite_count if row.favourite_count is not None else int(store.get("recommendations.favourite_count"))
+    )
+    base_older_count = row.older_count if row.older_count is not None else int(store.get("recommendations.older_count"))
     effective: dict[str, bool | int] = {
         "muted": bool(stored["muted"]),
         "row_size": int(stored["row_size"] if stored["row_size"] is not None else base_row_size),
         "recent_count": int(stored["recent_count"] if stored["recent_count"] is not None else base_recent_count),
+        "favourite_count": int(
+            stored["favourite_count"] if stored["favourite_count"] is not None else base_favourite_count
+        ),
+        "older_count": int(stored["older_count"] if stored["older_count"] is not None else base_older_count),
         "base_row_size": int(base_row_size),
         "base_recent_count": int(base_recent_count),
+        "base_favourite_count": int(base_favourite_count),
+        "base_older_count": int(base_older_count),
     }
     return {"supported": True, "stored": stored, "effective": effective}

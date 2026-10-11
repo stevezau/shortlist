@@ -3046,6 +3046,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/history-mix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * User History Mix
+         * @description This week's history mix for one person on one row: the recent, favourite and older titles it searches.
+         *
+         *     Reads their live history from Plex, so the UI fetches it on demand rather than with the page.
+         */
+        get: operations["user_history_mix_api_users__user_id__history_mix_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users/{user_id}/outcomes": {
         parameters: {
             query?: never;
@@ -3886,6 +3908,8 @@ export interface components {
              * @default
              */
             fallback_name: string;
+            /** Favourite Count */
+            favourite_count?: number | null;
             /** Hub Anchor */
             hub_anchor?: {
                 [key: string]: components["schemas"]["HubAnchorIn"];
@@ -3923,6 +3947,8 @@ export interface components {
              * @default
              */
             name_template: string;
+            /** Older Count */
+            older_count?: number | null;
             /**
              * Pick Order
              * @description How the delivered collection is ordered.
@@ -4167,6 +4193,8 @@ export interface components {
             explore_brief: string;
             /** Fallback Name */
             fallback_name: string;
+            /** Favourite Count */
+            favourite_count: number | null;
             /** Hub Anchor */
             hub_anchor: {
                 [key: string]: components["schemas"]["HubAnchorOut"];
@@ -4201,6 +4229,8 @@ export interface components {
             name: string;
             /** Name Template */
             name_template: string;
+            /** Older Count */
+            older_count: number | null;
             /**
              * Pick Order
              * @description How the delivered collection is ordered.
@@ -4998,6 +5028,40 @@ export interface components {
             tmdb_id: number;
             /** Year */
             year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HistoryMixItemOut
+         * @description One title in a person's history mix.
+         */
+        HistoryMixItemOut: {
+            /** Media Type */
+            media_type: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number | null;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HistoryMixOut
+         * @description The titles one row's AI web search draws from a person's history this week, in their three groups.
+         */
+        HistoryMixOut: {
+            /** Favourite Count */
+            favourite_count: number;
+            /** Favourites */
+            favourites: components["schemas"]["HistoryMixItemOut"][];
+            /** Older */
+            older: components["schemas"]["HistoryMixItemOut"][];
+            /** Older Count */
+            older_count: number;
+            /** Recent */
+            recent: components["schemas"]["HistoryMixItemOut"][];
         } & {
             [key: string]: unknown;
         };
@@ -6392,6 +6456,10 @@ export interface components {
          * @description This person's stored tweaks for one row. `None` on either field means "use the row's own".
          */
         RowOverrideOut: {
+            /** Favourite Count */
+            favourite_count: number | null;
+            /** Older Count */
+            older_count: number | null;
             /** Recent Count */
             recent_count: number | null;
             /** Row Size */
@@ -6404,8 +6472,12 @@ export interface components {
          * @description PATCH-shaped stored preference values shared by REST and assistant planning.
          */
         RowOverridePatch: {
+            /** Favourite Count */
+            favourite_count?: number | null;
             /** Muted */
             muted?: boolean | null;
+            /** Older Count */
+            older_count?: number | null;
             /** Recent Count */
             recent_count?: number | null;
             /** Row Size */
@@ -6418,8 +6490,12 @@ export interface components {
         RowOverrideSavedOut: {
             /** Collection Id */
             collection_id: number;
+            /** Favourite Count */
+            favourite_count: number | null;
             /** Muted */
             muted: boolean;
+            /** Older Count */
+            older_count: number | null;
             /** Recent Count */
             recent_count: number | null;
             /** Row Size */
@@ -8144,6 +8220,8 @@ export interface components {
         UserRowOut: {
             /** Collection Id */
             collection_id: number;
+            /** Favourite Count */
+            favourite_count: number;
             /** Is Default */
             is_default: boolean;
             /** Library */
@@ -8154,6 +8232,8 @@ export interface components {
             muted: boolean;
             /** Name */
             name: string;
+            /** Older Count */
+            older_count: number;
             override: components["schemas"]["RowOverrideOut"];
             /** Picks */
             picks: components["schemas"]["UserPickOut"][];
@@ -12537,6 +12617,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WatchItemOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_history_mix_api_users__user_id__history_mix_get: {
+        parameters: {
+            query: {
+                collection_id: number;
+            };
+            header?: never;
+            path: {
+                user_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryMixOut"];
                 };
             };
             /** @description Validation Error */

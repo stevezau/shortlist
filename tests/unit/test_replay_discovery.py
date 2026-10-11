@@ -114,15 +114,15 @@ def _case(user):
     return holdout_cases(user, [held, *history])[0]
 
 
-def _replay(user, curator, search, *, taste_mode="wide", favourite_count=0, cache=None):
+def _replay(user, curator, search, *, favourite_count=2, older_count=0, cache=None):
     config = EngineConfig(
         row_size=3,
         candidates_pre_rank=10,
         max_seeds=5,
         candidate_sources=["llm_web"],
         web_search_provider="exa",
-        taste_mode=taste_mode,
         favourite_count=favourite_count,
+        older_count=older_count,
     )
     return replay_case(
         _case(user),
@@ -138,11 +138,11 @@ def _replay(user, curator, search, *, taste_mode="wide", favourite_count=0, cach
 
 
 class TestTheAiSeesOnlyThePast:
-    @pytest.mark.parametrize("taste_mode", ["recent", "wide"])
-    def test_the_held_out_title_is_in_no_prompt_and_no_query(self, user, taste_mode):
+    @pytest.mark.parametrize("counts", [(0, 0), (2, 0), (0, 2), (2, 2)])
+    def test_the_held_out_title_is_in_no_prompt_and_no_query(self, user, counts):
         curator = _Curator("[]")
         search = _Search([TitleCandidate(title="Target", year=2025, media="movie")])
-        _replay(user, curator, search, taste_mode=taste_mode)
+        _replay(user, curator, search, favourite_count=counts[0], older_count=counts[1])
         assert curator.prompts
         assert all("Target" not in p.replace("- Target (2025) [movie]", "") for p in curator.prompts)
         assert all("Target" not in q for q in search.queries)
@@ -170,6 +170,49 @@ class TestTheAiSeesOnlyThePast:
         assert first.new_searches == len(search.queries) > 0
         again = _replay(user, _Curator("[]"), search, cache=cache)
         assert again.new_searches == 0
+
+
+class TestFoundByGroup:
+    """A history deep enough that all three groups have titles: 12 recent, 3 favourites, 20 older."""
+
+    def _outcome(self, user, titles, *, favourite_count=2, older_count=2):
+        history = [watched(f"Recent {i}", i + 1, 300 + i) for i in range(12)]
+        history += [watched(f"Fav {i}", 100 + i, 400 + i, plays=3) for i in range(3)]
+        history += [watched(f"Old {i}", 200 + i, 500 + i) for i in range(20)]
+        case = holdout_cases(user, [watched("Target", 0, 999), *history])[0]
+        config = EngineConfig(
+            row_size=3,
+            candidates_pre_rank=10,
+            max_seeds=5,
+            candidate_sources=["llm_web"],
+            web_search_provider="exa",
+            favourite_count=favourite_count,
+            older_count=older_count,
+        )
+        return replay_case(
+            case,
+            config,
+            config_label="x",
+            tmdb=_tmdb(),
+            library_index={MediaType.MOVIE: {999: 1}, MediaType.SHOW: {}},
+            resolve_tmdb_id=lambda item: item.tmdb_id,
+            curator=_Curator("[]"),
+            search=_Search(titles),
+        )
+
+    def test_each_kind_reports_which_of_its_searches_held_the_title(self, user):
+        outcome = self._outcome(user, [TitleCandidate(title="Target", year=2025, media="movie")])
+        assert outcome.found_by_group == {"recent": list(range(1, 6)), "favourite": [1, 2], "older": [1, 2]}
+
+    def test_a_title_no_search_found_is_in_no_group(self, user):
+        outcome = self._outcome(user, [TitleCandidate(title="Something else", year=2025, media="movie")])
+        assert outcome.found_by_group == {}
+
+    def test_with_both_counts_at_zero_only_recent_searches_run(self, user):
+        outcome = self._outcome(
+            user, [TitleCandidate(title="Target", year=2025, media="movie")], favourite_count=0, older_count=0
+        )
+        assert set(outcome.found_by_group) == {"recent"}
 
 
 class TestFirstWatchFilter:

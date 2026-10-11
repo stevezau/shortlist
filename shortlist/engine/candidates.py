@@ -58,6 +58,7 @@ _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the web-search LLM
 # point of the structured path: the curator picks from everything the searches found instead of from
 # a rationed slice of it.
 _WEB_PICK_CAP = 300
+_KIND_ORDER = ("recent", "favourite", "older")  # which kind owns a title several searches found
 # A normal reply is ~2,500 characters, so real failures are kept whole; a runaway one must not bloat the run trace.
 _UNPARSED_REPLY_CAP = 20_000
 # A search that came back nearly empty is cached BRIEFLY rather than for the usual week. Exa's
@@ -127,6 +128,9 @@ class GatherStats:
     # Everything the web search extracted, deduped, before the AI picked from it. Not persisted and not in
     # the trace: it exists so the replay can tell "the search found it" from "the AI picked it" (#152).
     web_found: list[TitleCandidate] = field(default_factory=list)
+    # The same extraction per search, as (kind, titles) in search order, so the replay can tell which kind of
+    # search found a title. Not persisted either.
+    web_found_by_search: list[tuple[str, list[TitleCandidate]]] = field(default_factory=list)
 
     def add_tokens(self, source: str, n: int, output: int = 0) -> None:
         """Add a source's token spend, `output` of it being output (a no-op for 0, e.g. NullCurator or a
@@ -182,6 +186,8 @@ def web_recommendations(
     taste: TastePrompt | None = None,
     favourite_seeds: list[Seed] | None = None,
     favourite_count: int = 0,
+    older_seeds: list[Seed] | None = None,
+    older_count: int = 0,
 ) -> list[dict]:
     """Titles to watch next from a web search, as ``[{title, year, media}]`` for TMDB resolution.
 
@@ -202,8 +208,9 @@ def web_recommendations(
     read ``last_tokens`` right after each LLM call, before the next one overwrites it.
     ``guidance`` is this row's AI instructions (#138), handed to whichever prompt the backend sends.
     ``taste`` is the history text for the pick prompt (#152), scoped to the row; None keeps the 20 newest titles.
-    ``favourite_seeds`` / ``favourite_count`` add up to that many long-time favourites to the external path's
-    searches. The native path takes ``taste`` but not the favourites: the model picks its own.
+    ``favourite_seeds`` / ``favourite_count`` add up to that many long-time favourites, and ``older_seeds`` /
+    ``older_count`` that many older watches, to the external path's searches. The native path takes ``taste``
+    but not the seeds: the model picks its own.
     """
     web_trace: dict = {"mode": mode}
     stats.trace["web"] = web_trace
@@ -224,6 +231,8 @@ def web_recommendations(
             taste=taste,
             favourite_seeds=favourite_seeds,
             favourite_count=favourite_count,
+            older_seeds=older_seeds,
+            older_count=older_count,
         )
     elif not getattr(curator, "supports_native_web_search", False):
         return []
@@ -301,6 +310,8 @@ def _web_via_search(
     taste: TastePrompt | None = None,
     favourite_seeds: list[Seed] | None = None,
     favourite_count: int = 0,
+    older_seeds: list[Seed] | None = None,
+    older_count: int = 0,
 ) -> list[dict]:
     """External-search path: one CACHED web search per recent title, then the curator picks from the
     union. Caching by (media, tmdb_id) means a title many users watched is searched once server-wide —
@@ -332,8 +343,14 @@ def _web_via_search(
         web_trace["structured"] = structured
     searched = [(seed, "recent") for seed in seeds[: max(1, recent_count)]]
     already = {(seed.tmdb_id, seed.media_type) for seed, _ in searched}
-    extra = [f for f in (favourite_seeds or []) if (f.tmdb_id, f.media_type) not in already]
-    searched += [(seed, "favourite") for seed in extra[: max(0, favourite_count)]]
+    for kind, extra_seeds, extra_count in (
+        ("favourite", favourite_seeds, favourite_count),
+        ("older", older_seeds, older_count),
+    ):
+        extra = [f for f in (extra_seeds or []) if (f.tmdb_id, f.media_type) not in already]
+        chosen = extra[: max(0, extra_count)]
+        searched += [(seed, kind) for seed in chosen]
+        already |= {(seed.tmdb_id, seed.media_type) for seed in chosen}
     for seed, kind in searched:
         key = f"{_WEB_SEARCH_CACHE_PREFIX}:{provider}:{seed.media_type.value}:{seed.tmdb_id}"
         query = build_web_query_for_title(seed.title)
@@ -400,9 +417,10 @@ def _web_via_search(
     results = _interleave(per_seed)
     candidates = _drop_seed_titles(
         _dedupe_titles(_interleave(per_seed_titles)),
-        [*seeds, *(seed for seed, kind in searched if kind == "favourite")],
+        [*seeds, *(seed for seed, kind in searched if kind != "recent")],
     )
     stats.web_found = list(candidates)
+    stats.web_found_by_search = list(zip((kind for _, kind in searched), per_seed_titles, strict=True))
     if web_trace is not None:
         web_trace["searches"] = trace_queries
         # Sampled like every other trace list. The prompt may carry 300 candidates; the trace is
@@ -420,7 +438,14 @@ def _web_via_search(
     # empty — a mode that declined to synthesise, a shape change — still has the snippets, so this
     # degrades to exactly the path that shipped before rather than to nothing.
     if candidates:
-        system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k, guidance=guidance, taste=taste)
+        kinds = [kind for _, kind in searched]
+        if structured and any(kind != "recent" for kind in kinds):
+            groups, shares = _fair_share(candidates, per_seed_titles, kinds, k)
+            if web_trace is not None:
+                web_trace["shares"] = shares
+            system, user = build_web_pick_prompt(profile, [], k, guidance=guidance, taste=taste, groups=groups)
+        else:
+            system, user = build_web_pick_prompt(profile, candidates[:_WEB_PICK_CAP], k, guidance=guidance, taste=taste)
     elif results:
         system, user = build_web_rag_prompt(profile, results[:_WEB_SEARCH_RAG_CAP], k, guidance=guidance, taste=taste)
     else:
@@ -452,6 +477,46 @@ def _web_via_search(
     # `proposed` is recorded by the caller, once, AFTER already-watched titles are dropped — so the
     # trace shows what the run actually used rather than what the model first said.
     return titles
+
+
+def _title_key(candidate: TitleCandidate) -> tuple[str, str]:
+    return (candidate.title.strip().lower(), candidate.media)
+
+
+def _fair_share(
+    candidates: list[TitleCandidate], per_seed_titles: list[list[TitleCandidate]], kinds: list[str], k: int
+) -> tuple[list[tuple[str, list[TitleCandidate], int]], dict[str, int]]:
+    """Split the extracted titles by the kind of search that found them, with each kind's share of the ``k`` picks.
+
+    A title belongs to the first kind in recent, favourite, older order that any search of it came
+    from, so a title a recent watch found is "recent" however many older searches found it too. Each
+    kind's picks are in proportion to its share of the searches run, and recent takes what the others
+    leave. A kind with no searches or no titles gets no share and no list, and its share goes to recent.
+    The pool the model reads is capped per kind in the same proportion, so a large recent haul cannot
+    push the favourites and older titles out of the prompt.
+
+    Returns:
+        ``(kind, titles, share)`` per kind kept, recent first, and the shares by kind for the trace.
+    """
+    owner: dict[tuple[str, str], str] = {}
+    for kind in _KIND_ORDER:
+        for found, found_kind in zip(per_seed_titles, kinds, strict=True):
+            if found_kind == kind:
+                for title in found:
+                    owner.setdefault(_title_key(title), kind)
+    searches = {kind: kinds.count(kind) for kind in _KIND_ORDER}
+    by_kind = {kind: [c for c in candidates if owner.get(_title_key(c)) == kind] for kind in _KIND_ORDER}
+    shares = {
+        kind: max(1, round(k * searches[kind] / len(kinds))) if searches[kind] and by_kind[kind] else 0
+        for kind in _KIND_ORDER[1:]
+    }
+    shares["recent"] = max(0, k - sum(shares.values()))
+    groups = [
+        (kind, by_kind[kind][: math.ceil(_WEB_PICK_CAP * searches[kind] / len(kinds))], shares[kind])
+        for kind in _KIND_ORDER
+        if by_kind[kind] and (kind == "recent" or shares[kind])
+    ]
+    return groups, {kind: shares[kind] for kind in _KIND_ORDER}
 
 
 def _titles_as_proposals(candidates: list[TitleCandidate], web_trace: dict | None, *, reason: str) -> list[dict]:
@@ -895,6 +960,8 @@ def gather_candidates(
     taste: TastePrompt | None = None,
     favourite_seeds: list[Seed] | None = None,
     favourite_count: int = 0,
+    older_seeds: list[Seed] | None = None,
+    older_count: int = 0,
 ) -> list[Candidate]:
     """Pool candidates from every enabled source, deduped by (tmdb_id, media_type).
 
@@ -907,7 +974,7 @@ def gather_candidates(
     source; the TMDB sources ignore them. ``search``/``web_search_mode`` drive the ``llm_web``
     source's external-search backend (Exa) — ``search`` is None when no key is configured.
     ``web_guidance`` is the row's AI instructions for that source's prompt (#138); None = built-in.
-    ``taste`` / ``favourite_seeds`` / ``favourite_count`` widen what the AI sees of the person's history
+    ``taste`` and the favourite and older seeds and counts widen what the AI sees of the person's history
     (#152); see `web_recommendations`. The defaults send exactly what this source has always sent.
 
     Pass a ``stats`` (a :class:`GatherStats`) to have the AI token spend of the ``llm_web`` source
@@ -1107,6 +1174,8 @@ def gather_candidates(
                 taste=taste,
                 favourite_seeds=favourite_seeds,
                 favourite_count=favourite_count,
+                older_seeds=older_seeds,
+                older_count=older_count,
             ):
                 media_type = MediaType.SHOW if rec.get("media") == "show" else MediaType.MOVIE
                 found = tmdb.search(rec["title"], media_type, year=rec.get("year"))

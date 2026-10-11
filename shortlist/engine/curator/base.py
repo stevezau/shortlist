@@ -318,6 +318,7 @@ def build_web_pick_prompt(
     year: int | None = None,
     guidance: Guidance | None = None,
     taste: TastePrompt | None = None,
+    groups: list[tuple[str, list, int]] | None = None,
 ) -> tuple[str, str]:
     """(system, user) prompts for picking from titles the SEARCH PROVIDER already extracted.
 
@@ -330,19 +331,43 @@ def build_web_pick_prompt(
 
     The caller resolves each returned title to TMDB and library-verifies it, so a title the model
     invents rather than picks from the list reaches no row.
+
+    ``groups`` is the history mix (#152): ``(kind, titles, share)`` per kind of search that found them.
+    Each list gets its own heading, and the closing line says how many to take from each. It replaces
+    ``candidates``; without it the prompt is the single list it has always been.
     """
     now = year if year is not None else datetime.now(UTC).year
     system = _web_system(_WEB_PICK, k=k, year=now, guidance=guidance, wide=taste is not None and taste.wide)
+    watched = taste.text if taste else taste_summary(profile)
+    if groups:
+        blocks = [f"{_GROUP_HEADINGS[kind]}\n{_title_lines(found)}" for kind, found, _ in groups]
+        shares = ", ".join(f"{share} from the {_GROUP_LISTS[kind]} list" for kind, _, share in groups)
+        user = (
+            f"{watched}\n\n" + "\n\n".join(blocks) + f"\n\nPick up to {k}. Take roughly {shares}, "
+            "unless a list has fewer that suit them."
+        )
+        return system, user
+    context = _title_lines(candidates) or "(no titles found)"
+    user = f"{watched}\n\nTitles recommended by recent articles:\n{context}\n\nPick up to {k}."
+    return system, user
+
+
+_GROUP_HEADINGS = {
+    "recent": "Titles recommended for their recent watches:",
+    "favourite": "Titles recommended for their long-time favourites:",
+    "older": "Titles recommended for things they watched further back:",
+}
+_GROUP_LISTS = {"recent": "recent", "favourite": "favourites", "older": "further-back"}
+
+
+def _title_lines(candidates: list) -> str:
     lines = []
     for c in candidates:
         year = getattr(c, "year", None)
         lines.append(
             f"- {getattr(c, 'title', '')}" + (f" ({year})" if year else "") + f" [{getattr(c, 'media', 'movie')}]"
         )
-    context = "\n".join(lines) or "(no titles found)"
-    watched = taste.text if taste else taste_summary(profile)
-    user = f"{watched}\n\nTitles recommended by recent articles:\n{context}\n\nPick up to {k}."
-    return system, user
+    return "\n".join(lines)
 
 
 _FENCE = re.compile(r"```[a-zA-Z]*\s*(.*?)```", re.DOTALL)

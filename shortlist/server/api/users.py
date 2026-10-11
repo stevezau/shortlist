@@ -34,6 +34,7 @@ from shortlist.server.prefs import blocked_entries
 from shortlist.server.schema_base import PassthroughModel
 from shortlist.server.services import jobs, report_service
 from shortlist.server.services.delivery_snapshots import utc
+from shortlist.server.services.history_mix import NotFoundError, row_history_mix
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
@@ -681,6 +682,53 @@ async def user_history(user_id: int, request: Request, limit: int = Query(25, ge
     if rows is None:
         raise HTTPException(status_code=404, detail="user not found")
     return rows
+
+
+class HistoryMixItemOut(PassthroughModel):
+    """One title in a person's history mix."""
+
+    title: str
+    year: int | None
+    media_type: str
+    tmdb_id: int | None  # None with no tmdb:// GUID — such a title cannot be blocked as a seed
+
+
+class HistoryMixOut(PassthroughModel):
+    """The titles one row's AI web search draws from a person's history this week, in their three groups."""
+
+    recent: list[HistoryMixItemOut]
+    favourites: list[HistoryMixItemOut]
+    older: list[HistoryMixItemOut]
+    favourite_count: int  # the effective count: how many favourites the row searches
+    older_count: int
+
+
+@router.get("/{user_id}/history-mix", response_model=HistoryMixOut)
+async def user_history_mix(user_id: int, request: Request, collection_id: int = Query(..., ge=1)) -> dict:
+    """This week's history mix for one person on one row: the recent, favourite and older titles it searches.
+
+    Reads their live history from Plex, so the UI fetches it on demand rather than with the page.
+    """
+    state = request.app.state
+
+    def build() -> dict:
+        with state.sessions() as session:
+            return row_history_mix(
+                session,
+                state.secrets,
+                profile_for=state.run_service.profile_with_history,
+                user_id=user_id,
+                collection_id=collection_id,
+            )
+
+    try:
+        return await asyncio.get_running_loop().run_in_executor(None, build)
+    except NotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    except Exception as e:
+        # A PMS error can carry a tokened URL — redact before it reaches the response (rule 9).
+        logger.warning("history-mix fetch failed for user {} ({})", user_id, type(e).__name__)
+        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
 
 
 @router.get("/{user_id}/watched", response_model=WatchedPageOut)

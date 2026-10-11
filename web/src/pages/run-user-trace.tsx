@@ -1780,6 +1780,12 @@ function WebSourceCard({
                   ? `${searches.length} searches, all reused from an earlier run’s cache — nothing billed.`
                   : `${searches.length} searches, all new this run.`}
             </p>
+            {web?.shares && (
+              <p className="text-xs text-muted-foreground">
+                Picks asked for: {web.shares.recent} recent, {web.shares.favourite} favourites, {web.shares.older}{" "}
+                older
+              </p>
+            )}
             <ul className="space-y-1.5">
               {searches.map((s, i) => (
                 <li key={i} className="text-sm">
@@ -1790,6 +1796,11 @@ function WebSourceCard({
                     />
                     <span className="min-w-0">
                       <span className="italic">“{s.query}”</span>
+                      {(s.kind === "favourite" || s.kind === "older") && (
+                        <Badge variant="outline" className="ml-2 whitespace-nowrap align-middle text-xs">
+                          {s.kind}
+                        </Badge>
+                      )}
                       {s.cached && (
                         <Badge
                           variant="secondary"

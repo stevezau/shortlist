@@ -223,6 +223,9 @@ class CollectionIn(StrictRequestModel):
     # How much this row weights a title's release date. None -> inherit recommendations.recency.
     recency: float | None = Field(default=None, ge=0.0, le=1.0)
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
+    # Long-time favourites and older watches the web search also looks up (#152); None -> inherit the global.
+    favourite_count: int | None = Field(default=None, ge=0, le=10)
+    older_count: int | None = Field(default=None, ge=0, le=10)
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
     # Per-row limits on what may be picked; None = no limit (#138). Year order is checked in `validate_row`.
     max_runtime: int | None = Field(default=None, ge=1, le=600)  # minutes
@@ -800,6 +803,8 @@ def serialize_row(
         "idle_hold_days": collection.idle_hold_days,
         "recency": collection.recency,
         "recent_count": collection.recent_count,
+        "favourite_count": collection.favourite_count,
+        "older_count": collection.older_count,
         "max_seeds": collection.max_seeds,
         "max_runtime": collection.max_runtime,
         "min_year": collection.min_year,
@@ -1292,6 +1297,8 @@ PATCHABLE_COLUMNS = (
     "idle_hold_days",
     "recency",
     "recent_count",
+    "favourite_count",
+    "older_count",
     "max_seeds",
     "max_runtime",
     "min_year",

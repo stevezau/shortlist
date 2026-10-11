@@ -65,6 +65,8 @@ export const queryKeys = {
   userRunsSummary: (id: number) => ["users", id, "runs", "summary"] as const,
   homeUsers: ["watching-account", "candidates"] as const,
   userHistory: (id: number) => ["users", id, "history"] as const,
+  userHistoryMix: (id: number, collectionId: number) =>
+    ["users", id, "history-mix", collectionId] as const,
   userWatched: (id: number, filters: WatchedFilters) =>
     ["users", id, "watched", filters] as const,
   session: ["auth", "session"] as const,
@@ -786,6 +788,16 @@ export function useUserHistory(id: number) {
     queryKey: queryKeys.userHistory(id),
     queryFn: () => api.getUserHistory(id),
     retry: false, // a live per-user Plex read; surface the error rather than hammering
+  });
+}
+
+/** This week's history mix for one row; fetched only once `enabled` (a live per-user Plex read). */
+export function useHistoryMix(id: number, collectionId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.userHistoryMix(id, collectionId),
+    queryFn: () => api.getHistoryMix(id, collectionId),
+    enabled,
+    retry: false,
   });
 }
 

@@ -1303,7 +1303,14 @@ class TestUserRowsApi:
         assert row_id not in {row["collection_id"] for row in client.get(f"/api/users/{member_id}/rows").json()}
         saved = client.put(f"/api/users/{member_id}/rows/{row_id}", json={"row_size": 20, "recent_count": 6})
         assert saved.status_code == 200, saved.text
-        assert saved.json() == {"collection_id": row_id, "muted": False, "row_size": 20, "recent_count": 6}
+        assert saved.json() == {
+            "collection_id": row_id,
+            "muted": False,
+            "row_size": 20,
+            "recent_count": 6,
+            "favourite_count": None,
+            "older_count": None,
+        }
         with client.app.state.sessions() as session:
             stored = session.get(CollectionUserOverride, (row_id, member_id))
             assert (stored.muted, stored.row_size, stored.recent_count) == (False, 20, 6)
@@ -1322,12 +1329,14 @@ class TestUserRowsApi:
             "section_key",
             "size",
             "recent_count",
+            "favourite_count",
+            "older_count",
             "is_default",
             "muted",
             "override",
             "picks",
         }
-        assert set(rows[0]["override"]) == {"row_size", "recent_count"}
+        assert set(rows[0]["override"]) == {"row_size", "recent_count", "favourite_count", "older_count"}
         assert rows[0]["is_default"] is True
         assert rows[0]["muted"] is False
         assert rows[0]["picks"] == []
@@ -1439,7 +1448,14 @@ class TestUserRowsApi:
         cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
         r = client.put(f"/api/users/{uid}/rows/{cid}", json={"muted": True, "row_size": 20})
         assert r.status_code == 200
-        assert set(r.json()) == {"collection_id", "muted", "row_size", "recent_count"}
+        assert set(r.json()) == {
+            "collection_id",
+            "muted",
+            "row_size",
+            "recent_count",
+            "favourite_count",
+            "older_count",
+        }
         row = client.get(f"/api/users/{uid}/rows").json()[0]
         assert row["muted"] is True
         assert row["override"]["row_size"] == 20
@@ -1484,7 +1500,7 @@ class TestUserRowsApi:
         # A recent_count-only PUT must not clobber the saved size (server writes only fields it's sent).
         client.put(f"/api/users/{uid}/rows/{cid}", json={"recent_count": 5})
         override = client.get(f"/api/users/{uid}/rows").json()[0]["override"]
-        assert override == {"row_size": 20, "recent_count": 5}
+        assert override == {"row_size": 20, "recent_count": 5, "favourite_count": None, "older_count": None}
 
     def test_recent_count_override_is_bounded(self, client: TestClient):
         uid = self._sarah_id(client)

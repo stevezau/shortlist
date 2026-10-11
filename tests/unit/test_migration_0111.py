@@ -7,6 +7,7 @@ from contextlib import closing
 
 import pytest
 from alembic import command
+from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Collection, User
@@ -37,9 +38,9 @@ def test_0111_drops_prompt_and_keeps_the_other_columns(tmp_path):
     command.upgrade(cfg, "0110")
     db = tmp_path / "shortlist.db"
     with disposing_engine(make_engine(tmp_path)) as engine, Session(engine) as session:
-        session.add_all(
-            [User(id=1, plex_account_id=1, username="bob", slug="bob"), Collection(id=500, slug="s", name="S")]
-        )
+        session.add(User(id=1, plex_account_id=1, username="bob", slug="bob"))
+        # A core insert: the ORM would also write columns a later migration adds, which this old schema lacks.
+        session.execute(insert(Collection).values(id=500, slug="s", name="S"))
         session.commit()
     with closing(sqlite3.connect(db)) as conn:
         conn.execute(

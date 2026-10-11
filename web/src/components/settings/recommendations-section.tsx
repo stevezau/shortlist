@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
+import { HistoryMixField, HISTORY_MIX_HELP, HISTORY_MIX_LABEL } from "@/components/history-mix-field";
 import { RECENT_COUNT_LABEL } from "@/components/recent-count-field";
 import { SaveStatus } from "@/components/save-status";
 import { AiWebSearchCard } from "@/components/settings/ai-web-search-card";
@@ -48,6 +49,7 @@ import {
   RECENCY_DEFAULT,
   WATCHED_PCT_DEFAULT,
 } from "@/lib/constants";
+import { mixModeLine } from "@/lib/history-mix";
 import { hasTrakt, SOURCES } from "@/lib/sources";
 import type { Settings, WebPromptPreview } from "@/lib/types";
 
@@ -61,6 +63,14 @@ function readSources(settings: Settings): string[] {
     ? value.filter((x): x is string => typeof x === "string")
     : ["tmdb_similar", "tmdb_discover"];
 }
+
+/** The look-back for "older watches", by the years the server stores (0 = any time). */
+const LOOKBACK_LABELS: Record<number, string> = {
+  0: "Any time",
+  5: "Last 5 years",
+  3: "Last 3 years",
+  1: "Last year",
+};
 
 /** A global 0..1 setting, edited as whole percent. */
 function readPercent(
@@ -142,6 +152,15 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     const value = Number(settings["recommendations.recent_count"]);
     return Number.isFinite(value) ? Math.min(25, Math.max(1, value)) : 10;
   });
+  const [favouriteCount, setFavouriteCount] = useState<number>(() =>
+    readWholeNumber(settings, "recommendations.favourite_count", 0),
+  );
+  const [olderCount, setOlderCount] = useState<number>(() =>
+    readWholeNumber(settings, "recommendations.older_count", 0),
+  );
+  const [olderLookback, setOlderLookback] = useState<number>(() =>
+    readWholeNumber(settings, "recommendations.older_lookback_years", 0),
+  );
   const [ratingSource, setRatingSource] = useState<RatingSource>(() =>
     asRatingSource(settings["recommendations.rating_source"]),
   );
@@ -192,6 +211,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       idleHoldDays,
       recency,
       recentCount,
+      favouriteCount,
+      olderCount,
+      olderLookback,
       maxSeeds,
       ratingSource,
       minHistory,
@@ -211,6 +233,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       "recommendations.idle_hold_days": idleHoldDays,
       "recommendations.recency": recency / 100,
       "recommendations.recent_count": recentCount,
+      "recommendations.favourite_count": favouriteCount,
+      "recommendations.older_count": olderCount,
+      "recommendations.older_lookback_years": olderLookback,
       "recommendations.max_seeds": maxSeeds,
       "recommendations.rating_source": ratingSource,
       "llm_web.instructions": storedInstructions(aiInstructions, builtin.data?.builtin_template ?? ""),
@@ -259,6 +284,21 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     label: (count) => `${count} watches`,
     reset: setRecentCount,
   });
+  const mFavourites = mark("recommendations.favourite_count", favouriteCount, {
+    fromDefault: Number,
+    label: (count) => `${count} favourites`,
+    reset: setFavouriteCount,
+  });
+  const mOlder = mark("recommendations.older_count", olderCount, {
+    fromDefault: Number,
+    label: (count) => `${count} older watches`,
+    reset: setOlderCount,
+  });
+  const mLookback = mark("recommendations.older_lookback_years", olderLookback, {
+    fromDefault: Number,
+    label: (years) => LOOKBACK_LABELS[years] ?? `${years} years`,
+    reset: setOlderLookback,
+  });
   const mRatings = mark("recommendations.use_plex_ratings", usePlexRatings, {
     label: (on) => (on ? "on" : "off"),
     reset: setUsePlexRatings,
@@ -286,7 +326,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   useReportModifiedCount("sources", countModified([mSources]));
   useReportModifiedCount(
     "refresh",
-    countModified([mRefresh, mWatched, mRecency, mIdle, mMaxSeeds, mRecentCount, mRatings, mDislike, mMinHistory, mColdStart, mRatingSource]),
+    countModified([mRefresh, mWatched, mRecency, mIdle, mMaxSeeds, mRecentCount, mFavourites, mOlder, mLookback, mRatings, mDislike, mMinHistory, mColdStart, mRatingSource]),
   );
 
   return (
@@ -321,7 +361,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
 
       <SettingsSection
         id="refresh"
-        modifiedCount={countModified([mRefresh, mWatched, mRecency, mIdle, mMaxSeeds, mRecentCount, mRatings, mDislike, mMinHistory, mColdStart, mRatingSource])}
+        modifiedCount={countModified([mRefresh, mWatched, mRecency, mIdle, mMaxSeeds, mRecentCount, mFavourites, mOlder, mLookback, mRatings, mDislike, mMinHistory, mColdStart, mRatingSource])}
         title="Refresh & variety" description="When a row changes, and how much of it may be familiar."
       >
         <SettingsPanel>
@@ -406,6 +446,47 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                   />
                   <span className="text-sm text-muted-foreground">watches</span>
                 </div>
+              </div>
+              <div id="history-mix" className="space-y-2 pt-2">
+                <p className="text-sm font-medium">
+                  {HISTORY_MIX_LABEL}
+                  <ModifiedBadge modified={mFavourites ?? mOlder} />
+                </p>
+                <p className="text-sm text-muted-foreground">{HISTORY_MIX_HELP}</p>
+                <ModifiedDefault modified={mFavourites ?? mOlder} name={HISTORY_MIX_LABEL} />
+                <HistoryMixField
+                  label=""
+                  value={{ favourites: favouriteCount, older: olderCount }}
+                  onChange={(mix) => {
+                    if (!mix) return;
+                    setFavouriteCount(mix.favourites);
+                    setOlderCount(mix.older);
+                  }}
+                  modeLine={mixModeLine(settings)}
+                />
+              </div>
+              <div className="space-y-1.5 pt-2">
+                <Label htmlFor="older-lookback">
+                  Older watches from
+                  <ModifiedBadge modified={mLookback} />
+                </Label>
+                <p className="text-sm text-muted-foreground">
+                  Narrow it if older history doesn&rsquo;t reflect someone any
+                  more. Favourites always count from any time.
+                </p>
+                <ModifiedDefault modified={mLookback} name="Older watches from" />
+                <select
+                  id="older-lookback"
+                  value={olderLookback}
+                  onChange={(e) => setOlderLookback(Number(e.target.value))}
+                  className="h-9 w-full max-w-md rounded-md border bg-background px-3 text-sm"
+                >
+                  {[0, 5, 3, 1].map((years) => (
+                    <option key={years} value={years}>
+                      {LOOKBACK_LABELS[years]}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
             {/* The switch and the line it draws stay in one block: "respect ratings" says nothing

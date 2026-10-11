@@ -64,6 +64,8 @@ export function toInput(collection: Collection): CollectionInput {
     requests_tag_pattern: collection.requests_tag_pattern ?? "",
     recency: collection.recency ?? null,
     recent_count: collection.recent_count ?? null,
+    favourite_count: collection.favourite_count ?? null,
+    older_count: collection.older_count ?? null,
     max_seeds: collection.max_seeds ?? null,
     max_runtime: collection.max_runtime ?? null,
     min_year: collection.min_year ?? null,
@@ -293,6 +295,15 @@ export function rowOverrides(
   ) {
     parts.push(
       `AI web search: ${collection.recent_count} ${collection.recent_count === 1 ? "watch" : "watches"}`,
+    );
+  }
+
+  if (
+    (collection.favourite_count ?? null) !== null ||
+    (collection.older_count ?? null) !== null
+  ) {
+    parts.push(
+      `History mix: ${collection.favourite_count ?? 0} favourites, ${collection.older_count ?? 0} older`,
     );
   }
 

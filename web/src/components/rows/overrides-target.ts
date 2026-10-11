@@ -20,6 +20,7 @@ const ORDER: Record<string, number> = {
   watched_pct: 20,
   recency: 30,
   recent_count: 40,
+  history_mix: 45,
   max_seeds: 50,
   idle_hold_days: 60,
   cold_start: 70,
@@ -28,4 +29,3 @@ const ORDER: Record<string, number> = {
 export function overrideOrder(setting: string): number {
   return ORDER[setting] ?? 100;
 }
-

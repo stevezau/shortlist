@@ -52,6 +52,8 @@ ROW_CASES = {
         "idle_hold_days": 21,
         "recency": 0.8,
         "recent_count": 6,
+        "favourite_count": 4,
+        "older_count": 5,
         "max_seeds": 17,
         "max_runtime": 130,
         "min_year": 1990,
@@ -105,6 +107,8 @@ NULL_FIELDS = {
     "idle_hold_days",
     "recency",
     "recent_count",
+    "favourite_count",
+    "older_count",
     "max_seeds",
     "max_runtime",
     "min_year",
@@ -171,7 +175,7 @@ def _assert_readback(wire, app, row_id, expected):
 def test_row_field_cases_cover_the_entire_advertised_writable_contract():
     covered = set(BASE) | {"name"} | set().union(*(set(case) for case in ROW_CASES.values()))
     assert covered == set(ROW_FIELD_DEFINITIONS)
-    assert len(covered) == 72
+    assert len(covered) == 74
     assert not {"id", "slug", "dry_run", "defer_rename", "poster_upload"} & covered
 
 

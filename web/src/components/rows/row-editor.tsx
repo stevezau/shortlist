@@ -635,6 +635,8 @@ export function RowEditor({
     "idle_hold_days",
     "watched_pct",
     "recent_count",
+    "favourite_count",
+    "older_count",
     "recency",
     "max_seeds",
     "cold_start",

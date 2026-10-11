@@ -112,6 +112,13 @@ Settings → Defaults → Refresh & variety has five more dials, each of which a
 - **Watches the AI web search looks up.** How many of each person's recent titles the AI web-search
   source looks up, one cached search each, taken off the front of the list above. This is the main
   cost lever on that source. Lower it to spend fewer tokens and web searches.
+- **How much of their history it searches from.** Recent watches are always included. The presets add
+  long-time favourites (films watched twice or more, shows finished or with 20+ episodes watched, anything
+  rated 4 stars or more) and older watches from across the years, so a row isn't built only from last week's
+  viewing. Recent only is the default and changes nothing. With the AI's own search the extra titles are
+  just added to what the AI is told; with Exa or SearXNG each one is one more search. **Older watches from**
+  narrows how far back the older ones reach. On a person's page, **Show this week's mix** lists exactly which
+  titles a row is using, and **Don't use** keeps one out of their picks from then on.
 
 ### If a watched title still gets recommended
 
@@ -146,6 +153,7 @@ Settings → Defaults → Refresh & variety sets what a row uses **unless the ro
 | **Recent releases**                                  | How much release date counts for this row — a “new and notable” shelf, or one that digs up older films |
 | **Row size**, **Audience**                           | How many titles, and who gets it                                                          |
 | **Watches the AI web search looks up**               | How many recent watches AI web search looks up for this row (shown only on rows using it) |
+| **How much of their history it searches from**       | How many long-time favourites and older watches AI web search adds (shown only on rows using it) |
 | **Request tag**                                      | The Radarr or Sonarr tag on titles requested for this row's audience                      |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can use AI web search alone

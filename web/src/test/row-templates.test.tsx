@@ -456,6 +456,17 @@ describe("what the row list says about a template's row", () => {
     );
   });
 
+  it("badges a row's own history mix, and nothing when it follows the server", async () => {
+    const { rowOverrides } = await import("@/lib/collections");
+    const own = rowOverrides(
+      { ...blankInput(), favourite_count: 6, older_count: 3 } as unknown as Parameters<typeof rowOverrides>[0],
+      null,
+    );
+    expect(own).toContain("History mix: 6 favourites, 3 older");
+    const inherit = rowOverrides(blankInput() as unknown as Parameters<typeof rowOverrides>[0], null);
+    expect(inherit.some((part) => part.startsWith("History mix"))).toBe(false);
+  });
+
   it("keeps the singular for a one-watch row", async () => {
     const { rowOverrides } = await import("@/lib/collections");
     const parts = rowOverrides(

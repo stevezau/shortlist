@@ -231,6 +231,10 @@ export type User = {
 /** GET /api/users/{id}/rows — one row this user gets, with their override and latest picks. */
 export type UserRow = Schemas["UserRowOut"];
 
+/** GET /api/users/{id}/history-mix — the titles one row's AI web search draws from a person this week. */
+export type HistoryMixOut = Schemas["HistoryMixOut"];
+export type HistoryMixItem = Schemas["HistoryMixItemOut"];
+
 /** PUT /api/users/{id}/rows/{collection_id} body. */
 export type RowOverridePatch = Schemas["RowOverridePatch"];
 
@@ -870,6 +874,9 @@ export interface TraceWebSearch {
   query: string;
   cached: boolean;
   returned: string[];
+  /** Which group of their history this search was for. Absent on runs recorded before the history mix,
+   *  which were all recent watches. */
+  kind?: "recent" | "favourite" | "older";
 }
 
 /** One title the AI proposed from the web search, resolved to a real TMDB id, tagged with whether it
@@ -890,6 +897,8 @@ export interface TraceWeb {
    *  only thing that says which of the two externals was used. */
   provider?: string;
   searches?: TraceWebSearch[];
+  /** How many picks the AI was asked for from each group; present only when it was asked to split them. */
+  shares?: { recent: number; favourite: number; older: number };
   rag_system?: string;
   rag_user?: string;
   proposed?: string[];

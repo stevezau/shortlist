@@ -548,8 +548,9 @@ def register_tools(server: MCPServer, state) -> None:
         (
             "Prepare a change for one explicit person: enablement, nickname, recommendation "
             "preferences, pause state, sharing management or up to 25 sparse per-person row overrides. "
-            "An override can set muted, row_size or recent_count; omit a field to preserve it and use null "
-            "for a numeric value to inherit the row default. Resolves every row affected by that person and "
+            "An override can set muted, row_size, recent_count, favourite_count or older_count; omit a field "
+            "to preserve it and use null for a numeric value to inherit the row default. "
+            "Resolves every row affected by that person and "
             "declares cleanup, rename, visibility and protective share-filter work. "
             "Personal history is never returned. Changing sharing management can affect privacy "
             "and requires the corresponding permission."

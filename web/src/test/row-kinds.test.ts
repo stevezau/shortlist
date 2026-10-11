@@ -404,6 +404,15 @@ describe("visibleSettings", () => {
     expect(visibleSettings(FIXTURES.popular, { ...CTX, globalSources: web }).has("recent_count")).toBe(false);
   });
 
+  it("shows the history mix exactly where Recent watches for AI web search shows", () => {
+    const web = ["tmdb_similar", "llm_web"];
+    expect(visibleSettings(row({ candidate_sources: web }), CTX).has("history_mix")).toBe(true);
+    expect(visibleSettings(row(), CTX).has("history_mix")).toBe(false);
+    expect(visibleSettings(FIXTURES.again, { ...CTX, globalSources: web }).has("history_mix")).toBe(true);
+    expect(visibleSettings(FIXTURES.popular, { ...CTX, globalSources: web }).has("history_mix")).toBe(false);
+    expect(visibleSettings(seasonal(row({ candidate_sources: web })), CTX).has("history_mix")).toBe(false);
+  });
+
   it("hides Recent watches for AI web search on a seasonal row, which the engine drops that source from", () => {
     const web = ["tmdb_similar", "llm_web"];
     expect(visibleSettings(seasonal(row({ candidate_sources: web })), CTX).has("recent_count")).toBe(false);

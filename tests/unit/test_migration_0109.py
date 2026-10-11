@@ -11,7 +11,7 @@ import pytest
 from alembic import command
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from sqlalchemy import text
+from sqlalchemy import delete, insert, text
 from sqlalchemy.orm import Session
 
 from shortlist.server.assistant.operation_models import AssistantChange, AssistantOperation
@@ -41,10 +41,12 @@ def _legacy(tmp_path):
 
 def _insert_row(engine, name):
     with Session(engine) as session:
-        row = Collection(slug=name, name=name, enabled=False)
-        session.add(row)
+        # A core insert: the ORM would also write columns a later migration adds, which this old schema lacks.
+        row_id = session.execute(
+            insert(Collection).values(slug=name, name=name, enabled=False).returning(Collection.id)
+        ).scalar_one()
         session.commit()
-        return row.id
+        return row_id
 
 
 @pytest.mark.parametrize(
@@ -147,10 +149,14 @@ def test_0109_preserves_existing_rows_indexes_and_foreign_keys_and_prevents_reus
     with disposing_engine(_legacy(tmp_path)) as engine:
         if not empty:
             with Session(engine) as session:
-                row = Collection(id=42, slug="preserved", name="Preserved", enabled=False, poster={"mode": "text"})
+                session.execute(
+                    insert(Collection).values(
+                        id=42, slug="preserved", name="Preserved", enabled=False, poster={"mode": "text"}
+                    )
+                )
                 user = User(id=12, plex_account_id=112, username="Person", slug="person")
                 theme = Theme(id=7, slug="saved-theme", name="Saved theme")
-                session.add_all([row, user, theme])
+                session.add_all([user, theme])
                 session.flush()
                 session.add_all(
                     [
@@ -207,7 +213,7 @@ def test_0109_preserves_existing_rows_indexes_and_foreign_keys_and_prevents_reus
             assert db.execute("PRAGMA foreign_key_check").fetchall() == []
         first = _insert_row(engine, "temporary")
         with Session(engine) as session:
-            session.delete(session.get(Collection, first))
+            session.execute(delete(Collection).where(Collection.id == first))
             session.commit()
         assert _insert_row(engine, "replacement") > first
 
@@ -236,10 +242,9 @@ def test_0109_preserves_a_preexisting_sequence_after_compatibility_downgrade(tmp
     with disposing_engine(_legacy(tmp_path)) as engine:
         command.upgrade(_alembic(tmp_path), "head")
         with Session(engine) as session:
-            row = Collection(id=2000, slug="retired-high-id", name="Retired")
-            session.add(row)
+            session.execute(insert(Collection).values(id=2000, slug="retired-high-id", name="Retired"))
             session.commit()
-            session.delete(row)
+            session.execute(delete(Collection).where(Collection.id == 2000))
             session.commit()
         command.downgrade(_alembic(tmp_path), "0108")
 

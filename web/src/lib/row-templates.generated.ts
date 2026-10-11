@@ -33,6 +33,8 @@ export function generatedRowInputDefaults(): CollectionInput {
   "idle_hold_days": null,
   "recency": null,
   "recent_count": null,
+  "favourite_count": null,
+  "older_count": null,
   "max_seeds": null,
   "max_runtime": null,
   "min_year": null,
