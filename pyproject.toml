@@ -43,7 +43,7 @@ dependencies = [
     "starlette>=0.37",
     "anyio>=4.0",
     "mcp==2.3.0",
-    "Authlib==1.8.0",
+    "Authlib==1.9.1",
     # The PMS notification socket (`watch_stream`). Already in the lock transitively via uvicorn's
     # standard extras, but declared here because we import it directly — a transitive dependency that
     # disappears when uvicorn changes its extras would break the only source of partial-watch data.
