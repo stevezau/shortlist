@@ -41,6 +41,13 @@ reviewer who rediscovers a finding checks the history before fixing it again.
   its own ratings). Cutting it means fewer per-item reloads in the engine (a product change, and it would speed
   real runs too) or a smaller fake library.
 
+**Run trace:**
+
+- #162 review leftover (LOW, display only): when `RowPolicy.library_groups` splits a `{top_seed}` row's
+  same-type libraries, the trace's seed list (`_record_history_trace`) still shows the widest seed set of any
+  UNSPLIT row. A split library's own seeds, including the watch it is named after, can be missing from it.
+  Fix: build the list from each row's `library_groups` specs (a union, not the widest single set).
+
 ---
 
 ## LEFT ON PURPOSE
