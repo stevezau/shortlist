@@ -12,6 +12,12 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 **Dependency advisories (build-time only, never in the image):**
 
 - `braces`: no patched release yet (latest is 3.0.3). Re-run `pnpm -C web audit` and bump when one ships.
+- The CI check "requirements.lock covers pyproject dependencies" (ci.yml lint job) compares package NAMES
+  only. Dependabot's pip PRs bump `pyproject.toml` alone, so a bumped pin is never locked: authlib 1.9.1 was
+  pinned while the image still installed 1.8.0, and CI tested 1.9.1 (its `pip install -e .[dev]` upgrades past
+  the lock). Found by the v1.12.2 release review; the lock was regenerated in that release. Fix: also fail when a
+  locked version does not satisfy the pyproject specifier (needs `packaging` in the lint job), or have
+  Dependabot update the lock.
 
 **Engine tuning:**
 
