@@ -22,9 +22,9 @@ baseurl: ""
 repo: https://github.com/stevezau/shortlist
 
 # Update both when a stable release is published; previews remain explicitly marked. The landing
-# page's status line renders them as "v1.12.1 · released 16 Oct 2026".
-stable_version: 1.12.1
-stable_released: 2026-10-16
+# page's status line renders them as "v1.12.2 · released 21 Oct 2026".
+stable_version: 1.12.2
+stable_released: 2026-10-21
 
 # GoatCounter site code (the part before .goatcounter.com). Empty means no analytics tag at all:
 # head.html emits the script only when this is set. The install include's Copy button also counts

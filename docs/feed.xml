@@ -5,8 +5,19 @@
   <link href="https://shortlistapp.dev/feed.xml" rel="self" type="application/atom+xml"/>
   <link href="https://shortlistapp.dev/" rel="alternate" type="text/html"/>
   <id>https://shortlistapp.dev/feed.xml</id>
-  <updated>2026-10-16T00:00:00Z</updated>
+  <updated>2026-10-21T00:00:00Z</updated>
   <author><name>Steven Adams</name></author>
+  <entry>
+    <title>Shortlist 1.12.2</title>
+    <link href="https://github.com/stevezau/shortlist/releases/tag/v1.12.2" rel="alternate" type="text/html"/>
+    <id>https://github.com/stevezau/shortlist/releases/tag/v1.12.2</id>
+    <updated>2026-10-21T00:00:00Z</updated>
+    <content type="text">### Fixed
+
+- **A row in two libraries of the same type no longer starves one of them** ([#162](https://github.com/stevezau/shortlist/issues/162)).
+  With a TV Shows and an Anime library, a row was built once from all of a person's show watches, and its suggestions were shared out afterwards. The library holding their newest watches took every suggestion, so the other got few or none and kept last night's titles. On a Because you watched row it also kept an old watch's name, while the busy library was named after a show it doesn't hold. Each library is now built from the watches it holds, with its own suggestions, and a Because you watched row is named after one of them. A library holding none of their watches is built from all their watches of its type. Two libraries of a type the row follows no watch of (someone who watches only shows, on a row with Movies and 4K Movies) also pick from their own suggestions, with the row's watches as before. The run page's list of watches a person's rows followed now includes each library's own. Rows in one movies library and one TV library are unchanged. A library that shares its type with another, and holds watches the row follows, searches on its own, so a row using AI web search makes one AI call for each of those libraries plus one for the rest of the row.
+- **An AI web search shared by two rows is no longer left out of a run's AI cost when the first row fails to use it.** The next row using it now records the cost.</content>
+  </entry>
   <entry>
     <title>Shortlist 1.12.1</title>
     <link href="https://github.com/stevezau/shortlist/releases/tag/v1.12.1" rel="alternate" type="text/html"/>
@@ -1720,52 +1731,5 @@ your rows are set to 0% already-watched, which is the default.
 
 - The documentation described a `recommendations.watched_show_pct` setting that has never existed.
   The finished threshold is fixed in the engine; the docs now say so.</content>
-  </entry>
-  <entry>
-    <title>Shortlist 1.1.0</title>
-    <link href="https://github.com/stevezau/shortlist/releases/tag/v1.1.0" rel="alternate" type="text/html"/>
-    <id>https://github.com/stevezau/shortlist/releases/tag/v1.1.0</id>
-    <updated>2026-08-05T00:00:00Z</updated>
-    <content type="text">A minor release: one new setting, four fixes reported by v1 users, and no breaking changes. An
-existing install upgrades in place and behaves exactly as it did until you change the new setting.
-
-### Added
-
-- **You can now choose what someone with too little watch history gets** ([#66](https://github.com/stevezau/shortlist/issues/66)).
-  Until now they always got a row of the server's highest-rated titles. That is still the default,
-  but **Settings → Finding titles → When someone hasn't watched enough** can now be set to
-  **Don't build their row** instead — no row is created, and any row they already have is removed,
-  so "skip" means gone rather than left to go stale. It comes back on its own the night they cross
-  the threshold.
-
-  **Any row can override this in its editor**, which is the point of having it per row. A
-  `{top_seed}` row ("Because you watched X") is the one worth skipping: it has no favourite to name
-  itself after, so for these people it quietly falls back to a plain title. A general "Picked for
-  you" row is perfectly happy holding popular titles in the meantime.
-
-- **Where that line sits is now yours to set.** **Enough watch history** (default 10 titles) was
-  fixed in the engine and unreachable; owners of small or new servers can lower it.
-
-### Fixed
-
-- **A run in progress no longer disagrees with itself about when it started**
-  ([#67](https://github.com/stevezau/shortlist/issues/67)). "Started 8m ago" sat beside a duration
-  of "10m 54s" — the two cells read the same timestamp against the same clock, but were evaluated at
-  different moments. They now share one.
-- **A first run no longer dies because the container started before its network did.** The one
-  plex.tv read whose failure aborts a whole run had about three seconds of retry, which is not
-  enough to outlast a slow network stack; it now gets about thirty. Every other read is unchanged,
-  and a run still fails loudly when plex.tv is genuinely gone.
-- **The Rows page now says why the admin's Collections tab lists everyone's rows.** The answer
-  existed but only covered the Recommended shelf, and only while that setting was on — an owner who
-  found the rows in Plex's Collections tab had nothing in front of them.
-- **The "How we picked" button no longer strands mid-header** on a person whose display name is long
-  enough to wrap the run card's header.
-
-### Changed
-
-- A muted row whose title depends on its picks (a `{top_seed}` row) is now genuinely removed from
-  Plex. It could not be matched by title, so it survived every run — private, but never actually
-  gone. Muting has always meant "gone"; now it is.</content>
   </entry>
 </feed>

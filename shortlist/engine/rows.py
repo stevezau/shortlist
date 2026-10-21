@@ -11,6 +11,7 @@ import copy
 import hashlib
 import time
 import zlib
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -1350,6 +1351,17 @@ class _Gathered:
     trace_at_gather: dict = field(default_factory=dict)
     paid: bool = False
 
+    def within(self, library_index: dict[MediaType, dict[int, int]]) -> _Gathered:
+        """This gather narrowed to the titles ``library_index`` holds, for a library ranking its row's gather."""
+        held: list[Candidate] = []
+        elsewhere: list[tuple[Candidate, str]] = []
+        for c in self.in_library:
+            if c.tmdb_id in library_index.get(c.media_type, {}):
+                held.append(c)
+            else:
+                elsewhere.append((c, "not_in_your_libraries"))
+        return replace(self, in_library=held, dropped=[*self.dropped, *elsewhere])
+
     def stats_for_ranking(self) -> candidates_mod.GatherStats:
         """The stats the next ranking of this gather writes to: the real ones the first time, which carry the
         AI cost, and a free copy every time after, so a shared gather is billed once."""
@@ -1669,6 +1681,20 @@ def _record_cold_start_trace(report: UserRunReport, picks: list[Pick]) -> None:
 _TRACE_HISTORY_SAMPLE = 40  # most recent watches to record in the trace (display only — full count is in counts)
 
 
+def _seeds_fed(specs: list[RowSpec], seeds_for: Callable[[RowSpec], list]) -> list:
+    """Every watch that seeds one of ``specs``, once each: the widest spec's first, so its weights are the ones
+    shown. A union, not the widest single set: a library split off its row (`RowPolicy.library_groups`) follows
+    its own watches, which the row's own seeds can leave out."""
+    seen: set[tuple[int | None, MediaType]] = set()
+    fed = []
+    for spec_seeds in sorted((seeds_for(spec) for spec in specs), key=len, reverse=True):
+        for seed in spec_seeds:
+            if (seed.tmdb_id, seed.media_type) not in seen:
+                seen.add((seed.tmdb_id, seed.media_type))
+                fed.append(seed)
+    return fed
+
+
 def _record_history_trace(
     report: UserRunReport,
     history: list,
@@ -1681,7 +1707,7 @@ def _record_history_trace(
     ratings: RatingsPolicy | None = None,
 ) -> None:
     """File the history/seeds/watched stage of the trace: the most recent watches, the seeds derived
-    from them (the widest set any row uses), and a watched summary. Display only.
+    from them (every one that seeds any of ``specs``, `_seeds_fed`), and a watched summary. Display only.
 
     ``library_of_watch``/``library_of_seed`` resolve each item to its Plex library's display name so
     the UI can group by real library — a server can have several movie or TV libraries with custom
@@ -1710,7 +1736,7 @@ def _record_history_trace(
     """
     recent = sorted(history, key=lambda i: i.watched_at, reverse=True)[:_TRACE_HISTORY_SAMPLE]
     disliked = ratings.blocked if ratings else set()
-    seeds = max((seeds_for(spec) for spec in specs), key=len, default=[])
+    seeds = _seeds_fed(specs, seeds_for)
     # True per-library watched totals over the FULL history — NOT the recent sample. The sample is
     # time-ordered and capped, so a heavy-TV watcher's Movies tab would sample only a handful of recent
     # movies; and a per-MEDIA total can't tell two same-type libraries apart (a "Movies" and a "4K
@@ -2238,6 +2264,15 @@ class RowPolicy:
     # server where every row inherits the global, which is the default shape.
     recency_cuts: dict[tuple, list[Candidate]] = field(default_factory=dict)
     pool_failures: dict[tuple, str] = field(default_factory=dict)  # pool key -> why every source for it failed
+    # (row slug, library key) -> library title, for each library `library_groups` split off its row.
+    split_libraries: dict[tuple[str, str], str] = field(default_factory=dict)
+    # (row slug, library key) -> that split library's seed budget. Kept out of the spec's `max_seeds`, which
+    # `row_recipe` reads: the share moves as the person watches, and must not read as a settings change.
+    split_budgets: dict[tuple[str, str], int] = field(default_factory=dict)
+    # (row slug, library key) -> the row a split library came from (`row_of`).
+    split_parents: dict[tuple[str, str], RowSpec] = field(default_factory=dict)
+    # (row slug, library key) for each split library of a type the row has no seed of (`borrows_row_watches`).
+    split_borrowed: set[tuple[str, str]] = field(default_factory=set)
     seed_cache: dict[tuple, list] = field(default_factory=dict)
     # (wide, media, libraries, favourites, older) -> the taste text and the titles to search, for `taste_for`.
     taste_cache: dict[tuple, HistoryMix] = field(default_factory=dict)
@@ -2564,12 +2599,14 @@ class RowPolicy:
         they would share one entry and land on the same watch, which is the opposite of what someone
         turning this on asked for. A non-cycling row keys exactly as it always did (window 1, offset
         0), so the common case still shares one derivation across rows."""
+        if self.borrows_row_watches(spec):
+            return self.seeds_for(self.row_of(spec))
         window = effective_seed_window(spec)
         offset = seed_cycle_offset(spec.slug, self.user.slug, self.ctx.run_day) if window > 1 else 0
         key = (
             spec.media,
             tuple(sorted(str(k) for k in spec.library_keys)),
-            effective_max_seeds(spec, self.cfg),
+            self.seed_budget(spec),
             window,
             offset,
         )
@@ -2578,7 +2615,7 @@ class RowPolicy:
             self.seed_cache[key] = derive_seeds(
                 relevant,
                 self.resolve,
-                max_seeds=effective_max_seeds(spec, self.cfg),
+                max_seeds=self.seed_budget(spec),
                 blocked=self.user.blocked_seeds,
                 window=window,
                 cycle_offset=offset,
@@ -2613,6 +2650,8 @@ class RowPolicy:
         ratings verdict. Memoised per (mode, media, libraries, counts), the only things it depends on. The
         older sample rotates by the week, so one run's rows agree and next week's differ.
         """
+        if self.borrows_row_watches(spec):
+            return self.taste_for(self.row_of(spec))
         wide = self.uses_wide_taste(spec)
         if not wide and "llm_web" not in self.effective_sources(spec):
             return HistoryMix(None, [], [])
@@ -2721,6 +2760,68 @@ class RowPolicy:
         """
         return (self.pool_key(spec), spec.limits().fingerprint())
 
+    def library_groups(self, spec: RowSpec, targets: list) -> list[tuple[RowSpec, list]]:
+        """How this row is picked: each spec it is picked from, with the libraries that spec fills.
+
+        A Plex collection lives in one library, so each library's copy of a row is its own row and is built from
+        that library: its watches and its own pre-rank cut (issue #162). Picked as one, two show libraries
+        shared the row's seeds and one cut per MEDIA type, so the library holding the fresher watches took every
+        place: TV Shows got no candidates and carried last night's row forward (under an old watch's name, on a
+        `{top_seed}` row, while Anime was named after a show in TV Shows). So each library that shares its media
+        type with another of the row's libraries is split off. It seeds from its own watches (from all of them
+        when it holds none, as `_history_for_row` does for any row) and gets its own gather and cut.
+
+        Its seed budget (`seed_budget`) is its media type's share of the row's, so a movies-and-TV row set to
+        one film and one show still follows one watch in each library. A library alone in its type stays with
+        the row: films seed films and shows seed shows, so it is already built from its own watches and its own
+        cut, and splitting it would only pay for a second gather (a second AI web search, on a row using one).
+        A type the row has no seed of (no watches of it, all of them "Don't seed" or disliked, or the other type
+        on a one-watch row) is split too, since its libraries would still share one cut, but each searches with
+        the row's own seeds and taste (`borrows_row_watches`): it has none of its own to follow. An AI row is
+        left whole: its libraries are what its theme covers, not its seeds.
+        """
+        if spec.theme is not None:
+            return [(spec, targets)]
+        libraries_of = Counter(section_kind(section) for section in targets)
+        split = [s for s in targets if libraries_of[section_kind(s)] > 1]
+        if not split:
+            return [(spec, targets)]
+        share = Counter(seed.media_type for seed in self.seeds_for(spec))
+        rest = [s for s in targets if s not in split]
+        groups: list[tuple[RowSpec, list]] = [(spec, rest)] if rest else []
+        for s in split:
+            key, kind = (spec.slug, str(s.key)), section_kind(s)
+            self.split_libraries[key] = getattr(s, "title", "") or str(s.key)
+            self.split_parents[key] = spec
+            if share[kind]:
+                self.split_budgets[key] = share[kind]
+                # Its own media type too: a library holds one type, so a library holding none of their watches
+                # falls back to their watches of THAT type, not to the shows a movies-and-TV row also covers.
+                groups.append((replace(spec, library_keys=[key[1]], media=kind.value), [s]))
+            else:
+                self.split_borrowed.add(key)
+                groups.append((replace(spec, library_keys=[key[1]]), [s]))
+        return groups
+
+    def borrows_row_watches(self, spec: RowSpec) -> bool:
+        """Whether ``spec`` is a split library of a type its row has no seed of (`library_groups`). It searches
+        with the row's seeds and taste, exactly as it did picked with the row; only its cut is its own."""
+        return len(spec.library_keys) == 1 and (spec.slug, spec.library_keys[0]) in self.split_borrowed
+
+    def row_of(self, spec: RowSpec) -> RowSpec:
+        """The row as the owner configured it: a split library's parent (`library_groups`), else ``spec`` itself."""
+        if len(spec.library_keys) == 1:
+            return self.split_parents.get((spec.slug, spec.library_keys[0]), spec)
+        return spec
+
+    def seed_budget(self, spec: RowSpec) -> int:
+        """How many watches seed this spec: a split library's share (`library_groups`), else the row's budget."""
+        if len(spec.library_keys) == 1:
+            budget = self.split_budgets.get((spec.slug, spec.library_keys[0]))
+            if budget is not None:
+                return budget
+        return effective_max_seeds(spec, self.cfg)
+
     def pools_for(self, spec: RowSpec) -> Pool | None:
         """This row's pool, or None when every source it uses is down.
 
@@ -2728,7 +2829,10 @@ class RowPolicy:
         must not take the person's other rows down with it — those rows have working sources and a
         row they can still fill.
         """
-        gather_key = self.pool_key(spec)
+        # A split library with no seed of its own searches exactly as its row does (`borrows_row_watches`), so it
+        # ranks the row's gather, narrowed to its library, rather than paying for the same AI web search again.
+        gather_spec = self.row_of(spec) if self.borrows_row_watches(spec) else spec
+        gather_key = self.pool_key(gather_spec)
         key = self.pool_slot(spec)
         if gather_key in self.pool_failures or key in self.pool_failures:
             return None
@@ -2751,7 +2855,7 @@ class RowPolicy:
                     self.gathers[gather_key] = _gather_pool(
                         self.ctx,
                         self.seeds_for(spec),
-                        row_library_index(self.ctx, spec, self.library_index),
+                        row_library_index(self.ctx, gather_spec, self.library_index),
                         excluded_genres=self.user.excluded_genres,
                         profile=self.user,
                         sources=list(gather_key[0]),
@@ -2774,7 +2878,11 @@ class RowPolicy:
                 self.pool_failures[gather_key] = f"{type(e).__name__}: {e}"
                 logger.warning("{}: row '{}' has no working candidate source ({})", self.user.username, spec.slug, e)
                 return None
-            gathered = self.gathers[gather_key]
+            shared = gathered = self.gathers[gather_key]
+            # Taken from the gather itself, not a narrowed copy, so the gather is still billed once.
+            ranking_stats = shared.stats_for_ranking()
+            if gather_spec is not spec:
+                gathered = shared.within(row_library_index(self.ctx, spec, self.library_index))
             try:
                 self.pool_cache[key], gather_stats = _rank_pool(
                     self.ctx,
@@ -2786,11 +2894,14 @@ class RowPolicy:
                     # overrides it re-cuts the cached `in_library` in `cut_at_recency`.
                     recency=self.cfg.recency,
                     limits=limits,
-                    gather_stats=gathered.stats_for_ranking(),
+                    gather_stats=ranking_stats,
                     who=f"{self.user.username}/{spec.slug}",
                     named=_named_titles(spec),
                 )
             except Exception as e:
+                if ranking_stats is shared.stats:
+                    # Nothing recorded the gather's cost, so the next row ranking it must.
+                    shared.paid = False
                 self.pool_failures[key] = f"{type(e).__name__}: {e}"
                 logger.warning("{}: row '{}' has no working candidate source ({})", self.user.username, spec.slug, e)
                 return None
@@ -2806,6 +2917,9 @@ class RowPolicy:
             pool_label = f"{spec.media} · {', '.join(gather_key[0])}"
             if any(len(self.seeds_for(other)) != seed_n for other in self.gathered_specs()):
                 pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
+            if len(spec.library_keys) == 1 and (spec.slug, spec.library_keys[0]) in self.split_libraries:
+                # Two libraries of one type split off a row gather separately, under otherwise identical labels.
+                pool_label += f" · {self.split_libraries[(spec.slug, spec.library_keys[0])]}"
             if not guidance.is_builtin:
                 pool_label += " · own AI instructions"
             if limits.active:
@@ -2922,11 +3036,16 @@ def _warm_start(
 
     Raises when EVERY row's sources are down — that is a failed user, not a quiet "ok".
     """
-    ctx, user, specs, report = policy.ctx, policy.user, policy.gathered_specs(), policy.report
-    # Reported as the widest seed set any of this person's rows uses — the "both media, every
-    # library" case when they have one, so the number still means "how much of their history fed
+    ctx, user, report = policy.ctx, policy.user, policy.report
+    # Each library a row is split into is picked from its own spec (`library_groups`).
+    specs = [
+        library_spec
+        for spec in policy.gathered_specs()
+        for library_spec, _ in policy.library_groups(spec, target_sections(ctx.delivery_sections, spec))
+    ]
+    # Every watch that seeds one of tonight's rows, so the number means "how much of their history fed
     # tonight's rows" rather than one arbitrary row's slice.
-    report.counts.seeds = max((len(policy.seeds_for(spec)) for spec in specs), default=0)
+    report.counts.seeds = len(_seeds_fed(specs, policy.seeds_for))
     # The finished-title set, derived once: read by pools_for (0% hard-exclude) and the per-row
     # watched cap (>0). Must land BEFORE the first pool is built.
     policy.mark_finished_titles()
@@ -2985,8 +3104,9 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         if spec.theme is not None:
             # An AI row (#138) is library-only: titles it names that the server lacks are never requested.
             continue
-        pools = policy.pools_for(spec)
-        if pools is None:
+        groups = policy.library_groups(spec, target_sections(ctx.delivery_sections, spec))
+        gathers = [pools[0] for s, _ in groups if (pools := policy.pools_for(s)) is not None]
+        if not gathers:
             continue
         # The row's own name (the same one the user sees), so the inbox can say WHICH row a
         # request came from. Fill the placeholders the template may carry.
@@ -3003,7 +3123,7 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         row_tags = title_tags.setdefault(spec.slug, {})
         row_why = title_why.setdefault(spec.slug, {})
         limits = spec.limits()
-        missing = requests_mod.collect_missing(pools[0], policy.library_index)
+        missing = [c for gathered in gathers for c in requests_mod.collect_missing(gathered, policy.library_index)]
         if limits.active:
             # A title the row's limits would never show is not this row's to ask for. Year and rating only:
             # runtime needs a TMDB lookup per title, and a missing title is not worth one.
@@ -3038,7 +3158,8 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
                 row_slug=spec.slug,
             )
             why = row_why.setdefault(key, [])
-            if entry not in why:
+            # Once per row: a row split by library gathers once per library, and each can surface the title.
+            if not any(w.row_slug == entry.row_slug for w in why):
                 why.append(entry)
     # `demand` is the run-wide shared map; the per-user tally above is local, so only this
     # merge needs the lock (Stage 3 parallel runs).
@@ -3430,7 +3551,9 @@ def _warm_section_picks(
     if seen is not None:
         sub = [c for c in sub if sec_idx[c.tmdb_id] in seen]
         prior_valid = [p for p in prior_valid if sec_idx[p.tmdb_id] in seen]
-    recipe = row_recipe(policy, spec)
+    # The ROW's settings, not the split spec's: whether a library is split off tonight follows which types of
+    # watch seed the row, so a library moving in or out of the split must not read as the owner changing one.
+    recipe = row_recipe(policy, policy.row_of(spec))
     was = ctx.previous_recipes.get((user.slug, spec.slug, str(section.key)), "")
     recipe_changed = bool(was) and was != recipe
     # `due` is what the CADENCE says; `refresh` is what we actually do. They differ only when the
@@ -4132,32 +4255,52 @@ def _row_section_picks(
                 _forget(user_report, spec, removed_in)
         if not any(section_picks.values()):
             return None
-    else:
-        pool_for_row: list[Candidate] = []
-        taste: set[tuple[int, MediaType]] = set()
-        if not cold:
-            # This row's own pool: its sources, its media and its libraries — already narrowed to
-            # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
-            # candidates it could never show.
-            pools = policy.pools_for(spec)
-            if pools is None:
-                return None  # every source this row uses is down; its siblings still deliver
-            gathered, in_library, pool_for_row = pools
-            taste = {(c.tmdb_id, c.media_type) for c in gathered} if spec.rewatch else set()
-            # A row that overrides the server's release-date weight needs its OWN truncation, not
-            # just its own ordering: the cut decides which candidates a row may select from at all,
-            # so re-ordering what the global's cut left would cap the setting at whatever survived
-            # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
-            # another gather. A row that inherits reuses the pool's cut untouched.
-            recency = policy.effective_recency(spec)
-            if recency != ctx.config.recency:
-                pool_for_row = policy.cut_at_recency(spec, in_library, recency)
-            row_label = _row_log_name(spec)
-            _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
-        section_picks = _build_section_picks(
-            policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
-        )
-    return section_picks
+        return section_picks
+    groups = [(spec, targets)] if cold else policy.library_groups(spec, targets)
+    built = [
+        _pooled_section_picks(policy, group_spec, sections, k, cold=cold, base_cold=base_cold)
+        for group_spec, sections in groups
+    ]
+    if all(picks is None for picks in built):
+        return None
+    return {key: picks for section_picks in built if section_picks for key, picks in section_picks.items()}
+
+
+def _pooled_section_picks(
+    policy: RowPolicy,
+    spec: RowSpec,
+    targets: list,
+    k: int,
+    *,
+    cold: bool,
+    base_cold: list[Pick],
+) -> dict[str, list[Pick]] | None:
+    """The picks for each of ``targets`` from this row's own pool, or None when every source it uses is down."""
+    ctx, user = policy.ctx, policy.user
+    pool_for_row: list[Candidate] = []
+    taste: set[tuple[int, MediaType]] = set()
+    if not cold:
+        # This row's own pool: its sources, its media and its libraries — already narrowed to
+        # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
+        # candidates it could never show.
+        pools = policy.pools_for(spec)
+        if pools is None:
+            return None  # every source this row uses is down; its siblings still deliver
+        gathered, in_library, pool_for_row = pools
+        taste = {(c.tmdb_id, c.media_type) for c in gathered} if spec.rewatch else set()
+        # A row that overrides the server's release-date weight needs its OWN truncation, not
+        # just its own ordering: the cut decides which candidates a row may select from at all,
+        # so re-ordering what the global's cut left would cap the setting at whatever survived
+        # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
+        # another gather. A row that inherits reuses the pool's cut untouched.
+        recency = policy.effective_recency(spec)
+        if recency != ctx.config.recency:
+            pool_for_row = policy.cut_at_recency(spec, in_library, recency)
+        row_label = _row_log_name(spec)
+        _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
+    return _build_section_picks(
+        policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
+    )
 
 
 def _stamp_row_picks(

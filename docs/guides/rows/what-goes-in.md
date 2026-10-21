@@ -2,7 +2,7 @@
 title: "How a Plex recommendation row is filled"
 description: How Because you watched and Watch it again rows choose their titles, what people with too little watch history get, and the orders a row's titles can appear in.
 heading: How a row is filled
-updated: 2026-10-04
+updated: 2026-10-21
 ---
 
 Every pick in a row carries the watch that earned it. Because you watched rows follow one recent
@@ -96,6 +96,19 @@ make sense for new suggestions don't apply here and don't show: **Already-watche
 point of this kind is titles they HAVE watched) and **Only series they haven't started** (the opposite
 of a rewatch row). A fill-up title can still be requested if your library doesn't have it — see
 [Requests on a row](../requests.md#requests-on-a-row).
+
+## A row in more than one library
+
+A row appears as one collection in each library it builds in, and each library's collection is built
+from that library. With two libraries of the same type, such as TV Shows and Anime, or Movies and 4K
+Movies, each one is built from the watches it holds and picks from its own suggestions. One library
+can't use up the other's suggestions, and on a Because you watched row each is named after a watch it
+holds. A library holding none of that person's watches is built from all their watches of its type.
+Two libraries of a type the row follows none of their watches in, such as Movies and 4K Movies for
+someone who only watches shows, still pick from their own suggestions.
+
+A Movies library and a TV library are built the same way they always were: films lead to films and
+shows to shows, so each already follows its own watches.
 
 ## People without enough watch history
 

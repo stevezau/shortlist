@@ -193,6 +193,10 @@ In a row covering Movies and TV, each library is named after its own watch: the 
 film, the TV row after a show. A library borrows the other's name only when the row has no watch of
 its type to follow.
 
+With two libraries of the same type, such as TV Shows and Anime, each is named after a watch it holds:
+the TV Shows row after a show in TV Shows, the Anime row after one in Anime. See
+[A row in more than one library](rows/what-goes-in.md#a-row-in-more-than-one-library).
+
 If a `{top_seed}` row is built for someone with too little history to have a favourite at all, it
 falls back to a clean default ("✨ Picked for You") rather than a half-finished sentence — or you can
 have the row not appear for them; see

@@ -6,6 +6,14 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-10-21
+
+### Fixed
+
+- **A row in two libraries of the same type no longer starves one of them** ([#162](https://github.com/stevezau/shortlist/issues/162)).
+  With a TV Shows and an Anime library, a row was built once from all of a person's show watches, and its suggestions were shared out afterwards. The library holding their newest watches took every suggestion, so the other got few or none and kept last night's titles. On a Because you watched row it also kept an old watch's name, while the busy library was named after a show it doesn't hold. Each library is now built from the watches it holds, with its own suggestions, and a Because you watched row is named after one of them. A library holding none of their watches is built from all their watches of its type. Two libraries of a type the row follows no watch of (someone who watches only shows, on a row with Movies and 4K Movies) also pick from their own suggestions, with the row's watches as before. The run page's list of watches a person's rows followed now includes each library's own. Rows in one movies library and one TV library are unchanged. A library that shares its type with another, and holds watches the row follows, searches on its own, so a row using AI web search makes one AI call for each of those libraries plus one for the rest of the row.
+- **An AI web search shared by two rows is no longer left out of a run's AI cost when the first row fails to use it.** The next row using it now records the cost.
+
 ## [1.12.1] - 2026-10-16
 
 ### Fixed

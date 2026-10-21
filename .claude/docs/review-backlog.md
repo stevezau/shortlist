@@ -12,6 +12,12 @@ reviewer who rediscovers a finding checks the history before fixing it again.
 **Dependency advisories (build-time only, never in the image):**
 
 - `braces`: no patched release yet (latest is 3.0.3). Re-run `pnpm -C web audit` and bump when one ships.
+- The CI check "requirements.lock covers pyproject dependencies" (ci.yml lint job) compares package NAMES
+  only. Dependabot's pip PRs bump `pyproject.toml` alone, so a bumped pin is never locked: authlib 1.9.1 was
+  pinned while the image still installed 1.8.0, and CI tested 1.9.1 (its `pip install -e .[dev]` upgrades past
+  the lock). Found by the v1.12.2 release review; the lock was regenerated in that release. Fix: also fail when a
+  locked version does not satisfy the pyproject specifier (needs `packaging` in the lint job), or have
+  Dependabot update the lock.
 
 **Engine tuning:**
 
@@ -134,6 +140,19 @@ the first run after the upgrade, not from the row's whole history.
 ## CLOSED — the record
 
 Everything below is fixed, resolved or not a bug. Newest first, then older audits.
+
+---
+
+## CLOSED 2026-10-21 — #162 review leftovers
+
+- The trace's seed list (and `counts.seeds`) showed the widest seed set of any unsplit row, so a split
+  library's own seeds could be missing. Both are now the union over every library's spec (`_seeds_fed`).
+- `library_groups` left a type the row has no seed of unsplit, so two same-type libraries shared one cut again.
+  They are split too, and each ranks its own cut of the row's gather (`RowPolicy.borrows_row_watches`,
+  `_Gathered.within`): same seeds and taste as before, and no extra AI search. The Architecture Review's MED
+  (each re-paying the row's AI search) and its `pool_key` taste LOW are moot for that reason.
+- Found re-reviewing that: a shared gather whose first ranking raised was never billed (`paid` was already
+  set). `pools_for` now clears `paid` when the ranking that took the real stats fails.
 
 ---
 
