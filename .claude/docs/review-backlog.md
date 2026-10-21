@@ -47,6 +47,11 @@ reviewer who rediscovers a finding checks the history before fixing it again.
   same-type libraries, the trace's seed list (`_record_history_trace`) still shows the widest seed set of any
   UNSPLIT row. A split library's own seeds, including the watch it is named after, can be missing from it.
   Fix: build the list from each row's `library_groups` specs (a union, not the widest single set).
+- #162 review leftover (LOW, quality): `library_groups` leaves a media type UNSPLIT when the row has no seed
+  of it (no watches of that type, all blocked or disliked, or the other type on a `max_seeds=1` row). Its
+  candidates then come only from seedless AI web search, and two same-type libraries share one cut again, so the
+  one whose titles the search favours less can starve. Pre-existing shape, not widened by the split. Splitting it
+  anyway costs another gather per library.
 
 ---
 

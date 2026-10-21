@@ -2244,6 +2244,8 @@ class RowPolicy:
     # (row slug, library key) -> that split library's seed budget. Kept out of the spec's `max_seeds`, which
     # `row_recipe` reads: the share moves as the person watches, and must not read as a settings change.
     split_budgets: dict[tuple[str, str], int] = field(default_factory=dict)
+    # (row slug, library key) -> the row a split library came from (`row_of`).
+    split_parents: dict[tuple[str, str], RowSpec] = field(default_factory=dict)
     seed_cache: dict[tuple, list] = field(default_factory=dict)
     # (wide, media, libraries, favourites, older) -> the taste text and the titles to search, for `taste_for`.
     taste_cache: dict[tuple, HistoryMix] = field(default_factory=dict)
@@ -2730,20 +2732,22 @@ class RowPolicy:
     def library_groups(self, spec: RowSpec, targets: list) -> list[tuple[RowSpec, list]]:
         """How this row is picked: each spec it is picked from, with the libraries that spec fills.
 
-        Normally the row itself, filling all of ``targets``. A row named after a watch splits off each library
-        that shares its media type with another of its libraries (issue #162): picked as one, two show
-        libraries shared the row's seeds and one pre-rank cut per MEDIA type, so the library holding the
-        fresher watches took every place. TV Shows got no candidates and carried last night's row forward
-        under an old watch's name, while Anime was named after a show in TV Shows. Split off, a library seeds
-        from its own watches (from all of them when it holds none, as `_history_for_row` does for any row) and
-        gets its own cut.
+        A Plex collection lives in one library, so each library's copy of a row is its own row and is built from
+        that library: its watches and its own pre-rank cut (issue #162). Picked as one, two show libraries
+        shared the row's seeds and one cut per MEDIA type, so the library holding the fresher watches took every
+        place: TV Shows got no candidates and carried last night's row forward (under an old watch's name, on a
+        `{top_seed}` row, while Anime was named after a show in TV Shows). So each library that shares its media
+        type with another of the row's libraries is split off. It seeds from its own watches (from all of them
+        when it holds none, as `_history_for_row` does for any row) and gets its own gather and cut.
 
         Its seed budget (`seed_budget`) is its media type's share of the row's, so a movies-and-TV row set to
-        one film and one show still follows one watch in each library. A library alone in its type is already
-        picked from its own seeds and cut, so it stays with the row, as does a type the row has no seed of. An
-        AI row is left whole: its libraries are what its theme covers, not its seeds.
+        one film and one show still follows one watch in each library. A library alone in its type stays with
+        the row: films seed films and shows seed shows, so it is already built from its own watches and its own
+        cut, and splitting it would only pay for a second gather (a second AI web search, on a row using one).
+        So does a type the row has no seed of. An AI row is left whole: its libraries are what its theme covers,
+        not its seeds.
         """
-        if spec.theme is not None or not _names_a_seed(spec, self.user, self.cfg):
+        if spec.theme is not None:
             return [(spec, targets)]
         libraries_of = Counter(section_kind(section) for section in targets)
         share = Counter(seed.media_type for seed in self.seeds_for(spec))
@@ -2754,7 +2758,18 @@ class RowPolicy:
         for s in split:
             self.split_libraries[(spec.slug, str(s.key))] = getattr(s, "title", "") or str(s.key)
             self.split_budgets[(spec.slug, str(s.key))] = share[section_kind(s)]
-        return ([(spec, rest)] if rest else []) + [(replace(spec, library_keys=[str(s.key)]), [s]) for s in split]
+            self.split_parents[(spec.slug, str(s.key))] = spec
+        # Its own media type too: a library holds one type, so a library holding none of their watches falls back
+        # to their watches of THAT type, not to the shows a movies-and-TV row also covers.
+        return ([(spec, rest)] if rest else []) + [
+            (replace(spec, library_keys=[str(s.key)], media=section_kind(s).value), [s]) for s in split
+        ]
+
+    def row_of(self, spec: RowSpec) -> RowSpec:
+        """The row as the owner configured it: a split library's parent (`library_groups`), else ``spec`` itself."""
+        if len(spec.library_keys) == 1:
+            return self.split_parents.get((spec.slug, spec.library_keys[0]), spec)
+        return spec
 
     def seed_budget(self, spec: RowSpec) -> int:
         """How many watches seed this spec: a split library's share (`library_groups`), else the row's budget."""
@@ -3479,7 +3494,9 @@ def _warm_section_picks(
     if seen is not None:
         sub = [c for c in sub if sec_idx[c.tmdb_id] in seen]
         prior_valid = [p for p in prior_valid if sec_idx[p.tmdb_id] in seen]
-    recipe = row_recipe(policy, spec)
+    # The ROW's settings, not the split spec's: whether a library is split off tonight follows which types of
+    # watch seed the row, so a library moving in or out of the split must not read as the owner changing one.
+    recipe = row_recipe(policy, policy.row_of(spec))
     was = ctx.previous_recipes.get((user.slug, spec.slug, str(section.key)), "")
     recipe_changed = bool(was) and was != recipe
     # `due` is what the CADENCE says; `refresh` is what we actually do. They differ only when the

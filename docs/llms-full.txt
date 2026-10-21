@@ -1121,10 +1121,9 @@ In a row covering Movies and TV, each library is named after its own watch: the 
 film, the TV row after a show. A library borrows the other's name only when the row has no watch of
 its type to follow.
 
-With two libraries of the same type, such as TV Shows and Anime, each is built from, and named after,
-the watches it holds: the TV Shows row after a show in TV Shows, the Anime row after one in Anime. Each
-follows as many watches as the row gives that type. A library holding none of that person's watches
-is built from all the watches the row covers instead.
+With two libraries of the same type, such as TV Shows and Anime, each is named after a watch it holds:
+the TV Shows row after a show in TV Shows, the Anime row after one in Anime. See
+[A row in more than one library](https://shortlistapp.dev/guides/rows/what-goes-in/#a-row-in-more-than-one-library).
 
 If a `{top_seed}` row is built for someone with too little history to have a favourite at all, it
 falls back to a clean default ("✨ Picked for You") rather than a half-finished sentence — or you can
@@ -1248,6 +1247,17 @@ make sense for new suggestions don't apply here and don't show: **Already-watche
 point of this kind is titles they HAVE watched) and **Only series they haven't started** (the opposite
 of a rewatch row). A fill-up title can still be requested if your library doesn't have it — see
 [Requests on a row](https://shortlistapp.dev/guides/requests/#requests-on-a-row).
+
+## A row in more than one library
+
+A row appears as one collection in each library it builds in, and each library's collection is built
+from that library. With two libraries of the same type, such as TV Shows and Anime, or Movies and 4K
+Movies, each one is built from the watches it holds and picks from its own suggestions. One library
+can't use up the other's suggestions, and on a Because you watched row each is named after a watch it
+holds. A library holding none of that person's watches is built from all their watches of its type.
+
+A Movies library and a TV library are built the same way they always were: films lead to films and
+shows to shows, so each already follows its own watches.
 
 ## People without enough watch history
 
