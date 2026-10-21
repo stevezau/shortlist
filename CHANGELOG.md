@@ -6,6 +6,8 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.12.2] - 2026-10-21
+
 ### Fixed
 
 - **A row in two libraries of the same type no longer starves one of them** ([#162](https://github.com/stevezau/shortlist/issues/162)).
