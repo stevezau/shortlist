@@ -11,6 +11,7 @@ import copy
 import hashlib
 import time
 import zlib
+from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -2238,6 +2239,11 @@ class RowPolicy:
     # server where every row inherits the global, which is the default shape.
     recency_cuts: dict[tuple, list[Candidate]] = field(default_factory=dict)
     pool_failures: dict[tuple, str] = field(default_factory=dict)  # pool key -> why every source for it failed
+    # (row slug, library key) -> library title, for each library `library_groups` split off its row.
+    split_libraries: dict[tuple[str, str], str] = field(default_factory=dict)
+    # (row slug, library key) -> that split library's seed budget. Kept out of the spec's `max_seeds`, which
+    # `row_recipe` reads: the share moves as the person watches, and must not read as a settings change.
+    split_budgets: dict[tuple[str, str], int] = field(default_factory=dict)
     seed_cache: dict[tuple, list] = field(default_factory=dict)
     # (wide, media, libraries, favourites, older) -> the taste text and the titles to search, for `taste_for`.
     taste_cache: dict[tuple, HistoryMix] = field(default_factory=dict)
@@ -2569,7 +2575,7 @@ class RowPolicy:
         key = (
             spec.media,
             tuple(sorted(str(k) for k in spec.library_keys)),
-            effective_max_seeds(spec, self.cfg),
+            self.seed_budget(spec),
             window,
             offset,
         )
@@ -2578,7 +2584,7 @@ class RowPolicy:
             self.seed_cache[key] = derive_seeds(
                 relevant,
                 self.resolve,
-                max_seeds=effective_max_seeds(spec, self.cfg),
+                max_seeds=self.seed_budget(spec),
                 blocked=self.user.blocked_seeds,
                 window=window,
                 cycle_offset=offset,
@@ -2721,6 +2727,43 @@ class RowPolicy:
         """
         return (self.pool_key(spec), spec.limits().fingerprint())
 
+    def library_groups(self, spec: RowSpec, targets: list) -> list[tuple[RowSpec, list]]:
+        """How this row is picked: each spec it is picked from, with the libraries that spec fills.
+
+        Normally the row itself, filling all of ``targets``. A row named after a watch splits off each library
+        that shares its media type with another of its libraries (issue #162): picked as one, two show
+        libraries shared the row's seeds and one pre-rank cut per MEDIA type, so the library holding the
+        fresher watches took every place. TV Shows got no candidates and carried last night's row forward
+        under an old watch's name, while Anime was named after a show in TV Shows. Split off, a library seeds
+        from its own watches (from all of them when it holds none, as `_history_for_row` does for any row) and
+        gets its own cut.
+
+        Its seed budget (`seed_budget`) is its media type's share of the row's, so a movies-and-TV row set to
+        one film and one show still follows one watch in each library. A library alone in its type is already
+        picked from its own seeds and cut, so it stays with the row, as does a type the row has no seed of. An
+        AI row is left whole: its libraries are what its theme covers, not its seeds.
+        """
+        if spec.theme is not None or not _names_a_seed(spec, self.user, self.cfg):
+            return [(spec, targets)]
+        libraries_of = Counter(section_kind(section) for section in targets)
+        share = Counter(seed.media_type for seed in self.seeds_for(spec))
+        split = [s for s in targets if libraries_of[section_kind(s)] > 1 and share[section_kind(s)] > 0]
+        if not split:
+            return [(spec, targets)]
+        rest = [s for s in targets if s not in split]
+        for s in split:
+            self.split_libraries[(spec.slug, str(s.key))] = getattr(s, "title", "") or str(s.key)
+            self.split_budgets[(spec.slug, str(s.key))] = share[section_kind(s)]
+        return ([(spec, rest)] if rest else []) + [(replace(spec, library_keys=[str(s.key)]), [s]) for s in split]
+
+    def seed_budget(self, spec: RowSpec) -> int:
+        """How many watches seed this spec: a split library's share (`library_groups`), else the row's budget."""
+        if len(spec.library_keys) == 1:
+            budget = self.split_budgets.get((spec.slug, spec.library_keys[0]))
+            if budget is not None:
+                return budget
+        return effective_max_seeds(spec, self.cfg)
+
     def pools_for(self, spec: RowSpec) -> Pool | None:
         """This row's pool, or None when every source it uses is down.
 
@@ -2806,6 +2849,9 @@ class RowPolicy:
             pool_label = f"{spec.media} · {', '.join(gather_key[0])}"
             if any(len(self.seeds_for(other)) != seed_n for other in self.gathered_specs()):
                 pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
+            if len(spec.library_keys) == 1 and (spec.slug, spec.library_keys[0]) in self.split_libraries:
+                # Two libraries of one type split off a row gather separately, under otherwise identical labels.
+                pool_label += f" · {self.split_libraries[(spec.slug, spec.library_keys[0])]}"
             if not guidance.is_builtin:
                 pool_label += " · own AI instructions"
             if limits.active:
@@ -2943,7 +2989,8 @@ def _warm_start(
     )
     _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": report.counts.seeds})
     for spec in specs:  # build every row's pool up front so counts and demand see them all
-        policy.pools_for(spec)
+        for library_spec, _ in policy.library_groups(spec, target_sections(ctx.delivery_sections, spec)):
+            policy.pools_for(library_spec)
     # Only if EVERY row's sources are down do we know nothing about this person: that's a failed
     # user, not a quiet "ok" that leaves yesterday's rows in place. One dead row among several
     # is just that one row.
@@ -2985,8 +3032,9 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         if spec.theme is not None:
             # An AI row (#138) is library-only: titles it names that the server lacks are never requested.
             continue
-        pools = policy.pools_for(spec)
-        if pools is None:
+        groups = policy.library_groups(spec, target_sections(ctx.delivery_sections, spec))
+        gathers = [pools[0] for s, _ in groups if (pools := policy.pools_for(s)) is not None]
+        if not gathers:
             continue
         # The row's own name (the same one the user sees), so the inbox can say WHICH row a
         # request came from. Fill the placeholders the template may carry.
@@ -3003,7 +3051,7 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
         row_tags = title_tags.setdefault(spec.slug, {})
         row_why = title_why.setdefault(spec.slug, {})
         limits = spec.limits()
-        missing = requests_mod.collect_missing(pools[0], policy.library_index)
+        missing = [c for gathered in gathers for c in requests_mod.collect_missing(gathered, policy.library_index)]
         if limits.active:
             # A title the row's limits would never show is not this row's to ask for. Year and rating only:
             # runtime needs a TMDB lookup per title, and a missing title is not worth one.
@@ -3038,7 +3086,8 @@ def _record_demand(policy: RowPolicy, demand: requests_mod.RowDemand) -> None:
                 row_slug=spec.slug,
             )
             why = row_why.setdefault(key, [])
-            if entry not in why:
+            # Once per row: a row split by library gathers once per library, and each can surface the title.
+            if not any(w.row_slug == entry.row_slug for w in why):
                 why.append(entry)
     # `demand` is the run-wide shared map; the per-user tally above is local, so only this
     # merge needs the lock (Stage 3 parallel runs).
@@ -4132,32 +4181,52 @@ def _row_section_picks(
                 _forget(user_report, spec, removed_in)
         if not any(section_picks.values()):
             return None
-    else:
-        pool_for_row: list[Candidate] = []
-        taste: set[tuple[int, MediaType]] = set()
-        if not cold:
-            # This row's own pool: its sources, its media and its libraries — already narrowed to
-            # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
-            # candidates it could never show.
-            pools = policy.pools_for(spec)
-            if pools is None:
-                return None  # every source this row uses is down; its siblings still deliver
-            gathered, in_library, pool_for_row = pools
-            taste = {(c.tmdb_id, c.media_type) for c in gathered} if spec.rewatch else set()
-            # A row that overrides the server's release-date weight needs its OWN truncation, not
-            # just its own ordering: the cut decides which candidates a row may select from at all,
-            # so re-ordering what the global's cut left would cap the setting at whatever survived
-            # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
-            # another gather. A row that inherits reuses the pool's cut untouched.
-            recency = policy.effective_recency(spec)
-            if recency != ctx.config.recency:
-                pool_for_row = policy.cut_at_recency(spec, in_library, recency)
-            row_label = _row_log_name(spec)
-            _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
-        section_picks = _build_section_picks(
-            policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
-        )
-    return section_picks
+        return section_picks
+    groups = [(spec, targets)] if cold else policy.library_groups(spec, targets)
+    built = [
+        _pooled_section_picks(policy, group_spec, sections, k, cold=cold, base_cold=base_cold)
+        for group_spec, sections in groups
+    ]
+    if all(picks is None for picks in built):
+        return None
+    return {key: picks for section_picks in built if section_picks for key, picks in section_picks.items()}
+
+
+def _pooled_section_picks(
+    policy: RowPolicy,
+    spec: RowSpec,
+    targets: list,
+    k: int,
+    *,
+    cold: bool,
+    base_cold: list[Pick],
+) -> dict[str, list[Pick]] | None:
+    """The picks for each of ``targets`` from this row's own pool, or None when every source it uses is down."""
+    ctx, user = policy.ctx, policy.user
+    pool_for_row: list[Candidate] = []
+    taste: set[tuple[int, MediaType]] = set()
+    if not cold:
+        # This row's own pool: its sources, its media and its libraries — already narrowed to
+        # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
+        # candidates it could never show.
+        pools = policy.pools_for(spec)
+        if pools is None:
+            return None  # every source this row uses is down; its siblings still deliver
+        gathered, in_library, pool_for_row = pools
+        taste = {(c.tmdb_id, c.media_type) for c in gathered} if spec.rewatch else set()
+        # A row that overrides the server's release-date weight needs its OWN truncation, not
+        # just its own ordering: the cut decides which candidates a row may select from at all,
+        # so re-ordering what the global's cut left would cap the setting at whatever survived
+        # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
+        # another gather. A row that inherits reuses the pool's cut untouched.
+        recency = policy.effective_recency(spec)
+        if recency != ctx.config.recency:
+            pool_for_row = policy.cut_at_recency(spec, in_library, recency)
+        row_label = _row_log_name(spec)
+        _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
+    return _build_section_picks(
+        policy, spec, targets, k, cold=cold, base_cold=base_cold, pool_for_row=pool_for_row, taste=taste
+    )
 
 
 def _stamp_row_picks(

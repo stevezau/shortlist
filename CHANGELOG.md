@@ -6,6 +6,11 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Because you watched row in two libraries of the same type no longer gets stuck in one of them** ([#162](https://github.com/stevezau/shortlist/issues/162)).
+  With a TV Shows and an Anime library, the row was built once from all of a person's show watches, and then shared out. The library holding their newest watches took every suggestion, so the other got none: it kept last night's titles under an old watch's name, and the busy library was named after a show it doesn't hold. Each library is now built from the watches it holds, and named after one of them. A library holding none of their watches is built from all of them, as before. Rows in a movies library and a TV library are unchanged. A row this does change is rebuilt in full once, on the first run after updating.
+
 ## [1.12.1] - 2026-10-16
 
 ### Fixed
