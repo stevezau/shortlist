@@ -104,6 +104,8 @@ from that library. With two libraries of the same type, such as TV Shows and Ani
 Movies, each one is built from the watches it holds and picks from its own suggestions. One library
 can't use up the other's suggestions, and on a Because you watched row each is named after a watch it
 holds. A library holding none of that person's watches is built from all their watches of its type.
+Two libraries of a type the row follows none of their watches in, such as Movies and 4K Movies for
+someone who only watches shows, still pick from their own suggestions.
 
 A Movies library and a TV library are built the same way they always were: films lead to films and
 shows to shows, so each already follows its own watches.

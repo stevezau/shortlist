@@ -41,18 +41,6 @@ reviewer who rediscovers a finding checks the history before fixing it again.
   its own ratings). Cutting it means fewer per-item reloads in the engine (a product change, and it would speed
   real runs too) or a smaller fake library.
 
-**Run trace:**
-
-- #162 review leftover (LOW, display only): when `RowPolicy.library_groups` splits a `{top_seed}` row's
-  same-type libraries, the trace's seed list (`_record_history_trace`) still shows the widest seed set of any
-  UNSPLIT row. A split library's own seeds, including the watch it is named after, can be missing from it.
-  Fix: build the list from each row's `library_groups` specs (a union, not the widest single set).
-- #162 review leftover (LOW, quality): `library_groups` leaves a media type UNSPLIT when the row has no seed
-  of it (no watches of that type, all blocked or disliked, or the other type on a `max_seeds=1` row). Its
-  candidates then come only from seedless AI web search, and two same-type libraries share one cut again, so the
-  one whose titles the search favours less can starve. Pre-existing shape, not widened by the split. Splitting it
-  anyway costs another gather per library.
-
 ---
 
 ## LEFT ON PURPOSE
@@ -146,6 +134,19 @@ the first run after the upgrade, not from the row's whole history.
 ## CLOSED — the record
 
 Everything below is fixed, resolved or not a bug. Newest first, then older audits.
+
+---
+
+## CLOSED 2026-10-21 — #162 review leftovers
+
+- The trace's seed list (and `counts.seeds`) showed the widest seed set of any unsplit row, so a split
+  library's own seeds could be missing. Both are now the union over every library's spec (`_seeds_fed`).
+- `library_groups` left a type the row has no seed of unsplit, so two same-type libraries shared one cut again.
+  They are split too, and each ranks its own cut of the row's gather (`RowPolicy.borrows_row_watches`,
+  `_Gathered.within`): same seeds and taste as before, and no extra AI search. The Architecture Review's MED
+  (each re-paying the row's AI search) and its `pool_key` taste LOW are moot for that reason.
+- Found re-reviewing that: a shared gather whose first ranking raised was never billed (`paid` was already
+  set). `pools_for` now clears `paid` when the ranking that took the real stats fails.
 
 ---
 

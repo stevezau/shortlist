@@ -359,3 +359,141 @@ def test_a_library_moving_in_or_out_of_the_split_is_not_a_settings_change(ctx: E
     decisions = {s["library"]: s["decision"] for s in second_night.trace["selection"]}
     assert {"Movies", "4K Movies"} <= decisions.keys(), decisions
     assert "settings_changed" not in decisions.values(), decisions
+
+
+def test_the_trace_lists_every_library_s_own_seeds(ctx: EngineContext, mock_plextv):
+    """A one-watch row follows their newest show, which is in Anime; TV Shows is split off and follows its own
+    newest. The trace listed only the row's seeds, so the watch TV Shows was named after was missing from it."""
+    _two_show_libraries(
+        ctx,
+        tv=list(range(10, 15)),
+        anime=list(range(50, 55)),
+        lookalikes={ANIME_WATCH: list(range(50, 55)), SILICON_VALLEY: list(range(10, 15))},
+    )
+    ctx.config.rows[0].max_seeds = 1
+    ctx.history_source.fetch.return_value = [
+        make_watched("Anime Watch", days_ago=1, media_type=MediaType.SHOW, rating_key=9700),
+        make_watched("Silicon Valley", days_ago=60, media_type=MediaType.SHOW, rating_key=9800),
+    ]
+
+    user = _run(ctx, mock_plextv)
+
+    assert _titles(user)["1"] == "Because you watched Silicon Valley"
+    assert sorted(s["title"] for s in user.trace["seeds"]) == ["Anime Watch", "Silicon Valley"]
+    assert user.counts.seeds == 2
+
+
+@pytest.mark.parametrize(
+    ("max_seeds", "films_watched"),
+    [(None, []), (1, [make_watched("A Film", days_ago=5, media_type=MediaType.MOVIE, rating_key=9101)])],
+    ids=["they_watch_only_shows", "a_one_watch_row_follows_a_show"],
+)
+def test_a_type_the_row_has_no_seed_of_is_not_crowded_out_either(
+    ctx: EngineContext, mock_plextv, max_seeds: int | None, films_watched: list
+):
+    """The row has no film seed, so its films all come from AI web search. Movies and 4K Movies shared that
+    search's one cut, and the films Movies holds took every place: 4K Movies got nothing. Each now takes its own
+    cut of that one search, made with the row's seeds as before: a film the row does not follow must not start
+    seeding Movies, and the same search must not be paid for once per library."""
+    searched_with: list[list[str]] = []
+
+    class _WebCurator:
+        supports_native_web_search = True
+        last_tokens = last_output_tokens = 0
+
+        def recommend_web(self, profile, seeds, k, *, guidance=None):
+            searched_with.append([seed.title for seed in seeds])
+            return [{"title": f"t{t}", "year": 2020, "media": "movie"} for t in range(30, 40)]
+
+    def film(title: str, mt: MediaType, year: int | None = None) -> dict | None:
+        if mt is not MediaType.MOVIE or not title[1:].isdigit():
+            return None
+        tmdb_id = int(title[1:])
+        return {**_show(tmdb_id), "vote_average": 9.0 if tmdb_id < 35 else 6.0}
+
+    ctx.curator = _WebCurator()
+    ctx.tmdb.search.side_effect = film
+    movies = MagicMock(type="movie", key="1", title="Movies")
+    movies_4k = MagicMock(type="movie", key="3", title="4K Movies")
+    tv_section = MagicMock(type="show", key="2", title="TV Shows")
+    ctx.plex.sections.return_value = [movies, movies_4k, tv_section]
+    ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: tv_section}
+    indexes = {
+        "1": {101: 9101, **{t: t for t in range(30, 35)}},
+        "3": {t: t + 400 for t in range(35, 40)},
+        "2": {SILICON_VALLEY: 9800, **{t: t for t in range(10, 15)}},
+    }
+    ctx.plex.build_library_index.side_effect = lambda sec: indexes[sec.key]
+    ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+        [_show(t) for t in range(10, 15)] if tid == SILICON_VALLEY else []
+    )
+    ctx.config.rows = [
+        RowSpec(
+            slug="picked",
+            name_template="Picked",
+            size=5,
+            media="both",
+            candidate_sources=["tmdb_similar", "llm_web"],
+            max_seeds=max_seeds,
+        )
+    ]
+    ctx.config.min_history = 1
+    ctx.config.candidates_pre_rank = 5
+    ctx.history_source.fetch.return_value = [
+        make_watched("Silicon Valley", days_ago=1, media_type=MediaType.SHOW, rating_key=9800),
+        *films_watched,
+    ]
+
+    user = _run(ctx, mock_plextv)
+
+    assert sorted(_picks_in(user, "Movies")) == [30, 31, 32, 33, 34]
+    assert sorted(_picks_in(user, "4K Movies")) == [35, 36, 37, 38, 39]
+    assert sorted(_picks_in(user, "TV Shows")) == [10, 11, 12, 13, 14]
+    assert searched_with == [["Silicon Valley"]]
+
+
+def test_a_shared_search_is_billed_when_its_first_ranking_fails(ctx: EngineContext, mock_plextv, monkeypatch):
+    """Movies and 4K Movies rank one AI web search. The first ranking takes the search's cost to record; when it
+    raised, the second was handed a free copy and the search was never billed."""
+
+    class _WebCurator:
+        supports_native_web_search = True
+        last_tokens = last_output_tokens = 0
+
+        def recommend_web(self, profile, seeds, k, *, guidance=None):
+            self.last_tokens = 50
+            return [{"title": f"t{t}", "year": 2020, "media": "movie"} for t in range(30, 40)]
+
+    ctx.curator = _WebCurator()
+    ctx.tmdb.search.side_effect = lambda title, mt, year=None: (
+        _show(int(title[1:])) if mt is MediaType.MOVIE and title[1:].isdigit() else None
+    )
+    movies = MagicMock(type="movie", key="1", title="Movies")
+    movies_4k = MagicMock(type="movie", key="3", title="4K Movies")
+    ctx.plex.sections.return_value = [movies, movies_4k]
+    ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+    indexes = {"1": {t: t for t in range(30, 35)}, "3": {t: t + 400 for t in range(35, 40)}}
+    ctx.plex.build_library_index.side_effect = lambda sec: indexes[sec.key]
+    ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
+    ctx.config.rows = [
+        RowSpec(slug="picked", name_template="Picked", size=5, media="both", candidate_sources=["llm_web"])
+    ]
+    ctx.config.min_history = 1
+    ctx.history_source.fetch.return_value = [
+        make_watched("Silicon Valley", days_ago=1, media_type=MediaType.SHOW, rating_key=9800),
+    ]
+    real_rank = rows_mod._rank_pool
+    rankings: list[int] = []
+
+    def first_ranking_fails(*args, **kwargs):
+        rankings.append(1)
+        if len(rankings) == 1:
+            raise RuntimeError("tmdb is down")
+        return real_rank(*args, **kwargs)
+
+    monkeypatch.setattr(rows_mod, "_rank_pool", first_ranking_fails)
+
+    user = _run(ctx, mock_plextv)
+
+    assert len(rankings) == 2
+    assert user.llm_tokens == 50
