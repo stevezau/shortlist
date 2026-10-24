@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1633,3 +1633,80 @@ class TestTheRecordedSeasonSourceReads:
         found = mock_plex.search_titles("free", limit=5)
 
         assert [title.title for title in found] == ["Free Burma Rangers", "Free Chol Soo Lee", "Free Guy", "Free Solo"]
+
+
+class TestAFutureWatchDateIsNotBelieved:
+    """A `lastViewedAt` ahead of the clock is not a watch date (issue #162).
+
+    One reporter's server dated a show ~10 years ahead. Seed recency is measured from the newest
+    watch, so that one stamp made every real watch read ~3,750 days old and pinned the same seed
+    every night. Read as unknown instead, which a show then repairs from its episodes.
+    """
+
+    _URL = "http://pms:32400/library/sections/1/all"
+    _AHEAD = int(datetime.now(UTC).timestamp()) + 3750 * 86400
+    _REAL = int(datetime.now(UTC).timestamp()) - 3 * 86400
+
+    @staticmethod
+    def _movie(key: int, title: str, seen: int) -> str:
+        return (
+            f'<Video ratingKey="{key}" title="{title}" year="2000" viewCount="1" lastViewedAt="{seen}">'
+            f'<Guid id="tmdb://{key}"/></Video>'
+        )
+
+    @respx.mock
+    def test_a_future_stamp_reads_as_undated(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        body = self._movie(1, "Ahead", self._AHEAD)
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="1" totalSize="1">{body}</MediaContainer>')
+        )
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK").items
+
+        assert items[0].watched_at == datetime(1970, 1, 1, tzinfo=UTC)
+
+    @respx.mock
+    def test_a_future_stamp_does_not_end_an_incremental_walk(self, mock_plex: PlexClient):
+        """Sorted newest-first, the future row comes FIRST. Read as the epoch it is older than any
+        cutoff, and stopping there would return nothing at all."""
+        mock_plex._server.url.return_value = self._URL
+        body = self._movie(1, "Ahead", self._AHEAD) + self._movie(2, "This Week", self._REAL)
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="2" totalSize="2">{body}</MediaContainer>')
+        )
+
+        since = datetime.fromtimestamp(self._REAL, tz=UTC) - timedelta(days=1)
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since).items
+
+        assert {i.title for i in items} == {"Ahead", "This Week"}
+
+    @respx.mock
+    def test_a_future_episode_stamp_does_not_date_its_show(self, mock_plex: PlexClient):
+        url = "http://pms:32400/library/metadata/7/allLeaves"
+        mock_plex._server.url.return_value = url
+        rows = (
+            f'<Video ratingKey="1" type="episode" viewCount="1" lastViewedAt="{self._REAL}"/>'
+            f'<Video ratingKey="2" type="episode" viewCount="1" lastViewedAt="{self._AHEAD}"/>'
+        )
+        respx.get(url).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="2" totalSize="2">{rows}</MediaContainer>')
+        )
+
+        dates = mock_plex.newest_episode_dates("2", "TOK", {7})
+
+        assert int(dates[7].timestamp()) == self._REAL
+
+    @respx.mock
+    def test_the_library_wide_episode_read_ignores_a_future_stamp_too(self, mock_plex: PlexClient):
+        url = "http://pms:32400/library/sections/2/all"
+        mock_plex._server.url.return_value = url
+        rows = (
+            f'<Video ratingKey="1" type="episode" grandparentRatingKey="7" viewCount="1" lastViewedAt="{self._REAL}"/>'
+            f'<Video ratingKey="2" type="episode" grandparentRatingKey="7" viewCount="1" lastViewedAt="{self._AHEAD}"/>'
+        )
+        respx.get(url).mock(
+            return_value=httpx.Response(200, text=f'<MediaContainer size="2" totalSize="2">{rows}</MediaContainer>')
+        )
+
+        assert mock_plex._newest_episode_stamps("2", "TOK") == {7: self._REAL}

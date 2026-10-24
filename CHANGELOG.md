@@ -6,6 +6,11 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A watch date in the future no longer pins a person's rows to one title** ([#162](https://github.com/stevezau/shortlist/issues/162)).
+  Plex can hold a last-watched date years ahead of today. Shortlist took it as the person's newest watch, so that title led their row every night and everything they really watched read as years old on the run page. A date more than a day ahead is now treated as unknown: a show takes the date of its newest watched episode instead, and the bad date is replaced at the next watch sync.
+
 ## [1.12.2] - 2026-10-21
 
 ### Fixed

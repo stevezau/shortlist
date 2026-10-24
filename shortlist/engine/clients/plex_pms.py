@@ -20,7 +20,7 @@ from bisect import bisect_left
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from urllib.parse import quote
 
@@ -142,6 +142,20 @@ def _tag_name(title: str) -> str:
 #: What `_watched_item` dates a row that carries no `lastViewedAt`. A show marked watched rather than
 #: played has none, so this is a real and common value, not a corrupt one — see `_dates_from_episodes`.
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+#: How far past this host's clock a `lastViewedAt` may sit and still be believed — room for a PMS
+#: whose clock runs a little ahead of ours. Beyond it the stamp is not a watch date: one reporter's
+#: server dated a show ~10 years ahead, and because seed recency is measured from the newest watch,
+#: every real watch then read ~3,750 days old and the same seed won every night (issue #162).
+FUTURE_WATCH_TOLERANCE = timedelta(days=1)
+
+
+def _watch_stamp(raw: str | None) -> int:
+    """A `lastViewedAt` as epoch seconds, or 0 when it is missing or in the future (see above)."""
+    stamp = int(raw or 0)
+    if stamp > (datetime.now(UTC) + FUTURE_WATCH_TOLERANCE).timestamp():
+        return 0
+    return stamp
 
 
 #: The identifier family Plex gives a COLLECTION's hub. Prefix only, and deliberately NOT a format.
@@ -2183,7 +2197,7 @@ class PlexClient:
             media_type=kind,
             view_count=int(el.get("viewCount") or 0),
             view_offset_ms=int(el.get("viewOffset") or 0),
-            last_viewed_at=int(el.get("lastViewedAt") or 0),
+            last_viewed_at=_watch_stamp(el.get("lastViewedAt")),
             show_rating_key=show_key,
             title=el.get("title") or "",
         )
@@ -2327,7 +2341,7 @@ class PlexClient:
         try:
             account_id = int(el.get("accountID") or 0)
             rating_key = int(el.get("ratingKey") or 0)
-            viewed_at = int(el.get("viewedAt") or 0)
+            viewed_at = _watch_stamp(el.get("viewedAt"))
         except ValueError:
             return None
         if not account_id or not rating_key or not viewed_at:
@@ -2475,12 +2489,13 @@ class PlexClient:
                         dropped_keys.add(rating_key)
                     continue
                 if since is not None and item.watched_at < since:
-                    # An item with NO `lastViewedAt` is stamped 1970 by `_watched_item`, so it looks
-                    # older than any cutoff. Treating that as "everything after this is older" would
-                    # end the walk on a data gap and silently drop every title behind it — the read
+                    # An item with NO believable `lastViewedAt` — none at all, or one in the future —
+                    # is stamped 1970 by `_watched_item`, so it looks older than any cutoff. Treating
+                    # that as "everything after this is older" would end the walk on a data gap and
+                    # silently drop every title behind it — a future row sorts FIRST — and the read
                     # would look like a quiet night rather than a truncation. Skip it and keep going;
                     # only a real timestamp may end the walk.
-                    if el.get("lastViewedAt") is None:
+                    if item.watched_at <= _EPOCH:
                         # Returned, not just stepped over. The `continue` only has to stop the walk
                         # ENDING here; dropping the row as well made an incremental read report a
                         # show the full read had dated from its episodes as absent, which is
@@ -2722,7 +2737,7 @@ class PlexClient:
             for el in page:
                 try:
                     views = int(el.get("viewCount") or 0)
-                    stamp = int(el.get("lastViewedAt") or 0)
+                    stamp = _watch_stamp(el.get("lastViewedAt"))
                 except ValueError:
                     continue
                 if views > 0:
@@ -2788,7 +2803,7 @@ class PlexClient:
                 if raw is None:
                     continue  # a season or show row — only leaves carry the key we fold on
                 try:
-                    key, stamp = int(raw), int(el.get("lastViewedAt") or 0)
+                    key, stamp = int(raw), _watch_stamp(el.get("lastViewedAt"))
                     views = int(el.get("viewCount") or 0)
                 except ValueError:
                     continue
@@ -2909,8 +2924,8 @@ class PlexClient:
                 break
         if tmdb_id is None:
             return None
-        last_viewed = el.get("lastViewedAt")
-        watched_at = datetime.fromtimestamp(int(last_viewed), tz=UTC) if last_viewed else _EPOCH
+        last_viewed = _watch_stamp(el.get("lastViewedAt"))
+        watched_at = datetime.fromtimestamp(last_viewed, tz=UTC) if last_viewed else _EPOCH
         year = el.get("year")
         # `userRating` belongs to the TOKEN this page was read with, not to the server — live-probed
         # 2026-08-06 across 50 accounts on a real server: a title reading 6.2 as the owner came back

@@ -29,6 +29,15 @@ reviewer who rediscovers a finding checks the history before fixing it again.
     matters, try crediting history seeds at a lower scale than recent ones and replay.
   - `replay.py` gathers with "full", so its headline `in_row` is "full"; read `by_mode["scaled:0.7"]`.
 
+**Future watch dates (#162 leftovers, 2026-10-25):**
+
+- Every PMS reader now treats a stamp more than a day ahead as unknown (`_watch_stamp`), but `build_seeds`
+  (`history.py`, `newest = max(...)`) still trusts whatever it is given. A future `source_viewed_at` or
+  `watch_events.viewed_at` stored BEFORE the fix is never rewritten, and a new reader that skips `_watch_stamp`
+  reopens #162. A guard there needs a `now` passed in (the engine reads no clock).
+- The cutoff is this host's clock, not the PMS's. A Shortlist host more than a day behind its PMS would read
+  every fresh watch as undated, silently. A once-per-read warning with the rejected count would make it visible.
+
 **Test and structure leftovers:**
 
 - A full run reports two unclosed loopback sockets from `test_assistant_mcp_tool_matrix.py`; they do not

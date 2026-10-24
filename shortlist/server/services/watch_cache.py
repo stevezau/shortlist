@@ -30,6 +30,7 @@ from loguru import logger
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from shortlist.engine.clients.plex_pms import FUTURE_WATCH_TOLERANCE
 from shortlist.engine.models import MediaType, UserProfile, WatchedItem
 from shortlist.server.db.models import WatchedTitle, WatchSyncState, utcnow
 from shortlist.server.services.delivery_snapshots import utc
@@ -665,12 +666,15 @@ def _upsert(
     #    nothing new about this show, so its date carries no new information and must not win.
     #
     # A FALLING count still writes through: that is an un-mark, and the date should follow it back.
+    # And a cached date in the FUTURE is never "better": it was written before the reader stopped
+    # believing such stamps (#162), and keeping it would pin that title as the newest watch for ever.
     # A first insert still records whatever it has, epoch included — it is all that is known.
     incoming = item.watched_at or utcnow()
     cached = utc(row.viewed_at)
     keep_cached = (
         cached is not None
         and incoming < cached
+        and cached <= utcnow() + FUTURE_WATCH_TOLERANCE
         and (
             incoming <= _EPOCH
             or (
