@@ -6,6 +6,8 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-10-25
+
 ### Added
 
 - **Choose which of a row's libraries it asks for titles for** ([#169](https://github.com/stevezau/shortlist/issues/169)).
