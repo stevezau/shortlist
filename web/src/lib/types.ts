@@ -828,6 +828,9 @@ export interface TraceSeed {
   /** The two ingredients behind `weight` — so the influence bar reads "watched 4×, 3 days ago". */
   watch_count?: number;
   recency_days?: number;
+  /** Days between their last watch of it and the run. Null when nothing dates the watch; absent on
+   *  runs recorded before it existed, which fall back to `recency_days`. */
+  days_ago?: number | null;
 }
 
 /** One title a source returned for a seed, tagged with its fate through selection. */

@@ -182,6 +182,46 @@ class TestRecordHistoryTrace:
         assert [s["title"] for s in report.trace["seeds"]] == ["B", "A"]
         assert report.trace["seeds"][0]["weight"] == 0.9
 
+    def test_a_seed_says_how_long_before_the_RUN_it_was_watched(self):
+        """`recency_days` counts back from their newest watch, not from the run, so someone whose last
+        watch was a week ago read every seed a week short — and "watched most recently" for a title
+        they last saw a week ago (issue #162's screenshot made this visible)."""
+        report = _report()
+        history = [
+            self._watch("A", 10),
+            self._watch("B", 20),
+            WatchedItem(title="Undated", media_type=MediaType.MOVIE, watched_at=datetime(1970, 1, 1, tzinfo=UTC)),
+        ]
+        seeds = [seed(1, "B", weight=0.9), seed(2, "A", weight=0.5), seed(3, "Undated", weight=0.1)]
+
+        rows_mod._record_history_trace(
+            report,
+            history,
+            [_row_spec()],
+            seeds_for=lambda _spec: seeds,
+            watched_movies=set(),
+            watched_shows={},
+            run_at=datetime(2026, 7, 25, 3, tzinfo=UTC),
+        )
+
+        assert {s["title"]: s["days_ago"] for s in report.trace["seeds"]} == {"B": 5, "A": 15, "Undated": None}
+
+    def test_no_run_time_records_no_days_ago(self):
+        """A direct engine call has no run time; a guess from the clock would make the trace differ by
+        when it was read. The UI keeps its older label for a trace without the field."""
+        report = _report()
+
+        rows_mod._record_history_trace(
+            report,
+            [self._watch("A", 10)],
+            [_row_spec()],
+            seeds_for=lambda _spec: [seed(1, "A")],
+            watched_movies=set(),
+            watched_shows={},
+        )
+
+        assert "days_ago" not in report.trace["seeds"][0]
+
     def test_counts_true_distinct_watched_titles_per_library(self):
         # Two movie libraries + a heavy-TV recent history: the per-library total must be exact per
         # library (not a shared per-media number), and count DISTINCT titles (a binge counts once).

@@ -1705,6 +1705,7 @@ def _record_history_trace(
     library_of_watch=lambda _item: "",
     library_of_seed=lambda _seed: "",
     ratings: RatingsPolicy | None = None,
+    run_at: datetime | None = None,
 ) -> None:
     """File the history/seeds/watched stage of the trace: the most recent watches, the seeds derived
     from them (every one that seeds any of ``specs``, `_seeds_fed`), and a watched summary. Display only.
@@ -1787,6 +1788,23 @@ def _record_history_trace(
             "rated": ratings.rated,
             "rated_human": ratings.rated_human,
         }
+    # How long before THIS RUN each seed was last watched. `recency_days` counts back from their newest
+    # watch instead (it is the weight's input), so labelled "days ago" it read every seed short by
+    # however long they had been away. Keyed as `build_seeds` groups. None when nothing dates the
+    # watch; absent on a direct engine call, which has no run time to count from.
+    last_watched: dict[tuple[str, MediaType], datetime] = {}
+    for item in history:
+        key = (item.title, item.media_type)
+        if item.watched_at and (key not in last_watched or item.watched_at > last_watched[key]):
+            last_watched[key] = item.watched_at
+    run_moment = _utc(run_at)
+
+    def days_ago(seed: Seed) -> int | None:
+        last = _utc(last_watched.get((seed.title, seed.media_type)))
+        if run_moment is None or last is None or last.year <= 1970:
+            return None
+        return max(0, (run_moment - last).days)
+
     report.trace["seeds"] = [
         {
             "title": s.title,
@@ -1798,6 +1816,7 @@ def _record_history_trace(
             # ago" instead of an opaque bar — this is what makes the influence bar legible.
             "watch_count": s.watch_count,
             "recency_days": s.recency_days,
+            **({"days_ago": days_ago(s)} if run_moment is not None else {}),
         }
         for s in sorted(seeds, key=lambda s: s.weight, reverse=True)
     ]
@@ -3059,6 +3078,7 @@ def _warm_start(
         library_of_watch=library_of_watch,
         library_of_seed=library_of_seed,
         ratings=policy.ratings,
+        run_at=ctx.run_at,
     )
     _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": report.counts.seeds})
     for spec in specs:  # build every row's pool up front so counts and demand see them all
